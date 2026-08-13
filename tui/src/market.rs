@@ -29,7 +29,7 @@ use crate::job::Logger;
 use anyhow::{Context, Result};
 use bytemuck::Zeroable;
 use dropset_sdk::layout::LiquidityProfile;
-use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix};
+use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix, NO_SLOT_BOUND, PROFILE_BYTES};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -72,12 +72,14 @@ pub struct PairConfig {
     /// stamp has to survive the conversion to the on-chain atoms-ratio (see
     /// [`reference_atoms_ratio`]).
     pub reference_price: f64,
-    /// How many slots after the quote each ladder rung expires. The bootstrap
-    /// stamps this on the seeded profile; `u32::MAX` means never (the maker
-    /// re-arms expiry itself once it takes over). The rung geometry (offsets and
-    /// per-side depth) lives in [`SEED_LADDER`] / [`ladder_at_spread_bps`], not
-    /// here — every market opens with the same shape.
-    pub expiry_offset: u32,
+    /// How many **seconds** after the quote each ladder rung expires. The
+    /// bootstrap stamps this on the seeded profile; `u32::MAX` means never
+    /// (the maker re-arms expiry itself once it takes over). The seeded
+    /// book is left slot-unbounded — the maker's own ladder is what
+    /// introduces per-tier slot bounds. The rung geometry (offsets and
+    /// per-side depth) lives in [`SEED_LADDER`] / [`ladder_at_spread_bps`],
+    /// not here — every market opens with the same shape.
+    pub expiry_secs: u32,
 }
 
 /// The seven FX-stablecoin markets the localnet bootstrap brings up, each a
@@ -106,7 +108,7 @@ const fn fx_market(
         },
         leader_keypair_file: "keys/EEEE.json",
         reference_price,
-        expiry_offset: u32::MAX, // never expires (re-armed by the maker bot)
+        expiry_secs: u32::MAX, // never expires (re-armed by the maker bot)
     }
 }
 
@@ -395,7 +397,7 @@ pub fn seed_vault(
     log.log("set_liquidity_profile");
     let bytes = ladder_profile_bytes(
         &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
-        config.expiry_offset,
+        config.expiry_secs,
     );
     let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, VAULT_IDX, bytes);
     chain::send_logged(
@@ -461,8 +463,8 @@ fn load_key(repo_root: &Path, rel: &str) -> Result<Keypair> {
 }
 
 /// Serialize an asymmetric multi-rung ladder — an independent
-/// `(offset_ppm, size_bps)` list per side, sharing `expiry_offset` — to the
-/// 160-byte `set_liquidity_profile` argument. Rungs past the profile's capacity
+/// `(offset_ppm, size_bps)` list per side, sharing `expiry_secs` — to the
+/// `set_liquidity_profile` argument. Rungs past the profile's capacity
 /// are dropped. The symmetric [`ladder_profile_bytes`] is the common case; the
 /// "thin the far side" reshape uses the asymmetric form (a full bid ladder over
 /// a thinned ask ladder), so the book's shape is a direct readout of both
@@ -470,29 +472,31 @@ fn load_key(repo_root: &Path, rel: &str) -> Result<Keypair> {
 pub fn ladder_profile_bytes_asym(
     bids: &[(u32, u16)],
     asks: &[(u32, u16)],
-    expiry_offset: u32,
-) -> [u8; 160] {
+    expiry_secs: u32,
+) -> [u8; PROFILE_BYTES] {
     let mut profile = LiquidityProfile::zeroed();
     for (i, &(offset_ppm, size_bps)) in bids.iter().take(profile.bids.len()).enumerate() {
         profile.bids[i].price_offset = offset_ppm.into();
         profile.bids[i].size_bps = size_bps.into();
-        profile.bids[i].expiry_offset = expiry_offset.into();
+        profile.bids[i].expiry_offset_secs = expiry_secs.into();
+        profile.bids[i].expiry_offset_slots = NO_SLOT_BOUND.into();
     }
     for (i, &(offset_ppm, size_bps)) in asks.iter().take(profile.asks.len()).enumerate() {
         profile.asks[i].price_offset = offset_ppm.into();
         profile.asks[i].size_bps = size_bps.into();
-        profile.asks[i].expiry_offset = expiry_offset.into();
+        profile.asks[i].expiry_offset_secs = expiry_secs.into();
+        profile.asks[i].expiry_offset_slots = NO_SLOT_BOUND.into();
     }
     profile_bytes(&profile)
 }
 
 /// Serialize a symmetric multi-rung ladder — the same `(offset_ppm, size_bps)`
-/// list on both sides — to the 160-byte `set_liquidity_profile` argument. The
+/// list on both sides — to the `set_liquidity_profile` argument. The
 /// bootstrap seeds the opening book with [`SEED_LADDER`] through here (so it
 /// opens with several price levels of depth), and the TUI's widen / tighten /
 /// reset reshapes all encode a full multi-level ladder through here too.
-pub fn ladder_profile_bytes(rungs: &[(u32, u16)], expiry_offset: u32) -> [u8; 160] {
-    ladder_profile_bytes_asym(rungs, rungs, expiry_offset)
+pub fn ladder_profile_bytes(rungs: &[(u32, u16)], expiry_secs: u32) -> [u8; PROFILE_BYTES] {
+    ladder_profile_bytes_asym(rungs, rungs, expiry_secs)
 }
 
 /// The seed ladder with every rung's price offset scaled by `scale` (sizes
@@ -619,7 +623,7 @@ mod tests {
     #[test]
     fn seed_ladder_fills_every_rung_symmetrically() {
         let bytes = ladder_profile_bytes(&SEED_LADDER, u32::MAX);
-        assert_eq!(bytes.len(), 160);
+        assert_eq!(bytes.len(), PROFILE_BYTES);
         let profile: &LiquidityProfile = bytemuck::from_bytes(&bytes);
         for (i, &(offset_ppm, size_bps)) in SEED_LADDER.iter().enumerate() {
             assert_eq!(profile.bids[i].price_offset.get(), offset_ppm);

@@ -242,7 +242,15 @@ pub fn poll(
         return state;
     }
 
-    state.markets = read_markets(client, slot.unwrap_or(0).min(u32::MAX as u64) as u32, None);
+    // The book's expiry filter is dual-domain: the poll's own `slot` (also
+    // shown on the status line as a liveness signal) plus the host wall
+    // clock, matching what the engine gates on.
+    state.markets = read_markets(
+        client,
+        slot.unwrap_or(0).min(u32::MAX as u64) as u32,
+        dropset_sdk::time::now_unix_u32(),
+        None,
+    );
     // Participants are read for the selected market only — the accounts pane
     // shows one market at a time, so there is no need to fetch holdings for the
     // whole roster each poll. Cloned so the read borrows nothing of `state`
@@ -354,16 +362,23 @@ pub fn read_reference_price(client: &RpcClient, market: &Pubkey, vault_idx: u32)
 /// Load a specific market by address, for the multi-market bootstrap which
 /// seeds each pair's own market PDA rather than whichever turns up first.
 pub fn read_market_at(client: &RpcClient, address: Pubkey) -> Option<MarketView> {
+    // Expiry is dual-domain, so the book filter needs both clocks: the
+    // chain's slot and the host's wall clock.
     let slot = client.get_slot().ok()?;
-    read_markets(client, slot.min(u32::MAX as u64) as u32, Some(address))
-        .into_iter()
-        .next()
+    read_markets(
+        client,
+        slot.min(u32::MAX as u64) as u32,
+        dropset_sdk::time::now_unix_u32(),
+        Some(address),
+    )
+    .into_iter()
+    .next()
 }
 
 /// Discover the localnet markets by scanning the program's owned accounts for
 /// the `MarketHeader` discriminator, decoding each one's header + active vault
 /// list via the slab-layout mirror, and reconstructing its resting book at
-/// `current_slot` through the shared SDK matcher. With `target` set, only that
+/// `(now_slot, now_unix)` through the shared SDK matcher. With `target` set, only that
 /// exact market is returned (the by-address bootstrap path); otherwise every
 /// market the scan turns up, in scan order.
 ///
@@ -371,7 +386,12 @@ pub fn read_market_at(client: &RpcClient, address: Pubkey) -> Option<MarketView>
 /// open depositors are filtered from it — so N markets cost one `get_program_accounts`
 /// plus a small `get_multiple_accounts` per market for the SPL-owned treasuries
 /// and mints (not in the program scan).
-fn read_markets(client: &RpcClient, current_slot: u32, target: Option<Pubkey>) -> Vec<MarketView> {
+fn read_markets(
+    client: &RpcClient,
+    now_slot: u32,
+    now_unix: u32,
+    target: Option<Pubkey>,
+) -> Vec<MarketView> {
     let Ok(accounts) = client.get_program_accounts(&DROPSET_ID) else {
         return Vec::new();
     };
@@ -412,8 +432,8 @@ fn read_markets(client: &RpcClient, current_slot: u32, target: Option<Pubkey>) -
 
         // Reconstruct the resting book via the shared matcher (Buy ⇒ asks,
         // Sell ⇒ bids) — the same levels a real swap would fill.
-        let asks = resting_levels(&view, SwapSide::Buy, current_slot);
-        let bids = resting_levels(&view, SwapSide::Sell, current_slot);
+        let asks = resting_levels(&view, SwapSide::Buy, now_slot, now_unix);
+        let bids = resting_levels(&view, SwapSide::Sell, now_slot, now_unix);
 
         // Open VaultDepositor PDAs for this market — discovered in the same
         // program-accounts scan, decoded for their (sector, owner).

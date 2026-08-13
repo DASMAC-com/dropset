@@ -4,6 +4,7 @@ import {
   DROPSET_PROGRAM_ADDRESS,
   getSwapInstructionAsync,
   initSimulator,
+  nowUnix,
   simulateSwap,
 } from "@dropset/sdk";
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
@@ -69,7 +70,7 @@ const applySlippage = (out: bigint, bps: number): bigint => {
 // Execute an eCLOB swap end-to-end, the direct-SDK counterpart to
 // executeDflowSwap:
 //   1. Resolve the route (market PDA, side, mints, token programs).
-//   2. Read the market bytes + current slot and re-simulate — the quote is
+//   2. Read the market bytes and re-simulate at the current clocks — the quote is
 //      re-derived here (not trusted from the UI) so `minOut` reflects the
 //      book at submit time, mirroring how the DFlow path re-fetches /order.
 //   3. Build the swap instruction (idempotently creating the taker's ATAs
@@ -101,6 +102,9 @@ export async function executeEclobSwap(
     throw new SwapError("No Dropset market for this pair", "api");
   }
 
+  // Level expiry is dual-domain, so the re-simulation needs both clocks:
+  // the chain's slot and the wall clock each quote's datums are measured
+  // from. A level rests only inside both of its deadlines.
   const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
 
   // Declare the same configured rate the DFlow route declares, paid to the
@@ -146,6 +150,7 @@ export async function executeEclobSwap(
     atomicAmount,
     route.limitPriceBits,
     Number(slot),
+    nowUnix(),
     platformFeeBps,
   );
   if (quote.outAmount === 0n) {

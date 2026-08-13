@@ -116,22 +116,27 @@ export function price_quote_for_base(bits, base) {
  * Simulate a take against a market account's raw data (including the
  * 8-byte discriminator). `side`: 0 = buy, 1 = sell. `limit_price_bits`:
  * raw `Price` bits (use the per-side no-bound sentinel to disable).
- * `platform_fee_bps`: the integrator fee the caller will declare on the
- * `swap` instruction — `0` for an unrouted quote. A rate above the
- * market's ceiling yields an all-zero `Quote`, matching the engine's
- * refusal.
+ * Level expiry is **dual-domain**: `now_slot` is the current slot and
+ * `now_unix` the current wall-clock time in unix **seconds**, and a
+ * level is shown only while it is inside both of its deadlines. Passing
+ * one where the other belongs silently resurrects expired levels (or
+ * kills live ones). `platform_fee_bps`: the integrator fee
+ * the caller will declare on the `swap` instruction — `0` for an
+ * unrouted quote. A rate above the market's ceiling yields an all-zero
+ * `Quote`, matching the engine's refusal.
  * @param {Uint8Array} market_data
  * @param {number} side
  * @param {bigint} amount_in
  * @param {number} limit_price_bits
- * @param {number} current_slot
+ * @param {number} now_slot
+ * @param {number} now_unix
  * @param {number} platform_fee_bps
  * @returns {Quote}
  */
-export function simulate_swap(market_data, side, amount_in, limit_price_bits, current_slot, platform_fee_bps) {
+export function simulate_swap(market_data, side, amount_in, limit_price_bits, now_slot, now_unix, platform_fee_bps) {
     const ptr0 = passArray8ToWasm0(market_data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.simulate_swap(ptr0, len0, side, amount_in, limit_price_bits, current_slot, platform_fee_bps);
+    const ret = wasm.simulate_swap(ptr0, len0, side, amount_in, limit_price_bits, now_slot, now_unix, platform_fee_bps);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }

@@ -449,7 +449,15 @@ impl Swap {
         let market_addr = *self.market.address();
         let (mint_seeds, bump_arr) = self.market.signer_seed_parts();
         let taker_fee_ppm = self.market.taker_fee.get() as u64;
-        let current_slot = self.clock.slot as u32;
+        // Level expiry is dual-domain: each level carries a slot deadline
+        // and a wall deadline, both anchored on the quote's own datums,
+        // and matches only while it is inside both (see `layout.rs`).
+        // `unix_timestamp` is an `i64`: clamp below at 0 (a negative
+        // sysvar value would wrap into the far future and resurrect every
+        // expired level) and above at `u32::MAX`, the width
+        // `Position.expires_at` stores.
+        let now_unix = self.clock.unix_timestamp.clamp(0, u32::MAX as i64) as u32;
+        let now_slot = self.clock.slot as u32;
         let head = self.market.head.get();
 
         // Walk the active DLL from `market.head` via `Vault.next`.
@@ -536,10 +544,14 @@ impl Swap {
                         v.remaining.bids[i]
                     };
                     let size = lvl.size.get();
-                    let expires_at = lvl.expires_at.get();
                     let price = lvl.price;
+                    // Live only inside BOTH deadlines — the min of the two
+                    // leader-supplied bounds. Zero in either domain is
+                    // dead, which materialization already encoded as a
+                    // zero deadline, so each domain is one compare.
                     if size == 0
-                        || expires_at <= current_slot
+                        || lvl.expires_at.get() <= now_unix
+                        || lvl.expires_at_slot.get() <= now_slot
                         || price.is_zero()
                         || price.is_infinity()
                         || !price.is_valid()

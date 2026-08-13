@@ -86,9 +86,10 @@ pub mod dropset {
         vault_idx: u32,
         price_bits: u32,
         quote_slot: u32,
+        quote_unix: u32,
     ) -> Result<()> {
         ctx.accounts
-            .set_reference_price(vault_idx, price_bits, quote_slot)
+            .set_reference_price(vault_idx, price_bits, quote_slot, quote_unix)
     }
 
     #[discrim = 6]

@@ -28,7 +28,7 @@ type Rpc = SolanaClientRuntime["rpc"];
 // both the quote (`quoteEclob` → `simulateSwap`) and the swap builder price
 // off exactly those bytes. Memoizing a route beyond its own tick would freeze
 // the book: `useEclobQuote` would re-simulate identical bytes forever while
-// `currentSlot` advanced out from under them (so levels would expire and the
+// the wall clock advanced out from under them (so levels would expire and the
 // quote would decay to "no liquidity"), and `eclobSwap`'s `minOut` would be
 // sized against page-load-time depth instead of current depth — a slippage
 // floor that silently loosens the longer a tab stays open.

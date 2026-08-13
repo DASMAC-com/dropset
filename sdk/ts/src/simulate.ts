@@ -74,7 +74,9 @@ export function initSimulator(input?: InitInput): Promise<void> {
  * Simulate a take against a market account's raw bytes (including the 8-byte
  * account discriminator — pass the account data verbatim). `limitPriceBits`
  * is raw {@link PriceBits}; use `PRICE_INFINITY` (buy) / `PRICE_ZERO` (sell)
- * for an unbounded market take. `currentSlot` scopes level expiry.
+ * for an unbounded market take. Level expiry is **dual-domain**, so both
+ * `nowSlot` and `nowUnix` (wall-clock unix **seconds**) scope it: a level
+ * rests only while it is inside both of its deadlines.
  *
  * `platformFeeBps` is the integrator fee the caller intends to declare on the
  * `swap` instruction — pass `0` (the default) for an unrouted quote. It is
@@ -91,7 +93,8 @@ export function simulateSwap(
   side: SwapSide,
   amountIn: bigint,
   limitPriceBits: PriceBits,
-  currentSlot: number,
+  nowSlot: number,
+  nowUnix: number,
   platformFeeBps = 0,
 ): SimulatedQuote {
   const q = wasmSimulateSwap(
@@ -99,7 +102,8 @@ export function simulateSwap(
     SIDE_CODE[side],
     amountIn,
     limitPriceBits,
-    currentSlot,
+    nowSlot,
+    nowUnix,
     platformFeeBps,
   );
   try {

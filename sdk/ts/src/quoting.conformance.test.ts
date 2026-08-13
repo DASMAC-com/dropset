@@ -14,8 +14,10 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import {
+  LEVEL_BYTES,
   N_LEVELS,
   nativeBookToProfileBytes,
+  NO_SLOT_BOUND,
   QuotingError,
   type NativeBook,
   type NativeLevel,
@@ -52,8 +54,6 @@ const vectors = JSON.parse(
   readFileSync(new URL('../../conformance/quoting_vectors.json', import.meta.url), 'utf8'),
 ) as { cases: Case[]; rejections: Rejection[] };
 
-const LEVEL_BYTES = 10;
-
 /**
  * Map each thrown {@link QuotingError} message to the canonical tag the
  * vectors carry — the same set of variants the Rust fork's `QuotingError`
@@ -72,16 +72,26 @@ const ERROR_TAGS: Record<string, string> = {
 };
 
 function nativeLevel(c: NativeLevelCase): NativeLevel {
-  return { price: c.price_bits, size: BigInt(c.size), expiryOffset: c.expiry_offset };
+  // These vectors pin the native→relative translation, not expiry policy,
+  // so their single `expiry_offset` maps to the wall domain and the slot
+  // bound is left open — matching the Rust fork's reading.
+  return {
+    price: c.price_bits,
+    size: BigInt(c.size),
+    expiryOffsetSecs: c.expiry_offset,
+    expiryOffsetSlots: NO_SLOT_BOUND,
+  };
 }
 
-/** Decode one serialized relative level: u32 offset, u16 bps, u32 expiry (LE). */
+/** Decode one serialized relative level: u32 offset, u16 bps, then a u32
+ * expiry offset per domain (LE). */
 function readLevel(view: DataView, index: number) {
   const o = index * LEVEL_BYTES;
   return {
     priceOffset: view.getUint32(o, true),
     sizeBps: view.getUint16(o + 4, true),
-    expiryOffset: view.getUint32(o + 6, true),
+    expiryOffsetSecs: view.getUint32(o + 6, true),
+    expiryOffsetSlots: view.getUint32(o + 10, true),
   };
 }
 
@@ -104,13 +114,13 @@ test('quoting vectors match', () => {
       const got = readLevel(view, i);
       assert.equal(got.priceOffset, exp.price_offset, `bid[${i}] offset`);
       assert.equal(got.sizeBps, exp.size_bps, `bid[${i}] size_bps`);
-      assert.equal(got.expiryOffset, exp.expiry_offset, `bid[${i}] expiry`);
+      assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `bid[${i}] expiry`);
     });
     c.asks.forEach((exp, i) => {
       const got = readLevel(view, N_LEVELS + i);
       assert.equal(got.priceOffset, exp.price_offset, `ask[${i}] offset`);
       assert.equal(got.sizeBps, exp.size_bps, `ask[${i}] size_bps`);
-      assert.equal(got.expiryOffset, exp.expiry_offset, `ask[${i}] expiry`);
+      assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `ask[${i}] expiry`);
     });
   }
 });

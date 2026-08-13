@@ -357,6 +357,23 @@ mis-predicts a quote rather than corrupting state — lower audit priority,
 parity-pinned by the conformance vectors rather than by the engine running
 the code.
 
+**Both clocks are inputs to book reconstruction.** Level expiry is
+dual-domain (architecture.md → **Expiry — the dual gate**): every level
+carries a slot deadline and a wall-clock deadline and rests only while it
+is inside both. So `simulate_swap` / `resting_levels` — and every mirror
+of them, the pure-TS market view, the TUI, and the frontend book viz —
+take `(now_slot, now_unix)`, the second in unix seconds. Passing one
+where the other belongs is a **silent** wrong answer: the book renders
+depth the engine will not fill, or hides depth it would. Off-chain
+consumers read `now_unix` from their own host clock rather than the
+chain — the sysvar is itself a stake-weighted median accurate only to a
+few seconds, so an NTP-synced host is well inside the noise and the
+maker's re-quote path pays no RPC for it. `now_slot` comes from the
+chain, since nothing off-chain can derive it. The
+`simulate_swap_vectors.json` fixture covers each domain independently
+(slot-dead/wall-live, wall-dead/slot-live, and the boundary in each), so
+a mirror that drops a conjunct fails rather than merely drifting.
+
 Both compile to **WASM** for any TypeScript consumer that must run the exact
 arithmetic. (The on-chain crates cannot target `wasm32`; a hand-mirrored port
 is rejected.) `make wasm` builds one package over `dropset-interface` whose

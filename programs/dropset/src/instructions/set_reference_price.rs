@@ -1,13 +1,19 @@
 //! `set_reference_price` — leader hot path.
 //!
-//! Stamps the target vault's reference price (and `quote_slot`), bumps
-//! `market.nonce`, and arms the `FLUSH_BIT` so the next taker
-//! materializes `Vault.remaining` from the (unchanged) `LiquidityProfile`.
+//! Stamps the target vault's reference price (with its `quote_slot` and
+//! the `quote_unix` wall-clock datum), bumps `market.nonce`, and arms
+//! the `FLUSH_BIT` so the next taker materializes `Vault.remaining` from
+//! the (unchanged) `LiquidityProfile`.
 //! Per the architecture spec's **SetReferencePrice** this is the
 //! asm-optimized path: it emits no events, walks no lists, and stores the
-//! price / slot raw — matching skips an invalid-price vault, so there is
-//! no write-time validation to do (the only domain guard is that the
-//! signer is the vault's `quote_authority`).
+//! price / slot / wall-clock raw — matching skips an invalid-price
+//! vault, so there is no write-time validation to do (the only domain
+//! guard is that the signer is the vault's `quote_authority`).
+//!
+//! `quote_unix` is leader-supplied precisely to keep this path
+//! syscall-free: reading the `Clock` sysvar here would cost ~100+ CU on
+//! a path hand-optimized to tens. Only the taker path, which already
+//! loads `Clock`, ever reads the field back.
 //!
 //! Two builds share one implementation. The production `asm-entrypoint`
 //! build handles this discriminator entirely in `src/asm/entrypoint.s`,
@@ -45,6 +51,7 @@ impl SetReferencePrice {
         vault_idx: u32,
         price_bits: u32,
         quote_slot: u32,
+        quote_unix: u32,
     ) -> Result<()> {
         #[cfg(feature = "asm-entrypoint")]
         {
@@ -52,7 +59,7 @@ impl SetReferencePrice {
             // anchor dispatcher runs, so this body is never reached. Kept
             // as a stub purely so IDL / SDK codegen still emit the
             // instruction interface.
-            let _ = (vault_idx, price_bits, quote_slot);
+            let _ = (vault_idx, price_bits, quote_slot, quote_unix);
             unsafe { core::hint::unreachable_unchecked() }
         }
         #[cfg(not(feature = "asm-entrypoint"))]
@@ -66,8 +73,10 @@ impl SetReferencePrice {
             // mutable borrow of the market's data.
             let mut view = *self.market.account();
             let mut data = view.try_borrow_mut()?;
-            stamp_reference_price(&mut data, vault_idx, price_bits, quote_slot, signer_key)
-                .map_err(ProgramError::Custom)?;
+            stamp_reference_price(
+                &mut data, vault_idx, price_bits, quote_slot, quote_unix, signer_key,
+            )
+            .map_err(ProgramError::Custom)?;
             Ok(())
         }
     }

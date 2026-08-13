@@ -536,16 +536,28 @@ materializes the ladder + inventory into `remaining` and clears it.
 Takers mask off `FLUSH_BIT` before comparing the low 63 bits for
 price-time priority (63 bits never wrap over the market's lifetime). The
 `price` is range-checked by the taker at match time (leader prices are
-**not** validated on write). `quote_slot` is leader-supplied and stored
-raw for the same reason: a stale or future slot only shortens or
+**not** validated on write). The two datums are leader-supplied and
+stored raw for the same reason: a stale or future datum only shortens or
 lengthens the liveness of the leader's *own* levels — self-grief, not an
-exploit, with match-time expiry the enforcement point — so it is not
-validated on write either. Per-level effective expiry is
-`quote_slot + level.expiry_offset`.
+exploit, with match-time expiry the enforcement point — so neither is
+validated on write either.
+
+`quote_slot` and `quote_unix` are the **expiry datums**, one per domain:
+the slot the quote was "as of", and the same instant in unix seconds.
+Per-level effective expiry is a pair, one deadline off each datum:
+
+```text
+quote_slot + level.expiry_offset_slots
+quote_unix + level.expiry_offset_secs
+```
+
+A level rests only while **both** are in the future. See **Expiry — the
+dual gate** below.
 
 **`Remaining` / `Position` — materialized levels.** Per-side arrays of
-`N_LEVELS` `Position`s (absolute `price`, atom-sized `size`,
-absolute `expires_at`), computed from `profile` + current inventory by
+`N_LEVELS` `Position`s (absolute `price`, atom-sized `size`, and one
+absolute deadline per expiry domain — `expires_at` in unix seconds,
+`expires_at_slot` in slots), computed from `profile` + inventory by
 the first taker after a flush (see **LiquidityProfile → Flush** for the
 formulas); subsequent takers read them directly and decrement `size` on
 fills.
@@ -588,9 +600,10 @@ form is never multiplied directly. Fills move integer atom counts
 alignment and for the cost-basis math in **Depositor positions and
 cost basis**.
 
-The 32-bit width is load-bearing: it lets `(price, quote_slot)` pack
-into one `u64` on the `SetReferencePrice` hot path and keeps every
-materialized `Position.price` compact.
+The 32-bit width is load-bearing: it keeps `price` adjacent to the two
+`u32` expiry datums on the `SetReferencePrice` hot path (three
+contiguous stores) and keeps every materialized `Position.price`
+compact.
 
 ### Value-per-share and the L measure
 
@@ -782,8 +795,8 @@ no further fee accrues to the leader after exit. They differ in
 *who* initiated and *how* matching is suppressed:
 
 - **Frozen** — protocol revocation lever (admin-initiated). Vault
-  stays on the active DLL; existing levels die off as their
-  `expires_at` passes. Terminal — no "unfreeze".
+  stays on the active DLL; existing levels die off as their deadlines
+  pass. Terminal — no "unfreeze".
 - **Tombstoned** — leader's intended lifecycle exit. Vault is
   unlinked from active matching immediately.
 
@@ -811,8 +824,10 @@ restored.
 
 Each level carries a `price_offset` in **ppm** (1_000_000 = 100%)
 from `reference_price.price`, a `size_bps` as fraction of vault
-inventory in **basis points** (10000 = 100%), and an `expiry_offset`
-in slots after `quote_slot`. The two scales differ on purpose:
+inventory in **basis points** (10000 = 100%), and one expiry offset
+per domain — `expiry_offset_secs` after `quote_unix` and
+`expiry_offset_slots` after `quote_slot`. The two scales differ on
+purpose:
 prices need sub-bp granularity (so `Ppm32`), sizes do not. Direction
 is implicit from which array the level lives in: bids subtract the
 price offset from the reference, asks add it.
@@ -829,8 +844,8 @@ The byte-exact layout is owned by
 [`state/market/layout.rs`](../programs/dropset/src/state/market/layout.rs)
 (`LiquidityProfile`, `Level`) and canonicalized in the IDL: per-side
 arrays of `N_LEVELS` `Level`s, each a
-`(price_offset, size_bps, expiry_offset)` triple, top of book first. The
-load-bearing invariants:
+`(price_offset, size_bps, expiry_offset_secs, expiry_offset_slots)`
+tuple, top of book first. The load-bearing invariants:
 
 - **Per-side size cap.** `Σ size_bps ≤ 10000` per side. The sum at
   exactly `10000` fully commits that leg; a lower sum leaves a reserve.
@@ -845,8 +860,8 @@ load-bearing invariants:
   base atoms.
 - **Implicit direction.** `price_offset` is a ppm spread from
   `reference_price.price` whose sign is implicit: bids subtract, asks
-  add. `expiry_offset` is slots after `quote_slot`. Both materialize to
-  absolute values at flush (see below).
+  add. The two expiry offsets are measured from their own datums. All
+  three materialize to absolute values at flush (see below).
 
 ### Flush
 
@@ -856,15 +871,40 @@ one-time materialization across all levels into `Vault.remaining`:
 
 ```text
 // PPM = 1_000_000. Let a = asks[i], b = bids[i].
+// deadline(datum, off) = 0 if off == 0 else datum +sat off
 
 asks_remaining[i].size       = base_atoms × a.size_bps / 10000  // base
 asks_remaining[i].price      = ref.price × (PPM + a.price_offset) / PPM
-asks_remaining[i].expires_at = ref.quote_slot + a.expiry_offset
+asks_remaining[i].expires_at      = deadline(ref.quote_unix,
+                                             a.expiry_offset_secs)
+asks_remaining[i].expires_at_slot = deadline(ref.quote_slot,
+                                             a.expiry_offset_slots)
 
 bids_remaining[i].size       = quote_atoms × b.size_bps / 10000  // quote
 bids_remaining[i].price      = ref.price × (PPM −sat b.price_offset) / PPM
-bids_remaining[i].expires_at = ref.quote_slot + b.expiry_offset
+bids_remaining[i].expires_at      = deadline(ref.quote_unix,
+                                             b.expiry_offset_secs)
+bids_remaining[i].expires_at_slot = deadline(ref.quote_slot,
+                                             b.expiry_offset_slots)
 ```
+
+**Zero is dead, in either domain.** `deadline` maps a zero offset to
+zero rather than to the bare datum, so "no life in this domain" survives
+the addition instead of collapsing onto the datum — a leader stamping a
+future datum cannot give a zero-life level a deadline still ahead of the
+clock. Folding the check in at flush time (once per quote) also keeps
+the taker's per-level gate a single unconditional compare per domain. A
+ladder armed before any reference price is all-zero and dead by the same
+encoding.
+
+**Both datums come from the stored quote, never the live clock.** This
+flush runs lazily inside the *first taker's swap* after `FLUSH_BIT`
+arms, so a clock read here would be **attacker-scheduled**: in the halt
+scenario the first post-restart taker is precisely the pick-off flow,
+and its own transaction would refresh the very quote it is picking off.
+Staleness must anchor at quote-write time. The constraint applies to
+both domains, and a future refactor must not "optimize" either stamp
+into the flush.
 
 **`ref.price` is decoded here.** `Price` is a comparison key, not an
 arithmetic type (see **Price**), so the offset math runs in decoded
@@ -903,9 +943,13 @@ Properties:
   at flush. After heavy buying drains base, the next flush
   automatically rescales the ladder to the new (smaller) base leg.
 - **Per-level expiry stratifies the ladder.** A leader can give
-  top-of-book a short `expiry_offset` (e.g., a few seconds in slots)
-  and deep levels a much longer one, so flush cadence can be graded
-  by depth instead of forced to the top-of-book rate.
+  top-of-book short offsets and deep levels much longer ones, so flush
+  cadence is graded by depth instead of forced to the top-of-book rate.
+  Having both domains per level is what makes the *tight* end
+  expressible: the cluster clock is second-denominated and accurate
+  only to a few seconds, which floors any wall TIF at ~15 s, so a
+  sub-second dead-man tail behind the quoter's latest stamp can only be
+  said in slots.
 
 ## Shares
 
@@ -1477,15 +1521,20 @@ structural asymmetries, it is mapped by the parity tests, not equated.
 
 ### SetReferencePrice
 
-Hot path. Takes `(vault_idx: u32, price_bits: u32, quote_slot: u32)`
+Hot path. Takes
+`(vault_idx: u32, price_bits: u32, quote_slot: u32, quote_unix: u32)`
 from the leader over just two accounts — the signer and the market.
-`price_bits` is the raw `Price` encoding and `quote_slot` is stored as a
-`u32` (it packs with the `u32` `price` into one aligned `u64`; see
-**Price**), so both are written verbatim, with **no** write-time
-validation. The one domain guard is that the signer equals the target
-vault's `quote_authority`.
+`price_bits` is the raw `Price` encoding; `quote_slot` and `quote_unix`
+are the two expiry datums (see **Expiry — the dual gate**). All three
+are written verbatim, with **no** write-time validation. The one domain
+guard is that the signer equals the target vault's `quote_authority`.
 
-Storing an invalid `price` or `quote_slot` is fund-safe, not just
+Both datums are **leader-supplied rather than read from the `Clock`
+sysvar**, which is what keeps this path syscall-free: a program-side
+clock read would cost ~100+ CU on a handler otherwise measured in tens.
+Only the taker path, which already loads `Clock`, ever reads them back.
+
+Storing an invalid `price` or a stale datum is fund-safe, not just
 "skipped": matching gates every vault on `has_valid_reference_price()`
 and re-checks each level's price and expiry, so an invalid price parks
 the vault out of the book and a bad slot just never matures the levels
@@ -1500,9 +1549,10 @@ sentinels, the clock sysvar and its future/backdate bounds, the
 occupancy and frozen gates) therefore moves no risk while removing the
 clock account and most of the hot-path CU.
 
-Reads `market.nonce`, writes `Vault.reference_price` as two aligned
-`u64` stores: one for `market.nonce | FLUSH_BIT` as `stamp`, one packing
-`(price, quote_slot)`. Increments `market.nonce`. Setting `FLUSH_BIT`
+Reads `market.nonce`, writes `Vault.reference_price` as the `stamp`
+(`market.nonce | FLUSH_BIT`) plus the three payload `u32`s — `price`,
+`quote_slot`, `quote_unix` — laid out contiguously so they land as
+adjacent stores. Increments `market.nonce`. Setting `FLUSH_BIT`
 arms a pending materialization of `Vault.remaining`, deferred to the
 next taker — so the leader write stays at two stores regardless of
 `N_LEVELS`. No vault iteration, no reallocations, no profile touch.
@@ -1517,14 +1567,85 @@ shares the same preamble there). It mirrors the solana-free
 (feature-off, `dropset_ref.so`) runs the same kernel through the plain
 Anchor entrypoint and serves as the parity oracle (`tests/asm_parity.rs`
 deploys both and asserts identical stamps and domain error codes). On
-litesvm the fast path costs ~47 CU versus ~256 for the Rust entrypoint —
-a ~82% saving. The offsets the assembly hardcodes are pinned against the
-live layout by an `offset_of!` test, so a `layout.rs` change breaks the
-build rather than silently mis-stamping.
+litesvm the fast path costs ~49 CU versus ~260 for the Rust entrypoint —
+a ~81% saving. (Adding the `quote_unix` datum cost exactly the one extra
+load/store pair it predicted: ~47 → ~49.) The offsets the assembly
+hardcodes are pinned against the live layout by an `offset_of!` test, so
+a `layout.rs` change breaks the build rather than silently mis-stamping.
 
-Off-chain pre-signing: because `quote_slot` is supplied by the leader
+Off-chain pre-signing: because both datums are supplied by the leader
 rather than read from the clock, a quote can be signed at slot N and
 relayed at slot M > N, with on-chain expiry math anchored to N.
+
+#### Expiry — the dual gate
+
+A level rests only while it is inside **both** of its deadlines:
+
+```text
+live  ⇔  now_slot < expires_at_slot  ∧  now_unix < expires_at
+```
+
+with `now_slot = Clock.slot` and `now_unix = Clock.unix_timestamp`
+(clamped into `u32`: a negative sysvar value would wrap into the far
+future and resurrect every expired level). Taking the **min of two
+leader-supplied bounds** is never worse than either alone, and the two
+answer different failure modes:
+
+- The **wall** bound is what survives a cluster halt. Slots stop ticking
+  while the cluster is down, so a slot-only ladder returns at restart
+  with its full budget intact against a pre-halt price — hours of price
+  movement delivered into one block, against spreads that assume price
+  continuity.
+- The **slot** bound is what gives a tight level a *fast* deadline,
+  which the wall domain cannot express at the resolution required (see
+  the ~15 s floor under **LiquidityProfile → Flush**).
+
+**Safety.** Both datums can only shorten or lengthen the life of the
+leader's *own* levels, so the write path keeps its no-validation stance
+and no trust boundary moves. Note the lemma's *shape* differs from a
+stored absolute expiry: because every offset is measured **from** its
+datum, a far-future datum **extends** the leader's own level lives
+rather than merely opting out of the protection. That is still
+self-harm-only — a leader can already choose arbitrarily long offsets —
+but it is the reason the argument is stated in terms of "the leader's
+own quotes" rather than "can only shorten".
+
+**Reshape extends wall life.** `SetLiquidityProfile` writes offsets
+against the *existing* datums, so a reshape without a fresh price
+lengthens each level's remaining life. That is the leader's own choice;
+it is documented, not gated.
+
+**Honest limits.** This is a staleness cap, not halt immunity, and the
+binding domain depends on the cluster's clock:
+
+- Under **today's** clock, `unix_timestamp` is a stake-weighted *median*
+  of vote-transaction timestamps, each projected to the current slot and
+  clamped to an epoch-start-anchored PoH expectation (+25% fast / −150%
+  slow). It is clamped, never rejected — there is no block-level
+  timestamp stamp and no consensus rejection. The clamp is also what
+  allows a post-restart *jump* equal to the accumulated fast headroom,
+  which is what kills a pre-halt book in block 1.
+- Under a **leader-stamped** clock (the SIMD-0363 direction — closed
+  stale, implemented in the Alpenglow feature branch, and *unratified*;
+  SIMD-0326 removes the vote transactions today's clock is derived
+  from), there is no post-restart jump: cluster time recovers an
+  outage-sized deficit at roughly 2× pace. Wall-TIF halt protection
+  weakens there, and the slot conjunct — slots resume ticking at
+  restart — becomes the fast protection instead. That design also
+  carries its own caveat: a run of byzantine or bribed consecutive
+  leaders can hold the clock back by Δ, with ~Δ recovery.
+
+The dual gate is therefore robust under **both** regimes, which is why
+it is adopted rather than either single-domain design. A residual
+remains for slot-*unbounded* deep tiers under a 0363-style clock (they
+survive roughly half their wall TIF of post-restart chain time at
+pre-halt prices); that is a tier-policy question for the ladder retune,
+not a layout one. Avoid hardcoding a slot duration in either docs or bot
+math — SIMD-0525 stages slots 400 → 200 ms without touching
+`unix_timestamp`; prefer cluster-provided parameters.
+
+The unconditional mitigation — bot startup / reconnect quote
+invalidation — is independent of all of this and stays required.
 
 ### SetQuoteAuthority
 
@@ -1559,8 +1680,8 @@ for full state semantics and the comparison with `FreezeVault`.
 
 Admin-only. Sets `Vault.frozen = 1`. This is the protocol's
 revocation lever against a misbehaving leader: the vault stays on
-the active DLL (existing levels still match until their
-`expires_at`) but cannot be re-quoted. There is no "unfreeze" — to
+the active DLL (existing levels still match until their deadlines
+pass) but cannot be re-quoted. There is no "unfreeze" — to
 re-enter, the same leader pubkey pays the create-vault fee again and
 starts a new vault. See **Vault → Frozen and tombstoned vaults** for
 full state semantics and the comparison with `CloseVault`.
@@ -1946,8 +2067,9 @@ On every taker instruction:
 1. **Collect** each live level as a
    `(price_key, price, stamp & !FLUSH_BIT, sector_idx, level_idx, size)`
    entry, pushing it onto a `Vec` allocated on the program heap and
-   skipping levels where `remaining.size == 0`,
-   `current_slot >= remaining.expires_at`, or the price is a sentinel
+   skipping levels where `remaining.size == 0`, either deadline has
+   passed (`now_slot >= remaining.expires_at_slot` or
+   `now_unix >= remaining.expires_at`), or the price is a sentinel
    (`ZERO` / `INFINITY` / invalid). `price_key` is the `u32` sort key:
    `price.as_u32()` for asks (lowest price is best) and
    `price.bid_key()` for bids (which maps the highest price to the
@@ -2005,7 +2127,7 @@ On every taker instruction:
    and `market.nonce` persist to
    chain. Takers bump `market.nonce` per fill but never touch
    `reference_price.stamp` beyond clearing `FLUSH_BIT`, and never
-   touch `Vault.remaining.price` or `Vault.remaining.expires_at`.
+   touch `Vault.remaining.price` or either of its expiry deadlines.
 
 ### Implementation notes — heap and capacity
 

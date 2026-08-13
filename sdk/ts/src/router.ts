@@ -51,8 +51,8 @@ import {
   type EclobRouteInput,
   platformFeeBpsFor,
   resolveEclobRoute,
-  type SlotRpc,
 } from './route';
+import { nowUnix as nowUnixSeconds, type SlotRpc } from './market';
 import { initSimulator, simulateSwap } from './simulate';
 
 /** Which venue a quote came from. */
@@ -210,8 +210,12 @@ export async function quoteEclob(
   input: {
     leg: EclobLeg;
     amount: bigint;
-    /** Read via `getSlot` when omitted. */
-    currentSlot?: number;
+    /** Current slot for the slot half of level-expiry filtering; read via
+     * `getSlot` when omitted. */
+    nowSlot?: number;
+    /** Wall-clock unix seconds for the wall half; the browser clock when
+     * omitted. */
+    nowUnix?: number;
     /** Configured integrator fee in bps; clamped to the market ceiling. */
     platformFeeBps?: number;
   },
@@ -222,14 +226,16 @@ export async function quoteEclob(
   if (!route) return null;
 
   const platformFeeBps = platformFeeBpsFor(route, input.platformFeeBps ?? 0);
-  const currentSlot = input.currentSlot ?? Number(await rpc.getSlot().send());
+  const nowSlot = input.nowSlot ?? Number(await rpc.getSlot().send());
+  const nowUnix = input.nowUnix ?? nowUnixSeconds();
   await initSimulator();
   const q = simulateSwap(
     route.marketData,
     route.side,
     input.amount,
     route.limitPriceBits,
-    currentSlot,
+    nowSlot,
+    nowUnix,
     platformFeeBps,
   );
   return {
@@ -301,7 +307,8 @@ async function eclobCandidate(
   rpc: AccountRpc & SlotRpc,
   leg: EclobLeg | null,
   amount: bigint,
-  currentSlot: number | undefined,
+  nowSlot: number | undefined,
+  nowUnix: number | undefined,
   platformFeeBps: number | undefined,
 ): Promise<Candidate<EclobQuote>> {
   if (!leg) {
@@ -309,7 +316,7 @@ async function eclobCandidate(
   }
   try {
     return classifyEclobQuote(
-      await quoteEclob(rpc, { leg, amount, currentSlot, platformFeeBps }),
+      await quoteEclob(rpc, { leg, amount, nowSlot, nowUnix, platformFeeBps }),
       amount,
     );
   } catch (e) {
@@ -319,7 +326,7 @@ async function eclobCandidate(
 
 /** Price the aggregator, resolving the fee guard first. */
 async function aggregatorCandidate(
-  rpc: AccountRpc,
+  rpc: AccountRpc & SlotRpc,
   leg: AggregatorLeg | null,
   amount: bigint,
   signal: AbortSignal | undefined,
@@ -392,7 +399,8 @@ export async function quoteBestRoute(
     amount: bigint;
     eclob: EclobLeg | null;
     aggregator: AggregatorLeg | null;
-    currentSlot?: number;
+    nowSlot?: number;
+    nowUnix?: number;
     signal?: AbortSignal;
     /**
      * Configured integrator fee for the **eCLOB** leg, in bps — clamped to the
@@ -403,9 +411,9 @@ export async function quoteBestRoute(
     platformFeeBps?: number;
   },
 ): Promise<BestRoute> {
-  const { amount, currentSlot, signal, platformFeeBps } = input;
+  const { amount, nowSlot, nowUnix, signal, platformFeeBps } = input;
   const [eclob, aggregator] = await Promise.all([
-    eclobCandidate(rpc, input.eclob, amount, currentSlot, platformFeeBps),
+    eclobCandidate(rpc, input.eclob, amount, nowSlot, nowUnix, platformFeeBps),
     aggregatorCandidate(rpc, input.aggregator, amount, signal),
   ]);
   return { best: selectBestRoute(eclob, aggregator), eclob, aggregator };

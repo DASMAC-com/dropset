@@ -58,7 +58,9 @@ export const BALANCE_REFETCH_DELAY_MS = 1_500;
 // ───────────── Order book ─────────────
 
 // Live-poll cadence for the on-chain order-book viz. One getAccountInfo +
-// getSlot per tick against the local (or mainnet) RPC. 1 s reads as live —
+// getSlot per tick against the local (or mainnet) RPC (expiry is
+// dual-domain: the slot comes from the chain, the wall clock from the
+// browser). 1 s reads as live —
 // the maker bot's flashed depth appears within a tick — without hammering
 // the node the way the alpha viz's 500 ms poll did.
 export const ORDER_BOOK_REFRESH_MS = 1_000;

@@ -7,7 +7,7 @@
 //! Both kernels open with the *same* preamble — bounds-check the target
 //! sector, compare the signer against its `quote_authority`, then bump the
 //! market nonce and arm `FLUSH_BIT` — and diverge only in the payload they
-//! write afterwards (two `u32` stores versus a 160-byte profile copy). That
+//! write afterwards (three `u32` stores versus a 224-byte profile copy). That
 //! preamble lives here once, mirroring how `src/asm/entrypoint.s` shares a
 //! single assembly preamble across its two discriminator branches: the Rust
 //! reference and the assembly stay aligned in structure, not just in the
@@ -68,7 +68,7 @@ pub(super) const VAULT_SIZE: usize = size_of::<Vault>();
 // ── Offsets within a single `Vault` sector ──────────────────────────
 // Only the fields the shared preamble touches live here; each kernel owns
 // the offsets of the payload it alone writes (`reference_price.price` /
-// `quote_slot`, or `profile`).
+// `quote_slot` / `quote_unix`, or `profile`).
 pub(super) const VAULT_QUOTE_AUTHORITY_OFF: usize = offset_of!(Vault, quote_authority);
 pub(super) const VAULT_REFERENCE_PRICE_OFF: usize = offset_of!(Vault, reference_price);
 pub(super) const RP_STAMP_OFF: usize = offset_of!(ReferencePrice, stamp);
@@ -87,7 +87,7 @@ const _: () = assert!(ITEMS_OFF == 268);
 // real on-chain layout (a header-size or `Vault`-alignment change breaks
 // the build here).
 const _: () = assert!(ITEMS_OFF == crate::state::Market::space_for(0));
-const _: () = assert!(VAULT_SIZE == 560);
+const _: () = assert!(VAULT_SIZE == 692);
 const _: () = assert!(VAULT_QUOTE_AUTHORITY_OFF == 40);
 const _: () = assert!(VAULT_REFERENCE_PRICE_OFF == 72);
 const _: () = assert!(RP_STAMP_OFF == 0);

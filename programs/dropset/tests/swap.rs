@@ -8,7 +8,7 @@ mod common;
 
 use anchor_lang_v2::bytemuck;
 use anchor_v2_testing::Signer;
-use common::fixture::{simple_profile, Fixture};
+use common::fixture::{dual_profile, simple_profile, Fixture};
 use dropset::{Price, FLUSH_BIT};
 use solana_pubkey::Pubkey;
 
@@ -737,8 +737,11 @@ fn flush_re_materializes_after_reference_price_change() {
 
 #[test]
 fn expired_levels_are_skipped() {
-    // Re-profile the seeded vault with a 1-slot expiry, warp well past
-    // it, then Buy: every level has expired, so nothing fills.
+    // Re-profile the seeded vault with a 1-second expiry, advance wall
+    // time well past it, then Buy: every level has expired, so nothing
+    // fills. The reshape leaves `reference_price` — datum included —
+    // alone, so the levels materialize against the seeded quote's
+    // `quote_unix`.
     let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
     f.set_liquidity_profile(
         &f.authority.insecure_clone(),
@@ -746,7 +749,7 @@ fn expired_levels_are_skipped() {
         simple_profile(5_000, 10_000, 1),
     )
     .expect("short-expiry profile");
-    f.svm.warp_to_slot(100);
+    f.warp_unix(100);
 
     let taker = f.funded_depositor(0, 200_000);
     let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
@@ -762,6 +765,73 @@ fn expired_levels_are_skipped() {
         f.vault(0).base_atoms.get(),
         SEED_BASE,
         "inventory untouched"
+    );
+}
+
+/// Expiry is the **min of two bounds**, so each domain has to kill a level
+/// on its own. Here the wall bound is wide open and only the slot bound has
+/// passed — the level must still be dead. The mirror case (wall dead, slot
+/// open) is `expired_levels_are_skipped` above, which leaves the slot side
+/// unbounded.
+///
+/// Together the two pin that neither conjunct was dropped: removing the
+/// slot compare turns this test green-to-red, removing the wall compare
+/// does the same to its sibling.
+#[test]
+fn a_passed_slot_bound_kills_a_level_whose_wall_bound_is_still_open() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    // Hours of wall life, but only two slots of it.
+    f.set_liquidity_profile(
+        &f.authority.insecure_clone(),
+        0,
+        dual_profile(5_000, 10_000, 86_400, 2),
+    )
+    .expect("slot-bounded profile");
+    // Advance slots past the bound while wall time barely moves, which is
+    // the ordinary case: slots tick ~2.5x a second.
+    f.warp_slots(50);
+
+    let taker = f.funded_depositor(0, 200_000);
+    let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 0)
+        .expect("ok, the slot bound expired every level");
+
+    assert_eq!(
+        f.token_balance(&f.quote_ata(&taker.pubkey())),
+        q_before,
+        "no quote spent: the slot bound passed even though the wall bound holds"
+    );
+    assert_eq!(
+        f.vault(0).base_atoms.get(),
+        SEED_BASE,
+        "inventory untouched"
+    );
+}
+
+/// A zero offset is dead **in either domain**, whatever the datum says —
+/// materialization encodes it as the zero deadline rather than letting the
+/// bare datum stand in. Pinned here on the slot axis with a live wall TIF,
+/// so a regression that dropped the zero encoding would leave the level
+/// matchable.
+#[test]
+fn a_zero_slot_offset_is_dead_even_with_wall_life_remaining() {
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
+    f.set_liquidity_profile(
+        &f.authority.insecure_clone(),
+        0,
+        dual_profile(5_000, 10_000, 86_400, 0),
+    )
+    .expect("zero slot-offset profile");
+
+    let taker = f.funded_depositor(0, 200_000);
+    let q_before = f.token_balance(&f.quote_ata(&taker.pubkey()));
+    f.swap(&taker, 0, 50_000, Price::INFINITY.as_u32(), 0)
+        .expect("ok, a zero offset is dead");
+
+    assert_eq!(
+        f.token_balance(&f.quote_ata(&taker.pubkey())),
+        q_before,
+        "a zero slot offset never matches, however long the wall TIF"
     );
 }
 

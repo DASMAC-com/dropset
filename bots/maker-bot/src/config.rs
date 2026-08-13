@@ -16,6 +16,7 @@
 //! decimals the localnet bootstrap and inventory valuation need.
 
 use dropset_fair_value::FairValueConfig;
+use dropset_sdk::quoting::NO_SLOT_BOUND;
 use std::time::Duration;
 
 /// Default localnet RPC endpoint (the `solana-test-validator` the TUI spawns).
@@ -205,40 +206,68 @@ pub const MARKETS: [MarketConfig; 7] = [
 ];
 
 /// One rung of the quote ladder: a ppm offset from the reference price, a
-/// fraction of the inventory leg in bps, and a per-level expiry in slots.
+/// fraction of the inventory leg in bps, and a per-level expiry in each
+/// of the two domains the engine gates on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LadderLevel {
     /// Offset from `reference_price`, in ppm (bids subtract, asks add).
     pub offset_ppm: u32,
     /// Fraction of the inventory leg, in bps (10000 = 100%).
     pub size_bps: u16,
-    /// Slots after the quote's `quote_slot` at which this level expires.
-    pub expiry_offset: u32,
+    /// Seconds after the quote's `quote_unix` wall-clock datum at which
+    /// this level expires.
+    pub expiry_offset_secs: u32,
+    /// Slots after the quote's `quote_slot` datum at which this level
+    /// expires — the second, independent bound. [`NO_SLOT_BOUND`] leaves
+    /// a level bounded only in wall time.
+    pub expiry_offset_slots: u32,
 }
 
 /// The spec's hand-shaped ladder (§2 + the §3 expiry table): top-of-book at
 /// 50 bps taking 40% of the leg and expiring fastest, widening and shrinking
-/// to a 500 bps tail that lives ~50 min. `Σ size_bps = 10000` per side.
+/// to a 500 bps tail that lives ~48 min. `Σ size_bps = 10000` per side.
+///
+/// Wall expiries carry over from the table's former slot denomination at
+/// the mainnet ~0.4 s/slot pace it assumed (90 / 300 / 1200 / 7200 slots
+/// → 36 s / 2 min / 8 min / 48 min), so the nominal lives are unchanged;
+/// what changed is that they now hold through a halt, where slots stop
+/// ticking but wall time does not.
+///
+/// The **slot** bound is the other half of the dual gate, and it is where
+/// the tight tiers get a deadline the wall domain cannot express. The
+/// cluster clock is second-denominated and accurate only to a few
+/// seconds, which floors any wall TIF at ~15 s — a ~37-slot dead-man tail
+/// behind a prop-cadence quoter. Top-of-book therefore takes a **2-slot**
+/// bound (sub-second: the level dies almost immediately unless the next
+/// tick re-stamps it), widening with depth, and the deepest tier goes
+/// [`NO_SLOT_BOUND`] so its stratified wall decay is what governs it.
+///
+/// These values are the shape of the policy, not a calibration — the
+/// vol-ladder retune owns the tuning.
 pub const DEFAULT_LADDER: [LadderLevel; 4] = [
     LadderLevel {
         offset_ppm: 5_000,
         size_bps: 4_000,
-        expiry_offset: 90,
+        expiry_offset_secs: 36,
+        expiry_offset_slots: 2,
     },
     LadderLevel {
         offset_ppm: 10_000,
         size_bps: 3_000,
-        expiry_offset: 300,
+        expiry_offset_secs: 120,
+        expiry_offset_slots: 30,
     },
     LadderLevel {
         offset_ppm: 20_000,
         size_bps: 2_000,
-        expiry_offset: 1_200,
+        expiry_offset_secs: 480,
+        expiry_offset_slots: 300,
     },
     LadderLevel {
         offset_ppm: 50_000,
         size_bps: 1_000,
-        expiry_offset: 7_200,
+        expiry_offset_secs: 2_880,
+        expiry_offset_slots: NO_SLOT_BOUND,
     },
 ];
 
@@ -345,8 +374,11 @@ pub struct KillSwitchConfig {
 /// Stale-quote invalidation (the bot half of the halt / pick-off mitigation).
 ///
 /// A resting quote stays matchable until its level's `expiry_offset` passes —
-/// up to ~50 min of live chain on the deepest tier — and slots don't tick at all
-/// while the chain is halted, so that life has no wall-clock bound. When the bot
+/// up to ~48 min on the deepest tier. That life is now wall-clock bounded
+/// (levels are measured from the quote's `quote_unix` datum, so a halt no
+/// longer freezes the countdown), but a staleness *cap* is not the same as
+/// an unattended-book policy: 48 min of drift is still far more than the
+/// bot intends to leave resting. When the bot
 /// stops refreshing the reference (a restart, a chain halt, feeds gone dark),
 /// these knobs govern the kill stamp that takes the book dark instead of leaving
 /// it to expire. See [`crate::model::invalidate`].
@@ -357,7 +389,7 @@ pub struct InvalidateConfig {
     /// Twice the `SetReferencePrice` heartbeat (30 s), so a healthy bot's own
     /// last stamp is always comfortably inside the bound and an ordinary restart
     /// doesn't churn the book — while still being ~2% of the deepest ladder
-    /// tier's ~50 min wall-clock life, so no level ever rests unattended for
+    /// tier's ~48 min wall-clock life, so no level ever rests unattended for
     /// more than about a minute.
     pub stale_after: Duration,
     /// Priority fee for the kill stamp, in micro-lamports per compute unit.
@@ -532,7 +564,8 @@ mod tests {
         for w in DEFAULT_LADDER.windows(2) {
             assert!(w[1].offset_ppm > w[0].offset_ppm);
             assert!(w[1].size_bps < w[0].size_bps);
-            assert!(w[1].expiry_offset > w[0].expiry_offset);
+            assert!(w[1].expiry_offset_secs > w[0].expiry_offset_secs);
+            assert!(w[1].expiry_offset_slots > w[0].expiry_offset_slots);
         }
     }
 
@@ -564,11 +597,12 @@ mod tests {
         // level can never outlive the bound and expire on its own instead.
         let deepest = DEFAULT_LADDER
             .iter()
-            .map(|l| l.expiry_offset)
+            .map(|l| l.expiry_offset_secs)
             .max()
             .expect("ladder is non-empty");
-        // Mainnet slots run ~0.4 s (§3 expiry table).
-        let deepest_wall = Duration::from_millis(deepest as u64 * 400);
+        // `expiry_offset` is wall-clock seconds, so the tier's life needs
+        // no slot-pace conversion — which is the point of the datum model.
+        let deepest_wall = Duration::from_secs(deepest as u64);
         assert!(cfg.invalidate.stale_after * 10 < deepest_wall);
     }
 

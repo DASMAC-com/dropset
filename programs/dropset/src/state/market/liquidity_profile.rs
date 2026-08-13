@@ -3,7 +3,7 @@
 //!
 //! Sibling of [`super::stamp_reference_price`]: same shared preamble from
 //! [`super::quote_write`] (sector bounds, the `quote_authority` compare,
-//! the nonce bump and flush arm), a different payload — the full 160-byte
+//! the nonce bump and flush arm), a different payload — the full 224-byte
 //! [`LiquidityProfile`] blob copied into the target sector, leaving
 //! `reference_price.price` and `quote_slot` untouched. The hand-written
 //! sBPF `entrypoint.s` mirrors it byte-for-byte, using `sol_memcpy_` for
@@ -29,10 +29,10 @@ pub const PROFILE_SIZE: usize = size_of::<LiquidityProfile>();
 // Pinned literals, so a `layout.rs` reorder or an `N_LEVELS` change breaks
 // the build here rather than leaving the assembly copying to the wrong
 // offset or the wrong width. `PROFILE_SIZE` is cross-checked against the
-// per-level derivation `layout.rs` asserts (`2 * N_LEVELS * 10`).
-const _: () = assert!(VAULT_PROFILE_OFF == 144);
-const _: () = assert!(PROFILE_SIZE == 160);
-const _: () = assert!(PROFILE_SIZE == 2 * N_LEVELS * 10);
+// per-level derivation `layout.rs` asserts (`2 * N_LEVELS * 14`).
+const _: () = assert!(VAULT_PROFILE_OFF == 148);
+const _: () = assert!(PROFILE_SIZE == 224);
+const _: () = assert!(PROFILE_SIZE == 2 * N_LEVELS * 14);
 
 /// Write `profile_bytes` onto vault `vault_idx`'s ladder, arm the flush
 /// bit, and bump the market nonce.
@@ -167,7 +167,7 @@ mod tests {
         // `len` claims more sectors than the buffer physically holds (the
         // post-external-resize edge `Slab::effective_len` guards). The
         // capacity leg must still reject, matching `min(len, capacity)` —
-        // and it must reject *before* a 160-byte copy runs off the end.
+        // and it must reject *before* a 224-byte copy runs off the end.
         let mut data = market_buf(0);
         write_u32(&mut data, LEN_OFF, SECTORS + 2);
         assert_eq!(
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn copy_does_not_bleed_past_the_profile_field() {
-        // The 160-byte copy must land exactly on `Vault.profile`: the
+        // The 224-byte copy must land exactly on `Vault.profile`: the
         // sector's own `reference_price` (below it) keeps its price / slot,
         // its `remaining` (above it) stays zeroed, and the neighboring
         // sectors are untouched.

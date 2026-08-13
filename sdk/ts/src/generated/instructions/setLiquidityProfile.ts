@@ -22,11 +22,11 @@ export type SetLiquidityProfileInstructionData = { discriminator: ReadonlyUint8A
 export type SetLiquidityProfileInstructionDataArgs = { vaultIdx: number; profileBytes: Array<number>;  };
 
 export function getSetLiquidityProfileInstructionDataEncoder(): FixedSizeEncoder<SetLiquidityProfileInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['vaultIdx', getU32Encoder()], ['profileBytes', getArrayEncoder(getU8Encoder(), { size: 160 })]]), (value) => ({ ...value, discriminator: SET_LIQUIDITY_PROFILE_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['vaultIdx', getU32Encoder()], ['profileBytes', getArrayEncoder(getU8Encoder(), { size: 224 })]]), (value) => ({ ...value, discriminator: SET_LIQUIDITY_PROFILE_DISCRIMINATOR }));
 }
 
 export function getSetLiquidityProfileInstructionDataDecoder(): FixedSizeDecoder<SetLiquidityProfileInstructionData> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['vaultIdx', getU32Decoder()], ['profileBytes', getArrayDecoder(getU8Decoder(), { size: 160 })]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['vaultIdx', getU32Decoder()], ['profileBytes', getArrayDecoder(getU8Decoder(), { size: 224 })]]);
 }
 
 export function getSetLiquidityProfileInstructionDataCodec(): FixedSizeCodec<SetLiquidityProfileInstructionDataArgs, SetLiquidityProfileInstructionData> {

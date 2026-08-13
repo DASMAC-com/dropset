@@ -78,9 +78,16 @@ pub struct DropsetQuoteParams {
     pub input_mint: Pubkey,
     pub output_mint: Pubkey,
     pub amount: u64,
-    /// Current slot, for per-level expiry filtering. The router supplies
-    /// this from its clock cache (e.g. Jupiter's `AmmContext.clock_ref`).
-    pub current_slot: u32,
+    /// Current slot, for the slot half of per-level expiry filtering.
+    pub now_slot: u32,
+    /// Current wall-clock time in unix **seconds**, for the wall half.
+    ///
+    /// Expiry is dual-domain — a level rests only inside both of its
+    /// deadlines — so a router must supply both from its clock cache
+    /// (e.g. Jupiter's `AmmContext.clock_ref` carries `slot` and
+    /// `unix_timestamp` together). Supplying one for the other silently
+    /// mis-filters the book.
+    pub now_unix: u32,
 }
 
 /// A quote result. The router traits return `{ in_amount, out_amount }`;
@@ -252,7 +259,7 @@ impl DropsetAmm {
         // fee no one on this side is owed. A caller wanting the eCLOB's own
         // platform fee builds the `swap` instruction directly (see the
         // frontend's eCLOB route).
-        let q = simulate_swap(&view, side, p.amount, limit, p.current_slot, 0);
+        let q = simulate_swap(&view, side, p.amount, limit, p.now_slot, p.now_unix, 0);
         Ok(DropsetQuote {
             in_amount: q.in_amount,
             out_amount: q.out_amount,
@@ -350,7 +357,10 @@ mod tests {
         v.quote_atoms = 10_000_000u64.into();
         v.remaining.asks[0].price = Price::encode(10_000_000, 0).unwrap().as_u32().into();
         v.remaining.asks[0].size = ask_size.into();
-        v.remaining.asks[0].expires_at = 1_000u32.into();
+        // Both deadlines comfortably past the `(now_slot, now_unix)` the
+        // quote tests pass — a level rests only inside both.
+        v.remaining.asks[0].expires_at = 1_700_001_000u32.into();
+        v.remaining.asks[0].expires_at_slot = 1_000u32.into();
         build_market(header, &[v])
     }
 
@@ -367,7 +377,8 @@ mod tests {
                 input_mint: Pubkey::from([2u8; 32]),
                 output_mint: Pubkey::from([1u8; 32]),
                 amount: 1_000_000,
-                current_slot: 10,
+                now_slot: 10,
+                now_unix: 1_700_000_010,
             })
             .unwrap();
         assert_eq!(q.out_amount, 500_000, "fills the whole ask level");
@@ -384,7 +395,8 @@ mod tests {
                 input_mint: Pubkey::from([2u8; 32]),
                 output_mint: Pubkey::from([1u8; 32]),
                 amount: 0,
-                current_slot: 10,
+                now_slot: 10,
+                now_unix: 1_700_000_010,
             })
             .unwrap();
         assert_eq!(q, DropsetQuote::default());
@@ -458,7 +470,8 @@ mod tests {
             input_mint: Pubkey::from([3u8; 32]),
             output_mint: Pubkey::from([1u8; 32]),
             amount: 1,
-            current_slot: 0,
+            now_slot: 0,
+            now_unix: 0,
         });
         assert_eq!(err, Err(AmmError::MintMismatch));
     }

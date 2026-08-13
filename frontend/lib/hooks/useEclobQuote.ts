@@ -87,9 +87,6 @@ export const useEclobQuote = (
           return;
         }
 
-        const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
-        if (cancelled || gen !== generation) return;
-
         // Quote with the platform fee the executor will actually declare
         // (lib/eclob/eclobSwap.ts) — same configured rate, same clamp to this
         // market's ceiling, which `quoteEclob` applies — so the displayed
@@ -97,10 +94,13 @@ export const useEclobQuote = (
         // figure they never receive. The simulator composes both fees exactly
         // as the engine does, so this also keeps the quote and the fill in
         // agreement to the atom.
+        const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
+        if (cancelled || gen !== generation) return;
+
         const q = await quoteEclob(rpc, {
           leg: { route },
           amount: atomic,
-          currentSlot: Number(slot),
+          nowSlot: Number(slot),
           platformFeeBps: PLATFORM_FEE ? PLATFORM_FEE.bps : 0,
         });
         if (cancelled || gen !== generation) return;

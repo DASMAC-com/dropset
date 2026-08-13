@@ -26,6 +26,7 @@ pub mod events;
 #[allow(unused_imports)]
 pub mod generated;
 pub mod quoting;
+pub mod time;
 
 // The solana-free shared math is re-exported here so `crate::{price,
 // layout,matching}` (used throughout the adapters and quoting) resolve, and

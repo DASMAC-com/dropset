@@ -51,13 +51,27 @@ const MAX_PLATFORM_FEE_BPS: u16 = 100;
 /// balance, bounds every fill in the cases below.
 const INVENTORY: u64 = 10_000_000;
 
-/// One live `remaining` book level: an absolute price, an atom size, and an
-/// expiry slot (`u32::MAX` = never).
+/// The fixture book's wall deadline, in unix seconds. Finite (rather than
+/// `u32::MAX`) so the vectors can pin expiry in *each* domain
+/// independently — a level dies when either bound passes, and only finite
+/// deadlines on both axes can distinguish "wall expired" from "slot
+/// expired".
+const WALL_DEADLINE: u32 = 1_700_000_600;
+/// The fixture book's slot deadline, likewise finite.
+const SLOT_DEADLINE: u32 = 1_000;
+/// A clock comfortably inside both deadlines — the "live book" baseline
+/// every fill case quotes at.
+const LIVE_UNIX: u32 = 1_700_000_000;
+const LIVE_SLOT: u32 = 1;
+
+/// One live `remaining` book level: an absolute price, an atom size, and
+/// the two absolute deadlines it rests inside.
 fn position(significand: u32, exp: i8, size: u64) -> Position {
     Position {
         price: Price::encode(significand, exp).unwrap().as_u32().into(),
         size: size.into(),
-        expires_at: u32::MAX.into(),
+        expires_at: WALL_DEADLINE.into(),
+        expires_at_slot: SLOT_DEADLINE.into(),
     }
 }
 
@@ -87,6 +101,7 @@ fn market_data() -> Vec<u8> {
         stamp: 1u64.into(), // nonce 1, FLUSH_BIT clear => read `remaining`
         price: Price::encode(10_850_000, 0).unwrap().as_u32().into(), // 1.0850
         quote_slot: 0u32.into(),
+        quote_unix: 0u32.into(),
     };
     v.base_atoms = INVENTORY.into();
     v.quote_atoms = INVENTORY.into();
@@ -117,7 +132,8 @@ struct Case {
     side: SwapSide,
     amount_in: u64,
     limit: Price,
-    current_slot: u32,
+    now_slot: u32,
+    now_unix: u32,
     /// Integrator fee the case declares, in bps. `0` for the unrouted
     /// cases; above `MAX_PLATFORM_FEE_BPS` to pin the refusal path.
     platform_fee_bps: u16,
@@ -129,7 +145,8 @@ fn case_json(view: &MarketView<'_>, c: &Case) -> Value {
         c.side,
         c.amount_in,
         c.limit,
-        c.current_slot,
+        c.now_slot,
+        c.now_unix,
         c.platform_fee_bps,
     );
     json!({
@@ -137,7 +154,8 @@ fn case_json(view: &MarketView<'_>, c: &Case) -> Value {
         "side": c.side as u8,
         "amount_in": c.amount_in,
         "limit_price_bits": c.limit.as_u32(),
-        "current_slot": c.current_slot,
+        "now_slot": c.now_slot,
+        "now_unix": c.now_unix,
         "platform_fee_bps": c.platform_fee_bps,
         "expected": {
             "in_amount": q.in_amount,
@@ -161,7 +179,8 @@ fn main() {
             side: SwapSide::Buy,
             amount_in: 3_000_000, // quote atoms; dwarfs the ~2.0M-quote ask depth
             limit: Price::INFINITY,
-            current_slot: 1,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
             platform_fee_bps: 0,
         },
         // Buy with a 1.10 limit: ask[0] (1.0904) fills, ask[1] (1.1393)
@@ -171,7 +190,8 @@ fn main() {
             side: SwapSide::Buy,
             amount_in: 3_000_000,
             limit: Price::encode(11_000_000, 0).unwrap(), // 1.10
-            current_slot: 1,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
             platform_fee_bps: 0,
         },
         // Small buy fully absorbed by ask[0] — single leg, input not capped.
@@ -180,7 +200,8 @@ fn main() {
             side: SwapSide::Buy,
             amount_in: 500_000,
             limit: Price::INFINITY,
-            current_slot: 1,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
             platform_fee_bps: 0,
         },
         // Sell that clears both bid levels — the symmetric cross-level path.
@@ -189,7 +210,8 @@ fn main() {
             side: SwapSide::Sell,
             amount_in: 5_000_000, // base atoms; dwarfs the bid depth
             limit: Price::ZERO,
-            current_slot: 1,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
             platform_fee_bps: 0,
         },
         // The same multi-level Buy at the market's full 100 bps ceiling —
@@ -203,7 +225,8 @@ fn main() {
             side: SwapSide::Buy,
             amount_in: 3_000_000,
             limit: Price::INFINITY,
-            current_slot: 1,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
             platform_fee_bps: MAX_PLATFORM_FEE_BPS,
         },
         // Symmetric Sell at the ceiling — the platform fee is charged on the
@@ -213,7 +236,8 @@ fn main() {
             side: SwapSide::Sell,
             amount_in: 5_000_000,
             limit: Price::ZERO,
-            current_slot: 1,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
             platform_fee_bps: MAX_PLATFORM_FEE_BPS,
         },
         // A small Buy at 1 bps whose fee rounds down to zero atoms: the
@@ -225,7 +249,8 @@ fn main() {
             side: SwapSide::Buy,
             amount_in: 5_000, // ~4.5k base out; 1 bps of that is 0.45 atoms
             limit: Price::INFINITY,
-            current_slot: 1,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
             platform_fee_bps: 1,
         },
         // One bps over the market's ceiling: the engine hard-rejects
@@ -236,13 +261,83 @@ fn main() {
             side: SwapSide::Buy,
             amount_in: 3_000_000,
             limit: Price::INFINITY,
-            current_slot: 1,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
             platform_fee_bps: MAX_PLATFORM_FEE_BPS + 1,
+        },
+        // ── Dual-domain expiry ──────────────────────────────────────────
+        // Expiry is the min of two independent bounds, so each domain
+        // needs its own kill case *and* its own boundary. A single-domain
+        // regression (dropping a conjunct, or reading one clock where the
+        // other belongs) leaves the other four green and fails exactly one
+        // of these.
+        //
+        // Slot bound passed, wall bound still ahead: the book is dead.
+        Case {
+            name: "expiry_slot_dead_wall_live",
+            side: SwapSide::Buy,
+            amount_in: 3_000_000,
+            limit: Price::INFINITY,
+            now_slot: SLOT_DEADLINE,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+        // Wall bound passed, slot bound still ahead: also dead. This is
+        // the halt case — slots frozen at a pre-halt value while wall time
+        // ran on.
+        Case {
+            name: "expiry_wall_dead_slot_live",
+            side: SwapSide::Buy,
+            amount_in: 3_000_000,
+            limit: Price::INFINITY,
+            now_slot: LIVE_SLOT,
+            now_unix: WALL_DEADLINE,
+            platform_fee_bps: 0,
+        },
+        // Boundary, slot domain. The gate is `expires_at <= now`, so the
+        // deadline slot itself is dead and the slot before it is live —
+        // pinned as a pair so an off-by-one moves exactly one of them.
+        Case {
+            name: "expiry_slot_boundary_dead",
+            side: SwapSide::Buy,
+            amount_in: 500_000,
+            limit: Price::INFINITY,
+            now_slot: SLOT_DEADLINE,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+        Case {
+            name: "expiry_slot_boundary_live",
+            side: SwapSide::Buy,
+            amount_in: 500_000,
+            limit: Price::INFINITY,
+            now_slot: SLOT_DEADLINE - 1,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+        // Boundary, wall domain — the same pair on the other axis.
+        Case {
+            name: "expiry_wall_boundary_dead",
+            side: SwapSide::Buy,
+            amount_in: 500_000,
+            limit: Price::INFINITY,
+            now_slot: LIVE_SLOT,
+            now_unix: WALL_DEADLINE,
+            platform_fee_bps: 0,
+        },
+        Case {
+            name: "expiry_wall_boundary_live",
+            side: SwapSide::Buy,
+            amount_in: 500_000,
+            limit: Price::INFINITY,
+            now_slot: LIVE_SLOT,
+            now_unix: WALL_DEADLINE - 1,
+            platform_fee_bps: 0,
         },
     ];
     let cases: Vec<Value> = cases.iter().map(|c| case_json(&view, c)).collect();
     let doc = json!({
-        "_comment": "Generated by `cargo run -p dropset-interface --example gen_simulate_swap`. Do not edit by hand. `market_data` is a representative market account's raw bytes (incl. the 8-byte discriminator); each case lists a swap input (side 0=buy/1=sell, amount_in, limit_price_bits, current_slot, platform_fee_bps) and the Quote the native matcher returns. A case whose platform_fee_bps exceeds the market's max_platform_fee expects an all-zero Quote: the engine rejects that swap, so the simulator refuses to quote it rather than clamping the rate. Verified against the WASM binding in sdk/interface/tests/wasm_conformance.rs (wasm::simulate_swap == native matcher); the native matcher is pinned to the on-chain engine by programs/dropset/tests/sdk_conformance.rs.",
+        "_comment": "Generated by `cargo run -p dropset-interface --example gen_simulate_swap`. Do not edit by hand. `market_data` is a representative market account's raw bytes (incl. the 8-byte discriminator); each case lists a swap input (side 0=buy/1=sell, amount_in, limit_price_bits, now_slot, now_unix, platform_fee_bps) and the Quote the native matcher returns. Level expiry is dual-domain: a level rests only while it is inside BOTH its slot deadline and its wall-clock deadline, so the `expiry_*` cases pin each bound independently plus the boundary in each domain. A case whose platform_fee_bps exceeds the market's max_platform_fee expects an all-zero Quote: the engine rejects that swap, so the simulator refuses to quote it rather than clamping the rate. Verified against the WASM binding in sdk/interface/tests/wasm_conformance.rs (wasm::simulate_swap == native matcher); the native matcher is pinned to the on-chain engine by programs/dropset/tests/sdk_conformance.rs.",
         "market_data": data,
         "cases": cases,
     });

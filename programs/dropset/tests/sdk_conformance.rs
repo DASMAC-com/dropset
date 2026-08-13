@@ -47,18 +47,8 @@ fn predict_and_execute(
     side: SwapSide,
     amount_in: u64,
     limit_price: Price,
-    current_slot: u32,
 ) -> Quote {
-    predict_and_execute_with_fee(
-        f,
-        taker,
-        side,
-        amount_in,
-        limit_price,
-        current_slot,
-        None,
-        0,
-    )
+    predict_and_execute_with_fee(f, taker, side, amount_in, limit_price, None, 0)
 }
 
 /// [`predict_and_execute`] with a caller-declared platform fee, so the
@@ -77,11 +67,16 @@ fn predict_and_execute_with_fee(
     side: SwapSide,
     amount_in: u64,
     limit_price: Price,
-    current_slot: u32,
     fee_authority: Option<&Pubkey>,
     platform_fee_bps: u16,
 ) -> Quote {
     let predicted = {
+        // Both clocks come from the bank the swap below executes against,
+        // so the prediction and the fill are evaluated at the same instant
+        // in both expiry domains. A literal here would let the two drift
+        // and turn a real divergence into a passing test.
+        let now_slot = f.now_slot();
+        let now_unix = f.now_unix();
         let data = market_bytes(f);
         let view = MarketView::load(&data).expect("SDK decodes the market account");
         simulate_swap(
@@ -89,7 +84,8 @@ fn predict_and_execute_with_fee(
             side,
             amount_in,
             limit_price,
-            current_slot,
+            now_slot,
+            now_unix,
             platform_fee_bps,
         )
     };
@@ -176,7 +172,7 @@ fn sdk_simulate_swap_matches_onchain_buy() {
 
     // Buy with no upper price bound, current slot 1 (the seeded ladder
     // never expires: expiry_offset = u32::MAX).
-    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY, 1);
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY);
     assert!(q.out_amount > 0, "expected a fill");
     // Consumes ~all the input (a Buy converts quote->base via truncating
     // division, so the last atom may be left unspent).
@@ -189,7 +185,7 @@ fn sdk_simulate_swap_matches_onchain_sell() {
     let amount_in: u64 = 500_000; // base atoms (Sell spends base)
     let taker = f.funded_depositor(2 * amount_in, 0);
 
-    let q = predict_and_execute(&mut f, &taker, SwapSide::Sell, amount_in, Price::ZERO, 1);
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Sell, amount_in, Price::ZERO);
     assert!(q.out_amount > 0, "expected a fill");
 }
 
@@ -216,7 +212,6 @@ fn sdk_simulate_swap_matches_onchain_with_a_platform_fee() {
         SwapSide::Buy,
         amount_in,
         Price::INFINITY,
-        1,
         Some(&integrator.pubkey()),
         100,
     );
@@ -243,7 +238,7 @@ fn sdk_simulate_swap_multi_level_buy() {
     let mut f = Fixture::seeded_with(1_000_000, 1_000_000, profile);
     let taker = f.funded_depositor(0, 1_000_000);
 
-    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 500_000, Price::INFINITY);
     assert!(
         q.legs >= 2,
         "expected a fill across both ask levels, got {}",
@@ -258,7 +253,7 @@ fn sdk_simulate_swap_multi_level_sell() {
     let mut f = Fixture::seeded_with(1_000_000, 1_000_000, profile);
     let taker = f.funded_depositor(1_000_000, 0);
 
-    let q = predict_and_execute(&mut f, &taker, SwapSide::Sell, 600_000, Price::ZERO, 1);
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Sell, 600_000, Price::ZERO);
     assert!(
         q.legs >= 2,
         "expected a fill across both bid levels, got {}",
@@ -274,7 +269,7 @@ fn sdk_simulate_swap_partial_fill_caps_input() {
     let amount_in: u64 = 50_000_000; // dwarfs the ~100k-base single-level book
     let taker = f.funded_depositor(0, amount_in);
 
-    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY, 1);
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY);
     assert!(q.out_amount > 0, "expected a fill");
     assert!(
         q.in_amount < amount_in,
@@ -291,7 +286,7 @@ fn sdk_simulate_swap_limit_price_stops_fill() {
     let taker = f.funded_depositor(0, 1_000_000);
     let limit = Price::encode(11_000_000, 0).unwrap(); // 1.10
 
-    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 1_000_000, limit, 1);
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 1_000_000, limit);
     assert_eq!(
         q.legs, 1,
         "limit should stop the fill after the first level"
@@ -319,7 +314,7 @@ fn sdk_simulate_swap_skips_oversize_ask_side_not_the_whole_take() {
     // crucially not an abort. The SDK predicts the same empty quote.
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0);
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1, 0);
     assert_eq!(
         q,
         Quote::default(),
@@ -346,7 +341,7 @@ fn sdk_simulate_swap_skips_oversize_ask_side_not_the_whole_take() {
     // The healthy bid side still matches: a Sell fills, and the SDK predicts
     // it exactly — proving the oversized ask side didn't poison the quote.
     let seller = f.funded_depositor(500_000, 0);
-    let sell = predict_and_execute(&mut f, &seller, SwapSide::Sell, 500_000, Price::ZERO, 1);
+    let sell = predict_and_execute(&mut f, &seller, SwapSide::Sell, 500_000, Price::ZERO);
     assert!(sell.out_amount > 0, "the healthy bid side must still fill");
 }
 
@@ -361,7 +356,7 @@ fn sdk_buy_unaffected_by_oversize_bid_side() {
     f.poke_level_size_bps(0, false, 0, 20_000);
 
     let buyer = f.funded_depositor(0, 500_000);
-    let q = predict_and_execute(&mut f, &buyer, SwapSide::Buy, 500_000, Price::INFINITY, 1);
+    let q = predict_and_execute(&mut f, &buyer, SwapSide::Buy, 500_000, Price::INFINITY);
     assert!(
         q.out_amount > 0,
         "a Buy fills the healthy ask side regardless of a bad bid"
@@ -383,7 +378,7 @@ fn sdk_simulate_swap_rejects_cyclic_vault_list() {
 
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0);
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1, 0);
     assert_eq!(
         q,
         Quote::default(),
@@ -421,7 +416,7 @@ fn sdk_simulate_swap_rejects_out_of_range_vault_next() {
 
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 0);
+    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1, 0);
     assert_eq!(
         q,
         Quote::default(),
@@ -452,7 +447,7 @@ fn sdk_simulate_swap_with_taker_fee() {
     f.set_taker_fee(&admin, 1_000).expect("set taker fee"); // 0.1%
     let taker = f.funded_depositor(0, 2_000_000);
 
-    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 1_000_000, Price::INFINITY, 1);
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 1_000_000, Price::INFINITY);
     assert!(q.fee_amount > 0, "expected a non-zero taker fee");
     assert!(q.out_amount > 0, "expected a fill");
 }

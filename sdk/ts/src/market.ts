@@ -58,29 +58,43 @@ const FLUSH_BIT = 1n << 63n;
 /** On-chain `align_of::<Vault>()` — the slab aligns the first sector to it. */
 const VAULT_ALIGN = 4;
 /** `size_of::<Vault>()`: the sector stride in the slab tail. */
-export const VAULT_SIZE = 560;
+export const VAULT_SIZE = 692;
 
 // ── Vault field byte offsets (mirror `layout.rs` `Vault`) ─────────────
 const V_NEXT = 0;
 const V_REF_STAMP = 72;
 const V_REF_PRICE = 80;
 const V_REF_QUOTE_SLOT = 84;
-const V_BASE_ATOMS = 88;
-const V_QUOTE_ATOMS = 96;
-const V_FROZEN = 136;
-const V_PROFILE = 144; // LiquidityProfile: bids[N] then asks[N]
-const V_REMAINING = 304; // Remaining: bids[N] then asks[N]
+const V_REF_QUOTE_UNIX = 88;
+const V_BASE_ATOMS = 92;
+const V_QUOTE_ATOMS = 100;
+const V_FROZEN = 140;
+const V_PROFILE = 148; // LiquidityProfile: bids[N] then asks[N]
+const V_REMAINING = 372; // Remaining: bids[N] then asks[N]
 
-const LEVEL_SIZE = 10; // Level: price_offset u32, size_bps u16, expiry_offset u32
-const POSITION_SIZE = 16; // Position: price u32, size u64, expires_at u32
+// Level: price_offset u32, size_bps u16, expiry_offset_secs u32,
+// expiry_offset_slots u32 — all alignment-1, so byte-packed.
+const LEVEL_SIZE = 14;
+// Position: price u32, size u64, expires_at u32, expires_at_slot u32.
+const POSITION_SIZE = 20;
 const SIDE_LEVELS_BYTES = N_LEVELS * LEVEL_SIZE;
 const SIDE_POSITIONS_BYTES = N_LEVELS * POSITION_SIZE;
 
 /** One relative level of a vault's `LiquidityProfile` (a flush ladder rung). */
-type ProfileLevel = { priceOffset: number; sizeBps: number; expiryOffset: number };
+type ProfileLevel = {
+  priceOffset: number;
+  sizeBps: number;
+  expiryOffsetSecs: number;
+  expiryOffsetSlots: number;
+};
 
 /** One stored `remaining` book level: absolute price, size, and expiry. */
-type RemainingPosition = { price: PriceBits; size: bigint; expiresAt: number };
+type RemainingPosition = {
+  price: PriceBits;
+  size: bigint;
+  expiresAt: number;
+  expiresAtSlot: number;
+};
 
 /** A decoded `Vault` sector — only the fields the book reader needs. */
 export type VaultView = {
@@ -90,8 +104,12 @@ export type VaultView = {
   referenceStamp: bigint;
   /** `reference_price.price` as raw {@link PriceBits}. */
   referencePrice: PriceBits;
-  /** `reference_price.quote_slot`: the slot flush expiries are relative to. */
+  /** `reference_price.quote_slot`: the datum flush slot-expiries are
+   * measured from. */
   quoteSlot: number;
+  /** `reference_price.quote_unix`: the wall-clock datum, in unix seconds,
+   * that flush expiries are measured from. */
+  quoteUnix: number;
   /** Pooled base inventory in atoms. */
   baseAtoms: bigint;
   /** Pooled quote inventory in atoms. */
@@ -125,7 +143,8 @@ function readProfileLevels(dv: DataView, base: number): ProfileLevel[] {
     out.push({
       priceOffset: dv.getUint32(o, true),
       sizeBps: dv.getUint16(o + 4, true),
-      expiryOffset: dv.getUint32(o + 6, true),
+      expiryOffsetSecs: dv.getUint32(o + 6, true),
+      expiryOffsetSlots: dv.getUint32(o + 10, true),
     });
   }
   return out;
@@ -139,6 +158,7 @@ function readRemainingPositions(dv: DataView, base: number): RemainingPosition[]
       price: dv.getUint32(o, true),
       size: dv.getBigUint64(o + 4, true),
       expiresAt: dv.getUint32(o + 12, true),
+      expiresAtSlot: dv.getUint32(o + 16, true),
     });
   }
   return out;
@@ -150,6 +170,7 @@ function decodeVault(dv: DataView, base: number): VaultView {
     referenceStamp: dv.getBigUint64(base + V_REF_STAMP, true),
     referencePrice: dv.getUint32(base + V_REF_PRICE, true),
     quoteSlot: dv.getUint32(base + V_REF_QUOTE_SLOT, true),
+    quoteUnix: dv.getUint32(base + V_REF_QUOTE_UNIX, true),
     baseAtoms: dv.getBigUint64(base + V_BASE_ATOMS, true),
     quoteAtoms: dv.getBigUint64(base + V_QUOTE_ATOMS, true),
     frozen: dv.getUint8(base + V_FROZEN),
@@ -267,8 +288,9 @@ function levelState(
   isAsk: boolean,
   flush: boolean,
   reference: PriceBits,
+  refUnix: number,
   refSlot: number,
-): { price: PriceBits; size: bigint; expiresAt: number } {
+): { price: PriceBits; size: bigint; expiresAt: number; expiresAtSlot: number } {
   if (flush) {
     const lvl = (isAsk ? v.profileAsks[i] : v.profileBids[i])!;
     const price = flushLevelPrice(reference, lvl.priceOffset, isAsk);
@@ -278,12 +300,30 @@ function levelState(
     // so on a collected side every level is `≤ Σ ≤ BPS` and `?? 0n` is an
     // unreachable total-function fallback, not a silent level drop.
     const size = levelFillAtoms(lvl.sizeBps, leg) ?? 0n;
-    // Saturating add, clamped to u32 like the on-chain `saturating_add`.
-    const expiresAt = Math.min(refSlot + lvl.expiryOffset, NULL_SECTOR);
-    return { price, size, expiresAt };
+    return {
+      price,
+      size,
+      expiresAt: deadline(refUnix, lvl.expiryOffsetSecs),
+      expiresAtSlot: deadline(refSlot, lvl.expiryOffsetSlots),
+    };
   }
   const p = (isAsk ? v.remainingAsks[i] : v.remainingBids[i])!;
-  return { price: p.price, size: p.size, expiresAt: p.expiresAt };
+  return {
+    price: p.price,
+    size: p.size,
+    expiresAt: p.expiresAt,
+    expiresAtSlot: p.expiresAtSlot,
+  };
+}
+
+/**
+ * One domain's absolute deadline, mirroring the on-chain `Vault::deadline`:
+ * a saturating add, except that a **zero offset yields zero** — the dead
+ * sentinel — so "no life in this domain" survives the addition instead of
+ * collapsing onto the bare datum.
+ */
+function deadline(datum: number, offset: number): number {
+  return offset === 0 ? 0 : Math.min(datum + offset, NULL_SECTOR);
 }
 
 /** Whether the active DLL cycles or points out of bounds (mirror `active_dll_is_corrupt`). */
@@ -327,7 +367,12 @@ function activeVaults(slab: MarketSlab): Array<[number, VaultView]> {
  * collector mirrors that by skipping the offending vault's contribution on
  * the collected side. Mirrors `matching::collect_side_levels`.
  */
-function collectSideLevels(slab: MarketSlab, isAsk: boolean, currentSlot: number): Lvl[] | null {
+function collectSideLevels(
+  slab: MarketSlab,
+  isAsk: boolean,
+  nowSlot: number,
+  nowUnix: number,
+): Lvl[] | null {
   if (activeDllIsCorrupt(slab)) return null;
 
   const levels: Lvl[] = [];
@@ -345,13 +390,24 @@ function collectSideLevels(slab: MarketSlab, isAsk: boolean, currentSlot: number
     const nonce = v.referenceStamp & ~FLUSH_BIT;
     const flush = (v.referenceStamp & FLUSH_BIT) !== 0n;
     if (flush && flushSideSumExceedsBps(v, isAsk)) continue;
+    const refUnix = v.quoteUnix;
     const refSlot = v.quoteSlot;
 
     for (let i = 0; i < N_LEVELS; i++) {
-      const { price, size, expiresAt } = levelState(v, i, isAsk, flush, reference, refSlot);
+      const { price, size, expiresAt, expiresAtSlot } = levelState(
+        v,
+        i,
+        isAsk,
+        flush,
+        reference,
+        refUnix,
+        refSlot,
+      );
+      // Both conjuncts, exactly as the engine gates them.
       if (
         size === 0n ||
-        expiresAt <= currentSlot ||
+        expiresAt <= nowUnix ||
+        expiresAtSlot <= nowSlot ||
         isZeroPrice(price) ||
         isInfinityPrice(price) ||
         !isValidPrice(price)
@@ -373,7 +429,7 @@ function collectSideLevels(slab: MarketSlab, isAsk: boolean, currentSlot: number
 }
 
 /**
- * Reconstruct the resting levels on one `side` at `currentSlot` in
+ * Reconstruct the resting levels on one `side` at `(nowSlot, nowUnix)` in
  * cross-vault price-time priority (best price first). Each level's `size`
  * is normalized to **base atoms** — an ask carries base atoms directly, a
  * bid's matchable quote leg is converted to base at the level price — so
@@ -383,10 +439,11 @@ function collectSideLevels(slab: MarketSlab, isAsk: boolean, currentSlot: number
 export function restingLevels(
   slab: MarketSlab,
   side: 'bid' | 'ask',
-  currentSlot: number | bigint,
+  nowSlot: number | bigint,
+  nowUnix: number | bigint,
 ): BookLevel[] {
   const isAsk = side === 'ask';
-  const levels = collectSideLevels(slab, isAsk, Number(currentSlot));
+  const levels = collectSideLevels(slab, isAsk, Number(nowSlot), Number(nowUnix));
   if (levels === null) return [];
   return levels.map((l) => ({
     price: l.price,
@@ -397,39 +454,54 @@ export function restingLevels(
 /** Reconstruct both sides of the book from a decoded slab. */
 export function marketViewFromSlab(
   slab: MarketSlab,
-  currentSlot: number | bigint,
+  nowSlot: number | bigint,
+  nowUnix: number | bigint,
 ): DropsetMarketView {
   return {
     header: slab.header,
-    bids: restingLevels(slab, 'bid', currentSlot),
-    asks: restingLevels(slab, 'ask', currentSlot),
+    bids: restingLevels(slab, 'bid', nowSlot, nowUnix),
+    asks: restingLevels(slab, 'ask', nowSlot, nowUnix),
   };
 }
 
 /** Decode a raw account buffer and reconstruct the book in one step. */
 export function decodeDropsetMarketView(
   data: ReadonlyUint8Array,
-  currentSlot: number | bigint,
+  nowSlot: number | bigint,
+  nowUnix: number | bigint,
 ): DropsetMarketView {
-  return marketViewFromSlab(decodeMarketSlab(data), currentSlot);
+  return marketViewFromSlab(decodeMarketSlab(data), nowSlot, nowUnix);
 }
 
-/** Minimal `getSlot` shape — the current slot drives flush-level expiry filtering. */
-type SlotRpc = { getSlot: (...args: never[]) => { send: () => Promise<bigint> } };
+/**
+ * Minimal `getSlot` shape — the slot half of the dual expiry gate. Kept
+ * argument-less for structural compatibility with any kit RPC; a caller
+ * needing a non-default commitment reads the slot itself and pins it.
+ */
+export type SlotRpc = { getSlot: (...args: never[]) => { send: () => Promise<bigint> } };
+
+/** Wall-clock now, in the unix seconds level expiry is denominated in. */
+export function nowUnix(): number {
+  return Math.floor(Date.now() / 1000);
+}
 
 /**
  * Fetch a market account and reconstruct its resting book — the reusable
  * live-poll primitive behind the order-book viz. One `getAccountInfo`
- * decodes the whole book; the current slot (for expiry filtering) is read
- * via `getSlot` unless supplied in `config.currentSlot`.
+ * decodes the whole book.
+ *
+ * Level expiry is **dual-domain** — each level carries a slot deadline and
+ * a wall-clock deadline and rests only inside both — so the filter needs
+ * both clocks. The slot comes from `getSlot` unless pinned via
+ * `config.nowSlot`; the wall clock defaults to the browser's.
  */
 export async function fetchDropsetMarketView(
   rpc: Parameters<typeof fetchEncodedAccount>[0] & SlotRpc,
   address: Address,
-  config?: FetchAccountConfig & { currentSlot?: number | bigint },
+  config?: FetchAccountConfig & { nowSlot?: number | bigint; nowUnix?: number | bigint },
 ): Promise<DropsetMarketView> {
   const account = await fetchEncodedAccount(rpc, address, config);
   assertAccountExists(account);
-  const currentSlot = config?.currentSlot ?? (await rpc.getSlot().send());
-  return decodeDropsetMarketView(account.data, currentSlot);
+  const nowSlot = config?.nowSlot ?? (await rpc.getSlot().send());
+  return decodeDropsetMarketView(account.data, nowSlot, config?.nowUnix ?? nowUnix());
 }

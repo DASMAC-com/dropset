@@ -548,7 +548,17 @@ fn do_repeg(
     let price =
         Price::from_value(bumped).with_context(|| format!("re-peg to atoms-ratio {bumped}"))?;
     let slot = client.get_slot().context("current slot")?;
-    let ix = set_reference_price_ix(leader.pubkey(), market, vault_idx, price, slot);
+    // A re-peg is a fresh quote, so it re-stamps the wall-clock datum too
+    // — otherwise the new price would inherit the old quote's remaining
+    // level life.
+    let ix = set_reference_price_ix(
+        leader.pubkey(),
+        market,
+        vault_idx,
+        price,
+        slot,
+        dropset_sdk::time::now_unix(),
+    );
     chain::send_logged(
         client,
         wallet,
@@ -627,7 +637,7 @@ fn do_reshape(
         Action::ResetLadder => (
             market::ladder_profile_bytes(
                 &market::ladder_at_spread_bps(market::DEFAULT_SPREAD_BPS),
-                config.expiry_offset,
+                config.expiry_secs,
             ),
             format!(
                 "Reset to the default {}-bps multi-level ladder",

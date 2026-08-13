@@ -20,7 +20,7 @@ const DISCRIMINATOR = 8;
 const HEADER = 253;
 const LEN_AT = DISCRIMINATOR + HEADER; // 261
 const ITEMS_START = (LEN_AT + 4 + 3) & ~3; // 268
-const VAULT = 560;
+const VAULT = 692;
 
 // MarketHeader field offsets, relative to the start of the header (i.e.
 // after the discriminator). Only `head` / `activeCount` matter to the reader.
@@ -31,12 +31,17 @@ const H_ACTIVE_COUNT = 20;
 const V_REF_STAMP = 72;
 const V_REF_PRICE = 80;
 const V_REF_QUOTE_SLOT = 84;
-const V_BASE_ATOMS = 88;
-const V_QUOTE_ATOMS = 96;
-const V_PROFILE_BIDS = 144;
-const V_PROFILE_ASKS = 224;
-const V_REMAINING_BIDS = 304;
-const V_REMAINING_ASKS = 432;
+const V_REF_QUOTE_UNIX = 88;
+const V_BASE_ATOMS = 92;
+const V_QUOTE_ATOMS = 100;
+// Level is 14 bytes and Position 20, so each side's array is 112 / 160.
+const V_PROFILE_BIDS = 148;
+const V_PROFILE_ASKS = 260;
+const V_REMAINING_BIDS = 372;
+const V_REMAINING_ASKS = 532;
+/** `Level` / `Position` strides — 14 and 20 bytes under dual-domain expiry. */
+const LEVEL = 14;
+const POSITION = 20;
 
 const NULL_SECTOR = 0xffff_ffff;
 
@@ -49,10 +54,12 @@ function writePosition(
   price: number,
   size: bigint,
   expiresAt = NULL_SECTOR,
+  expiresAtSlot = NULL_SECTOR,
 ): void {
   dv.setUint32(offset, price, true);
   dv.setBigUint64(offset + 4, size, true);
   dv.setUint32(offset + 12, expiresAt, true);
+  dv.setUint32(offset + 16, expiresAtSlot, true);
 }
 
 function writeProfileLevel(
@@ -60,11 +67,13 @@ function writeProfileLevel(
   offset: number,
   priceOffset: number,
   sizeBps: number,
-  expiryOffset: number,
+  expiryOffsetSecs: number,
+  expiryOffsetSlots = NULL_SECTOR,
 ): void {
   dv.setUint32(offset, priceOffset, true);
   dv.setUint16(offset + 4, sizeBps, true);
-  dv.setUint32(offset + 6, expiryOffset, true);
+  dv.setUint32(offset + 6, expiryOffsetSecs, true);
+  dv.setUint32(offset + 10, expiryOffsetSlots, true);
 }
 
 /** A one-vault, single-sector market. `configure` fills the vault sector. */
@@ -89,17 +98,18 @@ function remainingMarket(): Uint8Array {
     dv.setBigUint64(b + V_REF_STAMP, 1n, true); // stamp = 1, flush bit clear
     dv.setUint32(b + V_REF_PRICE, enc(10_850_000), true);
     dv.setUint32(b + V_REF_QUOTE_SLOT, 0, true);
+    dv.setUint32(b + V_REF_QUOTE_UNIX, 0, true);
     dv.setBigUint64(b + V_BASE_ATOMS, 10_000_000n, true);
     dv.setBigUint64(b + V_QUOTE_ATOMS, 10_000_000n, true);
     writePosition(dv, b + V_REMAINING_ASKS, enc(10_904_000), 1_000_000n);
-    writePosition(dv, b + V_REMAINING_ASKS + 16, enc(11_393_000), 800_000n);
+    writePosition(dv, b + V_REMAINING_ASKS + POSITION, enc(11_393_000), 800_000n);
     writePosition(dv, b + V_REMAINING_BIDS, enc(10_796_000), 2_000_000n);
-    writePosition(dv, b + V_REMAINING_BIDS + 16, enc(10_416_000), 1_500_000n);
+    writePosition(dv, b + V_REMAINING_BIDS + POSITION, enc(10_416_000), 1_500_000n);
   });
 }
 
 test('remaining asks are best-first and base-sized', () => {
-  const view = marketViewFromSlab(decodeMarketSlab(remainingMarket()), 1);
+  const view = marketViewFromSlab(decodeMarketSlab(remainingMarket()), 1, 1);
   assert.deepEqual(view.asks, [
     { price: enc(10_904_000), size: 1_000_000n },
     { price: enc(11_393_000), size: 800_000n },
@@ -107,7 +117,7 @@ test('remaining asks are best-first and base-sized', () => {
 });
 
 test('remaining bids are best-first and normalized to base', () => {
-  const view = marketViewFromSlab(decodeMarketSlab(remainingMarket()), 1);
+  const view = marketViewFromSlab(decodeMarketSlab(remainingMarket()), 1, 1);
   const best = enc(10_796_000);
   const next = enc(10_416_000);
   assert.deepEqual(view.bids, [
@@ -118,7 +128,7 @@ test('remaining bids are best-first and normalized to base', () => {
 
 test('levels expired at the current slot are excluded', () => {
   // Every level expires at u32::MAX; past it the book is empty both sides.
-  const view = marketViewFromSlab(decodeMarketSlab(remainingMarket()), NULL_SECTOR);
+  const view = marketViewFromSlab(decodeMarketSlab(remainingMarket()), NULL_SECTOR, NULL_SECTOR);
   assert.equal(view.asks.length, 0);
   assert.equal(view.bids.length, 0);
 });
@@ -129,12 +139,13 @@ test('flush-armed vault materializes levels from its profile', () => {
     dv.setBigUint64(b + V_REF_STAMP, (1n << 63n) | 1n, true); // flush armed, nonce 1
     dv.setUint32(b + V_REF_PRICE, enc(10_850_000), true);
     dv.setUint32(b + V_REF_QUOTE_SLOT, 0, true);
+    dv.setUint32(b + V_REF_QUOTE_UNIX, 0, true);
     dv.setBigUint64(b + V_BASE_ATOMS, 1_000_000n, true);
     dv.setBigUint64(b + V_QUOTE_ATOMS, 1_000_000n, true);
     writeProfileLevel(dv, b + V_PROFILE_ASKS, 500, 10_000, 1_000);
     writeProfileLevel(dv, b + V_PROFILE_BIDS, 500, 10_000, 1_000);
   });
-  const view = marketViewFromSlab(decodeMarketSlab(data), 1);
+  const view = marketViewFromSlab(decodeMarketSlab(data), 1, 1);
   // ref × (1e6 ± 500)/1e6: 10_850_000 → 10_855_425 (ask) / 10_844_575 (bid).
   assert.deepEqual(view.asks, [{ price: enc(10_855_425), size: 1_000_000n }]);
   const bidPrice = enc(10_844_575);
@@ -150,12 +161,13 @@ test('oversized flush side is skipped, the healthy side still materializes', () 
     dv.setBigUint64(b + V_REF_STAMP, (1n << 63n) | 1n, true); // flush armed
     dv.setUint32(b + V_REF_PRICE, enc(10_850_000), true);
     dv.setUint32(b + V_REF_QUOTE_SLOT, 0, true);
+    dv.setUint32(b + V_REF_QUOTE_UNIX, 0, true);
     dv.setBigUint64(b + V_BASE_ATOMS, 1_000_000n, true);
     dv.setBigUint64(b + V_QUOTE_ATOMS, 1_000_000n, true);
     writeProfileLevel(dv, b + V_PROFILE_ASKS, 500, 20_000, 1_000); // Σ ask = 20000 > BPS
     writeProfileLevel(dv, b + V_PROFILE_BIDS, 500, 5_000, 1_000); // Σ bid = 5000, healthy
   });
-  const view = marketViewFromSlab(decodeMarketSlab(data), 1);
+  const view = marketViewFromSlab(decodeMarketSlab(data), 1, 1);
   assert.equal(view.asks.length, 0, 'oversized ask side contributes no depth');
   const bidPrice = enc(10_844_575);
   assert.deepEqual(view.bids, [{ price: bidPrice, size: baseForQuote(bidPrice, 500_000n) }]);

@@ -104,7 +104,7 @@ fn asm_offsets_match_layout() {
     // `Market::space_for(0)` IS the slab's ITEMS_OFFSET (align_up over the
     // len field to align_of::<Vault>() == 4), so this pins the pad.
     assert_eq!(Market::space_for(0), 268, "SLAB_ITEMS_OFF");
-    assert_eq!(size_of::<Vault>(), 560, "VAULT_SIZE");
+    assert_eq!(size_of::<Vault>(), 692, "VAULT_SIZE");
 
     // Vault field offsets the two payloads write to.
     assert_eq!(
@@ -120,8 +120,13 @@ fn asm_offsets_match_layout() {
         84,
         "RP_QUOTE_SLOT_OFF"
     );
-    assert_eq!(offset_of!(Vault, profile), 144, "VAULT_PROFILE_OFF");
-    assert_eq!(size_of::<LiquidityProfile>(), 160, "PROFILE_SIZE");
+    assert_eq!(
+        rp + offset_of!(ReferencePrice, quote_unix),
+        88,
+        "RP_QUOTE_UNIX_OFF"
+    );
+    assert_eq!(offset_of!(Vault, profile), 148, "VAULT_PROFILE_OFF");
+    assert_eq!(size_of::<LiquidityProfile>(), 224, "PROFILE_SIZE");
 
     // Instruction-data layout: the assembly reads `vault_idx` at +1 and
     // hands `sol_memcpy_` a source pointer of +5, so pin those against the
@@ -146,11 +151,46 @@ fn asm_offsets_match_layout() {
     );
     assert_eq!(&wire[5..], &probe, "IX_PROFILE_OFF");
     assert_eq!(PROFILE_BYTES, size_of::<LiquidityProfile>());
+
+    // Same treatment for disc 5, whose three u32 payload fields the
+    // assembly reads at fixed offsets +5 / +9 / +13. `quote_unix` is last
+    // and therefore the one a stale SDK builder would silently omit, so
+    // pin its position against the real serialization too.
+    let wire = dropset::instruction::SetReferencePrice {
+        vault_idx: 0x0403_0201,
+        price_bits: 0x0807_0605,
+        quote_slot: 0x0C0B_0A09,
+        quote_unix: 0x100F_0E0D,
+    }
+    .data();
+    assert_eq!(wire.len(), 1 + 4 * size_of::<u32>(), "ix data len");
+    assert_eq!(wire[0], 5, "discriminator");
+    assert_eq!(
+        &wire[1..5],
+        &0x0403_0201u32.to_le_bytes(),
+        "IX_VAULT_IDX_OFF"
+    );
+    assert_eq!(
+        &wire[5..9],
+        &0x0807_0605u32.to_le_bytes(),
+        "IX_PRICE_BITS_OFF"
+    );
+    assert_eq!(
+        &wire[9..13],
+        &0x0C0B_0A09u32.to_le_bytes(),
+        "IX_QUOTE_SLOT_OFF"
+    );
+    assert_eq!(
+        &wire[13..17],
+        &0x100F_0E0Du32.to_le_bytes(),
+        "IX_QUOTE_UNIX_OFF"
+    );
 }
 
-/// The stamped reference price plus the post-stamp market nonce — the
-/// observable state the assembly and the kernel must agree on.
-type Stamp = (u64, u32, u32, u64);
+/// The stamped reference price (`stamp`, `price`, `quote_slot`,
+/// `quote_unix`) plus the post-stamp market nonce — the observable state
+/// the assembly and the kernel must agree on.
+type Stamp = (u64, u32, u32, u32, u64);
 
 fn valid_price() -> u32 {
     Price::encode(10_850_000, 0).unwrap().as_u32()
@@ -160,20 +200,25 @@ fn ref_built() -> bool {
     std::path::Path::new(common::REF_PROGRAM_SO_PATH).exists()
 }
 
-/// Open vault 0, stamp `(price_bits, quote_slot)`, and read back
-/// `(stamp, price, quote_slot, nonce)`.
-fn stamp_and_read(mut f: Fixture, price_bits: u32, quote_slot: u32) -> Stamp {
+/// Open vault 0, stamp `(price_bits, quote_slot, quote_unix)`, and read
+/// back `(stamp, price, quote_slot, quote_unix, nonce)`.
+///
+/// The datum is passed explicitly rather than taken from each bank's own
+/// clock: the two builds run on separate `LiteSVM` instances, and a
+/// parity comparison must not depend on their clocks agreeing.
+fn stamp_and_read(mut f: Fixture, price_bits: u32, quote_slot: u32, quote_unix: u32) -> Stamp {
     let auth = f.authority.pubkey();
     f.create_vault(0, auth, false, Pubkey::default())
         .expect("create_vault");
     let signer = f.authority.insecure_clone();
-    f.set_reference_price(&signer, 0, price_bits, quote_slot)
+    f.set_reference_price_at(&signer, 0, price_bits, quote_slot, quote_unix)
         .expect("set_reference_price");
     let v = f.vault(0);
     (
         v.reference_price.stamp.get(),
         v.reference_price.price.as_u32(),
         v.reference_price.quote_slot.get(),
+        v.reference_price.quote_unix.get(),
         f.market_header().nonce.get(),
     )
 }
@@ -187,14 +232,14 @@ fn happy_path_parity() {
     // Identical bootstrap + op sequence on each build, so the pre-stamp
     // nonce matches; the resulting stamp is then byte-identical only if the
     // assembly (default build) writes the same bytes the kernel does.
-    let reference = stamp_and_read(Fixture::bootstrap_ref(), valid_price(), 7);
-    let asm = stamp_and_read(Fixture::bootstrap(), valid_price(), 7);
+    let reference = stamp_and_read(Fixture::bootstrap_ref(), valid_price(), 7, 1_700_000_000);
+    let asm = stamp_and_read(Fixture::bootstrap(), valid_price(), 7, 1_700_000_000);
     assert_eq!(
         reference, asm,
         "asm stamp must byte-match the reference build"
     );
     // And the stamp is what we expect: flush armed over a zero pre-nonce,
-    // price + slot stored raw, nonce bumped to 1.
+    // price + slot + wall-clock datum stored raw, nonce bumped to 1.
     assert_eq!(
         asm.0,
         dropset::FLUSH_BIT,
@@ -202,7 +247,8 @@ fn happy_path_parity() {
     );
     assert_eq!(asm.1, valid_price());
     assert_eq!(asm.2, 7);
-    assert_eq!(asm.3, 1, "nonce bumped");
+    assert_eq!(asm.3, 1_700_000_000, "quote_unix stored raw");
+    assert_eq!(asm.4, 1, "nonce bumped");
 }
 
 #[test]
@@ -211,14 +257,17 @@ fn invalid_price_stored_raw_parity() {
         eprintln!("skipping invalid_price_stored_raw_parity: reference oracle absent");
         return;
     }
-    // The write validates neither the price nor the slot; both builds store
-    // an invalid significand and a far-future slot verbatim.
+    // The write validates none of the price, the slot, or the wall-clock
+    // datum; both builds store an invalid significand, a far-future slot,
+    // and a zero datum verbatim. A zero datum is the fail-closed case —
+    // it is stored, not rejected, and kills the vault at match time.
     let bits = 5_000_000;
-    let reference = stamp_and_read(Fixture::bootstrap_ref(), bits, 1_000_000);
-    let asm = stamp_and_read(Fixture::bootstrap(), bits, 1_000_000);
+    let reference = stamp_and_read(Fixture::bootstrap_ref(), bits, 1_000_000, 0);
+    let asm = stamp_and_read(Fixture::bootstrap(), bits, 1_000_000, 0);
     assert_eq!(reference, asm);
     assert_eq!(asm.1, bits);
     assert_eq!(asm.2, 1_000_000);
+    assert_eq!(asm.3, 0);
 }
 
 #[test]
@@ -499,7 +548,8 @@ fn stamp_cu(mut f: Fixture) -> u64 {
     f.create_vault(0, auth, false, Pubkey::default())
         .expect("create_vault");
     let signer = f.authority.insecure_clone();
-    f.set_reference_price_meta(&signer, 0, valid_price(), 0)
+    let now = f.now_unix();
+    f.set_reference_price_meta(&signer, 0, valid_price(), 0, now)
         .expect("set_reference_price")
         .compute_units_consumed
 }

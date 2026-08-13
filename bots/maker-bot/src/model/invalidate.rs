@@ -2,12 +2,17 @@
 //! left to expire on its own.
 //!
 //! A quote the bot stamped stays matchable until its level's `expiry_offset`
-//! passes — up to 7_200 slots (~50 min of live chain) on the deepest tier (§3
-//! expiry table). If the bot goes down, or the chain halts, or the feeds go
-//! dark, nobody refreshes the reference in the meantime and takers can fill
-//! against a price the bot no longer believes. Slot expiry is not a mitigation
-//! for that: slots don't tick while the chain is halted, so the wall-clock life
-//! of a resting level is unbounded.
+//! passes — up to 2_880 s (~48 min) on the deepest tier (§3 expiry table).
+//! If the bot goes down, or the chain halts, or the feeds go dark, nobody
+//! refreshes the reference in the meantime and takers can fill against a
+//! price the bot no longer believes.
+//!
+//! Level expiry now *does* bound that exposure in wall-clock terms — it is
+//! measured from the quote's `quote_unix` datum rather than its slot, so a
+//! halt no longer freezes the countdown the way slot expiry did. But it is
+//! a cap, not a policy: 48 minutes of unattended drift on the deepest tier
+//! is far longer than the bot is willing to rest a book it is no longer
+//! refreshing, so this mitigation stays required regardless.
 //!
 //! `FreezeVault` is admin-only (§4 — the bot's killswitch halts quoting, it
 //! doesn't freeze), so the bot can't literally shut the vault. But matching

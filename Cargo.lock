@@ -1718,6 +1718,7 @@ dependencies = [
  "dropset-sdk",
  "litesvm",
  "serde_json",
+ "solana-clock",
  "solana-instruction",
  "solana-keypair",
  "solana-loader-v3-interface",

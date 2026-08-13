@@ -27,10 +27,45 @@ pub struct ReferencePrice {
     pub stamp: PodU64,
     /// Reference price the leader's ladder is anchored to.
     pub price: Price,
-    /// Slot the quote was "as of" (leader-supplied, validated at write
-    /// time).
+    /// Slot the quote was "as of" (leader-supplied). The **slot datum**
+    /// every level's [`Level::expiry_offset_slots`] is measured from.
     pub quote_slot: PodU32,
+    /// Wall-clock time the quote was "as of", in unix seconds
+    /// (leader-supplied). The **wall datum** every level's
+    /// [`Level::expiry_offset_secs`] is measured from.
+    pub quote_unix: PodU32,
 }
+
+// Expiry is **dual-domain**: a level is live only while it is inside
+// *both* its slot bound and its wall bound (see [`Level`]). The two
+// answer different failure modes and neither subsumes the other.
+//
+// - The **wall** bound is what survives a halt. Slots stop ticking while
+//   the cluster is down, so a slot-only ladder returns at restart with
+//   its full budget intact, anchored to a pre-halt price — hours of
+//   price movement delivered into one block, against spreads that assume
+//   price continuity.
+// - The **slot** bound is what gives a tight level a *fast* deadline.
+//   `Clock.unix_timestamp` is a stake-weighted median of vote timestamps
+//   and accurate only to a few seconds, which floors any wall TIF at
+//   ~15 s. A top-of-book level wants a sub-second dead-man tail behind
+//   the quoter's latest stamp; two slots expresses that, 15 seconds
+//   cannot.
+//
+// Taking the **min of two leader-supplied bounds** is never worse than
+// either alone, and it is robust across clock regimes: under today's
+// median-and-clamp clock the wall bound kills across a halt, and under a
+// leader-stamped clock (SIMD-0363 direction, unratified) where cluster
+// time recovers an outage at ~2x pace rather than jumping, the slot
+// conjunct is the fast protection instead.
+//
+// Both datums are stamped at **quote-write time** and never derived at
+// materialize time. Materialization runs lazily inside the first taker's
+// swap after `FLUSH_BIT` arms, so a materialize-time stamp would be
+// attacker-scheduled — in the halt scenario the first post-restart taker
+// *is* the pick-off flow, and its own transaction would refresh the very
+// quote it is picking off. This constraint applies to both domains; see
+// the spec's **SetReferencePrice**.
 
 /// One level in a [`LiquidityProfile`]. All fields are alignment-1 so the
 /// containing array is byte-packed.
@@ -44,8 +79,26 @@ pub struct Level {
     /// Per-flush allowance as bps of the matching inventory leg
     /// (`base_atoms` for asks, `quote_atoms` for bids). Σ per side ≤ 10000.
     pub size_bps: PodU16,
-    /// Per-level expiry in slots after `reference_price.quote_slot`.
-    pub expiry_offset: PodU32,
+    /// Per-level expiry in **seconds** after
+    /// `reference_price.quote_unix`. Expiry stratification is the
+    /// passive kill switch: tight levels are given seconds, deep levels
+    /// minutes, so a dead leader's book decays level by level in wall
+    /// terms instead of sharing one quote-wide deadline.
+    ///
+    /// **Zero is dead.** A level with no life in either domain never
+    /// matches, whatever its datum — materialization encodes that as the
+    /// zero sentinel in [`Position::expires_at`].
+    pub expiry_offset_secs: PodU32,
+    /// Per-level expiry in **slots** after `reference_price.quote_slot`
+    /// — the second, independent bound (see the note under
+    /// [`ReferencePrice`]). Also zero-is-dead.
+    ///
+    /// "No slot bound" is expressed as the **maximum** offset, not a
+    /// sentinel, so the gate stays a single unconditional compare. The
+    /// `u32` ceiling is ~4.3e9 slots — decades even at the fastest
+    /// proposed slot times, and so comfortably past the longest wall TIF
+    /// any tier policy would set that "unbounded" means what it says.
+    pub expiry_offset_slots: PodU32,
 }
 
 /// The leader's bid / ask ladder, expressed as offsets from a single
@@ -71,8 +124,23 @@ pub struct Position {
     pub price: Price,
     /// Live allowance in atoms (base for asks, quote for bids).
     pub size: PodU64,
-    /// Absolute slot this level expires at.
+    /// Absolute unix second this level expires at
+    /// (`reference_price.quote_unix + Level::expiry_offset_secs`,
+    /// saturating).
+    ///
+    /// **Zero is dead**, and materialization writes zero deliberately
+    /// whenever the level's own offset is zero — so "no life in this
+    /// domain" survives into the stored state instead of being lost to
+    /// the addition, and the match gate stays one unconditional compare.
+    /// A ladder armed before any reference price is all-zero and dead by
+    /// the same encoding.
     pub expires_at: PodU32,
+    /// Absolute slot this level expires at
+    /// (`reference_price.quote_slot + Level::expiry_offset_slots`,
+    /// saturating). Same zero-is-dead encoding as
+    /// [`Position::expires_at`]; the level matches only while **both**
+    /// deadlines are in the future.
+    pub expires_at_slot: PodU32,
 }
 
 /// Per-vault remaining sizes, one entry per [`Level`].
@@ -110,8 +178,8 @@ pub struct Vault {
     /// Authority for quote-mutating ix; always populated. See the spec's
     /// **Vault** for rotation semantics.
     pub quote_authority: Address,
-    /// Packed `(stamp, price, quote_slot)` — hot path on
-    /// `SetReferencePrice`.
+    /// Packed `(stamp, price, quote_slot, quote_unix)` — the two expiry
+    /// datums plus the price, written together on `SetReferencePrice`.
     pub reference_price: ReferencePrice,
     /// Pooled base inventory across the leader and outside depositors.
     pub base_atoms: PodU64,
@@ -315,23 +383,27 @@ impl MarketHeader {
 // These const asserts pin the on-chain layout — any change must be a
 // deliberate update here, paired with the matching account-data
 // migration story.
-const _: () = assert!(core::mem::size_of::<Vault>() == 560);
+const _: () = assert!(core::mem::size_of::<Vault>() == 692);
 const _: () = assert!(core::mem::size_of::<MarketHeader>() == 253);
-const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 10);
-const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 16);
+const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 14);
+const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 20);
 
 // Field-offset guards: total-size asserts alone don't catch a reorder
 // that happens to preserve the byte count (e.g. swapping `_reserved`
 // with another byte array). Pin the load-bearing offsets so the build
 // breaks on any field reorder that would shift the on-chain layout —
 // `next`/`prev` are dispatched directly by the DLL ops, `leader`
-// doubles as the emptiness marker, and `_reserved` is the only field
-// whose contents are intentionally zeroed.
+// doubles as the emptiness marker, `_reserved` is the only field
+// whose contents are intentionally zeroed, and `profile` is pinned by
+// the hand-written `entrypoint.s` — its `sol_memcpy_` destination is a
+// literal offset there, so a shift that only Rust knows about is a
+// silent ASM/Rust divergence rather than a build break.
 const _: () = assert!(core::mem::offset_of!(Vault, next) == 0);
 const _: () = assert!(core::mem::offset_of!(Vault, prev) == 4);
 const _: () = assert!(core::mem::offset_of!(Vault, leader) == 8);
-const _: () = assert!(core::mem::offset_of!(Vault, tombstoned) == 139);
-const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 140);
+const _: () = assert!(core::mem::offset_of!(Vault, tombstoned) == 143);
+const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 144);
+const _: () = assert!(core::mem::offset_of!(Vault, profile) == 148);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 8);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, tombstone_head) == 12);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, free_head) == 16);
