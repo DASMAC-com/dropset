@@ -89,9 +89,10 @@ ______________________________________________________________________
 The through-line, so the story reads as one piece before it's cut into
 pages:
 
-> Dropset is the 24/7/365 currency translation layer. Anyone with a phone
-> can buy tokenized Tesla stock today, from almost any country — and nobody
-> can do that with a euro. Foreign exchange is the biggest market on earth:
+> Dropset is the liquidity layer for every national currency — all of them,
+> for anyone, 24/7/365. Anyone with a phone can buy tokenized Tesla stock
+> today, from almost any country — and nobody can do that with a euro.
+> Foreign exchange is the biggest market on earth:
 > over nine trillion dollars a day. But it barely trades onchain — less than
 > ten percent of the world's currencies are on Solana, the fastest
 > and cheapest chain, and our goal is 24/7/365 coverage of every FX spot
@@ -121,26 +122,31 @@ pages:
 > instead of sitting still. Permissioned rails gate that access, and gated
 > liquidity never compounds. Public liquidity is what blockchains were built
 > for. Dropset is built by people who have built exchanges. Dropset — the
-> 24/7/365 currency translation layer.
+> liquidity layer for every national currency.
 
 ### Page-by-page
 
 #### Page 1 — Title · ~5s
 
-- **On-slide:** The 24/7/365 currency translation layer. Nothing else.
+- **On-slide:** The liquidity layer for every national currency. Nothing else.
 - **Visual:** The Dropset wordmark, alone.
-- **Spoken:** "Dropset is the 24/7/365 currency translation layer. Here's
-  what I mean. Anyone with a phone can buy tokenized Tesla stock today,
-  from almost any country — and nobody can do that with a euro. That's the
-  hole we're filling."
-- **Note on the tagline:** "Where currency trades onchain" described the
-  product accurately and asked the audience to care on its own. **Translation
-  layer** does the work instead: it names what Dropset *is for* in words that
-  land on someone who has never traded FX, and it is the one line in the deck
-  that has to survive an investor scrolling past. "24/7/365" is load-bearing
-  in it — it carries the deck's ambition and pays off the 24/5 fact two pages
-  later, so the shorter "onchain currency translation layer" is a downgrade,
-  not a trim. Candidates that lost: "Fiat's final frontier" (evocative, says
+- **Spoken:** "Dropset is the liquidity layer for every national currency —
+  all of them, for anyone, 24/7/365. Here's what I mean. Anyone with a phone
+  can buy tokenized Tesla stock today, from almost any country — and nobody
+  can do that with a euro. That's the hole we're filling."
+- **Note on the tagline:** two predecessors lost. "Where currency trades
+  onchain" described the product accurately and asked the audience to care on
+  its own. "The 24/7/365 currency translation layer" then carried the
+  ambition, but it **wrapped on the slide** — it read as "The Currency
+  Translation Layer 24…" — and translation is the metaphor for the mechanism
+  rather than the thing being sold. **Liquidity** is the business: every
+  currency liquid, for everyone, always, which is what Dropset offers
+  stablecoins and the platforms holding them. "national" is load-bearing —
+  to a crypto-native audience "every currency" reads as every *token* ("you're
+  making my token liquid?"), and the one word that disambiguates is worth the
+  extra width. The always-on claim moved into the spoken opener on this page
+  and page 12, which is what keeps page 2's 24/5 fact a payoff rather than an
+  orphan. Candidates that lost: "Fiat's final frontier" (evocative, says
   nothing about what we do) and "Babelfish for fiat currency" (the analogy is
   right and the reference dates the speaker).
 - **Note on the analogy:** the tokenized-equity comparison is **spoken, never
@@ -231,10 +237,14 @@ pages:
   deck's most checkable number.
 - **Note on the goal line:** the 24/7/365 ambition is **spoken here, not
   printed**, and that is a change from v2 where it was the page's one accent
-  row. The title page now *opens* with 24/7/365 in the tagline, so printing
-  it again three pages later reads as a deck repeating itself rather than as
-  an escalation. Restore the accent row only if the tagline ever loses the
-  number.
+  row. The title page's spoken open still carries 24/7/365, so printing it
+  again three pages later reads as a deck repeating itself rather than as an
+  escalation. This note used to say "restore the accent row only if the
+  tagline ever loses the number" — the tagline has since lost it, and the row
+  stays retired anyway: the always-on claim moved into the page-1 and page-12
+  spoken openers rather than off the deck, so the payoff this page needs is
+  still set up, and page 3's sparseness is worth more than a second printing
+  of a number the room has already heard.
 - **Note on the money-ness fact:** "public blockchains are the most
   money-like digital environment available today" was v2's **thesis fact**
   and it is now spoken. It is still the claim the rest of the deck answers
@@ -746,11 +756,11 @@ pages:
 
 #### Page 12 — Close · ~4s
 
-- **On-slide:** The Dropset wordmark and the tagline — The 24/7/365 currency
-  translation layer. A replay of page 1, and nothing else.
+- **On-slide:** The Dropset wordmark and the tagline — The liquidity layer for
+  every national currency. A replay of page 1, and nothing else.
 - **Visual:** Identical to the title page, deliberately.
-- **Spoken:** "Dropset — the 24/7/365 currency translation layer." Then the
-  personal why (below), which is the last thing the room hears.
+- **Spoken:** "Dropset — the liquidity layer for every national currency."
+  Then the personal why (below), which is the last thing the room hears.
 - **Note on why this page exists:** the review's sharpest note was that it
   was left **wondering why we care about this**, and that people invest in a
   founder at least as much as in a problem. v2 ended on the team page, which
@@ -761,21 +771,20 @@ pages:
   the tagline is the first thing said and the last, which is the oldest
   trick there is for making a two-minute pitch feel composed rather than
   rushed.
-- **Note on the personal why — a scaffold, to be rewritten in the founder's
-  own voice.** This is the one block in the spec that is **not** finished
-  copy, and it should not be delivered as written. The beats, in order:
-  1. **The fifteen-year frame.** Fifteen years in this industry, and money
-     still doesn't actually move onchain. Everything else did — trading,
-     collectibles, now equities — and the thing blockchains were *for* is
-     the thing still waiting.
-  1. **The built-exchanges arc, as motive rather than credential.** Page 11
-     already lists Econia and the Opcode Guide as evidence. Here they are
-     the reason: this is a person who has built exchange technology across
-     the whole stack on more than one chain, which is why the unsolved
-     market they'd pick is an exchange problem.
-  1. **Why FX specifically.** It is the largest market on earth and the one
-     that has been least touched — the last big thing that hasn't come
-     onchain, and the one where being early actually compounds.
+- **Note on the personal why — a rehearsal draft, in the founder's own
+  argument.** This is the one block in the spec that is **not** finished copy:
+  the beats are the real ones, and the wording is meant to be iterated on out
+  loud rather than read out. The beats, in order:
+  1. **The seventeen-year frame.** Seventeen years in this industry, and we
+     still haven't solved the problem of money — sending it around
+     permissionlessly.
+  1. **What did get solved, as the contrast.** There is no shortage of ways
+     to speculate onchain and no shortage of alternative stores of value; but
+     as far as greasing the wheels of global commerce, money still doesn't
+     function the way we'd hope it could.
+  1. **Why FX specifically, and why here.** A large part of why is that there
+     is no FX liquidity onchain — specifically on Solana, which is a deeply
+     money-like environment, and so the place this gets fixed.
      Keep it to **two or three sentences out loud**. The failure mode is a
      biography; the target is the single sentence that makes a listener believe
      this person would still be working on this in five years.
@@ -1036,8 +1045,8 @@ disagree:
    headlines, not as list items. A reviewer reading the deck without
    the talk should get the argument. **Three exceptions**, all of them
    naming rather than claiming:
-   - the **title and close** (pages 1 and 12), "The 24/7/365 currency
-     translation layer" — a tagline is a name for the company, and the
+   - the **title and close** (pages 1 and 12), "The liquidity layer for
+     every national currency" — a tagline is a name for the company, and the
      sentence forms of it ("Dropset is the…") put a subject on a page whose
      subject is the wordmark directly above the line;
    - the **roadmap headline** (page 9), "The path to 24/7/365 FX and
