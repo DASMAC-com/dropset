@@ -203,7 +203,9 @@ file-mutating tool
 that targets a base-repo absolute path from a worktree session —
 editing the base copy the worktree build never sees is a recurring,
 expensive slip), the iTerm2 tab-color integration, and the `~/.zshrc`
-setup they lean on. Both settings files are git-ignored, so all of it
+setup they lean on — including the **session secrets**, which are
+resolved from 1Password at session launch rather than written into the
+shell file. Both settings files are git-ignored, so all of it
 is opt-in — a fresh worktree gets none of it until it is wired into
 that checkout's own `settings.json`. Each guard's **script** is committed; its
 `PreToolUse` **wiring** is not. Full detail — every hook's wiring and
