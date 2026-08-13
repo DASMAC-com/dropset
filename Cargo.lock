@@ -1753,6 +1753,7 @@ dependencies = [
  "async-trait",
  "bs58",
  "dropset-db-schema",
+ "http 1.4.2",
  "reqwest",
  "serde",
  "serde_json",
