@@ -1,5 +1,32 @@
-// Number formatting shared by the depth ladder and the trades tape, so a price
-// or a size is written the same way in both panes.
+// Display conversion and number formatting shared by the depth ladder and the
+// trades tape, so a price or a size is written the same way in both panes.
+// Both steps live here: turning a chain-native value (raw `Price` bits, atom
+// counts) into a human one, and then rendering that number as text.
+
+import { type PriceBits, quoteForBase } from "@dropset/sdk";
+
+// A raw on-chain `Price` in human quote-per-base units: the quote atoms one
+// whole base unit buys, de-scaled by the quote mint's decimals.
+//
+// The decimals adjustment is not optional. A `Price` is an *atoms* ratio, so
+// decoding it alone yields quote-atoms-per-base-atom — which only coincides
+// with the displayed rate when both mints share a decimal count. Every 6-vs-6
+// pair on the board hides the bug; TGBP (9 decimals) against USDC (6) showed
+// it as a clean factor of 1000, the pane reading 0.0014 where the pair trades
+// at 1.41.
+//
+// Built on `quoteForBase` rather than `decodePrice` float math, per that
+// function's own guidance: it is the exact integer path the on-chain matcher
+// and the TUI's `human_price` both take, so the three agree bit for bit
+// instead of drifting at the last decimal.
+export function humanPrice(
+  bits: PriceBits,
+  baseDecimals: number,
+  quoteDecimals: number,
+): number {
+  const perBaseUnit = quoteForBase(bits, 10n ** BigInt(baseDecimals));
+  return Number(perBaseUnit) / 10 ** quoteDecimals;
+}
 
 // FX stablecoin pairs span a wide price range (EUR ≈ 1.1, MXN ≈ 0.05,
 // IDR ≈ 0.00006), so pick the fraction digits from the price magnitude and

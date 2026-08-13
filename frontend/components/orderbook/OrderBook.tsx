@@ -6,7 +6,12 @@ import { IS_LOCALNET } from "@/lib/env";
 import type { BookToken, OrderBookState } from "@/lib/hooks/useOrderBook";
 import { useOrderBook } from "@/lib/hooks/useOrderBook";
 import { useSwapStore } from "@/lib/store";
-import { formatAmount, formatPrice, priceFractionDigits } from "./format";
+import {
+  formatAmount,
+  formatPrice,
+  humanPrice,
+  priceFractionDigits,
+} from "./format";
 import { ROW_H } from "./layout";
 import { Trades } from "./Trades";
 import { GREEN, GREEN_BAR, GREEN_FLASH, RED, RED_BAR, RED_FLASH } from "./tone";
@@ -31,14 +36,26 @@ type Row = { price: number; size: bigint; total: bigint };
 
 // Best-first levels → rows with a running cumulative total (from the spread
 // outward). Drops anything that doesn't decode to a real, positive price.
-function levelsToRows(levels: readonly BookLevel[]): Row[] {
+//
+// Prices are scaled to human quote-per-base with the pair's decimals — see
+// `humanPrice`. The sentinel guard still runs on the decoded float, since
+// ZERO / INFINITY are properties of the `Price` itself and survive any scaling.
+function levelsToRows(
+  levels: readonly BookLevel[],
+  baseDecimals: number,
+  quoteDecimals: number,
+): Row[] {
   const rows: Row[] = [];
   let acc = 0n;
   for (const l of levels) {
-    const price = decodePrice(l.price);
-    if (!Number.isFinite(price) || price <= 0) continue;
+    const decoded = decodePrice(l.price);
+    if (!Number.isFinite(decoded) || decoded <= 0) continue;
     acc += l.size;
-    rows.push({ price, size: l.size, total: acc });
+    rows.push({
+      price: humanPrice(l.price, baseDecimals, quoteDecimals),
+      size: l.size,
+      total: acc,
+    });
     if (rows.length >= MAX_ROWS) break;
   }
   return rows;
@@ -111,8 +128,16 @@ function OrderBookView({
       // restingLevels is best-first: asks ascending (cheapest first), bids
       // descending (highest first). Cumulative totals accumulate from the
       // spread outward on each side.
-      const asks = levelsToRows(view?.asks ?? []);
-      const bids = levelsToRows(view?.bids ?? []);
+      const asks = levelsToRows(
+        view?.asks ?? [],
+        base.decimals,
+        quote.decimals,
+      );
+      const bids = levelsToRows(
+        view?.bids ?? [],
+        base.decimals,
+        quote.decimals,
+      );
       const deepestAsk = asks.at(-1)?.total ?? 0n;
       const deepestBid = bids.at(-1)?.total ?? 0n;
       const maxTotal = deepestAsk > deepestBid ? deepestAsk : deepestBid || 1n;
@@ -135,7 +160,7 @@ function OrderBookView({
         spread,
         spreadPct,
       };
-    }, [view]);
+    }, [view, base.decimals, quote.decimals]);
 
   const barPct = (total: bigint) => Number((total * 100n) / maxTotal);
 
@@ -223,7 +248,7 @@ export function OrderBookPanel({ className }: { className?: string }) {
   return (
     <div className={`flex flex-col gap-3 ${className ?? ""}`}>
       <OrderBookView view={view} base={base} quote={quote} />
-      <Trades market={market} base={base} enabled={IS_LOCALNET} />
+      <Trades market={market} base={base} quote={quote} enabled={IS_LOCALNET} />
     </div>
   );
 }
