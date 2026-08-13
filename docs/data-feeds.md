@@ -48,10 +48,10 @@ stream seam (§4). The venue adapters have been relocated into
 Coinbase, CoinGecko, CoinMarketCap, ECB/Frankfurter — available to both
 sink paths, rather than one per app. The collector polls Coinbase and the
 maker polls the other three today; what changed is that either could use
-any of them. The collector crate still sits at its original path under
-`analytics/`;
-its move to `market-data/` and the indexer's migration onto the
-framework are separate tracked tasks.
+any of them. The eCLOB indexer has since migrated onto the framework
+too (§6), so every ingestion path in the repo now runs on one drive
+loop. The collector crate still sits at its original path under
+`analytics/`; its move to `market-data/` is a separate tracked task.
 
 ______________________________________________________________________
 
