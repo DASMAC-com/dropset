@@ -23,6 +23,17 @@ manual `grep -nE '^.{81,}$'`: the manual grep just re-buys a result
 `docs/conventions/context-economy.md` → "Don't hand-run a check a hook
 already owns").
 
+**Never place a line wrap inside an inline code span.** `mdformat`
+rejoins a line break that falls between backticks, and the rejoined
+line is then long enough for markdownlint to fail it on MD013 — so the
+two hooks fight, and the fix→lint loop does not converge on its own.
+One session ran `make lint` **15 times (≈9.1k)**, four of them the same
+failure, before the cause was identified. The autofix-vs-violation rule
+in `review-pr` handles the *response*; this is the *cause*, and it is an
+authoring rule: keep an inline code span entirely on one line, and wrap
+before or after it. If that makes the line unavoidably long, shorten the
+prose around the span rather than breaking the span.
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —

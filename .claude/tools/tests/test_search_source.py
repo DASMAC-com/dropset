@@ -97,6 +97,40 @@ class SearchTests(unittest.TestCase):
         out = ss.search("needle", self.root, extensions=None)
         self.assertEqual([m["path"] for m in out["matches"]], ["docs/notes.md"])
 
+    def test_esm_and_cjs_configs_are_source(self):
+        """Their absence was a silent under-report: a sweep for a symbol defined
+        in a `.mjs` build script came back with a confident zero."""
+        self.write("decks/scripts/capture.mjs", "const CAPTURE_SCALE = 3;\n")
+        self.write("cfg/legacy.cjs", "module.exports = { CAPTURE_SCALE: 3 };\n")
+        out = ss.search("CAPTURE_SCALE", self.root)
+        self.assertEqual(
+            [m["path"] for m in out["matches"]],
+            ["cfg/legacy.cjs", "decks/scripts/capture.mjs"],
+        )
+
+    def test_an_empty_defaulted_run_flags_that_prose_was_not_searched(self):
+        """The difference between a real negative and an unasked question."""
+        self.write("docs/notes.md", "the needle in prose\n")
+        out = ss.search("needle", self.root)
+        self.assertEqual(out["total"], 0)
+        self.assertTrue(out["narrowed_by_default"])
+
+    def test_an_explicit_extension_set_is_not_flagged_as_defaulted(self):
+        """`--ext md` found nothing means nothing is there — don't second-guess
+        an answer the caller already scoped."""
+        self.write("tui/src/ui.rs", "fn needle() {}\n")
+        out = ss.search("needle", self.root, extensions=("md",))
+        self.assertEqual(out["total"], 0)
+        self.assertFalse(out["narrowed_by_default"])
+
+    def test_a_globbed_run_is_not_flagged_as_defaulted(self):
+        """Under a glob the default resolves to *every* extension, so nothing
+        was narrowed and there is nothing to warn about."""
+        self.write("docs/notes.md", "prose without the symbol\n")
+        out = ss.search("needle", self.root, globs=("docs/notes.md",))
+        self.assertEqual(out["total"], 0)
+        self.assertFalse(out["narrowed_by_default"])
+
     def test_explicit_extension_filter(self):
         self.write("a.rs", "needle\n")
         self.write("b.ts", "needle\n")
@@ -391,6 +425,30 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertEqual(out.strip(), "")
+
+    def test_an_empty_default_run_says_prose_was_not_searched(self):
+        """One measured run read this bare zero as absence and fell back to a
+        bare `grep` — the very thing this tool replaces."""
+        (self.root / "notes.md").write_text("the absent one\n", encoding="utf-8")
+        code, _, err = self._capture(
+            ["search_source.py", "absent", "--root", str(self.root)]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("searched the source set only", err)
+        self.assertIn("--ext md", err)
+
+    def test_an_explicitly_scoped_empty_run_stays_quiet(self):
+        code, _, err = self._capture(
+            ["search_source.py", "absent", "--root", str(self.root), "--ext", "md"]
+        )
+        self.assertEqual(code, 1)
+        self.assertNotIn("searched the source set only", err)
+
+    def test_a_run_that_matched_does_not_nag_about_extensions(self):
+        _, _, err = self._capture(
+            ["search_source.py", "needle", "--root", str(self.root)]
+        )
+        self.assertNotIn("searched the source set only", err)
 
     def test_glob_searches_every_extension_by_default(self):
         """A named `.md` must not be dropped by the source-extension heuristic —

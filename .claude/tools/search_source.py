@@ -23,12 +23,20 @@ with the truncation stated out loud** rather than silently trimmed (per
 ``CLAUDE.md`` → "Context economy": a cap nobody is told about reads as
 "searched everything").
 
+**Prose is not in the default set.** Searching skill or convention text needs
+``--ext md`` (or ``--all-text``); a bare sweep looks only at the source
+extensions below, so a string that lives only in a ``.md`` comes back as a
+confident ``0 match(es)``. That zero now says so on stderr rather than reading
+as absence — one measured run took the bare zero at face value and fell back to
+a hand-rolled ``grep``, which is exactly what this tool exists to replace.
+
 Usage::
 
     python3 .claude/tools/search_source.py 'WARNING 1' --context 2
     python3 .claude/tools/search_source.py 'fn compute_fill' --ext rs --dir programs,sdk
     python3 .claude/tools/search_source.py 'TODO' --files-only
     python3 .claude/tools/search_source.py '^#' --glob docs/fx-survey.md
+    python3 .claude/tools/search_source.py 'pnpm --dir' --ext md   # prose
 
 Options: ``--ext`` (comma-separated extensions, no dot; default is the source set
 below), ``--all-text`` (every extension, not just the source set), ``--dir``
@@ -86,12 +94,25 @@ DEFAULT_EXTENSIONS = object()
 # The extensions "source" means by default. Deliberately excludes `.md` — a doc
 # search is a different question, and mixing prose into a symbol sweep is what
 # made the unscoped hoisted grep noisy. Pass `--ext md` or `--all-text` for docs.
+#
+# That exclusion is a design choice, but it is also a trap, so it is announced:
+# a bare sweep for a string that lives only in prose returns a confident
+# `0 match(es)` that means "not in the source set", not "not in the repo". One
+# measured run read that as absence and fell back to a bare `grep` — the very
+# thing this tool replaces. `print_result` now says so whenever a defaulted run
+# comes back empty.
+#
+# `mjs` / `cjs` are here because their absence was a silent under-report of the
+# same shape: a sweep for a symbol present six times in a `.mjs` config file
+# returned zero hits, and ESM/CJS config files are ordinary source in this repo.
 SOURCE_EXTENSIONS = (
     "rs",
     "ts",
     "tsx",
     "js",
     "jsx",
+    "mjs",
+    "cjs",
     "py",
     "toml",
     "json",
@@ -335,8 +356,13 @@ def search(
     heuristic on top would silently drop a ``.md`` the caller asked for by name.
     Pass an explicit tuple (or ``None``) to override either way.
     """
+    # Remember that the caller expressed no preference *before* resolving it, so
+    # an empty result can distinguish "searched everywhere and found nothing"
+    # from "never looked outside the source set".
+    defaulted = extensions is DEFAULT_EXTENSIONS
     if extensions is DEFAULT_EXTENSIONS:
         extensions = None if globs else SOURCE_EXTENSIONS
+    narrowed_by_default = defaulted and extensions is not None
 
     matcher = build_matcher(pattern, fixed, ignore_case)
 
@@ -430,6 +456,10 @@ def search(
         "scanned": scanned,
         "glob_hits": stats["glob_hits"],
         "globbed": globs is not None,
+        # True when the run fell back to `SOURCE_EXTENSIONS` because the caller
+        # named no extension. Only meaningful on an empty result, where it is the
+        # difference between a real negative and an unasked question.
+        "narrowed_by_default": narrowed_by_default,
     }
 
 
@@ -461,6 +491,14 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
         # The size cap is the other silent-cap risk, so it is announced too.
         summary += (
             f" | {len(skipped)} file(s) skipped as oversized: {', '.join(skipped)}"
+        )
+    if not result["total"] and result.get("narrowed_by_default"):
+        # The third silent-cap risk, and the one that reads most like a real
+        # negative: nothing matched, but prose was never searched. Naming the
+        # remedy inline is what stops the reader falling back to a bare `grep`.
+        summary += (
+            " | NOTE: searched the source set only (no --ext/--all-text given), "
+            "so .md and other prose was not looked at — retry with --ext md"
         )
     if result.get("globbed") and not result.get("scanned"):
         # Distinguish the two ways a globbed run can search nothing. Blaming a

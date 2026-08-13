@@ -136,6 +136,7 @@ ratatui
 raydium
 readback
 regclass
+rels
 repeg
 repr
 reqwest

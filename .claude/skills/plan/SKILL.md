@@ -140,6 +140,19 @@ skill binds it too:
   on every issue. See `CLAUDE.md` →
   "Structured filing fields" for their exact shape.
 
+- **Buffer folds onto the same issue; write them once.**
+  Every `save_issue` echoes the issue's whole body back,
+  whatever the write said — so an aggregated survivor is
+  most expensive to touch exactly when it is being folded
+  into most. One planning session made **97 `save_issue`
+  calls for ≈164k**, its five costliest results all late
+  folds onto one survivor. When several folds, a priority
+  change and a relation land on the same issue in one
+  sitting, accumulate them into a **single** call (a `patch`
+  array takes up to 50 ops) rather than writing each as it
+  is decided. See `docs/conventions/linear-automation.md` →
+  "Partial edits".
+
 - **Record file collisions after each `save_issue`.** The
   incremental sweep is what turns a new issue's
   `**Touches**:` into `related` links against the open

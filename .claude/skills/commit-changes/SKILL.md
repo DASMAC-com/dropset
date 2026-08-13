@@ -32,6 +32,25 @@ changes here belong to this session.
    so nothing unintended slips in (build
    artifacts, generated files, secrets).
 
+   **Stage new files before treating a lint run as
+   meaningful for them.** `pre-commit --all-files`
+   is `git ls-files`, so an untracked file is
+   simply *not checked* — one run's two freshly
+   written test files passed a green `make lint`
+   and then failed cspell on the next run, once
+   committing had made them visible. A green lint
+   proves nothing about a file git has never seen.
+
+   **Don't re-derive the diff you already have.**
+   If `review_diff.py` has already written slices
+   for this range, self-review reads those files —
+   re-running a bare `git diff` buys the same bytes
+   twice, and did so in two measured sessions
+   (≈3.4k and ≈3.1k, the second-largest single
+   result of each). This is the "never re-fetch
+   what's already in context" rule applied to a
+   payload the session itself produced.
+
 1. Draft a concise commit message:
 
    - Summary line in imperative voice, capital
@@ -52,6 +71,17 @@ changes here belong to this session.
    The `-S` is mandatory — branch protection on
    this repo requires every commit to have a
    verified signature.
+
+   **A `failed to fill whole buffer` error means the
+   1Password SSH agent is locked** — it is not a git
+   or a key problem, and the
+   message says nothing to suggest otherwise. It
+   appears mid-session, after earlier commits in
+   the same run signed fine, because the agent
+   locks on its own timer. Nothing an agent can do
+   fixes it: ask the user to unlock 1Password, then
+   retry the same commit. One run stalled on two
+   consecutive attempts before this was diagnosed.
 
 1. Push to the branch's upstream:
 

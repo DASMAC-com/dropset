@@ -207,6 +207,28 @@ PR-authoring **writes** (`create_pull_request`,
    predicates feed steps 9 and 11, which say what a re-run
    forced by a rebase may skip.
 
+   **If the base delta touched `programs/**`, run
+   `make program` before any suite.** The rebase just pulled
+   new program source into this worktree, and a scoped
+   `cargo test` will happily run against the **stale** `.so`
+   left from before it. The failure is maximally confusing:
+   one run got 8 failures in tests it had never touched
+   (`Custom(6037)` where `Custom(6048)` was expected), which
+   read exactly like regressions from its own edits, and
+   diagnosing them plus rebuilding plus re-running was that
+   session's single biggest wall-clock detour.
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- make program
+   ```
+
+   This is the same hazard as the `test-no-teardown` ordering
+   trap in step 11, arriving from the other direction — there
+   a suite leaves a feature-off `.so` behind, here a rebase
+   leaves a stale one. The trigger is already free: the tool
+   printed the base delta's touched files just above, so this
+   costs one bare command and no extra reads.
+
    This replaces hand-rolling the sequence. One session ran
    the identical `fetch` → `log` → two `diff --name-only`
    → intersect-by-eye chain **three times** as `main` moved
@@ -424,6 +446,30 @@ PR-authoring **writes** (`create_pull_request`,
    reads an out-of-workspace absolute path and prompts zero
    times. (Where the Grep tool is genuinely absent, a bare
    `grep` still works — you just pay the prompt.)
+
+   **Run the formatting-class hooks scoped in ONE invocation
+   after edits — don't discover them serially.** Each
+   `pre-commit run --files …` surfaces one violation class at
+   a time, so a fix→lint→fix→lint loop walks cspell, then
+   line-length, then cspell again: one run spent **6
+   invocations** on what was a single class of problem. Run
+   the formatting hooks together over the changed paths, take
+   the whole list, and fix it in one pass.
+
+   **A markdown edit costs two runs by construction.** The
+   `markdownlint-fix` and `mdformat` hooks *modify files and
+   then fail*, so any `.md` change needs a second full run to
+   go green. That is the design, not a failure — one session
+   read it as one and spent 12 invocations (≈4.4k) on a spec
+   edit. Either run the two markdown hooks scoped to the
+   changed `.md` files first and let the full run come back
+   clean, or simply expect the second run.
+
+   **Answer "which hooks cover this file type?" with a grep,
+   not a read.** `cfg/pre-commit-lint.yml` is ~190 lines and
+   was once read whole (≈1.7k) to learn which hooks cover
+   `.sh` and `.github/**`. Grep it for `id:` / `files:` /
+   `types_or:` instead.
 
    If lint fails, first separate **environmental**
    failures and **autofixes** from **real violations** —
@@ -658,6 +704,19 @@ PR-authoring **writes** (`create_pull_request`,
      changes behavior tests pin).
    - **docs** — the doc-freshness lens.
 
+   **Once this has run, the slice files ARE the diff — for the
+   main loop too.** Having written them, do not turn round and
+   re-derive the same content with a bare `git diff` to read it
+   yourself: that buys the same bytes twice, and it was the
+   **second-largest single result** of two separate sessions
+   (≈3.4k re-running a `git diff` over a range already sliced,
+   ≈3.1k doing it for a self-review). Read the slice you want,
+   or `diff_path` for the whole thing. This is the standing
+   "never re-fetch what's already in context" rule applied to a
+   payload the session itself produced, which is exactly why it
+   slips — the rule reads as being about *tool results*, and a
+   file you wrote does not feel like one.
+
    A lens that genuinely needs two categories gets two paths;
    the full `diff_path` stays available for the cross-check,
    which is the one pass that should see everything. Two
@@ -728,11 +787,32 @@ PR-authoring **writes** (`create_pull_request`,
    `base_fresh` holds, a foreign path can't be base drift,
    because there is no drift to leak.
 
-   **Brief every sub-agent on the shell rules.** Prepend
-   the standing sub-agent brief from
-   `docs/conventions/sub-agent-brief.md` to **each** Agent
-   prompt — the review agents here *and* the cross-check
-   agent in step 6. That brief is the canonical wording
+   **When sub-agents are unavailable, run the pass inline —
+   and say so in the summary.** Some sessions operate under
+   instructions that forbid spawning an `Agent` unless the
+   user asked for one, which flatly contradicts this step. The
+   conflict is real and recurs, so resolve it here rather than
+   improvising: **do not spawn**, and do not silently skip the
+   pass either. Work the same lenses inline in the main loop,
+   one at a time, against the same slices and excerpts.
+
+   Then **state the reduced assurance in the step-17 review
+   summary** — one line naming which lenses ran inline and
+   that no independent cross-check was possible. The point is
+   not cost: an inline pass is *far* cheaper, since no fan-out
+   appears in the rollup at all, and one such run still found
+   two real defects. The point is that inline lenses share the
+   main loop's context and its blind spots, so they cannot
+   disagree with it the way a fresh agent can — and a reader
+   of the summary is entitled to know which kind of review
+   they got.
+
+   **Brief every sub-agent on the shell rules.** The standing
+   sub-agent brief from `docs/conventions/sub-agent-brief.md`
+   reaches **each** Agent prompt — the review agents here
+   *and* the cross-check agent in step 6 — via the preamble
+   file built below, so there is no need to `Read` that
+   convention doc here. That brief is the canonical wording
    (read-only framing, Read/Grep/Glob over shell, one bare
    command per Bash call, each reducible to an allow-rule);
    it exists so sub-agents — which inherit neither that
@@ -753,8 +833,32 @@ PR-authoring **writes** (`create_pull_request`,
    slice of a 5.4M fan-out — paid to say the same thing
    forty-odd times.
 
-   Compose it once, `Write` it to the scratchpad, and give
-   each Agent the path plus its own scope:
+   **Don't compose it by hand — emit it.** Writing it
+   yourself means first `Read`ing
+   `docs/conventions/sub-agent-brief.md` whole (≈1.7k,
+   measured on two separate runs) purely to copy verbatim,
+   unchanging boilerplate. That is deterministic string
+   assembly over a file with one owner, so a tool does it —
+   reading the brief in its **own** process, which is the
+   point (per `CLAUDE.md` → "Skill tooling"). One bare
+   command, and the skill reads nothing:
+
+   ```sh
+   python3 .claude/tools/lens_preamble.py \
+     --out <scratchpad>/lens-preamble.md \
+     --append .claude/skills/review-pr/lens-standing.md
+   ```
+
+   It composes two committed halves, each with a single
+   owner: the canonical shell rules from the convention doc,
+   and this skill's own standing scaffolding from
+   `lens-standing.md` beside this file — the negative scope,
+   the budget, the pre-emit gate, the standing suppressions.
+   **That template is the agent-facing wording**; the prose in
+   this step is the rationale for it. When you change one,
+   check the other still describes it.
+
+   Then give each Agent the path plus its own scope:
 
    ```txt
    Read <scratchpad>/lens-preamble.md first — it is the
@@ -833,12 +937,23 @@ PR-authoring **writes** (`create_pull_request`,
    **Give each lens an explicit read/turn budget as a HARD
    STOP, and one hard negative.** In the brief, tell the lens
    to adjudicate from the diff plus a **single** up-front read
-   of each file it needs, and give it a numeric turn cap
+   of each file it needs, and give it a numeric cap
    described in those two words — **hard stop**: at the cap it
    reports what it has, flagging anything unresolved, rather
    than continuing. The hard negative, stated verbatim: **do
    NOT re-open a file a finding already cites** unless you are
    resolving a specific, named dispute about that exact file.
+
+   **State that cap in tool calls, not only in turns.** A
+   "turn" is not a unit an agent can count as it goes, and the
+   rollup does not score it the way an operator reads it: one
+   completeness lens ran **939 seconds and 17 tool calls**
+   while the rollup scored it **7 turns** — compliant to the
+   harness, a 3× overrun to whoever is paying. Tool calls are
+   the thing the lens actually issues, so they are the thing it
+   can hold itself to. Write the cap in both units — *"≤ 6
+   turns / ≤ 8 tool calls, hard stop"* — so neither reading
+   leaves it unbounded.
    Re-reading a file the diff already handed the lens
    (`swap.rs`, `matching.rs`) to "double-check" has run a
    single lens to 700k+ input for facts it already had. The
@@ -866,6 +981,38 @@ PR-authoring **writes** (`create_pull_request`,
 
    So it is not a freshness-lens quirk. Same three words, same
    excerpts-not-filenames discipline, in every brief.
+
+   **But do not read the above as "cap-overrun is solved".**
+   It is not, and the later evidence is unambiguous: four
+   sessions ran the fan-out with the verbatim hard-stop wording
+   *and* inlined excerpts exactly as prescribed, and overran
+   anyway — one where three of six lenses went over by exactly
+   one turn, and one controlled within-session case where a
+   **byte-identical brief** bound one lens (completeness, 4
+   turns / 222.5k) and not another (correctness, 9 turns /
+   486.6k). Same words, same diff, same model, 2× the cost. So
+   the wording is necessary and is not sufficient, and the next
+   rule is where the remaining variance actually lives.
+
+   **Cap a lens brief at three enumerated sub-questions.**
+   Sub-question count is the discriminator the turn cap is
+   not. On one review the two most expensive lenses (463.1k and
+   447.4k, 8 turns each) were each handed **six** enumerated
+   investigative sub-questions — every one an invitation to its
+   own file read — while the cheapest (255.3k, 5 turns) got
+   five questions scoped to two named files. Both of the
+   expensive lenses
+   spent their turns re-deriving layout facts (a struct's
+   fields, a guard in `create_market`) the main loop could have
+   inlined in two lines.
+
+   So, when writing a brief: **any sub-question the main loop
+   can already answer gets *answered* in the brief, not
+   asked.** A question you know the answer to is not a probe,
+   it is a fact with a question mark on it, and it costs a file
+   read to convert back. Three genuine open questions is the
+   ceiling; if you have more, either you are surveying (see the
+   scope line below) or the lens should be split.
 
    **Hand every lens the context you already hold — not just
    correctness.** This is the single highest-value lever in
@@ -1004,15 +1151,28 @@ PR-authoring **writes** (`create_pull_request`,
    re-derived one from scratch (923k input / 12 turns on a
    944-line TUI diff) despite the "read each file once" rule.
 
-   **For the style lens, name the comparison files.** Style
-   is the lens most prone to a broad discovery scan — turned
-   loose it globs `components/**` (or the crate's whole module
-   tree) hunting for the local idiom, which is how one run
-   reached 485.8k. When the touched files were authored or
-   read in-session, the main loop **already knows** which
-   siblings define the idiom: name the specific **one or two**
-   of them in the brief and scope the comparison to those,
-   rather than letting the lens rediscover them.
+   **For the style lens, name the comparison files — and
+   paste their excerpts.** Style is the lens most prone to a
+   broad discovery scan — turned loose it globs
+   `components/**` (or the crate's whole module tree) hunting
+   for the local idiom, which is how one run reached 485.8k.
+   When the touched files were authored or read in-session,
+   the main loop **already knows** which siblings define the
+   idiom: name the specific **one or two** of them in the
+   brief and scope the comparison to those, rather than
+   letting the lens rediscover them.
+
+   Naming them is half the lever; **inlining them is the other
+   half**, and it is the half that gets dropped, because a
+   named path reads like enough. It is not: a path is an
+   instruction to go read, and the lens will. The exemplar to
+   beat is a style lens run at **85.8k input / 2 turns / 1
+   tool call** — cheaper than every other figure on this page,
+   including the reduced-tier ones below — and the one thing
+   that distinguished it from its four siblings on the same
+   review was that it received its comparison files *and their
+   excerpts* inline. One tool call, because there was nothing
+   left to go and fetch.
 
    **Scale the fan-out to the diff.** The full lens set
    below plus the step-6 cross-check is the right spend for
@@ -1107,10 +1267,32 @@ PR-authoring **writes** (`create_pull_request`,
      for a full tier) still caught a real warning.
    - The **one-lens** trivial short-circuit, where that single
      lens caught a **blocking** self-contradiction.
+   - A **move-refactor tier** at **503.5k combined** (against
+     the ≈0.8M–2.8M full-tier figures above): two lenses, no
+     cross-check, freshness gated off, excerpts inlined and
+     greps hoisted. **Both lenses landed inside their cap**
+     (5 and 4 against 6), and the pass returned a warning plus
+     five nits with **zero blocking misses**.
+   - The **small single-crate tier** on a 264-line one-crate
+     diff. Its only cost was that adjudicating one lens's
+     false positive moved into the main loop (≈1.5k across
+     three calls) — a good trade against a full cross-check,
+     and evidence the tier's cross-check skip is correctly
+     *placed*, not merely cheap.
+   - A **three-lens tier** where all three lenses
+     independently found the same real defect and two
+     independently found the same test gap. That convergence
+     is what made three sufficient without a cross-check —
+     and it is the signal to look for when judging whether a
+     reduced tier held.
 
    So when you scale the tier down, hold the per-lens
    discipline *tighter*, not looser: excerpts inline, hard-stop
-   cap, comparison files named.
+   cap, comparison files named **and their excerpts pasted**.
+   The evidence is that the tier rules and the excerpt
+   discipline **compose** — the cheapest lens ever measured
+   here (85.8k / 2 turns / 1 tool call) came out of a *full*
+   tier with excerpts inlined, not out of a reduced one.
 
    **Small single-crate tier — correctness + completeness, no
    cross-check.** One step up from the single-lens cases: a
@@ -1294,7 +1476,31 @@ PR-authoring **writes** (`create_pull_request`,
      the question is about **named files** rather than a
      subtree — `--dir docs --ext md` once returned ~200
      headings across 18 files (3.0k) to answer a question
-     about three named docs.
+     about three named docs. Searching skill or convention
+     prose needs `--ext md`: the default extension set is
+     source only, so a bare sweep for a string that lives in a
+     `SKILL.md` returns a confident `0 match(es)`.
+
+     **Hoist for the files the lens will *predictably* need,
+     not only the ones the main loop happened to read.** As
+     written, the excerpt rule is "inline what you already
+     have" — which by construction excludes the files the main
+     loop never opened, and those are exactly where a lens goes
+     next. One run inlined the two predicates the diff turns on
+     (`has_valid_reference_price`, `is_matchable`) and nothing
+     for the program-side gate **consumers**, so the lens
+     cold-read `swap.rs`, `deposit.rs`,
+     `set_liquidity_profile.rs` and `errors.rs` across ~5 extra
+     turns.
+
+     Note carefully that this spend was **not waste** — those
+     reads produced the review's single most valuable output,
+     an outside-depositor constraint (`ReferencePriceNotSet`)
+     no other lens found. The lever is to **pre-pay that
+     context once in the main loop**, not to suppress the
+     reads. So before spawning: ask what invariant the diff
+     changes, grep for its consumers once, and hand over that
+     result set.
 
    - **Confirm a rule's presence or absence by `Read`ing the
      current file, never by inferring from the diff's `-`/`+`
@@ -1530,8 +1736,25 @@ PR-authoring **writes** (`create_pull_request`,
    one-line rationale.
 
 1. **Adversarial cross-check.** (Skipped for a trivial
-   diff that took the scaled-down path above.) Spawn a fresh
-   sub-agent that receives the collected findings
+   diff that took the scaled-down path above.)
+
+   **Re-check base freshness first.** The step-5 fan-out just
+   ran for several minutes, and that window is exactly where
+   `main` moves — in one measured run the freshness gate did
+   catch drift, but only *after* four lenses had already
+   adjudicated the pre-drift diff, forcing a full re-run. One
+   bare command and ~200 tokens buys the whole cross-check
+   against that:
+
+   ```sh
+   python3 .claude/tools/review_diff.py --base origin/<base> \
+     --out <scratchpad>/review-diff.txt --split
+   ```
+
+   If the diff changed, re-run the affected lenses before
+   spending the cross-check on a stale picture.
+
+   Spawn a fresh sub-agent that receives the collected findings
    and the diff (prepend the same `CLAUDE.md`
    sub-agent brief to its prompt too, and hand it the
    diff **by path** — `<scratchpad>/review-diff.txt`, the
@@ -1559,6 +1782,21 @@ PR-authoring **writes** (`create_pull_request`,
    halves are the value: it finds what per-lens scope cannot
    see, and it is the thing that stops a plausible-but-wrong
    finding from reaching the catalogue.
+
+   **Give this pass a higher cap than the primary lenses —
+   8–10 tool calls, explicitly.** The primary lenses are being
+   tightened (three sub-questions, a cap stated in tool calls);
+   the cross-check should move the other way, and stating that
+   is the point. It is the pass that overran its cap most often
+   *and* returned the most value per turn: one run's cross-check
+   caught that a first-round fix had only half-closed its own
+   problem, and refuted a lens's test premise by reading
+   `sqlx`'s source. Capping it like a primary lens buys a small
+   saving on the one pass where the extra turns are the
+   product. So cap it at **8–10 tool calls, hard stop** — a
+   real bound, just a larger one — and hold the hard negative
+   below unchanged, since re-reading cited files is waste at
+   any cap.
 
    **Challenge from what it was given, not by re-deriving
    the codebase.** The cross-check's inputs are the
@@ -1975,6 +2213,38 @@ PR-authoring **writes** (`create_pull_request`,
    python3 .claude/tools/run_quiet.py -- make test
    python3 .claude/tools/run_quiet.py -- make test-no-teardown
    ```
+
+   **Re-check base freshness immediately before this run, not
+   just at step 2.** The review tail is long — a lens fan-out,
+   a cross-check, fixes, a re-lint — and `main` moved during it
+   in two measured sessions. In one, the drift landed *after* a
+   completed `make test` / `make test-no-teardown` / `sdk/ts`
+   pass and invalidated all three. The earlier check does not
+   cover a suite started twenty minutes later, so re-run
+   `review_diff.py` here and rebase first if it moved.
+
+   **Start these in the background and wait on CI
+   concurrently.** Step 17 blocks on GitHub CI, and running the
+   local suites to completion first serializes two ~20–40
+   minute waits for no reason: they test the same commit.
+   Launch the local suites with `run_in_background: true`, go
+   on to push and let CI start, and collect both results as
+   they land — one measured session paid **zero** extra
+   wall-clock for the overlap. Two notes from that same run:
+
+   - `wait_for_checks` returned `elapsed_seconds: 0`, because
+     `init-pr`'s draft PR starts CI at push time and it had
+     already settled. Read CI state right after the push
+     rather than assuming a wait is needed.
+
+   - **The CI-mirror carve-out.** `runs_rust_suites` fails
+     open, so it was `true` for a diff of three `.github/**`
+     files with no Rust in it at all — correct as a default,
+     but the local suite was then mirroring a CI run on the
+     same commit that the diff could not influence. When the
+     diff is confined to `.github/**` *and* CI is already
+     green on the head commit, treat CI as the mirror and skip
+     the local suite, recording the skip and its reason.
 
    - Both depend on the Solana/Anchor toolchain via
      `check-toolchain`. If the toolchain is absent
@@ -2484,6 +2754,16 @@ PR-authoring **writes** (`create_pull_request`,
      the final step, after `firm-perms`; do **not** block
      here waiting for the merge.
 
+     **And expect no output at all.** Under this harness
+     `gh pr merge --auto` prints **nothing** — stdout is not a
+     TTY, so the "Merge when ready" confirmation `gh` shows
+     interactively never appears. The exit status is genuinely
+     the *whole* signal: there is no reply text to read back,
+     and one run read the silence as a failed enqueue. If you
+     want positive confirmation beyond exit 0, take it from a
+     `mergeQueueEntry` probe after the settle delay — not from
+     anything the command said.
+
    - **If the user declines**, leave the PR ready and the
      issue In Review, and note that they can merge it (or
      enable "Merge when ready") themselves.
@@ -2844,37 +3124,57 @@ PR-authoring **writes** (`create_pull_request`,
    - `state: "OPEN"` with both `mergeQueueEntry` **and**
      `autoMergeRequest` null → **not conclusive on its own.**
      Per the settle window above, this is also what the
-     registration gap looks like. Treat it as terminal — the
-     PR was **taken out** of the queue (a check went red, a
-     conflict appeared, or someone dequeued it) — only when
-     one of these holds:
+     registration gap looks like: the PR that was never
+     registered and the PR that was registered and kicked out
+     read *identically* on this probe.
 
-     - an **earlier** probe in this watch already returned a
-       non-null `mergeQueueEntry`, so the entry demonstrably
-       existed and is now gone; or
-     - **two consecutive** all-null probes, spaced by the
-       pacing delay, have returned.
+     **Resolve that ambiguity with one `gh run list` — before
+     concluding anything.** The queue branch is the evidence:
+     if a run set for `pr-<number>-` exists, the entry
+     demonstrably existed, so an all-null probe now means it
+     **left**. If no such run set exists, the PR was never
+     registered and this is the window. One read settles it,
+     where waiting for a second probe only settles it slowly:
 
-     Until then it is the registration window: keep polling,
-     and stay silent. A single all-null read right after the
-     enqueue means "not registered yet", not "removed".
+     ```sh
+     gh run list --limit 20 --json headBranch,name,status,conclusion,url
+     ```
 
-     **Diagnose a confirmed removal from the queue branch's
-     CI, not from the PR's checks.** The queue does not
+     Pick the entry whose `headBranch` carries the
+     `pr-<number>-` prefix. A bare `gh run list` reduces to a
+     `Bash(gh run list:*)` allow-rule, so this costs one
+     allow-listed call.
+
+     This call used to sit **after** the branch below, as part
+     of diagnosing a removal already concluded — which meant a
+     run that read all-null as "not registered yet" never
+     reached it. On PR #311 that first probe *was* a terminal
+     dequeue: the PR had enqueued normally, the queue branch's
+     full run set had already completed, and `SDK` failed
+     transiently and kicked it out — while all 8 checks on the
+     PR itself stayed green, exactly as the note below warns.
+     The cost of concluding without this read was a blind
+     re-enqueue on a wrong diagnosis. It happened to be the
+     right action, because the failure was transient
+     infrastructure — but that was luck, not reasoning.
+
+     Failing that evidence, fall back to the slower tests:
+     treat it as terminal only when an **earlier** probe in
+     this watch already returned a non-null `mergeQueueEntry`,
+     or when **two consecutive** all-null probes, spaced by the
+     pacing delay, have returned. Until then it is the
+     registration window: keep polling, and stay silent.
+
+     **Diagnose the removal from the queue branch's CI, not
+     from the PR's checks.** This is why the run list above is
+     the right evidence in the first place. The queue does not
      re-run the PR branch's checks — it builds a temporary
      branch (`gh-readonly-queue/<base>/pr-<number>-<sha>`,
      i.e. `main` with this PR merged into it) and runs CI
      *there*. A failure on that branch dequeues the PR while
      leaving **every** check on the PR itself green, so
      `gh pr checks <number>` reports "nothing failed" on a PR
-     that was demonstrably kicked out. Find the queue run
-     instead — a bare `gh run list` reduces to a
-     `Bash(gh run list:*)` allow-rule — and pick the entry
-     whose `headBranch` carries the `pr-<number>-` prefix:
-
-     ```sh
-     gh run list --limit 20 --json headBranch,name,status,conclusion,url
-     ```
+     that was demonstrably kicked out.
 
      Key on **job** conclusions, not the parent run's
      `status`: a run can still read `in_progress` while one of

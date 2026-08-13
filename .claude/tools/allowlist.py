@@ -37,8 +37,17 @@ option, so it precedes the subcommand
   ``housekeeping`` step 7: ``over-broad`` (a bare-verb wildcard or an unscoped
   file-access root), ``subsumed`` (a narrower rule an earlier one already
   covers — the dead weight ``firm-perms`` never prunes), ``dangerous`` (an
-  ``rm -rf`` / force-push / pipe-to-shell one-off), and ``machine-path`` (an
-  absolute home path that leaked into a rule).
+  ``rm -rf`` / force-push / pipe-to-shell one-off), ``machine-path`` (a
+  malformed path, or an absolute home path in a settings file where one does
+  not belong), and ``machine-path-stale`` (a path that no longer resolves on
+  disk — the shape worktree rules decay into as worktrees are pruned).
+
+  **``machine-path`` is file-aware.** In a ``settings.local.json`` — git-ignored
+  and machine-local by design — an absolute home path is correct, not drift, so
+  it is not flagged there merely for being absolute. Flagging it unconditionally
+  produced 39 false positives out of 40 on one real pass, nearly all of them
+  load-bearing worktree and skill-tooling rules. The response carries
+  ``machine_local_settings`` so a reader knows which rule was in force.
 
 Defaults ``--settings`` to ``.claude/settings.local.json`` in the cwd. Stdlib
 only; a Python skill-tool under ``.claude/tools/`` — deliberately **not** a
@@ -57,8 +66,44 @@ import firm_core
 
 DEFAULT_SETTINGS = ".claude/settings.local.json"
 
-# Absolute home paths are machine-specific and shouldn't be pinned into a rule.
+# Absolute home paths, machine-specific by nature.
+#
+# Flagging these unconditionally made the shortlist unusable: on one pass
+# `cruft` returned **40 flagged entries out of 359, and 39 were false
+# positives**, every one of them `machine-path`. The file being audited is
+# `.claude/settings.local.json`, which is git-ignored and machine-local *by
+# design* — so an absolute `/Users/<name>/…` is the correct and only possible
+# form there, not drift. Worse, the flagged set was dominated by load-bearing
+# rules: the `git -C <base>/.claude/worktrees/*` entries the worktree workflow
+# requires, the `~/.zshrc` reads the local-integrations doc tells you to make,
+# and the `python3 <base>/.claude/tools/*` skill-tooling entry point. Removing
+# any of them breaks the workflow it serves, so a human had to reject nearly
+# the whole list by hand — which is the work the check was meant to remove.
+#
+# So an absolute home path is flagged only in a settings file where it does not
+# belong. The shapes below are defects in *any* file and stay unconditional.
 _MACHINE_PATH_RE = re.compile(r"/(Users|home)/[^/*]+/")
+
+# A doubled slash can never match — this is the one true positive that pass
+# found (`Read(//Users/<name>/.cargo/**)`), and it is malformed regardless of
+# which settings file it sits in. The lookbehind exempts a URL scheme
+# (`https://`, `file://`) and nothing else: a doubled slash *mid*-path is just
+# as unmatchable as a leading one, so it must not be exempted too.
+_MALFORMED_PATH_RE = re.compile(r"(?<!:)//")
+
+# A path prefix worth resolving on disk. Anchored at the rule's first absolute
+# path and stopped before any glob, so `Read(/Users/x/repo/**)` resolves
+# `/Users/x/repo`. Worktree rules accumulate as worktrees come and go, so a
+# no-longer-resolving path is the version of this check with real value.
+#
+# `:` is excluded from the path body because in a `Bash(...)` rule it is the
+# argument separator, not part of the filename — capturing it turned
+# `Bash(python3 /abs/tool.py:*)` into a lookup for `/abs/tool.py:`, which never
+# resolves, so every absolute Bash rule would have read as stale.
+_ABS_PATH_RE = re.compile(r"(/(?:Users|home)/[^/*\s:]+/[^*\s():]*)")
+
+# Machine-local settings files: absolute home paths are expected here.
+_LOCAL_SETTINGS_NAMES = ("settings.local.json",)
 
 # Dangerous one-off shapes: destructive rm, force-push, pipe-to-shell installs.
 _DANGEROUS_RES = (
@@ -191,34 +236,78 @@ def _is_subsumed(index: int, allow: list[str]) -> bool:
     return False
 
 
-def classify(rule: str, index: int, allow: list[str]) -> tuple[str, str] | None:
+def is_machine_local_settings(settings_path: Path | None) -> bool:
+    """Whether absolute home paths are *expected* in this settings file."""
+    if settings_path is None:
+        return False
+    return settings_path.name in _LOCAL_SETTINGS_NAMES
+
+
+def stale_path(rule: str) -> str | None:
+    """The first absolute path in ``rule`` that no longer resolves, if any."""
+    match = _ABS_PATH_RE.search(rule)
+    if not match:
+        return None
+    candidate = match.group(1).rstrip("/")
+    if not candidate:
+        return None
+    return None if Path(candidate).exists() else candidate
+
+
+def classify(
+    rule: str,
+    index: int,
+    allow: list[str],
+    machine_local: bool = False,
+) -> tuple[str, str] | None:
     """Classify ``allow[index]`` as cruft, or ``None`` if it looks fine.
+
     ``allow`` is the whole array (``index`` names the entry) so the subsumed
-    check can see broader rules on either side of it."""
+    check can see broader rules on either side of it. ``machine_local`` says the
+    settings file is one where absolute home paths belong, which suppresses the
+    bare ``machine-path`` verdict without suppressing the malformed and stale
+    checks — those are defects in any file.
+    """
     over_broad = _over_broad_reason(rule)
     if over_broad is not None:
         return "over-broad", over_broad
     for reason, pattern in _DANGEROUS_RES:
         if pattern.search(rule):
             return "dangerous", reason
+    if _MALFORMED_PATH_RE.search(rule):
+        return "machine-path", "doubled slash in the path — this rule can never match"
     if _MACHINE_PATH_RE.search(rule):
-        return "machine-path", "absolute home path pinned into the rule"
+        if not machine_local:
+            # In a shared settings file the absolute path is *itself* the
+            # defect, so report that rather than whether it happens to resolve.
+            return "machine-path", "absolute home path pinned into the rule"
+        missing = stale_path(rule)
+        if missing is not None:
+            # Where absolute paths are legitimate, staleness is the real signal
+            # — worktree rules accumulate as worktrees come and go.
+            return "machine-path-stale", f"path no longer exists on disk: {missing}"
     if _is_subsumed(index, allow):
         return "subsumed", "another rule already covers this"
     return None
 
 
-def cruft(allow: list[str]) -> dict:
+def cruft(allow: list[str], settings_path: Path | None = None) -> dict:
     """The suspicious-entry shortlist, keeping the full array out of context."""
+    machine_local = is_machine_local_settings(settings_path)
     flagged = []
     for i, rule in enumerate(allow):
-        verdict = classify(rule, i, allow)
+        verdict = classify(rule, i, allow, machine_local=machine_local)
         if verdict is not None:
             category, reason = verdict
             flagged.append(
                 {"index": i, "rule": rule, "category": category, "reason": reason}
             )
-    return {"count": len(allow), "flagged": flagged}
+    return {
+        "count": len(allow),
+        "flagged": flagged,
+        # Stated so a reader knows why absolute paths went unflagged.
+        "machine_local_settings": machine_local,
+    }
 
 
 def run(argv: list[str]) -> int:
@@ -248,7 +337,7 @@ def run(argv: list[str]) -> int:
     elif args.cmd == "covers":
         result = covers(args.rule, load_allow(settings_path))
     else:
-        result = cruft(load_allow(settings_path))
+        result = cruft(load_allow(settings_path), settings_path)
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")

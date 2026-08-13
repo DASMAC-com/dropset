@@ -131,6 +131,35 @@ what to file.
    - **Priority** — default to 3 (Medium). Bump to
      2 (High) only if the user calls it urgent.
 
+1. **Check the Backlog for a duplicate first — cheaply.**
+   This step exists because its absence filed a real
+   duplicate; it stays because the check is worth one small
+   call. Search the open Backlog for the issue's subject
+   before creating anything.
+
+   Ask for **titles**, not bodies. A dedup question is a
+   yes/no, and the default response shape answers it at
+   thousands of tokens: one measured call returned 8 full
+   issue objects — each with a long truncated description —
+   for ≈3.0k, the 4th-costliest tool of that session, and
+   another spent ≈5.6k on a 15-result query. So cap it:
+
+   ```txt
+   mcp__claude_ai_Linear__list_issues(
+     project: "<$LINEAR_PROJECT_ID>",
+     state: "Backlog",
+     query: "<the distinctive noun phrase>",
+     limit: 5,
+   )
+   ```
+
+   Treat a **title** match as sufficient to investigate and
+   a title mismatch as sufficient to proceed — only
+   `get_issue` a candidate that actually looks like the same
+   work. If one is a genuine duplicate, stop and amend that
+   issue (or hand off to `/merge-tasks`) instead of filing a
+   second.
+
 1. Create the issue with `save_issue` (do **not**
    pass `id` — that's for updates only):
 

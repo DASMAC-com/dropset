@@ -540,6 +540,24 @@ def _is_subcommand_word(tok: str) -> bool:
     )
 
 
+def _unwrap_run_quiet(tokens: list[str]) -> list[str]:
+    """Drop a ``… run_quiet.py --`` prefix, returning the wrapped command.
+
+    Conservative on purpose: it unwraps only when the marker is followed by an
+    explicit ``--`` separator, which is the documented invocation. A
+    ``run_quiet.py`` appearing as an *argument* to something else (a `git add`
+    of the tool, say) has no such separator and is left alone.
+    """
+    if not any(RUN_QUIET_MARKER in tok for tok in tokens):
+        return tokens
+    try:
+        marker = next(i for i, tok in enumerate(tokens) if RUN_QUIET_MARKER in tok)
+        sep = tokens.index("--", marker)
+    except (StopIteration, ValueError):
+        return tokens
+    return tokens[sep + 1 :]
+
+
 def bash_signature(command: str) -> str:
     """Normalize a Bash command to a stable shape for grouping repeats.
 
@@ -551,11 +569,23 @@ def bash_signature(command: str) -> str:
     ``git -C /repo pull --ff-only`` → ``git pull``,
     ``git branch -m worktree-eng-1 eng-1`` → ``git branch``, and
     ``printenv LINEAR_TEAM_ID`` → ``printenv``. Returns "" for an empty command.
+
+    A ``run_quiet.py --`` wrapper is **unwrapped** first, so the shape is the
+    command that actually ran: ``python3 .claude/tools/run_quiet.py -- make
+    lint`` → ``make lint``. Without that, the normalizer fused the wrapper with
+    its payload and emitted nonsense like ``python3 make lint`` /
+    ``python3 pnpm frontend`` — the tool path is skipped as a path token and the
+    ``--`` as a flag, leaving ``python3`` glued to the wrapped program. Besides
+    being unreadable, it grouped unrelated commands together and risked
+    nominating the wrapper itself as a hardening candidate. The wall-clock
+    ``cost`` label is unaffected: ``via_run_quiet`` is set from the raw command
+    text, not from this signature.
     """
     tokens = command.split()
     # Drop any leading environment assignments (`FOO=bar cmd …`).
     while tokens and _ENV_ASSIGN.match(tokens[0]):
         tokens.pop(0)
+    tokens = _unwrap_run_quiet(tokens)
     if not tokens:
         return ""
     head = [tokens[0]]

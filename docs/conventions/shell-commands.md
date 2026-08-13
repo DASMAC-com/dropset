@@ -119,6 +119,23 @@ Concrete rules:
     python3 .claude/tools/search_source.py 'PATTERN' --context 2
     ```
 
+    **Prose needs `--ext md`.** The default extension set is source
+    only, so a sweep for a string that lives in a skill or convention
+    doc returns `0 match(es)` — which reads as absence but means "never
+    looked". One run took that zero at face value and fell back to a
+    bare `grep`, the very thing the tool replaces. The summary line now
+    names the omission; pass `--ext md` (or `--all-text`) instead.
+
+    **A `--context N` window is for adjudicating a hit, never for
+    enumerating them.** It multiplies the payload by `N`: one
+    `--context 8` sweep returned 65.8KB, overflowed the tool-result cap,
+    spilled to disk, and answered nothing, while the re-ask without
+    context returned 11 lines and settled the question. Anchor the
+    pattern on the thing being enumerated and take no context. For the
+    same reason, ask **one question per sweep** — alternating several
+    unrelated patterns into one regex multiplies the result by the
+    number of things asked at once.
+
     When a bare `grep` really is unavoidable, take the flags from
     `python3 .claude/tools/review_diff.py --print-grep-excludes` rather
     than re-deriving them — that is the same list, with one owner.
@@ -240,6 +257,14 @@ don't write them, in ad-hoc shell or in committed skills/scripts:
   The `cd &&` compound re-prompts as a path-resolution bypass. Run
   bare from the cwd, or address another checkout with `git -C <path>`
   alone — no `cd`, no `&&`.
+- **A search pattern containing `<` or `>`.** Angle brackets read as
+  redirects, so a pattern carrying them is refused as "too complex to
+  verify that it stays inside the worktree" even inside quotes. One
+  sweep for the audit registry's `<->` interface notation was rejected
+  on exactly this and cost a retry with a reworded pattern. Search with
+  `search_source.py` (it takes the pattern as an argument, not through
+  the shell), or reword to avoid the characters — `--fixed` does not
+  help, since the refusal happens before the tool ever runs.
 
 If a one-off like these still gets approved during a session, do
 **not** allow-list it (a `*` can't generalize a compound): the

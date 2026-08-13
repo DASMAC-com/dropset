@@ -603,6 +603,18 @@ fresh worktree inherits.
    - On **yes**, route straight into `/review-pr`.
    - On **not yet**, stop and leave the PR as it is.
 
+   **Do not write a "delivered" narrative onto the Linear
+   issue at this point.** It is tempting — the work reads as
+   finished — but the adversarial pass has not run yet, and
+   on one measured run it *invalidated* the summary that had
+   already been written (the route memoization the note
+   described was removed as a blocking bug), forcing a
+   second corrections append. Two full-body echoes for one
+   story. The disposition is `review-pr`'s to record after
+   its fan-out, when it is actually known; leave the issue
+   alone here beyond the In-Progress transition in the
+   earlier step.
+
    Do **not** surface `/pr-title-description` as its own
    step in this flow: `review-pr` already **calls** it
    for the final title and body (its steps 13–14), so
