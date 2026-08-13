@@ -42,8 +42,9 @@ const _: () = assert!(RP_QUOTE_UNIX_OFF == 16);
 /// `quote_unix` is leader-supplied rather than read from the `Clock`
 /// sysvar, which keeps this path syscall-free. That is safe by the same
 /// argument as `quote_slot` — but note the argument's *shape* differs
-/// from a stored absolute expiry: because every level's `expiry_offset`
-/// is measured from this datum, a far-future `quote_unix` **extends**
+/// from a stored absolute expiry: because every level's
+/// `expiry_offset_secs` is measured from this datum, a far-future
+/// `quote_unix` **extends**
 /// the leader's own level lives rather than merely opting out of the
 /// protection. It is still self-harm-only, since a leader can already
 /// choose arbitrarily long offsets today, so no trust boundary moves;
@@ -111,9 +112,9 @@ mod tests {
 
     /// The wall-clock datum is stored raw, exactly like the price and the
     /// slot: the kernel neither validates nor clamps it. A zero datum is
-    /// the fail-closed case — every level materializes to
-    /// `0 + expiry_offset`, far in the past, so the vault is dead until
-    /// the leader stamps a real one.
+    /// the fail-closed case — every level's wall deadline materializes
+    /// to `0 + expiry_offset_secs`, far in the past, so the vault is dead
+    /// until the leader stamps a real one.
     #[test]
     fn quote_unix_is_stored_raw_including_zero_and_max() {
         let mut data = market_buf(0);

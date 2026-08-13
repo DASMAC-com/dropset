@@ -170,8 +170,8 @@ fn sdk_simulate_swap_matches_onchain_buy() {
     let amount_in: u64 = 1_000_000; // quote atoms (Buy spends quote)
     let taker = f.funded_depositor(0, 2 * amount_in);
 
-    // Buy with no upper price bound, current slot 1 (the seeded ladder
-    // never expires: expiry_offset = u32::MAX).
+    // Buy with no upper price bound, priced at the bank's own clocks
+    // (the seeded ladder never expires: both offsets are u32::MAX).
     let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY);
     assert!(q.out_amount > 0, "expected a fill");
     // Consumes ~all the input (a Buy converts quote->base via truncating

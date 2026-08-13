@@ -1,8 +1,9 @@
 //! Stale-quote invalidation — when a resting book must be killed rather than
 //! left to expire on its own.
 //!
-//! A quote the bot stamped stays matchable until its level's `expiry_offset`
-//! passes — up to 2_880 s (~48 min) on the deepest tier (§3 expiry table).
+//! A quote the bot stamped stays matchable until one of its level
+//! deadlines passes — up to 2_880 s (~48 min) of wall life on the
+//! deepest tier (§3 expiry table).
 //! If the bot goes down, or the chain halts, or the feeds go dark, nobody
 //! refreshes the reference in the meantime and takers can fill against a
 //! price the bot no longer believes.

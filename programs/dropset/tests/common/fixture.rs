@@ -763,7 +763,7 @@ impl Fixture {
     }
 
     /// Stamp a **fresh** quote: `quote_unix` is the bank's current time,
-    /// so every level is live for its own `expiry_offset` seconds. This
+    /// so every level is live for its own `expiry_offset_secs`. This
     /// is what a healthy leader does on every tick; tests that need to
     /// control the datum itself use [`Self::set_reference_price_at`].
     pub fn set_reference_price(

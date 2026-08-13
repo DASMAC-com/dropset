@@ -373,7 +373,7 @@ pub struct KillSwitchConfig {
 
 /// Stale-quote invalidation (the bot half of the halt / pick-off mitigation).
 ///
-/// A resting quote stays matchable until its level's `expiry_offset` passes —
+/// A resting quote stays matchable until a level deadline passes —
 /// up to ~48 min on the deepest tier. That life is now wall-clock bounded
 /// (levels are measured from the quote's `quote_unix` datum, so a halt no
 /// longer freezes the countdown), but a staleness *cap* is not the same as
@@ -600,8 +600,8 @@ mod tests {
             .map(|l| l.expiry_offset_secs)
             .max()
             .expect("ladder is non-empty");
-        // `expiry_offset` is wall-clock seconds, so the tier's life needs
-        // no slot-pace conversion — which is the point of the datum model.
+        // `expiry_offset_secs` is wall-clock seconds, so the tier's life
+        // needs no slot-pace conversion — the point of the datum model.
         let deepest_wall = Duration::from_secs(deepest as u64);
         assert!(cfg.invalidate.stale_after * 10 < deepest_wall);
     }
