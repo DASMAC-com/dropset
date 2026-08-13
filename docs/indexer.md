@@ -120,13 +120,16 @@ ______________________________________________________________________
 ```text
  cluster ──▶ ingest ──▶ decode ──▶ store(raw) ──▶ aggregate ──▶ /v1
  (RPC poll;  (filter     (events.rs   (Postgres:    (watermarked   (Axum
-  geyser      event-      walk +       fill_events   worker:        REST)
+  geyser      event-      walk +       fill_events   sink:          REST)
   next)       authority)  SDK codec)   + JSONB, PK)  legs→takes,
                                                      market stats)
 ```
 
-Each stage is idempotent on the primary key, so a replay (restart,
-backfill, or a re-delivered slot) never double-counts.
+Ingest is the shared framework's poll source and store sink
+(`data-feeds.md` §6); decode, the writers, and aggregation are this
+crate's. Each stage is idempotent on the primary key, so a replay
+(restart, backfill, or a re-delivered slot) never double-counts — which
+is what lets the framework deliver at-least-once.
 
 ______________________________________________________________________
 
@@ -161,10 +164,11 @@ for a first bring-up), behind the same decode + store seam. This
 poll-at-`finalized` shape is a proven production pattern for Solana
 order-book indexers, not a toy.
 
-**Built first: the RPC poll.** The prototype's `ingest.rs` implements
-this poll (`RpcPollSource`), keeping the dependency tree to the same
-solana 3.x line as the maker-bot and needing no validator plugin.
-Geyser is the documented next step behind the same `poll` shape — it
+**Built first: the RPC poll.** The prototype implemented this poll
+itself; it now comes from the shared ingestion framework's
+`RpcPollSource` (`feeds/src/rpc.rs`), which keeps the dependency tree to
+the same solana 3.x line as the maker-bot and needs no validator plugin.
+Geyser is the documented next step behind the same `Source` shape — it
 supplies inner instructions directly and the true per-block
 transaction index (the RPC path leaves `txn_index` at `0`, which is
 safe because the globally-unique signature already keys the row).
@@ -303,13 +307,21 @@ indexer/
     config.rs      # env-driven config (db / rpc / program id)
     model.rs       # row types, /v1 wire shape, event → JSON / columns
     decode.rs      # dropset_sdk::events walk, on live tx meta
-    ingest.rs      # RpcPollSource (geyser is the next step)
     store.rs       # sqlx pool, schema fence, ON CONFLICT writers + reads
     aggregate.rs   # watermarked legs→takes + market rollups
     api.rs         # Axum /v1 router
-    bin/indexer.rs # ingest + decode + store + aggregate worker
+    bin/indexer.rs # wires the feeds runner: source + store/aggregate sinks
     bin/api.rs     # the /v1 service
+  tests/           # store path, against a container Postgres
 ```
+
+There is no `ingest.rs`: the RPC transport moved to the shared ingestion
+framework (`feeds/src/rpc.rs`, `data-feeds.md` §6), and what stays here is
+the Dropset-specific half — `decode.rs`, the `EventWriter` that turns
+decoded events into rows inside the framework's batch transaction, the
+`AggregateSink` that folds behind it, and `/v1`. `bin/indexer.rs` is now
+wiring rather than a loop: it resumes the source from `feed_cursors`,
+orders the two sinks, and hands them to the framework runner.
 
 The indexer no longer carries a `migrations/` directory. Its tables live in
 the shared `dropset` database, whose single schema owner is the `db-schema/`
@@ -367,13 +379,16 @@ ______________________________________________________________________
   `[u8; 160]`, neither serde-supported as generated. The indexer
   sidesteps it (decode is borsh; `/v1` JSON is built in `model.rs`),
   but the feature wants a Codama-visitor fix — a separate follow-up.
-- **RPC-poll backlog window.** The poll fetches at most
+- **RPC-poll backlog window.** *Resolved by the move onto the shared
+  ingestion framework.* The poll used to fetch at most
   `signature_batch_limit` newest-first signatures per tick and then
-  advances the cursor to the newest — so a backlog larger than one
-  batch (a long gap, or the first poll after downtime) skips the
-  middle. Fine for steady localnet flow; the fix (page with `before`
-  until the window drains, or don't advance on a saturated batch) lands
-  with the geyser path.
+  advance the cursor to the newest, so a backlog larger than one batch
+  (a long gap, or the first poll after downtime) skipped the middle.
+  The framework's poll source now walks back with `before` until it
+  reaches the resume cursor before emitting anything, then drains
+  oldest-first (`data-feeds.md` §13). The same migration made the
+  resume position durable, so downtime no longer starts the poll from
+  the present.
 - **Realtime channel.** WebSocket vs SSE vs PostgREST + `pg_notify`
   for the eventual push surface — out of scope for the prototype, seam
   noted in §6 / §7.

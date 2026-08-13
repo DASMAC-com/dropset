@@ -1,7 +1,6 @@
 ---
 # cspell:word doctests
 # cspell:word dorny
-# cspell:word nextest
 # cspell:word sccache
 env:
   ANCHOR_REV: '2a191379'
@@ -332,6 +331,57 @@ jobs:
         needs.changes.outputs.code == 'true'
       name: 'Run Rust<->ASM parity tests'
       run: 'cargo nextest run --test asm_parity'
+  # The SQL-backed crates (`dropset-feeds` and `dropset-indexer`) reach a real
+  # Postgres through testcontainers, so their store suites are `#[ignore]`d
+  # and the default `cargo nextest run` above skips them entirely — as it does
+  # the feature-gated unit tests, since the feeds transports are off by
+  # default. This job covers both gaps. It is deliberately toolchain-light:
+  # nothing here builds or loads the program, so it skips install-toolchain,
+  # the program keypair, and the SBF cache the other jobs need, and keeps its
+  # own rust-cache key rather than dragging in their multi-GB target/.
+  #
+  # testcontainers talks to the Docker daemon that ubuntu-latest already runs,
+  # so no `services:` block is needed — each test starts and disposes of its
+  # own database, which is what keeps them independent under nextest's
+  # process-per-test parallelism.
+  test-postgres:
+    name: 'Tests (Postgres)'
+    needs: 'changes'
+    runs-on: 'ubuntu-latest'
+    steps:
+    - uses: 'actions/checkout@v6'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'dtolnay/rust-toolchain@stable'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'mozilla-actions/sccache-action@v0.0.10'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'Swatinem/rust-cache@v2'
+      with:
+        cache-on-failure: true
+        shared-key: 'rust-postgres-${{ runner.os }}'
+    - if: |
+        needs.changes.outputs.code == 'true'
+      uses: 'taiki-e/install-action@nextest'
+    # One invocation over both crates so the shared dependency graph compiles
+    # once. `--run-ignored all` runs the container-backed suites alongside the
+    # ordinary unit tests; the feeds features are named explicitly because a
+    # `-p` selection does not enable them.
+    #
+    # The schema comes from `dropset-db-schema` inside the tests themselves
+    # (docs/data-feeds.md §8) — there is no in-crate migrator left to lean on
+    # since the single-schema-owner split, and no DDL is issued here.
+    - env:
+        RUSTC_WRAPPER: 'sccache'
+      if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Run store and feature-gated tests against Postgres'
+      run: |
+        cargo nextest run --run-ignored all -p dropset-feeds \
+        -p dropset-indexer --features dropset-feeds/store,dropset-feeds/http \
+        --features dropset-feeds/rpc,dropset-feeds/stream
 name: 'Tests'
 'on':
   merge_group: null

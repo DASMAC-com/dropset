@@ -1,20 +1,17 @@
 //! Adapt a fetched transaction's inner instructions into decoded events
 //! at their on-chain coordinates, reusing the shared
 //! `dropset_sdk::events` codec.
+//!
+//! The fetched-transaction type is the framework's [`dropset_feeds::RawTx`]:
+//! the ingestion framework flattens and base58-decodes a transaction's inner
+//! instructions, and decoding what is inside those blobs is the part that
+//! stays Dropset-specific. It is referred to by its framework path
+//! throughout this crate rather than re-exported here, so there is one name
+//! for one type.
 
 use crate::model::{DecodedEvent, EventCoords};
+use dropset_feeds::RawTx;
 use dropset_sdk::events::{decode_event_payload, strip_event_tag};
-
-/// A fetched transaction reduced to what the indexer needs: its
-/// coordinates and the raw `data` of each inner instruction, in order.
-#[derive(Clone, Debug)]
-pub struct RawTx {
-    pub slot: i64,
-    pub txn_index: i64,
-    pub signature: String,
-    pub block_time: Option<i64>,
-    pub inner_ix_blobs: Vec<Vec<u8>>,
-}
 
 /// Decode every Dropset event-CPI from a transaction, assigning each its
 /// `event_ordinal` — its position among the transaction's event-CPI inner

@@ -48,10 +48,10 @@ stream seam (§4). The venue adapters have been relocated into
 Coinbase, CoinGecko, CoinMarketCap, ECB/Frankfurter — available to both
 sink paths, rather than one per app. The collector polls Coinbase and the
 maker polls the other three today; what changed is that either could use
-any of them. The collector crate still sits at its original path under
-`analytics/`;
-its move to `market-data/` and the indexer's migration onto the
-framework are separate tracked tasks.
+any of them. The eCLOB indexer has since migrated onto the framework
+too (§6), so every ingestion path in the repo now runs on one drive
+loop. The collector crate still sits at its original path under
+`analytics/`; its move to `market-data/` is a separate tracked task.
 
 ______________________________________________________________________
 
@@ -102,15 +102,17 @@ The framework is an **extraction and unification**, not a green-field
 invention. Two consumers already ingest data their own way; the
 framework lifts the common shape out of them:
 
-- **Indexer — durable RPC poll.** `RpcPollSource`
-  (`indexer/src/ingest.rs`) polls `getSignaturesForAddress` +
-  `getTransaction` at `finalized` and returns base58-decoded
-  inner-instruction blobs; `Store` (`indexer/src/store.rs`) is the
-  `sqlx` pool + idempotent `ON CONFLICT` writers (it ran its own
-  `sqlx::migrate!` until §8's single schema owner took that over);
-  `Cursor` is a typed watermark. Its own comment names the
-  seam: *"the geyser path would implement the same `poll` shape behind
-  the same decode + store seam."* That is the poll source + store sink.
+- **Indexer — durable RPC poll.** The indexer's own `RpcPollSource`
+  polled `getSignaturesForAddress` + `getTransaction` at `finalized` and
+  returned base58-decoded inner-instruction blobs; `Store`
+  (`indexer/src/store.rs`) is the `sqlx` pool + idempotent `ON CONFLICT`
+  writers (it ran its own `sqlx::migrate!` until §8's single schema owner
+  took that over); `Cursor` is a typed watermark. Its own comment named
+  the seam: *"the geyser path would implement the same `poll` shape
+  behind the same decode + store seam."* That is the poll source + store
+  sink — and the migration in §6 has since landed, so the transport now
+  lives in `feeds/src/rpc.rs` and the indexer keeps only its event
+  decode, the row writers, the aggregator, and `/v1`.
 - **Maker bot — a live price source and a live fill source.** The
   maker bot already composes a price feed (a CoinGecko → FX-rate →
   static cascade) to build a fair mid, and subscribes to fills via a
@@ -209,10 +211,13 @@ same source to a forward sink and quotes off it.
   client: a base URL, a shared client, and `get_json(path, query)`.
   Consumers: the Coinbase reference feed, the FX and issuer-rate feeds,
   and the maker's own price polls.
-- **RPC-poll** (`feature = "rpc"`, the solana 3.x client tree) — the
-  indexer's `RpcPollSource`, generalized over program id: poll
-  signatures newest-first, fetch each transaction at `finalized`,
-  flatten inner instructions into ordered, decoded blobs. Consumer: the
+- **RPC-poll** (`feature = "rpc"`, the solana 3.x client tree) —
+  `RpcPollSource`, generalized over program id from the indexer's
+  original poll source: enumerate signatures backwards to the resume
+  cursor, then emit oldest-first, fetching each transaction at
+  `finalized` and flattening inner instructions into ordered, decoded
+  blobs. It is generic over an `RpcTransport` seam — the shape a geyser
+  transport would implement. Consumer: the
   eCLOB indexer.
 - **Streaming / WebSocket** (`feature = "stream"`) — a subscribe source
   for the low-latency bot path (a CEX ticker socket, an RPC
@@ -287,10 +292,16 @@ ______________________________________________________________________
   feed to migrate: it is a stochastic flow generator sizing orders against
   the live on-chain book, so it stays as the *producer* of the fills the
   maker now consumes.
-- **The eCLOB indexer (store sink, migration).** The indexer adopts the
-  RPC source + store sink + cursor while keeping its own writers,
-  aggregator, and `/v1`. Deferred so the extraction does not destabilize
-  a merged component; the crate is designed to fit it.
+- **The eCLOB indexer (store sink, landed).** The indexer runs on the
+  RPC source + store sink + cursor and keeps its own writers, aggregator,
+  and `/v1`. Its writers became a `StoreWriter` (decode-and-write inside
+  the framework's batch transaction) and its aggregator a second `Sink`
+  ordered after the store sink, so one batch's ingest and fold stay in
+  step exactly as the hand-rolled worker had them. The migration also
+  made ingest **resumable**: the old loop always started from the
+  present, so a restart skipped whatever landed while it was down, and
+  the framework's `feed_cursors` position closes that. It brought no DDL
+  — the cursor table is §8's carve-out and already exists.
 
 ______________________________________________________________________
 
@@ -562,13 +573,36 @@ ______________________________________________________________________
   feed through the `ChannelSource` stream seam (§4). A CEX socket for
   the basis leg follows when polling it at the §10 cadence proves too
   slow for quoting — not before.
-- **Backfill windowing.** The indexer's poll takes the newest batch and
-  advances, so a backlog larger than one batch skips the middle
-  (`indexer.md` §9). The framework should offer a paged-backfill helper
-  so every poll source inherits the fix.
-- **Observability hook.** A metrics seam (records/batch, cursor lag,
-  error rate) the runner emits, so a deployed feed is observable without
-  per-feed wiring. Noted, not built in the first cut.
+- **Backfill windowing.** *Resolved — the framework owns a paged
+  backfill (`feeds/src/backfill.rs`) that any poll source can adopt; the
+  RPC source is the first.* (It is a helper a source drives, not
+  behavior a source inherits: the HTTP venue adapters page their own
+  backfill and are unchanged.) The correction that matters is
+  directional: a resume cursor is an exclusive *lower* bound, so
+  advancing it to a mid-backlog position discards everything older
+  rather than deferring it. The pager therefore withholds every page
+  until the backward walk has reached the bound, then emits
+  oldest-first. To make a walk that must finish affordable it stores a
+  **page key** per page rather than the records — for the RPC source,
+  the `before` marker *and* the newest signature the page held when it
+  was enumerated. Both ends are needed: a window bounded only from below
+  is open at the tip, so it can grow between enumeration and emission,
+  and the cursor must land on the recorded newest rather than on
+  whatever is newest by then. The per-poll page cap bounds how long one
+  `next()` runs, not how deep the walk may go: an unfinished walk
+  resumes where it stopped. Emission is two-phase for the same reason a
+  cursor is conservative — the page stays queued until the batch is
+  built, so a source error retries it instead of skipping it.
+- **Observability hook.** *Resolved — `FeedMetrics`, a two-callback
+  trait (`on_batch` / `on_error`) with no-op defaults that the runner
+  emits through; `run_with_metrics` / `run_until_with_metrics` carry a
+  recorder, and the plain `run` / `run_until` keep their signatures.*
+  Each batch reports records, `caught_up`, and the fetch and dispatch
+  durations; error rate is `on_error`'s frequency against `on_batch`'s.
+  Cursor **lag** is deliberately not reported as a number: only a source
+  knows whether its position is a timestamp, a slot, or a signature, so
+  the framework exposes `caught_up` and leaves the lag derivation to the
+  recorder. The indexer is the first consumer.
 - **FX bar source.** Pyth Benchmarks vs. a paid FX vendor, and its cost
   and history depth.
 - **Econ-calendar source.** Which static feed for the ECB / FOMC / CPI /

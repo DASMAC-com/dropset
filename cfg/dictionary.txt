@@ -100,6 +100,7 @@ moneyness
 mpsc
 multisigs
 mxne
+nextest
 nohup
 numstat
 oanda
