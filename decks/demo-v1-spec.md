@@ -271,7 +271,7 @@ cannot be kept in step automatically, so the two silently diverge.
   subject, where the page is about FX; "But almost none of it settles
   onchain" narrows the claim to settlement, when the gap is that FX barely
   trades there at all.
-- **Visual:** A **progress bar** — 8.6% of currencies available on Solana —
+- **Visual:** A **progress bar** — 9.3% of currencies available on Solana —
   over the currencies count from our own site, captioned
   `dropset.io/currencies`.
 - **Spoken:** "Blockchains are a perfect remedy for this situation — they're
@@ -339,26 +339,28 @@ cannot be kept in step automatically, so the two silently diverge.
   Solana" as the qualifier.
 - **Note on the bar:** a single ratio against a limit is a **meter**, not
   a pie of two slices — the empty part of the track *is* the message. It
-  carries the **percentage only**; the raw 14-of-162 count belongs to the
+  carries the **percentage only**; the raw 15-of-162 count belongs to the
   screenshot beneath it, which is the **citation**: our own page, showing
   the number, with the URL. Labelling both restated the same figure
   twice.
 - **Note on the count:** `LISTED_CURRENCIES` / `TOTAL_CURRENCIES` in
-  `DemoDeck.tsx` drive the meter; the raw 14-of-162 appears only in the
+  `DemoDeck.tsx` drive the meter; the raw 15-of-162 appears only in the
   capture beneath it. The spoken track states the **percentage and not the
   count**, deliberately — so no hand-copied figure in the notes can fall out
   of step with the constants, and the presenter is not reading their own
   slide. They are still live numbers from our own site, so **check them
   before presenting**.
 - **Note on the block's size — the capture is the cap.** Splitting the gap
-  page gave this one the whole width, so the meter grew from 760 to 900. It
-  cannot grow further: `currencies-listed.png` is **876 px wide**, the
-  smallest capture in the deck, and at the full ~1180 measure the frame asks
-  for 1142 units of a 876-px image and visibly blurs in the export while
-  every neighboring capture stays crisp. At 900 the image renders at 862 and
-  is still being downscaled. **Re-shoot the capture at a higher device pixel
-  ratio before widening this**; the slack left on the page is deliberate
-  white space, not room this block should take.
+  page gave this one the whole width, so the meter grew from 760 to 900, and
+  it held there while `currencies-listed.png` was only **876 px wide**, narrow
+  for a deck whose captures run 820–1500. The block width is the image's
+  *rendered* width, with the frame padding added outside it, so it meets the
+  capture's native pixels directly: ask for more units than it has and it
+  stretches and visibly blurs in the export while every neighboring capture
+  stays crisp. The re-shoot that added the fifteenth currency came back at
+  **1226 px**, so the meter now takes the full ~1180 measure — a genuine
+  downscale, and sharper than it was at 900, which had been a hair past the
+  old capture's native width. **Re-shoot wider before widening this again.**
 
 #### Page 4 — Live today · ~12s
 
@@ -1528,7 +1530,7 @@ the deck:
 - "Why you?" → We've built onchain exchanges before (Econia, ~\$500M);
   this is our domain.
 - "Why now?" → Non-US-dollar stablecoins are only just arriving onchain
-  (~14 currencies today, euro leading), and payments are following.
+  (~15 currencies today, euro leading), and payments are following.
 - "How do you make money?" → Page 9 is the answer, and the appendix
   detail is that each stage compounds into the next: liquidity
   operations now, protocol fees as the books thicken and volumes
@@ -1958,7 +1960,7 @@ our pages in brackets.
 1. **One-liner.** DASMAC is building Dropset, an onchain Forex platform
    that harnesses Solana for open, efficient exchange of multinational
    currencies at scale. [Pages 1, 12]
-1. **Problem / unique insight.** ~14 currencies now live on Solana via
+1. **Problem / unique insight.** ~15 currencies now live on Solana via
    stablecoins; Solana settlement can support the massive FX market
    *composably* — DevEx convenience for payments providers, merchants,
    manufacturers, and retail — because Solana is general-purpose, not
@@ -1975,7 +1977,7 @@ our pages in brackets.
    2\]
 1. **Why now.** The non-US stablecoin market has only just started to
    expand — EUR stablecoins drive most volume, more currencies going
-   live (14 on Solana). Page 10 is the other half of the answer: the
+   live (15 on Solana). Page 10 is the other half of the answer: the
    asset classes that already consolidated onchain are the pattern FX
    follows. [Pages 3, 5, 10]
 1. **Business model.** Liquidity operations now, protocol fees as
