@@ -130,13 +130,12 @@ reads.
 ## Authentication (PAT header, not OAuth)
 
 The server is added at **user scope** with a PAT in an `Authorization`
-header, on the same env-var convention as the `LINEAR_*` ids — the
-token lives in `~/.zshrc`, never in a committed file or
-`~/.claude.json`:
-
-```sh
-export GITHUB_MCP_PAT=…
-```
+header, read from `GITHUB_MCP_PAT` — never a committed file or
+`~/.claude.json`. Unlike the plain `LINEAR_*` ids, the token is a
+**secret**, so it is not written into `~/.zshrc` either: a
+`_ds_secrets` helper resolves it from 1Password at session launch (see
+[local-integrations](local-integrations.md) → "Session secrets"), and
+the registration below only references the variable:
 
 ```sh
 claude mcp add --transport http --scope user github \

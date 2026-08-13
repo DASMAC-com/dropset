@@ -21,12 +21,12 @@ export LINEAR_SESSION_METRICS_DOC_ID=…
 # Used by the plan skill — the "Planning" document a planning
 # session bootstraps from and writes its decisions back into:
 export LINEAR_PLANNING_DOC_ID=…
-# Used only by the sync-blockers Python tool (the deterministic
-# core of the sync-blockers skill) — a personal Linear API key. A
-# script can't use the OAuth-based claude.ai Linear MCP, so it
-# authenticates with this key, sent as the Authorization header.
-# Never commit it.
-export LINEAR_API_KEY=…
+# NOTE: LINEAR_API_KEY belongs here by rights — the sync-blockers
+# Python tool needs it, because a script can't use the OAuth-based
+# claude.ai Linear MCP and must authenticate with a personal key
+# sent as the Authorization header. It is NOT set here, though: it
+# is a secret, so it is resolved from 1Password at session launch.
+# See local-integrations.md, "Session secrets".
 ```
 
 Skills read these at run time with a bare `printenv`, **one variable
