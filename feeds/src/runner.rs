@@ -49,7 +49,7 @@ pub struct BatchStats {
 }
 
 /// The observability seam the runner emits through, so a deployed feed is
-/// instrumented without per-feed wiring (docs/data-feeds.md §7).
+/// instrumented without per-feed wiring (docs/data-feeds.md §13).
 ///
 /// Implementations are called inline on the drive loop and must not block:
 /// increment a counter, push to a channel, and return. The default

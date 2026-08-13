@@ -1,6 +1,6 @@
 //! Paged backfill for poll sources: emit a backlog oldest-first, one page
 //! at a time, so the resume cursor only ever advances over a contiguous
-//! prefix (docs/data-feeds.md §7).
+//! prefix (docs/data-feeds.md §13).
 //!
 //! A poll transport that answers "what is new since X" almost always
 //! answers it **newest-first and capped** — `getSignaturesForAddress`
