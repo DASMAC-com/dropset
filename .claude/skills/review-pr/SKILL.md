@@ -2551,13 +2551,22 @@ PR-authoring **writes** (`create_pull_request`,
      even a 400-line tail — a bigger `tail_lines` just re-buys
      the same passing-batch noise (one run paid `get_job_logs`
      at tail=120 then tail=400 to relearn this). Instead,
-     **reproduce the failing hook locally over `--all-files`
+     **reproduce the failing hook locally over the whole tree
      and trust its exit code** — the local run surfaces the
      actual offending files, which the CI tail does not:
 
      ```sh
-     python3 .claude/tools/run_quiet.py -- pre-commit run <hook-id> --all-files
+     python3 .claude/tools/run_quiet.py -- \
+       python3 .claude/tools/lint_paths.py -- <hook-id>
      ```
+
+     Drive it through `lint_paths.py`, **not** a bare
+     `pre-commit run <hook-id> --all-files`: `--all-files`
+     enumerates via `git ls-files`, so a file this branch added
+     but never `git add`ed is invisible to it — and that is
+     precisely the file CI is failing on, since CI's checkout
+     has it committed. A bare `--all-files` reproduce would come
+     back green and send you back to the CI log.
 
      `run_quiet` already indexes the failing hook and prints
      its offending-file tail (PR #235), so a non-zero exit

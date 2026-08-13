@@ -369,7 +369,7 @@ fresh worktree inherits.
    is exactly the population this step exists to serve.
 
    **This is not only a frontend-task concern.** `make lint`
-   runs `pre-commit --all-files`, and those two hooks are
+   runs the whole hook set over the tree, and those two are
    typed on `ts` / `tsx` / `js` / `css` — which the repo has
    plenty of regardless of what *this* branch touches. So the
    first full `make lint` in a cold worktree fails on them
