@@ -1,15 +1,14 @@
 import Link from "next/link";
-import { decks } from "@/lib/decks";
-import { ExportButton } from "./ExportButton";
+import { decks } from "@/lib/decks.mjs";
 
 /**
  * The deck index.
  *
  * The page opens with the two things a visitor needs — what this is, and that
- * a deck is interactive — and nothing else. Everything about shortcuts,
- * presenter mode and how the export works is real but rarely wanted, so it
- * sits in a closed disclosure at the bottom. Ahead of the deck list it pushed
- * the decks themselves below a wall of text.
+ * a deck is interactive — and nothing else. Everything about shortcuts and
+ * presenter mode is real but rarely wanted, so it sits in a closed disclosure
+ * at the bottom. Ahead of the deck list it pushed the decks themselves below a
+ * wall of text.
  */
 export default function Home() {
   return (
@@ -29,7 +28,7 @@ export default function Home() {
         </h1>
         <p className="mt-4 max-w-xl text-lg text-muted-fg">
           Talks and demos for Dropset — where currency trades onchain. Open a
-          deck and drive it with the arrow keys, or export it to PowerPoint.
+          deck and drive it with the arrow keys.
         </p>
       </header>
 
@@ -41,7 +40,7 @@ export default function Home() {
           >
             <Link
               href={deck.route}
-              className="group block p-6 pb-4 transition-colors hover:bg-muted/60"
+              className="group block p-6 transition-colors hover:bg-muted/60"
             >
               <div className="flex items-baseline justify-between gap-4">
                 <h2 className="text-xl font-medium text-foreground transition-colors group-hover:text-accent">
@@ -53,12 +52,6 @@ export default function Home() {
               </div>
               <p className="mt-2 text-muted-fg">{deck.subtitle}</p>
             </Link>
-            {/* A sibling of the card link, not a child: a button nested inside
-                an anchor would make a click ambiguous, and this one must not
-                navigate. */}
-            <div className="px-6 pb-5">
-              <ExportButton route={deck.route} title={deck.title} />
-            </div>
           </li>
         ))}
       </ul>
@@ -66,7 +59,7 @@ export default function Home() {
       <details className="group mt-12 rounded-xl border border-border bg-muted/20 open:bg-muted/30">
         <summary className="cursor-pointer list-none px-5 py-4 text-sm text-muted-fg transition-colors hover:text-foreground">
           <span className="font-mono text-xs tracking-widest uppercase">
-            Presenting and exporting
+            Presenting
           </span>
           <span className="ml-2 text-xs text-muted-fg group-open:hidden">+</span>
           <span className="ml-2 hidden text-xs text-muted-fg group-open:inline">
@@ -95,15 +88,12 @@ export default function Home() {
             screen.
           </li>
           <li>
-            <strong className="text-foreground">Export .pptx</strong> renders
-            each page at 3840×2160 into a PowerPoint file — what Google
-            Slides&apos; <span className="font-mono">File ▸ Import slides</span>{" "}
-            accepts. Slides can&apos;t import a PDF; for one, import here first
-            and use <span className="font-mono">File ▸ Download</span>.
-          </li>
-          <li>
-            The same export runs from a checkout as{" "}
+            A PowerPoint file for Google Slides&apos;{" "}
+            <span className="font-mono">File ▸ Import slides</span> is built
+            from a checkout with{" "}
             <span className="font-mono text-foreground">pnpm run export</span>.
+            It renders each page at 3840×2160 and needs a local browser, so it
+            isn&apos;t something this site can do for you.
           </li>
           <li>
             Decks are{" "}
