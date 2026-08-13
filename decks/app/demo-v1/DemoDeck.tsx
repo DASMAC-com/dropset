@@ -388,11 +388,10 @@ const Statement = ({
  * the better place for the raw count, because it's our own page carrying the
  * number, with the URL, so the figure is checkable rather than asserted.
  */
-const LISTED_CURRENCIES = 14;
+const LISTED_CURRENCIES = 15;
 const TOTAL_CURRENCIES = 162;
 /**
- * 900, up from the 760 this carried through v2 — and **capped by the
- * screenshot, not by the page**.
+ * The page's full measure — and **capped by the screenshot, not by the page**.
  *
  * 760 was sized for a page this block shared: the v2 gap page ran a column of
  * six facts down the left and the meter plus its citation down the right, so
@@ -402,21 +401,21 @@ const TOTAL_CURRENCIES = 162;
  * figures too small to read from the back of a room, which defeats the point
  * of citing them.
  *
- * The obvious fix — take the full measure, ~1180 — **does not work**, and the
- * reason is worth keeping. `currencies-listed.png` is **876 px wide**, the
- * smallest capture in the deck by some way (the others run 820–1500). The
- * `Screenshot` frame renders its image at `width - 2 * SCREENSHOT_INSET`, so
- * at 1180 the image is asked for 1142 units against 876 native — a 1.3×
- * upscale, and it visibly blurs in the export while every other capture on
- * neighboring pages stays crisp. At 900 the image lands at 862, just inside
- * native, so it is still being *down*scaled and stays sharp.
+ * It then held at 900 for several revisions, and the ceiling that pinned it
+ * there is still the one that applies: `Screenshot` hands this straight to its
+ * `Image` as the rendered width and pads the frame *outside* it, so this number
+ * meets the capture's native pixels directly. Ask for more units than the
+ * capture has and it is stretched past native, and it visibly blurs in the
+ * export while every other capture on neighboring pages stays crisp.
+ * `currencies-listed.png` used to be **876 px** — narrow for a deck whose
+ * captures run 820–1500 — so even 900 was already a hair beyond it.
  *
- * **So this cannot grow without a new capture.** Re-shoot
- * `currencies-listed.png` at a higher device pixel ratio first; until then 900
- * is the ceiling, and the page's remaining slack is deliberate white space
- * rather than room this block should take.
+ * The re-shoot that added the fifteenth currency came back at **1226 px**,
+ * which is what makes this width available: 1180 against 1226 native is a
+ * genuine downscale, so the capture is *sharper* here than it was at 900.
+ * Past 1226 it would stretch again, and that needs another capture first.
  */
-const METER_WIDTH = 900;
+const METER_WIDTH = 1180;
 const LISTED_SHARE = (LISTED_CURRENCIES / TOTAL_CURRENCIES) * 100;
 
 const CurrencyMeter = () => (
@@ -1445,7 +1444,7 @@ export default function DemoDeck() {
               <Screenshot
                 src="/screens/currencies-listed.png"
                 width={METER_WIDTH}
-                alt="14 of 162 currencies represented on Solana; 148 not yet listed"
+                alt="15 of 162 currencies represented on Solana; 147 not yet listed"
                 source="dropset.io/currencies"
                 margin="30px 0 0 0"
               />
