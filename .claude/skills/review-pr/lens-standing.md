@@ -1,3 +1,10 @@
+# Standing scope, budget, and suppressions
+
+The agent-facing half of every lens brief in a `review-pr` fan-out.
+`lens_preamble.py` appends this to the canonical sub-agent brief and writes
+the result to the scratchpad; the rationale for each rule lives in
+`SKILL.md` step 5, beside the measurement that produced it.
+
 ## Scope of this review
 
 Work **only** from the diff and commit log you were given. Dependency and

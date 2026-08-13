@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# cspell:word OOXML
+# cspell:word getbbox
+# cspell:word getpixel
+# cspell:word LANCZOS
 """Review rendered deck output without paying for it at print resolution.
 
 Two measured sessions spent **882.7k of `Read` (~98% of all tool-result cost)**
@@ -111,9 +115,7 @@ def _require_pillow():
 def natural_key(name: str):
     """Sort ``slide2`` before ``slide10`` — plain string order gets this wrong,
     and a deck silently reordered at page 10 is a nasty way to find out."""
-    return [
-        int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)
-    ]
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
 
 
 def slide_media_order(zf: zipfile.ZipFile) -> list[str]:
@@ -316,9 +318,7 @@ def _downscaled(data: bytes, width: int):
     return img
 
 
-def build_montage(
-    pages: list[tuple[str, bytes]], cols: int, cell_width: int
-):
+def build_montage(pages: list[tuple[str, bytes]], cols: int, cell_width: int):
     """A labelled contact sheet: the whole deck as one cheap read."""
     Image, _, ImageDraw = _require_pillow()
 

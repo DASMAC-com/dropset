@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# cspell:word TMPL
+# cspell:word putpixel
 """Tests for `render_review.py`.
 
 Split deliberately: the ordering, discovery, duplicate and CLI-shape logic is
