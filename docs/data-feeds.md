@@ -45,10 +45,13 @@ and fill transports on the live sink — the latter carrying the first
 streaming source, an RPC `logsSubscribe` socket bridged through the
 stream seam (§4). The venue adapters have been relocated into
 `feeds/src/venues/` (§4): there is now one implementation of each venue —
-Coinbase, CoinGecko, CoinMarketCap, ECB/Frankfurter — available to both
-sink paths, rather than one per app. The collector polls Coinbase and the
-maker polls the other three today; what changed is that either could use
-any of them. The eCLOB indexer has since migrated onto the framework
+Pyth Hermes, Coinbase (candles *and* spot ticker), Kraken, CoinGecko,
+CoinMarketCap, ECB/Frankfurter — available to both sink paths, rather
+than one per app. The collector polls Coinbase candles and the maker
+polls the rest today; what changed is that either could use any of them.
+The FX-anchor and basis **primaries** (§9) are now among them, so the
+maker no longer quotes off the fallback tier alone. The eCLOB indexer has
+since migrated onto the framework
 too (§6), so every ingestion path in the repo now runs on one drive
 loop. The collector crate still sits at its original path under
 `analytics/`; its move to `market-data/` is a separate tracked task.
@@ -283,12 +286,16 @@ ______________________________________________________________________
   sources on this crate into a store sink: an HTTP Coinbase reference
   feed first (the proof feed), then the FX, issuer-rate, and
   econ-calendar feeds. See §7 onward.
-- **Maker bot (live sink, landed).** The maker-bot's price cascade and
-  `logsSubscribe` fill walk run on `feeds`: three HTTP price sources
-  (CoinGecko, CoinMarketCap, ECB/Frankfurter) and the fill `logsSubscribe`
+- **Maker bot (live sink, landed).** The maker-bot's tiered price legs and
+  `logsSubscribe` fill walk run on `feeds`: the HTTP price sources — Pyth
+  Hermes and ECB/Frankfurter for the FX anchor, Coinbase and Kraken for
+  the basis and the USDC peg, CoinGecko / CoinMarketCap behind them — and
+  the fill `logsSubscribe`
   socket — bridged through the stream seam (§4) — fan onto in-process
   forward (live) sinks its synchronous tick loop drains with `try_recv`, on
-  a small background runtime. The taker bot has no bespoke price or fill
+  a small background runtime. Coinbase's ticker is keyed by one product,
+  so that tier is one source per listed market rather than one batched
+  poll. The taker bot has no bespoke price or fill
   feed to migrate: it is a stochastic flow generator sizing orders against
   the live on-chain book, so it stays as the *producer* of the fills the
   maker now consumes.
@@ -423,13 +430,52 @@ regimes, and its failure modes belong to
 [`market-making.md`](market-making.md) §1; what follows is which
 sources feed each leg and on what terms.
 
-| Role                             | Source                                                                                |
-| -------------------------------- | ------------------------------------------------------------------------------------- |
-| FX anchor (`fiat/USD`)           | Pyth Hermes FX / OANDA streaming; CME 6E in session; ECB / Frankfurter daily fallback |
-| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC`, Binance `EUR/USDT`                                           |
-| Peg truth                        | Circle / issuer redemption rate                                                       |
-| Token/USD, last resort           | CoinGecko / CoinMarketCap — reflexive, never the anchor                               |
-| Macro overlay                    | Econ-calendar loader (ECB / FOMC / CPI / NFP times)                                   |
+| Role                             | Source                                                                              |
+| -------------------------------- | ----------------------------------------------------------------------------------- |
+| FX anchor (`fiat/USD`)           | Pyth Hermes FX (wired); OANDA / CME 6E in session; ECB / Frankfurter daily fallback |
+| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC` (wired), Kraken `<token>/USD` (wired)                       |
+| Peg truth                        | Kraken `USDC/USD` (wired); Circle / issuer redemption rate                          |
+| Token/USD, last resort           | CoinGecko / CoinMarketCap — reflexive, never the anchor                             |
+| Macro overlay                    | Econ-calendar loader (ECB / FOMC / CPI / NFP times)                                 |
+
+### What is wired, and why the rest is not
+
+The primaries above are keyless and live. The gaps are not oversights — each
+was probed and ruled out on evidence:
+
+- **Binance is unusable from the deploy region.** `api.binance.com` answers
+  `HTTP 451` from both a developer machine and `us-west-2`, so the spec's
+  `EUR/USDT` basis leg would be dead code in the deployment rather than
+  merely untested. `api.binance.us` is reachable but lists **no EUR pair at
+  all**, and its one relevant symbol, `USDCUSD`, prints an administered flat
+  `1.00000000` — a feed that would report a depeg as perfect health. Kraken
+  takes that slot instead.
+- **Circle publishes no keyless redemption rate.** `/v1/exchange/rates` is
+  credentialed (`401`); the only public endpoint returns circulating supply
+  per chain, not a rate. Peg truth is therefore *observed at a venue* rather
+  than read from the issuer: Kraken's `USDC/USD` is a real market print of
+  the peg, and it is the leg that is **wired**. Kraken also lists `EURC/EUR`
+  — the cross redemption arbitrage enforces directly, and the natural
+  issuer-rate proxy — but nothing subscribes to it yet: the maker's roster
+  asks only for `<token>/USD` plus the shared `USDC/USD`. A credentialed
+  Circle Mint feed supersedes both when keys exist.
+- **OANDA is the same story** — credentialed, and Pyth Hermes already covers
+  every roster currency for free, with a confidence half-width OANDA would
+  have to be asked for separately.
+
+**Coverage is asymmetric, permanently.** Of the seven demo tokens only EURC
+reaches a CEX (Coinbase `EURC-USDC`, Kraken `EURC/USD`). The other six trade
+on neither, so their basis leg has no primary tier and the CoinGecko /
+CoinMarketCap indices carry it — the fallbacks are load-bearing, not vestigial.
+
+Two decode details Pyth forces, both handled in the adapter. It publishes each
+cross **one way only**, and for five of the seven roster currencies that is
+`USD/<ccy>`, so those are reciprocated — with the confidence half-width
+transformed as `δ(1/p) ≈ δp / p²`, since a half-width does not survive
+inversion unchanged. And its FX feeds follow the interbank schedule, so
+readings are aged from the publisher's `publish_time` rather than from
+receipt: a consumer ageing from receipt would see a frozen weekend rate as
+perpetually fresh and never engage the crypto-only regime.
 
 **Coinbase is the proof feed and the first adapter.** The Exchange
 public REST API is keyless and reachable; its candles endpoint returns

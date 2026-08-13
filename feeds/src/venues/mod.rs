@@ -11,13 +11,18 @@
 //!
 //! - **Batched quote venues** — one request prices many symbols, so the source
 //!   is built with the whole symbol set and yields a [`Quotes`] map per poll.
-//!   These implement [`BatchQuotes`]; [`coingecko`], [`coinmarketcap`], and
-//!   [`frankfurter`] are the three today. Batching is the per-venue budget's
-//!   main lever (§10): one poll for N markets, not N polls.
-//! - **Per-product history venues** — the endpoint is keyed by a single
-//!   product, so batching is not on offer and one source covers one product.
-//!   [`coinbase`]'s candles endpoint is the case; it pages its own backfill
-//!   instead, and deliberately does **not** implement [`BatchQuotes`].
+//!   These implement [`BatchQuotes`]; [`coingecko`], [`coinmarketcap`],
+//!   [`frankfurter`], and [`kraken`] are the four today. Batching is the
+//!   per-venue budget's main lever (§10): one poll for N markets, not N polls.
+//! - **Per-product venues** — the endpoint is keyed by a single product, so
+//!   batching is not on offer and one source covers one product. [`coinbase`]
+//!   is both cases: its candles endpoint pages its own backfill, and its
+//!   ticker endpoint yields one spot price. Neither implements [`BatchQuotes`].
+//! - **Batched venues richer than a price** — [`pyth`] batches like the first
+//!   group but yields a confidence half-width and a publish time alongside each
+//!   rate, so it cannot ride [`Quotes`]' bare `f64` and does not implement
+//!   [`BatchQuotes`] either. That extra payload is precisely what makes it the
+//!   FX anchor's *primary* tier rather than another fallback.
 //!
 //! Each adapter splits its decode out into free `parse_*` functions, which need
 //! no network: they are unit tested against captured responses, so a venue's
@@ -45,15 +50,23 @@ pub mod coingecko;
 pub mod coinmarketcap;
 #[cfg(feature = "http")]
 pub mod frankfurter;
+#[cfg(feature = "http")]
+pub mod kraken;
+#[cfg(feature = "http")]
+pub mod pyth;
 
 #[cfg(feature = "http")]
-pub use coinbase::{Candle, CoinbaseCandles};
+pub use coinbase::{Candle, CoinbaseCandles, CoinbaseTicker};
 #[cfg(feature = "http")]
 pub use coingecko::CoinGeckoSource;
 #[cfg(feature = "http")]
 pub use coinmarketcap::CmcSource;
 #[cfg(feature = "http")]
 pub use frankfurter::FrankfurterSource;
+#[cfg(feature = "http")]
+pub use kraken::KrakenSource;
+#[cfg(feature = "http")]
+pub use pyth::{FxQuote, PythFeed, PythHermesSource};
 
 /// One batched reading: the venue's own symbol key → USD price. The key type
 /// is the venue's, not ours — CoinGecko slugs are strings, CoinMarketCap ids

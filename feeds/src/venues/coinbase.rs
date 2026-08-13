@@ -150,6 +150,89 @@ impl Source for CoinbaseCandles {
     }
 }
 
+/// A poll [`Source`] over one Coinbase product's **spot ticker** — the live
+/// basis leg, as opposed to [`CoinbaseCandles`]' history.
+///
+/// The maker needs the current `<token>/USDC` print, not a closed bucket, so
+/// this is a separate source over `/products/{id}/ticker` rather than a mode of
+/// the candle feed: no cursor, no backfill, and each poll simply replaces the
+/// last reading. Like the candles endpoint it is keyed by a single product, so
+/// it is not a [`super::BatchQuotes`] venue either.
+///
+/// Which products a consumer subscribes to is the consumer's business — this
+/// crate quotes whatever it is handed (docs/data-feeds.md §9).
+pub struct CoinbaseTicker {
+    http: HttpClient,
+    name: String,
+    product_id: String,
+}
+
+impl CoinbaseTicker {
+    /// Build the source over `base_url` for one product (e.g. `EURC-USDC`).
+    pub fn new(base_url: &str, product_id: impl Into<String>) -> Result<Self> {
+        let product_id = product_id.into();
+        Ok(Self {
+            http: HttpClient::new(base_url)?,
+            name: format!("coinbase:{product_id}"),
+            product_id,
+        })
+    }
+
+    /// Fetch this product's current price, or `None` when the venue answered
+    /// without a usable one.
+    pub async fn poll(&self) -> Result<Option<f64>> {
+        let path = format!("/products/{}/ticker", self.product_id);
+        let body: serde_json::Value = self.http.get_json(&path, &[]).await?;
+        Ok(parse_coinbase_ticker(&body))
+    }
+}
+
+#[async_trait]
+impl Source for CoinbaseTicker {
+    /// The product id and its price, so one consumer can drain several ticker
+    /// sources into a single keyed cache.
+    type Record = (String, f64);
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn next(&mut self) -> Result<Batch<Self::Record>> {
+        let price = self.poll().await?;
+        Ok(Batch::new(ticker_records(&self.product_id, price)).with_caught_up(true))
+    }
+}
+
+/// Map one poll's outcome onto this source's records. Split out from
+/// [`CoinbaseTicker::next`] so the degrade path is testable without a network:
+/// an unusable response must reach the sink as **no record**, never as a zero,
+/// because a consumer caches by product id and an empty batch correctly leaves
+/// the previous reading to age out.
+fn ticker_records(product_id: &str, price: Option<f64>) -> Vec<(String, f64)> {
+    price
+        .map(|p| vec![(product_id.to_string(), p)])
+        .unwrap_or_default()
+}
+
+/// Decode Coinbase's `{"price":"…","bid":"…","ask":"…"}` ticker response,
+/// preferring the bid/ask mid and falling back to the last trade — the same
+/// choice, for the same reason, as the Kraken adapter's
+/// [`super::kraken::parse_kraken`].
+pub fn parse_coinbase_ticker(body: &serde_json::Value) -> Option<f64> {
+    let field = |k: &str| {
+        body.get(k)
+            .and_then(|v| match v {
+                serde_json::Value::String(s) => s.parse::<f64>().ok(),
+                other => other.as_f64(),
+            })
+            .filter(|v| v.is_finite() && *v > 0.0)
+    };
+    match (field("bid"), field("ask")) {
+        (Some(bid), Some(ask)) => Some((bid + ask) / 2.0),
+        _ => field("price"),
+    }
+}
+
 /// The end of the next backfill window: at most `max_buckets` past `next_start`,
 /// clamped to the last closed boundary so a request never spans more than
 /// Coinbase's per-request cap and never reaches into the forming bucket.
@@ -241,5 +324,47 @@ mod tests {
         )
         .unwrap();
         assert_eq!(source.max_buckets, MAX_CANDLES_PER_REQUEST);
+    }
+
+    #[test]
+    fn ticker_prefers_the_mid_over_the_last_trade() {
+        // The mid (1.15300) must differ from the last trade (1.15290), or the
+        // test passes just as happily against a `price`-only implementation
+        // and asserts nothing about the preference it is named for.
+        let body = serde_json::json!({
+            "price": "1.15290", "bid": "1.15280", "ask": "1.15320", "volume": "3128704"
+        });
+        let got = parse_coinbase_ticker(&body).unwrap();
+        assert!((got - 1.153_00).abs() < 1e-12, "got {got}");
+    }
+
+    #[test]
+    fn ticker_falls_back_to_price_without_both_sides() {
+        let body = serde_json::json!({ "price": "1.15290", "bid": "0" });
+        assert!((parse_coinbase_ticker(&body).unwrap() - 1.152_90).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ticker_rejects_a_response_with_no_usable_price() {
+        // Coinbase answers 400 for a product it has withdrawn, but an empty or
+        // zero-priced body must not become a zero reading either.
+        assert!(parse_coinbase_ticker(&serde_json::json!({})).is_none());
+        assert!(parse_coinbase_ticker(&serde_json::json!({ "price": "0" })).is_none());
+        assert!(parse_coinbase_ticker(&serde_json::json!({ "price": "n/a" })).is_none());
+    }
+
+    #[test]
+    fn an_unusable_ticker_response_yields_no_record_rather_than_a_zero() {
+        assert!(ticker_records("EURC-USDC", None).is_empty());
+        assert_eq!(
+            ticker_records("EURC-USDC", Some(1.1529)),
+            vec![("EURC-USDC".to_string(), 1.1529)]
+        );
+    }
+
+    #[test]
+    fn ticker_source_is_named_per_product_so_several_do_not_collide_in_logs() {
+        let source = CoinbaseTicker::new("https://example.test", "EURC-USDC").unwrap();
+        assert_eq!(source.name(), "coinbase:EURC-USDC");
     }
 }

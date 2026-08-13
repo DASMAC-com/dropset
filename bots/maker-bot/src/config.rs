@@ -1,3 +1,5 @@
+// cspell:word EURCUSD
+// cspell:word hexdigit
 //! Bot configuration — the knobs `docs/market-making.md` pins down.
 //!
 //! Defaults encode the spec verbatim: the tiered price feed and poll
@@ -34,9 +36,19 @@ pub const DEFAULT_LEADER_KEY: &str = "keys/EEEE.json";
 pub const QUOTE_KEYPAIR_FILE: &str = "keys/USDC.json";
 pub const QUOTE_DECIMALS: u8 = 6;
 
-/// CoinGecko id for USDC, priced in USD — the USDC/USD common-mode leg (§1
-/// fm1). One id shared by every market (all quote against the same USDC), so it
-/// rides the existing batched CoinGecko call rather than a per-market lookup.
+/// Kraken pair for USDC against USD — the **primary** USDC/USD common-mode leg
+/// (§1 fm1). One pair shared by every market, so it rides the batched Kraken
+/// call rather than a per-market lookup.
+///
+/// Kraken is the venue for this reading because the alternatives do not quote
+/// it honestly: Coinbase Exchange lists no `USDC-USD` product at all, and
+/// Binance.US carries the pair but prints an administered flat `1.00000000`,
+/// which would report a depeg as perfect health.
+pub const USDC_KRAKEN_PAIR: &str = "USDCUSD";
+
+/// CoinGecko id for USDC, priced in USD — the USDC/USD common-mode leg's
+/// **fallback**, used when the Kraken reading is absent or stale. It is a
+/// derived index rather than a venue print, which is why it was demoted.
 pub const USDC_COINGECKO_ID: &str = "usd-coin";
 
 /// One FX-stablecoin market: a base token quoted against USDC, with the
@@ -56,11 +68,27 @@ pub struct MarketConfig {
     /// ISO 4217 code of the fiat the token tracks — the symbol the keyless
     /// ECB/Frankfurter FX anchor and the static last-resort peg to.
     pub currency: &'static str,
-    /// CoinGecko coin id — the crypto basis leg (batched `/simple/price`).
+    /// Pyth Hermes feed id for this market's fiat cross — the **primary** FX
+    /// anchor, which unlike Frankfurter publishes a confidence half-width.
+    pub pyth_feed_id: &'static str,
+    /// Whether [`MarketConfig::pyth_feed_id`] is published as `USD/<ccy>` and
+    /// must be reciprocated into USD per `<ccy>`. Pyth quotes each cross one
+    /// way only, and for five of the seven roster currencies that is the
+    /// inverted direction.
+    pub pyth_invert: bool,
+    /// Coinbase product id for the token against USDC — the **primary** basis
+    /// leg, in exactly the engine's units. `None` for a token Coinbase doesn't
+    /// list, which is all of the roster but EURC.
+    pub coinbase_product: Option<&'static str>,
+    /// Kraken pair name for the token against USD — the basis-leg secondary.
+    /// `None` for a token Kraken doesn't list (every exotic).
+    pub kraken_pair: Option<&'static str>,
+    /// CoinGecko coin id — the crypto basis-leg fallback (batched
+    /// `/simple/price`). Load-bearing for the six exotics no CEX quotes.
     pub coingecko_id: &'static str,
-    /// CoinMarketCap numeric id — the basis-leg fallback when CoinGecko is down
-    /// (batched by id). `None` for a token CMC doesn't list (MXNe), which
-    /// simply leaves CoinGecko as the sole crypto basis source.
+    /// CoinMarketCap numeric id — the last basis-leg fallback (batched by id).
+    /// `None` for a token CMC doesn't list (MXNe), which simply leaves
+    /// CoinGecko as the sole crypto basis source there.
     pub coinmarketcap_id: Option<u32>,
     /// Last-resort static USD-per-token peg, used only when every live leg is
     /// down. A representative spot value; a live FX anchor and basis supersede
@@ -72,13 +100,26 @@ pub struct MarketConfig {
 /// liquidity, each quoted against USDC at $100 top-of-book. The CoinGecko ids
 /// are from a by-contract lookup on each token's real mainnet mint; the
 /// CoinMarketCap ids from its `cryptocurrency/detail` record. MXNe (Real MXN)
-/// is not listed on CoinMarketCap, so its secondary tier is `None`.
+/// is not listed on CoinMarketCap, so that tier is `None`.
+///
+/// The Pyth feed ids are from the Hermes FX catalogue
+/// (`/v2/price_feeds?asset_type=fx`). Only EUR and GBP are published as
+/// `<ccy>/USD`; the rest are `USD/<ccy>` and carry `pyth_invert: true`.
+///
+/// **Only EURC reaches a CEX.** Coinbase lists `EURC-USDC` and Kraken lists
+/// `EURC/USD`; none of the other six tokens trades on either venue, so their
+/// basis leg has no primary tier and the CoinGecko / CoinMarketCap fallbacks
+/// carry it. That asymmetry is the roster's, not a gap in the wiring.
 pub const MARKETS: [MarketConfig; 7] = [
     MarketConfig {
         symbol: "EURC",
         base_keypair_file: "keys/EURC.json",
         base_decimals: 6,
         currency: "EUR",
+        pyth_feed_id: "a995d00bb36a63cef7fd2c287dc105fc8f3d93779f062f09551b0af3e81ec30b",
+        pyth_invert: false,
+        coinbase_product: Some("EURC-USDC"),
+        kraken_pair: Some("EURCUSD"),
         coingecko_id: "euro-coin",
         coinmarketcap_id: Some(20641),
         static_usd: 1.14,
@@ -88,6 +129,10 @@ pub const MARKETS: [MarketConfig; 7] = [
         base_keypair_file: "keys/VCHF.json",
         base_decimals: 9,
         currency: "CHF",
+        pyth_feed_id: "0b1e3297e69f162877b577b0d6a47a0d63b2392bc8499e6540da4187a63e28f8",
+        pyth_invert: true,
+        coinbase_product: None,
+        kraken_pair: None,
         coingecko_id: "vnx-swiss-franc",
         coinmarketcap_id: Some(24130),
         static_usd: 1.235,
@@ -97,6 +142,10 @@ pub const MARKETS: [MarketConfig; 7] = [
         base_keypair_file: "keys/TGBP.json",
         base_decimals: 9,
         currency: "GBP",
+        pyth_feed_id: "84c2dde9633d93d1bcad84e7dc41c9d56578b7ec52fabedc1f335d673df0a7c1",
+        pyth_invert: false,
+        coinbase_product: None,
+        kraken_pair: None,
         coingecko_id: "tokenised-gbp",
         coinmarketcap_id: Some(38935),
         static_usd: 1.324,
@@ -106,6 +155,10 @@ pub const MARKETS: [MarketConfig; 7] = [
         base_keypair_file: "keys/ZARP.json",
         base_decimals: 6,
         currency: "ZAR",
+        pyth_feed_id: "389d889017db82bf42141f23b61b8de938a4e2d156e36312175bebf797f493f1",
+        pyth_invert: true,
+        coinbase_product: None,
+        kraken_pair: None,
         coingecko_id: "zarp-stablecoin",
         coinmarketcap_id: Some(21856),
         static_usd: 0.0605,
@@ -115,6 +168,10 @@ pub const MARKETS: [MarketConfig; 7] = [
         base_keypair_file: "keys/MXNe.json",
         base_decimals: 9,
         currency: "MXN",
+        pyth_feed_id: "e13b1c1ffb32f34e1be9545583f01ef385fde7f42ee66049d30570dc866b77ca",
+        pyth_invert: true,
+        coinbase_product: None,
+        kraken_pair: None,
         coingecko_id: "real-mxn",
         coinmarketcap_id: None,
         static_usd: 0.0573,
@@ -124,6 +181,10 @@ pub const MARKETS: [MarketConfig; 7] = [
         base_keypair_file: "keys/XSGD.json",
         base_decimals: 6,
         currency: "SGD",
+        pyth_feed_id: "396a969a9c1480fa15ed50bc59149e2c0075a72fe8f458ed941ddec48bdb4918",
+        pyth_invert: true,
+        coinbase_product: None,
+        kraken_pair: None,
         coingecko_id: "xsgd",
         coinmarketcap_id: Some(8489),
         static_usd: 0.7705,
@@ -133,6 +194,10 @@ pub const MARKETS: [MarketConfig; 7] = [
         base_keypair_file: "keys/idrx.json",
         base_decimals: 2,
         currency: "IDR",
+        pyth_feed_id: "6693afcd49878bbd622e46bd805e7177932cf6ab0b1c91b135d71151b9207433",
+        pyth_invert: true,
+        coinbase_product: None,
+        kraken_pair: None,
         coingecko_id: "idrx",
         coinmarketcap_id: Some(26732),
         static_usd: 0.000056,
@@ -194,12 +259,27 @@ pub struct FeedConfig {
     /// ECB/Frankfurter FX-anchor poll interval. ECB publishes once a working
     /// day, so a slow poll suffices.
     pub fx_poll: Duration,
+    /// Pyth Hermes FX-anchor poll interval — the primary anchor tier. Hermes
+    /// republishes on the order of a second, so this is the cadence at which
+    /// the anchor actually moves and is polled far harder than the daily ECB
+    /// fallback below.
+    pub pyth_poll: Duration,
+    /// Kraken poll interval — the batched basis / peg-truth tier.
+    pub kraken_poll: Duration,
+    /// Coinbase spot-ticker poll interval — the primary basis tier.
+    pub coinbase_poll: Duration,
     /// CoinGecko REST base URL (`/simple/price` is appended).
     pub coingecko_base_url: String,
     /// CoinMarketCap REST base URL (`/v2/cryptocurrency/quotes/latest`).
     pub coinmarketcap_base_url: String,
     /// Frankfurter REST base URL (`/latest`), the keyless ECB FX-rate feed.
     pub frankfurter_base_url: String,
+    /// Pyth Hermes base URL (`/v2/updates/price/latest`).
+    pub pyth_base_url: String,
+    /// Kraken public REST base URL (`/0/public/Ticker`).
+    pub kraken_base_url: String,
+    /// Coinbase Exchange REST base URL (`/products/{id}/ticker`).
+    pub coinbase_base_url: String,
 }
 
 /// Quoting strategy parameters (§2–§3).
@@ -345,9 +425,19 @@ impl Default for FeedConfig {
             coingecko_poll: Duration::from_secs(60),
             coinmarketcap_poll: Duration::from_secs(60),
             fx_poll: Duration::from_secs(300),
+            // The primaries are keyless but not rate-limit-free, and one poll
+            // covers the whole roster in each case. A 5 s Hermes cadence tracks
+            // the anchor at the bot's own tick rate; the CEX basis legs move
+            // slowly enough (a pegged token against its peg) that 15 s is ample.
+            pyth_poll: Duration::from_secs(5),
+            kraken_poll: Duration::from_secs(15),
+            coinbase_poll: Duration::from_secs(15),
             coingecko_base_url: "https://api.coingecko.com/api/v3".to_string(),
             coinmarketcap_base_url: "https://pro-api.coinmarketcap.com".to_string(),
             frankfurter_base_url: "https://api.frankfurter.dev/v1".to_string(),
+            pyth_base_url: "https://hermes.pyth.network".to_string(),
+            kraken_base_url: "https://api.kraken.com".to_string(),
+            coinbase_base_url: "https://api.exchange.coinbase.com".to_string(),
         }
     }
 }
@@ -401,11 +491,20 @@ impl Default for BotConfig {
             kill: KillSwitchConfig::default(),
             invalidate: InvalidateConfig::default(),
             fair_value: FairValueConfig {
-                // The bot's FX anchor is currently the daily Frankfurter feed,
-                // polled every `fx_poll` (300 s); a staleness bound comfortably
-                // above that keeps the slow anchor from flapping in and out of
-                // the composition each cycle. TBD(survey): split per leg so the
-                // fast crypto leg can be checked on a tighter bound.
+                // One bound has to cover legs whose cadences differ by orders
+                // of magnitude: Pyth republishes every second or so, while the
+                // Frankfurter fallback behind it is a once-a-working-day ECB
+                // reference. The bound is therefore set by the *slowest* leg —
+                // anything tighter would drop the fallback out of the
+                // composition permanently, which is the tier that keeps the six
+                // CEX-less exotics quoting at all.
+                //
+                // The cost is that a dead Pyth feed is not caught for 15 min on
+                // its own; in practice the weekend flip is what this governs,
+                // and Pyth ages from its `publish_time` (not from receipt), so
+                // a frozen FX session does go stale here rather than reading as
+                // perpetually fresh. TBD(survey): split per leg, which is the
+                // real fix and is the survey's to make.
                 leg_stale: Duration::from_secs(15 * 60),
                 ..FairValueConfig::default()
             },
@@ -493,6 +592,57 @@ mod tests {
                 "duplicate mint file {}",
                 m.base_keypair_file
             );
+        }
+    }
+
+    /// Every market names a Pyth FX feed, and each id is a distinct 32-byte
+    /// hex string. A duplicated id would silently anchor two currencies on one
+    /// cross — the copy-paste failure this roster is most exposed to.
+    #[test]
+    fn every_market_has_a_distinct_pyth_feed() {
+        use std::collections::HashSet;
+        let mut ids = HashSet::new();
+        for m in MARKETS {
+            assert_eq!(
+                m.pyth_feed_id.len(),
+                64,
+                "{} pyth feed id is 32 bytes of hex",
+                m.symbol
+            );
+            assert!(
+                m.pyth_feed_id.chars().all(|c| c.is_ascii_hexdigit()),
+                "{} pyth feed id is hex",
+                m.symbol
+            );
+            assert!(
+                ids.insert(m.pyth_feed_id),
+                "{} reuses another market's pyth feed",
+                m.symbol
+            );
+        }
+    }
+
+    /// The CEX tiers are opt-in per token and must not be invented: only EURC
+    /// is listed on Coinbase or Kraken, and every entry that does exist has to
+    /// name the market's own currency so a mis-pasted pair can't quote the
+    /// wrong token.
+    #[test]
+    fn cex_basis_tiers_are_only_claimed_where_the_token_is_listed() {
+        for m in MARKETS {
+            if m.symbol == "EURC" {
+                assert_eq!(m.coinbase_product, Some("EURC-USDC"));
+                assert_eq!(m.kraken_pair, Some("EURCUSD"));
+            } else {
+                assert!(m.coinbase_product.is_none(), "{} on Coinbase?", m.symbol);
+                assert!(m.kraken_pair.is_none(), "{} on Kraken?", m.symbol);
+            }
+            for pair in [m.coinbase_product, m.kraken_pair].into_iter().flatten() {
+                assert!(
+                    pair.starts_with(m.symbol),
+                    "{} names the pair {pair}",
+                    m.symbol
+                );
+            }
         }
     }
 }

@@ -10,23 +10,50 @@
 //! ## Legs, and how the bot's feeds map onto them
 //!
 //! The sources are the shared `dropset_feeds::venues` adapters — the bot
-//! selects and tiers them, it does not implement them.
+//! selects and tiers them, it does not implement them. Each leg walks its tiers
+//! in order and takes the first that answers ([`crate::tasks`] does the walk):
 //!
-//! | Engine leg    | Meaning              | Venue source                            |
-//! | ------------- | -------------------- | --------------------------------------- |
-//! | `fx`          | USD per fiat unit    | ECB/Frankfurter USD/`<ccy>`             |
-//! | `crypto_usdc` | USDC per token       | CoinGecko / CoinMarketCap token-USD     |
-//! | `usdc_usd`    | USD per USDC         | CoinGecko `usd-coin`                    |
-//! | `static_usd`  | last-resort peg      | [`crate::config::MarketConfig::static_usd`] |
+//! | Engine leg    | Meaning           | Primary            | Then                 | Last resort   |
+//! | ------------- | ----------------- | ------------------ | -------------------- | ------------- |
+//! | `fx`          | USD per fiat unit | Pyth Hermes        | ECB/Frankfurter      | —             |
+//! | `crypto_usdc` | USDC per token    | Coinbase `/USDC`   | Kraken `/USD`        | CoinGecko/CMC |
+//! | `usdc_usd`    | USD per USDC      | Kraken `USDCUSD`   | CoinGecko `usd-coin` | —             |
+//! | `static_usd`  | last-resort peg   | [`crate::config::MarketConfig::static_usd`] | | |
 //!
-//! The crypto/USD tier (CoinGecko / CMC), which the *old* cascade used as the
-//! primary mid, is **demoted** here to the basis leg — a fallback source, never
-//! the anchor, for the reflexivity reason in §1. The spec's designated
-//! streaming primaries (Pyth Hermes / OANDA for the anchor; Coinbase
-//! `<token>/USDC`, Binance `EUR/USDT` for the basis; Circle redemption for
-//! peg-truth) are a separate follow-up; until they land, Frankfurter serves as
-//! the FX anchor — which is exactly the anchor's designated *fallback* tier, so
-//! the two-peg model runs live on real data today.
+//! Four things that table is load-bearing about:
+//!
+//! - **The crypto/USD index tier is demoted, not retired.** CoinGecko / CMC was
+//!   the *old* cascade's primary mid and is a fallback here, for the
+//!   reflexivity reason in §1 fm5 — but only EURC is listed on Coinbase or
+//!   Kraken, so for the other six markets that fallback *is* the basis leg.
+//! - **Pyth earns the anchor by publishing a confidence half-width**, which
+//!   Frankfurter's daily ECB reference does not. Without one the
+//!   fresh-but-uncertain regime (§1 fm6) is unobservable, so on the Frankfurter
+//!   tier the engine can only ever see the anchor as fresh or stale.
+//! - **A tier hands off when it goes stale, not merely when it goes absent.**
+//!   The FX walk drops a Pyth reading the engine would reject as stale, so a
+//!   Hermes outage reaches Frankfurter instead of leaving a dead primary
+//!   sitting in the slot masking a live fallback.
+//! - **…except while the FX session is shut.** Frankfurter is aged from
+//!   *receipt*, so it reads fresh all weekend off a Friday close. Standing it
+//!   up then would hold the engine in the Normal regime on a closed market,
+//!   which is the "fall back to a stale peg" behavior §1 fm2 rejects — so the
+//!   FX fallback is suppressed on weekends and the crypto reference anchors.
+//!
+//! One unit conversion happens in the walk rather than the engine: Coinbase
+//! quotes `<token>/USDC` directly, but Kraken quotes `<token>/USD`, so a Kraken
+//! basis reading is divided by the live `usdc_usd` leg. The peg guard only
+//! *alarms* at a 3% deviation — it does not correct one — and leaving it
+//! uncorrected would make the observed basis jump whenever the tier flipped
+//! between the two venues.
+//!
+//! The remaining spec-named sources are not wired, and each for a reason
+//! established by probing it: **Binance** answers `HTTP 451` from the deploy
+//! region (and Binance.US lists no EUR pair at all), and **Circle** publishes
+//! no keyless redemption-rate endpoint — Kraken's `USDC/USD` market print
+//! stands in for peg truth until credentials exist. (Kraken lists `EURC/EUR`
+//! too, the closer issuer-rate proxy, but nothing subscribes to it yet.)
+//! OANDA is the same story as Circle.
 
 use dropset_fair_value::{Legs, Reading};
 
