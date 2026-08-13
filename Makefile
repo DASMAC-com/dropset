@@ -478,8 +478,18 @@ taker-down: check-docker
 
 # === Repo tooling ===
 
+# Run the lint hook set over every file in the working tree. Note this is NOT
+# `pre-commit run --all-files`: that enumerates files with `git ls-files`, so a
+# new file that has never been `git add`ed is invisible to every hook and the
+# run passes without opening it — while CI, whose checkout has the file
+# committed and therefore tracked, fails on it. The tool builds the file list as
+# tracked + untracked-but-not-ignored, making the local set a superset of CI's.
+# The rationale in full (including why the chunked cspell batches in the output
+# are not the culprit) is in the tool's module docstring — read it before
+# swapping this back to `--all-files`. Pass a single hook after `--`, e.g.
+# `python3 .claude/tools/lint_paths.py -- cspell`.
 lint:
-	pre-commit run --config cfg/pre-commit-lint.yml --all-files
+	python3 .claude/tools/lint_paths.py
 
 # Account for where a session's tokens went (the deterministic core of the
 # session-metrics skill). A stdlib-only Python skill-tool under .claude/tools/

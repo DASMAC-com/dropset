@@ -32,14 +32,18 @@ changes here belong to this session.
    so nothing unintended slips in (build
    artifacts, generated files, secrets).
 
-   **Stage new files before treating a lint run as
-   meaningful for them.** `pre-commit --all-files`
-   is `git ls-files`, so an untracked file is
-   simply *not checked* — one run's two freshly
-   written test files passed a green `make lint`
-   and then failed cspell on the next run, once
-   committing had made them visible. A green lint
-   proves nothing about a file git has never seen.
+   **A bare `pre-commit --all-files` does not check
+   new files.** It enumerates via `git ls-files`, so
+   an untracked file is simply *not checked* — one
+   run's two freshly written test files passed a
+   green sweep and then failed cspell on the next
+   run, once committing had made them visible.
+   `make lint` is no longer affected: it goes
+   through `.claude/tools/lint_paths.py`, which
+   lints tracked **and** untracked-not-ignored files
+   alike. But any hand-rolled sweep over
+   `--all-files` still proves nothing about a file
+   git has never seen — run `make lint` instead.
 
    **Don't re-derive the diff you already have.**
    If `review_diff.py` has already written slices
