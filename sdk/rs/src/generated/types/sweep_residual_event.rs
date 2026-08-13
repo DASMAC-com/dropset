@@ -27,11 +27,14 @@ pub struct SweepResidualEvent {
     /// one account the caller chooses freely — every other account on the
     /// instruction is pinned by a constraint — so it is the one term of
     /// the read-out an account diff can't attribute on its own.
+    ///
+    /// Named to match the two close-payout instructions, which pay out to
+    /// a `token_recipient` of exactly this kind.
     #[cfg_attr(
         feature = "serde",
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
-    pub destination: Pubkey,
+    pub token_recipient: Pubkey,
     /// `treasury.amount` read before the transfer.
     pub treasury_amount: u64,
     /// `Σ vault.<leg>_atoms` over every sector in the slab.

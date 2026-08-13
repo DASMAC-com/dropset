@@ -544,22 +544,29 @@ impl Fixture {
         associated_token_address(owner, &self.quote_mint, &SPL_TOKEN_PROGRAM_ID)
     }
 
-    /// Create (idempotently) `owner`'s ATA for an arbitrary `mint`, paid
-    /// by `authority`, and return its address. The any-mint sibling of
-    /// [`Self::create_atas`], which is fixed to the market's two legs —
-    /// used where a destination token account is needed for a mint the
-    /// fixture doesn't track, such as a teardown drain recipient.
-    pub fn create_ata_for(&mut self, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+    /// Create (idempotently) `owner`'s ATA for an arbitrary `mint` under
+    /// `token_program`, paid by `authority`, and return its address. The
+    /// any-mint sibling of [`Self::create_atas`], which is fixed to the
+    /// market's two legs — used where a recipient token account is needed
+    /// for a mint the fixture doesn't track, such as a teardown drain
+    /// recipient.
+    ///
+    /// `token_program` is a parameter rather than a hard-coded
+    /// `SPL_TOKEN_PROGRAM_ID` because an ATA's address is derived from it:
+    /// a registry fee mint may be Token-2022 (`init` supports one), and
+    /// deriving that vault's recipient against classic SPL Token yields a
+    /// *different, non-existent* address — which the caller then passes to
+    /// a close instruction that fails on an account nobody created.
+    pub fn create_ata_for(
+        &mut self,
+        owner: &Pubkey,
+        mint: &Pubkey,
+        token_program: &Pubkey,
+    ) -> Pubkey {
         let auth = self.authority.insecure_clone();
-        let ata = associated_token_address(owner, mint, &SPL_TOKEN_PROGRAM_ID);
+        let ata = associated_token_address(owner, mint, token_program);
         if self.svm.get_account(&ata).is_none() {
-            create_associated_token_account(
-                &mut self.svm,
-                &auth,
-                owner,
-                mint,
-                &SPL_TOKEN_PROGRAM_ID,
-            );
+            create_associated_token_account(&mut self.svm, &auth, owner, mint, token_program);
         }
         ata
     }
@@ -1029,16 +1036,16 @@ impl Fixture {
 
     /// `sweep_residual` — admin sweeps one leg's treasury residual
     /// (`treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee_atoms`) into
-    /// `destination`. `mint` selects the leg; `treasury` is that leg's
+    /// `token_recipient`. `mint` selects the leg; `treasury` is that leg's
     /// treasury ATA.
     pub fn sweep_residual(
         &mut self,
         admin: &Keypair,
         mint: &Pubkey,
         treasury: &Pubkey,
-        destination: &Pubkey,
+        token_recipient: &Pubkey,
     ) -> Result<(), String> {
-        self.sweep_residual_meta(admin, mint, treasury, destination)
+        self.sweep_residual_meta(admin, mint, treasury, token_recipient)
             .map(|_| ())
     }
 
@@ -1050,7 +1057,7 @@ impl Fixture {
         admin: &Keypair,
         mint: &Pubkey,
         treasury: &Pubkey,
-        destination: &Pubkey,
+        token_recipient: &Pubkey,
     ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
@@ -1062,7 +1069,7 @@ impl Fixture {
                 AccountMeta::new_readonly(*mint, false),
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
                 AccountMeta::new(*treasury, false),
-                AccountMeta::new(*destination, false),
+                AccountMeta::new(*token_recipient, false),
                 AccountMeta::new_readonly(event_authority(), false),
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
@@ -1825,7 +1832,7 @@ impl Fixture {
     /// on demand) and sending the rent to `rent_recipient`. `mint` selects
     /// the leg; `treasury` is that leg's treasury ATA.
     ///
-    /// The implicit destination keeps the zero-balance teardown cases —
+    /// The implicit recipient keeps the zero-balance teardown cases —
     /// the majority — free of a recipient they don't care about. Use
     /// [`Self::close_market_treasury_to`] where the drain itself is what's
     /// under test.
@@ -1836,7 +1843,7 @@ impl Fixture {
         treasury: &Pubkey,
         rent_recipient: &Pubkey,
     ) -> Result<(), String> {
-        let token_recipient = self.create_ata_for(&admin.pubkey(), mint);
+        let token_recipient = self.create_ata_for(&admin.pubkey(), mint, &SPL_TOKEN_PROGRAM_ID);
         self.close_market_treasury_to(admin, mint, treasury, &token_recipient, rent_recipient)
     }
 
@@ -1852,6 +1859,22 @@ impl Fixture {
         token_recipient: &Pubkey,
         rent_recipient: &Pubkey,
     ) -> Result<(), String> {
+        self.close_market_treasury_meta(admin, mint, treasury, token_recipient, rent_recipient)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::close_market_treasury_to`] but yields the transaction
+    /// metadata so a test can decode the emitted `CloseMarketTreasuryEvent`
+    /// — the only on-chain record of where the leg's accrued taker fee went,
+    /// since the market account is destroyed moments later.
+    pub fn close_market_treasury_meta(
+        &mut self,
+        admin: &Keypair,
+        mint: &Pubkey,
+        treasury: &Pubkey,
+        token_recipient: &Pubkey,
+        rent_recipient: &Pubkey,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &CloseMarketTreasuryIx {}.data(),
@@ -1864,9 +1887,11 @@ impl Fixture {
                 AccountMeta::new(*treasury, false),
                 AccountMeta::new(*token_recipient, false),
                 AccountMeta::new(*rent_recipient, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, admin, ix)
+        send_ixn_meta(&mut self.svm, admin, ix)
     }
 
     /// `close_market` — close the market PDA + vault slab, refunding rent
@@ -1909,7 +1934,11 @@ impl Fixture {
         fee_token_program: &Pubkey,
         rent_recipient: &Pubkey,
     ) -> Result<(), String> {
-        let token_recipient = self.create_ata_for(&admin.pubkey(), fee_mint);
+        // Derive the recipient under the vault's own token program: a
+        // Token-2022 fee mint's ATA sits at a different address than the
+        // classic-SPL derivation, and the close would fail on an account
+        // that was never created.
+        let token_recipient = self.create_ata_for(&admin.pubkey(), fee_mint, fee_token_program);
         self.close_registry_fee_vault_to(
             admin,
             fee_mint,
@@ -1930,6 +1959,28 @@ impl Fixture {
         token_recipient: &Pubkey,
         rent_recipient: &Pubkey,
     ) -> Result<(), String> {
+        self.close_registry_fee_vault_meta(
+            admin,
+            fee_mint,
+            fee_token_program,
+            token_recipient,
+            rent_recipient,
+        )
+        .map(|_| ())
+    }
+
+    /// Like [`Self::close_registry_fee_vault_to`] but yields the
+    /// transaction metadata so a test can decode the emitted
+    /// `CloseRegistryFeeVaultEvent` — the only on-chain record of where the
+    /// vault's collected market-creation fees went.
+    pub fn close_registry_fee_vault_meta(
+        &mut self,
+        admin: &Keypair,
+        fee_mint: &Pubkey,
+        fee_token_program: &Pubkey,
+        token_recipient: &Pubkey,
+        rent_recipient: &Pubkey,
+    ) -> Result<TransactionMetadata, String> {
         let fee_vault = associated_token_address(&self.registry, fee_mint, fee_token_program);
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
@@ -1942,9 +1993,11 @@ impl Fixture {
                 AccountMeta::new(fee_vault, false),
                 AccountMeta::new(*token_recipient, false),
                 AccountMeta::new(*rent_recipient, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, admin, ix)
+        send_ixn_meta(&mut self.svm, admin, ix)
     }
 
     /// `close_registry` — close the registry PDA, refunding rent to

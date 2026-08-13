@@ -112,7 +112,10 @@ pub struct SweepResidualEvent {
     /// one account the caller chooses freely — every other account on the
     /// instruction is pinned by a constraint — so it is the one term of
     /// the read-out an account diff can't attribute on its own.
-    pub destination: Address,
+    ///
+    /// Named to match the two close-payout instructions, which pay out to
+    /// a `token_recipient` of exactly this kind.
+    pub token_recipient: Address,
     /// `treasury.amount` read before the transfer.
     pub treasury_amount: u64,
     /// `Σ vault.<leg>_atoms` over every sector in the slab.
@@ -122,6 +125,69 @@ pub struct SweepResidualEvent {
     /// Atoms transferred out: `treasury_amount − vault_sum − accrued_fee`,
     /// saturating at zero.
     pub swept: u64,
+}
+
+/// Emitted by `close_market_treasury` as a market treasury leg is drained
+/// and destroyed during teardown.
+///
+/// The close is the **only** path that moves a leg's accrued taker fee out
+/// of custody — `sweep_residual` subtracts the accrued counters by design
+/// and no other harvest instruction exists. Without this record an indexer
+/// reconciling fee revenue would see `accrued_<leg>_fee_atoms` read zero on
+/// its next poll and then the treasury account disappear, with no on-chain
+/// statement of where the atoms went. `drained` and `accrued_fee` together
+/// split the outbound transfer into the protocol's revenue and everything
+/// else (unsolicited transfers, dust), so the payout reconciles without
+/// reading state that no longer exists.
+#[event]
+pub struct CloseMarketTreasuryEvent {
+    pub market: Address,
+    /// Leg closed — one of the market's two mints.
+    pub mint: Address,
+    /// `true` when `mint` is the market's base leg. Carried explicitly
+    /// because the market account is closed moments later, so a consumer
+    /// cannot re-derive the leg from chain state afterwards.
+    pub is_base: bool,
+    /// Token account the drained balance was paid to.
+    pub token_recipient: Address,
+    /// Address the treasury's rent lamports were paid to.
+    pub rent_recipient: Address,
+    /// `treasury.amount` read immediately before the drain — every atom
+    /// that left, protocol revenue and residual alike.
+    pub drained: u64,
+    /// The leg's `accrued_<leg>_fee_atoms` at close, zeroed by this
+    /// instruction: the protocol-revenue share of `drained`. The remainder
+    /// (`drained − accrued_fee`) is residual that no counter claimed —
+    /// normally an unsolicited transfer that arrived after the last sweep.
+    /// It can exceed `drained` only on a transfer-fee mint, the same
+    /// pre-existing shortfall `sweep_residual` saturates against.
+    pub accrued_fee: u64,
+}
+
+/// Emitted by `close_registry_fee_vault` as a registry fee ATA is drained
+/// and destroyed during teardown.
+///
+/// The registry-side counterpart to [`CloseMarketTreasuryEvent`], and
+/// outbound for the same reason: nothing else moves tokens out of a fee
+/// ATA, so this close is where collected `create_market` / `create_vault`
+/// fee revenue leaves custody. A registry may hold one such ATA per
+/// historical fee mint, each closed by its own call, so `fee_mint` is what
+/// distinguishes the records.
+#[event]
+pub struct CloseRegistryFeeVaultEvent {
+    /// Mint of the fee vault closed — the discriminator across a
+    /// registry's several historical fee ATAs.
+    pub fee_mint: Address,
+    /// Token account the collected fees were paid to.
+    pub token_recipient: Address,
+    /// Address the fee vault's rent lamports were paid to.
+    pub rent_recipient: Address,
+    /// `fee_vault.amount` read immediately before the drain: the fees this
+    /// vault accumulated over its life, plus anything sent to it
+    /// unsolicited. The registry tracks no per-mint counter to split those
+    /// two apart, so unlike the market-treasury event there is no accrued
+    /// term to carry.
+    pub collected: u64,
 }
 
 /// Emitted by `set_max_platform_fee` when an admin retunes a market's

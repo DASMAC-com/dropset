@@ -15,8 +15,8 @@ export const SWEEP_RESIDUAL_DISCRIMINATOR = new Uint8Array([28]);
 
 export function getSweepResidualDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(SWEEP_RESIDUAL_DISCRIMINATOR); }
 
-export type SweepResidualInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountMint extends string | AccountMeta<string> = string, TAccountTokenProgram extends string | AccountMeta<string> = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", TAccountTreasury extends string | AccountMeta<string> = string, TAccountDestination extends string | AccountMeta<string> = string, TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
-Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? ReadonlySignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? ReadonlyAccount<TAccountMarket> : TAccountMarket, TAccountMint extends string ? ReadonlyAccount<TAccountMint> : TAccountMint, TAccountTokenProgram extends string ? ReadonlyAccount<TAccountTokenProgram> : TAccountTokenProgram, TAccountTreasury extends string ? WritableAccount<TAccountTreasury> : TAccountTreasury, TAccountDestination extends string ? WritableAccount<TAccountDestination> : TAccountDestination, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
+export type SweepResidualInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountMint extends string | AccountMeta<string> = string, TAccountTokenProgram extends string | AccountMeta<string> = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", TAccountTreasury extends string | AccountMeta<string> = string, TAccountTokenRecipient extends string | AccountMeta<string> = string, TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? ReadonlySignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? ReadonlyAccount<TAccountMarket> : TAccountMarket, TAccountMint extends string ? ReadonlyAccount<TAccountMint> : TAccountMint, TAccountTokenProgram extends string ? ReadonlyAccount<TAccountTokenProgram> : TAccountTokenProgram, TAccountTreasury extends string ? WritableAccount<TAccountTreasury> : TAccountTreasury, TAccountTokenRecipient extends string ? WritableAccount<TAccountTokenRecipient> : TAccountTokenRecipient, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
 export type SweepResidualInstructionData = { discriminator: ReadonlyUint8Array;  };
 
@@ -34,7 +34,7 @@ export function getSweepResidualInstructionDataCodec(): FixedSizeCodec<SweepResi
     return combineCodec(getSweepResidualInstructionDataEncoder(), getSweepResidualInstructionDataDecoder());
 }
 
-export type SweepResidualAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountMint extends string = string, TAccountTokenProgram extends string = string, TAccountTreasury extends string = string, TAccountDestination extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
+export type SweepResidualAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountMint extends string = string, TAccountTokenProgram extends string = string, TAccountTreasury extends string = string, TAccountTokenRecipient extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /** Registry admin — the only signer this lever accepts. */
 admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
@@ -70,21 +70,28 @@ treasury: Address<TAccountTreasury>;
  * `transfer_checked` re-derives and enforces the mint match itself, so
  * a `token::mint` constraint would only duplicate a check the CPI
  * already runs, and the admin may legitimately want a non-ATA
- * destination.
+ * recipient.
+ *
+ * That delegation is **conditional**, exactly as on the two
+ * close-payout instructions: `transfer_out_leg` skips a zero amount,
+ * so a zero-residual sweep — the healthy case, and the one this
+ * handler still emits a read-out for — makes no CPI at all and
+ * nothing validates the mint. Harmless, since nothing moves; but the
+ * justification above only covers the paying path.
  */
-destination: Address<TAccountDestination>;
+tokenRecipient: Address<TAccountTokenRecipient>;
 /** CHECK: Only the event authority can invoke self-CPI */
 eventAuthority?: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: Address<TAccountProgram>;
 }
 
-export async function getSweepResidualInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountMint extends string, TAccountTokenProgram extends string, TAccountTreasury extends string, TAccountDestination extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SweepResidualAsyncInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountDestination, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<SweepResidualInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountDestination, TAccountEventAuthority, TAccountProgram>> {
+export async function getSweepResidualInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountMint extends string, TAccountTokenProgram extends string, TAccountTreasury extends string, TAccountTokenRecipient extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SweepResidualAsyncInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<SweepResidualInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: false }, mint: { value: input.mint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, treasury: { value: input.treasury ?? null, isWritable: true }, destination: { value: input.destination ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
+const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: false }, mint: { value: input.mint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, treasury: { value: input.treasury ?? null, isWritable: true }, tokenRecipient: { value: input.tokenRecipient ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -100,10 +107,10 @@ accounts.eventAuthority.value = await findEventAuthorityPda();
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.mint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.treasury), getAccountMeta(accounts.destination), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSweepResidualInstructionDataEncoder().encode({}), programAddress } as SweepResidualInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountDestination, TAccountEventAuthority, TAccountProgram>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.mint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.treasury), getAccountMeta(accounts.tokenRecipient), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSweepResidualInstructionDataEncoder().encode({}), programAddress } as SweepResidualInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountEventAuthority, TAccountProgram>);
 }
 
-export type SweepResidualInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountMint extends string = string, TAccountTokenProgram extends string = string, TAccountTreasury extends string = string, TAccountDestination extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
+export type SweepResidualInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountMint extends string = string, TAccountTokenProgram extends string = string, TAccountTreasury extends string = string, TAccountTokenRecipient extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /** Registry admin — the only signer this lever accepts. */
 admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
@@ -139,21 +146,28 @@ treasury: Address<TAccountTreasury>;
  * `transfer_checked` re-derives and enforces the mint match itself, so
  * a `token::mint` constraint would only duplicate a check the CPI
  * already runs, and the admin may legitimately want a non-ATA
- * destination.
+ * recipient.
+ *
+ * That delegation is **conditional**, exactly as on the two
+ * close-payout instructions: `transfer_out_leg` skips a zero amount,
+ * so a zero-residual sweep — the healthy case, and the one this
+ * handler still emits a read-out for — makes no CPI at all and
+ * nothing validates the mint. Harmless, since nothing moves; but the
+ * justification above only covers the paying path.
  */
-destination: Address<TAccountDestination>;
+tokenRecipient: Address<TAccountTokenRecipient>;
 /** CHECK: Only the event authority can invoke self-CPI */
 eventAuthority: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: Address<TAccountProgram>;
 }
 
-export function getSweepResidualInstruction<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountMint extends string, TAccountTokenProgram extends string, TAccountTreasury extends string, TAccountDestination extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SweepResidualInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountDestination, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): SweepResidualInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountDestination, TAccountEventAuthority, TAccountProgram> {
+export function getSweepResidualInstruction<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountMint extends string, TAccountTokenProgram extends string, TAccountTreasury extends string, TAccountTokenRecipient extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SweepResidualInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): SweepResidualInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountEventAuthority, TAccountProgram> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: false }, mint: { value: input.mint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, treasury: { value: input.treasury ?? null, isWritable: true }, destination: { value: input.destination ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
+const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: false }, mint: { value: input.mint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, treasury: { value: input.treasury ?? null, isWritable: true }, tokenRecipient: { value: input.tokenRecipient ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -163,7 +177,7 @@ accounts.tokenProgram.value = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as A
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.mint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.treasury), getAccountMeta(accounts.destination), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSweepResidualInstructionDataEncoder().encode({}), programAddress } as SweepResidualInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountDestination, TAccountEventAuthority, TAccountProgram>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.mint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.treasury), getAccountMeta(accounts.tokenRecipient), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSweepResidualInstructionDataEncoder().encode({}), programAddress } as SweepResidualInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountEventAuthority, TAccountProgram>);
 }
 
 export type ParsedSweepResidualInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
@@ -203,9 +217,16 @@ treasury: TAccountMetas[5];
  * `transfer_checked` re-derives and enforces the mint match itself, so
  * a `token::mint` constraint would only duplicate a check the CPI
  * already runs, and the admin may legitimately want a non-ATA
- * destination.
+ * recipient.
+ *
+ * That delegation is **conditional**, exactly as on the two
+ * close-payout instructions: `transfer_out_leg` skips a zero amount,
+ * so a zero-residual sweep — the healthy case, and the one this
+ * handler still emits a read-out for — makes no CPI at all and
+ * nothing validates the mint. Harmless, since nothing moves; but the
+ * justification above only covers the paying path.
  */
-destination: TAccountMetas[6];
+tokenRecipient: TAccountMetas[6];
 /** CHECK: Only the event authority can invoke self-CPI */
 eventAuthority: TAccountMetas[7];
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
@@ -224,5 +245,5 @@ const getNextAccount = () => {
   accountIndex += 1;
   return accountMeta;
 }
-  return { programAddress: instruction.programAddress, accounts: { admin: getNextAccount(), registry: getNextAccount(), market: getNextAccount(), mint: getNextAccount(), tokenProgram: getNextAccount(), treasury: getNextAccount(), destination: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getSweepResidualInstructionDataDecoder().decode(instruction.data) };
+  return { programAddress: instruction.programAddress, accounts: { admin: getNextAccount(), registry: getNextAccount(), market: getNextAccount(), mint: getNextAccount(), tokenProgram: getNextAccount(), treasury: getNextAccount(), tokenRecipient: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getSweepResidualInstructionDataDecoder().decode(instruction.data) };
 }

@@ -41,8 +41,15 @@ pub struct SweepResidual {
     /// `transfer_checked` re-derives and enforces the mint match itself, so
     /// a `token::mint` constraint would only duplicate a check the CPI
     /// already runs, and the admin may legitimately want a non-ATA
-    /// destination.
-    pub destination: solana_pubkey::Pubkey,
+    /// recipient.
+    ///
+    /// That delegation is **conditional**, exactly as on the two
+    /// close-payout instructions: `transfer_out_leg` skips a zero amount,
+    /// so a zero-residual sweep — the healthy case, and the one this
+    /// handler still emits a read-out for — makes no CPI at all and
+    /// nothing validates the mint. Harmless, since nothing moves; but the
+    /// justification above only covers the paying path.
+    pub token_recipient: solana_pubkey::Pubkey,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: solana_pubkey::Pubkey,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
@@ -80,7 +87,7 @@ impl SweepResidual {
         ));
         accounts.push(solana_instruction::AccountMeta::new(self.treasury, false));
         accounts.push(solana_instruction::AccountMeta::new(
-            self.destination,
+            self.token_recipient,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -136,7 +143,7 @@ impl Default for SweepResidualInstructionData {
 ///   3. `[]` mint
 ///   4. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
 ///   5. `[writable]` treasury
-///   6. `[writable]` destination
+///   6. `[writable]` token_recipient
 ///   7. `[]` event_authority
 ///   8. `[]` program
 #[derive(Clone, Debug, Default)]
@@ -147,7 +154,7 @@ pub struct SweepResidualBuilder {
     mint: Option<solana_pubkey::Pubkey>,
     token_program: Option<solana_pubkey::Pubkey>,
     treasury: Option<solana_pubkey::Pubkey>,
-    destination: Option<solana_pubkey::Pubkey>,
+    token_recipient: Option<solana_pubkey::Pubkey>,
     event_authority: Option<solana_pubkey::Pubkey>,
     program: Option<solana_pubkey::Pubkey>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
@@ -210,10 +217,17 @@ impl SweepResidualBuilder {
     /// `transfer_checked` re-derives and enforces the mint match itself, so
     /// a `token::mint` constraint would only duplicate a check the CPI
     /// already runs, and the admin may legitimately want a non-ATA
-    /// destination.
+    /// recipient.
+    ///
+    /// That delegation is **conditional**, exactly as on the two
+    /// close-payout instructions: `transfer_out_leg` skips a zero amount,
+    /// so a zero-residual sweep — the healthy case, and the one this
+    /// handler still emits a read-out for — makes no CPI at all and
+    /// nothing validates the mint. Harmless, since nothing moves; but the
+    /// justification above only covers the paying path.
     #[inline(always)]
-    pub fn destination(&mut self, destination: solana_pubkey::Pubkey) -> &mut Self {
-        self.destination = Some(destination);
+    pub fn token_recipient(&mut self, token_recipient: solana_pubkey::Pubkey) -> &mut Self {
+        self.token_recipient = Some(token_recipient);
         self
     }
     /// CHECK: Only the event authority can invoke self-CPI
@@ -254,7 +268,7 @@ impl SweepResidualBuilder {
                 "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
             )),
             treasury: self.treasury.expect("treasury is not set"),
-            destination: self.destination.expect("destination is not set"),
+            token_recipient: self.token_recipient.expect("token_recipient is not set"),
             event_authority: self.event_authority.expect("event_authority is not set"),
             program: self.program.expect("program is not set"),
         };
@@ -293,8 +307,15 @@ pub struct SweepResidualCpiAccounts<'a, 'b> {
     /// `transfer_checked` re-derives and enforces the mint match itself, so
     /// a `token::mint` constraint would only duplicate a check the CPI
     /// already runs, and the admin may legitimately want a non-ATA
-    /// destination.
-    pub destination: &'b solana_account_info::AccountInfo<'a>,
+    /// recipient.
+    ///
+    /// That delegation is **conditional**, exactly as on the two
+    /// close-payout instructions: `transfer_out_leg` skips a zero amount,
+    /// so a zero-residual sweep — the healthy case, and the one this
+    /// handler still emits a read-out for — makes no CPI at all and
+    /// nothing validates the mint. Harmless, since nothing moves; but the
+    /// justification above only covers the paying path.
+    pub token_recipient: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
@@ -333,8 +354,15 @@ pub struct SweepResidualCpi<'a, 'b> {
     /// `transfer_checked` re-derives and enforces the mint match itself, so
     /// a `token::mint` constraint would only duplicate a check the CPI
     /// already runs, and the admin may legitimately want a non-ATA
-    /// destination.
-    pub destination: &'b solana_account_info::AccountInfo<'a>,
+    /// recipient.
+    ///
+    /// That delegation is **conditional**, exactly as on the two
+    /// close-payout instructions: `transfer_out_leg` skips a zero amount,
+    /// so a zero-residual sweep — the healthy case, and the one this
+    /// handler still emits a read-out for — makes no CPI at all and
+    /// nothing validates the mint. Harmless, since nothing moves; but the
+    /// justification above only covers the paying path.
+    pub token_recipient: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Kept for v1-compatible account ordering and IDL shape
@@ -354,7 +382,7 @@ impl<'a, 'b> SweepResidualCpi<'a, 'b> {
             mint: accounts.mint,
             token_program: accounts.token_program,
             treasury: accounts.treasury,
-            destination: accounts.destination,
+            token_recipient: accounts.token_recipient,
             event_authority: accounts.event_authority,
             program: accounts.program,
         }
@@ -408,7 +436,7 @@ impl<'a, 'b> SweepResidualCpi<'a, 'b> {
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new(
-            *self.destination.key,
+            *self.token_recipient.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -441,7 +469,7 @@ impl<'a, 'b> SweepResidualCpi<'a, 'b> {
         account_infos.push(self.mint.clone());
         account_infos.push(self.token_program.clone());
         account_infos.push(self.treasury.clone());
-        account_infos.push(self.destination.clone());
+        account_infos.push(self.token_recipient.clone());
         account_infos.push(self.event_authority.clone());
         account_infos.push(self.program.clone());
         remaining_accounts
@@ -466,7 +494,7 @@ impl<'a, 'b> SweepResidualCpi<'a, 'b> {
 ///   3. `[]` mint
 ///   4. `[]` token_program
 ///   5. `[writable]` treasury
-///   6. `[writable]` destination
+///   6. `[writable]` token_recipient
 ///   7. `[]` event_authority
 ///   8. `[]` program
 #[derive(Clone, Debug)]
@@ -484,7 +512,7 @@ impl<'a, 'b> SweepResidualCpiBuilder<'a, 'b> {
             mint: None,
             token_program: None,
             treasury: None,
-            destination: None,
+            token_recipient: None,
             event_authority: None,
             program: None,
             __remaining_accounts: Vec::new(),
@@ -546,13 +574,20 @@ impl<'a, 'b> SweepResidualCpiBuilder<'a, 'b> {
     /// `transfer_checked` re-derives and enforces the mint match itself, so
     /// a `token::mint` constraint would only duplicate a check the CPI
     /// already runs, and the admin may legitimately want a non-ATA
-    /// destination.
+    /// recipient.
+    ///
+    /// That delegation is **conditional**, exactly as on the two
+    /// close-payout instructions: `transfer_out_leg` skips a zero amount,
+    /// so a zero-residual sweep — the healthy case, and the one this
+    /// handler still emits a read-out for — makes no CPI at all and
+    /// nothing validates the mint. Harmless, since nothing moves; but the
+    /// justification above only covers the paying path.
     #[inline(always)]
-    pub fn destination(
+    pub fn token_recipient(
         &mut self,
-        destination: &'b solana_account_info::AccountInfo<'a>,
+        token_recipient: &'b solana_account_info::AccountInfo<'a>,
     ) -> &mut Self {
-        self.instruction.destination = Some(destination);
+        self.instruction.token_recipient = Some(token_recipient);
         self
     }
     /// CHECK: Only the event authority can invoke self-CPI
@@ -622,10 +657,10 @@ impl<'a, 'b> SweepResidualCpiBuilder<'a, 'b> {
 
             treasury: self.instruction.treasury.expect("treasury is not set"),
 
-            destination: self
+            token_recipient: self
                 .instruction
-                .destination
-                .expect("destination is not set"),
+                .token_recipient
+                .expect("token_recipient is not set"),
 
             event_authority: self
                 .instruction
@@ -650,7 +685,7 @@ struct SweepResidualCpiBuilderInstruction<'a, 'b> {
     mint: Option<&'b solana_account_info::AccountInfo<'a>>,
     token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     treasury: Option<&'b solana_account_info::AccountInfo<'a>>,
-    destination: Option<&'b solana_account_info::AccountInfo<'a>>,
+    token_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
     event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
     program: Option<&'b solana_account_info::AccountInfo<'a>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.

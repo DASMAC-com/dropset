@@ -319,7 +319,9 @@ pub mod dropset {
         #[cfg(feature = "admin-teardown")]
         {
             require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin)?;
-            ctx.accounts.close_market_treasury()
+            let event = ctx.accounts.close_market_treasury()?;
+            emit_cpi!(event);
+            Ok(())
         }
     }
 
@@ -347,7 +349,9 @@ pub mod dropset {
         #[cfg(feature = "admin-teardown")]
         {
             require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin)?;
-            ctx.accounts.close_registry_fee_vault()
+            let event = ctx.accounts.close_registry_fee_vault()?;
+            emit_cpi!(event);
+            Ok(())
         }
     }
 

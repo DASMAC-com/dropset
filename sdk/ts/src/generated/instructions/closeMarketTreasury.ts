@@ -7,7 +7,7 @@
  */
 
 import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
-import { findRegistryPda } from '../pdas';
+import { findEventAuthorityPda, findRegistryPda } from '../pdas';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -15,8 +15,8 @@ export const CLOSE_MARKET_TREASURY_DISCRIMINATOR = new Uint8Array([18]);
 
 export function getCloseMarketTreasuryDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(CLOSE_MARKET_TREASURY_DISCRIMINATOR); }
 
-export type CloseMarketTreasuryInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountMint extends string | AccountMeta<string> = string, TAccountTokenProgram extends string | AccountMeta<string> = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", TAccountTreasury extends string | AccountMeta<string> = string, TAccountTokenRecipient extends string | AccountMeta<string> = string, TAccountRentRecipient extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
-Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? ReadonlySignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountMint extends string ? ReadonlyAccount<TAccountMint> : TAccountMint, TAccountTokenProgram extends string ? ReadonlyAccount<TAccountTokenProgram> : TAccountTokenProgram, TAccountTreasury extends string ? WritableAccount<TAccountTreasury> : TAccountTreasury, TAccountTokenRecipient extends string ? WritableAccount<TAccountTokenRecipient> : TAccountTokenRecipient, TAccountRentRecipient extends string ? WritableAccount<TAccountRentRecipient> : TAccountRentRecipient, ...TRemainingAccounts]>;
+export type CloseMarketTreasuryInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountMint extends string | AccountMeta<string> = string, TAccountTokenProgram extends string | AccountMeta<string> = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", TAccountTreasury extends string | AccountMeta<string> = string, TAccountTokenRecipient extends string | AccountMeta<string> = string, TAccountRentRecipient extends string | AccountMeta<string> = string, TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? ReadonlySignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountMint extends string ? ReadonlyAccount<TAccountMint> : TAccountMint, TAccountTokenProgram extends string ? ReadonlyAccount<TAccountTokenProgram> : TAccountTokenProgram, TAccountTreasury extends string ? WritableAccount<TAccountTreasury> : TAccountTreasury, TAccountTokenRecipient extends string ? WritableAccount<TAccountTokenRecipient> : TAccountTokenRecipient, TAccountRentRecipient extends string ? WritableAccount<TAccountRentRecipient> : TAccountRentRecipient, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
 export type CloseMarketTreasuryInstructionData = { discriminator: ReadonlyUint8Array;  };
 
@@ -34,7 +34,7 @@ export function getCloseMarketTreasuryInstructionDataCodec(): FixedSizeCodec<Clo
     return combineCodec(getCloseMarketTreasuryInstructionDataEncoder(), getCloseMarketTreasuryInstructionDataDecoder());
 }
 
-export type CloseMarketTreasuryAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountMint extends string = string, TAccountTokenProgram extends string = string, TAccountTreasury extends string = string, TAccountTokenRecipient extends string = string, TAccountRentRecipient extends string = string> =  {
+export type CloseMarketTreasuryAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountMint extends string = string, TAccountTokenProgram extends string = string, TAccountTreasury extends string = string, TAccountTokenRecipient extends string = string, TAccountRentRecipient extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /** Registry admin — authorized via the registry admin set. */
 admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
@@ -72,7 +72,14 @@ treasury: Address<TAccountTreasury>;
  * fee plus any unsolicited transfer — immediately before the close.
  * Any admin-chosen token account for `mint`; left unconstrained
  * beyond "is a token account" because `transfer_checked` enforces
- * the mint match itself, matching `sweep_residual`'s destination.
+ * the mint match itself, matching `sweep_residual`'s recipient.
+ *
+ * That justification is **conditional on there being something to
+ * pay**: `transfer_out_leg` skips a zero amount, so on the
+ * zero-balance close — the majority of teardown calls, and every call
+ * against a market that never charged a fee — no CPI runs and nothing
+ * validates the mint at all. Harmless, because nothing moves; a
+ * wrong-mint recipient is only ever rejected on the paying path.
  *
  * Distinct from `rent_recipient` below, which receives the account's
  * **lamports**: this one is a token account and takes the balance,
@@ -85,14 +92,18 @@ tokenRecipient: Address<TAccountTokenRecipient>;
  * chooses where reclaimed rent lands.
  */
 rentRecipient: Address<TAccountRentRecipient>;
+/** CHECK: Only the event authority can invoke self-CPI */
+eventAuthority?: Address<TAccountEventAuthority>;
+/** CHECK: Kept for v1-compatible account ordering and IDL shape */
+program: Address<TAccountProgram>;
 }
 
-export async function getCloseMarketTreasuryInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountMint extends string, TAccountTokenProgram extends string, TAccountTreasury extends string, TAccountTokenRecipient extends string, TAccountRentRecipient extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CloseMarketTreasuryAsyncInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient>, config?: { programAddress?: TProgramAddress } ): Promise<CloseMarketTreasuryInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient>> {
+export async function getCloseMarketTreasuryInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountMint extends string, TAccountTokenProgram extends string, TAccountTreasury extends string, TAccountTokenRecipient extends string, TAccountRentRecipient extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CloseMarketTreasuryAsyncInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<CloseMarketTreasuryInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, mint: { value: input.mint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, treasury: { value: input.treasury ?? null, isWritable: true }, tokenRecipient: { value: input.tokenRecipient ?? null, isWritable: true }, rentRecipient: { value: input.rentRecipient ?? null, isWritable: true } }
+const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, mint: { value: input.mint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, treasury: { value: input.treasury ?? null, isWritable: true }, tokenRecipient: { value: input.tokenRecipient ?? null, isWritable: true }, rentRecipient: { value: input.rentRecipient ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -103,12 +114,15 @@ accounts.registry.value = await findRegistryPda();
 if (!accounts.tokenProgram.value) {
 accounts.tokenProgram.value = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as Address<'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'>;
 }
-
-const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.mint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.treasury), getAccountMeta(accounts.tokenRecipient), getAccountMeta(accounts.rentRecipient)], data: getCloseMarketTreasuryInstructionDataEncoder().encode({}), programAddress } as CloseMarketTreasuryInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient>);
+if (!accounts.eventAuthority.value) {
+accounts.eventAuthority.value = await findEventAuthorityPda();
 }
 
-export type CloseMarketTreasuryInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountMint extends string = string, TAccountTokenProgram extends string = string, TAccountTreasury extends string = string, TAccountTokenRecipient extends string = string, TAccountRentRecipient extends string = string> =  {
+const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
+return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.mint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.treasury), getAccountMeta(accounts.tokenRecipient), getAccountMeta(accounts.rentRecipient), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getCloseMarketTreasuryInstructionDataEncoder().encode({}), programAddress } as CloseMarketTreasuryInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram>);
+}
+
+export type CloseMarketTreasuryInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountMint extends string = string, TAccountTokenProgram extends string = string, TAccountTreasury extends string = string, TAccountTokenRecipient extends string = string, TAccountRentRecipient extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /** Registry admin — authorized via the registry admin set. */
 admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
@@ -146,7 +160,14 @@ treasury: Address<TAccountTreasury>;
  * fee plus any unsolicited transfer — immediately before the close.
  * Any admin-chosen token account for `mint`; left unconstrained
  * beyond "is a token account" because `transfer_checked` enforces
- * the mint match itself, matching `sweep_residual`'s destination.
+ * the mint match itself, matching `sweep_residual`'s recipient.
+ *
+ * That justification is **conditional on there being something to
+ * pay**: `transfer_out_leg` skips a zero amount, so on the
+ * zero-balance close — the majority of teardown calls, and every call
+ * against a market that never charged a fee — no CPI runs and nothing
+ * validates the mint at all. Harmless, because nothing moves; a
+ * wrong-mint recipient is only ever rejected on the paying path.
  *
  * Distinct from `rent_recipient` below, which receives the account's
  * **lamports**: this one is a token account and takes the balance,
@@ -159,14 +180,18 @@ tokenRecipient: Address<TAccountTokenRecipient>;
  * chooses where reclaimed rent lands.
  */
 rentRecipient: Address<TAccountRentRecipient>;
+/** CHECK: Only the event authority can invoke self-CPI */
+eventAuthority: Address<TAccountEventAuthority>;
+/** CHECK: Kept for v1-compatible account ordering and IDL shape */
+program: Address<TAccountProgram>;
 }
 
-export function getCloseMarketTreasuryInstruction<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountMint extends string, TAccountTokenProgram extends string, TAccountTreasury extends string, TAccountTokenRecipient extends string, TAccountRentRecipient extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CloseMarketTreasuryInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient>, config?: { programAddress?: TProgramAddress } ): CloseMarketTreasuryInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient> {
+export function getCloseMarketTreasuryInstruction<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountMint extends string, TAccountTokenProgram extends string, TAccountTreasury extends string, TAccountTokenRecipient extends string, TAccountRentRecipient extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CloseMarketTreasuryInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): CloseMarketTreasuryInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, mint: { value: input.mint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, treasury: { value: input.treasury ?? null, isWritable: true }, tokenRecipient: { value: input.tokenRecipient ?? null, isWritable: true }, rentRecipient: { value: input.rentRecipient ?? null, isWritable: true } }
+const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, mint: { value: input.mint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, treasury: { value: input.treasury ?? null, isWritable: true }, tokenRecipient: { value: input.tokenRecipient ?? null, isWritable: true }, rentRecipient: { value: input.rentRecipient ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -176,7 +201,7 @@ accounts.tokenProgram.value = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as A
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.mint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.treasury), getAccountMeta(accounts.tokenRecipient), getAccountMeta(accounts.rentRecipient)], data: getCloseMarketTreasuryInstructionDataEncoder().encode({}), programAddress } as CloseMarketTreasuryInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.mint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.treasury), getAccountMeta(accounts.tokenRecipient), getAccountMeta(accounts.rentRecipient), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getCloseMarketTreasuryInstructionDataEncoder().encode({}), programAddress } as CloseMarketTreasuryInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountMint, TAccountTokenProgram, TAccountTreasury, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram>);
 }
 
 export type ParsedCloseMarketTreasuryInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
@@ -218,7 +243,14 @@ treasury: TAccountMetas[5];
  * fee plus any unsolicited transfer — immediately before the close.
  * Any admin-chosen token account for `mint`; left unconstrained
  * beyond "is a token account" because `transfer_checked` enforces
- * the mint match itself, matching `sweep_residual`'s destination.
+ * the mint match itself, matching `sweep_residual`'s recipient.
+ *
+ * That justification is **conditional on there being something to
+ * pay**: `transfer_out_leg` skips a zero amount, so on the
+ * zero-balance close — the majority of teardown calls, and every call
+ * against a market that never charged a fee — no CPI runs and nothing
+ * validates the mint at all. Harmless, because nothing moves; a
+ * wrong-mint recipient is only ever rejected on the paying path.
  *
  * Distinct from `rent_recipient` below, which receives the account's
  * **lamports**: this one is a token account and takes the balance,
@@ -231,11 +263,15 @@ tokenRecipient: TAccountMetas[6];
  * chooses where reclaimed rent lands.
  */
 rentRecipient: TAccountMetas[7];
+/** CHECK: Only the event authority can invoke self-CPI */
+eventAuthority: TAccountMetas[8];
+/** CHECK: Kept for v1-compatible account ordering and IDL shape */
+program: TAccountMetas[9];
 };
 data: CloseMarketTreasuryInstructionData; };
 
 export function parseCloseMarketTreasuryInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedCloseMarketTreasuryInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 8) {
+  if (instruction.accounts.length < 10) {
   // TODO: Coded error.
   throw new Error('Not enough accounts');
 }
@@ -245,5 +281,5 @@ const getNextAccount = () => {
   accountIndex += 1;
   return accountMeta;
 }
-  return { programAddress: instruction.programAddress, accounts: { admin: getNextAccount(), registry: getNextAccount(), market: getNextAccount(), mint: getNextAccount(), tokenProgram: getNextAccount(), treasury: getNextAccount(), tokenRecipient: getNextAccount(), rentRecipient: getNextAccount() }, data: getCloseMarketTreasuryInstructionDataDecoder().decode(instruction.data) };
+  return { programAddress: instruction.programAddress, accounts: { admin: getNextAccount(), registry: getNextAccount(), market: getNextAccount(), mint: getNextAccount(), tokenProgram: getNextAccount(), treasury: getNextAccount(), tokenRecipient: getNextAccount(), rentRecipient: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getCloseMarketTreasuryInstructionDataDecoder().decode(instruction.data) };
 }

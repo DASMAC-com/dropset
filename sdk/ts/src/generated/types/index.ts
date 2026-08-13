@@ -6,6 +6,8 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from './closeMarketTreasuryEvent';
+export * from './closeRegistryFeeVaultEvent';
 export * from './closeVaultEvent';
 export * from './createVaultEvent';
 export * from './depositEvent';

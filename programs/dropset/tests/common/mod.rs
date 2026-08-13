@@ -381,11 +381,34 @@ pub fn mint_to(
     destination_ata: &Pubkey,
     amount: u64,
 ) {
-    // SPL Token `MintTo` ix (discriminator 7): [7u8, amount(8 bytes LE)].
+    mint_to_under(
+        svm,
+        mint_authority,
+        mint,
+        destination_ata,
+        amount,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
+}
+
+/// [`mint_to`] against an explicit `token_program`. Token-2022 keeps SPL
+/// Token's `MintTo` layout byte-for-byte, so only the program id varies —
+/// which is what makes one body serve both and keeps the two paths from
+/// drifting apart.
+#[allow(dead_code)]
+pub fn mint_to_under(
+    svm: &mut LiteSVM,
+    mint_authority: &Keypair,
+    mint: &Pubkey,
+    destination_ata: &Pubkey,
+    amount: u64,
+    token_program: &Pubkey,
+) {
+    // `MintTo` ix (discriminator 7): [7u8, amount(8 bytes LE)].
     let mut data = vec![7u8];
     data.extend_from_slice(&amount.to_le_bytes());
     let ix = Instruction::new_with_bytes(
-        SPL_TOKEN_PROGRAM_ID,
+        *token_program,
         &data,
         vec![
             AccountMeta::new(*mint, false),

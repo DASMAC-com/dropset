@@ -374,10 +374,21 @@ no test able to fail and no on-chain way to notice. The counters keep the
 invariant a real check; this sweep preserves the recovery property the
 residual idea was after.
 
-That recovery property covers both legitimately non-zero cases: anyone
-can transfer tokens **directly** to a treasury ATA, and an exact-in take
-leaves change no level could price. Either way the atoms are otherwise
-stranded forever, since no vault has a claim a `Withdraw` could pay out.
+That recovery property covers three legitimately non-zero cases. In every
+one the atoms are otherwise stranded forever, since no vault has a claim a
+`Withdraw` could pay out:
+
+- the **exact-in fill residue** — a take consumes the caller's whole
+  `amount_in` and the part no level could price into a whole output atom
+  lands here. This is the routine case (see **Take → Fill semantics**);
+- an **unsolicited transfer** — anyone can send tokens **directly** to a
+  treasury ATA and no instruction can stop them;
+- **ATA adoption at market birth** — `Init` and `CreateMarket` adopt a
+  pre-existing treasury ATA rather than rejecting one (see **Account
+  lifecycle and rent reclamation → Bootstrap tolerates pre-existing
+  treasury ATAs**), so a squatter can fund the address before the market
+  exists. A market can therefore *open* holding a residual, before it has
+  filled anything at all.
 
 Mechanics and bounds:
 
@@ -1857,9 +1868,11 @@ Token-2022 transfer-fee extension, for the reason given under
 
 Admin-only, always on (**not** teardown-gated: exact-in fill residue and
 unsolicited transfers both strand atoms on a live market). Takes no
-arguments; the accounts are the
-admin, the registry, the market, one leg's `mint` + owning token program,
-that leg's treasury ATA, and a destination token account. It transfers out
+arguments; the accounts are the admin, the registry, the market, one leg's
+`mint` + owning token program, that leg's treasury ATA, and a
+`token_recipient` token account — named to match the two draining
+`close_*` instructions, which pay out to a recipient of exactly this kind.
+It transfers out
 `treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee_atoms`, saturating at
 zero, and emits `SweepResidualEvent` with all three terms even when it
 sweeps nothing.
@@ -2415,15 +2428,31 @@ retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
 `SetTakerFee`, `SetRegistryDefaults`), and `SweepResidual` — which emits
 on **every** call, including the zero-sweep case, because the three terms
 it reports are a diagnosis an account diff cannot supply (see
-**MarketHeader → Fee model → Residual sweep**). Everything whose entire
-effect is already
+**MarketHeader → Fee model → Residual sweep**).
+
+The two **draining** closes emit for the same reason, and are the sharpest
+case of the principle: `close_market_treasury` and
+`close_registry_fee_vault` each transfer real value out — a leg's accrued
+taker fee, a vault's collected market-creation fees — and then destroy the
+account that held it. An indexer watching diffs sees the counter read zero
+and the account vanish in the same slot, with no statement of where the
+atoms went; the close is also the **only** path that moves accrued
+protocol revenue, since `sweep_residual` subtracts the accrued counters by
+design. So `CloseMarketTreasuryEvent` splits the outbound transfer into
+`drained` and the `accrued_fee` share of it, and
+`CloseRegistryFeeVaultEvent` reports `collected` — each naming its
+`token_recipient` and `rent_recipient`, all of it unrecoverable once the
+account is gone.
+
+Everything whose entire effect is already
 recoverable from a single account diff emits **nothing**: the leader
 quote-refresh pair (`SetReferencePrice`, `SetLiquidityProfile`) on the
 hot path, the vault-config setters (`SetQuoteAuthority`,
 `SetAllowOutsideDepositors`, `SetOutsideDepositsApproved`), the registry
 and market bootstrap
-(`Init`, `AddAdmin`, `RemoveAdmin`, `CreateMarket`), and the
-rent-returning `close_*` teardown instructions.
+(`Init`, `AddAdmin`, `RemoveAdmin`, `CreateMarket`), and the **purely**
+rent-returning teardown closes — `close_market` and `close_registry`,
+which move no tokens and whose whole effect is a refund of lamports.
 
 **Per-emit cost.** Each `emit_cpi!` runs as a self-CPI: ~1000 CU
 invocation overhead + `data_len/250` CU for the payload. The hard

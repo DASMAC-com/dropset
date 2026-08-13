@@ -22,8 +22,9 @@
 
 use anchor_lang_v2::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
 use dropset::{
-    CloseVaultEvent, CreateVaultEvent, DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent,
-    RealizeEvent, SetDefaultFeeConfigEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
+    CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
+    DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent, RealizeEvent,
+    SetDefaultFeeConfigEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
     SetMinLeaderShareEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent, SweepResidualEvent,
     WithdrawEvent,
 };
@@ -245,7 +246,7 @@ pub fn set_taker_fee(meta: &TransactionMetadata) -> SetTakerFee {
 pub struct SweepResidual {
     pub market: [u8; 32],
     pub mint: [u8; 32],
-    pub destination: [u8; 32],
+    pub token_recipient: [u8; 32],
     pub treasury_amount: u64,
     pub vault_sum: u64,
     pub accrued_fee: u64,
@@ -258,11 +259,59 @@ pub fn sweep_residual(meta: &TransactionMetadata) -> SweepResidual {
     let d = SweepResidual {
         market: c.pubkey(),
         mint: c.pubkey(),
-        destination: c.pubkey(),
+        token_recipient: c.pubkey(),
         treasury_amount: c.u64(),
         vault_sum: c.u64(),
         accrued_fee: c.u64(),
         swept: c.u64(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct CloseMarketTreasury {
+    pub market: [u8; 32],
+    pub mint: [u8; 32],
+    pub is_base: bool,
+    pub token_recipient: [u8; 32],
+    pub rent_recipient: [u8; 32],
+    pub drained: u64,
+    pub accrued_fee: u64,
+}
+
+pub fn close_market_treasury(meta: &TransactionMetadata) -> CloseMarketTreasury {
+    let body = one_body::<CloseMarketTreasuryEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = CloseMarketTreasury {
+        market: c.pubkey(),
+        mint: c.pubkey(),
+        is_base: c.bool(),
+        token_recipient: c.pubkey(),
+        rent_recipient: c.pubkey(),
+        drained: c.u64(),
+        accrued_fee: c.u64(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct CloseRegistryFeeVault {
+    pub fee_mint: [u8; 32],
+    pub token_recipient: [u8; 32],
+    pub rent_recipient: [u8; 32],
+    pub collected: u64,
+}
+
+pub fn close_registry_fee_vault(meta: &TransactionMetadata) -> CloseRegistryFeeVault {
+    let body = one_body::<CloseRegistryFeeVaultEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = CloseRegistryFeeVault {
+        fee_mint: c.pubkey(),
+        token_recipient: c.pubkey(),
+        rent_recipient: c.pubkey(),
+        collected: c.u64(),
     };
     c.finish();
     d

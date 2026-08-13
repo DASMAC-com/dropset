@@ -7,7 +7,7 @@
  */
 
 import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
-import { findRegistryPda } from '../pdas';
+import { findEventAuthorityPda, findRegistryPda } from '../pdas';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -15,8 +15,8 @@ export const CLOSE_REGISTRY_FEE_VAULT_DISCRIMINATOR = new Uint8Array([20]);
 
 export function getCloseRegistryFeeVaultDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(CLOSE_REGISTRY_FEE_VAULT_DISCRIMINATOR); }
 
-export type CloseRegistryFeeVaultInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = string, TAccountTokenProgram extends string | AccountMeta<string> = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", TAccountFeeVault extends string | AccountMeta<string> = string, TAccountTokenRecipient extends string | AccountMeta<string> = string, TAccountRentRecipient extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
-Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? ReadonlySignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountFeeMint extends string ? ReadonlyAccount<TAccountFeeMint> : TAccountFeeMint, TAccountTokenProgram extends string ? ReadonlyAccount<TAccountTokenProgram> : TAccountTokenProgram, TAccountFeeVault extends string ? WritableAccount<TAccountFeeVault> : TAccountFeeVault, TAccountTokenRecipient extends string ? WritableAccount<TAccountTokenRecipient> : TAccountTokenRecipient, TAccountRentRecipient extends string ? WritableAccount<TAccountRentRecipient> : TAccountRentRecipient, ...TRemainingAccounts]>;
+export type CloseRegistryFeeVaultInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = string, TAccountTokenProgram extends string | AccountMeta<string> = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", TAccountFeeVault extends string | AccountMeta<string> = string, TAccountTokenRecipient extends string | AccountMeta<string> = string, TAccountRentRecipient extends string | AccountMeta<string> = string, TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? ReadonlySignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountFeeMint extends string ? ReadonlyAccount<TAccountFeeMint> : TAccountFeeMint, TAccountTokenProgram extends string ? ReadonlyAccount<TAccountTokenProgram> : TAccountTokenProgram, TAccountFeeVault extends string ? WritableAccount<TAccountFeeVault> : TAccountFeeVault, TAccountTokenRecipient extends string ? WritableAccount<TAccountTokenRecipient> : TAccountTokenRecipient, TAccountRentRecipient extends string ? WritableAccount<TAccountRentRecipient> : TAccountRentRecipient, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
 export type CloseRegistryFeeVaultInstructionData = { discriminator: ReadonlyUint8Array;  };
 
@@ -34,7 +34,7 @@ export function getCloseRegistryFeeVaultInstructionDataCodec(): FixedSizeCodec<C
     return combineCodec(getCloseRegistryFeeVaultInstructionDataEncoder(), getCloseRegistryFeeVaultInstructionDataDecoder());
 }
 
-export type CloseRegistryFeeVaultAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountFeeMint extends string = string, TAccountTokenProgram extends string = string, TAccountFeeVault extends string = string, TAccountTokenRecipient extends string = string, TAccountRentRecipient extends string = string> =  {
+export type CloseRegistryFeeVaultAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountFeeMint extends string = string, TAccountTokenProgram extends string = string, TAccountFeeVault extends string = string, TAccountTokenRecipient extends string = string, TAccountRentRecipient extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /** Registry admin — authorized via the registry admin set. */
 admin: TransactionSigner<TAccountAdmin>;
 /**
@@ -65,6 +65,11 @@ feeVault: Address<TAccountFeeVault>;
  * account" because `transfer_checked` enforces the mint match
  * itself, matching `close_market_treasury` and `sweep_residual`.
  *
+ * Conditional for the same reason as those two: `transfer_out_leg`
+ * skips a zero amount, so a never-used fee vault closes with no CPI
+ * and nothing validates the mint. The guarantee covers the paying
+ * path only.
+ *
  * Distinct from `rent_recipient` below, which receives the account's
  * **lamports**: this one is a token account and takes the balance,
  * that one is any address and takes the rent.
@@ -75,14 +80,18 @@ tokenRecipient: Address<TAccountTokenRecipient>;
  * CHECK: rent destination only.
  */
 rentRecipient: Address<TAccountRentRecipient>;
+/** CHECK: Only the event authority can invoke self-CPI */
+eventAuthority?: Address<TAccountEventAuthority>;
+/** CHECK: Kept for v1-compatible account ordering and IDL shape */
+program: Address<TAccountProgram>;
 }
 
-export async function getCloseRegistryFeeVaultInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountFeeMint extends string, TAccountTokenProgram extends string, TAccountFeeVault extends string, TAccountTokenRecipient extends string, TAccountRentRecipient extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CloseRegistryFeeVaultAsyncInput<TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient>, config?: { programAddress?: TProgramAddress } ): Promise<CloseRegistryFeeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient>> {
+export async function getCloseRegistryFeeVaultInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountFeeMint extends string, TAccountTokenProgram extends string, TAccountFeeVault extends string, TAccountTokenRecipient extends string, TAccountRentRecipient extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CloseRegistryFeeVaultAsyncInput<TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<CloseRegistryFeeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, feeMint: { value: input.feeMint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, feeVault: { value: input.feeVault ?? null, isWritable: true }, tokenRecipient: { value: input.tokenRecipient ?? null, isWritable: true }, rentRecipient: { value: input.rentRecipient ?? null, isWritable: true } }
+const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, feeMint: { value: input.feeMint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, feeVault: { value: input.feeVault ?? null, isWritable: true }, tokenRecipient: { value: input.tokenRecipient ?? null, isWritable: true }, rentRecipient: { value: input.rentRecipient ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -93,12 +102,15 @@ accounts.registry.value = await findRegistryPda();
 if (!accounts.tokenProgram.value) {
 accounts.tokenProgram.value = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as Address<'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'>;
 }
-
-const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.feeVault), getAccountMeta(accounts.tokenRecipient), getAccountMeta(accounts.rentRecipient)], data: getCloseRegistryFeeVaultInstructionDataEncoder().encode({}), programAddress } as CloseRegistryFeeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient>);
+if (!accounts.eventAuthority.value) {
+accounts.eventAuthority.value = await findEventAuthorityPda();
 }
 
-export type CloseRegistryFeeVaultInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountFeeMint extends string = string, TAccountTokenProgram extends string = string, TAccountFeeVault extends string = string, TAccountTokenRecipient extends string = string, TAccountRentRecipient extends string = string> =  {
+const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
+return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.feeVault), getAccountMeta(accounts.tokenRecipient), getAccountMeta(accounts.rentRecipient), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getCloseRegistryFeeVaultInstructionDataEncoder().encode({}), programAddress } as CloseRegistryFeeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram>);
+}
+
+export type CloseRegistryFeeVaultInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountFeeMint extends string = string, TAccountTokenProgram extends string = string, TAccountFeeVault extends string = string, TAccountTokenRecipient extends string = string, TAccountRentRecipient extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /** Registry admin — authorized via the registry admin set. */
 admin: TransactionSigner<TAccountAdmin>;
 /**
@@ -129,6 +141,11 @@ feeVault: Address<TAccountFeeVault>;
  * account" because `transfer_checked` enforces the mint match
  * itself, matching `close_market_treasury` and `sweep_residual`.
  *
+ * Conditional for the same reason as those two: `transfer_out_leg`
+ * skips a zero amount, so a never-used fee vault closes with no CPI
+ * and nothing validates the mint. The guarantee covers the paying
+ * path only.
+ *
  * Distinct from `rent_recipient` below, which receives the account's
  * **lamports**: this one is a token account and takes the balance,
  * that one is any address and takes the rent.
@@ -139,14 +156,18 @@ tokenRecipient: Address<TAccountTokenRecipient>;
  * CHECK: rent destination only.
  */
 rentRecipient: Address<TAccountRentRecipient>;
+/** CHECK: Only the event authority can invoke self-CPI */
+eventAuthority: Address<TAccountEventAuthority>;
+/** CHECK: Kept for v1-compatible account ordering and IDL shape */
+program: Address<TAccountProgram>;
 }
 
-export function getCloseRegistryFeeVaultInstruction<TAccountAdmin extends string, TAccountRegistry extends string, TAccountFeeMint extends string, TAccountTokenProgram extends string, TAccountFeeVault extends string, TAccountTokenRecipient extends string, TAccountRentRecipient extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CloseRegistryFeeVaultInput<TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient>, config?: { programAddress?: TProgramAddress } ): CloseRegistryFeeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient> {
+export function getCloseRegistryFeeVaultInstruction<TAccountAdmin extends string, TAccountRegistry extends string, TAccountFeeMint extends string, TAccountTokenProgram extends string, TAccountFeeVault extends string, TAccountTokenRecipient extends string, TAccountRentRecipient extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CloseRegistryFeeVaultInput<TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): CloseRegistryFeeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, feeMint: { value: input.feeMint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, feeVault: { value: input.feeVault ?? null, isWritable: true }, tokenRecipient: { value: input.tokenRecipient ?? null, isWritable: true }, rentRecipient: { value: input.rentRecipient ?? null, isWritable: true } }
+const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, feeMint: { value: input.feeMint ?? null, isWritable: false }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, feeVault: { value: input.feeVault ?? null, isWritable: true }, tokenRecipient: { value: input.tokenRecipient ?? null, isWritable: true }, rentRecipient: { value: input.rentRecipient ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -156,7 +177,7 @@ accounts.tokenProgram.value = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as A
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.feeVault), getAccountMeta(accounts.tokenRecipient), getAccountMeta(accounts.rentRecipient)], data: getCloseRegistryFeeVaultInstructionDataEncoder().encode({}), programAddress } as CloseRegistryFeeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.feeMint), getAccountMeta(accounts.tokenProgram), getAccountMeta(accounts.feeVault), getAccountMeta(accounts.tokenRecipient), getAccountMeta(accounts.rentRecipient), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getCloseRegistryFeeVaultInstructionDataEncoder().encode({}), programAddress } as CloseRegistryFeeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountFeeMint, TAccountTokenProgram, TAccountFeeVault, TAccountTokenRecipient, TAccountRentRecipient, TAccountEventAuthority, TAccountProgram>);
 }
 
 export type ParsedCloseRegistryFeeVaultInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
@@ -191,6 +212,11 @@ feeVault: TAccountMetas[4];
  * account" because `transfer_checked` enforces the mint match
  * itself, matching `close_market_treasury` and `sweep_residual`.
  *
+ * Conditional for the same reason as those two: `transfer_out_leg`
+ * skips a zero amount, so a never-used fee vault closes with no CPI
+ * and nothing validates the mint. The guarantee covers the paying
+ * path only.
+ *
  * Distinct from `rent_recipient` below, which receives the account's
  * **lamports**: this one is a token account and takes the balance,
  * that one is any address and takes the rent.
@@ -201,11 +227,15 @@ tokenRecipient: TAccountMetas[5];
  * CHECK: rent destination only.
  */
 rentRecipient: TAccountMetas[6];
+/** CHECK: Only the event authority can invoke self-CPI */
+eventAuthority: TAccountMetas[7];
+/** CHECK: Kept for v1-compatible account ordering and IDL shape */
+program: TAccountMetas[8];
 };
 data: CloseRegistryFeeVaultInstructionData; };
 
 export function parseCloseRegistryFeeVaultInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedCloseRegistryFeeVaultInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 7) {
+  if (instruction.accounts.length < 9) {
   // TODO: Coded error.
   throw new Error('Not enough accounts');
 }
@@ -215,5 +245,5 @@ const getNextAccount = () => {
   accountIndex += 1;
   return accountMeta;
 }
-  return { programAddress: instruction.programAddress, accounts: { admin: getNextAccount(), registry: getNextAccount(), feeMint: getNextAccount(), tokenProgram: getNextAccount(), feeVault: getNextAccount(), tokenRecipient: getNextAccount(), rentRecipient: getNextAccount() }, data: getCloseRegistryFeeVaultInstructionDataDecoder().decode(instruction.data) };
+  return { programAddress: instruction.programAddress, accounts: { admin: getNextAccount(), registry: getNextAccount(), feeMint: getNextAccount(), tokenProgram: getNextAccount(), feeVault: getNextAccount(), tokenRecipient: getNextAccount(), rentRecipient: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getCloseRegistryFeeVaultInstructionDataDecoder().decode(instruction.data) };
 }

@@ -48,7 +48,7 @@ fn zero_residual_sweeps_nothing_and_reads_out_the_invariant() {
     let ev = common::events::sweep_residual(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.mint, base_mint.to_bytes());
-    assert_eq!(ev.destination, dest.to_bytes());
+    assert_eq!(ev.token_recipient, dest.to_bytes());
     assert_eq!(ev.treasury_amount, SEED_BASE);
     assert_eq!(ev.vault_sum, SEED_BASE);
     assert_eq!(ev.accrued_fee, 0);
@@ -157,7 +157,7 @@ fn quote_leg_sweeps_its_own_treasury() {
 
     let ev = common::events::sweep_residual(&meta);
     assert_eq!(ev.mint, quote_mint.to_bytes());
-    assert_eq!(ev.destination, dest.to_bytes());
+    assert_eq!(ev.token_recipient, dest.to_bytes());
     // Measured against the *quote* inventory, not the base leg.
     assert_eq!(ev.vault_sum, SEED_QUOTE);
     assert_eq!(ev.treasury_amount, SEED_QUOTE + 4_242);

@@ -583,6 +583,62 @@ fn create_market_adopts_squatted_treasuries() {
     assert_eq!(header.quote_treasury, squatted_quote.to_bytes().into());
 }
 
+/// The one `init_if_needed` shape the suite never runs: **mixed** — one
+/// leg pre-existing, the other fresh, in a single instruction.
+///
+/// Not a coverage hole. The two tests above squat *both* treasuries, so
+/// reverting either constraint to plain `init` fails them, which makes each
+/// one individually load-bearing already. What is untested is the branch
+/// *divergence*: `init_if_needed` taking the adopt path for one account and
+/// the create path for the other in the same call, where a shared-state slip
+/// between the two would show up.
+#[test]
+fn create_market_adopts_a_squatted_base_alongside_a_fresh_quote() {
+    let (mut svm, authority, fee_mint) = bootstrap();
+    let payer = fresh_payer(&mut svm);
+    let payer_ata = fund_with_fee(&mut svm, &authority, &fee_mint, &payer);
+    let base_mint = create_spl_mint(&mut svm, &authority);
+    let quote_mint = create_spl_mint(&mut svm, &authority);
+
+    // Squat the base leg only. The quote treasury does not exist yet, so
+    // the same instruction must create it.
+    let squatter = fresh_payer(&mut svm);
+    let (market, _) = market_pda(&base_mint, &quote_mint);
+    let squatted_base = create_associated_token_account(
+        &mut svm,
+        &squatter,
+        &market,
+        &base_mint,
+        &SPL_TOKEN_PROGRAM_ID,
+    );
+    let fresh_quote = associated_token_address(&market, &quote_mint, &SPL_TOKEN_PROGRAM_ID);
+    assert!(
+        svm.get_account(&fresh_quote).is_none(),
+        "the quote leg must start absent — that is the half under test"
+    );
+
+    let ix = create_market_ixn(
+        payer.pubkey(),
+        base_mint,
+        quote_mint,
+        SPL_TOKEN_PROGRAM_ID,
+        SPL_TOKEN_PROGRAM_ID,
+        fee_mint,
+        SPL_TOKEN_PROGRAM_ID,
+        payer_ata,
+    );
+    send_ixn(&mut svm, &payer, ix)
+        .expect("one adopted leg and one created leg must both resolve in a single call");
+
+    // Both legs land in the same end state regardless of which branch got
+    // them there: owned by the market PDA and stamped on the header.
+    assert_eq!(token_account_authority(&svm, &squatted_base), market);
+    assert_eq!(token_account_authority(&svm, &fresh_quote), market);
+    let header = read_market_header(&svm, &market);
+    assert_eq!(header.base_treasury, squatted_base.to_bytes().into());
+    assert_eq!(header.quote_treasury, fresh_quote.to_bytes().into());
+}
+
 /// The adopt branch must re-check the ATA derivation, not just take the
 /// account it is handed. This is the load-bearing half of the safety
 /// argument and it only became reachable with `init_if_needed`: under

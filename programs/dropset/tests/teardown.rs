@@ -494,12 +494,29 @@ fn fee_charging_market_tears_down_and_drains_the_accrued_fee() {
     let harvest = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
     let (harvest_base, harvest_quote) = f.create_atas(&harvest.pubkey());
     let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
-    f.close_market_treasury_to(&admin, &base_mint, &base_treasury, &harvest_base, &rr)
+    let meta = f
+        .close_market_treasury_meta(&admin, &base_mint, &base_treasury, &harvest_base, &rr)
         .expect("base treasury closes despite holding the accrued fee");
     assert_eq!(
         f.token_balance(&harvest_base),
         accrued,
         "the accrued fee was paid to the drain recipient"
+    );
+
+    // The harvest read-out. This is the only on-chain record of where the
+    // protocol's revenue went: the counter is about to read zero and the
+    // market account is destroyed moments later, so an indexer that missed
+    // this event could not reconstruct the payout from state at all.
+    let ev = common::events::close_market_treasury(&meta);
+    assert_eq!(ev.market, f.market.to_bytes());
+    assert_eq!(ev.mint, base_mint.to_bytes());
+    assert!(ev.is_base, "a Buy fees the base leg");
+    assert_eq!(ev.token_recipient, harvest_base.to_bytes());
+    assert_eq!(ev.rent_recipient, rr.to_bytes());
+    assert_eq!(ev.drained, accrued, "every atom that left is accounted for");
+    assert_eq!(
+        ev.accrued_fee, accrued,
+        "and all of it was protocol revenue — no residual on this path"
     );
     assert_eq!(
         f.market_header().accrued_base_fee_atoms.get(),
@@ -846,7 +863,11 @@ fn close_registry_fee_vault_drains_collected_fees() {
 
     let fee_mint = f.fee_mint;
     let collector = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
-    let collector_ata = f.create_ata_for(&collector.pubkey(), &fee_mint);
+    let collector_ata = f.create_ata_for(
+        &collector.pubkey(),
+        &fee_mint,
+        &common::SPL_TOKEN_PROGRAM_ID,
+    );
     f.close_registry_fee_vault_to(
         &admin,
         &fee_mint,
@@ -1143,4 +1164,205 @@ fn close_treasury_rejects_non_leg_mint() {
         .close_market_treasury(&admin, &other_mint, &other_treasury, &rr)
         .expect_err("a non-leg market-owned ATA must not be closeable");
     common::assert_program_error(&err, dropset::DropsetError::NotAMarketTreasury);
+}
+
+/// `token_recipient` carries no `token::mint` constraint on either close
+/// instruction — the justification being that `transfer_checked` re-derives
+/// and enforces the mint itself. Nothing pinned that, so this does: aim the
+/// base leg's drain at a token account for an unrelated mint and require
+/// the CPI to reject it.
+///
+/// The market must actually hold a balance for this to bite, which is the
+/// whole point of the pairing with the next test.
+#[test]
+fn close_treasury_rejects_a_wrong_mint_recipient() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+
+    // Give the base treasury something to pay out, so the drain CPI runs.
+    const DUST: u64 = 9_001;
+    let (base_mint, base_treasury) = (f.base_mint, f.base_treasury);
+    common::mint_to(&mut f.svm, &admin, &base_mint, &base_treasury, DUST);
+
+    // A token account for a mint that is neither market leg.
+    let stranger_mint = common::create_spl_mint(&mut f.svm, &admin);
+    let stranger = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let wrong_recipient =
+        f.create_ata_for(&stranger.pubkey(), &stranger_mint, &SPL_TOKEN_PROGRAM_ID);
+
+    let err = f
+        .close_market_treasury_to(&admin, &base_mint, &base_treasury, &wrong_recipient, &rr)
+        .expect_err("transfer_checked must reject a recipient of the wrong mint");
+    // `Custom(3)` is SPL Token's own `TokenError::MintMismatch` — the CPI
+    // rejecting on its re-derived mint, which is exactly the check the
+    // account's missing `token::mint` constraint delegates to. An Anchor
+    // constraint error here would mean something else caught it first.
+    common::assert_instruction_error(&err, "Custom(3)");
+
+    // The rejection is total — nothing moved and the treasury still stands.
+    assert_eq!(f.token_balance(&base_treasury), DUST);
+    assert!(exists(&f.svm, &base_treasury), "the close reverted");
+}
+
+/// The other half of the delegated-mint story, and the reason the account
+/// doc calls the guarantee **conditional**: `transfer_out_leg` skips a zero
+/// amount, so on a zero-balance close no CPI runs and *nothing* validates
+/// the mint. The same wrong-mint recipient that is rejected above sails
+/// through here.
+///
+/// Harmless — no atoms move either way — but it is the majority path (every
+/// market that never charged a fee), so the guarantee must not be read as
+/// unconditional.
+#[test]
+fn a_zero_balance_close_never_validates_the_recipient_mint() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+
+    let (base_mint, base_treasury) = (f.base_mint, f.base_treasury);
+    assert_eq!(
+        f.token_balance(&base_treasury),
+        0,
+        "no fee charged, no transfer received — the common teardown shape"
+    );
+
+    let stranger_mint = common::create_spl_mint(&mut f.svm, &admin);
+    let stranger = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let wrong_recipient =
+        f.create_ata_for(&stranger.pubkey(), &stranger_mint, &SPL_TOKEN_PROGRAM_ID);
+
+    f.close_market_treasury_to(&admin, &base_mint, &base_treasury, &wrong_recipient, &rr)
+        .expect("a zero-balance close skips the CPI, so the mint goes unchecked");
+    assert!(!exists(&f.svm, &base_treasury), "base treasury closed");
+}
+
+/// Token-2022 on the teardown drain path.
+///
+/// `close_registry_fee_vault` takes its token program from the caller and
+/// `init` will stand up a Token-2022 registry fee vault, but every teardown
+/// test drove classic SPL Token — so `transfer_checked` had never actually
+/// run against Token-2022 here. Re-point the market's fee config at a
+/// Token-2022 mint, fund the resulting fee ATA, and close it.
+///
+/// This also exercises the `create_ata_for` fix: the recipient's address is
+/// derived from the token program, so deriving a Token-2022 fee mint's ATA
+/// against classic SPL Token yields a different, non-existent account.
+#[test]
+fn close_registry_fee_vault_drains_a_token_2022_vault() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+
+    // Re-point the market's fee at a Token-2022 mint. `set_market_fee_config`
+    // eagerly creates the matching registry fee ATA under that program.
+    let t22_mint = common::create_token2022_mint(&mut f.svm, &admin);
+    f.set_market_fee_config(&admin, &t22_mint, &common::TOKEN_2022_PROGRAM_ID, 42_000)
+        .expect("admin re-points the market fee at a Token-2022 mint");
+    let t22_fee_vault =
+        common::associated_token_address(&f.registry, &t22_mint, &common::TOKEN_2022_PROGRAM_ID);
+    assert!(exists(&f.svm, &t22_fee_vault), "Token-2022 fee ATA created");
+
+    // Fund it, so the close has something to drain and the Token-2022
+    // `transfer_checked` actually runs. Minting straight in is the
+    // unsolicited-transfer shape the instruction already promises to
+    // recover; where the balance came from is immaterial to the CPI.
+    const COLLECTED: u64 = 77_000;
+    common::mint_to_under(
+        &mut f.svm,
+        &admin,
+        &t22_mint,
+        &t22_fee_vault,
+        COLLECTED,
+        &common::TOKEN_2022_PROGRAM_ID,
+    );
+
+    // Wind the market down — a fee vault only closes once no market remains.
+    let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
+    let (base_treasury, quote_treasury) = (f.base_treasury, f.quote_treasury);
+    f.close_market_treasury(&admin, &base_mint, &base_treasury, &rr)
+        .expect("close base treasury");
+    f.close_market_treasury(&admin, &quote_mint, &quote_treasury, &rr)
+        .expect("close quote treasury");
+    f.close_market(&admin, &rr).expect("close market");
+
+    // `close_registry_fee_vault_for` derives the recipient under the vault's
+    // own token program — the create_ata_for fix. Against the classic-SPL
+    // derivation this address would not exist.
+    let collector = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let collector_ata = f.create_ata_for(
+        &collector.pubkey(),
+        &t22_mint,
+        &common::TOKEN_2022_PROGRAM_ID,
+    );
+    let meta = f
+        .close_registry_fee_vault_meta(
+            &admin,
+            &t22_mint,
+            &common::TOKEN_2022_PROGRAM_ID,
+            &collector_ata,
+            &rr,
+        )
+        .expect("a Token-2022 fee vault drains and closes");
+
+    assert_eq!(
+        f.token_balance(&collector_ata),
+        COLLECTED,
+        "the Token-2022 balance was paid out, not stranded"
+    );
+    assert!(!exists(&f.svm, &t22_fee_vault), "Token-2022 fee ATA closed");
+
+    let ev = common::events::close_registry_fee_vault(&meta);
+    assert_eq!(ev.fee_mint, t22_mint.to_bytes());
+    assert_eq!(ev.token_recipient, collector_ata.to_bytes());
+    assert_eq!(ev.rent_recipient, rr.to_bytes());
+    assert_eq!(ev.collected, COLLECTED);
+}
+
+/// The registry-side close emits its harvest read-out on the classic-SPL
+/// path too, carrying the collected market-creation fees off-chain before
+/// the account that held them is destroyed.
+#[test]
+fn close_registry_fee_vault_emits_the_harvest_read_out() {
+    let mut f = Fixture::bootstrap();
+    let admin = f.authority.insecure_clone();
+    let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
+
+    // A non-admin opens a vault and pays the fee — real collected revenue.
+    let bob = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    f.create_vault_as(&bob, 0, bob.pubkey(), false, Pubkey::default())
+        .expect("non-admin opens a vault and pays the fee");
+    f.force_withdraw_leader(&admin, 0, &bob.pubkey())
+        .expect("reclaim bob's empty vault");
+
+    let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
+    let (base_treasury, quote_treasury) = (f.base_treasury, f.quote_treasury);
+    f.close_market_treasury(&admin, &base_mint, &base_treasury, &rr)
+        .expect("close base treasury");
+    f.close_market_treasury(&admin, &quote_mint, &quote_treasury, &rr)
+        .expect("close quote treasury");
+    f.close_market(&admin, &rr).expect("close market");
+
+    let fee_mint = f.fee_mint;
+    let collector = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let collector_ata = f.create_ata_for(&collector.pubkey(), &fee_mint, &SPL_TOKEN_PROGRAM_ID);
+    let meta = f
+        .close_registry_fee_vault_meta(
+            &admin,
+            &fee_mint,
+            &SPL_TOKEN_PROGRAM_ID,
+            &collector_ata,
+            &rr,
+        )
+        .expect("close the fee vault");
+
+    let ev = common::events::close_registry_fee_vault(&meta);
+    assert_eq!(ev.fee_mint, fee_mint.to_bytes());
+    assert_eq!(ev.token_recipient, collector_ata.to_bytes());
+    assert_eq!(ev.rent_recipient, rr.to_bytes());
+    assert_eq!(
+        ev.collected,
+        common::CREATE_MARKET_FEE_ATOMS,
+        "the read-out matches what was actually paid out"
+    );
 }
