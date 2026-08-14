@@ -19,13 +19,34 @@ import { type PriceBits, quoteForBase } from "@dropset/sdk";
 // function's own guidance: it is the exact integer path the on-chain matcher
 // and the TUI's `human_price` both take, so the three agree bit for bit
 // instead of drifting at the last decimal.
+//
+// The ratio is probed at PRICE_PROBE_ATOMS base atoms rather than at exactly
+// one whole base unit (`10^baseDecimals`). `quoteForBase` floors, so the
+// smaller the probe the coarser the answer, and a *low-decimal* base makes
+// that probe tiny: at 2 decimals it asks for the quote value of 100 atoms and
+// gets back a single floored integer, leaving the price about two significant
+// figures. On IDR-scale pairs that collapses adjacent ladder levels onto the
+// same number — the pane showed several distinct asks at 0.000056 — while a
+// 6-vs-6 pair hides it, exactly like the decimals bug above. Probing far
+// above one unit recovers the encoding's full 8 significant digits before the
+// floor bites.
+//
+// The probe is shared verbatim with the TUI's `human_price`, so it is sized
+// to fit the `u64` that fork passes: 1e18 is comfortably inside it, and even
+// against the largest representable price stays inside the `u128`
+// `quoteForBase` returns.
+const PRICE_PROBE_ATOMS = 10n ** 18n;
+
 export function humanPrice(
   bits: PriceBits,
   baseDecimals: number,
   quoteDecimals: number,
 ): number {
-  const perBaseUnit = quoteForBase(bits, 10n ** BigInt(baseDecimals));
-  return Number(perBaseUnit) / 10 ** quoteDecimals;
+  const perProbe = quoteForBase(bits, PRICE_PROBE_ATOMS);
+  return (
+    (Number(perProbe) / Number(PRICE_PROBE_ATOMS)) *
+    (10 ** baseDecimals / 10 ** quoteDecimals)
+  );
 }
 
 // FX stablecoin pairs span a wide price range (EUR ≈ 1.1, MXN ≈ 0.05,
