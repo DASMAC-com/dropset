@@ -230,8 +230,16 @@ impl FairValueEngine {
         // because it is a property of the market, not of which legs answered:
         // any crypto reading present for such a market is not a basis source
         // (the config invariant is that it has none), so it must not reach the
-        // EMA. Falls through when FX is down — a pinned market with no anchor
-        // degrades to the static peg like any other.
+        // EMA. Falls through when FX is down, and that path is *not* the one the
+        // other markets take: having no crypto leg is what makes a market
+        // pinned, so a shut FX session leaves it with nothing live at all. The
+        // others land on their crypto reference (`CryptoOnly`, healthy, §1 fm2)
+        // while a pinned market lands on the static peg and runs `Degraded` —
+        // tightened switches — for the whole FX-closed window. That suspends the
+        // "never tighten a permanent condition" argument for `Unverified` above,
+        // every weekend, and is accepted rather than overlooked: the alternative
+        // it replaces was anchoring the weekend on the very reading this market
+        // has no usable source for.
         if let Some(pinned) = self.cfg.pinned_basis {
             if let Some(fx) = fx {
                 return FairValue {

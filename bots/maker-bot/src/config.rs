@@ -123,9 +123,10 @@ pub struct MarketConfig {
 /// **MXNe has no basis source at all**, and that is a roster fact rather than a
 /// wiring gap. CoinGecko's `real-mxn` does resolve to the correct mint, but it
 /// aggregates a market carrying roughly $16 of daily volume across two Orca
-/// pools on a ~$44k cap, and prices it near half the peso peg — against ~$0.0585
-/// from CMC's DEX scanner on the same mint, which agrees with the FX anchor to
-/// within ~2%. So the id is right and the number is garbage. It is dropped
+/// pools on a ~$44k cap, and prices it near half the peso peg — against
+/// ~$0.0585 from CMC's DEX scanner on the same mint, which agrees with the live
+/// FX anchor to within ~0.4%. So the id is right and the number is garbage. It
+/// is dropped
 /// rather than demoted: a fallback tier is only worth having if reaching it is
 /// better than not, and a standing basis breach on a permanently-wrong reading
 /// costs more than no reading, because it is the peg-event alarm (§4) and an
@@ -135,8 +136,9 @@ pub struct MarketConfig {
 ///
 /// Note this is a symptom of a wider shape, not a quirk of MXNe: only EURC
 /// reaches a CEX, so for the other five index-priced markets the index tier
-/// *is* the basis leg, unchecked by any second source. MXNe is merely the one thin enough for
-/// that to become visible. Corroborating across sources — median, dispersion
+/// *is* the basis leg, unchecked by any second source. MXNe is merely the one
+/// thin enough for that to become visible. Corroborating across sources —
+/// median, dispersion
 /// gate, explicit single-source policy — is tracked separately as the
 /// multi-source composite work; this constant is the interim admission that
 /// one market has nothing to corroborate against.
@@ -224,9 +226,18 @@ pub const MARKETS: [MarketConfig; 7] = [
         coingecko_id: None,
         coinmarketcap_id: None,
         // Assumes the token trades at its peg, which is the most the FX anchor
-        // alone can say. CMC's DEX scanner puts the on-chain price within ~2% of
-        // that, so 1.0 is not merely a placeholder — but it is an assumption,
-        // which is exactly what `Health::Unverified` exists to advertise.
+        // alone can say — so 1.0 is not merely a placeholder, but it is an
+        // assumption, which is exactly what `Health::Unverified` advertises.
+        //
+        // Sizing that assumption against the thing it can cost: a pin is a
+        // *directional* claim, so a standing gap between it and the true price
+        // is not a tail risk but a constant one side is quoted through. On the
+        // 2026-08-14 dry run the composition produced $0.0587 against $0.0585
+        // from CMC's DEX scanner — a ~0.4% offset, inside the innermost ladder
+        // tier's 5_000 ppm (0.5%) but not far inside it. Measure against the
+        // *live* anchor, not `static_usd` below: that constant is a stale
+        // last-resort value and reads ~2% off the same scanner, which would
+        // wrongly imply the inner quote rests through the market.
         pinned_basis: Some(1.0),
         static_usd: 0.0573,
     },

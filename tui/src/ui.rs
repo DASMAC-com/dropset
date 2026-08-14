@@ -19,6 +19,7 @@ use ratatui::{
 };
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
+use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 /// Number of grouped control rows the "runtime actions" pane renders (bots,
@@ -328,7 +329,7 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
 
 /// Render a set of market symbols as one comma-separated alert subject, so a
 /// condition affecting several markets is one line rather than one line each.
-fn joined(symbols: &std::collections::BTreeSet<String>) -> String {
+fn joined(symbols: &BTreeSet<String>) -> String {
     symbols.iter().cloned().collect::<Vec<_>>().join(", ")
 }
 
