@@ -618,6 +618,75 @@ its own. These are the numbers the maker spec defers to:
   what sets its healthy band and alert threshold, so the bot runs
   against a measured baseline rather than blind.
 
+### What is implemented today
+
+The first slice of the above ships as committed SQL in
+`market-data/analytics/` (see its README) plus an **FX analytics**
+dashboard beside the ingestion one, in the same provisioning tree.
+Four queries: the basis against an FX anchor in bps, and — the three
+that need only the venue's own candles — weekend versus weekday,
+behavior by FX session, and realized volatility by hour and regime.
+
+Being single-leg is what let three of the four produce results before
+any FX feed existed: a cold collector backfills 60 days, so the history
+is on disk minutes after first start rather than accruing over calendar
+time. Only the basis series needs the anchor leg; it returns no rows
+until one is collected, rather than failing.
+
+Two invariants hold across all of them, and both exist because
+violating them yields a confident wrong answer rather than an error:
+
+- **Adjacent-bucket returns only.** A log return is computed between two
+  buckets only when they are genuinely consecutive at the stated
+  granularity. A venue emits no candle for a minute with no trades
+  (~12% of bars on a 60-day EURC-USDC backfill) and interbank FX leaves
+  a ~48-hour weekend hole, so an unguarded window function bridges the
+  gap and reports one enormous pseudo-return attributed to whichever
+  bucket sits on the far side.
+- **Local wall clock, never fixed UTC offsets.** Session windows and the
+  FX week boundary resolve per timestamp in the relevant centre's own
+  zone. Daylight saving moves these twice a year and the hemispheres
+  shift in opposite directions, so a hardcoded UTC hour is wrong for a
+  large part of any multi-month window — which is the window these run
+  over.
+
+Measured on `coinbase` / `EURC-USDC` / 60s over 2026-06-15 to
+2026-08-14, the shape of the result: weekends are calmer (0.98 vs 1.42
+bps per bar) with a far smaller tail (largest single-bar move 13 vs 82
+bps); the session rhythm survives into the stablecoin (London 1.58 and
+New York 1.57 against Sydney 1.05 and Tokyo 1.13); and the intraday
+profile carries FX's fingerprints, peaking at 13:00 UTC in the
+London/New York overlap with a second spike near the 21:00 UTC daily
+roll, neither of which appears on weekends.
+
+**EUR/USD leads the analytics; AUD is carried as a case study.** The
+reason is measured rather than editorial — over the same window and
+venue, `EURC-USDC` recorded 71,469 bars (1,172/day) against
+`AUDD-USDC`'s 845 (14.1/day, thinnest day 4). A book printing in ~1% of
+minutes supports a daily-resolution basis level and not an intraday
+session or volatility read. Every query takes source and product as
+parameters, so nothing is rewritten if that book deepens. The thinness
+is itself worth keeping: a barely-traded centralized book is the
+clearest argument for an on-chain FX market in that currency.
+
+One hazard to carry into the anchor work. FX vendors disagree about
+whether a weekend exists — some publish a complete 1440-bar Saturday,
+others correctly publish nothing — so both conventions will appear in
+`cex_prices` under different sources. Do **not** compute a weekend
+volatility figure from a source whose market was closed; it yields a
+plausible ultra-low sigma for a session that never traded and fails
+silently. Prefer a source whose weekend bar count is zero. Do still
+compute the weekend **deviation** series: an anchor holding flat while
+the venue leg moves is the mechanism being measured, since with no
+arbitrage channel open the basis is free to widen.
+
+Resist detecting such a series by a collapse in distinct closing
+prices. That heuristic was tested against this repo's own traded tape
+and is wrong — a real Saturday carries 3–15 distinct closes across
+~1,000 bars, and weekends show *more* distinct closes per bar than
+weekdays (8.9 vs 5.5 per 1,000). Sparse pricing is what a quiet real
+market looks like.
+
 ______________________________________________________________________
 
 ## 12. Deployment — local demo and cloud

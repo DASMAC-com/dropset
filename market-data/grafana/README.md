@@ -18,8 +18,19 @@ dashboard. Append `?kiosk` to the URL for a chrome-free view — no nav,
 no side menu — which is what you want on a screenshare or a screenshot.
 
 The dashboard is deliberately named just `market-data`, not something
-narrower: its panels are ingestion-focused today, but maker telemetry
-and the analytics panels land in this same tree later.
+narrower: its panels are ingestion-focused, and maker telemetry lands in
+this same tree later.
+
+A second dashboard, **FX analytics** (`fx-analytics`), now sits beside
+it. The split is by question rather than by subject: `market-data`
+answers *is ingestion alive and any good*, and `FX analytics` answers
+*what does the collected history say* — the basis against an FX anchor
+in bps, and how volatility varies by weekend, trading session, and hour
+of day. Keeping them apart matters for the ingestion view in
+particular, whose value is that a wall of green means a feeds change
+works; mixing regime analytics into it would dilute that read. The
+committed SQL behind the same analyses, runnable outside Grafana, is in
+`market-data/analytics/`.
 
 ## The tree
 
