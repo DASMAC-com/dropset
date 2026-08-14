@@ -1,16 +1,32 @@
 # cspell:word rustls
 # The market-data collection app (docs/data-feeds.md §7), and the first
 # consumer of the shared `feeds` framework — so it proves the source →
-# store-sink path end to end. One binary,
-# `market-data-coinbase` (the Coinbase EURC/USDC reference feed, §9); schema
-# provisioning belongs to `dropset-migrate`, the single schema owner (§8), so
-# this crate no longer ships a migrate runner. HTTP-only: it enables `feeds`'
-# `http` + `store` features and never compiles the Solana or streaming
-# transports.
+# store-sink path end to end. Four binaries, one per source:
+# `market-data-coinbase` (the crypto reference feed, §9) and the free-tier FX
+# roster `market-data-oanda` / `-twelvedata` / `-alphavantage` (§9 "The
+# free-tier FX roster"). Schema provisioning belongs to `dropset-migrate`, the
+# single schema owner (§8), so this crate ships no migrate runner. HTTP-only: it
+# enables `feeds`' `http` + `store` features and never compiles the Solana or
+# streaming transports.
+#
+# Each binary is declared rather than left to `src/bin` auto-discovery, so the
+# deployed command name carries the crate prefix the compose services invoke.
+
+[[bin]]
+name = "market-data-alphavantage"
+path = "src/bin/alphavantage.rs"
 
 [[bin]]
 name = "market-data-coinbase"
 path = "src/bin/coinbase.rs"
+
+[[bin]]
+name = "market-data-oanda"
+path = "src/bin/oanda.rs"
+
+[[bin]]
+name = "market-data-twelvedata"
+path = "src/bin/twelvedata.rs"
 
 [dependencies]
 anyhow = "1"
@@ -45,7 +61,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [package]
-description = "Market-data collection app and its Coinbase reference feed."
+description = "Market-data collection app and its crypto and FX reference feeds."
 name = "dropset-market-data"
 publish = false
 edition.workspace = true

@@ -1,3 +1,4 @@
+// cspell:word outputsize
 //! The Alpha Vantage FX daily adapter (docs/data-feeds.md §9) — a **daily-only**
 //! third opinion on the FX rate.
 //!
@@ -176,7 +177,9 @@ fn check_response(body: FxDailyResponse) -> Result<BTreeMap<String, RawBar>> {
         ("Error Message", body.error_message),
     ] {
         if let Some(text) = value {
-            return Err(anyhow!("Alpha Vantage refused the request ({label}): {text}"));
+            return Err(anyhow!(
+                "Alpha Vantage refused the request ({label}): {text}"
+            ));
         }
     }
     body.series

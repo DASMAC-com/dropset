@@ -1,3 +1,4 @@
+// cspell:word Hinnant
 //! Wall-clock helpers shared by the feed windows.
 //!
 //! The civil-date arithmetic here exists so an adapter whose venue publishes a
@@ -41,9 +42,8 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let year_of_era = y - era * 400; // [0, 399]
     let shifted_month = if m > 2 { m - 3 } else { m + 9 }; // March = 0
     let day_of_year = (153 * shifted_month + 2) / 5 + d - 1; // [0, 365]
-    let day_of_era =
-        year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year; // [0, 146096]
-    // 719468 is the day count from 0000-03-01 to 1970-01-01.
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year; // [0, 146096]
+                                                                                            // 719468 is the day count from 0000-03-01 to 1970-01-01.
     era * 146_097 + day_of_era - 719_468
 }
 
@@ -105,12 +105,10 @@ pub fn format_civil_utc(epoch: i64) -> String {
 /// Alpha Vantage documents its FX series as UTC). A venue that cannot be pinned
 /// must not use this.
 pub fn parse_civil_utc(datetime: &str) -> Result<i64> {
-    let (date, time) = datetime
-        .split_once(' ')
-        .unwrap_or((datetime, "00:00:00"));
+    let (date, time) = datetime.split_once(' ').unwrap_or((datetime, "00:00:00"));
     let mut date_parts = date.split('-');
     let mut time_parts = time.split(':');
-    let mut field = |part: Option<&str>, what: &str| -> Result<i64> {
+    let field = |part: Option<&str>, what: &str| -> Result<i64> {
         part.filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow!("civil timestamp {datetime:?} has no {what}"))?
             .parse::<i64>()
@@ -146,10 +144,7 @@ mod tests {
     fn matches_timestamps_captured_from_the_venues() {
         // Ground truth: OANDA returned this candle in both RFC3339 and UNIX
         // form, which pins the pair exactly.
-        assert_eq!(
-            civil_to_epoch_secs(2026, 8, 14, 0, 51, 0),
-            1_786_668_660
-        );
+        assert_eq!(civil_to_epoch_secs(2026, 8, 14, 0, 51, 0), 1_786_668_660);
         // The Saturday the weekend probes used, derived rather than hardcoded —
         // an earlier hand-written constant for this date was four days wrong.
         assert_eq!(civil_to_epoch_secs(2026, 8, 8, 0, 0, 0), 1_786_147_200);
@@ -159,13 +154,11 @@ mod tests {
     fn handles_leap_days_and_century_rules() {
         // 2000 was a leap year (divisible by 400); 1900 was not.
         assert_eq!(
-            civil_to_epoch_secs(2000, 3, 1, 0, 0, 0)
-                - civil_to_epoch_secs(2000, 2, 28, 0, 0, 0),
+            civil_to_epoch_secs(2000, 3, 1, 0, 0, 0) - civil_to_epoch_secs(2000, 2, 28, 0, 0, 0),
             2 * 86_400
         );
         assert_eq!(
-            civil_to_epoch_secs(1900, 3, 1, 0, 0, 0)
-                - civil_to_epoch_secs(1900, 2, 28, 0, 0, 0),
+            civil_to_epoch_secs(1900, 3, 1, 0, 0, 0) - civil_to_epoch_secs(1900, 2, 28, 0, 0, 0),
             86_400
         );
     }

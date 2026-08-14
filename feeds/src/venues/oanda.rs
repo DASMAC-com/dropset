@@ -1,3 +1,4 @@
+// cspell:word OHLC
 //! The OANDA v20 candles adapter (docs/data-feeds.md §9) — the **FX anchor**,
 //! and the first source whose subject is a real currency pair rather than a
 //! stablecoin proxy.
@@ -375,7 +376,10 @@ mod tests {
 
     #[test]
     fn timestamps_decode_from_epoch_seconds_with_a_fraction() {
-        assert_eq!(parse_unix_seconds("1786668660.000000000").unwrap(), 1_786_668_660);
+        assert_eq!(
+            parse_unix_seconds("1786668660.000000000").unwrap(),
+            1_786_668_660
+        );
         // The header is what produces the fraction; a bare integer is valid too.
         assert_eq!(parse_unix_seconds("1786668660").unwrap(), 1_786_668_660);
         // An RFC3339 timestamp means the header was dropped somewhere, which

@@ -44,6 +44,33 @@
 # `make explorer` / `make explorer-down` drive it by hand.
 name: 'dropset-localnet'
 services:
+  alphavantage:
+    # The Alpha Vantage daily FX feed. Daily bars only — `FX_INTRADAY` is
+    # premium-gated on the free tier — so it corroborates the daily close and
+    # cannot stand in for the OANDA anchor (docs/data-feeds.md §9).
+    #
+    # Keyed, so it sits behind the `fx` profile with the other two: a plain
+    # `docker compose up` and `make collectors-up` stay keyless and always work,
+    # and `make fx-collectors-up` starts these. The `:?` on the key makes a
+    # missing credential a clear compose error rather than a crash-looping
+    # container.
+    build:
+      context: '../..'
+      dockerfile: 'market-data/Dockerfile'
+    command:
+    - 'market-data-alphavantage'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      ALPHA_VANTAGE_API_KEY: '${ALPHA_VANTAGE_API_KEY:?required}'
+      BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
+      RUST_LOG: 'info'
+    profiles:
+    - 'fx'
+    restart: 'unless-stopped'
   coinbase:
     # The Coinbase reference-price collector: resume from the saved cursor,
     # backfill then poll the candles endpoint, and persist closed buckets into
@@ -257,6 +284,31 @@ services:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       RUST_LOG: 'info'
     restart: 'no'
+  oanda:
+    # The OANDA v20 FX anchor feed: minute bars with real tick volume, a
+    # per-candle `complete` flag, and history reaching back years
+    # (docs/data-feeds.md §9). The deepest and freshest of the three FX sources.
+    #
+    # A weekend window legitimately returns no candles — real FX is closed — and
+    # the adapter advances its cursor past the window anyway, so an idle
+    # Saturday is not a stall.
+    build:
+      context: '../..'
+      dockerfile: 'market-data/Dockerfile'
+    command:
+    - 'market-data-oanda'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      OANDA_API_KEY: '${OANDA_API_KEY:?required}'
+      PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
+      RUST_LOG: 'info'
+    profiles:
+    - 'fx'
+    restart: 'unless-stopped'
   postgres:
     # The one shared `dropset` database: indexer tables, market-data price
     # tables, and the maker go-between tables as they land (docs/data-feeds.md
@@ -313,6 +365,34 @@ services:
     restart: 'unless-stopped'
     volumes:
     - '../../keys:/app/keys:ro'
+  twelvedata:
+    # The Twelve Data FX cross-check: an independent minute-bar opinion for the
+    # fusion estimator to disagree with (docs/data-feeds.md §9).
+    #
+    # Two things to know about its rows. It publishes no volume, so they carry
+    # `0.0` — never compare volume across sources. And it publishes a complete
+    # minute grid on weekends where OANDA publishes nothing, so session
+    # detection reads bar absence from OANDA rather than trusting either alone.
+    #
+    # Its 300-second tick is sized to 800 credits/day with headroom; that does
+    # not coarsen the bars, since one request returns a window of them.
+    build:
+      context: '../..'
+      dockerfile: 'market-data/Dockerfile'
+    command:
+    - 'market-data-twelvedata'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
+      RUST_LOG: 'info'
+      TWELVE_DATA_API_KEY: '${TWELVE_DATA_API_KEY:?required}'
+    profiles:
+    - 'fx'
+    restart: 'unless-stopped'
 volumes:
   # The shared database's durable storage. Named, so recorded market-data
   # history survives a stack restart (see the `postgres` service). `local` is

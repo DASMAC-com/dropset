@@ -1,3 +1,4 @@
+// cspell:word AUDUSD
 //! FX collector configuration, credential resolution, and the canonical ↔
 //! venue symbol mapping the three FX feeds share.
 //!
@@ -55,14 +56,11 @@ fn env_or(key: &str, default: &str) -> String {
 impl FxConfig {
     /// Read the collector's configuration, starting from its venue's defaults.
     pub fn from_env(defaults: &FxDefaults) -> Result<Self> {
-        let database_url = std::env::var("DATABASE_URL")
-            .map_err(|_| anyhow!("DATABASE_URL is required"))?;
-        let granularity_secs = env_or(
-            "GRANULARITY_SECS",
-            &defaults.granularity_secs.to_string(),
-        )
-        .parse()
-        .unwrap_or(defaults.granularity_secs);
+        let database_url =
+            std::env::var("DATABASE_URL").map_err(|_| anyhow!("DATABASE_URL is required"))?;
+        let granularity_secs = env_or("GRANULARITY_SECS", &defaults.granularity_secs.to_string())
+            .parse()
+            .unwrap_or(defaults.granularity_secs);
         let backfill_days = env_or("BACKFILL_DAYS", &DEFAULT_BACKFILL_DAYS.to_string())
             .parse()
             .unwrap_or(DEFAULT_BACKFILL_DAYS);

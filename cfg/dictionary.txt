@@ -2,7 +2,9 @@ addrs
 affordance
 affordances
 airdrop
+alphavantage
 anza
+apikey
 aptos
 askq
 asym
@@ -78,6 +80,7 @@ hyperliquid
 idempotently
 idrx
 impls
+intraday
 iterm
 kalman
 kapsule
@@ -195,8 +198,10 @@ topup
 transfero
 tryb
 tsup
+twelvedata
 txns
 uncaptioned
+unfetched
 unfillable
 unfirmable
 unitless
