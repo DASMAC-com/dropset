@@ -624,21 +624,20 @@ be allocated rather than assumed.
 | Econ calendar          | Order of a day, static download   | Collector                              |
 | On-chain (indexer RPC) | Framework poll interval           | Indexer                                |
 
-Those cadences govern the **caught-up** state only. While a source is
-backfilling, the runner loops without pausing, so the only thing pacing
-it is the shared HTTP client's minimum interval — and the 250 ms default
-is ~240 requests a minute, which is 30× Twelve Data's 8/minute tier. So
-the two FX sources with a tier stricter than that default raise their own
-floor at construction: **Twelve Data to 8 s** (7.5/minute, just inside the
-limit — about two minutes' overhead across a whole 60-day backfill), and
-**Alpha Vantage to 1 h** (24/day against its 25/day account budget).
-OANDA needs none: at 100 req/s allowed, the default floor is already
-~400× stricter than the venue asks.
-
-The distinction is worth stating plainly, because the trap is that
+Those cadences govern the **caught-up** state only — while a source
+backfills, the runner loops without pausing and only the shared client's
+minimum interval (below) paces it. That is the trap worth naming:
 **steady-state polling and catch-up draw on the same budget but are
-governed by different knobs.** A cadence sized correctly for the
-caught-up state says nothing about what a cold backfill will do.
+governed by different knobs**, so a cadence sized correctly for the
+caught-up state says nothing about what a cold backfill will do. At the
+250 ms default a backfill issues ~240 requests a minute — 30× Twelve
+Data's 8/minute tier.
+
+So the two FX sources stricter than that default raise their own floor at
+construction: **Twelve Data to 8 s** (7.5/minute, and about two minutes'
+overhead across a whole 60-day backfill) and **Alpha Vantage to 1 h**
+(24/day against its 25/day account). OANDA needs none — at 100 req/s
+allowed the default is already ~400× stricter than the venue asks.
 
 The three FX cadences span two orders of magnitude, and the reason is
 worth stating because it is counter-intuitive: **a tight request budget
