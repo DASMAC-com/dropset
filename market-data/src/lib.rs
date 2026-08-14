@@ -16,4 +16,5 @@
 //! provisioning one (`data-feeds.md` §8).
 
 pub mod config;
+pub mod fx;
 pub mod store;
