@@ -38,12 +38,19 @@ pub struct Quote {
     /// Input atoms actually consumed (`<= amount_in`; quote for Buy, base
     /// for Sell). DFlow requires `in_amount <= requested`.
     ///
-    /// The take is **exact-in**: whenever the taker's own budget is what
-    /// the fill runs out against, this equals `amount_in` exactly —
-    /// including the sub-atom change the levels could not price, which
-    /// the engine consumes into the treasury as unattributed residual
-    /// rather than leaving stranded. It is short of `amount_in` only when
-    /// something else stopped the walk: thin depth, or the limit price.
+    /// The take is **exact-in**: on a leg the taker's own budget is what
+    /// the fill runs out against, this equals `amount_in` — including
+    /// the sub-atom change that leg could not price, which the engine
+    /// consumes into the treasury as unattributed residual rather than
+    /// leaving stranded.
+    ///
+    /// It is short of `amount_in` when something *else* stopped the
+    /// walk, and those cases are deliberate, not rounding: thin depth,
+    /// the limit price, or a remainder that cannot buy one output atom
+    /// at the next level (which is left with the taker — the engine
+    /// absorbs change only at a price they actually traded at). Guard 1f
+    /// can also strand a single input atom. So treat this as the
+    /// authoritative consumed figure rather than assuming `amount_in`.
     pub in_amount: u64,
     /// Net output atoms delivered to the taker after **both** fees (base
     /// for Buy, quote for Sell) — what actually lands in their token
@@ -179,15 +186,20 @@ pub fn simulate_swap(
             let fill_b = cap_by_taker_quote
                 .min(lvl.size as u128)
                 .min(base_atoms as u128);
-            let taker_bound = fill_b == cap_by_taker_quote;
             if fill_b == 0 {
-                if taker_bound {
-                    // Can't afford one base atom here or anywhere below.
-                    unfilled = 0;
+                // `cap_by_taker_quote == 0` is the taker failing to
+                // afford one base atom here, and every ask below is
+                // dearer — stop, leaving the remainder with them (the
+                // engine's `LegFill::Exhausted`, which deliberately
+                // absorbs nothing: see its doc). An empty level or
+                // drained vault says nothing about the budget, so walk
+                // on.
+                if cap_by_taker_quote == 0 {
                     break;
                 }
                 continue;
             }
+            let taker_bound = fill_b == cap_by_taker_quote;
             let fill_b = fill_b.min(u64::MAX as u128) as u64;
             let fill_q = lvl.price.quote_for_base(fill_b);
             // A reverse leg past u64::MAX makes the on-chain engine abort
@@ -225,14 +237,14 @@ pub fn simulate_swap(
             let fill_q = taker_implied_quote
                 .min(lvl.size as u128)
                 .min(quote_atoms as u128);
-            let taker_bound = fill_q == taker_implied_quote;
             if fill_q == 0 {
-                if taker_bound {
-                    unfilled = 0;
+                // Mirror of the Buy arm above.
+                if taker_implied_quote == 0 {
                     break;
                 }
                 continue;
             }
+            let taker_bound = fill_q == taker_implied_quote;
             let fill_q = fill_q.min(u64::MAX as u128) as u64;
             let fill_b = lvl.price.base_for_quote(fill_q);
             // Symmetric to the Buy guard: the engine aborts the whole take
@@ -292,11 +304,14 @@ pub fn simulate_swap(
     }
 
     // A take that matched no level is soft-reverted whole by the engine
-    // (`filled_legs == 0`), which transfers nothing. Say so explicitly
-    // rather than letting the zeros fall out: a walk that only ever
-    // absorbed exact-in residue drove `unfilled` to zero without filling
-    // anything, and would otherwise quote the taker's full `amount_in`
-    // as consumed against no output at all.
+    // (`filled_legs == 0`), which transfers nothing. Redundant with the
+    // arithmetic today — every accumulator only moves on a fill, so they
+    // are already zero here — and kept anyway as a backstop on the one
+    // invariant this file must never break: nothing consumed without a
+    // leg to show for it. An earlier draft of the exact-in change zeroed
+    // `unfilled` on the walk-ending path, which quoted the taker's whole
+    // `amount_in` as consumed against no output at all; this is what
+    // would have contained it.
     if legs == 0 {
         return Quote::default();
     }
@@ -1135,6 +1150,107 @@ mod tests {
         assert!(
             q.in_amount as u128 - priced > 100,
             "a 2-decimal book leaves a visible residue, not a rounding atom"
+        );
+    }
+
+    /// A one-vault market carrying exactly the two asks given, at 6-vs-6
+    /// decimals with no fees. Lets a test place a deliberately far-out
+    /// level behind an honest one.
+    fn market_with_asks(a0: Position, a1: Position) -> Vec<u8> {
+        let mut header = MarketHeader::zeroed();
+        header.head = 0u32.into();
+        header.tombstone_head = NULL_SECTOR.into();
+        header.free_head = NULL_SECTOR.into();
+        header.active_count = 1u32.into();
+        header.base_mint = [2u8; 32];
+        header.quote_mint = [3u8; 32];
+
+        let mut v = Vault::zeroed();
+        v.next = NULL_SECTOR.into();
+        v.prev = NULL_SECTOR.into();
+        v.leader = [1u8; 32];
+        v.reference_price = ReferencePrice {
+            stamp: 1u64.into(),
+            price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
+            quote_slot: FIX_QUOTE_SLOT.into(),
+            quote_unix: FIX_QUOTE_UNIX.into(),
+        };
+        v.base_atoms = 10_000_000u64.into();
+        v.quote_atoms = 10_000_000u64.into();
+        v.remaining.asks[0] = a0;
+        v.remaining.asks[1] = a1;
+
+        let vaults = [v];
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]);
+        data.extend_from_slice(bytes_of(&header));
+        data.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
+        while !data.len().is_multiple_of(VAULT_ALIGN) {
+            data.push(0);
+        }
+        data.extend_from_slice(cast_slice(&vaults));
+        data
+    }
+
+    /// A level the taker cannot afford one output atom at ends the walk
+    /// and takes **nothing** — even when honest depth filled ahead of it.
+    ///
+    /// This is the case that makes exact-in safe. A vault leader may post
+    /// any valid price, so a level where one base atom costs more than
+    /// the taker's whole remaining budget can rest harmlessly at the tail
+    /// of the book. If the engine absorbed the remainder there, reaching
+    /// that level would confiscate it — and `min_out` could not object,
+    /// because residue never reduces output. So the unspent budget goes
+    /// back to the taker, exactly as it did before exact-in.
+    #[test]
+    fn a_far_out_level_ends_the_walk_without_consuming_the_budget() {
+        // Honest ask: 1.0904, only 1_000 base atoms deep, so the taker's
+        // budget is NOT the binding cap and it charges no residue.
+        // Behind it, the largest representable price.
+        let honest = position(10_904_000, 1_000);
+        let far_out = position_at(99_999_999, 15, 1_000_000);
+        let data = market_with_asks(honest, far_out);
+        let view = MarketView::load(&data).unwrap();
+
+        const BUDGET: u64 = 5_000_000;
+        let q = simulate_swap(&view, SwapSide::Buy, BUDGET, Price::INFINITY, 1, 1, 0);
+
+        assert_eq!(q.legs, 1, "only the honest ask is affordable");
+        assert_eq!(q.out_amount, 1_000, "the honest ask's full depth");
+        let priced = Price::encode(10_904_000, 0).unwrap().quote_for_base(1_000);
+        assert_eq!(
+            q.in_amount as u128, priced,
+            "the taker pays for the honest leg and keeps the rest — a far-out \
+             level must not absorb the unspent budget"
+        );
+        assert!(
+            q.in_amount < BUDGET / 100,
+            "in_amount {} is nowhere near the {BUDGET} budget",
+            q.in_amount
+        );
+    }
+
+    /// The zero-leg early return, reached the only way it can be: a live
+    /// best ask the taker cannot afford a single atom at. The engine
+    /// soft-reverts that take whole (`filled_legs == 0`) and transfers
+    /// nothing, so the quote must report nothing consumed rather than a
+    /// total-loss fill.
+    #[test]
+    fn a_take_too_small_for_the_best_ask_quotes_nothing() {
+        // Both levels far out — `collect_side_levels` sorts best-price
+        // first, so a cheap level in either slot would be the one the
+        // walk reaches and this would not test the zero-leg path.
+        let data = market_with_asks(
+            position_at(99_999_999, 15, 1_000_000),
+            position_at(10_000_000, 15, 1_000_000),
+        );
+        let view = MarketView::load(&data).unwrap();
+
+        let q = simulate_swap(&view, SwapSide::Buy, 5_000_000, Price::INFINITY, 1, 1, 0);
+        assert_eq!(
+            q,
+            Quote::default(),
+            "a zero-leg take consumes nothing and delivers nothing"
         );
     }
 }

@@ -120,13 +120,16 @@ pub fn mid_price(market: &MarketView) -> Option<f64> {
 /// the same displayed number. Probing far above one unit recovers the `Price`
 /// encoding's full 8 significant digits before the floor bites.
 ///
-/// Shared verbatim with the frontend's `humanPrice`, and sized to fit the `u64`
-/// this fork passes — 1e18 is inside it, and even against the largest
-/// representable price stays inside the returned `u128`.
+/// Shared verbatim with the frontend's `humanPrice`, and sized to this fork's
+/// two limits, which are the tighter pair: 1e18 sits inside the `u64` argument,
+/// and the widest product it can produce — 1e18 against the largest
+/// representable price (~1e16), so ~1e34 — sits inside the returned `u128`.
 const PRICE_PROBE_ATOMS: u64 = 1_000_000_000_000_000_000;
 
-/// A resting level's price in human quote-per-base units: quote atoms for one
-/// whole base unit, de-scaled by the quote mint's decimals.
+/// A resting level's price in human quote-per-base units: the quote value of
+/// one whole base unit, de-scaled by the quote mint's decimals. Computed by
+/// probing the ratio far above one base unit and rescaling — see
+/// [`PRICE_PROBE_ATOMS`] for why one unit is too coarse to ask at.
 ///
 /// `pub(crate)` so the markets pane's reference price
 /// ([`crate::accounts`]) shares this one implementation. It had its own copy
