@@ -421,6 +421,16 @@ pub fn run_supervisor(
 ///
 /// A market with a pinned basis is skipped: it has no observation to check, and
 /// its unverified state is already declared at startup.
+///
+/// **The latch is per market, not per source tier**, which bounds what it can
+/// catch. A market whose CEX primary answers first spends its shot on that
+/// reading, so the index ids further down its ladder are never validated — and
+/// a mis-wired index id is reachable only *through* that fallback. On this
+/// roster only EURC has a primary at all, so the other five are checked on the
+/// tier that actually prices them; but EURC's fallback ids would go unchecked
+/// until the day it falls back, which is the day the per-tick breach path fires
+/// and reads as a peg event. Latching per tier would close it, and belongs with
+/// the multi-source work rather than here.
 fn check_first_basis(ctx: &mut Context, cfg: &BotConfig, legs: Legs) {
     if ctx.basis_checked || ctx.cfg.pinned_basis.is_some() {
         return;
@@ -1004,13 +1014,21 @@ mod tests {
     use crate::config::MARKETS;
     use crate::context::MarketAddrs;
     use crate::quote_state::QuoteStateStore;
-    use dropset_fair_value::FairValueConfig;
+    use dropset_fair_value::{FairValueConfig, Health, Regime};
     use solana_keypair::Keypair;
 
     /// A `Context` that never talks to a validator. `RpcClient::new` doesn't
     /// connect, so this is only unsound if the code under test actually sends —
     /// which is exactly what the guard tests below assert it does *not* do.
     fn offline_ctx(dir: &std::path::Path) -> Context {
+        offline_ctx_with(dir, MARKETS[0])
+    }
+
+    /// The same offline context for an arbitrary market, so a test can exercise
+    /// the per-market calibration `Context::new` layers onto the shared config —
+    /// which mutating `ctx.cfg` after the fact cannot, since the engine is
+    /// already built by then.
+    fn offline_ctx_with(dir: &std::path::Path, cfg: MarketConfig) -> Context {
         let market = MarketAddrs {
             market: Pubkey::new_unique(),
             base_mint: Pubkey::new_unique(),
@@ -1020,13 +1038,13 @@ mod tests {
             base_decimals: 6,
             quote_decimals: 6,
         };
-        let quote_state = QuoteStateStore::new(dir).for_market(market.market, MARKETS[0].symbol);
+        let quote_state = QuoteStateStore::new(dir).for_market(market.market, cfg.symbol);
         Context::new(
             chain::rpc("http://127.0.0.1:1"),
             Keypair::new(),
             0,
             market,
-            MARKETS[0],
+            cfg,
             FairValueConfig::default(),
             quote_state,
         )
@@ -1090,8 +1108,6 @@ mod tests {
         assert!(!ctx.reference_invalidated, "no episode was opened");
     }
 
-    /// A context with no persisted record starts its hot-path clock at "now" —
-    /// the fallback arm of the seeding in `Context::new`.
     /// The startup check only spends its one shot on a basis that actually
     /// exists: the feed sources warm asynchronously, so the early ticks have a
     /// partial or empty leg set and must not count as "checked".
@@ -1184,6 +1200,39 @@ mod tests {
         assert!(observed.basis_checked);
     }
 
+    /// The per-market pin has to survive the trip through `Context::new`, which
+    /// layers it onto the *shared* calibration. Asserting it here rather than on
+    /// the config constant is the point: the roster invariant test proves MXNe
+    /// declares a pin, and this proves the engine that market actually quotes
+    /// with honours it. Without this, dropping the layering line would leave
+    /// MXNe silently back on `Degrade::NoBasisLeg` with every other test green.
+    #[test]
+    fn a_pinned_market_context_composes_in_the_pinned_regime() {
+        let dir = std::env::temp_dir().join("dropset-basis-check-layering");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mxne = *MARKETS.iter().find(|m| m.symbol == "MXNe").unwrap();
+        assert!(mxne.pinned_basis.is_some(), "MXNe is the pinned market");
+
+        let mut ctx = offline_ctx_with(&dir, mxne);
+        let legs = Legs {
+            fx: Some(Reading::new(0.0573, Duration::from_secs(1))),
+            crypto_usdc: None,
+            usdc_usd: None,
+            static_usd: mxne.static_usd,
+        };
+        let fair = ctx.engine.compose(legs, Duration::from_secs(1), false);
+        assert_eq!(fair.regime, Regime::FxPinned);
+        assert_eq!(fair.health, Health::Unverified);
+        assert!(!fair.basis_breach);
+
+        // The converse, so the assertion above cannot pass vacuously: an
+        // unpinned market built the same way composes normally.
+        let eurc = *MARKETS.iter().find(|m| m.symbol == "EURC").unwrap();
+        let mut ctx = offline_ctx_with(&dir, eurc);
+        let fair = ctx.engine.compose(legs, Duration::from_secs(1), false);
+        assert_ne!(fair.regime, Regime::FxPinned);
+    }
+
     /// An empty leg set leaves the shot unspent, so the check still fires on
     /// the first tick that has a basis rather than being burned while warming.
     #[test]
@@ -1210,6 +1259,8 @@ mod tests {
         assert!(ctx.basis_checked);
     }
 
+    /// A context with no persisted record starts its hot-path clock at "now" —
+    /// the fallback arm of the seeding in `Context::new`.
     #[test]
     fn an_unknown_record_starts_the_clock_at_now() {
         let dir = std::env::temp_dir().join("dropset-invalidate-clock-unknown");

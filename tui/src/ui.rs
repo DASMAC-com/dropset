@@ -326,16 +326,16 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     );
 }
 
-/// Render the alerts pane beneath the actions — environment / config
-/// conditions the operator should know about (Docker missing, an unset feed
-/// key, a degraded FX feed), each a colored bullet. Shows a green "all clear"
-/// line when nothing is wrong, so the pane always reads as a live health check.
 /// Render a set of market symbols as one comma-separated alert subject, so a
 /// condition affecting several markets is one line rather than one line each.
 fn joined(symbols: &std::collections::BTreeSet<String>) -> String {
     symbols.iter().cloned().collect::<Vec<_>>().join(", ")
 }
 
+/// Render the alerts pane beneath the actions — environment / config
+/// conditions the operator should know about (Docker missing, an unset feed
+/// key, a degraded FX feed), each a colored bullet. Shows a green "all clear"
+/// line when nothing is wrong, so the pane always reads as a live health check.
 fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
     let mut alerts: Vec<(Color, String)> = Vec::new();
 
@@ -374,8 +374,9 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
         ));
     }
 
-    // A suspected wiring error outranks the standing advisory below it, so it
-    // is pushed first — the alerts pane reads top-down.
+    // A suspected wiring error is pushed ahead of the standing advisory that
+    // follows it. The pane groups by subject rather than sorting by severity,
+    // so this orders the pair against each other, not against the bullets above.
     if !app.basis_config_suspects.is_empty() {
         alerts.push((
             Color::Red,
@@ -387,9 +388,11 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
         ));
     }
 
-    // Markets with no independent basis source. Cyan, not yellow: nothing is
-    // wrong and nothing will recover, so it must not read as a degrade the
-    // operator is waiting out.
+    // Markets with no independent basis source. A deliberate fourth color: not
+    // Yellow, because nothing is wrong and nothing will recover, so it must not
+    // read as a degrade the operator is waiting out; and not the DarkGray used
+    // for inert notes like an unset API key, because this one qualifies every
+    // price the market quotes and should stay legible.
     if !app.unverified_markets.is_empty() {
         alerts.push((
             Color::Cyan,

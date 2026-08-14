@@ -1100,7 +1100,14 @@ pub(crate) enum BasisNote {
 /// the boundary: they share a prefix but mean opposite things to an operator —
 /// one is a standing property of the roster, the other is a bug to go fix.
 fn classify_basis_line(line: &str) -> Option<(String, BasisNote)> {
-    let (symbol, detail) = line.strip_prefix("[basis] ")?.split_once(':')?;
+    // Found anywhere in the line rather than anchored at its start: `bot::stream`
+    // re-tags every child line as `[<symbol>] <line>` before it reaches the event
+    // loop, so what arrives here is `[MXNe] [basis] MXNe: …`. An anchored
+    // `strip_prefix` compiles, passes an unwrapped unit test, and then never
+    // fires on real output — which is why the sibling `note_feed_state` matches
+    // with `contains` too.
+    let (_, tagged) = line.split_once("[basis] ")?;
+    let (symbol, detail) = tagged.split_once(':')?;
     let note = if detail.contains("no independent basis source") {
         BasisNote::Unverified
     } else if detail.contains("outside the sane band") {
@@ -1118,6 +1125,29 @@ mod tests {
     };
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
+
+    /// The shape the parser actually receives at runtime: `bot::stream` prepends
+    /// `[<symbol>] ` to every child line, so the marker sits mid-line rather than
+    /// at column 0. An anchored `strip_prefix` passes the untagged cases below
+    /// and still never fires in the running TUI, which is exactly the bug this
+    /// case exists to pin down.
+    #[test]
+    fn classify_basis_line_matches_the_tag_bot_stream_prepends() {
+        assert_eq!(
+            classify_basis_line(
+                "[MXNe] [basis] MXNe: no independent basis source — quoting the \
+                 FX anchor with a pinned basis of 1.0000 (unverified)"
+            ),
+            Some(("MXNe".to_string(), BasisNote::Unverified))
+        );
+        assert_eq!(
+            classify_basis_line(
+                "[ZARP] [basis] ZARP: first observed basis 0.5225 is outside the \
+                 sane band [0.90, 1.10] — a first reading cannot be a peg event"
+            ),
+            Some(("ZARP".to_string(), BasisNote::SuspectConfig))
+        );
+    }
 
     /// The two `[basis]` conditions share a prefix but must never be conflated:
     /// one is a permanent roster property, the other is a wiring bug.

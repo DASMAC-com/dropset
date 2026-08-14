@@ -134,8 +134,8 @@ pub struct MarketConfig {
 /// `Health::Unverified`.
 ///
 /// Note this is a symptom of a wider shape, not a quirk of MXNe: only EURC
-/// reaches a CEX, so for the other six markets the index tier *is* the basis
-/// leg, unchecked by any second source. MXNe is merely the one thin enough for
+/// reaches a CEX, so for the other five index-priced markets the index tier
+/// *is* the basis leg, unchecked by any second source. MXNe is merely the one thin enough for
 /// that to become visible. Corroborating across sources — median, dispersion
 /// gate, explicit single-source policy — is tracked separately as the
 /// multi-source composite work; this constant is the interim admission that

@@ -218,6 +218,13 @@ impl FairValueEngine {
         let usdc_breach =
             usdc.is_some_and(|u| u.value < self.cfg.usdc_low || u.value > self.cfg.usdc_high);
 
+        // `since_basis` accumulates here and is only reset when the EMA folds an
+        // observation, which a pinned market never reaches. That is harmless
+        // rather than a leak: it saturates instead of overflowing, and its sole
+        // reader is the EMA decay in the normal arm — unreachable for a pinned
+        // market, whose config invariant is that it has no crypto source to pair
+        // with the anchor.
+        //
         // PINNED: the market has no independent basis source, so there is no
         // observation to smooth and no band to test. Handled ahead of the walk
         // because it is a property of the market, not of which legs answered:
