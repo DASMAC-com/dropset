@@ -123,11 +123,20 @@ pub fn secret(name: &str) -> Result<String> {
 }
 
 /// Split a canonical `BASE-QUOTE` symbol into its two ISO-4217 legs.
+///
+/// Both legs must be exactly three ASCII letters. The charset check is not
+/// decoration: a derived leg is interpolated into the OANDA request **path**
+/// (`/v3/instruments/{instrument}/candles`), so a length check alone would
+/// admit a three-character leg carrying a `/` and let a malformed
+/// `PRODUCT_ID` reshape the request path. The value is operator config rather
+/// than untrusted input, so this is a guard rail, not a boundary — but it
+/// costs one predicate.
 pub fn split_canonical(product_id: &str) -> Result<(&str, &str)> {
     let (base, quote) = product_id
         .split_once('-')
         .ok_or_else(|| anyhow!("{product_id:?} is not a canonical BASE-QUOTE symbol"))?;
-    if base.len() != 3 || quote.len() != 3 {
+    let is_code = |leg: &str| leg.len() == 3 && leg.bytes().all(|b| b.is_ascii_alphabetic());
+    if !is_code(base) || !is_code(quote) {
         return Err(anyhow!(
             "{product_id:?} is not a canonical BASE-QUOTE symbol: both legs must \
              be three-letter ISO-4217 codes"
@@ -174,6 +183,18 @@ mod tests {
         // AUDD-USDC parses as BASE-QUOTE but its legs are not currency codes,
         // and an FX venue would 404 on it.
         assert!(split_canonical("AUDD-USDC").is_err());
+    }
+
+    #[test]
+    fn a_leg_that_is_the_right_length_but_not_letters_is_rejected() {
+        // The motivating case: a derived leg is interpolated into OANDA's
+        // request path, so a three-character leg carrying a separator would
+        // reshape the path rather than name an instrument.
+        assert!(split_canonical("a/b-c/d").is_err());
+        assert!(split_canonical("../-USD").is_err());
+        assert!(split_canonical("AU1-USD").is_err());
+        // The legitimate shape still passes, in either case.
+        assert!(split_canonical("aud-usd").is_ok());
     }
 
     #[test]

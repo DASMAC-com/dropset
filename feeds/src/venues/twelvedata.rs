@@ -33,9 +33,28 @@ use crate::{Batch, Cursor, HttpClient, Source};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
-/// Twelve Data's per-request bar cap.
+/// Twelve Data's per-request bar cap, verified against the venue: a
+/// 5000-minute window returns exactly 5000 bars. The adapter advances its
+/// cursor past the whole requested window, so a window wider than the cap
+/// would drop every bar past it and never ask again — this clamp is what
+/// keeps that unreachable.
 pub const MAX_BARS_PER_REQUEST: usize = 5000;
+
+/// The floor between two requests on this venue.
+///
+/// The free tier allows **8 requests per minute**, which is far stricter than
+/// the shared client's 250 ms default — and the default is what would apply
+/// during a **backfill**, where the runner loops without pausing (its
+/// `poll_interval` only governs the caught-up state). At 250 ms that is ~240
+/// requests a minute, 30× the tier, so a cold backfill would be rate-limited
+/// immediately and burn the 800/day budget getting nowhere.
+///
+/// 8 seconds is 7.5 requests a minute — just inside the limit, and cheap: a
+/// 60-day minute-bar backfill is ~18 requests at 5000 bars each, so the floor
+/// costs about two minutes once, not per poll.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(8);
 
 /// This source's opaque resume position: the next epoch second still to fetch.
 #[derive(Serialize, Deserialize)]
@@ -108,7 +127,7 @@ impl TwelveDataCandles {
             None => default_start,
         };
         Ok(Self {
-            http: HttpClient::new(base_url)?,
+            http: HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL),
             name: name.into(),
             symbol: symbol.into(),
             interval: interval_token(granularity_secs)?,

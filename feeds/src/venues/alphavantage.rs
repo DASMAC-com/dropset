@@ -27,9 +27,24 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 /// The only bucket width this source can serve.
 pub const GRANULARITY_SECS: i64 = 86_400;
+
+/// The floor between two requests on this venue.
+///
+/// The free tier allows **25 requests per day for the whole account**, so an
+/// hour between requests caps this source at 24 — inside the budget with a
+/// request to spare, and far below the six-hour poll a collector actually
+/// runs at.
+///
+/// It is therefore not load-bearing today: this source fetches the entire
+/// published series in one call and never pages, so the floor never binds.
+/// It is here to encode the constraint at the transport, where it will bind
+/// if anyone later adds paging or a retry loop — the shared client's 250 ms
+/// default would exhaust a 25/day budget in seven seconds.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(3_600);
 
 /// This source's opaque resume position: the next epoch second still to fetch.
 #[derive(Serialize, Deserialize)]
@@ -104,7 +119,7 @@ impl AlphaVantageDaily {
             None => default_start,
         };
         Ok(Self {
-            http: HttpClient::new(base_url)?,
+            http: HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL),
             name: name.into(),
             from_symbol: from_symbol.into(),
             to_symbol: to_symbol.into(),
