@@ -85,12 +85,27 @@ pub struct MarketConfig {
     /// `None` for a token Kraken doesn't list (every exotic).
     pub kraken_pair: Option<&'static str>,
     /// CoinGecko coin id — the crypto basis-leg fallback (batched
-    /// `/simple/price`). Load-bearing for the six exotics no CEX quotes.
-    pub coingecko_id: &'static str,
+    /// `/simple/price`). Load-bearing for the exotics no CEX quotes.
+    ///
+    /// `None` where CoinGecko's aggregate is known not to track the token we
+    /// mean. A listing whose id resolves to the right mint is still unusable
+    /// when it prices a market too thin to be an aggregate of anything — see
+    /// MXNe below.
+    pub coingecko_id: Option<&'static str>,
     /// CoinMarketCap numeric id — the last basis-leg fallback (batched by id).
-    /// `None` for a token CMC doesn't list (MXNe), which simply leaves
-    /// CoinGecko as the sole crypto basis source there.
+    ///
+    /// `None` for a token with no CMC *coin* listing (MXNe). That is narrower
+    /// than "CMC doesn't carry it": CMC's DEX scanner does price MXNe, keyed by
+    /// contract address rather than by numeric id, so it is unreachable from
+    /// this batched-by-id tier but not absent from the venue.
     pub coinmarketcap_id: Option<u32>,
+    /// Basis to pin because the market has **no independent basis source** —
+    /// `None` for every market whose basis is observed.
+    ///
+    /// Must be `Some` exactly when all four source fields above are `None`;
+    /// the invariant is asserted in this module's tests, so a market can never
+    /// silently quote on a pinned basis while a real source sits configured.
+    pub pinned_basis: Option<f64>,
     /// Last-resort static USD-per-token peg, used only when every live leg is
     /// down. A representative spot value; a live FX anchor and basis supersede
     /// it whenever the feeds answer.
@@ -101,7 +116,32 @@ pub struct MarketConfig {
 /// liquidity, each quoted against USDC at $100 top-of-book. The CoinGecko ids
 /// are from a by-contract lookup on each token's real mainnet mint; the
 /// CoinMarketCap ids from its `cryptocurrency/detail` record. MXNe (Real MXN)
-/// is not listed on CoinMarketCap, so that tier is `None`.
+/// has no CoinMarketCap *coin* listing, so that tier is `None` — CMC's DEX
+/// scanner prices it by contract address, which this batched-by-id tier cannot
+/// reach.
+///
+/// **MXNe has no basis source at all**, and that is a roster fact rather than a
+/// wiring gap. CoinGecko's `real-mxn` does resolve to the correct mint, but it
+/// aggregates a market carrying roughly $16 of daily volume across two Orca
+/// pools on a ~$44k cap, and prices it near half the peso peg — against
+/// ~$0.0585 from CMC's DEX scanner on the same mint, which agrees with the live
+/// FX anchor to within ~0.4%. So the id is right and the number is garbage. It
+/// is dropped
+/// rather than demoted: a fallback tier is only worth having if reaching it is
+/// better than not, and a standing basis breach on a permanently-wrong reading
+/// costs more than no reading, because it is the peg-event alarm (§4) and an
+/// alarm that is always on is an alarm the operator stops reading. MXNe
+/// therefore quotes off the FX anchor with `pinned_basis`, reported as
+/// `Health::Unverified`.
+///
+/// Note this is a symptom of a wider shape, not a quirk of MXNe: only EURC
+/// reaches a CEX, so for the other five index-priced markets the index tier
+/// *is* the basis leg, unchecked by any second source. MXNe is merely the one
+/// thin enough for that to become visible. Corroborating across sources —
+/// median, dispersion
+/// gate, explicit single-source policy — is tracked separately as the
+/// multi-source composite work; this constant is the interim admission that
+/// one market has nothing to corroborate against.
 ///
 /// The Pyth feed ids are from the Hermes FX catalogue
 /// (`/v2/price_feeds?asset_type=fx`). Only EUR and GBP are published as
@@ -110,7 +150,9 @@ pub struct MarketConfig {
 /// **Only EURC reaches a CEX.** Coinbase lists `EURC-USDC` and Kraken lists
 /// `EURC/USD`; none of the other six tokens trades on either venue, so their
 /// basis leg has no primary tier and the CoinGecko / CoinMarketCap fallbacks
-/// carry it. That asymmetry is the roster's, not a gap in the wiring.
+/// carry it. That asymmetry is the roster's, not a gap in the wiring — but it
+/// does leave five markets resting their basis on one uncorroborated index
+/// reading, and MXNe (below) on none at all.
 pub const MARKETS: [MarketConfig; 7] = [
     MarketConfig {
         symbol: "EURC",
@@ -121,8 +163,9 @@ pub const MARKETS: [MarketConfig; 7] = [
         pyth_invert: false,
         coinbase_product: Some("EURC-USDC"),
         kraken_pair: Some("EURCUSD"),
-        coingecko_id: "euro-coin",
+        coingecko_id: Some("euro-coin"),
         coinmarketcap_id: Some(20641),
+        pinned_basis: None,
         static_usd: 1.14,
     },
     MarketConfig {
@@ -134,8 +177,9 @@ pub const MARKETS: [MarketConfig; 7] = [
         pyth_invert: true,
         coinbase_product: None,
         kraken_pair: None,
-        coingecko_id: "vnx-swiss-franc",
+        coingecko_id: Some("vnx-swiss-franc"),
         coinmarketcap_id: Some(24130),
+        pinned_basis: None,
         static_usd: 1.235,
     },
     MarketConfig {
@@ -147,8 +191,9 @@ pub const MARKETS: [MarketConfig; 7] = [
         pyth_invert: false,
         coinbase_product: None,
         kraken_pair: None,
-        coingecko_id: "tokenised-gbp",
+        coingecko_id: Some("tokenised-gbp"),
         coinmarketcap_id: Some(38935),
+        pinned_basis: None,
         static_usd: 1.324,
     },
     MarketConfig {
@@ -160,8 +205,9 @@ pub const MARKETS: [MarketConfig; 7] = [
         pyth_invert: true,
         coinbase_product: None,
         kraken_pair: None,
-        coingecko_id: "zarp-stablecoin",
+        coingecko_id: Some("zarp-stablecoin"),
         coinmarketcap_id: Some(21856),
+        pinned_basis: None,
         static_usd: 0.0605,
     },
     MarketConfig {
@@ -173,8 +219,26 @@ pub const MARKETS: [MarketConfig; 7] = [
         pyth_invert: true,
         coinbase_product: None,
         kraken_pair: None,
-        coingecko_id: "real-mxn",
+        // No source tier reaches this token: not on Coinbase or Kraken, no CMC
+        // coin id, and CoinGecko's correct-mint listing prices a ~$16/day market
+        // at roughly half the peg. Quotes on the FX anchor alone — see the
+        // roster doc above.
+        coingecko_id: None,
         coinmarketcap_id: None,
+        // Assumes the token trades at its peg, which is the most the FX anchor
+        // alone can say — so 1.0 is not merely a placeholder, but it is an
+        // assumption, which is exactly what `Health::Unverified` advertises.
+        //
+        // Sizing that assumption against the thing it can cost: a pin is a
+        // *directional* claim, so a standing gap between it and the true price
+        // is not a tail risk but a constant one side is quoted through. On the
+        // 2026-08-14 dry run the composition produced $0.0587 against $0.0585
+        // from CMC's DEX scanner — a ~0.4% offset, inside the innermost ladder
+        // tier's 5_000 ppm (0.5%) but not far inside it. Measure against the
+        // *live* anchor, not `static_usd` below: that constant is a stale
+        // last-resort value and reads ~2% off the same scanner, which would
+        // wrongly imply the inner quote rests through the market.
+        pinned_basis: Some(1.0),
         static_usd: 0.0573,
     },
     MarketConfig {
@@ -186,8 +250,9 @@ pub const MARKETS: [MarketConfig; 7] = [
         pyth_invert: true,
         coinbase_product: None,
         kraken_pair: None,
-        coingecko_id: "xsgd",
+        coingecko_id: Some("xsgd"),
         coinmarketcap_id: Some(8489),
+        pinned_basis: None,
         static_usd: 0.7705,
     },
     MarketConfig {
@@ -199,8 +264,9 @@ pub const MARKETS: [MarketConfig; 7] = [
         pyth_invert: true,
         coinbase_product: None,
         kraken_pair: None,
-        coingecko_id: "idrx",
+        coingecko_id: Some("idrx"),
         coinmarketcap_id: Some(26732),
+        pinned_basis: None,
         static_usd: 0.000056,
     },
 ];
@@ -692,9 +758,35 @@ mod tests {
         }
     }
 
-    /// Every demo market names a base mint, a CoinGecko id, a tracked
-    /// currency, and a positive static peg; symbols and mint files are unique
-    /// so the roster maps cleanly onto distinct vaults.
+    /// A market pins its basis exactly when it has no source to observe one
+    /// from. Both halves matter: pinning while a source is configured would
+    /// silently ignore a live feed, and leaving a sourceless market unpinned
+    /// would quote it on `Degrade::NoBasisLeg` forever — permanently tightened
+    /// switches plus a standing breach, which is the state this roster change
+    /// exists to remove.
+    #[test]
+    fn a_market_pins_its_basis_exactly_when_it_has_no_source() {
+        for m in MARKETS {
+            let has_source = m.coinbase_product.is_some()
+                || m.kraken_pair.is_some()
+                || m.coingecko_id.is_some()
+                || m.coinmarketcap_id.is_some();
+            assert_eq!(
+                m.pinned_basis.is_none(),
+                has_source,
+                "{}: pinned_basis must be Some exactly when no basis source is \
+                 configured (has_source = {has_source})",
+                m.symbol
+            );
+            if let Some(b) = m.pinned_basis {
+                assert!(b > 0.0 && b.is_finite(), "{} pinned basis", m.symbol);
+            }
+        }
+    }
+
+    /// Every demo market names a base mint, a tracked currency, and a positive
+    /// static peg; symbols and mint files are unique so the roster maps cleanly
+    /// onto distinct vaults.
     #[test]
     fn markets_roster_is_well_formed() {
         use std::collections::HashSet;
@@ -702,7 +794,11 @@ mod tests {
         let mut files = HashSet::new();
         for m in MARKETS {
             assert!(!m.symbol.is_empty());
-            assert!(!m.coingecko_id.is_empty());
+            assert!(
+                m.coingecko_id.is_none_or(|id| !id.is_empty()),
+                "{} CoinGecko id is empty rather than absent",
+                m.symbol
+            );
             assert_eq!(m.currency.len(), 3, "{} currency is ISO 4217", m.symbol);
             assert!(m.static_usd > 0.0, "{} static peg", m.symbol);
             assert!(m.base_decimals <= 9, "{} decimals", m.symbol);

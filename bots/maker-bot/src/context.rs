@@ -86,6 +86,13 @@ pub struct Context {
     /// When the engine last composed for this market, for the basis-EMA decay.
     /// `None` until the first tick.
     pub last_compose: Option<Instant>,
+    /// Whether the one-shot startup basis sanity check has run for this market.
+    ///
+    /// Keyed on the first tick where a basis is actually *observable* (both the
+    /// FX and crypto legs live), not on the first tick: the feed sources warm
+    /// asynchronously on a background runtime, so the earliest ticks routinely
+    /// have no basis to check and would spend the one shot on nothing.
+    pub basis_checked: bool,
 
     /// The vault's TVL (USD) the first time this run valued it — the baseline
     /// the §4 drawdown floor is measured against. Seeded on the first tick that
@@ -162,6 +169,13 @@ impl Context {
             .age(SystemTime::now())
             .and_then(|age| now.checked_sub(age))
             .unwrap_or(now);
+        // The calibration is shared across markets but the pinned basis is a
+        // property of *this* market's source coverage, so it is layered on here
+        // — the one place the per-market engine is built.
+        let fair_value = FairValueConfig {
+            pinned_basis: cfg.pinned_basis,
+            ..fair_value
+        };
         Self {
             quote_state,
             reference_invalidated: false,
@@ -172,6 +186,7 @@ impl Context {
             cfg,
             engine: FairValueEngine::new(fair_value),
             last_compose: None,
+            basis_checked: false,
             launch_tvl_usd: None,
             fills_active: false,
             last_set_price: None,

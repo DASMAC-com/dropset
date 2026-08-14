@@ -19,6 +19,7 @@ use ratatui::{
 };
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
+use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 /// Number of grouped control rows the "runtime actions" pane renders (bots,
@@ -326,6 +327,12 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     );
 }
 
+/// Render a set of market symbols as one comma-separated alert subject, so a
+/// condition affecting several markets is one line rather than one line each.
+fn joined(symbols: &BTreeSet<String>) -> String {
+    symbols.iter().cloned().collect::<Vec<_>>().join(", ")
+}
+
 /// Render the alerts pane beneath the actions — environment / config
 /// conditions the operator should know about (Docker missing, an unset feed
 /// key, a degraded FX feed), each a colored bullet. Shows a green "all clear"
@@ -365,6 +372,36 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
         alerts.push((
             Color::Yellow,
             "FX feed unavailable (rate-limited?) — maker quoting on the fallback peg.".to_string(),
+        ));
+    }
+
+    // A suspected wiring error is pushed ahead of the standing advisory that
+    // follows it. The pane groups by subject rather than sorting by severity,
+    // so this orders the pair against each other, not against the bullets above.
+    if !app.basis_config_suspects.is_empty() {
+        alerts.push((
+            Color::Red,
+            format!(
+                "{}: first basis reading was out of band — check the feed \
+                 config, not the peg.",
+                joined(&app.basis_config_suspects)
+            ),
+        ));
+    }
+
+    // Markets with no independent basis source. A deliberate fourth color: not
+    // Yellow, because nothing is wrong and nothing will recover, so it must not
+    // read as a degrade the operator is waiting out; and not the DarkGray used
+    // for inert notes like an unset API key, because this one qualifies every
+    // price the market quotes and should stay legible.
+    if !app.unverified_markets.is_empty() {
+        alerts.push((
+            Color::Cyan,
+            format!(
+                "{}: no independent basis source — quoting the FX anchor on a \
+                 pinned basis (unverified).",
+                joined(&app.unverified_markets)
+            ),
         ));
     }
 

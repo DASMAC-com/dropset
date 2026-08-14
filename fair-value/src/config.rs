@@ -43,6 +43,23 @@ pub struct FairValueConfig {
     pub basis_low: f64,
     pub basis_high: f64,
 
+    /// Basis to pin for a market that has **no independent basis source at
+    /// all** — `None` for a market whose basis is observed from feeds (the
+    /// normal case).
+    ///
+    /// This is not a fallback and not a calibration knob: it is a statement
+    /// that no venue or index prices this token independently of its FX
+    /// anchor, so there is nothing to observe. Such a market composes
+    /// `fair = fx × pinned_basis` in [`crate::Regime::FxPinned`] and reports
+    /// [`crate::Health::Unverified`] — never a basis breach, because a pinned
+    /// constant cannot breach a band it was never measured against.
+    ///
+    /// Set it only when every source tier for the market is absent; feeding a
+    /// known-bad source into the basis is worse than admitting there isn't
+    /// one, because a permanently-breaching market trains the operator to
+    /// ignore the peg alarm (§4).
+    pub pinned_basis: Option<f64>,
+
     /// USDC/USD common-mode band; a USDC/USD reading outside `[low, high]` is a
     /// portfolio-wide common-mode breach → halt every market (§1 fm1, §4).
     /// TBD(analytics).
@@ -68,6 +85,9 @@ impl Default for FairValueConfig {
             // does not masquerade as calibrated. TBD(analytics), per market.
             basis_low: 0.90,
             basis_high: 1.10,
+            // A market observes its basis unless its config says no source
+            // exists; the engine never pins one on a market's behalf.
+            pinned_basis: None,
             // Placeholder USDC/USD common-mode band. TBD(analytics).
             usdc_low: 0.97,
             usdc_high: 1.03,

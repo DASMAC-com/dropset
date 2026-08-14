@@ -20,7 +20,7 @@
 //!                          coingecko | cmc | fx
 
 use anyhow::{anyhow, Context, Result};
-use dropset_fair_value::{FairValueEngine, Reading};
+use dropset_fair_value::{FairValueConfig, FairValueEngine, Reading, Regime};
 use dropset_feeds::venues::{
     BatchQuotes, CmcSource, CoinGeckoSource, CoinbaseTicker, FrankfurterSource, KrakenSource,
     PythFeed, PythHermesSource,
@@ -339,8 +339,10 @@ impl FeedRoster {
         coinbase.dedup();
 
         // The USDC/USD common-mode fallback rides the batched CoinGecko call.
-        let mut coingecko: Vec<String> =
-            markets.iter().map(|m| m.coingecko_id.to_string()).collect();
+        let mut coingecko: Vec<String> = markets
+            .iter()
+            .filter_map(|m| m.coingecko_id.map(str::to_string))
+            .collect();
         coingecko.push(USDC_COINGECKO_ID.to_string());
         coingecko.sort_unstable();
         coingecko.dedup();
@@ -531,7 +533,12 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     if !args.drop.is_empty() {
         println!("Suppressed tiers: {}", args.drop.join(", "));
     }
-    println!("\n  market      mid (USDC)    anchor         health     basis      fx source");
+    // Column widths fit the longest value each can take: `Unverified` for
+    // health, and a pinned basis rendered as `1.0000 pinned`.
+    println!(
+        "\n  market      mid (USDC)    anchor         health       \
+         basis           fx source"
+    );
 
     let now = Duration::from_secs(0);
     let q = |v: Option<f64>| v.map(|v| Reading::new(v, now));
@@ -574,23 +581,41 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
                     })
                 })
             })
-            .or_else(|| q(cg.get(m.coingecko_id).copied()))
+            .or_else(|| q(m.coingecko_id.and_then(|id| cg.get(id)).copied()))
             .or_else(|| q(m.coinmarketcap_id.and_then(|id| cmc.get(&id)).copied()));
-        // A fresh engine per row — no history, so no smoothing.
+        // A fresh engine per row — no history, so no smoothing. The pinned
+        // basis is per-market, so it is layered onto the shared calibration
+        // here exactly as the live path does in `Context`.
         let legs = build_legs(fx_q, basis_q, usdc_q, m.static_usd);
-        let mut engine = FairValueEngine::new(cfg.fair_value);
+        let mut engine = FairValueEngine::new(FairValueConfig {
+            pinned_basis: m.pinned_basis,
+            ..cfg.fair_value
+        });
         let fair = engine.compose(legs, now, false);
         let anchor = format!("{:?}", fair.anchor);
+        // Rendered to a String first: a derived `Debug` ignores width specifiers,
+        // so `{:<11?}` would not pad and the column would drift on the longer
+        // variants.
+        let health = format!("{:?}", fair.health);
         let mid = fair.fair.map_or("—".to_string(), |v| format!("{v:.8}"));
         let basis = fair.basis.map_or("—".to_string(), |b| {
-            format!("{b:.4}{}", if fair.basis_breach { " BREACH" } else { "" })
+            let note = if fair.regime == Regime::FxPinned {
+                // Named, not blank: a bare 1.0000 here would read as an
+                // observed basis that happens to sit at parity.
+                " pinned"
+            } else if fair.basis_breach {
+                " BREACH"
+            } else {
+                ""
+            };
+            format!("{b:.4}{note}")
         });
         println!(
-            "  {:<10}  {:>12}  {:<13}  {:<9?}  {:<9}  {}",
+            "  {:<10}  {:>12}  {:<13}  {:<11}  {:<14}  {}",
             m.symbol,
             mid,
             anchor,
-            fair.health,
+            health,
             basis,
             if fair.uncertain {
                 format!("{fx_src} (wide)")

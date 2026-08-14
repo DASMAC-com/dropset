@@ -25,7 +25,13 @@
 //! - **The crypto/USD index tier is demoted, not retired.** CoinGecko / CMC was
 //!   the *old* cascade's primary mid and is a fallback here, for the
 //!   reflexivity reason in §1 fm5 — but only EURC is listed on Coinbase or
-//!   Kraken, so for the other six markets that fallback *is* the basis leg.
+//!   Kraken, so for the other five index-priced markets that fallback *is* the
+//!   basis leg, unchecked by any second source.
+//! - **One market has no tier at all.** MXNe reaches none of the four sources
+//!   (see [`crate::config::MARKETS`]), so it composes on its FX anchor with a
+//!   pinned basis and reports `Health::Unverified` rather than walking a ladder
+//!   with nothing on it. The walk below therefore never produces a
+//!   `crypto_usdc` reading for it, and the engine's pinned arm runs instead.
 //! - **Pyth earns the anchor by publishing a confidence half-width**, which
 //!   Frankfurter's daily ECB reference does not. Without one the
 //!   fresh-but-uncertain regime (§1 fm6) is unobservable, so on the Frankfurter
