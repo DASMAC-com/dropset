@@ -220,7 +220,7 @@ impl FeedHub {
                     })
                 })
             })
-            .or_else(|| aged(self.cg.get(market.coingecko_id)))
+            .or_else(|| market.coingecko_id.and_then(|id| aged(self.cg.get(id))))
             .or_else(|| {
                 market
                     .coinmarketcap_id
@@ -338,6 +338,19 @@ pub fn run_supervisor(
         if fills_active { "on" } else { "off" }
     );
 
+    // Declare, once at wiring time, every market quoting on a pinned basis. A
+    // market with no independent basis source is a standing condition rather
+    // than an event, so it is stated at startup instead of re-alarmed per tick.
+    for ctx in &markets {
+        if let Some(b) = ctx.cfg.pinned_basis {
+            println!(
+                "[basis] {}: no independent basis source — quoting the FX \
+                 anchor with a pinned basis of {b:.4} (unverified)",
+                ctx.cfg.symbol
+            );
+        }
+    }
+
     // Before the first quote of the run: kill any book still resting at a stale
     // price from a previous run (or from before a chain halt). This must precede
     // the loop — takers can fill against those levels from the first block the
@@ -373,6 +386,7 @@ pub fn run_supervisor(
         };
         for ctx in &mut markets {
             let legs = hub.legs(&ctx.cfg, &tick);
+            check_first_basis(ctx, &cfg, legs);
             let dt = ctx
                 .last_compose
                 .map_or(Duration::ZERO, |t| now.duration_since(t));
@@ -385,6 +399,58 @@ pub fn run_supervisor(
         }
         std::thread::sleep(cfg.tick);
     }
+}
+
+/// Validate a market's **first observable basis** against the sane band, once
+/// per run, and say so loudly when it lands outside.
+///
+/// The band exists to catch a *peg event* (§4) — a token that was tracking its
+/// fiat and stopped. But the very first observation cannot be that: there is no
+/// "was tracking" to depart from. A basis that is already outside the band the
+/// first time it is computed means the two legs are not measuring the same
+/// thing — a mismatched index id, a token/USD reading mistaken for token/USDC,
+/// an inverted FX feed. Those are wiring errors, and they are silent today: the
+/// tick loop simply reports a breach every tick forever, which reads as a
+/// market event and trains the operator to ignore the alarm that matters.
+///
+/// So this reports at most once, names the configuration as the suspect, and
+/// does **not** halt: from a single reading the bot cannot tell a misconfigured
+/// market from one whose peg has genuinely broken, and refusing to boot the
+/// whole roster over one market's feed would be the worse failure. The breach path
+/// still runs — this only ensures the first one is attributed correctly.
+///
+/// A market with a pinned basis is skipped: it has no observation to check, and
+/// its unverified state is already declared at startup.
+fn check_first_basis(ctx: &mut Context, cfg: &BotConfig, legs: Legs) {
+    if ctx.basis_checked || ctx.cfg.pinned_basis.is_some() {
+        return;
+    }
+    let Some(observed) = observable_basis(legs, cfg.fair_value.leg_stale) else {
+        return;
+    };
+    ctx.basis_checked = true;
+    let (low, high) = (cfg.fair_value.basis_low, cfg.fair_value.basis_high);
+    if observed < low || observed > high {
+        eprintln!(
+            "[basis] {}: first observed basis {observed:.4} is outside the sane \
+             band [{low:.2}, {high:.2}] — a first reading cannot be a peg event, \
+             so treat this as a feed/config error (wrong index id, or a \
+             token/USD reading used as token/USDC) rather than a market move",
+            ctx.cfg.symbol
+        );
+    }
+}
+
+/// The basis a pair of legs implies, when one is observable at all: both legs
+/// live, fresh, and the FX anchor positive. `None` means there is nothing to
+/// check this tick — the sources are still warming, or one has dropped out.
+///
+/// Split out from [`check_first_basis`] so the observability rule is testable
+/// without standing up a [`Context`] (which needs an RPC client and a keypair).
+fn observable_basis(legs: Legs, stale: Duration) -> Option<f64> {
+    let fx = legs.fx.filter(|r| r.fresh(stale))?;
+    let crypto = legs.crypto_usdc.filter(|r| r.fresh(stale))?;
+    (fx.value > 0.0).then(|| crypto.value / fx.value)
 }
 
 /// Kill every market's resting book that is too stale to leave matchable,
@@ -1026,6 +1092,124 @@ mod tests {
 
     /// A context with no persisted record starts its hot-path clock at "now" —
     /// the fallback arm of the seeding in `Context::new`.
+    /// The startup check only spends its one shot on a basis that actually
+    /// exists: the feed sources warm asynchronously, so the early ticks have a
+    /// partial or empty leg set and must not count as "checked".
+    #[test]
+    fn a_basis_is_observable_only_when_both_legs_are_live_and_fresh() {
+        let stale = Duration::from_secs(300);
+        let fresh = |v: f64| Some(Reading::new(v, Duration::from_secs(1)));
+        let base = Legs {
+            fx: fresh(0.0573),
+            crypto_usdc: fresh(0.0573),
+            usdc_usd: fresh(1.0),
+            static_usd: 0.0573,
+        };
+
+        assert_eq!(observable_basis(base, stale), Some(1.0));
+        // Either leg missing — nothing to check yet.
+        assert_eq!(observable_basis(Legs { fx: None, ..base }, stale), None);
+        assert_eq!(
+            observable_basis(
+                Legs {
+                    crypto_usdc: None,
+                    ..base
+                },
+                stale
+            ),
+            None
+        );
+        // A leg present but stale is not a reading.
+        assert_eq!(
+            observable_basis(
+                Legs {
+                    fx: Some(Reading::new(0.0573, Duration::from_secs(600))),
+                    ..base
+                },
+                stale
+            ),
+            None
+        );
+        // A non-positive anchor would divide by zero.
+        assert_eq!(
+            observable_basis(
+                Legs {
+                    fx: fresh(0.0),
+                    ..base
+                },
+                stale
+            ),
+            None
+        );
+        // The MXNe shape the issue reported: a basis near 0.52.
+        let observed = observable_basis(
+            Legs {
+                crypto_usdc: fresh(0.03064),
+                ..base
+            },
+            stale,
+        )
+        .unwrap();
+        assert!((observed - 0.5347).abs() < 1e-3, "observed {observed}");
+    }
+
+    /// A pinned market has no observation to validate, so the check must not
+    /// consume its one shot — and must never report a band violation for a
+    /// constant that was never measured.
+    #[test]
+    fn the_startup_basis_check_skips_a_pinned_market() {
+        let dir = std::env::temp_dir().join("dropset-basis-check-pinned");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cfg = BotConfig::default();
+        let legs = Legs {
+            fx: Some(Reading::new(0.0573, Duration::from_secs(1))),
+            // Deliberately garbage: were this market not pinned, it would trip.
+            crypto_usdc: Some(Reading::new(0.03064, Duration::from_secs(1))),
+            usdc_usd: Some(Reading::new(1.0, Duration::from_secs(1))),
+            static_usd: 0.0573,
+        };
+
+        let mut pinned = offline_ctx(&dir);
+        pinned.cfg.pinned_basis = Some(1.0);
+        check_first_basis(&mut pinned, &cfg, legs);
+        assert!(
+            !pinned.basis_checked,
+            "a pinned market has nothing to check"
+        );
+
+        // The same legs on an unpinned market do consume the shot, once.
+        let mut observed = offline_ctx(&dir);
+        observed.cfg.pinned_basis = None;
+        check_first_basis(&mut observed, &cfg, legs);
+        assert!(observed.basis_checked);
+    }
+
+    /// An empty leg set leaves the shot unspent, so the check still fires on
+    /// the first tick that has a basis rather than being burned while warming.
+    #[test]
+    fn the_startup_basis_check_waits_for_a_live_basis() {
+        let dir = std::env::temp_dir().join("dropset-basis-check-warming");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cfg = BotConfig::default();
+        let mut ctx = offline_ctx(&dir);
+        ctx.cfg.pinned_basis = None;
+
+        check_first_basis(&mut ctx, &cfg, Legs::default());
+        assert!(!ctx.basis_checked, "nothing was observable yet");
+
+        check_first_basis(
+            &mut ctx,
+            &cfg,
+            Legs {
+                fx: Some(Reading::new(1.14, Duration::from_secs(1))),
+                crypto_usdc: Some(Reading::new(1.14, Duration::from_secs(1))),
+                usdc_usd: None,
+                static_usd: 1.14,
+            },
+        );
+        assert!(ctx.basis_checked);
+    }
+
     #[test]
     fn an_unknown_record_starts_the_clock_at_now() {
         let dir = std::env::temp_dir().join("dropset-invalidate-clock-unknown");
@@ -1203,7 +1387,8 @@ mod tests {
             .insert(m.kraken_pair.unwrap().to_string(), (1.1520, now));
         hub.kraken
             .insert(USDC_KRAKEN_PAIR.to_string(), (0.9997, now));
-        hub.cg.insert(m.coingecko_id.to_string(), (1.1510, now));
+        hub.cg
+            .insert(m.coingecko_id.unwrap().to_string(), (1.1510, now));
         hub.cg.insert(USDC_COINGECKO_ID.to_string(), (1.0000, now));
         hub.cmc.insert(m.coinmarketcap_id.unwrap(), (1.1490, now));
         hub
@@ -1244,7 +1429,7 @@ mod tests {
         // permanent state for the six markets no CEX lists.
         hub.kraken.clear();
         assert_eq!(hub.legs(&m, &tick).crypto_usdc.unwrap().value, 1.1510);
-        hub.cg.remove(m.coingecko_id);
+        hub.cg.remove(m.coingecko_id.unwrap());
         assert_eq!(hub.legs(&m, &tick).crypto_usdc.unwrap().value, 1.1490);
     }
 
@@ -1303,7 +1488,8 @@ mod tests {
         let (now, now_unix) = (Instant::now(), 1_786_579_250);
         let mut hub = full_hub(now, now_unix);
         let zarp = *MARKETS.iter().find(|m| m.symbol == "ZARP").unwrap();
-        hub.cg.insert(zarp.coingecko_id.to_string(), (0.0605, now));
+        hub.cg
+            .insert(zarp.coingecko_id.unwrap().to_string(), (0.0605, now));
         hub.pyth.insert(
             zarp.currency.to_string(),
             (

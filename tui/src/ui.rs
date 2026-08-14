@@ -330,6 +330,12 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
 /// conditions the operator should know about (Docker missing, an unset feed
 /// key, a degraded FX feed), each a colored bullet. Shows a green "all clear"
 /// line when nothing is wrong, so the pane always reads as a live health check.
+/// Render a set of market symbols as one comma-separated alert subject, so a
+/// condition affecting several markets is one line rather than one line each.
+fn joined(symbols: &std::collections::BTreeSet<String>) -> String {
+    symbols.iter().cloned().collect::<Vec<_>>().join(", ")
+}
+
 fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
     let mut alerts: Vec<(Color, String)> = Vec::new();
 
@@ -365,6 +371,33 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
         alerts.push((
             Color::Yellow,
             "FX feed unavailable (rate-limited?) — maker quoting on the fallback peg.".to_string(),
+        ));
+    }
+
+    // A suspected wiring error outranks the standing advisory below it, so it
+    // is pushed first — the alerts pane reads top-down.
+    if !app.basis_config_suspects.is_empty() {
+        alerts.push((
+            Color::Red,
+            format!(
+                "{}: first basis reading was out of band — check the feed \
+                 config, not the peg.",
+                joined(&app.basis_config_suspects)
+            ),
+        ));
+    }
+
+    // Markets with no independent basis source. Cyan, not yellow: nothing is
+    // wrong and nothing will recover, so it must not read as a degrade the
+    // operator is waiting out.
+    if !app.unverified_markets.is_empty() {
+        alerts.push((
+            Color::Cyan,
+            format!(
+                "{}: no independent basis source — quoting the FX anchor on a \
+                 pinned basis (unverified).",
+                joined(&app.unverified_markets)
+            ),
         ));
     }
 

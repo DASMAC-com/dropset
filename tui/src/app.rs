@@ -43,7 +43,7 @@ use solana_client::rpc_client::RpcClient;
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -175,6 +175,13 @@ pub struct App {
     /// derived from its streamed `[feed] coingecko …` log lines, surfaced as an
     /// alert. Set on a failure line, cleared on a recovery line (or a wipe).
     pub(crate) feed_degraded: bool,
+    /// Markets the maker reported as quoting on a **pinned** basis — no
+    /// independent source prices the token, so the mid rests on the FX anchor
+    /// alone. A standing advisory, not a fault.
+    pub(crate) unverified_markets: BTreeSet<String>,
+    /// Markets whose *first* observed basis fell outside the sane band, which
+    /// points at a feed/config mismatch rather than a peg event.
+    pub(crate) basis_config_suspects: BTreeSet<String>,
     /// The current eCLOB manual bid-ask spread (bps) the widen / tighten
     /// controls step. Seeded at the default; `w` / `n` step it by
     /// [`SPREAD_STEP_BPS`] and rebuild the ladder at the new spread.
@@ -232,6 +239,8 @@ impl App {
             last_refresh: Instant::now() - REFRESH_INTERVAL,
             dirty: true,
             feed_degraded: false,
+            unverified_markets: BTreeSet::new(),
+            basis_config_suspects: BTreeSet::new(),
             spread_bps: market::DEFAULT_SPREAD_BPS,
             auto_bootstrap: false,
         })
@@ -810,6 +819,8 @@ impl App {
                 self.cu.clear();
                 self.fills.clear();
                 self.feed_degraded = false;
+                self.unverified_markets.clear();
+                self.basis_config_suspects.clear();
                 self.dirty = true;
                 self.log(
                     LogKind::Ok,
@@ -826,6 +837,7 @@ impl App {
             match ev {
                 JobEvent::Log(s) => {
                     self.note_feed_state(&s);
+                    self.note_basis_state(&s);
                     self.log(LogKind::Info, s);
                 }
                 JobEvent::AccountsChanged => self.dirty = true,
@@ -893,6 +905,32 @@ impl App {
             self.feed_degraded = false;
         } else if line.contains("failed") || line.contains("no prices") {
             self.feed_degraded = true;
+        }
+    }
+
+    /// Record a market's basis-sourcing state from a streamed maker-bot
+    /// `[basis] <SYMBOL>: …` line — see [`classify_basis_line`].
+    ///
+    /// Two distinct conditions share the prefix and must not be conflated:
+    ///
+    /// - **no independent basis source** — a standing, expected state. The
+    ///   market quotes off its FX anchor with a pinned basis, so its mid is
+    ///   real but uncorroborated. Emitted once at maker startup.
+    /// - **first observed basis outside the band** — a suspected *wiring*
+    ///   error, since a first reading has no peg to have departed from.
+    ///
+    /// Both are latched rather than flipped: neither can recover within a run
+    /// (the first is configuration, the second already happened), so there is
+    /// no clearing line to listen for — only a wipe resets them.
+    fn note_basis_state(&mut self, line: &str) {
+        match classify_basis_line(line) {
+            Some((symbol, BasisNote::Unverified)) => {
+                self.unverified_markets.insert(symbol);
+            }
+            Some((symbol, BasisNote::SuspectConfig)) => {
+                self.basis_config_suspects.insert(symbol);
+            }
+            None => {}
         }
     }
 
@@ -1044,11 +1082,67 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// What a maker-bot `[basis]` line says about a market.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BasisNote {
+    /// The market has no independent basis source and quotes on a pinned
+    /// basis — expected and permanent, not a fault.
+    Unverified,
+    /// The market's first observed basis was already out of band, which points
+    /// at the feed wiring rather than at a peg event.
+    SuspectConfig,
+}
+
+/// Parse a streamed maker-bot `[basis] <SYMBOL>: <detail>` line into the market
+/// it concerns and what it says. `None` for any other line.
+///
+/// Matching on the maker's own phrasing keeps the two conditions distinct at
+/// the boundary: they share a prefix but mean opposite things to an operator —
+/// one is a standing property of the roster, the other is a bug to go fix.
+fn classify_basis_line(line: &str) -> Option<(String, BasisNote)> {
+    let (symbol, detail) = line.strip_prefix("[basis] ")?.split_once(':')?;
+    let note = if detail.contains("no independent basis source") {
+        BasisNote::Unverified
+    } else if detail.contains("outside the sane band") {
+        BasisNote::SuspectConfig
+    } else {
+        return None;
+    };
+    Some((symbol.trim().to_string(), note))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{hit_target, parse_swap_amount, swap_side_label, SwapSide};
+    use super::{
+        classify_basis_line, hit_target, parse_swap_amount, swap_side_label, BasisNote, SwapSide,
+    };
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
+
+    /// The two `[basis]` conditions share a prefix but must never be conflated:
+    /// one is a permanent roster property, the other is a wiring bug.
+    #[test]
+    fn classify_basis_line_separates_the_two_conditions() {
+        assert_eq!(
+            classify_basis_line(
+                "[basis] MXNe: no independent basis source — quoting the FX \
+                 anchor with a pinned basis of 1.0000 (unverified)"
+            ),
+            Some(("MXNe".to_string(), BasisNote::Unverified))
+        );
+        assert_eq!(
+            classify_basis_line(
+                "[basis] ZARP: first observed basis 0.5225 is outside the sane \
+                 band [0.90, 1.10] — a first reading cannot be a peg event"
+            ),
+            Some(("ZARP".to_string(), BasisNote::SuspectConfig))
+        );
+        // Unrelated maker output, and a `[basis]` line saying something else,
+        // are both ignored rather than latching an alert.
+        assert_eq!(classify_basis_line("[feed] coingecko recovered"), None);
+        assert_eq!(classify_basis_line("[basis] EURC: nothing notable"), None);
+        assert_eq!(classify_basis_line("maker-bot live: 7 markets"), None);
+    }
 
     #[test]
     fn swap_side_label_names_each_side() {

@@ -83,6 +83,15 @@ pub enum Regime {
     Normal,
     /// Crypto reference is the anchor by design (FX session closed, §1 fm2).
     CryptoOnly,
+    /// FX anchor × a **pinned** basis, because the market has no independent
+    /// basis source to observe one from ([`crate::FairValueConfig::pinned_basis`]).
+    ///
+    /// Structural, like [`Regime::CryptoOnly`] and unlike [`Regime::Degraded`]:
+    /// nothing has gone wrong and nothing will recover, so it is not a degrade.
+    /// The distinction is the same one this enum already draws between a
+    /// weekend and an outage — a permanent state reported as a fault is a
+    /// fault the operator learns to ignore.
+    FxPinned,
     /// A degrade — see [`Degrade`] for which.
     Degraded(Degrade),
     /// No usable leg at all.
@@ -108,6 +117,16 @@ pub enum Degrade {
 pub enum Health {
     /// Quote normally.
     Ok,
+    /// Quote normally, but on a reference **no independent source corroborates**
+    /// — the market's basis is pinned rather than observed ([`Regime::FxPinned`]).
+    ///
+    /// Deliberately neither `Ok` nor `Degraded`. Not `Ok`, because the mid rests
+    /// on one unchecked leg and the operator is entitled to see that. Not
+    /// `Degraded`, because the kill switches tighten on a degrade and this state
+    /// is permanent — quoting such a market at half width forever is a standing
+    /// cost paid for information that will never arrive, and it re-creates the
+    /// very desensitization this variant exists to prevent.
+    Unverified,
     /// Quote with the kill switches tightened (§4 row: FX stale → degrade).
     Degraded,
     /// Do not quote — no usable reference.
@@ -143,7 +162,9 @@ pub struct FairValue {
 
 impl FairValue {
     /// Whether the kill-switch policy should run tightened (§4). True in every
-    /// degraded regime; false when healthy or paused.
+    /// degraded regime; false when healthy, paused, or
+    /// [`Health::Unverified`] — see that variant for why a permanently
+    /// uncorroborated market is not quoted tightened.
     pub fn degraded(&self) -> bool {
         self.health == Health::Degraded
     }
@@ -196,6 +217,31 @@ impl FairValueEngine {
         // USDC/USD reading exists (§1 fm1).
         let usdc_breach =
             usdc.is_some_and(|u| u.value < self.cfg.usdc_low || u.value > self.cfg.usdc_high);
+
+        // PINNED: the market has no independent basis source, so there is no
+        // observation to smooth and no band to test. Handled ahead of the walk
+        // because it is a property of the market, not of which legs answered:
+        // any crypto reading present for such a market is not a basis source
+        // (the config invariant is that it has none), so it must not reach the
+        // EMA. Falls through when FX is down — a pinned market with no anchor
+        // degrades to the static peg like any other.
+        if let Some(pinned) = self.cfg.pinned_basis {
+            if let Some(fx) = fx {
+                return FairValue {
+                    fair: Some(fx.value * pinned),
+                    anchor: Anchor::Fx,
+                    regime: Regime::FxPinned,
+                    basis: Some(pinned),
+                    health: Health::Unverified,
+                    uncertain: fx.uncertain(self.cfg.fx_max_confidence_frac),
+                    // A pinned constant cannot breach a band it was never
+                    // measured against; reporting one would be the false alarm
+                    // this whole path exists to remove.
+                    basis_breach: false,
+                    usdc_breach,
+                };
+            }
+        }
 
         match (fx, crypto) {
             // NORMAL: both legs live — fair = fx × basis, basis = EMA(crypto/fx).
@@ -301,6 +347,87 @@ mod tests {
     /// A reading fresh enough to pass the default 5-minute staleness bound.
     fn fresh(value: f64) -> Reading {
         Reading::new(value, secs(1))
+    }
+
+    /// An engine for a market with no independent basis source, pinned at 1.0.
+    fn pinned_engine() -> FairValueEngine {
+        FairValueEngine::new(FairValueConfig {
+            pinned_basis: Some(1.0),
+            ..FairValueConfig::default()
+        })
+    }
+
+    #[test]
+    fn pinned_market_anchors_on_fx_and_reports_unverified() {
+        let mut e = pinned_engine();
+        let legs = Legs {
+            fx: Some(fresh(0.0573)),
+            crypto_usdc: None,
+            usdc_usd: Some(fresh(1.0)),
+            static_usd: 0.0573,
+        };
+        let r = e.compose(legs, secs(5), false);
+        assert_eq!(r.regime, Regime::FxPinned);
+        assert_eq!(r.anchor, Anchor::Fx);
+        assert_eq!(r.health, Health::Unverified);
+        assert_eq!(r.basis, Some(1.0));
+        assert!((r.fair.unwrap() - 0.0573).abs() < 1e-12);
+        // Unverified is not a degrade: the switches must not tighten forever.
+        assert!(!r.degraded());
+    }
+
+    /// The regression this whole path exists to prevent: the old behavior fed a
+    /// garbage index price into the basis, which sat outside the band on every
+    /// tick and reported a standing BREACH. A pinned market must never breach.
+    #[test]
+    fn pinned_market_never_reports_a_basis_breach() {
+        let mut e = pinned_engine();
+        // A crypto reading roughly half the anchor — exactly the MXNe case that
+        // breached. It must be ignored, not folded into the basis.
+        let legs = Legs {
+            fx: Some(fresh(0.0573)),
+            crypto_usdc: Some(fresh(0.03064)),
+            usdc_usd: Some(fresh(1.0)),
+            static_usd: 0.0573,
+        };
+        let r = e.compose(legs, secs(5), false);
+        assert_eq!(r.regime, Regime::FxPinned);
+        assert_eq!(r.basis, Some(1.0));
+        assert!(!r.basis_breach);
+        assert!((r.fair.unwrap() - 0.0573).abs() < 1e-12);
+    }
+
+    /// A pinned market is still subject to every non-basis guard: losing the FX
+    /// anchor degrades it to the static peg exactly like any other market.
+    #[test]
+    fn pinned_market_without_fx_falls_to_the_static_peg() {
+        let mut e = pinned_engine();
+        let legs = Legs {
+            fx: None,
+            crypto_usdc: None,
+            usdc_usd: None,
+            static_usd: 0.0573,
+        };
+        let r = e.compose(legs, secs(5), false);
+        assert_eq!(r.regime, Regime::Degraded(Degrade::StaticPeg));
+        assert_eq!(r.anchor, Anchor::Static);
+        assert_eq!(r.health, Health::Degraded);
+    }
+
+    /// The USDC/USD common-mode guard is regime-independent, so it must still
+    /// fire for a pinned market (§1 fm1).
+    #[test]
+    fn pinned_market_still_reports_a_usdc_breach() {
+        let mut e = pinned_engine();
+        let legs = Legs {
+            fx: Some(fresh(0.0573)),
+            crypto_usdc: None,
+            usdc_usd: Some(fresh(0.80)),
+            static_usd: 0.0573,
+        };
+        let r = e.compose(legs, secs(5), false);
+        assert_eq!(r.regime, Regime::FxPinned);
+        assert!(r.usdc_breach);
     }
 
     #[test]
