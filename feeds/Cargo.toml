@@ -50,6 +50,10 @@ sqlx = { version = "0.8", default-features = false, features = [
 ], optional = true }
 
 [dev-dependencies]
+# Builds a `reqwest::Response` in-process (reqwest converts from
+# `http::Response`), so the body-size cap is exercised without a live venue or
+# a mock server.
+http = "1"
 # The store path is exercised against a real Postgres in a throwaway container
 # (feeds/tests/store_postgres.rs), so the `feed_cursors` upsert and the store
 # sink's cursor-advance are covered end to end. Those tests are `#[ignore]`d —

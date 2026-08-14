@@ -549,6 +549,39 @@ per-market maker processes are ever split out they would need a local
 price fan-out; that is the trigger to revisit this, not a problem to
 pre-solve.
 
+### How the shared client enforces it
+
+Every venue adapter reaches the network through one
+`HttpClient::get_json` (`feeds/src/http.rs`), so the bounds below hold
+for all of them at once rather than per adapter.
+
+- **A minimum interval per client**, 250 ms by default and raised per
+  venue with `with_min_interval`. It is a floor on back-to-back
+  requests — a paged backfill, a burst after an outage — not a cadence:
+  steady-state polling rate stays with the runner's `poll_interval`.
+  Clones share one gate, so a cloned client draws on the same venue
+  budget instead of opening a second one, and an idle stretch banks no
+  credit for a later burst.
+- **A 429 records a cooldown and surfaces the error.** The venue's
+  `Retry-After` — the delta-seconds form; an HTTP-date falls through to
+  a 60 s default — is clamped to five minutes and held as the earliest
+  instant the next request may go out. The runner then logs it, reports
+  it to the metrics seam, and backs off. Rate-limit pressure therefore
+  stays visible instead of being absorbed by a silent in-call retry, and
+  a cooldown far longer than the 10 s request timeout never sits inside
+  a single call.
+- **A response-body cap** of 8 MiB, raised per venue with
+  `with_max_response_bytes`. A declared `Content-Length` over the cap is
+  refused before a byte is buffered, and the running total then catches
+  a venue that under-declares or omits it. This gives the client a size
+  bound to go with the time bound the request timeout already provided,
+  so a wedged or hostile endpoint cannot make a consumer allocate
+  without bound.
+
+The one bound left to the operator is the cross-process half: nothing
+in the client stops a *second process* from polling the same venue, so
+the single-poller invariant above stays a deployment property.
+
 ______________________________________________________________________
 
 ## 11. Analytics over the collected history
