@@ -43,6 +43,8 @@ use std::hash::Hash;
 // Each venue rides its own transport's gate, not the module's — the contract
 // below is transport-free, so a future streaming venue lands here too.
 #[cfg(feature = "http")]
+pub mod alphavantage;
+#[cfg(feature = "http")]
 pub mod coinbase;
 #[cfg(feature = "http")]
 pub mod coingecko;
@@ -59,6 +61,8 @@ pub mod pyth;
 #[cfg(feature = "http")]
 pub mod twelvedata;
 
+#[cfg(feature = "http")]
+pub use alphavantage::AlphaVantageDaily;
 #[cfg(feature = "http")]
 pub use coinbase::{CoinbaseCandles, CoinbaseTicker};
 #[cfg(feature = "http")]

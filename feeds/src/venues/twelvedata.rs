@@ -28,7 +28,7 @@
 //! relying on the transport's `error_for_status`.
 
 use super::Candle;
-use crate::time::{civil_to_epoch_secs, now_secs};
+use crate::time::{format_civil_utc, now_secs, parse_civil_utc};
 use crate::{Batch, Cursor, HttpClient, Source};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -233,65 +233,6 @@ fn window_end(
     (next_start + span).min(closed_boundary)
 }
 
-/// Render an epoch second as the venue's civil-UTC query format.
-fn format_civil_utc(epoch: i64) -> String {
-    let days = epoch.div_euclid(86_400);
-    let secs = epoch.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    let (hour, minute, second) = (secs / 3_600, (secs % 3_600) / 60, secs % 60);
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
-}
-
-/// Hinnant's `civil_from_days` — the inverse of the epoch arithmetic in
-/// [`crate::time`], needed only to *render* a query bound. Decoding a response
-/// goes the other way and uses the shared helper there.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let day_of_era = z - era * 146_097; // [0, 146096]
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let shifted_month = (5 * day_of_year + 2) / 153; // March = 0
-    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
-    let month = if shifted_month < 10 {
-        shifted_month + 3
-    } else {
-        shifted_month - 9
-    };
-    (if month <= 2 { year + 1 } else { year }, month, day)
-}
-
-/// Decode the venue's civil timestamp into an epoch second.
-///
-/// The zone is not carried in the string, so this is correct **only** because
-/// every request pins `timezone=UTC`. That coupling is the reason the parameter
-/// is a constant in `next` rather than something a caller may choose.
-fn parse_civil_utc(datetime: &str) -> Result<i64> {
-    let (date, time) = datetime
-        .split_once(' ')
-        // A daily interval returns a bare date with no time part.
-        .unwrap_or((datetime, "00:00:00"));
-    let mut date_parts = date.split('-');
-    let mut time_parts = time.split(':');
-    let mut next_num = |part: Option<&str>, what: &str| -> Result<i64> {
-        part.ok_or_else(|| anyhow!("Twelve Data timestamp {datetime:?} has no {what}"))?
-            .parse::<i64>()
-            .with_context(|| format!("Twelve Data timestamp {datetime:?} has a bad {what}"))
-    };
-    let year = next_num(date_parts.next(), "year")?;
-    let month = next_num(date_parts.next(), "month")?;
-    let day = next_num(date_parts.next(), "day")?;
-    let hour = next_num(time_parts.next(), "hour")?;
-    let minute = next_num(time_parts.next(), "minute")?;
-    let second = time_parts.next().map_or(Ok(0), |s| {
-        s.parse::<i64>()
-            .with_context(|| format!("Twelve Data timestamp {datetime:?} has a bad second"))
-    })?;
-    Ok(civil_to_epoch_secs(year, month, day, hour, minute, second))
-}
-
 /// Turn a raw response (newest-first) into the batch's records: keep bars
 /// inside `[next_start, end)`, oldest-first. An undecodable bar is dropped
 /// rather than failing the batch, for the same reason as the OANDA adapter.
@@ -326,6 +267,7 @@ fn decode(raw: &RawBar) -> Result<Candle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time::civil_to_epoch_secs;
 
     /// A captured response: two AUD/USD 1min bars, newest-first, as returned
     /// with `timezone=UTC`.
@@ -406,47 +348,6 @@ mod tests {
     #[test]
     fn a_healthy_response_passes_the_envelope_check() {
         assert_eq!(check_response(captured_response()).unwrap().len(), 2);
-    }
-
-    #[test]
-    fn timestamps_decode_as_utc() {
-        // Correct only because every request pins timezone=UTC; the string
-        // itself carries no zone.
-        assert_eq!(
-            parse_civil_utc("2026-08-14 00:26:00").unwrap(),
-            civil_to_epoch_secs(2026, 8, 14, 0, 26, 0)
-        );
-        // A daily interval returns a bare date.
-        assert_eq!(
-            parse_civil_utc("2026-08-13").unwrap(),
-            civil_to_epoch_secs(2026, 8, 13, 0, 0, 0)
-        );
-        assert!(parse_civil_utc("not-a-time").is_err());
-    }
-
-    #[test]
-    fn query_bounds_render_in_the_venues_civil_format() {
-        assert_eq!(
-            format_civil_utc(civil_to_epoch_secs(2026, 8, 14, 0, 26, 0)),
-            "2026-08-14 00:26:00"
-        );
-        assert_eq!(
-            format_civil_utc(civil_to_epoch_secs(2026, 1, 1, 0, 0, 0)),
-            "2026-01-01 00:00:00"
-        );
-    }
-
-    #[test]
-    fn civil_rendering_round_trips_through_parsing() {
-        // The two directions are separate implementations, so pin them
-        // together rather than trusting each alone.
-        for epoch in [
-            civil_to_epoch_secs(2026, 8, 8, 0, 0, 0),
-            civil_to_epoch_secs(2024, 2, 29, 23, 59, 59),
-            civil_to_epoch_secs(1999, 12, 31, 12, 0, 0),
-        ] {
-            assert_eq!(parse_civil_utc(&format_civil_utc(epoch)).unwrap(), epoch);
-        }
     }
 
     #[test]
