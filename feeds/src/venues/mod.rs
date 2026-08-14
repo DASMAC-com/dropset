@@ -56,6 +56,8 @@ pub mod kraken;
 pub mod oanda;
 #[cfg(feature = "http")]
 pub mod pyth;
+#[cfg(feature = "http")]
+pub mod twelvedata;
 
 #[cfg(feature = "http")]
 pub use coinbase::{CoinbaseCandles, CoinbaseTicker};
@@ -71,6 +73,8 @@ pub use kraken::KrakenSource;
 pub use oanda::OandaCandles;
 #[cfg(feature = "http")]
 pub use pyth::{FxQuote, PythFeed, PythHermesSource};
+#[cfg(feature = "http")]
+pub use twelvedata::TwelveDataCandles;
 
 /// A single closed OHLCV candle — the record every candle source yields, and
 /// the row shape `cex_prices` stores.
