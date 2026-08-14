@@ -4,6 +4,7 @@ import { quoteEclob } from "@dropset/sdk";
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
 import { QUOTE_DEBOUNCE_MS, QUOTE_REFRESH_MS } from "../data/timings";
+import { gateNowUnix, syncChainClock } from "../eclob/chainClock";
 import { resolveEclobRoute } from "../eclob/route";
 import { PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
@@ -96,11 +97,18 @@ export const useEclobQuote = (
         // agreement to the atom.
         const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
         if (cancelled || gen !== generation) return;
+        // Both halves of the dual-domain gate come from the chain: the slot
+        // directly, the wall clock via the offset this refreshes. Quoting
+        // against the device clock would let a skewed browser price levels the
+        // engine has already expired.
+        await syncChainClock(rpc, slot);
+        if (cancelled || gen !== generation) return;
 
         const q = await quoteEclob(rpc, {
           leg: { route },
           amount: atomic,
           nowSlot: Number(slot),
+          nowUnix: gateNowUnix(),
           platformFeeBps: PLATFORM_FEE ? PLATFORM_FEE.bps : 0,
         });
         if (cancelled || gen !== generation) return;

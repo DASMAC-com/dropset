@@ -28,6 +28,7 @@ import {
   projectedRemaining,
   recordResponse,
 } from "../dflow/rateLimitBudget";
+import { gateNowUnix, syncChainClock } from "../eclob/chainClock";
 import { DFLOW_QUOTE_URL, PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
 import { getErrorMessage } from "../guards";
@@ -150,19 +151,26 @@ export const useRouterQuote = (
           : null;
         if (cancelled || gen !== generation) return;
 
-        // Only our own book needs the slot (the wall clock comes from the
-        // browser), so an aggregator-only tick doesn't read one — which on
-        // mainnet today, where we have no market yet, is every tick.
+        // Only our own book needs the clocks, so an aggregator-only tick reads
+        // neither — which on mainnet today, where we have no market yet, is
+        // every tick. When the leg is live both halves of the dual-domain gate
+        // come from the chain: the slot directly, the wall clock from the
+        // offset `syncChainClock` refreshes off that same slot.
         let nowSlot: number | undefined;
+        let nowUnix: number | undefined;
         if (eclobLeg) {
           const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
           if (cancelled || gen !== generation) return;
+          await syncChainClock(rpc, slot);
+          if (cancelled || gen !== generation) return;
           nowSlot = Number(slot);
+          nowUnix = gateNowUnix();
         }
 
         const { best, aggregator } = await quoteBestRoute(rpc, {
           amount: atomic,
           nowSlot,
+          nowUnix,
           signal: controller.signal,
           eclob: eclobLeg,
           // Our own leg declares the fee on the `swap` instruction, clamped by

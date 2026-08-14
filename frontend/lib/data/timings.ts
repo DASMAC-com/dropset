@@ -58,12 +58,31 @@ export const BALANCE_REFETCH_DELAY_MS = 1_500;
 // ───────────── Order book ─────────────
 
 // Live-poll cadence for the on-chain order-book viz. One getAccountInfo +
-// getSlot per tick against the local (or mainnet) RPC (expiry is
-// dual-domain: the slot comes from the chain, the wall clock from the
-// browser). 1 s reads as live —
+// getSlot + getBlockTime per tick against the local (or mainnet) RPC (expiry
+// is dual-domain, and both halves are read from the chain — see
+// lib/eclob/chainClock.ts). 1 s reads as live —
 // the maker bot's flashed depth appears within a tick — without hammering
 // the node the way the alpha viz's 500 ms poll did.
 export const ORDER_BOOK_REFRESH_MS = 1_000;
+
+// ───────────── Expiry gate clock ─────────────
+
+// How far the visitor's device clock may sit from cluster time before the
+// book is gated on the chain-derived estimate instead (lib/eclob/chainClock).
+// Sized between the two error scales it separates: an NTP-synced device is
+// within a second or so, and `getBlockTime` — a stake-weighted mean of vote
+// timestamps — carries noise of its own, while the skew actually worth
+// correcting runs to tens of seconds. Small against the top tier's lifetime,
+// so a tolerated offset can't meaningfully misjudge a level.
+export const CLOCK_SKEW_TOLERANCE_SECS = 5;
+
+// Forward nudge applied to the gate whichever clock it ends up using, so a
+// level inside its last moments is dropped here rather than quoted and then
+// dropped by the engine mid-swap. Covers one poll tick plus the RPC round-trip
+// that follows it. The two directions are not symmetric — briefly
+// under-showing a dying level costs a sliver of displayed depth, while
+// over-showing one costs the taker a soft revert plus fees.
+export const CLOCK_SAFETY_MARGIN_SECS = 2;
 
 // ───────────── Recent fills ─────────────
 
