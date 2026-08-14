@@ -203,7 +203,9 @@ impl SwapSide {
     ///   `base_for_quote` saturates its *denominator* on the `unb >= 0`
     ///   branch, which would enlarge the quotient — but `den` can only
     ///   clamp at `u128::MAX`, against a `num` of at most `u64::MAX`,
-    ///   so the quotient is `0` and the leg is skipped. Kept so an
+    ///   so the quotient is `0`, which ends the walk as `Exhausted`
+    ///   (correctly: a denominator that large is an astronomical price,
+    ///   and it sorts last). Kept so an
     ///   overflow stays a hard abort if the sizing is ever weakened —
     ///   and so the off-chain simulator's matching guard has an on-chain
     ///   counterpart to mirror.
@@ -361,10 +363,14 @@ enum LegFill {
         quote: u64,
         residue_in: u64,
     },
-    /// This leg fills nothing — the level or the vault is empty, or the
-    /// leg would move value in one direction only — but the taker's
-    /// budget can still buy an output atom further down the book. Walk
-    /// on without touching it.
+    /// This leg fills nothing and the walk continues. Two causes: the
+    /// level or the vault is empty (the taker's budget is untouched and
+    /// a later level may well fill it), or the leg would move value in
+    /// one direction only and guard 1f rejected it. Only the first
+    /// leaves the taker able to buy an output atom further down the
+    /// book — guard 1f on a taker-capped leg fires with at most one
+    /// input atom left, which buys nothing anywhere, so the next level
+    /// returns [`LegFill::Exhausted`]. Either way this leg is untouched.
     Skip,
     /// The taker's remaining input cannot buy one whole output atom at
     /// this price. Levels are visited best-price-first, so every level
@@ -1457,6 +1463,29 @@ mod tests {
                                     assert_eq!(
                                         residue_in, 0,
                                         "residue charged on a leg the taker cap did not bind: \
+                                         side={side:?} price={price:?} taker_in={taker_in} \
+                                         level_size={level_size} inv={inv}"
+                                    );
+                                } else {
+                                    // And the positive direction, or a
+                                    // regression that simply stopped
+                                    // charging residue — reverting
+                                    // exact-in wholesale — would satisfy
+                                    // the branch above on every case and
+                                    // pass the whole loop.
+                                    //
+                                    // Against `clamped`, not `taker_in`:
+                                    // the sizing works from the budget
+                                    // clamped to `u64`, and this loop
+                                    // deliberately feeds it a `u128`
+                                    // above that to exercise the clamp.
+                                    // The handler cannot (`amount_in` is
+                                    // a `u64`), so the two coincide in
+                                    // production.
+                                    assert_eq!(
+                                        input + residue_in,
+                                        clamped,
+                                        "a taker-bound leg must consume the budget in full: \
                                          side={side:?} price={price:?} taker_in={taker_in} \
                                          level_size={level_size} inv={inv}"
                                     );

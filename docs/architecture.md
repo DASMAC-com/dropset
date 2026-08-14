@@ -2148,22 +2148,43 @@ On every taker instruction:
    crosses too. Continue until the taker is filled, a level crosses
    the limit price, or the `Vec` is exhausted.
 
+1. **Tear down.** The `Vec` buffer is freed with the transaction;
+   debited inventory, `Vault.remaining.size` decrements, the cleared
+   `FLUSH_BIT` on any flushed vault, the `accrued_<leg>_fee_atoms` increments,
+   and `market.nonce` persist to
+   chain. Takers bump `market.nonce` per fill but never touch
+   `reference_price.stamp` beyond clearing `FLUSH_BIT`, and never
+   touch `Vault.remaining.price` or either of its expiry deadlines.
+
 #### Fill semantics — the take is exact-in
 
-A take means "I put in these tokens." Both conversions above round
-toward zero, so the largest whole number of output atoms a taker's
-budget buys generally prices back to slightly **less** than that
-budget. That change cannot be spent at any later level — every later
-level is priced worse, so it converts to zero output there — and the
-engine therefore **consumes it** rather than handing it back:
+A take means "I put in these tokens." Both conversions in the walk
+round toward zero, so the largest whole number of output atoms a
+taker's budget buys generally prices back to slightly **less** than
+that budget. That change cannot be spent at any later level — every
+later level is priced worse, so it converts to zero output there. The
+engine consumes it rather than handing it back, but **only where the
+taker demonstrably accepted the price**:
 
-- Whenever the **taker's own budget** is the binding cap on a leg, the
-  walk ends there and the taker's whole remaining input is transferred.
-  The vault is credited only the priced input leg; the difference is
-  the **residue**, bounded by the input cost of one output atom.
-- Whenever something else stops the walk — thin depth, an empty vault,
-  or the limit price — the unspent budget is still the taker's and is
-  never transferred. A partial fill stays a partial fill.
+- On a leg that **fills** and where the **taker's own budget** is the
+  binding cap, the walk ends there and the taker's whole remaining
+  input is transferred. The vault is credited only the priced input
+  leg; the difference is the **residue**, bounded by the input cost of
+  one output atom *at that level's price* — a price the taker just
+  traded at, since they received output from this level.
+- When the walk stops because the taker cannot afford one whole output
+  atom at the best remaining level, **nothing is absorbed**. The
+  taker's budget is what binds here too, so the symmetry is tempting —
+  but they receive nothing at that level, so its price is not one they
+  accepted, and it is chosen by whoever posted the level rather than
+  bounded by the market. Absorbing here would let a vault leader rest
+  a valid-but-far-out level at the tail of the book and confiscate the
+  entire unspent budget of any walk that reached it, with `min_out`
+  unable to object because the residue never reduces output. The
+  remainder returns to the taker.
+- When something else stops the walk — thin depth, an empty vault, or
+  the limit price — the unspent budget is likewise still the taker's
+  and is never transferred. A partial fill stays a partial fill.
 
 The residue is booked to **neither** vault inventory nor an
 `accrued_<leg>_fee_atoms` counter. It is not revenue and not a fee: it
@@ -2174,18 +2195,11 @@ custody** below). Crediting the matched vault instead would hand one
 leader a windfall the price it quoted did not earn, and lift depositor
 NAV through `L = isqrt(base · quote)`.
 
-The residue scales with the **output** token's granularity: at most one
-invisible atom into a 6-decimal token, but up to roughly one cent of
-input into a 2-decimal one, since a single output atom there costs a
-whole unit of the input asset.
-
-1. **Tear down.** The `Vec` buffer is freed with the transaction;
-   debited inventory, `Vault.remaining.size` decrements, the cleared
-   `FLUSH_BIT` on any flushed vault, the `accrued_<leg>_fee_atoms` increments,
-   and `market.nonce` persist to
-   chain. Takers bump `market.nonce` per fill but never touch
-   `reference_price.stamp` beyond clearing `FLUSH_BIT`, and never
-   touch `Vault.remaining.price` or either of its expiry deadlines.
+The residue scales with the **value of one output atom**, not with the
+output token's decimal count — a low-decimal token whose per-unit value
+is correspondingly low cancels out entirely. In practice that is at
+most one invisible atom into a 6-decimal token, and up to roughly one
+cent of input where a single output atom is genuinely worth a cent.
 
 ### Implementation notes — heap and capacity
 
