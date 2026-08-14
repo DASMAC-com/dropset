@@ -127,7 +127,13 @@ const PRICE_PROBE_ATOMS: u64 = 1_000_000_000_000_000_000;
 
 /// A resting level's price in human quote-per-base units: quote atoms for one
 /// whole base unit, de-scaled by the quote mint's decimals.
-fn human_price(price: Price, base_dec: u8, quote_dec: u8) -> f64 {
+///
+/// `pub(crate)` so the markets pane's reference price
+/// ([`crate::accounts`]) shares this one implementation. It had its own copy
+/// of the one-base-unit form and so its own copy of the resolution bug —
+/// two call sites, one of them silently stale, is exactly what a shared
+/// helper prevents.
+pub(crate) fn human_price(price: Price, base_dec: u8, quote_dec: u8) -> f64 {
     let per_probe = price.quote_for_base(PRICE_PROBE_ATOMS) as f64 / PRICE_PROBE_ATOMS as f64;
     per_probe * 10f64.powi(base_dec as i32) / 10f64.powi(quote_dec as i32)
 }
