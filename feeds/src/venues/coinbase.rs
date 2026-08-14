@@ -24,6 +24,7 @@
 //! **not** a [`super::BatchQuotes`] venue: one source covers one product, and a
 //! roster is several sources rather than one batched poll.
 
+use super::Candle;
 use crate::time::now_secs;
 use crate::{Batch, Cursor, HttpClient, Source};
 use anyhow::Result;
@@ -35,20 +36,6 @@ use serde::{Deserialize, Serialize};
 /// It is the venue's constraint, so it lives with the venue — a collector
 /// clamps its configured window to it rather than restating the number.
 pub const MAX_CANDLES_PER_REQUEST: usize = 300;
-
-/// A single closed OHLCV candle — the record this source yields. The pair,
-/// exchange, and granularity live on the consumer's writer (they are constant
-/// per feed), so a record carries only what varies bucket to bucket.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Candle {
-    /// Epoch-second bucket open.
-    pub bucket_start: i64,
-    pub low: f64,
-    pub high: f64,
-    pub open: f64,
-    pub close: f64,
-    pub volume: f64,
-}
 
 /// The Coinbase Exchange candle tuple, decoded positionally:
 /// `[time, low, high, open, close, volume]`.

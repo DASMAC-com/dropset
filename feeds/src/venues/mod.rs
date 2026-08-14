@@ -53,10 +53,12 @@ pub mod frankfurter;
 #[cfg(feature = "http")]
 pub mod kraken;
 #[cfg(feature = "http")]
+pub mod oanda;
+#[cfg(feature = "http")]
 pub mod pyth;
 
 #[cfg(feature = "http")]
-pub use coinbase::{Candle, CoinbaseCandles, CoinbaseTicker};
+pub use coinbase::{CoinbaseCandles, CoinbaseTicker};
 #[cfg(feature = "http")]
 pub use coingecko::CoinGeckoSource;
 #[cfg(feature = "http")]
@@ -66,7 +68,33 @@ pub use frankfurter::FrankfurterSource;
 #[cfg(feature = "http")]
 pub use kraken::KrakenSource;
 #[cfg(feature = "http")]
+pub use oanda::OandaCandles;
+#[cfg(feature = "http")]
 pub use pyth::{FxQuote, PythFeed, PythHermesSource};
+
+/// A single closed OHLCV candle — the record every candle source yields, and
+/// the row shape `cex_prices` stores.
+///
+/// It lives here rather than in one venue's module because it is the shared
+/// currency between candle adapters and the collectors that persist them:
+/// [`coinbase::CoinbaseCandles`] and [`oanda::OandaCandles`] both produce it,
+/// and a store writer is written once against it rather than once per venue.
+///
+/// The pair, source, and granularity live on the consumer's writer (they are
+/// constant per feed), so a record carries only what varies bucket to bucket.
+/// `volume` is whatever the venue means by it — traded size on a CEX, tick
+/// count on an FX venue, and `0.0` where the venue publishes none at all — so
+/// it is comparable only *within* a source, never across two.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Candle {
+    /// Epoch-second bucket open.
+    pub bucket_start: i64,
+    pub low: f64,
+    pub high: f64,
+    pub open: f64,
+    pub close: f64,
+    pub volume: f64,
+}
 
 /// One batched reading: the venue's own symbol key → USD price. The key type
 /// is the venue's, not ours — CoinGecko slugs are strings, CoinMarketCap ids
