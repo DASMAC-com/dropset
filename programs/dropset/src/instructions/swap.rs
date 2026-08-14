@@ -309,7 +309,9 @@ impl SwapSide {
                 // base to quote via the level price, then take the
                 // tightest of the taker, level, and vault-quote caps.
                 let cap_by_taker = price.quote_for_base(taker_in);
-                let fill_q = cap_by_taker.min(level_size as u128).min(quote_atoms as u128);
+                let fill_q = cap_by_taker
+                    .min(level_size as u128)
+                    .min(quote_atoms as u128);
                 let taker_bound = fill_q == cap_by_taker;
                 if fill_q == 0 {
                     return Ok(if taker_bound {
@@ -1081,8 +1083,9 @@ impl Swap {
         // vault inventory — the loop debits the *gross* output and books the
         // taker fee into `accrued_<leg>_fee_atoms`, so the debit exceeds this
         // payout by exactly the accrued fee. Which is the point: the custody
-        // invariant is `treasury == Σ vault + accrued_<leg>_fee_atoms`, and
-        // paying out `gross − accrued` is what keeps it. Do not "correct"
+        // invariant is `treasury >= Σ vault + accrued_<leg>_fee_atoms`, and
+        // paying out `gross − accrued` is what keeps the output leg from
+        // adding slack of its own. Do not "correct"
         // this to `total_out` — that would pay the accrued protocol revenue
         // straight back out, over-drawing a treasury shared by every vault on
         // the market.

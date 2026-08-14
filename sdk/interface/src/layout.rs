@@ -188,8 +188,10 @@ pub struct MarketHeader {
     pub quote_treasury: [u8; 32],
     /// Taker fee accrued in `base_treasury` as protocol revenue. Part of
     /// the treasury custody invariant
-    /// `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee_atoms`, so
-    /// it is *not* depositor inventory.
+    /// `base_treasury.amount >= Σ vault.base_atoms + accrued_base_fee_atoms`, so
+    /// it is *not* depositor inventory. The invariant is an inequality
+    /// because the treasury also holds atoms nobody claims — exact-in fill
+    /// change and unsolicited transfers — which `sweep_residual` recovers.
     pub accrued_base_fee_atoms: LeU64,
     /// Same as `accrued_base_fee_atoms`, for the quote leg.
     pub accrued_quote_fee_atoms: LeU64,

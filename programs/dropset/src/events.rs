@@ -94,14 +94,15 @@ pub struct SetTakerFeeEvent {
     pub taker_fee: u16,
 }
 
-/// Emitted by `sweep_residual` on every call — including the healthy
-/// `swept == 0` case, so the instruction doubles as an on-chain read-out
-/// of the treasury custody invariant's three terms. A non-zero `swept` is
-/// either a recovered unsolicited transfer or the alarm that
-/// `treasury.amount == vault_sum + accrued_fee` has drifted; a
-/// `treasury_amount` *below* `vault_sum + accrued_fee` is the
-/// transfer-fee-mint shortfall (nothing is swept). See the spec's
-/// **Fee model → Residual sweep**.
+/// Emitted by `sweep_residual` on every call — including the `swept == 0`
+/// case, so the instruction doubles as an on-chain read-out of the
+/// treasury custody invariant's three terms. A non-zero `swept` is the
+/// expected case: atoms nobody claims, from an exact-in fill residue or a
+/// recovered unsolicited transfer. A `treasury_amount` *below*
+/// `vault_sum + accrued_fee` is the one unhealthy reading — the
+/// transfer-fee-mint shortfall, where nothing is swept and the treasury
+/// cannot cover its claims. See the spec's **Fee model → Residual
+/// sweep**.
 #[event]
 pub struct SweepResidualEvent {
     pub market: Address,

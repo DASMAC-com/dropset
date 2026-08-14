@@ -72,8 +72,9 @@ fn min_out_soft_reverts_when_unattainable() {
     );
     assert_eq!(nonce_before, f.market_header().nonce.get());
 
-    // Treasury invariant holds — `treasury == Σ vault + accrued`, with
-    // nothing accrued on a swap that never committed.
+    // Treasury invariant holds with zero slack — a swap that never
+    // committed accrues no fee and, since it transfers nothing at all,
+    // leaves no exact-in residue either.
     let h = f.market_header();
     assert_eq!(h.accrued_base_fee_atoms.get(), 0);
     assert_eq!(h.accrued_quote_fee_atoms.get(), 0);

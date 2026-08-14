@@ -4,11 +4,16 @@
 //! protocol fee has a claim on.
 //!
 //! The invariant under test throughout is
-//! `treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee_atoms`, so the
-//! residual the instruction pays out is zero on every honest path. The two
-//! interesting cases are therefore an **unsolicited transfer** straight to
-//! the treasury ATA (recovered) and a **fee'd swap** (accrued revenue,
-//! deliberately *not* recovered).
+//! `treasury.amount >= Σ vault.<leg>_atoms + accrued_<leg>_fee_atoms`, and
+//! the residual is whatever slack that leaves. The interesting cases are
+//! an **unsolicited transfer** straight to the treasury ATA (recovered), a
+//! **fee'd swap** (accrued revenue, deliberately *not* recovered), and a
+//! market quiet since its last sweep (nothing to pay out).
+//!
+//! The exact-in fill residue is the other thing that lands in this bucket
+//! — `swap.rs` and the teardown drill cover it, since it needs a
+//! taker-bound fill to produce and this suite's cases are built to isolate
+//! the other two terms.
 
 mod common;
 

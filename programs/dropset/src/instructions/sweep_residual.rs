@@ -6,21 +6,32 @@
 //! residual = treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee_atoms
 //! ```
 //!
-//! In normal operation that value is exactly **zero** — the treasury
-//! custody invariant (see the architecture spec's **MarketHeader → Fee
-//! model**) says the two claimed terms sum to the balance. So a non-zero
-//! residual is primarily a **bug alarm**, not income: it means a rounding
-//! error, a share-math slip, or a botched rollback leaked or stranded
-//! atoms, and an operator wants to see it. That tripwire is the reason the
+//! The treasury custody invariant (see the architecture spec's
+//! **MarketHeader → Fee model**) bounds the two claimed terms *below* the
+//! balance, so this value is `>= 0` and routinely above it. Two things
+//! legitimately put atoms here, and to the protocol they are the same
+//! thing — atoms nobody has a claim on, otherwise stranded forever, since
+//! no vault has a claim a `Withdraw` could pay out:
+//!
+//! * An **unsolicited transfer**. Anyone can send tokens straight to the
+//!   treasury ATA and no instruction can stop them.
+//! * The **exact-in fill residue**. A take consumes the caller's whole
+//!   `amount_in`, and the part no level could price into a whole output
+//!   atom is credited to neither a vault nor a fee counter (see `swap`'s
+//!   `compute_fill`). This is the common case — it accrues on ordinary
+//!   taker-bound swaps, which makes this instruction routine collection
+//!   rather than an exceptional recovery path.
+//!
+//! What the residual can no longer do on its own is distinguish those
+//! from a rounding error, a share-math slip, or a botched rollback that
+//! leaked or stranded atoms. It is still worth an operator's eye — an
+//! order-of-magnitude jump is a signal — but the sharp check is the
+//! *direction*: the subtraction below saturates at zero, and a treasury
+//! that cannot cover its claims is the solvency bug. That is also why the
 //! protocol fee is tracked in explicit counters rather than *defined* as
 //! the residual — under a residual definition any drift would be revenue
 //! by construction, indistinguishable from depositor principal and
 //! harvested away with no test able to fail.
-//!
-//! The legitimate non-zero case is an **unsolicited transfer**: anyone can
-//! send tokens straight to the treasury ATA, and those atoms would
-//! otherwise be stranded forever (no vault has a claim on them, so no
-//! `Withdraw` can move them). This instruction recovers them.
 //!
 //! Deliberately **not** a fee harvest. The accrued counters are subtracted,
 //! never touched — draining protocol revenue waits on a decided
@@ -122,10 +133,11 @@ impl SweepResidual {
         // considered case and the other as an oversight.
         let swept = residual.min(u64::MAX as u128) as u64;
 
-        // A zero residual is the healthy case, and `transfer_out_leg`
-        // skips a zero amount — so the instruction still succeeds and
-        // still emits, which makes it usable as an on-chain read-out of
-        // the invariant's three terms.
+        // A zero residual is a fine outcome — a market that has taken no
+        // swaps since the last sweep has nothing to collect — and
+        // `transfer_out_leg` skips a zero amount, so the instruction still
+        // succeeds and still emits, which makes it usable as an on-chain
+        // read-out of the invariant's three terms.
         let (mint_seeds, bump_arr) = self.market.signer_seed_parts();
         let signer_seeds_inner: [&[u8]; 3] =
             [mint_seeds[0].as_ref(), mint_seeds[1].as_ref(), &bump_arr];
