@@ -3,13 +3,22 @@
 //!
 //! It polls the public REST candles endpoint (keyless), which returns
 //! `[time, low, high, open, close, volume]` arrays, newest-first, ≤ 300 per
-//! request. The source **pages its own backfill**: the framework's
-//! paged-backfill helper is still an open question (docs/data-feeds.md §7), and
-//! the indexer's take-newest-and-advance poll would skip the middle of a
-//! 60–90-day backlog, so this walks `start → now` in ≤ `max_buckets` windows,
-//! reporting `caught_up = false` until the present. Only **closed** buckets are
-//! emitted — the currently-forming candle is excluded — so a store sink's
+//! request. The source **pages its own backfill**: the indexer's
+//! take-newest-and-advance poll would skip the middle of a 60–90-day backlog,
+//! so this walks `start → now` in ≤ `max_buckets` windows, reporting
+//! `caught_up = false` until the present. Only **closed** buckets are emitted
+//! — the currently-forming candle is excluded — so a store sink's
 //! `ON CONFLICT DO NOTHING` never freezes an incomplete OHLCV row.
+//!
+//! The framework's paged-backfill helper (`feeds/src/backfill.rs`,
+//! docs/data-feeds.md §13) is **deliberately not adopted here** — a settled
+//! decision, not an open question. That helper exists to correct two failure
+//! modes of a resume cursor used as an exclusive *lower* bound, and this
+//! source has neither: its windows are bounded at **both** ends with the end
+//! never reaching the present, it advances to the window it actually
+//! requested rather than to the newest row it happened to see, and it commits
+//! only after the await. Adopting `Backfill` here would add indirection and
+//! remove nothing.
 //!
 //! The endpoint is keyed by a single product, so this adapter is deliberately
 //! **not** a [`super::BatchQuotes`] venue: one source covers one product, and a

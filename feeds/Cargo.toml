@@ -94,7 +94,7 @@ rpc = [
 ]
 # The subscribe / streaming seam: the channel bridge a WebSocket /
 # `logsSubscribe` / geyser transport pushes into. The concrete socket lands
-# with its first bot consumer (docs/data-feeds.md §4, §7).
+# with its first bot consumer (docs/data-feeds.md §4, §13).
 stream = []
 
 [package]

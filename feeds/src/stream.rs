@@ -15,7 +15,7 @@ const DRAIN_CAP: usize = 256;
 /// WebSocket / `logsSubscribe` / geyser client) into the async [`Source`]
 /// model. This is the reusable seam every push source funnels through; the
 /// concrete socket — its reconnect policy, filter, and message schema — lives
-/// with its first consumer (docs/data-feeds.md §4, §7), which spawns a task
+/// with its first consumer (docs/data-feeds.md §4, §13), which spawns a task
 /// that pushes into the returned [`mpsc::Sender`].
 ///
 /// `next` awaits the next record, then drains any already-queued ones into the
