@@ -44,6 +44,6 @@ export const decks = [
     subtitle:
       "The ~2-minute pitch: the gap, what's live today, the eCLOB, and why FX is next.",
     presented: "2026-08-26",
-    pages: 12,
+    pages: 11,
   },
 ];

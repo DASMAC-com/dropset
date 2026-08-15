@@ -37,15 +37,22 @@ import { colors, deckTheme } from "@/theme/tokens";
  * - **No competitor is named or shown, anywhere** — not on a slide and not in
  *   a `Notes` track. A two-minute pitch cannot afford to give competitors free
  *   press, and naming them invites the room to evaluate them instead of us.
- *   Page 10 makes the argument as a property of public liquidity instead. The
+ *   Page 9 makes the argument as a property of public liquidity instead. The
  *   fuller answers live in the spec's appendix, for questions only.
  *
- * Twelve pages. Pages 2–3 are the open, split into two beats so the pitch
- * starts with momentum: a huge market, and no penetration of it. Pages 4–7 are
+ * Eleven pages. Pages 2–3 are the open, split into two beats so the pitch
+ * starts with momentum: a huge market, and no penetration of it. Pages 4–6 are
  * one argument in sequence: the swap flow works today, we curate the data for
- * every currency, most of them have no liquidity at all, and the eCLOB is what
- * we're building to fix that. Then how we grow, the roadmap, why FX is next,
- * the team, and a close that replays the title and stays up after the talk.
+ * every currency — and most of those currencies have no liquidity at all — and
+ * the eCLOB is what we're building to fix that. Then how we grow, the roadmap,
+ * why FX is next, the team, and a close that replays the title and stays up
+ * after the talk.
+ *
+ * The illiquid tail used to be its own page between the curation page and the
+ * eCLOB. It was cut and its track folded into the curation page: the gap it
+ * named is a clause, not a page, and spending a whole beat restating the
+ * previous page's table with a worse screenshot delayed the eCLOB by ten
+ * seconds it had to earn back.
  */
 
 /**
@@ -591,7 +598,7 @@ const Screenshot = ({
 
 // The chevron that means "and then". Space Mono, one mark and one face, and
 // it is deliberately shared: page 4's swap flow uses it between steps, and
-// page 10's flip reuses it between asset classes precisely because page 4 has
+// page 9's flip reuses it between asset classes precisely because page 4 has
 // already taught the audience what it means. It used to be the gap page's
 // `Fact` bullet marker too; that list is gone, and the glyph now only ever
 // marks a sequence.
@@ -949,11 +956,16 @@ const BEATS: Beat[] = [
   // Plain-spoken customer development, and it **names no company**: an earlier
   // draft read "DASMAC bootstraps liquidity", which put the DevCo back on a
   // slide it has receded from and made the first beat about us rather than
-  // about the issuers. Both sides of the two-sided market are in the talk
-  // track — the issuers upstream and the pipeline of companies that consume the
-  // liquidity downstream (the page-8 names) — because seeding one side is a
-  // liquidity operation, and seeding both is a market.
-  { when: "Now", headline: "Onboard emerging stablecoin issuers" },
+  // about the issuers.
+  //
+  // Both sides of the two-sided market are named **on the slide**, not just in
+  // the talk track — the issuers upstream and the customers who consume the
+  // liquidity downstream (the page-7 names) — because seeding one side is a
+  // liquidity operation, and seeding both is a market. An earlier version read
+  // "Onboard emerging stablecoin issuers", which printed only the supply half
+  // and left the beat looking like a sourcing task; the demand half was
+  // audible in the track but never legible on the page.
+  { when: "Now", headline: "Connect stablecoin issuers with demand-side customers" },
   // Two words on the slide, and the talk track no longer expands them. The
   // prop-AMM argument — that *other* market makers enter, so quotes compete
   // tighter rather than being set by whoever owns the venue, which is the
@@ -1070,7 +1082,7 @@ const Roadmap = () => (
 );
 
 /**
- * The page-10 flip: three asset classes in the order they came onchain, the
+ * The page-9 flip: three asset classes in the order they came onchain, the
  * third being ours.
  *
  * This **replaces** v2's two-panel open-venue comparison — three
@@ -1291,7 +1303,7 @@ const Portrait = ({
 );
 
 /**
- * The tagline — the deck's one-liner, and the only line on pages 1 and 12.
+ * The tagline — the deck's one-liner, and the only line on pages 1 and 11.
  *
  * It replaced "Where currency trades onchain" (accurate, and it asked the
  * audience to care on its own), and then "The 24/7/365 currency translation
@@ -1306,9 +1318,10 @@ const Portrait = ({
  * currency" reads as every *token* — "you're making my token liquid?" — and
  * the one word that disambiguates is worth the extra width. The always-on
  * claim moved out of the line and into **page 1's spoken opener**, which is
- * what keeps page 2's 24/5 fact a payoff rather than an orphan. Page 12's
- * opener stays bare on purpose — it hands straight off to the personal why,
- * and the close should land on the problem rather than re-pitch a feature.
+ * what keeps page 2's 24/5 fact a payoff rather than an orphan. Page 11's
+ * opener stays bare on purpose — it hands straight off to the ambition line,
+ * and the close should land on the scale of the thing rather than re-pitch a
+ * feature.
  *
  * A noun phrase, and one of global rule 1's three sanctioned fragments: a
  * tagline names the company, and every sentence form ("Dropset is the…") puts
@@ -1319,12 +1332,12 @@ const TAGLINE = "The liquidity layer for every national currency";
 /**
  * The title page's body: the wordmark over the tagline, centred, nothing else.
  *
- * **Rendered twice** — page 1 opens on it and page 12 closes on it — which is
+ * **Rendered twice** — page 1 opens on it and page 11 closes on it — which is
  * the whole reason it is a component. The close only works if the page is
  * *identical* to the opener, and two hand-built copies drift the moment either
  * is edited; sharing the body makes that structural rather than a promise.
  * Only the `Notes` differ, which is the point: the same picture carries the
- * one-liner at the start and the why-me at the end.
+ * one-liner at the start and the ambition at the end.
  *
  * The page used to carry a "Built by DASMAC" line and the wide company banner
  * beneath it; both are gone. DASMAC is the boring DevCo in the background —
@@ -1370,7 +1383,7 @@ export default function DemoDeck() {
         {/* The opener introduces the speaker, then states the thesis, and
             stops. The tokenized-equity analogy that used to carry this beat is
             held in reserve under "Optional backup beats" in the spec: it was
-            the sit-up moment and it planted page 10, but it made the opener
+            the sit-up moment and it planted page 9, but it made the opener
             long. If it returns it is spoken over the bare wordmark and never
             printed — on the slide it competes with the tagline. */}
         <Notes>
@@ -1437,7 +1450,7 @@ export default function DemoDeck() {
               the money-ness thesis ("public blockchains are the most money-like
               digital environment available today") was the abstract sentence on
               a page whose job is a concrete ratio; it is still the claim the
-              deck answers to, and page 10 is its payoff. */}
+              deck answers to, and page 9 is its payoff. */}
           <SlideFill>
             <Box>
               <CurrencyMeter />
@@ -1562,31 +1575,21 @@ export default function DemoDeck() {
             margin="30px 0 0 0"
           />
         </SlideBody>
+        {/* Carries what was the long-tail page's track as well as its own. That
+            page was cut, so the gap it existed to open — curated data on one
+            side, no liquidity on the other — now has to land here, off the one
+            capture. The third sentence is what the cut page's screenshot used
+            to do: it sizes the gap, so the eCLOB arrives against a number
+            rather than against an adjective. */}
         <Notes>
           Dropset also curates market data for every Solana-based stablecoin.
-        </Notes>
-      </Slide>
-
-      {/* 6 — The illiquid tail. The problem the eCLOB answers. */}
-      <Slide>
-        <SlideBody>
-          <Eyebrow>The long tail</Eyebrow>
-          <Statement fontSize="64px" nowrap>
-            Many currencies have no liquidity whatsoever
-          </Statement>
-          <Screenshot
-            src="/screens/currencies-illiquid.png"
-            width={1400}
-            alt="The tail of the same table: the Australian and Canadian dollars, the yen, the naira, the lira and more, all with no price, volume or liquidity at all"
-            margin="34px 0 0 0"
-          />
-        </SlideBody>
-        <Notes>
           However, many of these currencies still have no liquidity whatsoever.
+          This is a major market gap for an asset class with nine trillion
+          dollars of daily volume.
         </Notes>
       </Slide>
 
-      {/* 7 — The eCLOB */}
+      {/* 6 — The eCLOB */}
       <Slide>
         <SlideBody>
           <Eyebrow>The eCLOB</Eyebrow>
@@ -1631,7 +1634,7 @@ export default function DemoDeck() {
               <Screenshot
                 src="/screens/eclob-frontend.png"
                 width={500}
-                alt="The eCLOB on the frontend: a EURC/USDC order book, a live trades tape, and a priced swap"
+                alt="The eCLOB on the frontend: a priced USDC to EURC swap, a EURC/USDC order book, a live trades tape, and the routing globe"
                 caption="Liquidity routes to the frontend"
                 margin="0px"
               />
@@ -1647,7 +1650,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 8 — How we grow */}
+      {/* 7 — How we grow */}
       <Slide>
         <SlideBody>
           <Eyebrow>How we grow</Eyebrow>
@@ -1662,15 +1665,16 @@ export default function DemoDeck() {
           We bootstrap the vaults for this two-sided market ourselves, kicking
           off a public liquidity flywheel that matches upstream stablecoin
           issuers with downstream liquidity consumers. We’re already working
-          with early-stage stablecoin issuers on a liquidity pilot program.
-          We’ve validated demand from onchain banking and supply chain
+          with early-stage stablecoin issuers on a liquidity pilot program, and
+          we’ve validated demand from onchain banking and supply chain
           management teams who source existing liquidity onchain but suffer
           wide spreads when clearing FX swaps off-chain through their banking
-          solutions.
+          solutions. In other words, latent demand doesn’t have a
+          straightforward supply channel.
         </Notes>
       </Slide>
 
-      {/* 9 — Growth roadmap */}
+      {/* 8 — Growth roadmap */}
       <Slide>
         <SlideBody>
           <Eyebrow>Growth roadmap</Eyebrow>
@@ -1704,7 +1708,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 10 — Why FX is next */}
+      {/* 9 — Why FX is next */}
       <Slide>
         <SlideBody>
           <Eyebrow>Why FX is next</Eyebrow>
@@ -1767,7 +1771,7 @@ export default function DemoDeck() {
             it is the answer to what happens if a better settlement layer
             arrives. And the **absorption** claim — a maker with gated access
             can quote here and hedge there, and nothing carries depth back —
-            repairs a soft spot on page 8, which otherwise leaves our own vaults
+            repairs a soft spot on page 7, which otherwise leaves our own vaults
             as the only answer to where depth for a thin pair comes from. Say it
             as a capability, not as something running today. The old "vampire
             attack" phrasing is retired: with no competitor named it has no
@@ -1777,10 +1781,21 @@ export default function DemoDeck() {
             The RWA figures are spoken because their honest form is about
             *growth*, not size — Solana is third by total RWA value behind
             Ethereum and BNB, so any "Solana leads RWAs" claim hands a listening
-            investor a free correction. */}
+            investor a free correction.
+
+            **The opener carries a comparative with no citation.** "Dominates
+            public
+            blockchain token launch numbers" is a ranking against other chains,
+            and this page's rule is that a comparative is cited or rephrased
+            away — the tokenized-equity figure beside it clears that bar at 96%,
+            this one does not yet. It replaced "Solana is where tokens get
+            launched", which made the point without the ranking. Source it
+            before presenting or fall back to that; the spec's page-9 note
+            records the reversal and the fallback wording. */}
         <Notes>
-          Solana is where tokens get launched, and more recently it commands a
-          near monopoly on tokenized equity volume. It’s basically
+          Solana dominates public blockchain token launch numbers, and more
+          recently it commands a near monopoly on tokenized equity
+          volume. It’s basically
           the perfect place for moving tokens — which are the vehicle for
           stablecoins, and by extension for public FX markets, because it
           facilitates permissionless liquidity flywheels that take off in a
@@ -1788,7 +1803,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 11 — Team. No longer the last page: the close (12) replays the title
+      {/* 10 — Team. No longer the last page: the close (11) replays the title
           and is what stays up, so the mirror-the-title line and the
           "leave this page up" direction both moved there. */}
       <Slide>
@@ -1836,7 +1851,7 @@ export default function DemoDeck() {
         </Notes>
       </Slide>
 
-      {/* 12 — Close. A replay of page 1, and the page that stays up. */}
+      {/* 11 — Close. A replay of page 1, and the page that stays up. */}
       <Slide>
         <TitlePage />
         {/* This page exists because the sign-off review was left **wondering
@@ -1848,20 +1863,21 @@ export default function DemoDeck() {
             headshots, and it gives the talk a bookend: the tagline is the first
             thing said and the last.
 
-            The personal why below is the founder's own argument, written down
-            as a **rehearsal draft** rather than as copy to be read out — it is
-            the one block in this deck meant to be iterated on out loud, and
-            the wording that lands will be whatever it becomes on the third
-            pass. Keep it to two or three sentences. The failure mode is a
-            biography; the target is the single sentence that makes a listener
-            believe this person would still be working on this in five years. */}
+            The close is now **two sentences**: the tagline, then the ambition
+            stated flat. The page used to carry a rehearsal-draft personal why
+            — the seventeen-years-old argument, money onchain still not really
+            working — and it is held under "Optional backup beats" in the spec
+            rather than deleted, because it is the right material for a
+            follow-up conversation. What it is not is a *closing* line: it
+            spends the last seconds of the pitch on exposition, and a listener
+            who has sat through ten pages of the problem does not need the
+            problem restated at them. The scale claim does the work instead,
+            and the sentiment behind it is better argued live, against an
+            actual question, than recited. */}
         <Notes>
-          Dropset — the liquidity layer for every national currency. This
-          industry is seventeen years old, and we can finally send money
-          anywhere in the world. Yet we still can’t get in and out of any
-          currency. Money onchain still doesn’t really work, even in deeply
-          money-like environments like Solana. Through Dropset, we’re going to
-          solve this issue once and for all.
+          Dropset — the liquidity layer for every national currency. In other
+          words, we’re going to put all the money on the blockchain and it’s
+          going to be huge.
         </Notes>
       </Slide>
     </Deck>
