@@ -218,7 +218,7 @@ cannot be kept in step automatically, so the two silently diverge.
   brand art here, both of which are won't-do. Solana is **not** mentioned
   here either; the old "Forex on Solana" line implied a boundary the deck
   no longer wants. The deck now **closes on a replay of this page** (page
-  12), which supersedes v2's "no separate closing slide" — see that page
+  11), which supersedes v2's "no separate closing slide" — see that page
   for why.
 
 #### Page 2 — A huge market · ~7s
@@ -286,7 +286,7 @@ cannot be kept in step automatically, so the two silently diverge.
   currencies are represented by a stablecoin on Solana. So we're building
   Dropset to provide 24/7/365 coverage for every national currency."
 - **Note on "every national currency":** the closing words are **the tagline**,
-  which pages 1 and 12 print and speak. Landing them here, at the moment the
+  which pages 1 and 11 print and speak. Landing them here, at the moment the
   goal is stated, is what makes the tagline read as the promise rather than as
   a slogan — the room hears it first as a claim about the company, then as the
   scope of the thing being built, then as the last words of the pitch. The
@@ -583,7 +583,7 @@ cannot be kept in step automatically, so the two silently diverge.
   captioned with the company and what they are to us ("Loon / CADC
   issuer", "Altitude / Banking").
 - **Spoken:** "We bootstrap the vaults for this two-sided market ourselves,
-  kicking off a public liquidity flywheel where we're matching upstream
+  kicking off a public liquidity flywheel that matches upstream stablecoin
   issuers with downstream liquidity consumers. We're already working with
   early-stage stablecoin issuers on a liquidity pilot program, and we've
   validated demand from onchain banking and supply chain management teams who
@@ -1178,7 +1178,7 @@ are beats the presenter may choose to speak.
 Tangible where FX is abstract: it conveys that with tokenized equities it
 already makes sense that anyone can trade a stock from anywhere on their
 phone, and that a euro is the conspicuous exception. It also sets up page
-10, which returns to tokenized equities with the number attached. Spoken
+9, which returns to tokenized equities with the number attached. Spoken
 only if used — never printed, since on the title slide it would be a
 second sentence competing with the tagline.
 
@@ -2030,8 +2030,8 @@ advice puts "nuanced thoughts" in the first place.
    read.
 1. **The sentences tell a story as you flip through.** Read the on-slide
    lines top to bottom and they should read as one arc. Pages
-   4–7 are the load-bearing stretch: works today → we curate the data →
-   the tail is empty → here's the exchange that fixes it.
+   4–6 are the load-bearing stretch: works today → we curate the data and
+   the tail of it is empty → here's the exchange that fixes it.
 1. **Super simple words.**
 1. **Lead with the strongest selling point, not a template.** It already
    works, on mainnet, and there's a screenshot — so "live today" is page
@@ -2051,16 +2051,16 @@ our pages in brackets.
 
 1. **One-liner.** DASMAC is building Dropset, an onchain Forex platform
    that harnesses Solana for open, efficient exchange of multinational
-   currencies at scale. [Pages 1, 12]
+   currencies at scale. [Pages 1, 11]
 1. **Problem / unique insight.** ~15 currencies now live on Solana via
    stablecoins; Solana settlement can support the massive FX market
    *composably* — DevEx convenience for payments providers, merchants,
    manufacturers, and retail — because Solana is general-purpose, not
-   verticalized like Hyperliquid. [Pages 3, 6, 10; appendix]
+   verticalized like Hyperliquid. [Pages 3, 5, 9; appendix]
 1. **Solution / product.** Dropset routes existing onchain liquidity
    through aggregators and adds a novel eCLOB to bootstrap new markets
    with inexpensive quote updates that accelerate market-maker
-   onboarding. [Pages 4, 7]
+   onboarding. [Pages 4, 6]
 1. **Traction.** Dropset.io is live and clearing trades on mainnet
    (today via aggregators), and curates the market data for every
    currency on Solana. [Pages 4, 5]
@@ -2071,7 +2071,7 @@ our pages in brackets.
    expand — EUR stablecoins drive most volume, more currencies going
    live (15 on Solana). Page 9 is the other half of the answer: the
    asset classes that already consolidated onchain are the pattern FX
-   follows. [Pages 3, 5, 10]
+   follows. [Pages 3, 5, 9]
 1. **Business model.** Liquidity operations now, protocol fees as
    volumes compound next, derivatives after that. [Page 8]
 1. **Founders' bio.** Exchange-design background — authored the Econia
