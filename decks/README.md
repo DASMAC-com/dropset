@@ -79,6 +79,13 @@ deps, and theme don't fight the product build.
     crisp. `sips` (built in) resizes; Pillow does the crop and the
     quantize.
 
+    **Quantizing is the default, not a rule — check the result.** It suits
+    the table captures, which are flat. On a busier capture it can flatten
+    a gradient into a visible color cast: `eclob-frontend.png` came out
+    tinted green at 256 colors, and is now committed as full RGB at
+    ~345KB, well inside the limit. If a resized capture already fits under
+    500KB, quantizing it buys weight you weren't spending anyway.
+
   The first two are generated, so `public/`'s entries are gitignored with
   a carve-out for the committed `public/screens/` — see `.gitignore`.
 

@@ -72,11 +72,14 @@ What changed from the deck that first went out:
 - Full sentences on slides, in place of fragment headlines.
 - **Static images only.** The two recorded demos and the click-to-play
   badge are gone; product beats are interface screenshots.
-- **Twelve pages, not eight.** Pages 4–7 are one argument in
-  sequence: the swap works today → we curate the data for every currency
-  → most of them have no liquidity at all → the eCLOB is what we're
-  building to fix that. Splitting those beats is what makes the eCLOB
-  land as an answer to a problem the audience has just been shown.
+- **Eleven pages, not eight.** Pages 4–6 are one argument in
+  sequence: the swap works today → we curate the data for every currency,
+  and most of them have no liquidity at all → the eCLOB is what we're
+  building to fix that. Keeping those beats distinct is what makes the eCLOB
+  land as an answer to a problem the audience has just been shown. The
+  middle beat had its own page until the tail slide was folded into the
+  curation page; it is now that page's second and third sentences, which
+  costs the pause and saves the ten seconds.
 - A **growth roadmap** page (three beats in time order), answering the
   revenue question the first deck left implied.
 - The "why this will fail" / "why it won't" pair **collapsed into one
@@ -106,35 +109,36 @@ pages:
 > Dropset frontend already processes Solana mainnet FX swaps, sourcing liquidity
 > from existing onchain exchanges. Dropset also curates market data for every
 > Solana-based stablecoin. However, many of these currencies still have no
-> liquidity whatsoever. Which is why we're building a DEX specifically tailored
+> liquidity whatsoever. This is a major market gap for an asset class with
+> nine trillion dollars of daily volume. Which is why we're building a DEX
+> specifically tailored
 > to bootstrapping stablecoin liquidity: the ephemeral central limit order book,
 > or eCLOB, which delivers propAMM efficiency while providing CLOB transparency.
 > It's built around vaults, so anyone can become a vault leader and crowdsource
 > their market-making inventory. We bootstrap the vaults for this two-sided
 > market ourselves, kicking off a public liquidity flywheel that matches
 > upstream stablecoin issuers with downstream liquidity consumers. We're already
-> working with early-stage stablecoin issuers on a liquidity pilot program.
-> We've validated demand from onchain banking and supply chain management teams
+> working with early-stage stablecoin issuers on a liquidity pilot program, and
+> we've validated demand from onchain banking and supply chain management teams
 > who source existing liquidity onchain but suffer wide spreads when clearing FX
-> swaps off-chain through their banking solutions. By connecting emerging
+> swaps off-chain through their banking solutions. In other words, latent
+> demand doesn't have a straightforward supply channel. By connecting emerging
 > stablecoin issuers and demand-side customers, we can create a comprehensive FX
 > liquidity network that accrues protocol fees. As markets mature, we have
 > access to product opportunities beyond spot, like derivatives, for business
 > use cases
 > including treasury management, B2B payment flow, hedging, and beyond.
-> Solana is where tokens get launched, and more recently it commands a near
-> monopoly on tokenized equity volume. It's basically the perfect place for
+> Solana dominates public blockchain token launch numbers, and more recently
+> it commands a near monopoly on tokenized equity volume. It's basically the
+> perfect place for
 > moving tokens — which are the vehicle for stablecoins, and by extension for
 > public FX markets, because it facilitates permissionless liquidity flywheels
 > that take off in a positive feedback loop. We're the people to build it. The
 > team has already worked on multiple exchanges. We're already operationally
 > integrated with existing stablecoin issuers, and I've personally authored or
 > co-authored three onchain exchanges. Dropset — the liquidity layer for every
-> national currency. This industry is seventeen years old, and we can finally
-> send money anywhere in the world. Yet we still can't get in and out of any
-> currency. Money onchain still doesn't really work, even in deeply money-like
-> environments like Solana. Through Dropset, we're going to solve this issue
-> once and for all.
+> national currency. In other words, we're going to put all the money on the
+> blockchain and it's going to be huge.
 
 ### Talk-track rules
 
@@ -149,18 +153,19 @@ and a beat that lost on length may win in a different room.
 **Echoing the slide.** The voice should not spend a sentence saying what the
 audience is already reading. The strict form — never restate the headline —
 has standing exceptions, and each earns its echo by doing work the slide
-cannot: page 6's "many of **these** currencies" uses the repetition to link
-back to page 5's set and keep a continuous read going; page 7 restates the
+cannot: page 5's "many of **these** currencies" uses the repetition to link
+back to the set its own first sentence just named, keeping a continuous read
+going across a page break it no longer has to cross; page 6 restates the
 propAMM / CLOB claim because that clause is what attaches the expanded
-acronym to its meaning; page 8 re-says "public liquidity flywheel" as the
+acronym to its meaning; page 7 re-says "public liquidity flywheel" as the
 subject of a sentence about who stands on each side of it. The test is not
 whether words repeat. It is whether the sentence would still be worth saying
 if the slide were blank.
 
 **Captions and captured figures are the hard case**, and here the rule is
-strict: what a caption already states, the voice does not. Page 7's three
-captions and page 8's four company tiles are the live examples — the slide
-**specifies**, and the voice **generalizes and explains**. Page 8 says "from
+strict: what a caption already states, the voice does not. Page 6's three
+captions and page 7's four company tiles are the live examples — the slide
+**specifies**, and the voice **generalizes and explains**. Page 7 says "from
 onchain banking to supply chain management" while the tiles name Altitude and
 CargoBill with their logos; that division is the pattern to follow, not a
 compromise.
@@ -192,16 +197,16 @@ cannot be kept in step automatically, so the two silently diverge.
   introduces the speaker and states the thesis, and stops. 24/7/365 now first
   lands on **page 3**, as the answer to the gap that page has just shown,
   which is one arrival instead of a page-1 mention the deck later repeats.
-  Page 12's opener likewise stays bare, since it hands straight off to the
-  personal why and the close should land on the problem rather than re-pitch
-  a feature.
+  Page 11's opener likewise stays bare, since it hands straight off to the
+  ambition line and the close should land on the scale of the thing rather
+  than re-pitch a feature.
   Candidates that lost: "Fiat's final frontier" (evocative, says
   nothing about what we do) and "Babelfish for fiat currency" (the analogy is
   right and the reference dates the speaker).
 - **Note on the analogy:** the tokenized-equity comparison is **held in
   reserve**, not spoken by default — it now lives under "Optional backup
   beats" in §2 with the reasoning for it. It was the sit-up moment for a VC
-  who knows nothing about FX, and it set up page 10; it came out to keep the
+  who knows nothing about FX, and it set up page 9; it came out to keep the
   opener short enough to introduce the speaker. If it goes back in, it is
   spoken over the bare wordmark and **never printed**.
 - **Note:** **Dropset is the brand; DASMAC recedes.** The company is the
@@ -238,7 +243,7 @@ cannot be kept in step automatically, so the two silently diverge.
   the prize — and as printed facts they invited the audience to read a list
   while the presenter talked. They come back out loud — fragmentation now
   also carrying the **obfuscation** of banks and OTC desks, which is what
-  page 7's transparency claim pays off, and the closing hours as the plain
+  page 6's transparency claim pays off, and the closing hours as the plain
   "only trade five days a week". That phrasing is chosen over "24/5" so the
   line needs no unpacking — and it is the **hinge of the sentence page 3
   finishes**, so this line cannot be reworded on its own. Fuller variants
@@ -295,12 +300,12 @@ cannot be kept in step automatically, so the two silently diverge.
   ending moved. The referential form keeps the bridge and survives a reword.
   The two *headlines* are still one sentence on the slides (see the headline
   note above), and that pairing is the one that must not be broken.
-- **Note on "So we're building", not "which is why":** page 7 opens on "Which
-  is why we're building a DEX…", picking up from page 6's problem, and that is
-  where the construction does the most work. This page therefore closes on the
-  plainer "So we're building Dropset" — the same move without the echo four
-  pages early. If page 7's opener is ever reworded, this one can take the
-  phrase back.
+- **Note on "So we're building", not "which is why":** page 6 opens on "Which
+  is why we're building a DEX…", picking up from the problem page 5 closes on,
+  and that is where the construction does the most work. This page therefore
+  closes on the plainer "So we're building Dropset" — the same move without
+  the echo three pages early. If page 6's opener is ever reworded, this one
+  can take the phrase back.
 - **Note on not reading the slide:** the spoken track **must not** restate
   the headline. Drafts that opened "And it barely trades onchain" said out
   loud exactly what the slide already prints. The page now prints the gap and
@@ -333,7 +338,7 @@ cannot be kept in step automatically, so the two silently diverge.
 - **Note on the money-ness fact:** "public blockchains are the most
   money-like digital environment available today" was v2's **thesis fact**
   and it is now spoken. It is still the claim the rest of the deck answers
-  to — page 10 is its payoff — but as a printed row it was the abstract
+  to — page 9 is its payoff — but as a printed row it was the abstract
   sentence on a page whose job is a concrete ratio. Keep it in the talk
   track and keep it about the *class* of environment, with "especially
   Solana" as the qualifier.
@@ -419,7 +424,7 @@ cannot be kept in step automatically, so the two silently diverge.
   on every page that carries one, so don't go looking for a page-4 override
   of it.
 
-#### Page 5 — Currency curation · ~10s
+#### Page 5 — Currency curation · ~16s
 
 - **On-slide:** Dropset curates market data for all Solana-based
   currencies.
@@ -427,7 +432,41 @@ cannot be kept in step automatically, so the two silently diverge.
   currency sorted by onchain liquidity, deepest first, with price, 24h
   change and volume, market cap, liquidity and holders.
 - **Spoken:** "Dropset also curates market data for every Solana-based
-  stablecoin."
+  stablecoin. However, many of these currencies still have no liquidity
+  whatsoever. This is a major market gap for an asset class with nine
+  trillion dollars of daily volume."
+- **Note on the merge — this page absorbed "The long tail".** That page
+  printed "Many currencies have no liquidity whatsoever" over a capture of
+  the same table's tail, and its spoken clause is now this page's second
+  sentence. The old page 6 note argued the opposite — that the split was
+  load-bearing, and the pause on the tail page was the setup the eCLOB
+  needed — and it is **superseded**: the gap it named is a clause, not a
+  page, and the second capture restated the first one's table with worse
+  data density. Folding it back buys ~10s for the back half and costs the
+  pause, which the third sentence now covers by sizing the gap instead of
+  letting the audience sit in it.
+- **Note on the third sentence — it does what the cut page's visual did.**
+  "A major market gap for an asset class with nine trillion dollars of daily
+  volume" is the only place the *stakes* of the empty rows get stated.
+  Without it the merged track lists two facts and moves on, and the eCLOB
+  then arrives against an adjective rather than a number. **This is the
+  figure page 2 opens on**, deliberately: it is its second spoken airing and
+  page 9 prints it a third time, so the deck's largest number bookends the
+  middle of the argument. **Spoken in words, not as "9T"** — page 1's opener
+  already says "over nine trillion dollars in daily volume", and a spoken
+  track that reads an abbreviation aloud is a presenter tripping over its
+  own shorthand. The printed tiles are where the compact form belongs.
+- **Note on "these" — it is load-bearing, and it survived the merge.** The
+  second sentence would be the read-the-slide trap page 3 documents if it
+  stood alone, and **"these"** is what saves it: it reaches back to "every
+  Solana-based stablecoin" in the sentence before and makes the pair one
+  continuous read that began on page 4 — "the production frontend already
+  processes… it also carries market data… however, many of these currencies
+  have no liquidity whatsoever." Inside one page that link is now
+  structural rather than a cross-page reach, which is the merge's one
+  unambiguous gain. The stakes-and-intent follow-through, the named
+  currencies, and the "scroll to the bottom" framing remain under "Optional
+  backup beats" in §2.
 - **Note on the verb — "curates" is the chosen one.** It does echo the
   eyebrow, which prints **Currency curation**, and a softer "carries" was
   tried for exactly that reason. "Curates" won because it is the accurate
@@ -435,13 +474,15 @@ cannot be kept in step automatically, so the two silently diverge.
   feed, and understating the only capability this page exists to state buys
   nothing. The echo is accepted — one word against an eyebrow is not the
   read-the-slide problem that restating a full statement is.
-- **Note on the one-liner:** this is the shortest spoken track in the deck,
-  and deliberately: the capture *is* the argument. The field list the voice
-  used to read out — price, 24h change and volume, market cap, liquidity,
-  holders — is **visible in the columns**, so saying it was reading the
-  slide, and it crowded out time the back half of the deck needs. "It also"
-  carries the continuity from page 4 in two words. The dropped detail is
-  under "Optional backup beats" in §2.
+- **Note on the first sentence:** it was the shortest spoken track in the
+  deck before the merge, and deliberately so: the capture *is* the argument.
+  The field list the voice used to read out — price, 24h change and volume,
+  market cap, liquidity, holders — is **visible in the columns**, so saying
+  it was reading the slide, and it crowded out time the back half of the
+  deck needs. "It also" carries the continuity from page 4 in two words. The
+  dropped detail is under "Optional backup beats" in §2. The two sentences
+  that follow are the folded-in tail beat, not a relaxation of this rule —
+  neither of them names a column.
 - **Note on "stablecoin" not "currency":** the line says every Solana-based
   **stablecoin**, matching the word page 3 introduces. What is curated is the
   tokens; "currency" here would blur the proxy the deck just established.
@@ -449,34 +490,11 @@ cannot be kept in step automatically, so the two silently diverge.
   second capability. **One table, blown up.** An earlier version put
   three tables on this page (grouped by country, sorted by liquidity, and
   the tail) and none of them could be read at that size; a group-by-country
-  capture was dropped for the same reason.
+  capture was dropped for the same reason. The tail capture that briefly
+  had its own page is gone for the third time by the same argument, and
+  `public/screens/currencies-illiquid.png` went with it.
 
-#### Page 6 — The long tail · ~10s
-
-- **On-slide:** Many currencies have no liquidity whatsoever.
-- **Visual:** The tail of that same table, full width — the Australian
-  and Canadian dollars, the yen, the naira, the lira and more, every
-  column showing a dash.
-- **Spoken:** "However, many of these currencies still have no liquidity
-  whatsoever."
-- **Note on the one line — and why it may echo the headline.** The spoken
-  track is a single clause, and it deliberately restates the printed
-  statement. That looks like the read-the-slide trap page 3 documents, and it
-  is the exception: the word **"these"** is doing the work. It reaches back to
-  page 5's "every Solana-based stablecoin" and turns the printed claim into
-  the next clause of a continuous read that began on page 4 — "the production
-  frontend already processes… it also carries market data… however, many of
-  these currencies have no liquidity whatsoever." Drop "these" and it *is*
-  just the headline said twice. The stakes-and-intent follow-through, the
-  named currencies, and the "scroll to the bottom" framing are all under
-  "Optional backup beats" in §2.
-- **Note:** This page is the **hinge**, and it's why the curation beat
-  got split off page 5: the eCLOB has to arrive as the answer to a
-  problem the audience has just been shown in our own data, rather than
-  as a design we assert is needed. Don't fold it back into page 5 to save
-  a page — the pause on this slide is the setup.
-
-#### Page 7 — The eCLOB · ~16s
+#### Page 6 — The eCLOB · ~16s
 
 - **On-slide:** Eyebrow "The eCLOB", then one sentence: Dropset ships
   propAMM efficiency and CLOB transparency. (CLOB, the acronym — not
@@ -484,10 +502,20 @@ cannot be kept in step automatically, so the two silently diverge.
 - **Visual:** Three captures **side by side, vertically centred**, each
   captioned underneath: "Reprice: 47 CU · reshape: 59 CU" (the
   compute-unit pane), "Demo maker quoting locally" (the maker's control
-  panel), and "Liquidity routes to the frontend" (the order book, live
-  trades tape and a priced swap on the product itself). No connecting
-  chevrons — left to right already reads as cost → maker → product without
-  being told to.
+  panel), and "Liquidity routes to the frontend" (a priced USDC→EURC swap,
+  the order book, the live trades tape and the routing globe, on the product
+  itself). No connecting chevrons — left to right already reads as cost →
+  maker → product without being told to.
+- **Note on the third capture — the quantize step is skipped, deliberately.**
+  The committed `public/screens/eclob-frontend.png` was previously reduced to
+  a 256-color palette per the README's quantize step, and on *this* image that
+  was too far: the flattening tinted whole regions green, which on a dark
+  product UI reads as a rendering fault rather than as compression. Resized to
+  1000px it lands at ~345KB in full RGB — comfortably inside the repo's 500KB
+  per-file limit — so the quantize buys nothing here and costs the color.
+  `maker-tui.png` beside it is stored the same way for the same reason. The
+  README's guidance still holds for the table captures, which are flat enough
+  to survive it; it is a default, not a rule.
 - **Spoken:** "Which is why we're building a DEX specifically tailored to
   bootstrapping stablecoin liquidity: the ephemeral central limit order book,
   or eCLOB, which delivers propAMM efficiency while providing CLOB
@@ -511,20 +539,22 @@ cannot be kept in step automatically, so the two silently diverge.
   left-to-right walk of the three captions. Both are under "Optional backup
   beats" in §2.
 - **Note on the opener:** "Which is why we're building a DEX…" **picks up
-  directly from page 6's** "however, many of these currencies still have no
-  liquidity whatsoever" — problem, then the thing built for it. This is the
+  directly from page 5's** "however, many of these currencies still have no
+  liquidity whatsoever… a major market gap for an asset class with nine
+  trillion dollars of daily volume" — problem, sized, then the thing built
+  for it. This is the
   page where that construction earns its place, so page 3 deliberately closes
   on the plainer "So we're building Dropset" to avoid the echo. It replaced
   "So we're building the exchange those markets need", which arrived at a
-  conclusion page 6 had already reached.
+  conclusion page 5 had already reached.
 - **Note on the vault beat:** "anyone can become a **vault leader** and
   crowdsource their market-making inventory" is the open-access ambition, and
-  it is the seam into page 8, whose whole subject is FX vaults bootstrapping a
+  it is the seam into page 7, whose whole subject is FX vaults bootstrapping a
   public flywheel. Naming the role — *vault leader* — is what makes it a thing
   a listener could imagine doing, rather than a property of the protocol. Note
   the page now says vaults **are what it is built around**, not one feature
   among several: that is a stronger claim than the earlier "it also includes a
-  vault-style approach", and page 8 is where it gets paid off.
+  vault-style approach", and page 7 is where it gets paid off.
 - **Note:** **One short sentence, and it must not wrap.** This heading is
   the page's whole height budget: it went through four drafts, each of
   which wrapped one line further than intended, and each time the overflow
@@ -543,7 +573,7 @@ cannot be kept in step automatically, so the two silently diverge.
   says more than four stills of it starting up, and needs no localnet
   capture session to produce.
 
-#### Page 8 — How we grow · ~15s
+#### Page 7 — How we grow · ~18s
 
 - **On-slide:** FX vaults bootstrap a public liquidity flywheel.
 - **Visual:** A curve of depth growing, over the flywheel's two ends —
@@ -555,10 +585,23 @@ cannot be kept in step automatically, so the two silently diverge.
 - **Spoken:** "We bootstrap the vaults for this two-sided market ourselves,
   kicking off a public liquidity flywheel where we're matching upstream
   issuers with downstream liquidity consumers. We're already working with
-  early-stage stablecoin issuers on a liquidity pilot program. We've validated
-  demand from onchain banking and supply chain management teams who source
-  existing liquidity onchain but suffer wide spreads when clearing FX swaps
-  off-chain through their banking solutions."
+  early-stage stablecoin issuers on a liquidity pilot program, and we've
+  validated demand from onchain banking and supply chain management teams who
+  source existing liquidity onchain but suffer wide spreads when clearing FX
+  swaps off-chain through their banking solutions. In other words, latent
+  demand doesn't have a straightforward supply channel."
+- **Note on the closing sentence — it states the thesis the tiles imply.**
+  "Latent demand doesn't have a straightforward supply channel" is the page's
+  only sentence that is neither evidence nor mechanism: it is what the two
+  proof sentences *mean* taken together. Without it the page presents a
+  supply-side fact and a demand-side fact and trusts the room to draw the
+  line between them in the two seconds before the next slide. With it, the
+  gap is named, and the roadmap page that follows reads as the plan for
+  closing a gap the audience has just had stated rather than as a list of
+  intentions. "Latent" is the load-bearing word — the demand is not
+  hypothetical and not being created by us, it is present and unserved,
+  which is a materially easier thing to sell than a market that has to be
+  invented.
 - **Note on the two proof sentences — check both before presenting.** "Already
   working with early-stage stablecoin issuers on a **liquidity pilot program**"
   and "validated demand from teams…" are the page's evidence, one per side of
@@ -616,11 +659,11 @@ cannot be kept in step automatically, so the two silently diverge.
   be wide — a narrow one above a vertical divider read as a chart mounted
   on a stick, which is why there's no divider.
 
-#### Page 9 — Growth roadmap · ~12s
+#### Page 8 — Growth roadmap · ~12s
 
 - **On-slide:** The path to 24/7/365 FX and beyond. Then three beats in time
   order, spanning the page, each an **action word and nothing else**:
-  1. **Now** — Onboard emerging stablecoin issuers
+  1. **Now** — Connect stablecoin issuers with demand-side customers
   1. **Next** — Accrue protocol fees
   1. **Later** — Expand beyond spot
 - **Visual:** The three beats as a rollout along one unbroken rule spanning
@@ -634,12 +677,22 @@ cannot be kept in step automatically, so the two silently diverge.
   them made the audience read ahead of the talk. The bodies moved into the
   spoken track intact — nothing was lost, and the page now reads in about a
   second.
-  **Imperative verbs**, deliberately: "Onboard", not "We onboard". The
+  **Imperative verbs**, deliberately: "Connect", not "We connect". The
   timeline's `Now / Next / Later` already supplies the subject and the
   tense, so a pronoun in each headline is three words of scaffolding
   restating what the rule beneath them says. This is the deck's **one place
   imperatives are correct** — everywhere else the rule is full sentences,
   and these are labels on a timeline rather than claims.
+- **Note on the `Now` beat naming both sides.** It read "Onboard emerging
+  stablecoin issuers", which printed only the **supply** half and so read as
+  a sourcing task rather than as market-building. The demand half was already
+  in the spoken track ("by connecting emerging stablecoin issuers **and
+  demand-side customers**") but never legible on the page, which left the
+  slide and the voice making different-sized claims. Naming both sides costs
+  this beat a third line of type at 42px — the widest of the three columns by
+  some margin — and that is the price of the page stating the actual
+  strategy: seeding one side is a liquidity operation, seeding both is a
+  market.
 - **Note on the dots:** their spacing is **derived from the column pitch**,
   and it has to stay that way. They were originally a flex row of three
   equal segments while the text below was `space-between` on a fixed column
@@ -703,7 +756,7 @@ cannot be kept in step automatically, so the two silently diverge.
   derivatives thesis instead of being handed one. Name the streams in
   abstracted language, not jargon — no "fee switch".
 
-#### Page 10 — Why FX is next · ~11s
+#### Page 9 — Why FX is next · ~11s
 
 - **On-slide:** Public liquidity is what blockchains were built for. Then
   three beats left to right, separated by the deck's chevron, each a label
@@ -735,21 +788,30 @@ cannot be kept in step automatically, so the two silently diverge.
 - **Visual:** The three-beat row **is** the visual — a flip, in the reviewer's
   word: three frames of the same story, and the audience arrives at the third
   before the presenter says it.
-- **Spoken:** "Solana is where tokens get launched, and more recently it
-  commands a near monopoly on tokenized equity volume. It's basically the
-  perfect place for moving tokens — which are the vehicle for stablecoins, and
-  by extension for public FX markets, because it facilitates permissionless
-  liquidity flywheels that take off in a positive feedback loop."
-- **Note on "where tokens get launched", not "dominates".** A draft said Solana
-  "dominates in the number of tokens launched", which is the **same
-  unverifiable comparative** the cut list below rejects twice over — "99% of
-  tokens are created on Solana" and "more new tokens than every other chain
-  combined" both failed to source. "Where tokens get launched" makes the same
-  point as a **statement about Solana** rather than a ranking against other
-  chains, so it needs no dashboard behind it. Contrast the second half: "near
-  monopoly on tokenized equity volume" *is* a comparative and it stays, because
-  96% is sourced. The rule this page runs on is that every comparative claim in
-  the voice has a citation behind it or is rephrased away.
+- **Spoken:** "Solana dominates public blockchain token launch numbers, and
+  more recently it commands a near monopoly on tokenized equity volume. It's
+  basically the perfect place for moving tokens — which are the vehicle for
+  stablecoins, and by extension for public FX markets, because it facilitates
+  permissionless liquidity flywheels that take off in a positive feedback
+  loop."
+- **Note on "dominates … token launch numbers" — this reverses an earlier
+  decision, and it takes on a sourcing obligation.** The line read "Solana is
+  where tokens get launched", and that phrasing was chosen *specifically* to
+  avoid a comparative: an earlier draft saying Solana "dominates in the number
+  of tokens launched" was rejected as the same unverifiable comparative the
+  cut list below rejects twice over — "99% of tokens are created on Solana"
+  and "more new tokens than every other chain combined" both failed to source.
+  The current line is a **ranking against other chains**, so this page's own
+  rule now applies to it: every comparative claim in the voice has a citation
+  behind it or is rephrased away. Contrast the second half, "near monopoly on
+  tokenized equity volume", which is also a comparative and stays because 96%
+  is sourced under "Figure sources".
+  **Action before this is spoken to investors: source it, or fall back.** A
+  launch-count share from a launchpad-analytics dashboard is the kind of
+  citation that discharges it. The fallback, if no figure holds up, is the
+  previous wording — "Solana is where tokens get launched" — which makes
+  substantially the same point as a statement about Solana rather than as a
+  ranking, and so needs no dashboard behind it.
 - **Note on the argument's shape — tokens are the bridge.** The page used to
   assert that FX lands here because the pattern repeated twice. It now argues a
   **mechanism**: Solana is proven at moving tokens, stablecoins *are* tokens, so
@@ -790,7 +852,7 @@ cannot be kept in step automatically, so the two silently diverge.
   flywheels that take off in a positive feedback loop**." That is the same
   argument the cut "anyone can quote… so depth compounds instead of sitting
   still" made and the permissioned-rails passage in §2 makes at length, in a
-  dozen words. It also **rhymes with page 8's flywheel** — the same image used
+  dozen words. It also **rhymes with page 7's flywheel** — the same image used
   once as our growth mechanism and once as a property of the chain, which is
   the motif, not an accident. This clause is why the page can end on a claim
   rather than an assertion; do not trim it as decoration.
@@ -895,7 +957,7 @@ cannot be kept in step automatically, so the two silently diverge.
     Note the spoken line says "**that one launchpad**" and names neither it
     nor the venue it overtook: both are DEXes the appendix files under
     competitors, and global rule 5 admits no sympathetic exceptions (the same
-    call that took Hyperliquid out of page 8). "#1 across every chain" makes
+    call that took Hyperliquid out of page 7). "#1 across every chain" makes
     the point without a name, since overtaking everyone includes them.
   - **RWA momentum** — spoken only, and worded as *growth*, never as size.
     Solana added ~\$2B of tokenized RWAs in six months (~\$1.4B → ~\$3.6B at
@@ -928,7 +990,7 @@ cannot be kept in step automatically, so the two silently diverge.
   to a gated venue can quote here and hedge there, so their depth reaches a
   public book and nothing carries it back — **left the spoken track** in the
   talk-track trim and is held in "Optional backup beats" in §2. Worth knowing
-  what that costs: it repaired a soft spot on page 8, which now leaves our own
+  what that costs: it repaired a soft spot on page 7, which now leaves our own
   vaults as the only spoken answer to where depth for a thin pair comes from.
   If it is restored, say it as a **capability**, not as something running
   today — it depends on how a given maker is integrated. The "vampire attack"
@@ -945,14 +1007,14 @@ cannot be kept in step automatically, so the two silently diverge.
   back into a wind-up.
 - **Note — the flywheel graphic is a deliberate won't-do.** The filed task
   asked this page to carry "a graphic around the flywheel of permissionless
-  open liquidity", riffing on page 8's SVG. Three treatments were put up
+  open liquidity", riffing on page 7's SVG. Three treatments were put up
   (the chevron row; a flywheel ring as the hero image with the asset classes
   feeding it; both stacked) and the **chevron row was chosen**, in session,
   on 2026-08-11. Two reasons it wins: a cycle diagram and a three-beat
   progression compete for the same attention, and the review's primary
   complaint about this page was that it was *too long a wind-up* — a second
   visual is the one thing guaranteed to make that worse. The flywheel
-  language survives where it is already earning its keep, on page 8. Revisit
+  language survives where it is already earning its keep, on page 7. Revisit
   only if this page ever loses the row.
 - **Note on the subtext line's polarity.** The filed task asked for
   "permissioned falls short" as the one subtext line. It is **positive**
@@ -961,7 +1023,7 @@ cannot be kept in step automatically, so the two silently diverge.
   have reintroduced the argue-against-them framing the same task was
   removing, and global rule 5 leaves it nothing to name.
 
-#### Page 11 — Team · ~8s
+#### Page 10 — Team · ~8s
 
 - **On-slide:** Eyebrow "The team", then "Dropset is built by people who
   have built exchanges" — matching every other page's kicker-plus-sentence
@@ -987,7 +1049,7 @@ cannot be kept in step automatically, so the two silently diverge.
   they are with issuers already in the market, which is the load-bearing part:
   we plug into the stablecoin economy as it stands rather than having assembled
   a quantity of partners. "Issuers" rather than "providers" also matches the
-  word pages 8 and 9 use for the upstream side, so the same counterparties are
+  word pages 7 and 8 use for the upstream side, so the same counterparties are
   called the same thing throughout.
 - **Note on not reading the bios.** This page prints **both full bios** —
   Econia and the \$500M figure, the Opcode Guide, Judy's banks / stablecoin
@@ -1014,7 +1076,7 @@ cannot be kept in step automatically, so the two silently diverge.
   other's rather than on its own terms. One sentence each, both in the
   same voice. The credential reads "Dragonfly Capital", not "…Partners",
   with the EA role stated plainly. This page **no longer closes the deck** —
-  page 12 does — so the mirror-the-title line moved there and the
+  page 11 does — so the mirror-the-title line moved there and the
   "[Leave this page up]" direction went with it. Longer copy is still
   correct here (two bios is the page), but it is no longer the page an
   audience stares at for the rest of the session.
@@ -1025,32 +1087,38 @@ cannot be kept in step automatically, so the two silently diverge.
   five-line bios under two headshots, so the gap above the portraits is
   tightened as well.
 
-#### Page 12 — Close · ~4s
+#### Page 11 — Close · ~8s
 
 - **On-slide:** The Dropset wordmark and the tagline — The liquidity layer for
   every national currency. A replay of page 1, and nothing else.
 - **Visual:** Identical to the title page, deliberately.
-- **Spoken:** "Dropset — the liquidity layer for every national currency. This
-  industry is seventeen years old, and we can finally send money anywhere in the
-  world. Yet we still can't get in and out of any currency. Money onchain still
-  doesn't really work, even in deeply money-like environments like Solana.
-  Through Dropset, we're going to solve this issue once and for all."
-- **Note on the close's shape — concede, then turn.** The structure is *what
-  worked* ("we can **finally** send money anywhere in the world"), *what did
-  not* ("yet we still can't get in and out of any currency"), and then the
-  intention ("**through Dropset**, we're going to solve this issue once and for
-  all"). Granting the win first is what makes the gap land as irony rather than
-  as complaint, and "finally" is the word doing it — seventeen years for the
-  easy half.
-- **Note on where Solana sits in the close — it moved.** An earlier draft ended
-  "Solana is a deeply money-like environment, **which is why this is where it
-  gets fixed**", making the chain the answer. It now reads "money onchain still
-  doesn't really work, **even in deeply money-like environments like Solana**",
-  which puts Solana inside the *problem* — the gap persists even in the best
-  environment available — and leaves **Dropset** as the only thing offered as
-  the fix. That is the stronger close for a page whose job is the founder's
-  why: the last sentence should promise something only this team is promising,
-  and "Solana is where it gets fixed" is a claim anyone could make.
+- **Spoken:** "Dropset — the liquidity layer for every national currency. In
+  other words, we're going to put all the money on the blockchain and it's
+  going to be huge."
+- **Note on the close's shape — the tagline, then the scale.** Two sentences:
+  the name for the company, and what it amounts to said flat. "In other
+  words" is the hinge, and it is doing real work — it frames the second
+  sentence as a *translation* of the tagline rather than as a new claim, so
+  "all the money on the blockchain" reads as what "the liquidity layer for
+  every national currency" actually means rather than as a bigger promise
+  bolted onto it.
+- **Note on the register — "it's going to be huge" is deliberate.** It is the
+  least hedged sentence in the deck and the only one that makes no argument
+  at all. That is the point at the ninety-second mark: the room has just been
+  walked through eleven pages of evidence, and the close is where conviction
+  is more persuasive than one more reason. The failure mode to watch is
+  delivery, not copy — said tentatively it sounds like a hope, and the line
+  only works said as a fact.
+- **Note on what this replaced — the rehearsal-draft personal why.** The page
+  used to carry five sentences: the seventeen-year frame, the concede-then-
+  turn structure, Solana placed inside the problem, and "through Dropset,
+  we're going to solve this issue once and for all". All of it is preserved
+  under "Optional backup beats" in §2, and **it is good material** — it is
+  simply not *closing* material. It spends the last seconds of a two-minute
+  pitch on exposition, restating a problem the deck has spent ten pages
+  establishing, to a room that is by then ready for the ask rather than for
+  more setup. The sentiment behind it is better argued live, against an
+  actual question, than recited on a timer.
 - **Note on the presenter instruction:** the notes used to end with "\[Leave
   this page up.\]" — a direction to the presenter sitting inside the copy being
   read aloud, the last of two such brackets in the deck (page 4 had the other).
@@ -1062,34 +1130,24 @@ cannot be kept in step automatically, so the two silently diverge.
   founder at least as much as in a problem. v2 ended on the team page, which
   states credentials and answers "can they build it" — not "why are they the
   ones who will". This page is the room to say that, and putting it on a
-  replay of the title means the why-me lands over the deck's own thesis
+  replay of the title means the answer lands over the deck's own thesis
   rather than over two headshots. It also gives the talk a **bookend**:
   the tagline is the first thing said and the last, which is the oldest
   trick there is for making a two-minute pitch feel composed rather than
   rushed.
-- **Note on the personal why — a rehearsal draft, in the founder's own
-  argument.** This is the one block in the spec that is **not** finished copy:
-  the beats are the real ones, and the wording is meant to be iterated on out
-  loud rather than read out. The beats, in order:
-  1. **The seventeen-year frame — the industry's age, not the speaker's
-     tenure.** This industry is seventeen years old, and sending money around
-     the world is the part that works. Getting in and out of currencies is
-     the part that doesn't.
-  1. **What did get solved, as the contrast.** There is no shortage of ways
-     to speculate onchain and no shortage of alternative stores of value; but
-     the currencies people actually earn and spend in don't flow on a
-     decentralized ledger the way it promised they would. **This beat is now
-     compressed to four words out loud** — "money onchain still doesn't really
-     work" — which keeps the irony and drops the enumeration. The longer form
-     above is the version to expand into if the room is with you and there is
-     time; it is the beat most worth restoring, because the contrast is what
-     makes seventeen years sound like a failure rather than a duration.
-  1. **Why FX specifically, and why here.** A large part of why is that there
-     is no FX liquidity onchain — specifically on Solana, which is a deeply
-     money-like environment, and so the place this gets fixed.
-     Keep it to **two or three sentences out loud**. The failure mode is a
-     biography; the target is the single sentence that makes a listener believe
-     this person would still be working on this in five years.
+- **Note on how this page now answers it — scale, not biography.** The page
+  kept its job and changed its instrument. "We're going to put all the money
+  on the blockchain and it's going to be huge" answers *why we care* by
+  naming the size of the prize rather than by narrating the founder's route
+  to it, which is a claim a listener can act on in the four seconds available.
+  The founder's own argument is the better answer to the same question with
+  five minutes and an actual interlocutor, so it lives under "Optional backup
+  beats" in §2 as **the personal why, as the close**, whole and ready to be
+  spoken. Its three beats, in order, are the seventeen-year frame, the
+  contrast of what did get solved, and why FX specifically — and the rule for
+  delivering it live still holds: the failure mode is a biography, and the
+  target is the single sentence that makes a listener believe this person
+  would still be working on this in five years.
 - **Note on the layout:** it reuses the title page's components exactly —
   same wordmark width, same statement size, same centred body. Reusing
   rather than rebuilding is deliberate: the replay only works if the page is
@@ -1178,7 +1236,7 @@ Signals that Dropset is not a single-chain bet. Cut for two reasons: page 3
 now makes the money-like-environment argument at length, so the compressed
 restatement that used to follow this line was the deck repeating itself one
 page later; and the ambition raises "so which chain next?" in a two-minute
-pitch that has no room to answer it. Distinct from the page-10 memecoin
+pitch that has no room to answer it. Distinct from the page-9 memecoin
 cross-chain comparison, which is barred outright for being unverifiable —
 this one is merely deferred.
 
@@ -1199,47 +1257,51 @@ on the slide either way.
 > deepest first.
 
 The columns are visible in the capture, so this is the slide read aloud. The
-last sentence had a second job — it set up page 6's "scroll to the bottom of
-that same list" — and both halves came out together, which is why page 6 no
-longer opens on that framing.
+last sentence had a second job — it set up the "scroll to the bottom of that
+same list" framing on what was then the long-tail page — and both halves came
+out together. That page has since been folded into this one, so there is no
+longer a page break for the framing to carry across.
 
-#### Page 6 — the stakes, and the intent
+#### Page 5 — the stakes, and the intent
 
 > These are real currencies, with real countries and real economies behind
 > them — which is why we're working to bring these markets onchain.
 
-Supplies what the table of dashes cannot: that there are countries behind
-those rows, and what we mean to do about it. Cut because the page now carries
-one line, and because the intent lands better on page 7 as the eCLOB itself
-rather than as a promise a page early. Restore for a room that needs the
-human stakes named.
+Supplies what a table of dashes cannot: that there are countries behind those
+rows, and what we mean to do about it. Cut because the intent lands better on
+page 6 as the eCLOB itself rather than as a promise a page early. It is now
+partly covered by the merged track's third sentence, which sizes the gap
+instead — restore this for a room that needs the stakes named in *human*
+terms rather than in volume.
 
-#### Page 6 — the currencies, named
+#### Page 5 — the currencies, named
 
 > The Australian dollar, the Canadian dollar, the yen, the naira, the lira —
 > all sitting there with no price, no volume, and no liquidity at all.
 
-Naming them makes the tail concrete where a table of dashes is abstract, and
-the first two are not arbitrary: the Australian and Canadian dollars are the
-currencies the customer-development work is actually pointed at. Worth
-restoring for any room where that pipeline comes up — it lets the later
-two-sided-market beat land on currencies the audience has already heard named.
+Naming them makes the tail concrete, and the first two are not arbitrary: the
+Australian and Canadian dollars are the currencies the customer-development
+work is actually pointed at. This beat gained value when the tail lost its own
+page: the dashes are no longer shown in a capture of their own, so naming a
+few is now the only way the empty rows become specific. Worth restoring for
+any room where that pipeline comes up — it lets the later two-sided-market
+beat land on currencies the audience has already heard named.
 
-#### Page 7 — the cost collapse and the order-book credibility
+#### Page 6 — the cost collapse and the order-book credibility
 
 > Making a market onchain used to be prohibitively expensive — gas made
 > continuous quoting impossible — and we've built order books before, so we
 > built one that's inexpensive for market makers to quote.
 
 Two beats in one sentence: *why nobody did this before*, and *why we can*. The
-second is the team claim, which page 11 makes properly; the first is the
+second is the team claim, which page 10 makes properly; the first is the
 strongest available answer to "so why hasn't this been done?" if it comes up.
 Cut in favour of naming and expanding the eCLOB, which the slide cannot do —
 "inexpensive for market makers to quote" was itself the compute-unit claim
 restated as a benefit, and is the phrasing to reuse if a room needs the cost
 point without the numbers.
 
-#### Page 7 — the compute-unit numbers, spoken
+#### Page 6 — the compute-unit numbers, spoken
 
 > Repricing the whole book costs forty-seven compute units and reshaping the
 > ladder fifty-nine, on a chain that gives you two hundred thousand per
@@ -1251,7 +1313,7 @@ is what turns the numbers into a sense of scale. Restore for a technical room,
 and if so, say the denominator and **one** of the two costs, never both: two
 numbers plus a limit spoken aloud is dictation.
 
-#### Page 7 — the left-to-right walk
+#### Page 6 — the left-to-right walk
 
 > Left to right: that's what a quote costs, that's our own maker paying it to
 > quote a live market, and that's the same liquidity arriving on the frontend
@@ -1262,7 +1324,7 @@ same thing — the longest instance of reading the slide the deck had. Genuinely
 useful in a walkthrough rather than a pitch, or if the captions are ever
 dropped in favour of bare images.
 
-#### Page 7 — the band-aid line
+#### Page 6 — the band-aid line
 
 > …so everything before this was a band-aid.
 
@@ -1272,7 +1334,7 @@ supply names and then ask about them. Kept in reserve deliberately; the fuller
 answers live under "The competitors" above, where they can be that blunt
 because nothing there has to be said in front of a room.
 
-#### Page 8 — the wedge
+#### Page 7 — the wedge
 
 > The wedge is that long tail of currencies: spreads are wide there, and an
 > issuer arriving with no depth of their own needs a day-one liquidity partner.
@@ -1285,7 +1347,7 @@ instead of on positioning, which is the stronger evidence of the two — but thi
 is the beat to reach for the moment someone asks why the tail rather than
 EUR/USD.
 
-#### Page 8 — the counterparties, read aloud
+#### Page 7 — the counterparties, read aloud
 
 > Upstream are the stablecoin issuers — AUDD Digital, and Loon, who issues
 > CADC — who mint a currency and need it to trade. Downstream is the demand:
@@ -1297,7 +1359,7 @@ these sentences *do* add is each side's **motive** ("mint a currency and need
 it to trade" / "need to buy FX to settle"), stated more plainly than the tiles
 can. If a room seems not to be reading the tiles, this is the version to use.
 
-#### Page 8 — the bootstrap comparison
+#### Page 7 — the bootstrap comparison
 
 > We seed the markets ourselves, the way every venue that ever bootstrapped its
 > own liquidity did.
@@ -1306,30 +1368,30 @@ Heads off "isn't self-seeded liquidity fake?" by making it the normal history
 of exchanges rather than an admission. See also the note on this page about the
 named comparison that was deliberately removed from it.
 
-#### Page 9 — the prop-AMM argument
+#### Page 8 — the prop-AMM argument
 
 > This isn't a prop AMM, so as additional market makers come in, quotes get
 > tighter, volume follows the tighter spreads, liquidity compounds, and protocol
 > fees accrue value off it.
 
 **The highest-priority beat in this whole section.** It is the answer to "so
-you're just taking a cut?", and page 9 prints only the two words "Accrue
+you're just taking a cut?", and page 8 prints only the two words "Accrue
 protocol fees", so without it nothing on that page distinguishes a compounding
 liquidity network from a toll. Cut for time with that risk accepted and
 recorded on the page. Reach for it the moment a room reacts to the fee beat,
 and expect the question in follow-up even when it is not asked in the room.
 
-#### Page 9 — the two sides, spelled out
+#### Page 8 — the two sides, spelled out
 
 > We lead the vaults that give them day-one liquidity, and at the same time we
 > develop the downstream pipeline of the companies and users who need liquid
 > currency swaps — those are the two sides of the market.
 
-Page 8 now carries the two-sided-market argument with named counterparties and
+Page 7 now carries the two-sided-market argument with named counterparties and
 the demand evidence, so restating it on the timeline was the deck making the
-same point twice, four slides apart. Useful only if page 8 is ever cut.
+same point twice, four slides apart. Useful only if page 7 is ever cut.
 
-#### Page 9 — hedging made concrete
+#### Page 8 — hedging made concrete
 
 > Hedging isn't just for market makers.
 
@@ -1339,7 +1401,7 @@ listed by name in the same breath ("treasury management, B2B payment flow,
 hedging"), which does the same work inside the sentence. Restore if a room reads
 derivatives as speculation.
 
-#### Page 10 — the training-wheels concession
+#### Page 9 — the training-wheels concession
 
 > First memecoins — the training wheels. It looked unserious, and it was the
 > proving ground: anyone could launch a market here, and anyone could trade
@@ -1351,7 +1413,7 @@ the word "memecoins" itself — the track now says "token launches", which avoid
 the frame rather than defending it. This is the version for a room that raises
 memecoins first; the two approaches do not mix, so pick one.
 
-#### Page 10 — the printed figures, spoken
+#### Page 9 — the printed figures, spoken
 
 > Over twelve million tokens launched… ninety-six percent of onchain
 > tokenized-equity volume is on Solana.
@@ -1362,7 +1424,7 @@ numbers themselves. Restore only for a room taking notes on figures, and if so,
 note that 96% is the one number on this page an investor is most likely to
 check.
 
-#### Page 10 — the launchpad as a real business
+#### Page 9 — the launchpad as a real business
 
 > And it is a real business — one launchpad alone became the number-one DEX by
 > daily volume across every chain, on a billion dollars of cumulative revenue.
@@ -1373,7 +1435,7 @@ without it — "it looked unserious, and it was the proving ground" concedes and
 turns the objection in one clause — but this is the version for a room that
 visibly does not take memecoins seriously.
 
-#### Page 10 — the real-world-assets trend
+#### Page 9 — the real-world-assets trend
 
 > Real-world assets are going the same way — Solana added more of them in the
 > last six months than in its whole history before that, and it has more holders
@@ -1384,7 +1446,7 @@ sequence four steps long when three already carry it, and the page's tile row
 only has room for three. Worth restoring if a listener challenges whether the
 pattern is still current rather than a 2024 story.
 
-#### Page 10 — the chain-optionality hedge
+#### Page 9 — the chain-optionality hedge
 
 > Solana is the most money-like onchain environment today, and I say today
 > deliberately: it's where this belongs right now because it's the fastest and
@@ -1395,10 +1457,10 @@ The answer to "what if Solana loses?", and it is a good one — the moat is the
 liquidity, not the chain. Cut because raising it unprompted plants a doubt the
 room may not have had, and a two-minute pitch cannot afford to argue both that
 Solana is where this belongs and that it might not be. Have it ready; do not
-volunteer it. (Distinct from page 7's cut multi-chain ambition, which is the
+volunteer it. (Distinct from page 4's cut multi-chain ambition, which is the
 same idea as a *plan* rather than as a *defense*.)
 
-#### Page 10 — the permissioned-rails argument
+#### Page 9 — the permissioned-rails argument
 
 > That's the part the permissioned rails structurally can't have: gate who gets
 > to make a market and liquidity never compounds, it just sits where you put it.
@@ -1413,7 +1475,7 @@ and public depth cannot flow back behind a gate. This is the material to have
 ready when someone names an incumbent — see "The competitors" above for who,
 and keep the answer in these terms rather than theirs.
 
-#### Page 10 — the closing flourish
+#### Page 9 — the closing flourish
 
 > Public liquidity is what blockchains were built for — moving money is the
 > problem they were supposed to solve, and this is that.
@@ -1425,7 +1487,7 @@ were supposed to solve") is the only part that was ever new. Restore *that half*
 alone if the room needs a line to remember; restoring the whole sentence puts
 the presenter back to narrating the headline.
 
-#### Page 11 — the credentials, spoken
+#### Page 10 — the credentials, spoken
 
 > I've authored exchange technology across the entire stack, on more than one
 > blockchain — the Econia order book on Aptos, five hundred million dollars of
@@ -1438,20 +1500,47 @@ Both bios, read aloud, while the slide prints them. Cut entirely on the caption
 rule. One clause in it was doing real work and is worth keeping in mind
 separately: **the Opcode Guide is why quoting on the eCLOB costs double-digit
 compute units** — that is the only place the deck connects the founder's prior
-work to the number on page 7, and it is a good answer to "why should this team
+work to the number on page 6, and it is a good answer to "why should this team
 be the one that got the cost down".
 
-#### Page 12 — the long-form personal why
+#### Page 11 — the personal why, as the close
+
+> This industry is seventeen years old, and we can finally send money anywhere
+> in the world. Yet we still can't get in and out of any currency. Money
+> onchain still doesn't really work, even in deeply money-like environments
+> like Solana. Through Dropset, we're going to solve this issue once and for
+> all.
+
+**This was the close**, before it became the tagline plus the scale line. It
+is kept whole because it is the deck's best answer to "why do you care about
+this", and that question gets asked in the conversation *after* the pitch far
+more often than it gets answered inside one.
+
+**Its shape — concede, then turn.** *What worked* ("we can **finally** send
+money anywhere in the world"), *what did not* ("yet we still can't get in and
+out of any currency"), then the intention ("**through Dropset**, we're going
+to solve this issue once and for all"). Granting the win first makes the gap
+land as irony rather than as complaint, and "finally" is the word doing it —
+seventeen years for the easy half.
+
+**Where Solana sits in it.** An earlier draft ended "Solana is a deeply
+money-like environment, **which is why this is where it gets fixed**", making
+the chain the answer. The version above puts Solana inside the *problem* — the
+gap persists even in the best environment available — and leaves **Dropset**
+as the only thing offered as the fix. The last sentence should promise
+something only this team is promising, and "Solana is where it gets fixed" is
+a claim anyone could make.
+
+#### Page 11 — the long-form contrast beat
 
 > There's no shortage of ways to speculate onchain and no shortage of
 > alternative stores of value, but the currencies people actually earn and spend
 > in don't flow on a decentralized ledger the way it promised they would.
 
-The full contrast beat, compressed in the track to "money onchain still doesn't
-really work". This is the sentence that makes *seventeen years* land as a
-failure rather than as a duration, and it is the first thing to expand into if
-the close has room. See the personal-why note on page 12 for the three beats
-and their order.
+The uncompressed form of "money onchain still doesn't really work" in the beat
+above. This is the sentence that makes *seventeen years* land as a failure
+rather than as a duration, and it is the first thing to expand into if the
+personal why is being given room in a follow-up conversation.
 
 ### Team, full
 
@@ -1474,7 +1563,7 @@ and their order.
 
 **No competitor appears anywhere in the deck** — not on a slide, not in a
 spoken track. These are the answers to have ready **if asked**, and asked is
-the only way they come out. Page 10 makes the argument as a property of
+the only way they come out. Page 9 makes the argument as a property of
 public liquidity instead, which is why these can be this blunt: nothing here
 has to be said in front of a room.
 
@@ -1531,11 +1620,11 @@ the deck:
   this is our domain.
 - "Why now?" → Non-US-dollar stablecoins are only just arriving onchain
   (~15 currencies today, euro leading), and payments are following.
-- "How do you make money?" → Page 9 is the answer, and the appendix
+- "How do you make money?" → Page 8 is the answer, and the appendix
   detail is that each stage compounds into the next: liquidity
   operations now, protocol fees as the books thicken and volumes
   compound, derivatives once there's enough depth to hedge against.
-- "Isn't 'FX is next' just an assertion?" → Page 10's beats are the
+- "Isn't 'FX is next' just an assertion?" → Page 9's beats are the
   evidence that the pattern is real (memecoins, then equities at 96% of
   onchain volume), and the mechanism is why it extends: FX needs a neutral
   venue where anyone can quote, which is the property those asset classes
@@ -1547,7 +1636,7 @@ the deck:
 
 ### Figure sources
 
-Every number on page 10 traces to a citable source, so a "where's that
+Every number on page 9 traces to a citable source, so a "where's that
 from?" is answered with a link rather than a shrug. Researched
 **2026-08-11**, corroborated independently by a second pass the same day.
 
@@ -1637,7 +1726,7 @@ ______________________________________________________________________
 
 ### How to read this
 
-- **One page = one slide.** Twelve pages (see "Format rules" for why the
+- **One page = one slide.** Eleven pages (see "Format rules" for why the
   ten-page cap moved, and what it costs).
 
 - Each page gives: the **on-slide line** (what the audience reads), the
@@ -1697,20 +1786,21 @@ disagree:
    headlines, not as list items. A reviewer reading the deck without
    the talk should get the argument. **Three exceptions**, all of them
    naming rather than claiming:
-   - the **title and close** (pages 1 and 12), "The liquidity layer for
+   - the **title and close** (pages 1 and 11), "The liquidity layer for
      every national currency" — a tagline is a name for the company, and the
      sentence forms of it ("Dropset is the…") put a subject on a page whose
      subject is the wordmark directly above the line;
-   - the **roadmap headline** (page 9), "The path to 24/7/365 FX and
+   - the **roadmap headline** (page 8), "The path to 24/7/365 FX and
      beyond" — the page is a timeline and its headline names a
      destination, which every sentence form of turned into a hedge about
      reaching it;
-   - the **roadmap's three beats** (page 9), "Onboard emerging stablecoin
-     issuers" and its two siblings — imperatives, where the timeline's
+   - the **roadmap's three beats** (page 8), "Connect stablecoin issuers
+     with demand-side customers" and its two siblings — imperatives, where
+     the timeline's
      `Now / Next / Later` already carries the subject and the tense.
      This exception is new in v3 and it is *why* the beats are short
      enough to have replaced three body paragraphs;
-   - the **flip tiles** (page 10) — a label, a figure, and its unit
+   - the **flip tiles** (page 9) — a label, a figure, and its unit
      ("Memecoins / 12M+ / tokens launched on Solana"). These are
      **measurements, not claims**: the sentence that reads them is the
      accent line under the row, and the headline above it is the argument.
@@ -1722,7 +1812,7 @@ disagree:
    no following sentence for it to separate. Sentence *structure* still
    applies (rule 1); only the period goes. This covers **every** page
    headline, the footer's "Built by DASMAC" credit, **the roadmap's three
-   beat headlines**, and **page 10's beat labels and figures** — anything
+   beat headlines**, and **page 9's beat labels and figures** — anything
    that reads as a title or a list item rather than as prose.
    Multi-sentence copy — the team bios — keeps its punctuation, because
    there the period is doing its actual job.
@@ -1738,7 +1828,7 @@ disagree:
    competitors free press, and naming them invites a room to evaluate them
    instead of us. Spoken, they are "permissioned rails" or "the other
    guys". The only marks left in the deck are **ours** and our **partners'**
-   (page 8), and a partner mark is still captioned with what the company is
+   (page 7), and a partner mark is still captioned with what the company is
    to us — a logo is argued, never listed. The fuller competitor answers
    live in the appendix and come out only if someone asks.
 1. **Solana is never framed as a ceiling.** It's the deliberate start —
@@ -1762,7 +1852,7 @@ disagree:
 1. **No bullet lists — no exceptions.** v2 sanctioned two (the gap page's
    six chevron facts and the open-venue page's panel bullets); v3 has
    neither, because the pages that carried them were split and replaced.
-   Page 10's three beats are a **row of peers**, not a list: they read
+   Page 9's three beats are a **row of peers**, not a list: they read
    left to right as a sequence, each is two or three words, and the
    chevrons between them mark progression rather than enumeration. If a
    page ever wants a bullet list again, that is the signal it is carrying
@@ -1893,19 +1983,21 @@ Source: <https://x.com/mert/status/1843591496181702766>
 > you get a call.
 
 Note where the deck **departs** from this: "one big sentence per page"
-still holds, but full sentences replaced fragments everywhere, and page 11
+still holds, but full sentences replaced fragments everywhere, and page 10
 carries a line per person. A reviewer reading only the deck is a
 first-class case.
 
 The **page cap** is the one departure v3 makes knowingly, and it is worth
 stating plainly rather than quietly: this advice says ten pages and the
-deck is twelve. It goes over because the accelerator's own sign-off review
+deck is eleven. It goes over because the accelerator's own sign-off review
 asked for two specific splits — a two-beat open and a closing page — and
 both make the deck *faster* to read, which is what the cap is a proxy for.
-Twelve pages at ~120 seconds is ten seconds a page; the v2 gap page alone
-took fifteen. **The real constraint is the two minutes, not the page
-count**, and the deck holds it. Adding a thirteenth page still has to
-displace something.
+It was twelve until the long-tail page was folded into the curation page,
+which is the cheapest page the deck had to give up and brings it within one
+of the advice. Eleven pages at ~120 seconds is close to eleven seconds a
+page; the v2 gap page alone took fifteen. **The real constraint is the two
+minutes, not the page count**, and the deck holds it. Adding a twelfth page
+back still has to displace something.
 
 #### Name why it will fail, then answer the counters
 
@@ -1925,8 +2017,8 @@ advice puts "nuanced thoughts" in the first place.
 
 ### Format rules (distilled from the above)
 
-1. **Twelve pages, and the budget is time.** The children's-book advice
-   says ten; this deck is twelve at ~120 seconds, because the accelerator's
+1. **Eleven pages, and the budget is time.** The children's-book advice
+   says ten; this deck is eleven at ~120 seconds, because the accelerator's
    own review asked for the two-beat open and the closing replay. Anything
    added from here has to displace something — **seconds**, not pages.
 1. **One big sentence per page.** No bullet lists, anywhere.
@@ -1977,14 +2069,15 @@ our pages in brackets.
    2\]
 1. **Why now.** The non-US stablecoin market has only just started to
    expand — EUR stablecoins drive most volume, more currencies going
-   live (15 on Solana). Page 10 is the other half of the answer: the
+   live (15 on Solana). Page 9 is the other half of the answer: the
    asset classes that already consolidated onchain are the pattern FX
    follows. [Pages 3, 5, 10]
 1. **Business model.** Liquidity operations now, protocol fees as
-   volumes compound next, derivatives after that. [Page 9]
+   volumes compound next, derivatives after that. [Page 8]
 1. **Founders' bio.** Exchange-design background — authored the Econia
    order book (~\$500M on Aptos) and the Solana Opcode Guide — with a
    dedicated operations owner on banking and accounting. Full detail on
-   page 11 and in the appendix (kept there to stay DRY). Page 12 carries
-   the **why-me** beat, which this checklist doesn't ask for and the
-   review did. [Pages 11, 12; appendix]
+   page 10 and in the appendix (kept there to stay DRY). Page 11 closes on
+   the **ambition**, and the **why-me** beat it used to carry — which this
+   checklist doesn't ask for and the review did — is held in the appendix
+   for the conversation after. [Pages 10, 11; appendix]
