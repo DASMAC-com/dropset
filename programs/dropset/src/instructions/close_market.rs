@@ -162,11 +162,14 @@ impl CloseMarketTreasury {
         )?;
         // Zero the leg's counter now that its atoms are gone. Cosmetic in
         // isolation — `close_market` deallocates the account moments
-        // later — but it keeps `treasury.amount == Σ vault.<leg>_atoms +
+        // later — but it keeps `treasury.amount >= Σ vault.<leg>_atoms +
         // accrued_<leg>_fee_atoms` literally true at every point in the
         // teardown, so the invariant needs no "except mid-close" caveat
         // and a partial teardown (base leg closed, quote still live)
-        // can't be misread as revenue that was never paid out.
+        // can't be misread as revenue that was never paid out. Note the
+        // `remainder` transferred just above is the whole balance — the
+        // accrued fee *and* any unattributed residual (exact-in change, an
+        // unsolicited transfer) that no `sweep_residual` collected first.
         if is_base {
             self.market.accrued_base_fee_atoms = 0u64.into();
         } else {

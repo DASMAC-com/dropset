@@ -87,10 +87,11 @@ quoteTreasury: Address;
  * These atoms sit physically in the treasury but belong to the
  * protocol, not to the vaults' depositors — the treasury custody
  * invariant is
- * `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee_atoms`.
+ * `base_treasury.amount >= Σ vault.base_atoms + accrued_base_fee_atoms`.
  * Authoritative: nothing infers protocol revenue from a residual, so
- * a treasury balance above the sum of the two is a bug alarm rather
- * than income (see `sweep_residual`).
+ * a treasury balance above the sum of the two is unattributed
+ * residual — exact-in fill change, or an unsolicited transfer — and
+ * never income (see `sweep_residual`).
  */
 accruedBaseFeeAtoms: bigint; 
 /** Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`). */
@@ -172,10 +173,11 @@ quoteTreasury: Address;
  * These atoms sit physically in the treasury but belong to the
  * protocol, not to the vaults' depositors — the treasury custody
  * invariant is
- * `base_treasury.amount == Σ vault.base_atoms + accrued_base_fee_atoms`.
+ * `base_treasury.amount >= Σ vault.base_atoms + accrued_base_fee_atoms`.
  * Authoritative: nothing infers protocol revenue from a residual, so
- * a treasury balance above the sum of the two is a bug alarm rather
- * than income (see `sweep_residual`).
+ * a treasury balance above the sum of the two is unattributed
+ * residual — exact-in fill change, or an unsolicited transfer — and
+ * never income (see `sweep_residual`).
  */
 accruedBaseFeeAtoms: number | bigint; 
 /** Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`). */

@@ -179,11 +179,14 @@ test('the result is a materialized plain object, not a wasm handle', () => {
   assert.equal(typeof q.platformFeeAmount, 'bigint');
   assert.equal(typeof q.legs, 'number');
   // Readable again after the call returned — i.e. copied out, not proxied.
-  assert.equal(q.inAmount, 499_999n);
+  // The take is exact-in and this one is bounded by the taker's own budget,
+  // so `inAmount` is the whole 500_000 rather than the 499_999 the engine
+  // could price into whole base atoms.
+  assert.equal(q.inAmount, 500_000n);
   assert.deepEqual(
     { ...q },
     {
-      inAmount: 499_999n,
+      inAmount: 500_000n,
       outAmount: 458_089n,
       feeAmount: 458n,
       platformFeeAmount: 0n,

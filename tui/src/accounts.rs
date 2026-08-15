@@ -462,11 +462,12 @@ fn read_markets(
         let quote_decimals = decimals(3);
         // Scale the leader's atoms-ratio reference to human quote-per-base with
         // the pair's decimals, so the markets pane shows the fair value the
-        // maker pegs to (distinct from the reconstructed book mid).
-        let reference_price = leader_reference.map(|p| {
-            p.quote_for_base(10u64.pow(base_decimals as u32)) as f64
-                / 10f64.powi(quote_decimals as i32)
-        });
+        // maker pegs to (distinct from the reconstructed book mid). Shared with
+        // the depth ladder rather than open-coded: the conversion has to probe
+        // the ratio well above one base unit to survive a low-decimal token,
+        // and one owner is what keeps the two panes from disagreeing.
+        let reference_price =
+            leader_reference.map(|p| crate::book::human_price(p, base_decimals, quote_decimals));
 
         out.push(MarketView {
             address: *address,

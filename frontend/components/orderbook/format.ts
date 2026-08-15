@@ -16,16 +16,46 @@ import { type PriceBits, quoteForBase } from "@dropset/sdk";
 // at 1.41.
 //
 // Built on `quoteForBase` rather than `decodePrice` float math, per that
-// function's own guidance: it is the exact integer path the on-chain matcher
-// and the TUI's `human_price` both take, so the three agree bit for bit
-// instead of drifting at the last decimal.
+// function's own guidance: the integer decoder is the one the on-chain matcher
+// uses, so the displayed rate is derived from the same arithmetic that prices
+// the fill instead of drifting at the last decimal. What this shares bit for
+// bit is the TUI's `human_price`, which probes identically; the matcher itself
+// converts at fill size, not at the probe below, so it is the decoder the
+// three have in common, not the whole expression.
+//
+// The ratio is probed at PRICE_PROBE_ATOMS base atoms rather than at exactly
+// one whole base unit (`10^baseDecimals`). `quoteForBase` floors, so the
+// smaller the probe the coarser the answer, and a *low-decimal* base makes
+// that probe tiny: at 2 decimals it asks for the quote value of 100 atoms and
+// gets back a single floored integer, leaving the price about two significant
+// figures. On IDR-scale pairs that collapses adjacent ladder levels onto the
+// same number — the pane showed several distinct asks at 0.000056 — while a
+// 6-vs-6 pair hides it, exactly like the decimals bug above. Probing far
+// above one unit recovers the encoding's full 8 significant digits before the
+// floor bites.
+//
+// The probe is shared verbatim with the TUI's `human_price`, so it is sized to
+// the tighter of the two forks' limits: that one passes a `u64`, which 1e18
+// sits comfortably inside, and its `quote_for_base` returns a `u128`, which the
+// widest product (1e18 x the largest representable price, ~1e16, giving ~1e34)
+// also clears. This fork has neither ceiling — `quoteForBase` takes and returns
+// `bigint` — so the constant is bounded by the Rust twin, not by anything here.
+const PRICE_PROBE_ATOMS = 10n ** 18n;
+
 export function humanPrice(
   bits: PriceBits,
   baseDecimals: number,
   quoteDecimals: number,
 ): number {
-  const perBaseUnit = quoteForBase(bits, 10n ** BigInt(baseDecimals));
-  return Number(perBaseUnit) / 10 ** quoteDecimals;
+  // Grouped left-to-right to match the Rust fork's association exactly
+  // (`per_probe * 10^base / 10^quote`). Forming the decimals ratio first
+  // instead would round differently — 10**b / 10**q is not exactly
+  // representable when b < q — and the two panes would disagree by an ulp.
+  const perProbe = quoteForBase(bits, PRICE_PROBE_ATOMS);
+  return (
+    ((Number(perProbe) / Number(PRICE_PROBE_ATOMS)) * 10 ** baseDecimals) /
+    10 ** quoteDecimals
+  );
 }
 
 // FX stablecoin pairs span a wide price range (EUR ≈ 1.1, MXN ≈ 0.05,

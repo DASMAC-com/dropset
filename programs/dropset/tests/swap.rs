@@ -72,8 +72,9 @@ fn min_out_soft_reverts_when_unattainable() {
     );
     assert_eq!(nonce_before, f.market_header().nonce.get());
 
-    // Treasury invariant holds — `treasury == Σ vault + accrued`, with
-    // nothing accrued on a swap that never committed.
+    // Treasury invariant holds with zero slack — a swap that never
+    // committed accrues no fee and, since it transfers nothing at all,
+    // leaves no exact-in residue either.
     let h = f.market_header();
     assert_eq!(h.accrued_base_fee_atoms.get(), 0);
     assert_eq!(h.accrued_quote_fee_atoms.get(), 0);
@@ -525,7 +526,16 @@ fn sell_side_accrues_the_quote_leg() {
         f.token_balance(&f.quote_treasury),
         v.quote_atoms.get() + h.accrued_quote_fee_atoms.get()
     );
-    assert_eq!(f.token_balance(&f.base_treasury), v.base_atoms.get());
+    // The input leg is the one exact-in leaves change on: the taker's
+    // whole 100_000 base reaches the treasury, the vault is credited only
+    // what the bid priced, and the single-atom difference is unattributed
+    // residual claimed by neither.
+    f.assert_treasury_residual(1, 0);
+    assert_eq!(
+        f.token_balance(&f.base_treasury),
+        v.base_atoms.get() + 1,
+        "the base treasury holds the vault's credit plus the exact-in residue"
+    );
 }
 
 #[test]
@@ -1080,12 +1090,18 @@ fn nonce_overflow_on_second_leg_hard_reverts_the_committed_first_leg() {
 // The invariant these tests are really guarding is that the fee splits the
 // taker's payout rather than adding to what leaves the treasury. Every case
 // that fills therefore re-asserts the custody invariant afterwards via
-// `assert_treasury_invariant` — the three-term
-// `treasury == Σ vault + accrued_<leg>_fee_atoms`, since the taker fee is
+// `assert_treasury_residual` — the three-term
+// `treasury >= Σ vault + accrued_<leg>_fee_atoms`, since the taker fee is
 // accrued to the market rather than left in the vault. The fee moves no
 // vault state and accrues none of its own, so a change that made it draw
 // extra atoms out of the treasury would surface right there rather than as
 // a slow depositor shortfall.
+//
+// The slack each case pins is the exact-in residue on the *input* leg: a
+// taker-bound fill consumes the caller's whole `amount_in`, and the part no
+// level could price is unattributed residual rather than anyone's revenue.
+// Pinning the exact atom count is what keeps that distinct from the fee —
+// a fee that quietly grew by an atom would otherwise hide inside a `>=`.
 
 /// 100 bps — the registry-seeded ceiling every fixture market starts at, so
 /// a test declaring exactly this exercises the boundary of what is allowed.
@@ -1142,8 +1158,10 @@ fn platform_fee_pays_the_integrator_and_creates_their_ata() {
     // The fee split the payout; it did not conjure atoms. Everything that
     // left the treasury went to either the taker or the integrator, so the
     // custody invariant still ties out — the fee moved no vault state and
-    // accrued nothing of its own.
-    f.assert_treasury_invariant();
+    // accrued nothing of its own. The one quote atom of slack is the
+    // exact-in residue on the taker's input leg, which the fee path must
+    // leave exactly where the fee-free path does.
+    f.assert_treasury_residual(0, 1);
 }
 
 #[test]
@@ -1176,8 +1194,10 @@ fn platform_fee_splits_the_payout_without_touching_the_vault() {
 
         let v = f.vault(0);
         // Custody invariant, per arm. This arm carries a live taker fee, so
-        // the accrued term is non-zero and the two-term form would fail here.
-        f.assert_treasury_invariant();
+        // the accrued term is non-zero and the two-term form would fail
+        // here; the one quote atom of slack is the exact-in residue on the
+        // taker's input leg, identical in both arms.
+        f.assert_treasury_residual(0, 1);
         (
             f.token_balance(&f.base_ata(&taker.pubkey())),
             f.maybe_token_balance(&fee_ata).unwrap_or(0),
@@ -1252,7 +1272,9 @@ fn platform_fee_on_a_sell_pays_in_the_quote_mint() {
     );
     assert_eq!(ev.atoms, fee_paid);
 
-    f.assert_treasury_invariant();
+    // A Sell pays base in, so the exact-in residue lands on the base leg —
+    // the mirror of the Buy case's quote-leg atom.
+    f.assert_treasury_residual(1, 0);
 }
 
 #[test]
@@ -1480,7 +1502,9 @@ fn platform_fee_reuses_an_existing_integrator_ata() {
         "the second fee accumulated into the existing ATA"
     );
 
-    f.assert_treasury_invariant();
+    // Two taker-bound Buys, so two quote atoms of exact-in residue — the
+    // bucket accumulates across swaps rather than being swept per fill.
+    f.assert_treasury_residual(0, 2);
 }
 
 #[test]

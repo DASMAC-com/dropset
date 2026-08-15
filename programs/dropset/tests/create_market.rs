@@ -719,9 +719,9 @@ fn create_market_adopts_prefunded_squatted_treasuries() {
 
     // And they are credited to nobody — which is what makes them
     // residual. The custody invariant is
-    // `treasury.amount == Σ vault.*_atoms + accrued_*_fee_atoms`; a fresh
-    // market has no vaults and no accrued fees, so both sides of that sum
-    // are zero and the whole balance is excess. That such an excess is
+    // `treasury.amount >= Σ vault.*_atoms + accrued_*_fee_atoms`; a fresh
+    // market has no vaults and no accrued fees, so both terms of that sum
+    // are zero and the whole balance is slack. That such an excess is
     // then payable out is `sweep_residual`'s own contract, covered by
     // `teardown.rs::close_treasury_recovers_an_unsolicited_transfer` —
     // an adopted balance is the same residual by a different route.

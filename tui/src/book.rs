@@ -111,10 +111,34 @@ pub fn mid_price(market: &MarketView) -> Option<f64> {
     }
 }
 
-/// A resting level's price in human quote-per-base units: quote atoms for one
-/// whole base unit, de-scaled by the quote mint's decimals.
-fn human_price(price: Price, base_dec: u8, quote_dec: u8) -> f64 {
-    price.quote_for_base(10u64.pow(base_dec as u32)) as f64 / 10f64.powi(quote_dec as i32)
+/// Base atoms to probe the price ratio at. `quote_for_base` floors, so the
+/// smaller the probe the coarser the answer — and probing at exactly one whole
+/// base unit (`10^base_dec`) makes the probe tiny for a *low-decimal* token: at
+/// 2 decimals it asks for the quote value of 100 atoms and gets one floored
+/// integer back, leaving roughly two significant figures. [`fmt_price`] below
+/// asks for four, and on an IDR-scale pair distinct ladder levels collapse onto
+/// the same displayed number. Probing far above one unit recovers the `Price`
+/// encoding's full 8 significant digits before the floor bites.
+///
+/// Shared verbatim with the frontend's `humanPrice`, and sized to this fork's
+/// two limits, which are the tighter pair: 1e18 sits inside the `u64` argument,
+/// and the widest product it can produce — 1e18 against the largest
+/// representable price (~1e16), so ~1e34 — sits inside the returned `u128`.
+const PRICE_PROBE_ATOMS: u64 = 1_000_000_000_000_000_000;
+
+/// A resting level's price in human quote-per-base units: the quote value of
+/// one whole base unit, de-scaled by the quote mint's decimals. Computed by
+/// probing the ratio far above one base unit and rescaling — see
+/// [`PRICE_PROBE_ATOMS`] for why one unit is too coarse to ask at.
+///
+/// `pub(crate)` so the markets pane's reference price
+/// ([`crate::accounts`]) shares this one implementation. It had its own copy
+/// of the one-base-unit form and so its own copy of the resolution bug —
+/// two call sites, one of them silently stale, is exactly what a shared
+/// helper prevents.
+pub(crate) fn human_price(price: Price, base_dec: u8, quote_dec: u8) -> f64 {
+    let per_probe = price.quote_for_base(PRICE_PROBE_ATOMS) as f64 / PRICE_PROBE_ATOMS as f64;
+    per_probe * 10f64.powi(base_dec as i32) / 10f64.powi(quote_dec as i32)
 }
 
 /// Aggregate the raw best-first `levels` into at most [`MAX_LEVELS`] display
@@ -294,6 +318,50 @@ mod tests {
             fmt_price(smallest),
             format!("{smallest:.MAX_PRICE_DECIMALS$}")
         );
+    }
+
+    /// A low-decimal base must not flatten distinct levels onto one price.
+    ///
+    /// `quote_for_base` floors, so probing the ratio at one whole base unit
+    /// hands a 2-decimal token only about two significant figures — fewer than
+    /// the four [`fmt_price`] promises. Two IDR-scale asks a tick apart then
+    /// render as the same number (and, in the frontend's ladder, collide as a
+    /// duplicate React key). The probe in `human_price` is what buys the
+    /// resolution back.
+    #[test]
+    fn human_price_resolves_adjacent_levels_on_a_low_decimal_base() {
+        // Price is an atoms ratio, so a 0.000056 quote-per-base rate on a
+        // 2-decimal base against a 6-decimal quote encodes as 0.56. One tick
+        // up is 0.5615.
+        let lo = Price::from_value(0.56).unwrap();
+        let hi = Price::from_value(0.5615).unwrap();
+        let (lo_h, hi_h) = (human_price(lo, 2, 6), human_price(hi, 2, 6));
+        assert!(
+            (lo_h - 0.000056).abs() < 1e-12,
+            "expected ~0.000056, got {lo_h}"
+        );
+        assert!(
+            (hi_h - 0.00005615).abs() < 1e-12,
+            "expected ~0.00005615, got {hi_h}"
+        );
+        // The property that matters: two distinct levels, two distinct rendered
+        // prices.
+        assert_ne!(
+            fmt_price(lo_h),
+            fmt_price(hi_h),
+            "adjacent low-decimal levels collapsed onto one displayed price"
+        );
+        // …and the reason the assertion above has teeth, pinned directly: the
+        // old probe was one whole base unit, and at 2 decimals that is 100
+        // atoms, which floors both of these levels to the same 56.
+        assert_eq!(lo.quote_for_base(100), 56);
+        assert_eq!(hi.quote_for_base(100), 56);
+
+        // The 6-vs-6 pairs that hid this are unaffected, and a 9-decimal base
+        // (the TGBP case that exposed the sibling scaling bug) still reads as
+        // its true rate rather than a power-of-ten multiple of it.
+        assert!((human_price(Price::from_value(1.085).unwrap(), 6, 6) - 1.085).abs() < 1e-9);
+        assert!((human_price(Price::from_value(0.00141).unwrap(), 9, 6) - 1.41).abs() < 1e-9);
     }
 
     #[test]

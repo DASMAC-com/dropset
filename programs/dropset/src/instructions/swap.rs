@@ -152,30 +152,63 @@ impl SwapSide {
         }
     }
 
-    /// Compute the `(fill_base, fill_quote)` for one matched leg, or
-    /// `Ok(None)` when **either** leg fills zero (the caller
-    /// `continue`s). The Buy and Sell arms are mirror images: size the
-    /// **output** leg the taker receives as `min(taker input converted
-    /// to output, level cap, vault output inventory)`, reverse-convert
-    /// to the **input** leg, then apply three guards.
+    /// Compute the [`LegFill`] for one matched leg. The Buy and Sell
+    /// arms are mirror images: size the **output** leg the taker
+    /// receives as `min(taker input converted to output, level cap,
+    /// vault output inventory)`, reverse-convert to the **input** leg,
+    /// then apply the guards below.
+    ///
+    /// **Exact-in.** A take means "I put in these tokens", so on a leg
+    /// where the *taker* cap is the binding one — which ends the walk,
+    /// since every later level is priced worse — the taker's whole
+    /// remaining input is consumed: the priced input leg the vault is
+    /// credited, plus a `residue_in` of everything the reverse
+    /// conversion floored away. That residue is what the removed 1c
+    /// round-trip cap used to strand: it was carried forward in
+    /// `taker_unfilled_in` and could never be spent, because at the next
+    /// level `base_for_quote` of it floors to `0` and guard 1f skips the
+    /// leg.
+    ///
+    /// It is bounded by the input cost of one output atom **at this
+    /// level's price** — and, critically, the taker *received output at
+    /// this level*, so that is a price they accepted. On the roster that
+    /// is one invisible atom into a 6-decimal token and up to ~one cent
+    /// of input into a 2-decimal one. The bound does **not** transfer to
+    /// a level the taker gets nothing at, which is why
+    /// [`LegFill::Exhausted`] absorbs nothing at all — see that type's
+    /// doc.
+    ///
+    /// The residue is credited to **no** vault: `Fill` reports it
+    /// alongside the priced legs precisely so the caller can debit the
+    /// taker for it without booking it anywhere, leaving it in the
+    /// treasury as unattributed residual. Crediting it to the matched
+    /// vault instead would hand that one leader a windfall the price it
+    /// quoted did not earn, and lift depositor NAV through
+    /// `L = isqrt(base · quote)`.
     ///
     /// * **1d (overflow):** guard the reverse-converted input leg
     ///   against `u64::MAX` and reject explicitly rather than silently
     ///   truncate — a clamped input would debit the taker (and book the
     ///   vault) less than the price implies, shattering the treasury
-    ///   invariant. Defense-in-depth: the output leg is already capped
-    ///   by `base_for_quote(taker_in)` / `quote_for_base(taker_in)`
-    ///   (the 1c cap), so the floor round-trip bounds the reverse leg at
-    ///   `<= taker_in <= u64::MAX` and this `require!` cannot fire on a
-    ///   valid price today. Kept so an overflow stays a hard abort if
-    ///   the cap is ever weakened — and so the off-chain simulator's
-    ///   matching guard has an on-chain counterpart to mirror.
-    /// * **1c (round-trip cap):** the decoders truncate toward zero in
-    ///   both directions, so `out→in→` can exceed the taker's remaining
-    ///   input by a few atoms. Capping the input leg at
-    ///   `taker_unfilled_in` keeps the per-leg vault credit equal to
-    ///   what the taker actually pays and stops `taker_unfilled_in` from
-    ///   saturating to 0 and billing the full budget for a partial fill.
+    ///   invariant. This `require!` still cannot fire on a valid price,
+    ///   but the 1c cap it used to lean on is gone, so the bound is now
+    ///   re-derived from the output cap alone: the output leg is at most
+    ///   `base_for_quote(taker_in)` / `quote_for_base(taker_in)`, and
+    ///   both decoders are monotone and floor toward zero, so the
+    ///   reverse conversion round-trips back to `<= taker_in <=
+    ///   u64::MAX` whichever of the three caps binds. Saturation opens
+    ///   no escape hatch either, though the two decoders get there
+    ///   differently: `quote_for_base` saturates its *numerator*, so a
+    ///   clamp shrinks the cap and `taker_bound` simply goes false;
+    ///   `base_for_quote` saturates its *denominator* on the `unb >= 0`
+    ///   branch, which would enlarge the quotient — but `den` can only
+    ///   clamp at `u128::MAX`, against a `num` of at most `u64::MAX`,
+    ///   so the quotient is `0`, which ends the walk as `Exhausted`
+    ///   (correctly: a denominator that large is an astronomical price,
+    ///   and it sorts last). Kept so an
+    ///   overflow stays a hard abort if the sizing is ever weakened —
+    ///   and so the off-chain simulator's matching guard has an on-chain
+    ///   counterpart to mirror.
     /// * **1f (zero input leg):** the same toward-zero truncation can
     ///   floor the reverse-converted input leg to `0` while the output
     ///   leg is legitimate — `base_for_quote(1) == 0` at any price
@@ -190,6 +223,20 @@ impl SwapSide {
     ///   level or vault cap reaches it too, and on the below-1 arm the
     ///   round trip magnifies it — one quote atom buys ~16.5k base at
     ///   0.00006, all of it free without this guard.
+    ///
+    ///   This guard is deliberately **not** an exact-in residue site: it
+    ///   returns [`LegFill::Skip`], leaving the remainder with the
+    ///   taker. Absorbing it here would mean charging for a leg that
+    ///   pays out nothing while the vault still gives up output — the
+    ///   one-directional transfer the guard exists to prevent, merely
+    ///   pointed the other way. Nothing visible is stranded: on a
+    ///   taker-capped leg the guard can only fire when the remainder is
+    ///   a **single** input atom, on either arm. Buy (`P < 1`):
+    ///   `fill_b = floor(taker_in / P)` with `fill_b · P < 1` gives
+    ///   `taker_in < 1 + P < 2`. Sell (`P > 1`):
+    ///   `fill_q = floor(taker_in · P)` with `fill_q < P` gives
+    ///   `taker_in < 1 + 1/P < 2`. So one atom of the input asset stays
+    ///   with the taker — below the resolution of every listed token.
     #[inline]
     fn compute_fill(
         self,
@@ -198,51 +245,139 @@ impl SwapSide {
         level_size: u64,
         base_atoms: u64,
         quote_atoms: u64,
-    ) -> Result<Option<(u64, u64)>> {
+    ) -> Result<LegFill> {
         let taker_in = taker_unfilled_in.min(u64::MAX as u128) as u64;
         match self {
             SwapSide::Buy => {
                 // level.size is in base; convert the taker's quote
                 // budget to base via the level price, then take the
                 // tightest of the taker, level, and vault-base caps.
-                let fill_b = price
-                    .base_for_quote(taker_in)
-                    .min(level_size as u128)
-                    .min(base_atoms as u128);
+                let cap_by_taker = price.base_for_quote(taker_in);
+                let fill_b = cap_by_taker.min(level_size as u128).min(base_atoms as u128);
                 if fill_b == 0 {
-                    return Ok(None);
+                    // Tell the two zero-fill causes apart on the taker
+                    // cap alone: `cap_by_taker == 0` means the taker
+                    // cannot afford one base atom *here*, and every ask
+                    // below is dearer, so no later level can fill them
+                    // either — stop. An empty level or drained vault
+                    // says nothing about the taker's budget: walk on.
+                    return Ok(if cap_by_taker == 0 {
+                        LegFill::Exhausted
+                    } else {
+                        LegFill::Skip
+                    });
                 }
+                // Which cap bound decides who owns the change: the
+                // taker's own budget ends the walk (every later ask is
+                // dearer, so the leftover can't fill anywhere), while a
+                // level or vault cap leaves the taker with budget to
+                // spend further down the book.
+                let taker_bound = fill_b == cap_by_taker;
                 let fill_b_u64 = fill_b.min(u64::MAX as u128) as u64;
                 let fill_q = price.quote_for_base(fill_b_u64);
                 require!(fill_q <= u64::MAX as u128, DropsetError::MathOverflow);
-                let fill_q = fill_q.min(taker_unfilled_in);
+                let fill_q = fill_q as u64;
                 if fill_q == 0 {
-                    return Ok(None);
+                    return Ok(LegFill::Skip);
                 }
-                Ok(Some((fill_b_u64, fill_q as u64)))
+                Ok(LegFill::Fill {
+                    base: fill_b_u64,
+                    quote: fill_q,
+                    residue_in: if taker_bound {
+                        taker_in.saturating_sub(fill_q)
+                    } else {
+                        0
+                    },
+                })
             }
             SwapSide::Sell => {
                 // level.size is in quote; convert the taker's unfilled
                 // base to quote via the level price, then take the
                 // tightest of the taker, level, and vault-quote caps.
-                let fill_q = price
-                    .quote_for_base(taker_in)
+                let cap_by_taker = price.quote_for_base(taker_in);
+                let fill_q = cap_by_taker
                     .min(level_size as u128)
                     .min(quote_atoms as u128);
                 if fill_q == 0 {
-                    return Ok(None);
+                    // Mirror of the Buy arm: `cap_by_taker == 0` is the
+                    // taker's base failing to buy one quote atom here,
+                    // and every bid below is lower, so no later level
+                    // can fill them either — stop. An empty level or
+                    // drained vault is a plain skip.
+                    return Ok(if cap_by_taker == 0 {
+                        LegFill::Exhausted
+                    } else {
+                        LegFill::Skip
+                    });
                 }
+                let taker_bound = fill_q == cap_by_taker;
                 let fill_q_u64 = fill_q.min(u64::MAX as u128) as u64;
                 let fill_b = price.base_for_quote(fill_q_u64);
                 require!(fill_b <= u64::MAX as u128, DropsetError::MathOverflow);
-                let fill_b = fill_b.min(taker_unfilled_in);
+                let fill_b = fill_b as u64;
                 if fill_b == 0 {
-                    return Ok(None);
+                    return Ok(LegFill::Skip);
                 }
-                Ok(Some((fill_b as u64, fill_q_u64)))
+                Ok(LegFill::Fill {
+                    base: fill_b,
+                    quote: fill_q_u64,
+                    residue_in: if taker_bound {
+                        taker_in.saturating_sub(fill_b)
+                    } else {
+                        0
+                    },
+                })
             }
         }
     }
+}
+
+/// What sizing one matched leg produced. The three arms are the three
+/// things the walk can do next, so the caller branches once instead of
+/// re-deriving "was that a skip or the end?" from a zero fill.
+///
+/// `residue_in` is the **exact-in residue**: input atoms the taker pays
+/// on top of the priced leg, which no vault is credited. It books to
+/// neither vault inventory nor the protocol-fee counters — it lands in
+/// the treasury as unattributed residual, the same bucket an unsolicited
+/// external transfer occupies (see [`Swap::swap`]'s settlement block and
+/// `sweep_residual`).
+///
+/// **Only [`LegFill::Fill`] carries it, and that is a safety property,
+/// not an oversight.** Its residue is bounded by the input cost of one
+/// output atom *at a price the taker actually traded at* — they received
+/// output from this level, so the level's price is one they accepted.
+/// [`LegFill::Exhausted`] has no such warrant: it fires precisely when
+/// the taker gets **nothing** at that level, and the level's price is
+/// chosen by whoever posted it. Absorbing there would let a vault
+/// leader post a valid-but-far-out level at the tail of the book and
+/// confiscate the whole unspent budget of any taker whose walk reached
+/// it — `min_out` is no defense, since residue never reduces output.
+/// So `Exhausted` stops the walk and leaves the remainder with the
+/// taker, exactly as the pre-exact-in engine did.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum LegFill {
+    /// A priced fill against this level.
+    Fill {
+        base: u64,
+        quote: u64,
+        residue_in: u64,
+    },
+    /// This leg fills nothing and the walk continues. Two causes: the
+    /// level or the vault is empty (the taker's budget is untouched and
+    /// a later level may well fill it), or the leg would move value in
+    /// one direction only and guard 1f rejected it. Only the first
+    /// leaves the taker able to buy an output atom further down the
+    /// book — guard 1f on a taker-capped leg fires with at most one
+    /// input atom left, which buys nothing anywhere, so the next level
+    /// returns [`LegFill::Exhausted`]. Either way this leg is untouched.
+    Skip,
+    /// The taker's remaining input cannot buy one whole output atom at
+    /// this price. Levels are visited best-price-first, so every level
+    /// after this one is worse and cannot fill it either: stop the walk.
+    /// The remainder stays with the taker — see the type's doc for why
+    /// this arm deliberately absorbs nothing.
+    Exhausted,
 }
 
 #[event_cpi]
@@ -678,16 +813,24 @@ impl Swap {
             };
 
             // Size the leg (mirror-symmetric across sides; see
-            // `compute_fill`). A zero fill skips the leg entirely.
-            let (fill_base, fill_quote): (u64, u64) = match side.compute_fill(
+            // `compute_fill`). A zero fill skips the leg entirely;
+            // `Exhausted` means the taker's remainder can't buy an
+            // output atom here or at any worse level below, so it is
+            // consumed as residue and the walk stops.
+            let (fill_base, fill_quote, residue_in) = match side.compute_fill(
                 price,
                 taker_unfilled_in,
                 level_size,
                 base_atoms,
                 quote_atoms,
             )? {
-                Some(fill) => fill,
-                None => continue,
+                LegFill::Fill {
+                    base,
+                    quote,
+                    residue_in,
+                } => (base, quote, residue_in),
+                LegFill::Skip => continue,
+                LegFill::Exhausted => break,
             };
 
             // Apply taker fee on the *output* leg (base on a Buy, quote
@@ -731,10 +874,12 @@ impl Swap {
             // left inside the vault — where it would lift depositor NAV
             // and, through `L = isqrt(base · quote)`, read as leader edge
             // the next `Realize` pays a performance fee on. That makes
-            // the treasury-vs-vault invariant `treasury.amount == Σ
+            // the treasury-vs-vault invariant `treasury.amount >= Σ
             // vault.<leg>_atoms + accrued_<leg>_fee_atoms` per leg: the
             // treasury sends the taker `output - fee` while the vault
-            // gives up `output`. The level's remaining size shrinks by
+            // gives up `output`, and the gap is the unattributed
+            // residual (exact-in residue, unsolicited transfers) that
+            // `sweep_residual` collects. The level's remaining size shrinks by
             // the gross output fill, since the fee slice was still
             // liquidity the taker consumed.
             let output_atoms = side.output_atoms(fill_base, fill_quote);
@@ -793,8 +938,14 @@ impl Swap {
             self.market.nonce = new_nonce.into();
 
             // Decrement the taker's remaining input by the input leg
-            // and accumulate the output leg they receive.
-            taker_unfilled_in = taker_unfilled_in.saturating_sub(input_atoms as u128);
+            // and accumulate the output leg they receive. The exact-in
+            // `residue_in` comes off the same budget but is credited to
+            // no vault — it is non-zero only on a taker-bound leg, so
+            // this zeroes the remainder and the walk stops at the
+            // `taker_unfilled_in == 0` check above.
+            taker_unfilled_in = taker_unfilled_in
+                .saturating_sub(input_atoms as u128)
+                .saturating_sub(residue_in as u128);
             total_out += output_atoms as u128;
             total_fee = total_fee.saturating_add(fee);
             filled_legs = filled_legs.saturating_add(1);
@@ -898,6 +1049,25 @@ impl Swap {
         // — one SPL transfer per side. The atom counts are side-agnostic
         // here (input = budget consumed, output = `total_out`); only the
         // CPI account selection below is keyed on `side`.
+        //
+        // "Budget consumed" is exact-in: it is the sum of the priced
+        // input legs **plus** the residue the walk absorbed, because
+        // `compute_fill`'s `residue_in` was decremented from
+        // `taker_unfilled_in` alongside them. So a taker whose own
+        // budget was the binding cap pays in exactly the `amount_in`
+        // they typed, while one stopped by thin depth or their limit
+        // price still pays only for what filled — the leftover budget
+        // is theirs and is never transferred.
+        //
+        // The residue is credited to no vault and to neither accrued-fee
+        // counter, so it lands in the treasury as unattributed residual.
+        // That relaxes the per-leg custody invariant from equality to
+        // `treasury.amount >= Σ vault.<leg>_atoms +
+        // accrued_<leg>_fee_atoms` — which it always had to be anyway,
+        // since anyone may transfer into the treasury ATA unsolicited.
+        // `sweep_residual` computes exactly that difference and is what
+        // collects it; exact-in makes that bucket accrue routinely
+        // rather than only on a stray external send.
         let taker_in_atoms = (amount_in as u128 - taker_unfilled_in) as u64;
 
         // Input leg: taker → treasury. The two settlement CPIs (this
@@ -946,8 +1116,9 @@ impl Swap {
         // vault inventory — the loop debits the *gross* output and books the
         // taker fee into `accrued_<leg>_fee_atoms`, so the debit exceeds this
         // payout by exactly the accrued fee. Which is the point: the custody
-        // invariant is `treasury == Σ vault + accrued_<leg>_fee_atoms`, and
-        // paying out `gross − accrued` is what keeps it. Do not "correct"
+        // invariant is `treasury >= Σ vault + accrued_<leg>_fee_atoms`, and
+        // paying out `gross − accrued` is what keeps the output leg from
+        // adding slack of its own. Do not "correct"
         // this to `total_out` — that would pay the accrued protocol revenue
         // straight back out, over-drawing a treasury shared by every vault on
         // the market.
@@ -1164,22 +1335,25 @@ impl Swap {
 #[cfg(test)]
 mod tests {
     //! Pin the invariant that makes `compute_fill`'s two `u128`→`u64`
-    //! `MathOverflow` guards (WARNING 1d) unreachable.
+    //! `MathOverflow` guards (WARNING 1d) unreachable, and the exact-in
+    //! residue accounting that replaced the 1c round-trip cap.
     //!
     //! Each side sizes the taker's **output** leg first — capped by the
     //! taker's converted budget, the level, and the vault — then
     //! reverse-converts to the **input** leg and guards it against
     //! `u64::MAX`. Because the output leg is capped by
-    //! `quote_for_base(taker_in)` / `base_for_quote(taker_in)` (the 1c
-    //! cap) and both decoders truncate toward zero, the reverse leg
+    //! `quote_for_base(taker_in)` / `base_for_quote(taker_in)` and both
+    //! decoders are monotone and truncate toward zero, the reverse leg
     //! round-trips back to `<= taker_in <= u64::MAX` — so neither guard
-    //! can fire on any reachable state, for either side. `quote_for_base`
+    //! can fire on any reachable state, for either side. That bound is
+    //! what the removed 1c cap used to be credited with, so the tests
+    //! below now carry it alone. `quote_for_base`
     //! also never saturates for a `u64` input (max exponent gives a
     //! `10^8` factor, so the widest product is `~1.8e35 < u128::MAX`), so
     //! the round-trip bound has no saturation escape hatch.
     //!
     //! The guards are therefore defense-in-depth: kept so an overflow
-    //! stays a hard abort if the cap is ever weakened. These tests pin
+    //! stays a hard abort if the sizing is ever weakened. These tests pin
     //! the bound so such a regression (or a switch to round-half-up in
     //! the decoders) trips a fast local unit test instead of shipping a
     //! live overflow path. The second test nails the exact case the
@@ -1234,9 +1408,16 @@ mod tests {
                                  taker_in={taker_in} level_size={level_size} inv={inv}"
                             );
                             // On a fill, the input leg the taker pays must
-                            // never exceed their remaining budget — the 1c
-                            // cap that keeps the reverse leg under u64::MAX.
-                            if let Ok(Some((fill_base, fill_quote))) = got {
+                            // never exceed their remaining budget. With
+                            // the 1c cap gone this is no longer clamped
+                            // into truth — it is the floor round-trip
+                            // bound, asserted directly.
+                            if let Ok(LegFill::Fill {
+                                base: fill_base,
+                                quote: fill_quote,
+                                residue_in,
+                            }) = got
+                            {
                                 let input = side.input_atoms(fill_base, fill_quote);
                                 assert!(
                                     input as u128 <= taker_in,
@@ -1246,12 +1427,85 @@ mod tests {
                                 // A matched leg moves value in *both*
                                 // directions (WARNING 1f). Either leg at
                                 // zero is a one-directional transfer and
-                                // must have early-returned `Ok(None)`.
+                                // must have early-returned `Skip`.
                                 assert!(
                                     fill_base > 0 && fill_quote > 0,
                                     "one-directional leg base={fill_base} quote={fill_quote}: \
                                      side={side:?} price={price:?} taker_in={taker_in} \
                                      level_size={level_size} inv={inv}"
+                                );
+                                // Exact-in: priced input plus residue is
+                                // what the taker is debited, and it can
+                                // never exceed the budget either.
+                                assert!(
+                                    input as u128 + residue_in as u128 <= taker_in,
+                                    "input {input} + residue {residue_in} exceeded taker budget \
+                                     {taker_in}: side={side:?} price={price:?} \
+                                     level_size={level_size} inv={inv}"
+                                );
+                                // Residue is charged ONLY when the
+                                // taker's own budget was the binding
+                                // cap. A regression widening
+                                // `taker_bound` to accept the level or
+                                // vault cap would over-debit a taker who
+                                // still had budget to spend further down
+                                // the book — this catches that on both
+                                // arms and all three caps at once, which
+                                // the single hand-written level-capped
+                                // case below cannot.
+                                let clamped = taker_in.min(u64::MAX as u128) as u64;
+                                let cap_by_taker = match side {
+                                    SwapSide::Buy => price.base_for_quote(clamped),
+                                    SwapSide::Sell => price.quote_for_base(clamped),
+                                };
+                                if side.output_atoms(fill_base, fill_quote) as u128 != cap_by_taker
+                                {
+                                    assert_eq!(
+                                        residue_in, 0,
+                                        "residue charged on a leg the taker cap did not bind: \
+                                         side={side:?} price={price:?} taker_in={taker_in} \
+                                         level_size={level_size} inv={inv}"
+                                    );
+                                } else {
+                                    // And the positive direction, or a
+                                    // regression that simply stopped
+                                    // charging residue — reverting
+                                    // exact-in wholesale — would satisfy
+                                    // the branch above on every case and
+                                    // pass the whole loop.
+                                    //
+                                    // Against `clamped`, not `taker_in`:
+                                    // the sizing works from the budget
+                                    // clamped to `u64`, and this loop
+                                    // deliberately feeds it a `u128`
+                                    // above that to exercise the clamp.
+                                    // The handler cannot (`amount_in` is
+                                    // a `u64`), so the two coincide in
+                                    // production.
+                                    assert_eq!(
+                                        input + residue_in,
+                                        clamped,
+                                        "a taker-bound leg must consume the budget in full: \
+                                         side={side:?} price={price:?} taker_in={taker_in} \
+                                         level_size={level_size} inv={inv}"
+                                    );
+                                }
+                            }
+                            // `Exhausted` absorbs nothing — it is the
+                            // arm where the taker receives no output, so
+                            // the level's price is not one they accepted
+                            // and its one-atom cost is no bound on their
+                            // loss. It may fire only on a zero taker cap.
+                            if let Ok(LegFill::Exhausted) = got {
+                                let clamped = taker_in.min(u64::MAX as u128) as u64;
+                                let cap_by_taker = match side {
+                                    SwapSide::Buy => price.base_for_quote(clamped),
+                                    SwapSide::Sell => price.quote_for_base(clamped),
+                                };
+                                assert_eq!(
+                                    cap_by_taker, 0,
+                                    "Exhausted on a non-zero taker cap: side={side:?} \
+                                     price={price:?} taker_in={taker_in}"
                                 );
                             }
                         }
@@ -1271,12 +1525,12 @@ mod tests {
         let price = Price::encode(10_000_000, -16).unwrap();
         let got =
             SwapSide::Sell.compute_fill(price, u64::MAX as u128, u64::MAX, u64::MAX, u64::MAX);
-        // `Ok(Some(_))`, not just `Ok`: a fill actually occurs, so the
+        // `LegFill::Fill`, not just `Ok`: a fill actually occurs, so the
         // reverse `base_for_quote` conversion and its `u64::MAX` guard
         // really ran and cleared — rather than the leg early-returning
-        // `Ok(None)` on a zero fill and never reaching the guard.
+        // on a zero fill and never reaching the guard.
         assert!(
-            matches!(got, Ok(Some(_))),
+            matches!(got, Ok(LegFill::Fill { .. })),
             "tiny-price max-base Sell must fill and clear the guard, got {got:?}"
         );
     }
@@ -1298,7 +1552,7 @@ mod tests {
         assert_eq!(above_one.base_for_quote(1), 0);
         let got = SwapSide::Sell.compute_fill(above_one, 1, u64::MAX, u64::MAX, u64::MAX);
         assert!(
-            matches!(got, Ok(None)),
+            matches!(got, Ok(LegFill::Skip)),
             "one-base-atom Sell remainder above price 1 must not fill, got {got:?}"
         );
 
@@ -1310,7 +1564,7 @@ mod tests {
         assert_eq!(below_one.quote_for_base(16_666), 0);
         let got = SwapSide::Buy.compute_fill(below_one, 1, u64::MAX, u64::MAX, u64::MAX);
         assert!(
-            matches!(got, Ok(None)),
+            matches!(got, Ok(LegFill::Skip)),
             "one-quote-atom Buy remainder below price 1 must not fill, got {got:?}"
         );
 
@@ -1319,7 +1573,7 @@ mod tests {
         // above rather than the blown-up one.
         let got = SwapSide::Buy.compute_fill(below_one, 1, 1, 1, 1);
         assert!(
-            matches!(got, Ok(None)),
+            matches!(got, Ok(LegFill::Skip)),
             "one-base-atom Buy leg below price 1 must not fill, got {got:?}"
         );
 
@@ -1327,13 +1581,156 @@ mod tests {
         // both legs still fills on either arm.
         let got = SwapSide::Sell.compute_fill(above_one, 1_000, u64::MAX, u64::MAX, u64::MAX);
         assert!(
-            matches!(got, Ok(Some((b, q))) if b > 0 && q > 0),
+            matches!(got, Ok(LegFill::Fill { base, quote, .. }) if base > 0 && quote > 0),
             "a well-sized Sell must still fill both legs, got {got:?}"
         );
         let got = SwapSide::Buy.compute_fill(below_one, 1_000, u64::MAX, u64::MAX, u64::MAX);
         assert!(
-            matches!(got, Ok(Some((b, q))) if b > 0 && q > 0),
+            matches!(got, Ok(LegFill::Fill { base, quote, .. }) if base > 0 && quote > 0),
             "a well-sized Buy must still fill both legs, got {got:?}"
+        );
+    }
+
+    /// Exact-in: a taker-bound leg consumes the caller's whole remaining
+    /// input, splitting it into the priced leg the vault is credited and
+    /// the residue nobody is.
+    ///
+    /// The 2-decimal case is the one that matters commercially — the
+    /// residue scales with the *output* token's granularity, so a
+    /// 6-decimal pair hides a bug a EURCV/IDRX pair would show as a
+    /// visible cent.
+    #[test]
+    fn taker_bound_leg_consumes_the_whole_remaining_input() {
+        // A 6-dec/6-dec FX pair at 1.0850. Buying with 10_000_001 quote
+        // atoms buys 9_216_590 base, which prices back to 10_000_000
+        // quote — one atom of change the old 1c cap stranded forever.
+        let fx = Price::encode(10_850_000, 0).unwrap();
+        let taker_in: u64 = 10_000_001;
+        let got = SwapSide::Buy.compute_fill(fx, taker_in as u128, u64::MAX, u64::MAX, u64::MAX);
+        let Ok(LegFill::Fill {
+            base,
+            quote,
+            residue_in,
+        }) = got
+        else {
+            panic!("taker-bound Buy must fill, got {got:?}");
+        };
+        assert_eq!(base as u128, fx.base_for_quote(taker_in));
+        assert_eq!(quote as u128, fx.quote_for_base(base));
+        assert_eq!(quote + residue_in, taker_in, "input not consumed in full");
+        assert!(residue_in > 0, "this fixture is meant to leave change");
+
+        // The same book, but the *level* is the binding cap: the taker
+        // still has budget for lower asks, so no residue is charged.
+        let got = SwapSide::Buy.compute_fill(fx, taker_in as u128, 1_000, u64::MAX, u64::MAX);
+        assert!(
+            matches!(got, Ok(LegFill::Fill { residue_in: 0, .. })),
+            "a level-capped leg must charge no residue, got {got:?}"
+        );
+
+        // Worst case in the live roster: a 2-decimal output token. Price
+        // is an atoms ratio, so a 1.129108 rate on a 2-dec base against
+        // a 6-dec quote encodes as 11291.08 quote atoms per base atom —
+        // one whole output atom costs ~1.13 quote *units*, and the
+        // change left behind is a visible fraction of a cent rather than
+        // a rounding atom. This is the fixture the demo walkthrough has
+        // to show consumed.
+        let two_dec = Price::encode(11_291_080, 4).unwrap(); // 11291.08
+        let taker_in: u64 = 100_000;
+        let got =
+            SwapSide::Buy.compute_fill(two_dec, taker_in as u128, u64::MAX, u64::MAX, u64::MAX);
+        let Ok(LegFill::Fill {
+            base,
+            quote,
+            residue_in,
+        }) = got
+        else {
+            panic!("2-decimal Buy must fill, got {got:?}");
+        };
+        assert_eq!(quote + residue_in, taker_in, "input not consumed in full");
+        assert!(
+            residue_in > 100,
+            "the 2-decimal arm is the large-residue case, got {residue_in} on base {base}"
+        );
+
+        // Sell mirror: the taker's base is the binding cap, so the whole
+        // of it is consumed against the bid.
+        let taker_in: u64 = 7_777_777;
+        let got = SwapSide::Sell.compute_fill(fx, taker_in as u128, u64::MAX, u64::MAX, u64::MAX);
+        let Ok(LegFill::Fill {
+            base, residue_in, ..
+        }) = got
+        else {
+            panic!("taker-bound Sell must fill, got {got:?}");
+        };
+        assert_eq!(base + residue_in, taker_in, "input not consumed in full");
+    }
+
+    /// A remainder too small to buy one output atom ends the walk — and
+    /// is **left with the taker**, not absorbed.
+    ///
+    /// This is the arm where the taker receives nothing, so the level's
+    /// price is not one they accepted and its one-atom cost is no bound
+    /// on what absorbing would cost them. A vault leader may post any
+    /// valid price, including one where a single output atom costs more
+    /// than a taker's entire budget; absorbing here would let a level
+    /// resting harmlessly at the tail of the book confiscate the whole
+    /// unspent remainder of any walk that reached it, with `min_out` no
+    /// defense (residue never reduces output). So `Exhausted` carries no
+    /// residue at all.
+    #[test]
+    fn an_unaffordable_level_ends_the_walk_without_charging_the_taker() {
+        // 987 quote per base: 500 quote atoms can't buy a single base
+        // atom, so there is nothing to price and nothing below this ask
+        // is cheaper.
+        let price = Price::encode(98_700_000, 2).unwrap();
+        assert_eq!(price.base_for_quote(500), 0);
+        let got = SwapSide::Buy.compute_fill(price, 500, u64::MAX, u64::MAX, u64::MAX);
+        assert_eq!(
+            got.unwrap(),
+            LegFill::Exhausted,
+            "an unaffordable level must stop the walk"
+        );
+
+        // The confiscation case, pinned directly: a far-out but valid
+        // ask where one base atom costs far more than a large budget.
+        // The taker must keep every atom of it — `Exhausted` is a
+        // fieldless marker precisely so there is nothing here to debit.
+        let far_out = Price::encode(99_999_999, 15).unwrap();
+        let fat_budget: u128 = 5_000_000_000; // 5,000 units at 6 decimals
+        assert_eq!(far_out.base_for_quote(fat_budget as u64), 0);
+        let got = SwapSide::Buy.compute_fill(far_out, fat_budget, u64::MAX, u64::MAX, u64::MAX);
+        assert_eq!(
+            got.unwrap(),
+            LegFill::Exhausted,
+            "a far-out level must not consume the taker's remaining budget"
+        );
+
+        // Sell mirror: a bid so low the taker's whole base buys no quote.
+        let floor_bid = Price::encode(10_000_000, -16).unwrap();
+        assert_eq!(floor_bid.quote_for_base(1_000), 0);
+        let got = SwapSide::Sell.compute_fill(floor_bid, 1_000, u64::MAX, u64::MAX, u64::MAX);
+        assert_eq!(
+            got.unwrap(),
+            LegFill::Exhausted,
+            "a far-out bid must not consume the taker's remaining base"
+        );
+
+        // An empty level at an affordable price is a plain skip — the
+        // taker's budget is intact and the next level may well fill it.
+        let got = SwapSide::Buy.compute_fill(price, 500_000_000, 0, u64::MAX, u64::MAX);
+        assert_eq!(
+            got.unwrap(),
+            LegFill::Skip,
+            "an empty level must not exhaust a solvent taker"
+        );
+
+        // Same for an empty vault behind a live level.
+        let got = SwapSide::Buy.compute_fill(price, 500_000_000, u64::MAX, 0, 0);
+        assert_eq!(
+            got.unwrap(),
+            LegFill::Skip,
+            "an empty vault must not exhaust a solvent taker"
         );
     }
 }

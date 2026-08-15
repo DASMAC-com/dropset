@@ -508,14 +508,23 @@ fn fee_charging_market_tears_down_and_drains_the_accrued_fee() {
     );
     assert!(!exists(&f.svm, &base_treasury), "base treasury closed");
 
-    // The quote leg accrued nothing (a Buy fees the base leg), so its
-    // close is the zero-balance path — no token CPI, nothing paid out.
+    // The quote leg accrued no *fee* — a Buy fees the base leg — but it is
+    // the input leg, so it carries the exact-in residue: the atom the
+    // taker paid in that no level could price, claimed by neither a vault
+    // nor the fee counter. Drain-on-close is what carries it out, which is
+    // the operational half of exact-in: the bucket now fills on every
+    // taker-bound swap rather than only on a stray external transfer.
+    assert_eq!(
+        f.market_header().accrued_quote_fee_atoms.get(),
+        0,
+        "a Buy accrues no quote-leg fee"
+    );
     f.close_market_treasury_to(&admin, &quote_mint, &quote_treasury, &harvest_quote, &rr)
         .expect("quote treasury closes");
     assert_eq!(
         f.token_balance(&harvest_quote),
-        0,
-        "a Buy accrues no quote-leg fee"
+        1,
+        "the quote leg's exact-in residue is drained to the recipient"
     );
     assert!(!exists(&f.svm, &quote_treasury), "quote treasury closed");
 
@@ -598,7 +607,12 @@ fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
         accrued_base > 0 && accrued_quote > 0,
         "the round trip accrued protocol revenue on both legs"
     );
-    f.assert_treasury_invariant();
+    // One atom of unattributed residual per leg: each half of the round
+    // trip was taker-bound, so exact-in consumed the caller's whole input
+    // and the part no level could price is claimed by neither the vault
+    // nor the fee counter. It is deliberately *not* accrued — that would
+    // make it protocol revenue rather than a residual.
+    f.assert_treasury_residual(1, 1);
 
     // ── Realized P&L: the leader's perf fee, minted as shares ────────
     // The round trip left value-per-share above the HWM stamped at seed
@@ -635,13 +649,23 @@ fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
         .sweep_residual_meta(&admin, &base_mint, &base_treasury, &sweep_dest)
         .expect("sweep the stray transfer");
     let ev = common::events::sweep_residual(&meta);
-    assert_eq!(ev.swept, STRAY, "exactly the stray atoms were swept");
+    // The stray transfer *and* the Sell's exact-in residue: both are atoms
+    // no vault and no fee counter claims, so they share one bucket and one
+    // sweep. This is what makes `sweep_residual` routine collection under
+    // exact-in rather than a dust-and-accident path.
+    assert_eq!(
+        ev.swept,
+        STRAY + 1,
+        "the stray atoms and the base-leg residue were swept together"
+    );
     assert_eq!(
         ev.accrued_fee, accrued_base,
         "the accrued fee was left behind"
     );
-    assert_eq!(f.token_balance(&sweep_dest), STRAY);
-    f.assert_treasury_invariant();
+    assert_eq!(f.token_balance(&sweep_dest), STRAY + 1);
+    // The base leg is now fully claimed; the quote leg still carries the
+    // Buy's residue, which no sweep has touched.
+    f.assert_treasury_residual(0, 1);
 
     // ── Teardown: every claim paid, every account closed ─────────────
     let rr = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS).pubkey();
@@ -651,9 +675,10 @@ fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
         .expect("force_withdraw_leader");
     assert_eq!(f.vault(0).total_shares.get(), 0, "vault fully drained");
 
-    // What is left in each treasury is exactly that leg's accrued fee —
-    // the realized perf fee was paid in *shares*, so it left with the
-    // leader's force-withdraw rather than sitting here.
+    // What is left in each treasury is that leg's accrued fee — the
+    // realized perf fee was paid in *shares*, so it left with the leader's
+    // force-withdraw rather than sitting here — plus, on the quote leg,
+    // the one residue atom the sweep above did not cover.
     assert_eq!(
         f.token_balance(&base_treasury),
         accrued_base,
@@ -661,8 +686,8 @@ fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
     );
     assert_eq!(
         f.token_balance(&quote_treasury),
-        accrued_quote,
-        "only protocol revenue remains in quote custody"
+        accrued_quote + 1,
+        "protocol revenue plus the unswept quote-leg residue"
     );
 
     let harvest = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
@@ -678,8 +703,8 @@ fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
     );
     assert_eq!(
         f.token_balance(&harvest_quote),
-        accrued_quote,
-        "the quote-leg accrued fee was harvested on the way out"
+        accrued_quote + 1,
+        "the quote-leg accrued fee and its residue were harvested on the way out"
     );
     // Both counters, not just the base one: the handler's leg select is a
     // hand-written `if is_base { … } else { … }`, so without the quote

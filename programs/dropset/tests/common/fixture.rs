@@ -1989,19 +1989,21 @@ impl Fixture {
         Some(u64::from_le_bytes(acct.data[64..72].try_into().unwrap()))
     }
 
-    /// Assert the treasury custody invariant on **both** legs:
-    /// `treasury.amount == Σ vault.<leg>_atoms + accrued_<leg>_fee_atoms`.
+    /// The **unattributed residual** each treasury holds, per leg:
+    /// `treasury.amount − Σ vault.<leg>_atoms − accrued_<leg>_fee_atoms`,
+    /// i.e. exactly what `sweep_residual` would pay out. Panics if either
+    /// leg is *under*-funded, which is the solvency bug the custody
+    /// invariant exists to catch.
     ///
-    /// The accrued term is what makes this worth a helper rather than two
-    /// inline `assert_eq!`s. A test that checks only
-    /// `treasury == Σ vault` passes on a market with no taker fee and fails
-    /// the moment one is set — the difference being exactly the protocol
-    /// revenue sitting in the treasury — which reads as a bug in whatever
-    /// the test was actually exercising.
+    /// The accrued term is what makes this worth a helper rather than an
+    /// inline subtraction. A test that checks only `treasury − Σ vault`
+    /// reads zero on a market with no taker fee and reads the protocol
+    /// revenue the moment one is set, which looks like a residual in
+    /// whatever the test was actually exercising.
     ///
     /// Sums every sector in the slab, active and tombstoned alike, since
     /// custody spans both.
-    pub fn assert_treasury_invariant(&self) {
+    pub fn treasury_residual(&self) -> (u64, u64) {
         let acct = self.svm.get_account(&self.market).expect("market");
         let header = bytemuck::pod_read_unaligned::<MarketHeader>(
             &acct.data[8..8 + core::mem::size_of::<MarketHeader>()],
@@ -2015,16 +2017,46 @@ impl Fixture {
             base_sum += v.base_atoms.get();
             quote_sum += v.quote_atoms.get();
         }
-        assert_eq!(
-            self.token_balance(&self.base_treasury),
-            base_sum + header.accrued_base_fee_atoms.get(),
-            "base treasury != Σ vault.base_atoms + accrued_base_fee_atoms"
+        let base_claimed = base_sum + header.accrued_base_fee_atoms.get();
+        let quote_claimed = quote_sum + header.accrued_quote_fee_atoms.get();
+        let base_held = self.token_balance(&self.base_treasury);
+        let quote_held = self.token_balance(&self.quote_treasury);
+        assert!(
+            base_held >= base_claimed,
+            "base treasury {base_held} < Σ vault.base_atoms + accrued_base_fee_atoms \
+             {base_claimed} — treasury cannot cover its claims"
         );
-        assert_eq!(
-            self.token_balance(&self.quote_treasury),
-            quote_sum + header.accrued_quote_fee_atoms.get(),
-            "quote treasury != Σ vault.quote_atoms + accrued_quote_fee_atoms"
+        assert!(
+            quote_held >= quote_claimed,
+            "quote treasury {quote_held} < Σ vault.quote_atoms + accrued_quote_fee_atoms \
+             {quote_claimed} — treasury cannot cover its claims"
         );
+        (base_held - base_claimed, quote_held - quote_claimed)
+    }
+
+    /// Assert the treasury custody invariant on **both** legs:
+    /// `treasury.amount >= Σ vault.<leg>_atoms + accrued_<leg>_fee_atoms`,
+    /// with the slack equal to `(base, quote)`.
+    ///
+    /// The invariant is an inequality rather than an equality because the
+    /// treasury is an ordinary token account anyone may transfer into, and
+    /// because an exact-in take deliberately leaves the input the levels
+    /// could not price there as unattributed residual. Both land in the
+    /// same bucket, which is the one `sweep_residual` collects — so a test
+    /// that knows what its swaps should have left over pins it here rather
+    /// than tolerating any gap at all.
+    pub fn assert_treasury_residual(&self, base: u64, quote: u64) {
+        assert_eq!(
+            self.treasury_residual(),
+            (base, quote),
+            "unattributed treasury residual (base, quote) not as expected"
+        );
+    }
+
+    /// The common case of [`Self::assert_treasury_residual`]: every atom in
+    /// both treasuries is claimed by a vault or an accrued-fee counter.
+    pub fn assert_treasury_invariant(&self) {
+        self.assert_treasury_residual(0, 0);
     }
 
     /// `registry.market_count` — the live-market witness `close_registry`
