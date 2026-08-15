@@ -13,15 +13,19 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from unittest import mock
+
 import firm_core
 
 from allowlist import (
+    DEFAULT_SETTINGS,
     AllowlistError,
     add,
     classify,
     covers,
     cruft,
     load_allow,
+    resolve_settings_path,
     run,
 )
 
@@ -38,9 +42,21 @@ class LoadTests(unittest.TestCase):
                 json.dump(_settings(["Bash(git status:*)", "Read(/a/**)"]), fh)
             self.assertEqual(load_allow(Path(p)), ["Bash(git status:*)", "Read(/a/**)"])
 
-    def test_missing_file_errors(self):
-        with self.assertRaises(AllowlistError):
-            load_allow(Path("/no/such/settings.json"))
+    def test_missing_file_is_empty_not_an_error(self):
+        """Under the shared-file model a worktree has no copy of its own, so
+        an absent file is the normal case rather than a bad path."""
+        self.assertEqual(load_allow(Path("/no/such/settings.json")), [])
+
+    def test_malformed_file_still_errors(self):
+        """A corrupt file is a real defect — treating it as empty would hide
+        it, which is the one thing the permissive missing-file path must not
+        start doing."""
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "settings.local.json")
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write("{not json")
+            with self.assertRaises(AllowlistError):
+                load_allow(Path(p))
 
     def test_malformed_allow_is_empty(self):
         with tempfile.TemporaryDirectory() as d:
@@ -48,6 +64,57 @@ class LoadTests(unittest.TestCase):
             with open(p, "w", encoding="utf-8") as fh:
                 json.dump({"permissions": {}}, fh)
             self.assertEqual(load_allow(Path(p)), [])
+
+
+class ResolveSettingsPathTests(unittest.TestCase):
+    def test_an_existing_path_is_honored_as_given(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "settings.local.json"
+            p.write_text(json.dumps(_settings([])), encoding="utf-8")
+            self.assertEqual(resolve_settings_path(p), p)
+
+    def test_a_missing_path_resolves_to_the_main_checkout(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d) / "base"
+            (base / ".claude").mkdir(parents=True)
+            settings = base / DEFAULT_SETTINGS
+            settings.write_text(json.dumps(_settings(["Bash(ls:*)"])), "utf-8")
+            missing = Path(d) / "wt" / DEFAULT_SETTINGS
+            with mock.patch("allowlist.find_main_checkout", return_value=base):
+                self.assertEqual(resolve_settings_path(missing), settings)
+
+    def test_a_missing_path_with_no_main_checkout_is_returned_as_is(self):
+        missing = Path("/no/such") / DEFAULT_SETTINGS
+        with mock.patch("allowlist.find_main_checkout", return_value=None):
+            self.assertEqual(resolve_settings_path(missing), missing)
+
+    def test_an_explicit_path_is_never_redirected(self):
+        """A caller that names a file means that file — retargeting it would
+        send an `add` write to a different allowlist than the one asked for."""
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d) / "base"
+            (base / ".claude").mkdir(parents=True)
+            (base / DEFAULT_SETTINGS).write_text(
+                json.dumps(_settings(["Bash(ls:*)"])), "utf-8"
+            )
+            named = Path(d) / "elsewhere" / "settings.local.json"
+            with mock.patch("allowlist.find_main_checkout", return_value=base):
+                self.assertEqual(resolve_settings_path(named, explicit=True), named)
+
+    def test_resolution_then_load_yields_the_main_checkout_allowlist(self):
+        """The end-to-end shape of the bug: a worktree with no settings file
+        of its own read an empty allowlist (or errored) instead of the real
+        one at the main checkout."""
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d) / "base"
+            (base / ".claude").mkdir(parents=True)
+            (base / DEFAULT_SETTINGS).write_text(
+                json.dumps(_settings(["Bash(git status:*)"])), "utf-8"
+            )
+            missing = Path(d) / "wt" / DEFAULT_SETTINGS
+            with mock.patch("allowlist.find_main_checkout", return_value=base):
+                allow = load_allow(resolve_settings_path(missing))
+            self.assertEqual(allow, ["Bash(git status:*)"])
 
 
 class CoversTests(unittest.TestCase):

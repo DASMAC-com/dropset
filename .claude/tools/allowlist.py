@@ -49,9 +49,15 @@ option, so it precedes the subcommand
   load-bearing worktree and skill-tooling rules. The response carries
   ``machine_local_settings`` so a reader knows which rule was in force.
 
-Defaults ``--settings`` to ``.claude/settings.local.json`` in the cwd. Stdlib
-only; a Python skill-tool under ``.claude/tools/`` — deliberately **not** a
-Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
+Defaults ``--settings`` to ``.claude/settings.local.json`` in the cwd, and
+**resolves that default through a worktree to the main checkout** when the cwd
+has no such file. Claude Code itself resolves the file that way, so a worktree
+legitimately has none of its own — see ``docs/conventions/local-integrations.md``
+→ "How settings files resolve across worktrees". A missing file is therefore
+the *normal* case for a worktree, not a usage error, and reads treat it as an
+empty allowlist. Stdlib only; a Python skill-tool under ``.claude/tools/`` —
+deliberately **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill
+tooling").
 """
 
 from __future__ import annotations
@@ -59,6 +65,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -123,15 +130,65 @@ class AllowlistError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
 
 
+def find_main_checkout() -> Path | None:
+    """The worktree whose branch is ``refs/heads/main`` — where Claude Code
+    resolves ``settings.local.json`` to. ``None`` if it can't be determined."""
+    try:
+        out = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+    except (OSError, ValueError):
+        return None
+    current: str | None = None
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            current = line[len("worktree ") :].strip()
+        elif line.strip() == "branch refs/heads/main" and current:
+            return Path(current)
+    return None
+
+
+def resolve_settings_path(path: Path, *, explicit: bool = False) -> Path:
+    """Where the settings file actually lives.
+
+    Claude Code resolves ``.claude/settings.local.json`` through a worktree to
+    the **main checkout**, so a worktree has no copy of its own and the cwd-
+    relative default will not exist there. When the *default* path is absent,
+    fall back to the main checkout's copy.
+
+    An ``explicit`` ``--settings`` path is **never** redirected, even when it
+    does not exist. A caller that names a file means that file: silently
+    retargeting it would send an ``add`` write to a different allowlist than
+    the one asked for, and would leave a caller-supplied path impossible to
+    scaffold.
+    """
+    if explicit or path.exists():
+        return path
+    base = find_main_checkout()
+    if base is None:
+        return path
+    resolved = base / DEFAULT_SETTINGS
+    return resolved if resolved.exists() else path
+
+
 def load_allow(path: Path) -> list[str]:
-    """The ``permissions.allow`` array from a settings file. A missing or
-    unreadable/malformed file raises ``AllowlistError`` (the caller passed a
-    bad path); a well-formed file with no ``permissions.allow`` array yields an
-    empty list (nothing to check / audit)."""
+    """The ``permissions.allow`` array from a settings file.
+
+    A **missing** file yields an empty list, not an error: under the shared-file
+    model a worktree legitimately has no copy of its own, so absence is the
+    normal case rather than a bad path. (Callers that need the resolved
+    location should run the path through :func:`resolve_settings_path` first.)
+    An unreadable or malformed file still raises ``AllowlistError`` — that is a
+    real defect, and silently treating a corrupt file as empty would hide it.
+    A well-formed file with no ``permissions.allow`` array yields an empty list.
+    """
     try:
         settings = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise AllowlistError(f"no settings file at {path}") from exc
+    except FileNotFoundError:
+        return []
     except (OSError, ValueError) as exc:
         raise AllowlistError(f"cannot parse {path}: {exc}") from exc
     if not isinstance(settings, dict):
@@ -328,11 +385,14 @@ def run(argv: list[str]) -> int:
     sub.add_parser("cruft", help="return only the suspicious entries")
 
     args = parser.parse_args(argv[1:])
-    settings_path = Path(args.settings)
+    # Resolve the *default* through the worktree to the main checkout when the
+    # cwd has no copy — the normal shape of a worktree, not an error. An
+    # explicitly passed --settings is honored verbatim.
+    settings_path = resolve_settings_path(
+        Path(args.settings), explicit=args.settings != DEFAULT_SETTINGS
+    )
 
     if args.cmd == "add":
-        # `add` scaffolds a missing settings file, so it must not go through
-        # load_allow's "no settings file at …" error first.
         result = add(args.rule, settings_path)
     elif args.cmd == "covers":
         result = covers(args.rule, load_allow(settings_path))

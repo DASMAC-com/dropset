@@ -1,5 +1,11 @@
 <!-- cspell:word cdds -->
 
+<!-- cspell:word rpaps -->
+
+<!-- cspell:word unpadded -->
+
+<!-- cspell:word unwired -->
+
 <!-- cspell:word zshrc -->
 
 <!-- cspell:word reorderer -->
@@ -81,12 +87,64 @@ but its `PreToolUse` **wiring** is not. To turn the guard on, add this
 
 Baseline permission allow-rules (the `Bash(prefix:*)` globs the shell
 rules produce) go in the same file, or in `settings.local.json` — the
-`firm-perms` skill maintains the local allowlist for you. Because
-neither settings file is tracked, a worktree does **not** inherit the
-base repo's copy automatically; `firm-perms`' full sweep is what
-propagates a firmed allowlist from the base repo into a worktree (and
-back), so run it once in a cold worktree if the guard or a familiar
-allow-rule is missing.
+`firm-perms` skill maintains the local allowlist for you. See
+"How settings files resolve across worktrees" below for *which* file a
+worktree session actually reads and writes: it is one shared file, not
+a per-worktree copy.
+
+## How settings files resolve across worktrees
+
+**`.claude/settings.local.json` is one shared file, resolved through
+worktrees to the main checkout.** Per the official Claude Code docs
+(`settings.md`, `permissions.md`, `worktrees.md`), it is read **and
+written** "at the root of the git repository, resolved through
+worktrees to the main checkout". So:
+
+- A worktree checkout carries **no copy of its own** — verify with
+  `ls .claude/` in any worktree; there is nothing there.
+- A **"don't ask again" approval inside a worktree session saves to
+  the main checkout's file**, and is therefore live in every other
+  worktree immediately.
+- The `hooks` key resolves the same way. **Guard hooks wired in the
+  main checkout's `settings.local.json` do fire in worktree
+  sessions** — verified 2026-08-14 by controlled probe: a worktree
+  with no settings file of its own, whose only wiring was the base
+  repo's, had a deliberate `echo a && echo b` blocked by
+  `no_compound_bash.py`.
+
+`permissions.md`'s line about settings keys loading from the cwd's
+`.claude` with "no parent-directory fallback" describes **directory
+nesting** — it does not override worktree-to-main-checkout resolution,
+which is a distinct, explicitly documented mechanism.
+
+**This corrects a superseded model.** An earlier version of this doc
+claimed a worktree "does not inherit the base repo's copy
+automatically" and that `firm-perms`' sweep was what propagated it.
+That was wrong: there is nothing to propagate, because there is only
+one file. Two consequences follow, both fixed in the skills:
+
+- `firm-perms`' worktree-plus-base **dual-write is redundant by
+  design** — the worktree write already lands in the main checkout's
+  file.
+- "User scope is the only thing a fresh worktree inherits" is
+  **false**. The real criterion for putting a rule in
+  `~/.claude/settings.json` is **cross-*repo* portability** — a rule
+  you want in *other* projects too — not worktree inheritance.
+
+What a fresh worktree genuinely lacks is anything *untracked and
+per-directory*: `frontend/node_modules`, `frontend/.env.local`. Those
+are `init-pr`'s job, and are unrelated to settings resolution.
+
+### Which guards are actually wired
+
+Reach was never the problem — **wiring** is. All three guard scripts
+are committed under `.claude/hooks/`, but a script only runs if a
+`PreToolUse` entry points at it. As of 2026-08-14 the main checkout
+wires **only** `no_compound_bash.py`. `no_git_grep.py` and
+`worktree_edit_guard.py` are committed and unwired, so neither
+currently fires — including the worktree edit-path guard, which exists
+specifically for worktree sessions. Wire the ones you want using the
+blocks in each guard's section below.
 
 ## The git-grep guard hook
 
@@ -481,17 +539,76 @@ can be rebuilt from version control. One line each:
   resolution is the whole point — you resume `raps 814`, not a UUID.
 
 - **`naps <name>`** — start a **named** session in the current directory
-  (no worktree). Planning sessions use this from the base repo:
-  `naps planning-<day>`.
+  (no worktree). The general-purpose named-session entry point.
 
 - **`rnaps <name>`** — resume a named session by the same name. The
-  counterpart to `naps`, as `raps` is to `aps`; added so a planning
+  counterpart to `naps`, as `raps` is to `aps`; added so a long-running
   session survives a closed terminal.
+
+- **`paps`** — start **or resume** a **planning** session. Takes no
+  argument: it derives the session name `plan-<day-of-month>` from
+  today's date (run on the 14th → `plan-14`), `cd`s to the base repo,
+  and launches Claude Code with `--model claude-fable-5` and `/plan`
+  as the initial prompt.
+
+  `paps` is **idempotent by design** — if today's `plan-<day>` session
+  already exists it resumes it, otherwise it creates it. That collapses
+  the new-vs-resume split into one verb, which is the point: a planning
+  session is opened and reopened many times in a day, and having to
+  remember which state it is in is the friction the helper removes. An
+  `rpaps` twin was considered and rejected for that reason.
+
+  Three things it makes deterministic, each of which used to be a
+  manual step the operator could forget:
+
+  - **The model.** Planning sessions run the most capable model
+    deliberately — fidelity over tokens — and passing `--model` at
+    launch is the only session-wide mechanism. Skill frontmatter
+    (`model: fable` on the `plan` skill) is belt-and-braces for a
+    mid-session `/plan`, not a substitute; whether it switches the
+    session going forward is unspecified.
+  - **The directory.** A planning session touches the board, not a
+    branch, so it must run in the base repo. `paps` `cd`s there
+    itself rather than trusting the shell's cwd.
+  - **The bootstrap.** Passing `/plan` as the initial prompt means the
+    skill's bootstrap read happens without being asked for.
+
+  This **supersedes** `naps planning-<day>` / `rnaps planning-<day>`
+  and the older `planning-<day>` session naming. `naps` / `rnaps`
+  remain, for named sessions that aren't planning sessions.
+
+  Reference implementation — `paps` is the one helper here a reader is
+  likely to have to write from scratch, so unlike the one-liners above
+  it is given in full:
+
+  <!-- markdownlint-disable MD013 -->
+
+  ```sh
+  paps() {
+    local name="plan-$(date +%-d)"
+    local repo="$HOME/repos/dropset"
+    cd "$repo" || return 1
+    # Resume today's session if it exists, otherwise start it.
+    if claude --list-sessions 2>/dev/null | grep -qx -- "$name"; then
+      claude --resume "$name"
+    else
+      claude --session-name "$name" --model claude-fable-5 /plan
+    fi
+  }
+  ```
+
+  <!-- markdownlint-enable MD013 -->
+
+  `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not
+  `plan-05` — match whatever `naps`/`rnaps` already do on your machine
+  so old sessions stay resumable. Adjust the existence probe to
+  whichever session-listing form your Claude Code CLI supports; the
+  behavior that matters is create-or-resume under one name.
 
 The split is deliberate and matches the two session kinds: worktree
 sessions (`aps` / `raps`) run one deterministic spec to completion and
-are addressed by their Linear number; planning sessions (`naps` /
-`rnaps`) run in the base repo, span days, and are addressed by name.
+are addressed by their Linear number; planning sessions (`paps`) run in
+the base repo, span days, and are addressed by the day they started.
 
 ### iTerm2 manual setup (can't be committed)
 

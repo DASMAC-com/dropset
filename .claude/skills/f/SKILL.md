@@ -1,6 +1,6 @@
 ---
 name: f
-description: Fast-firm the permission you just approved. Type /f right after one-time-approving a prompt to memorialize that single command as a reusable allow-glob in this worktree's and the base repo's settings — no sweep, no confirm gate. /f exact firms the command verbatim instead of generalized. This is the shorthand around firm-perms' fast path.
+description: Fast-firm the permission you just approved. Type /f right after one-time-approving a prompt to memorialize that single command as a reusable allow-glob in the shared settings.local.json — no sweep, no confirm gate. /f exact firms the command verbatim instead of generalized. This is the shorthand around firm-perms' fast path.
 disable-model-invocation: true
 user-invocable: true
 ---
@@ -17,8 +17,9 @@ exactly that one — no session sweep, no propose-then-confirm gate.
 It is a thin wrapper: the whole job is the deterministic tool
 `.claude/tools/firm_last.py` (which resolves the transcript, finds the
 most recent executed call, generalizes it via `firm_core.py`, and writes
-the rule into this worktree's *and* the base repo's
-`settings.local.json`). Run it, passing `$ARGUMENTS` straight through:
+the rule into the shared `settings.local.json` at the main checkout —
+one file, resolved through every worktree). Run it, passing
+`$ARGUMENTS` straight through:
 
 ```sh
 python3 .claude/tools/firm_last.py $ARGUMENTS
@@ -31,8 +32,7 @@ python3 .claude/tools/firm_last.py $ARGUMENTS
   collapsed), when the generalized glob would be wrong or too broad.
 
 Then relay the tool's one-line result verbatim — it states exactly what
-rule was written and where (this worktree + base), so the change stays
-trivially reversible.
+rule was written and where, so the change stays trivially reversible.
 
 The tool handles the edge cases itself, so just report what it prints:
 
@@ -49,6 +49,6 @@ for the narrow one-time approval you just granted. (The tool only ever
 firms a single command and never widens to a bare verb, so this holds by
 construction.)
 
-For the heavier cleanup — harvesting a whole session's approvals,
-reconciling worktree/base drift, or memorializing a pasted permissions
-block — use `/firm-perms sweep` instead.
+For the heavier cleanup — harvesting a whole session's approvals, or
+memorializing a pasted permissions block — use `/firm-perms sweep`
+instead.

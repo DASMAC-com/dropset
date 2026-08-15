@@ -408,6 +408,9 @@ class SessionAggregator:
             )
             for sig, shape in self._bash_shapes.items()
             if shape.count >= HARDENING_MIN_COUNT
+            # The repo's own tools are already the hardened form — see
+            # `is_repo_tool_shape`. Their cost shows up in the sinks table.
+            and not is_repo_tool_shape(sig)
         ]
         # **By result bytes, not call count.** See `HardeningCandidate` for why
         # count-ranking misled five consecutive sessions. `deterministic` stays a
@@ -528,6 +531,24 @@ _GIT_LOCAL_SUBCOMMANDS = {
 # Programs whose every invocation is deterministic string/env logic.
 _DETERMINISTIC_PROGRAMS = {"printenv", "basename", "dirname"}
 
+# Script interpreters, whose *script* names the shape rather than the
+# interpreter — otherwise every repo tool collapses into one shape.
+_INTERPRETERS = {"python3", "python", "python3.11", "python3.12", "node"}
+
+
+def is_repo_tool_shape(signature: str) -> bool:
+    """Whether a signature names one of the repo's own committed skill-tools.
+
+    These are excluded from the hardening table because they are **already the
+    hardened form**: the tooling convention says a settled workflow becomes a
+    Python tool under ``.claude/tools/``, and these are the result. Nominating
+    them reads as "port this into a tool" about a tool, and it crowded out real
+    candidates in three separate sessions. Their *results* can still be a
+    genuine token sink — that is what the sinks table is for.
+    """
+    program = signature.split()[0] if signature.split() else ""
+    return program.endswith(".py")
+
 
 def _is_subcommand_word(tok: str) -> bool:
     """A stable subcommand word: lowercase ASCII letters and hyphens only, no
@@ -580,6 +601,15 @@ def bash_signature(command: str) -> str:
     nominating the wrapper itself as a hardening candidate. The wall-clock
     ``cost`` label is unaffected: ``via_run_quiet`` is set from the raw command
     text, not from this signature.
+
+    A **script invocation is named by its script**, for the same reason:
+    ``python3 .claude/tools/search_source.py 'pat'`` → ``search_source.py``,
+    not a bare ``python3``. The interpreter's argument is a path, so the
+    generic path-skipping rule would drop it and collapse *every* repo tool
+    into one ``python3`` shape — which three separate sessions then reported
+    as their top hardening candidate, at ~5k over 19 calls in one and ~10.4k
+    over 11 in another. That reads as "harden this" when these already **are**
+    the hardened form and the cost lives entirely in their results.
     """
     tokens = command.split()
     # Drop any leading environment assignments (`FOO=bar cmd …`).
@@ -588,6 +618,13 @@ def bash_signature(command: str) -> str:
     tokens = _unwrap_run_quiet(tokens)
     if not tokens:
         return ""
+    if tokens[0] in _INTERPRETERS:
+        for tok in tokens[1:]:
+            if tok.startswith("-"):
+                continue  # an interpreter flag (`-m`, `-c`) isn't the script
+            if tok.endswith(".py"):
+                tokens = [tok.rsplit("/", 1)[-1], *tokens[tokens.index(tok) + 1 :]]
+            break
     head = [tokens[0]]
     for tok in tokens[1:]:
         if len(head) >= _SIGNATURE_TOKENS:

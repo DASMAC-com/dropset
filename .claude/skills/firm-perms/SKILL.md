@@ -1,6 +1,6 @@
 ---
 name: firm-perms
-description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. Bare `/firm-perms` (or `/firm-perms this`) is the deterministic fast firm: it memorializes the single command you just approved into this worktree's and the base repo's settings immediately, via the same `firm_last.py` tool `/f` runs — no sweep, no confirm gate. `/firm-perms sweep` (or a pasted permissions block) runs the full harvest-and-propose sweep: collect everything approved this session, generalize and dedupe it, and propagate the result to this worktree and the base repo behind a propose-then-confirm gate. Use the fast firm after an approval, the sweep at the end of a session or to reconcile worktree/base drift.
+description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. Bare `/firm-perms` (or `/firm-perms this`) is the deterministic fast firm: it memorializes the single command you just approved into the shared `settings.local.json` immediately, via the same `firm_last.py` tool `/f` runs — no sweep, no confirm gate. `/firm-perms sweep` (or a pasted permissions block) runs the full harvest-and-propose sweep: collect everything approved this session, generalize and dedupe it, and write the result behind a propose-then-confirm gate. That file is one shared file resolved through worktrees to the main checkout, so either mode takes effect in every worktree at once. Use the fast firm after an approval, the sweep at the end of a session.
 user-invocable: true
 ---
 
@@ -8,9 +8,9 @@ user-invocable: true
 
 "Firm up" `.claude/settings.local.json`: rewrite narrow, one-off
 `permissions.allow` entries into generalized globs, dedupe them, and
-write the same allowlist to **this worktree and the base repo** — so the
-rule takes effect here *now* and the base copy seeds it into future
-worktrees.
+write the result back. That file is **one shared file at the main
+checkout**, resolved through every worktree, so a firmed rule takes
+effect in this session *and* every other worktree at once.
 
 This skill has **two modes**, chosen by the invocation, with **no
 inference** between them:
@@ -35,8 +35,8 @@ does only that — it does **not** harvest the rest of the session, and it
 does **not** propose-then-wait.
 
 It is identical to `/f`: run the deterministic tool, which finds the most
-recent executed tool call, generalizes it, and writes the rule into this
-worktree's and the base repo's `settings.local.json`:
+recent executed tool call, generalizes it, and writes the rule into the
+shared `settings.local.json` at the main checkout:
 
 ```sh
 python3 .claude/tools/firm_last.py
@@ -140,23 +140,30 @@ because a glob is missing (`firm_core.generalize` returns `None` for
 them); never allow-list them. Surface them and point at the offending
 pattern so the *author* (a skill, a script, or you) stops emitting it.
 
-## Why base + active worktree
+## One file, not two — why there is no dual-write
 
-`.claude/settings.local.json` is gitignored and exists as an
-**independent copy per worktree**, not a symlink. A running session
-reads its *own* worktree copy, and new worktrees are seeded from the
-**base repo** file. So this skill writes the firmed allowlist to exactly
-two places: **this (the active) worktree** — so the rule takes effect in
-the running session *now* — and the **base repo** — so every *future*
-worktree inherits it on creation.
+`.claude/settings.local.json` is gitignored, and it is **one shared
+file resolved through worktrees to the main checkout**. A worktree
+carries **no copy of its own**; a session running inside a worktree
+reads, and writes, the **main checkout's** file. So a rule firmed
+here is live in every worktree immediately — including sibling
+worktrees, and including the running session.
 
-It deliberately does **not** fan out to sibling worktrees. An existing
-sibling keeps its own allowlist until it's either recreated (re-seeded
-from the base) or re-firmed while it's itself the active worktree. That
-narrower scope is the accepted tradeoff.
+**There is therefore exactly one write target**, and nothing to
+propagate. Discover the main checkout at run time (sweep step 1); the
+examples below call it `<base>`.
 
-Don't hardcode the base-repo path — discover it at run time (sweep step
-1). The examples below use `<base>` for that path.
+This **supersedes** an earlier "write to both the active worktree and
+the base repo" design. That dual-write was **redundant by
+construction** — the worktree write already landed in the main
+checkout's file, so the second write re-wrote the same path — and it
+rested on a model of per-worktree copies that the official docs
+contradict. See `docs/conventions/local-integrations.md` → "How
+settings files resolve across worktrees".
+
+The old caveat that the skill "does not fan out to sibling worktrees"
+is likewise retired: there is no fan-out to perform, because siblings
+were never reading separate files.
 
 ## Full sweep (`/firm-perms sweep` / pasted block)
 
@@ -194,10 +201,10 @@ base. It runs only when explicitly asked:
    ```
 
    The worktree whose `branch` line is `refs/heads/main` is the base
-   repo (`<base>`). Take its literal path from the output — the firmed
-   allowlist lands in just two places, this (the active) worktree and
-   `<base>`; sibling worktrees are not touched. If no worktree has
-   `main` checked out, warn the user and firm only this worktree.
+   repo (`<base>`), and `<base>/.claude/settings.local.json` is the one
+   file this skill reads and writes. Take its literal path from the
+   output. If no worktree has `main` checked out, warn the user and
+   stop — there is no other copy to fall back to.
 
 1. **Harvest this session's approvals.** Beyond what's already on disk,
    scan the session for every permission you had to approve by hand —
@@ -214,14 +221,14 @@ base. It runs only when explicitly asked:
    **not** become a rule — a `*` can't rescue a compound. Set these
    aside for the summary.
 
-   **Gate the dual read on this harvest.** If the working set is
+   **Gate the allowlist read on this harvest.** If the working set is
    **empty** after harvesting — no permission prompt fired this session
    (and no pasted block was supplied) — there is nothing to firm: report
-   "nothing to firm" and **stop here, without reading either
-   allowlist**. Both `settings.local.json` copies are large; reading
-   them to union-and-diff is pure overhead when the mature allowlist
+   "nothing to firm" and **stop here, without reading the
+   allowlist**. `settings.local.json` is large; reading it to
+   union-and-diff is pure overhead when the mature allowlist
    already covered every command this session (the common case). Only
-   when the harvest yields **≥1** new / uncovered rule is the dual read
+   when the harvest yields **≥1** new / uncovered rule is the read
    below worth its cost.
 
    The empty harvest is **terminal — do not read the allowlist to
@@ -230,27 +237,23 @@ base. It runs only when explicitly asked:
    re-confirm the working set is empty defeats the whole point of the
    gate (that read has been the top single token sink of a firm-nothing
    sweep). An empty harvest means *stop and report*, full stop — no
-   confirming read of either copy. In practice most sessions firm
-   nothing, so this gate fires far more often than the dual read does.
+   confirming read. In practice most sessions firm
+   nothing, so this gate fires far more often than the read does.
 
-1. **Read both allowlists** with the Read tool (never shell out to
+1. **Read the allowlist** with the Read tool (never shell out to
    `jq` / `node` / `python` to read or edit JSON):
 
-   - this worktree's `.claude/settings.local.json`
-   - `<base>/.claude/settings.local.json`
+   - `<base>/.claude/settings.local.json` — the one shared file, which
+     is what this worktree session is already reading and writing.
 
-1. **Build the firmed allowlist.** Union the two `allow` arrays with the
+1. **Build the firmed allowlist.** Union its `allow` array with the
    session-harvested rules, apply the generalization rules above
-   (`firm_core` is the reference), and dedupe — one canonical array both
-   files will get. Two cautions on the union:
+   (`firm_core` is the reference), and dedupe — one canonical array.
+   One caution on the union:
 
-   - **Watch entries that live in only one file.** The two copies can
-     have drifted, and a rule missing from the base may have been
-     *deliberately* dropped there. Treat every entry present in only one
-     file as a distinct diff item the user has to approve.
    - **Run the safety floor over the *result*.** A pre-existing bare-verb
-     wildcard that crept into one copy would otherwise ride the union
-     into the base file untouched. Flag it instead of propagating it.
+     wildcard already sitting in the allowlist would otherwise ride the
+     union through untouched. Flag it instead of preserving it.
 
 1. **Propose, then wait for the user.** Before writing **anything**,
    show a concrete diff against the current allowlist and stop for
@@ -259,28 +262,23 @@ base. It runs only when explicitly asked:
    - each rule being **added** (the generalized glob) and the concrete
      rule(s) it replaces, with a one-line reason;
    - each rule being **removed** as a now-subsumed duplicate;
-   - each entry present in **only one** of the files, so the user can
-     confirm it should land in both;
    - any over-broad rule you're **flagging** but leaving in place.
 
-   Do not edit any file until the user approves. This confirmation gate
-   matters most for the base-repo file, since it seeds every future
-   worktree.
+   Do not edit the file until the user approves. The gate matters
+   because this one file governs every worktree at once.
 
-1. **Write it to both files** once approved — replacing only the `allow`
+1. **Write it** once approved — replacing only the `allow`
    array and leaving `additionalDirectories` (and any other keys) intact.
    When the sweep is **pure additions** (no cruft removal), run the
-   helper's `add` per rule against each file instead of `Edit`/`Write`;
+   helper's `add` per rule instead of `Edit`/`Write`;
    it preserves the other keys, prunes what each new rule subsumes, and
    keeps the allowlist out of context. Reach for `Edit`/`Write` only when
-   the plan **removes** entries, which `add` can't express. Writing the
-   base copy reaches outside this
-   worktree, so it only works when `<base>` is in this session's
-   `additionalDirectories`. If the base write is denied, say so and
-   report that only this worktree was firmed.
+   the plan **removes** entries, which `add` can't express. The write
+   targets `<base>`, which is outside this worktree's own directory, so
+   it needs `<base>` in this session's `additionalDirectories`. If it is
+   denied, say so and report that nothing was firmed.
 
-1. **Report.** Confirm what was written and that both copies now match
-   (or that only this worktree was firmed). List the session approvals
+1. **Report.** Confirm what was written. List the session approvals
    you firmed in, and separately the **malformed** approvals you set
    aside — name the offending pattern and point at its source so the
    author stops emitting it, rather than allow-listing it.

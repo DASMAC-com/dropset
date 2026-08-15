@@ -131,6 +131,20 @@ def raw_touches_lines(body: str) -> list[str]:
     return [line for line in body.splitlines() if _is_touches_line(line)]
 
 
+_PART_HEADING_RE = re.compile(r"^#\s+Part\s+(\d+)\s*(?:—|-|–|$)", re.MULTILINE)
+
+
+def highest_part_number(body: str) -> int:
+    """The largest ``# Part N`` heading already in ``body``, or 0 if none.
+
+    A survivor accumulates folded sections over time, so the next fold has to
+    continue its numbering. Matches only a top-level ``# Part N`` heading, so a
+    mention of "Part 3" in prose can't inflate the count.
+    """
+    numbers = [int(m.group(1)) for m in _PART_HEADING_RE.finditer(body)]
+    return max(numbers) if numbers else 0
+
+
 def extract_touches(body: str) -> tuple[str, list[str]]:
     """Split a body into (body with its ``**Touches**:`` line(s) removed, the
     globs those lines carried). ``**Fingerprint**:`` and every other line stay.
@@ -292,8 +306,15 @@ def assemble(data: dict) -> dict:
     elif survivor_globs:
         non_meta_count += 1
 
+    # Continue the survivor's existing numbering rather than restarting at 1.
+    # A survivor that has been folded into before already carries `# Part 1 …`
+    # through `# Part N`, and emitting a second `# Part 1` produces a body with
+    # two sections of the same name — which has had to be hand-corrected more
+    # than once, including on the issue that reported this.
+    first_part = highest_part_number(survivor_body) + 1
+
     part_sections: list[str] = []
-    for n, other in enumerate(others, start=1):
+    for n, other in enumerate(others, start=first_part):
         body, globs = extract_touches(other.get("description") or "")
         absorb(globs)
         if issue_is_meta(globs):

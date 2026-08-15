@@ -471,6 +471,32 @@ PR-authoring **writes** (`create_pull_request`,
    `.sh` and `.github/**`. Grep it for `id:` / `files:` /
    `types_or:` instead.
 
+   **After a fix, the scoped re-run is the default — a full
+   `make lint` is the exception.** This is already prescribed
+   above and is still the most-missed instruction in the step:
+   one run paid ten full sweeps across ~5 fix-and-retry cycles
+   (≈5.3k) where a scoped per-hook re-run was the stated rule.
+   Re-run the hook that failed, over the paths you touched:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- pre-commit run <hook> --files <paths>
+   ```
+
+   Take the full sweep once at the start, and once at the end
+   to confirm green. Two corollaries:
+
+   - **Assert, don't re-run, on an unchanged tree.** If no
+     file changed since the last lint, the result cannot have
+     changed either — one run re-ran `make lint` on a
+     byte-identical tree. Say it's unchanged and move on.
+   - **`tsc --noEmit` is the exception that proves it.** It is
+     whole-project by nature, so scoping the *file list* buys
+     nothing — which means the lever there is **frequency**,
+     not scope. One session fired `tsc --noEmit` four times
+     and `biome check` five, several after single-file edits
+     that could not change a type. Run it once after the
+     TypeScript edits are done, not after each one.
+
    If lint fails, first separate **environmental**
    failures and **autofixes** from **real violations** —
    they are three different problems:
@@ -704,6 +730,24 @@ PR-authoring **writes** (`create_pull_request`,
      changes behavior tests pin).
    - **docs** — the doc-freshness lens.
 
+   **When a slice is still huge, split the slice — do not
+   tighten the prompt again.** This is the sharpened form of
+   the point above, and it names the lever precisely. One
+   measured fan-out ran at ~95% of total session cost while
+   **fully compliant**: every lens got inlined excerpts, a
+   named comparison-file list, a hard-stop turn cap and its own
+   split slice, and the turn counts *held*. Input still ran 1.3
+   to 5× the exemplars — because the `source` slice itself was
+   **3,297 lines**. No prompt discipline reaches that; the
+   input floor is the slice.
+
+   So treat slice size as its own dial. When a slice runs past
+   roughly a thousand lines, subdivide it — by crate, by
+   directory, or by the natural seam the diff already has — and
+   give each sub-slice its own lens instance, rather than
+   spending another round rewording the brief. Prompt
+   tightening has saturated; slice granularity has not.
+
    **Once this has run, the slice files ARE the diff — for the
    main loop too.** Having written them, do not turn round and
    re-derive the same content with a bare `git diff` to read it
@@ -787,25 +831,57 @@ PR-authoring **writes** (`create_pull_request`,
    `base_fresh` holds, a foreign path can't be base drift,
    because there is no drift to leak.
 
-   **When sub-agents are unavailable, run the pass inline —
-   and say so in the summary.** Some sessions operate under
+   **When sub-agents are unavailable, STOP and ask for them.
+   Do not run the pass inline.** Some sessions operate under
    instructions that forbid spawning an `Agent` unless the
-   user asked for one, which flatly contradicts this step. The
-   conflict is real and recurs, so resolve it here rather than
-   improvising: **do not spawn**, and do not silently skip the
-   pass either. Work the same lenses inline in the main loop,
-   one at a time, against the same slices and excerpts.
+   user asked for one, and some harnesses simply don't offer
+   the tool. Either way the resolution is the same, and it is
+   a **hard gate**: do not spawn, do not silently skip, and
+   **do not substitute an inline pass**. Stop here and ask
+   the user — via `AskUserQuestion` — to authorize sub-agents
+   for the fan-out, offering "yes, authorize sub-agents for
+   the review fan-out" as the recommended first option.
 
-   Then **state the reduced assurance in the step-17 review
-   summary** — one line naming which lenses ran inline and
-   that no independent cross-check was possible. The point is
-   not cost: an inline pass is *far* cheaper, since no fan-out
-   appears in the rollup at all, and one such run still found
-   two real defects. The point is that inline lenses share the
-   main loop's context and its blind spots, so they cannot
-   disagree with it the way a fresh agent can — and a reader
-   of the summary is entitled to know which kind of review
-   they got.
+   **Blocking is the intended behavior, not a degraded mode.**
+   A session under a standing no-agents instruction **cannot
+   complete a `review-pr` pass** until that instruction is
+   lifted for this step. That is stated plainly here so it is
+   implemented deliberately rather than discovered: an
+   independent adversarial pass is the *entire point* of the
+   step, so declining to run it is a stop condition.
+
+   **Why the inline path was removed, since it reads as the
+   obvious accommodation.** A lens running in the same context
+   as the author cannot disagree with the author's blind
+   spots — it shares them. That makes an inline pass
+   structurally a **self-review**, whatever it happens to
+   find. The objection is to the **assurance property**, so it
+   does not soften with a smaller diff: an earlier proposal to
+   keep the inline path behind a diff-size or rebase-risk
+   ceiling is **superseded** for exactly that reason. A small
+   diff self-reviewed is still self-reviewed.
+
+   Two further notes, recorded so the old reasoning is not
+   reconstructed:
+
+   - **Cost is not the argument, and the naive cost reading is
+     backwards.** An inline pass is cheaper in *total* tokens
+     — no fan-out appears in the rollup at all — but every
+     byte it spends lands in the **main loop**, where it is
+     replayed on **every subsequent turn**. A fan-out spends
+     more, in throwaway contexts that evaporate on completion,
+     and the main loop only ever sees the findings. Total
+     spend and main-loop context pressure are different costs;
+     the inline path is cheaper in one and more exposed in the
+     other. That exposure compounds under the post-review
+     rebase churn this skill already documents as recurring.
+   - **One such run did find two real defects**, and that is
+     not evidence the path was sound — an unchecked review can
+     be right. The failure it invites is the one nobody
+     notices. Observed instance: a PR ran its fan-out inline
+     under a no-agents instruction, correctly declared the
+     reduced assurance in its summary, and still produced a
+     review no fresh context ever checked.
 
    **Brief every sub-agent on the shell rules.** The standing
    sub-agent brief from `docs/conventions/sub-agent-brief.md`
@@ -1293,6 +1369,44 @@ PR-authoring **writes** (`create_pull_request`,
    discipline **compose** — the cheapest lens ever measured
    here (85.8k / 2 turns / 1 tool call) came out of a *full*
    tier with excerpts inlined, not out of a reduced one.
+
+   ### Exemplars — measured cases where a rule paid off
+
+   Recorded because trim proposals arrive continuously and a
+   rule that is *working* leaves no evidence of its own. Six
+   sessions volunteered a measurement to protect something and
+   had nowhere to put it; this is that place. A future trim
+   pass has to argue against these figures rather than against
+   silence.
+
+   - **The excerpt rule delivering.** Lens briefs that inlined
+     their excerpts instead of naming files held their turn
+     counts across several runs, and produced the cheapest
+     lens measured here (85.8k / 2 turns / 1 tool call). One
+     session noted its own exemplar figures may be
+     *understated*.
+   - **A reduced-tier fan-out staying inside its cap.** 190.6k
+     over 4 turns, and 217.2k over 5 — both under cap, on a
+     reduced tier, with the per-lens discipline held tighter
+     rather than looser.
+   - **The cross-check earning an overrun.** The adversarial
+     pass overran its cap and caught **two blocking data-loss
+     bugs** that every cheaper tier would have missed. It is
+     the pass that overruns most often *and* returns the most
+     value per turn — which is why its cap is deliberately
+     higher than the primary lenses', not lower.
+   - **The two-write Linear floor.** Sessions that hit the
+     documented per-issue write floor recorded it as compliant
+     but still non-trivial — the floor is real, and the cost
+     that remains under it is not a lapse.
+   - **Whole-file Reads that were correct.** One session's
+     whole-file Reads were *sanctioned*, not a slip: it both
+     edited those files and pasted their excerpts into five
+     lens briefs, so the read was paid once and amortized five
+     times. That is the documented exception, and it held.
+
+   When proposing a trim against any of these, say which
+   figure you expect to move and by how much.
 
    **Small single-crate tier — correctness + completeness, no
    cross-check.** One step up from the single-lens cases: a
@@ -1831,6 +1945,27 @@ PR-authoring **writes** (`create_pull_request`,
    topic agent with the challenge and have it
    defend or retract. Iterate at most 2 additional
    rounds, then accept the surviving findings.
+
+   **Checkpoint the findings catalogue to the scratchpad
+   before going further.** Write the surviving findings — each
+   with its file, line, severity and one-line claim — to a
+   file in the session scratchpad:
+
+   ```txt
+   Write(<scratchpad>/review-findings.md)
+   ```
+
+   Everything from here to CI green is the expensive tail:
+   fixes, regeneration, the full test suite, and the rebase
+   churn this skill documents as recurring (sessions have paid
+   `make test` ×4 and lint ×6 as `main` moved under them).
+   That tail is exactly where a **compaction** can land, and
+   the catalogue is the one artifact that is expensive to
+   rebuild and **not yet acted on** — losing it means
+   re-running the entire fan-out. The findings are cheap to
+   write down and irreplaceable if dropped, so write them
+   down. Re-read the file rather than re-deriving if anything
+   later is unclear.
 
 1. **Fix blocking issues** that are mechanical
    (e.g. unused imports, missing error handling,

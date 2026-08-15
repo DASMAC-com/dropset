@@ -13,6 +13,32 @@ exactly like a fat MCP result; `gh` vs. the MCP is token-neutral for
 the same data. The only durable lever is **how much each call returns
 into the transcript**:
 
+## Total spend and main-loop pressure are different costs
+
+Before the levers: "cheaper" is ambiguous, and conflating the two
+readings has produced a wrong call at least once.
+
+**Total spend** is every token the turn burns, wherever it burns.
+**Main-loop pressure** is only what lands in *this* transcript — and
+that is what gets replayed on every later turn, occupies the finite
+window, and eventually forces a compaction.
+
+A sub-agent fan-out spends heavily in **throwaway contexts that
+evaporate on completion**: the main loop sees only the findings. Doing
+the same work inline spends *less in total* — no fan-out appears in the
+rollup at all — while every byte of it lands in the main loop and is
+replayed forever. So the inline version is cheaper in one sense and
+strictly more exposed in the other, and the exposure compounds in
+exactly the sessions that run long.
+
+Say which one you mean. "It's cheaper inline" is true of total spend
+and false of context pressure, and a decision resting on the
+unqualified claim is resting on nothing. (`review-pr` step 5 is the
+concrete case: its inline-lens fallback was removed, and the cost
+argument was *not* the reason — see that step for why.)
+
+## The levers
+
 - **Ask for the narrowest thing that answers the question.** Use the
   narrowest method / subcommand, field-select where the transport
   allows it (`gh … --json <fields>`, a GraphQL projection), paginate
@@ -25,6 +51,25 @@ into the transcript**:
   ask `--files-only` (or `grep -l`) and stop: one consumer-discovery
   sweep returned 39 full match lines for a question that was one bit per
   file. Take full lines only once you need to read the surrounding code.
+
+  **Match the search shape to the question type, in every phase.** This
+  is the single most recurring lever across mined sessions — seven of
+  them answered a *location* or *existence* question with a full
+  `--context N` sweep, one paying ~3.6k to find a three-line function.
+  The rule already existed but was written into `review-pr`'s
+  hoisted-grep step, so the implement phase read as exempt. It is not:
+
+  1. **Locate** with `--files-only` (or `--glob <file>`) — one line per
+     file, no bodies.
+  1. **Then read** the one region you actually want, sliced.
+
+  Take context lines only when the question is genuinely *what does
+  this code do*, never when it is *where is it* or *does it exist*.
+
+  **Verify a list-producing flag with a count, not the list.** One
+  session's largest single result (~5.8k, ~35% of its Bash cost) was a
+  new tool's `--print` dumping ~600 repo paths to answer the yes/no
+  question "did the flag work". Pipe to a count, or check one line.
 
 - **Read large known files by slice.** Grep to locate, then `Read`
   with `offset`/`limit`; don't pull a 1000-line file to use 80 lines
@@ -178,6 +223,19 @@ into the transcript**:
   echo is a fixed cost per call, and the budget it belongs to is stated
   in `docs/conventions/linear-automation.md`.
 
+  **Field-select it, always — the `fields` argument exists.** For a
+  dedup scan or a board read, `identifier`, `title` and `priority`
+  suffice; nothing else is looked at. An unfiltered `list_issues`
+  measured **~11k per call**, twice in one session, against **~600
+  tokens** for the same Backlog listed compactly — an 18-fold difference
+  on a call the planning and filing skills make every pass. Better
+  still, for a whole-board read use the tool that does this by
+  construction:
+
+  ```sh
+  python3 .claude/tools/board_batch.py list
+  ```
+
 - **Never `Read` a harness-persisted tool result whole — extract the one
   field.** When a result exceeds the inline cap the harness writes it to
   disk and shows a preview, which is a *saving*; reading that file back
@@ -238,12 +296,58 @@ into the transcript**:
   later turn — that's why `review-pr`'s waits use the compact `gh`
   reads above rather than the full-object MCP calls.
 
+- **Never read a verbose-by-refresh log whole — tail it.** This is a
+  distinct class from a build cascade, and it bites hardest because the
+  output *looks* like a normal log. A `--watch`-style command re-prints
+  its whole table on **every refresh**, so the file grows per poll
+  rather than per fact, and only the **last** state informs anything.
+  One session's single largest result (~13.1k) was a background
+  `gh pr checks --watch` log read whole, for a status that is one line.
+
+  So: for CI waiting use `python3 .claude/tools/wait_for_checks.py`,
+  which reports the terminal state and nothing else; for anything else
+  in this class — container logs, a progress-bar installer, a
+  re-rendering status table — tail it, don't read it. The same shape
+  covers a cold `pnpm install`, whose output is nearly all registry
+  retries and peer-dependency trees: route it through the quiet runner
+  (`python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`).
+
+- **Bound a probe or extraction script's output at both ends.** When
+  probing an unfamiliar external API, go **through a filtering script**
+  rather than a bare fetch: one bare `curl` of an FX feed catalogue cost
+  ~5.3k returning ~60 currencies with full attribute blocks, to extract
+  seven ids — the same session then filtered in Python for ~200 tokens
+  per probe and answered more. The mirror-image failure is a script
+  whose anchors are too loose: a CSS extraction slicing from a start
+  marker to a far-off end marker returned ~6.0k, ~90% unrelated
+  stylesheet, for a question about two selectors. Print what you need,
+  not the region it lives in.
+
+- **When replacing a binary asset, compare metadata before content.**
+  Reading the outgoing artifact to compare it against the incoming one
+  costs a full binary Read — one run paid ~8.8k re-reading an old
+  committed capture, where `file` dimensions on both answered the actual
+  question for ~337 tokens. Ask what you are really comparing:
+  dimensions, byte size, and format usually settle it, and looking is
+  only warranted once the metadata says they match and you still
+  disagree.
+
 - **Treat a screenshot as a 25–60k-token result class.** An image is
   not a cheap glance: a full-viewport (2560×1440) screenshot `Read`s at
   ~30–50k tokens, and on a visual-iteration run image Reads have been
   the top sink outright (~180k, ~88% of all Read in one session — three
-  separate captures ≈94k of it answering a single question). Request
-  one deliberately, and:
+  separate captures ≈94k of it answering a single question).
+
+  **The price is raw bytes ÷ 4, and that arithmetic is what makes it
+  predictable — so do it before the call, not after.** Pixel dimensions
+  are the wrong intuition: a *250px* PNG icon at 75–85KB is
+  **~20–28k tokens each**, which is why one session spent ~60k reading
+  three icons (out of 64.4k of total Read cost), and another spent
+  ~40.4k — 72% of all its Read — on one 3840×2160 slide capture to
+  answer "does the tagline fit on one line". Small on screen does not
+  mean small in context; check the file size.
+
+  Request one deliberately, and:
 
   - **Never re-`Read` an image already in context.** Like every tool
     result it is replayed each turn; a second Read buys the same

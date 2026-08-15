@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), reconcile Backlog file-collision links via a sync-blockers sweep (which files no blocking edge — blocking is human-curated) and propose merge groups from its collision clusters to minimize open PRs, then — only when given the `audit` flag (`/housekeeping audit`) — run one finite `/audit` rotation inline and exit; with no flag the audit is skipped. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep, flagging deferred items in its report (pass `interactive` to restore the per-step AskUserQuestion gates); either way it closes with one batched AskUserQuestion offering to act on everything it deferred, which an unattended run can simply leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs and dismiss their stale GitHub notifications, mine the Session Metrics inbox via trim-context (one aggregated propose-only task), propose merges among `Claude:`-prefixed meta-work issues only, and run one finite `/audit` rotation inline — the audit runs by DEFAULT, filing its findings parked under the Audit findings milestone, and is skipped only when given the `no-audit` flag. It does NOT analyze the board: collision sweeps, Backlog-wide merge groups, and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep, flagging deferred items in its report (pass `interactive` to restore the per-step AskUserQuestion gates); either way it closes with one batched AskUserQuestion offering to act on everything it deferred, which an unattended run can simply leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -9,11 +9,10 @@ user-invocable: true
 
 The **one thing to fire up when you arrive**: it
 does the morning upkeep — the chores that pile up while
-you develop but don't belong to any one PR — then, **when
-you pass the `audit` flag** (`/housekeeping audit`), runs
-one finite `/audit` rotation inline so a fresh batch of
-findings lands on the Backlog. With **no** flag it stops
-after the upkeep and skips the audit. It first
+you develop but don't belong to any one PR — then runs one
+finite `/audit` rotation inline, **by default**, so the repo
+stays continuously audited. Pass `no-audit` to skip it for a
+deliberately quick pass. It first
 fast-forwards `main` so the pass runs on the latest
 committed skills and upgrades the Claude Code CLI
 (best-effort), then:
@@ -30,20 +29,24 @@ committed skills and upgrades the Claude Code CLI
    points at a `CLAUDE.md` section or `docs/conventions/`
    doc that no longer exists, filing the drift
    **propose-only**.
-1. **Reconcile file-collision links and propose merge
-   groups** — run an optional full `sync-blockers` sweep to
-   catch any collision the file-time `--for` calls didn't
-   already link, then propose `merge-tasks` groups from its
-   collision clusters (propose-only) to keep open PR count
-   minimal. It files no blocking edge.
-1. **Run one audit rotation** — **only when the `audit`
-   flag was passed**, invoke `/audit` once (a single
-   finite rotation) inline, then **exit**. With no flag,
-   skip this and exit after the upkeep.
+1. **Propose merges among meta-work issues** — fold
+   near-duplicate `Claude:`-prefixed issues, which are this
+   skill's own filing output. Nothing else about the board
+   is touched.
+1. **Run one audit rotation** — invoke `/audit` once (a
+   single finite rotation) inline, then **exit**. Its
+   findings land **parked** under the Audit findings
+   milestone, so a rotation costs the pull queue nothing.
+   Pass `no-audit` to skip.
+
+**It does not analyze the board.** No collision sweep, no
+Backlog-wide merge-group scan, no scheduling-smell report:
+those belong to the `plan` skill, which is the session that
+actually decides sequencing. See "Why the board belongs to
+`plan`" below.
 
 The morning entry point is a **single one-shot run**:
-upkeep → one `/audit` rotation (only when the `audit` flag
-was passed) → closing gate → exit. By default the upkeep
+upkeep → one `/audit` rotation → closing gate → exit. By default the upkeep
 goes **start-to-finish with no `AskUserQuestion`
 interrupting it** — it files or flags its deferred items and
 reports rather than stopping to ask (see "One-shot vs.
@@ -73,29 +76,37 @@ a Backlog task to fix later.
 Optional, and accepts two independent arguments in any
 order:
 
-- **The `audit` flag** — when the invocation includes
-  `audit` (e.g. `housekeeping audit`), the pass runs one
-  finite `/audit` rotation inline after the upkeep
-  (step 11); without it the audit is **skipped** entirely
-  and the pass exits after the upkeep. So
-  `/housekeeping audit` does upkeep then one audit
-  rotation, while a bare `/housekeeping` does upkeep only.
-  (Unlike the old finding-cap argument, `/audit` is
-  itself finite — one rotation, no cap — so the flag only
-  decides *whether* to run it, not how much.)
+- **The `no-audit` flag** — the audit runs **by default**.
+  A bare `/housekeeping` does upkeep *and* one finite
+  `/audit` rotation (step 11); passing `no-audit` (e.g.
+  `housekeeping no-audit`) skips the rotation for a
+  deliberately quick pass.
+
+  **This reverses the old opt-in `audit` flag**, and the
+  reason is Part 10's parking change rather than a change of
+  heart about audits. A rotation now files its findings
+  **parked** under the Audit findings milestone, so it no
+  longer injects anything into the pull queue — which was
+  the entire cost of running it often. With that cost gone,
+  the default that keeps the repo continuously audited is
+  the right one. (`/audit` is itself finite — one rotation,
+  no cap — so the flag only decides *whether* to run it, not
+  how much.)
+
 - **The `cspell` flag** — when the invocation includes
   `cspell` (e.g. `housekeeping cspell` or
   `housekeeping audit cspell`, and likewise under
   `/loop 30m housekeeping cspell`), the pass runs the
   opt-in spelling-escape check (step 3); without it that
   step is skipped.
+
 - **The `interactive` flag** — by default the pass runs
   **one-shot**: start to finish with **no**
   `AskUserQuestion` gate, every interactive step taking its
   non-prompting branch so the morning driver never stalls
   waiting on an answer. Passing `interactive` (e.g.
   `housekeeping interactive`) restores the prompts — the
-  merge-group and Todo-blocks-Backlog gates (step 6), the
+  meta-work merge gate (step 6), the
   perms-cruft removal (step 7), the stale-memory purge
   (step 8), and the session-metrics (step 9) and
   purge-conversations (step 10) offers. See "One-shot vs.
@@ -111,14 +122,13 @@ The morning driver has to **run to completion** — a direct
 two modes, and the default is the non-interrupting one:
 
 - **One-shot (the default).** A bare `/housekeeping` (with
-  or without `audit` / `cspell`) and **every** `/loop`
+  or without `no-audit` / `cspell`) and **every** `/loop`
   cadence run. It fires **no** *intermediate*
   `AskUserQuestion`: each interactive step takes its
   **non-prompting branch** — the same branch the steps below
   label the *unattended* pass.
-  Concretely: step 6 **lists** its merge-group candidates
-  and its
-  Todo-blocks-Backlog pairs and resolves nothing; steps 7
+  Concretely: step 6 **lists** its meta-work merge
+  candidates and merges nothing; steps 7
   and 8 **propose / list** the perms cruft and the stale
   memories and delete nothing; and steps 9 and 10 (the
   session-metrics and purge-conversations offers) are
@@ -150,7 +160,7 @@ gate just fixes which branch the default takes.
 
 After the last upkeep step, fire **one** `AskUserQuestion`
 batching every decision the pass deferred. One pass surfaced
-four merge groups, a stale blocking edge, two allowlist
+several merge groups, two allowlist
 defects and three stale memories — every one of them needing
 a human decision the pass had deliberately declined to ask
 for. Today they are printed and forgotten, and the next pass
@@ -158,12 +168,8 @@ re-derives the identical list from scratch.
 
 Batch these, each **only when non-empty**:
 
-- the **merge-group proposals** from step 6 ("merge these?");
-- the **Todo-blocks-Backlog** and **urgent-inversion** pairs,
-  with the discharged-blocker ones separated out — a blocker
-  whose PR has already merged is a one-click cleanup, not a
-  scheduling decision, and mixing the two makes the whole
-  question harder to answer;
+- the **meta-work merge proposals** from step 6 ("merge
+  these?") — `Claude:`-prefixed issues only;
 - the **allowlist cruft** approved for removal in step 7;
 - the **stale memories** approved for purge in step 8;
 - the **inbox size** only when `trim-context` reports the
@@ -191,6 +197,44 @@ Three constraints on it:
 1. **It fires in both modes.** `interactive` restores the
    per-step prompts, which is a different thing.
 
+## Why the board belongs to `plan`
+
+This skill used to analyze the board: a full collision
+sweep, a Backlog-wide scan for merge groups, and a
+scheduling-smell report. **All three moved to the `plan`
+skill** (its steps 1–3).
+
+The reason is not that the work stopped mattering — it is
+that planning sessions now exist as a distinct session kind,
+and the work is theirs. Sequencing the board is a judgment
+call that needs the direction a planning session holds and
+this one does not. A housekeeping pass running between
+planning sessions was reaching board conclusions — updating
+edges, proposing merges — with none of that context, which
+put the two skills in conflict over the same artifact.
+
+What moved, and where it landed:
+
+- the **full collision sweep** → `plan` step 1's bootstrap.
+  It files only `related` links and no blocking edge, so it
+  is bookkeeping rather than judgment; it moved anyway,
+  because the operator's direction is that housekeeping
+  stops touching the board at all. The **file-time**
+  `sync_blockers.py --for` calls the filing skills make are
+  unaffected — those are part of filing, not board analysis.
+- **merge-group proposals** → `plan` step 2, alongside
+  Queue honesty, which is the decision they serve.
+- the **scheduling-smell scan** → `plan` step 1. It had no
+  stated home there before, yet a planning session ran it
+  and immediately found two dead edges holding an Urgent
+  issue out of the available set — so it earns its place.
+
+**The one carve-out that stays here** is step 6's meta-work
+merge proposal, scoped to the `Claude:` title prefix. That
+is not board sequencing: this skill *files* those issues
+itself via the `trim-context` mining pass, so folding its
+own near-duplicate output is upkeep on its own artifacts.
+
 ## Run it from the base repo root
 
 This skill operates **across** worktrees — it
@@ -205,15 +249,14 @@ edits** of its own: its only writes are removing
 merged worktrees, filing / staging Linear issues, and
 annotating the Linear Session Metrics doc with
 recommended dispositions (it never edits a skill
-unattended). When given the `audit` flag, its last step
-runs one `/audit` rotation (step 11), but housekeeping
-itself makes no source edit — the rotation only files
-Linear issues.
+unattended). Its last step runs one `/audit` rotation
+(step 11), but housekeeping itself makes no source edit —
+the rotation only files Linear issues, and files them
+parked.
 
-Run it **once when you arrive with the `audit` flag**
-(e.g. `housekeeping audit`) for the full morning-driver
-flow (it runs one audit rotation and exits), or with no
-flag for upkeep only, or drive ad-hoc upkeep on a
+Run it **once when you arrive** for the full morning-driver
+flow (upkeep, then one audit rotation, then exit), pass
+`no-audit` for upkeep only, or drive ad-hoc upkeep on a
 timer:
 
 ```sh
@@ -547,92 +590,33 @@ freshness lens does on the PR path — here, periodically.
   lands later through a normal PR. If everything resolves,
   file nothing and note "in sync" in the report.
 
-**6. Reconcile file-collision links and propose merge
-groups.** Invoke the `sync-blockers` skill (via the Skill
-tool) to run a **full sweep** over the open Backlog,
-`related`-linking any `**Touches**:` collision that isn't
-already linked. It files **no blocking edge** — blocking is
-human-curated (`CLAUDE.md` → "Blocking relations") — so
-nothing in this step reorders the board. The deterministic
-Python tool does all the work in its own process; this skill
-just triggers it and reports the tally. This sweep is a
-**catch-up**, not the primary mechanism: the filing skills
-(`linear-task`, `audit`, `audit-scope`, `merge-tasks`)
-already record each new issue's collisions at file time via
-`sync_blockers.py --for`, so the sweep only picks up what a
-`**Touches**:` line backfilled onto an *older* issue would
-newly imply. It needs `LINEAR_API_KEY` /
-`LINEAR_PROJECT_ID`; if either is unset, skip it and say so.
+**6. Propose merges among meta-work issues only.**
 
-**Then aggressively propose merge groups — minimize open
-PRs.** The filing default is the **fewest coherent PRs**
-(`docs/conventions/linear-automation.md` → "Fold coupled
-findings into one issue"), but issues still land separately
-over time. So after the sweep, scan the open Backlog for
-clusters that would sensibly land as **one PR**. The sweep's
-**collision clusters** section is the direct input here —
-it already groups the Backlog by shared paths, so read it
-rather than re-deriving the grouping. A cluster needn't
-overlap files, though: issues sharing a subsystem, crate, or
-language-domain also fold (several doc-/comment-freshness
-issues, or several low-risk refactors in one crate). For
-each cluster,
-**propose a `merge-tasks` group** rather than leaving it
-fragmented — propose-only: in an attended pass surface the
-groups via `AskUserQuestion` and run `/merge-tasks <ids>` on
-the ones approved; in an unattended pass just list the
-suggested groups and merge nothing. **Respect the coherence
-floor**: never propose folding across separate apps,
-languages, or deploy units (`merge-tasks`' own `cross_area`
-warning is the backstop). This is the board-level companion
-to the filing-time fold — it catches coupling that slipped
-through as separate issues.
+**This step does not analyze the board.** No collision
+sweep, no Backlog-wide merge-group scan, no scheduling-smell
+report — all three moved to the `plan` skill (its steps 1–3),
+which is where somebody is actually deciding sequencing.
+See "Why the board belongs to `plan`" below.
 
-**Then flag the two scheduling smells.** Both come from one
-read-only run of the same `sync_blockers.py` tool (it writes
-nothing):
+What remains is a narrow carve-out, and it exists because
+this skill is itself a **producer** of issues: step 4 runs
+the `trim-context` mining pass, and repeated passes can file
+near-duplicate aggregated tasks. Folding those is upkeep on
+this skill's **own output**, not board sequencing.
 
-```sh
-python3 .claude/tools/sync_blockers.py --report-todo-blocks
-```
+So: scan open issues whose titles carry the **`Claude:`**
+meta-work prefix, and propose folding any that would land as
+one PR. Scope it by that title token — an issue without the
+prefix is out of scope for this step, whatever it touches.
+Propose-only, as everywhere else here: in an attended pass
+surface the groups via `AskUserQuestion` and run
+`/merge-tasks <ids>` on the approved ones; in a one-shot
+pass just list the suggestions and merge nothing. The
+**coherence floor** still binds (`merge-tasks`' own
+`cross_area` warning is the backstop).
 
-It prints two keys:
-
-```txt
-{
-  todo_blocks_backlog: [{blocker, blocker_state, blocked}],
-  urgent_gated_by_non_urgent: [
-    {blocker, blocker_priority, blocked_urgent}
-  ]
-}
-```
-
-- **A `Todo`-state issue blocking a `Backlog` issue.** Per
-  the Todo/Backlog convention
-  (`docs/conventions/linear-automation.md`) initiatives /
-  meta live in `Todo` and pullable work in `Backlog`, so a
-  `Todo` blocker gating a `Backlog` issue is a smell: a
-  not-yet-pulled or initiative-level item gates work that
-  sits in the pull queue, so the Backlog item can't actually
-  be started. Resolve by moving the blocker into Backlog,
-  dropping a non-dependency edge, or re-prioritizing.
-- **A non-Urgent issue blocking an `Urgent` one.** Nothing
-  automated creates this any more — no automated writer files
-  a blocking edge at all — but edges filed before that rule,
-  or placed by hand, survive. An Urgent Backlog issue is
-  meant to be pullable now; a `Medium` feature gating it makes
-  it unpullable until that feature ships. Resolve by dropping
-  the edge, or by **reversing** it so the Urgent fix lands
-  first. Both are the human's call: **report the pair, never
-  rewrite it** — a human-placed edge is authoritative.
-
-**Always list** every pair from both lists in the report
-(blocker `ENG-###` + its state/priority → the blocked
-`ENG-###`). In an **interactive** pass, also **ask to
-resolve** each via `AskUserQuestion`; in a **one-shot** pass,
-just list them and resolve nothing. It needs the same
-`LINEAR_API_KEY` / `LINEAR_PROJECT_ID` as the sweep; skip and
-say so if either is unset.
+If no meta-work duplicates are open, say "no meta-work
+merges proposed" and move on.
 
 **7. Audit the base-repo permission allowlist for cruft.**
 `firm-perms` only ever **adds** to
@@ -784,35 +768,38 @@ deleting anything, so this is a two-gate handoff, never an
 unattended delete. (In an unattended pass with no one to
 answer, skip the offer — nothing is purged.)
 
-**11. Run one audit rotation (only when the `audit` flag was
-passed).** The morning's last act: with upkeep done, the
-**`audit` flag decides whether to run a rotation** —
-passing it *is* the go-ahead, so there is no separate
-prompt (this is the one handoff in the suite that's
-arg-gated rather than `AskUserQuestion`-gated, precisely
-because the flag carries the intent).
+**11. Run one audit rotation (unless `no-audit` was
+passed).** The morning's last act, and it runs **by
+default** — there is no prompt, because a rotation no longer
+costs the pull queue anything.
 
-- **The `audit` flag was passed** (`housekeeping audit`) →
-  invoke the `audit` skill (via the Skill tool) **once**.
-  `/audit` is finite — a single seven-unit rotation that
-  files its findings (recording each one's file collisions
-  via `sync-blockers --for` as it goes), fires a high-severity
-  `PushNotification` only when something warrants
-  interrupting you, and stops on its own with a `DONE`
-  line. It runs **inline** (it's bounded, so there's no
-  background campaign to wait on), then **this housekeeping
-  pass exits**.
-- **No `audit` flag** → skip the audit entirely and end
-  the pass after the upkeep. (To run a rotation, re-run
-  with the `audit` flag, or invoke `/audit` directly.)
+- **Default** → invoke the `audit` skill (via the Skill
+  tool) **once**. `/audit` is finite — a single seven-unit
+  rotation that files its findings (recording each one's
+  file collisions via `sync-blockers --for` as it goes),
+  fires a high-severity `PushNotification` only when
+  something warrants interrupting you, and stops on its own
+  with a `DONE` line. It runs **inline** (it's bounded, so
+  there's no background campaign to wait on), then **this
+  housekeeping pass exits**.
+- **`no-audit` was passed** → skip the rotation and end
+  the pass after the upkeep.
+
+**Findings land parked, and say so.** Every finding the
+rotation files carries the **Audit findings** project
+milestone, which means *parked* — a first-class open issue
+for dedup, collision detection and search, but **not** in
+the pull queue and invisible to a planning bootstrap until
+somebody asks for it. So when reporting the rotation, give
+**counts and titles only**, and state plainly that the
+findings are parked and awaiting sequencing. A
+`/housekeeping` run must not read as having queued work;
+promoting a finding is the `plan` skill's call (its step 8).
 
 **The kickoff is a one-shot, not a loop.** `/audit` is a
 single bounded rotation, not a continuous campaign — it
 files what its seven units surface and stops. To audit
-again, run `housekeeping audit` (or `/audit`) again. The
-rotation records each finding's file collisions as it files
-them; the next pass's step 6 is the full reconciliation
-sweep.
+again, run `/housekeeping` (or `/audit`) again.
 
 **12. Report.** Print a short summary:
 
@@ -847,19 +834,13 @@ sweep.
 - Convention references: in sync, or the dangling
   `CLAUDE.md` / `docs/conventions/` references filed
   (with the ENG-### of the aggregated task).
-- File collisions: the `sync-blockers` reconciliation
-  sweep's one-line tally (backlog issue count + collision
-  links filed) **plus its collision clusters**, or why it
-  was skipped (e.g. a missing env
-  var); and any **Todo-blocks-Backlog** pairs flagged
-  (blocker `ENG-###`/state → blocked `ENG-###`), plus which
-  were resolved in an interactive pass — or that there were
-  none.
-- Merge-group proposals: the coherent coupled-issue clusters
-  proposed for folding via `merge-tasks` and which the human
-  approved merging (attended), or the suggested groups listed
-  (unattended) — or that the Backlog had none worth folding.
-- Permission allowlist: the base-repo `settings.local.json`
+- Meta-work merge proposals: the near-duplicate
+  `Claude:`-prefixed clusters proposed for folding via
+  `merge-tasks` and which the human approved merging
+  (attended), or the suggested groups listed (unattended) —
+  or that there were none. **Nothing about the wider board**
+  is reported here; that is the `plan` skill's output.
+- Permission allowlist: the `settings.local.json`
   entries flagged as cruft and, for an attended pass, which
   the human approved removing — or that it was clean.
 - Auto-memory: the memory slugs flagged stale (with the
@@ -870,16 +851,23 @@ sweep.
   was offered and accepted for this session, or skipped.
 - Purge-conversations: whether a `/purge-conversations` run
   was offered and accepted (with the MB freed), or skipped.
-- Audit: one `/audit` rotation ran inline (with its
-  `DONE` tally), or was skipped because the `audit` flag
-  wasn't passed.
+- Audit: one `/audit` rotation ran inline — report its
+  **count and the finding titles only**, and say that they
+  are **parked** under the Audit findings milestone awaiting
+  sequencing by a planning session. Or that it was skipped
+  because `no-audit` was passed.
 
 **13. Fire the closing gate.** With the report printed, batch
 every deferred decision into the single `AskUserQuestion`
-described in "The closing gate" above — the merge groups, the
-scheduling pairs, the allowlist cruft, the stale memories,
+described in "The closing gate" above — the meta-work merge
+groups, the allowlist cruft, the stale memories,
 the inbox size — including only the categories that are
 non-empty. This runs in **both** modes.
+
+**The parked audit findings are not part of this gate.**
+Offering to slate them in is the `plan` skill's step 8;
+asking here would put a sequencing decision in the session
+that deliberately does not do sequencing.
 
 Act on whatever comes back, and if nothing does (an
 unattended run with nobody watching), that's fine: the pass

@@ -5,14 +5,19 @@ The deterministic core of the ``/f`` fast-firm skill. ``/f`` is typed right
 after you one-time-approve a permission prompt, so the just-approved command is
 the most recent *executed* tool call in the session transcript. This tool finds
 it, generalizes it into a reusable allow-rule (via ``firm_core``), and writes
-that rule into this worktree's and the base repo's ``settings.local.json`` —
-the worktree copy hot-reloads for the running session, the base copy seeds
-future worktrees.
+that rule into ``settings.local.json`` at the **main checkout**.
+
+That is the only write target, and deliberately so. Claude Code resolves
+``.claude/settings.local.json`` through a worktree to the main checkout for
+reads *and* writes, so one file governs every worktree; a rule firmed from
+inside a worktree is live everywhere immediately. An earlier version also
+wrote a copy under the active worktree, which was redundant at best and
+actively misleading at worst — nothing ever reads that path, so a stale copy
+there looks live while doing nothing.
 
 Usage:
     python3 .claude/tools/firm_last.py            # generalize + firm
     python3 .claude/tools/firm_last.py exact      # firm the command verbatim
-    python3 .claude/tools/firm_last.py --base-only # skip the worktree write
 """
 
 from __future__ import annotations
@@ -210,7 +215,9 @@ def main(argv: list[str] | None = None) -> int:
         help="pass 'exact' to firm the command verbatim instead of generalized",
     )
     parser.add_argument(
-        "--base-only", action="store_true", help="skip the worktree write"
+        "--base-only",
+        action="store_true",
+        help="accepted and ignored; the base repo is the only write target",
     )
     parser.add_argument("--session-id", default=None, help="override the session id")
     args = parser.parse_args(argv)
@@ -244,32 +251,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    worktree_settings = Path.cwd() / ".claude" / "settings.local.json"
+    # There is exactly ONE settings.local.json: Claude Code resolves it
+    # through a worktree to the main checkout, for reads and writes alike.
+    # Writing a second copy under the worktree would produce a file nothing
+    # ever reads — worse than useless, because it looks live.
     base = find_base_repo()
-    targets: list[tuple[str, Path]] = []
-    if not args.base_only:
-        targets.append(("this worktree", worktree_settings))
-    if base:
-        base_settings = Path(base) / ".claude" / "settings.local.json"
-        if base_settings != worktree_settings:
-            targets.append(("base repo", base_settings))
-    elif not args.base_only:
-        print("firm-last: no main worktree found — firming only this worktree.")
-
-    if not targets:
-        # --base-only with no base repo resolvable: nothing to write anywhere.
-        print("firm-last: no base repo found — nothing firmed.")
+    if base is None:
+        print("firm-last: no main worktree found — nothing firmed.")
         return 0
+    target = Path(base) / ".claude" / "settings.local.json"
 
     try:
-        changed = [label for label, path in targets if firm_into(path, rule)]
+        changed = firm_into(target, rule)
     except firm_core.SettingsError as exc:
         # An existing settings file that doesn't parse: report it rather than
         # letting the writer replace it (or dying on a raw traceback).
         print(f"firm-last: {exc}", file=sys.stderr)
         return 1
     if changed:
-        print(f"firm-last: firmed {rule} into {', '.join(changed)}.")
+        print(f"firm-last: firmed {rule} into {target}.")
     else:
         print(f"firm-last: {rule} already covered — nothing to firm.")
     return 0

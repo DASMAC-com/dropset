@@ -56,8 +56,14 @@ only here: `docs/conventions/linear-automation.md`.
 ### Structured filing fields
 
 Every filed issue carries stable machine-readable fields the automation
-parses: `**Fingerprint**: <basename>:<slug>` (the dedup key) and
+parses: `**Fingerprint**: <domain-token>:<slug>` (the dedup key) and
 `**Touches**: <glob>[, …]` (the path globs, for collision detection).
+The fingerprint's first token is a **dotless domain token, never a bare
+`name.ext`** — Linear linkifies a hostname-valid basename and corrupts
+the key (`feeds-http:…`, not `http.rs:…`). Two further Linear
+write-mangle rules bind every filed body: **never let an emphasis span
+wrap a newline**, and **never start a machine-parsed field with a bare
+hostname-valid `name.ext`**.
 A rotation folds coupled findings into the **fewest coherent PRs** —
 fold every set that would land as one PR (same subsystem / crate /
 language-domain) into a single issue, keeping each finding's own

@@ -198,8 +198,7 @@ writes to confirm-on-use:
   one write on the `gh api graphql` rule) — so it needs no allow-rule
   of its own. These are
   Bash globs, not `mcp__github__*` entries, but they're pre-approved on
-  the same rationale (routine, low-blast-radius calls) and propagated to
-  the base repo so future worktrees inherit them.
+  the same rationale (routine, low-blast-radius calls).
 - **Pre-approve (routine PR-authoring writes):** `create_pull_request`
   (init-pr) and `update_pull_request` (pr-title-description, review-pr).
   The skills call these on every run to open
@@ -223,8 +222,9 @@ mutations.**
 The MCP entries are `mcp__github__<tool>` permission strings, not
 `Bash(…)`
 globs — and because of the single-tool-many-methods shape, one
-allow-rule per read tool covers all of its methods. Propagate the
-pre-approved allow-rules (the reads, the companion `gh` reads, and the
-routine PR-authoring writes)
-to the **base-repo** settings so future worktrees inherit them (per the
-per-worktree settings rule); `firm-perms` does this at session end.
+allow-rule per read tool covers all of its methods. They go in
+`settings.local.json` like any other rule, which is **one shared file
+resolved through worktrees to the main checkout** — so firming them
+once makes them live in every worktree, with nothing to propagate
+(see `local-integrations.md` → "How settings files resolve across
+worktrees"). `firm-perms` writes them at session end.

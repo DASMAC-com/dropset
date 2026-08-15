@@ -1,6 +1,6 @@
 ---
 name: audit
-description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent Backlog issues (folding coupled findings that share a PR), records each new issue's file collisions via sync-blockers `--for` (never a blocking edge — blocking is human-curated), announces, and stops. No loop, no finding cap, no re-invocation — run it again for another rotation.
+description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent issues (folding coupled findings that share a PR) stamped with the `Audit findings` project milestone so they land PARKED rather than in the pull queue, records each new issue's file collisions via sync-blockers `--for` (never a blocking edge — blocking is human-curated), announces counts and titles only, and stops. Sequencing a parked finding into the Backlog is the `plan` skill's job, never this one's. No loop, no finding cap, no re-invocation — run it again for another rotation.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -13,9 +13,12 @@ Run **one bounded audit rotation** and exit. A rotation is a fixed
 sequence of **seven units** — four random files plus three structural
 passes — each audited across the dimensions its subject calls for, with
 adversarial cross-checking, folding coupled findings and filing the
-fewest self-contained **Backlog** issues (no parent — the same
-no-parent Backlog `linear-task` files into) so the work can be picked
-up in parallel without blocking the repo. What gates what is recorded
+fewest self-contained issues (no parent), each stamped with the
+**`Audit findings` project milestone** so it lands **parked** — a
+first-class open issue for dedup, collision detection and search, but
+*not* in the pull queue. Slating a finding into the Backlog is a
+sequencing decision, and it belongs to a planning session (`plan`
+step 8), never to a rotation. What gates what is recorded
 as native Linear blocking edges, which a **human curates** — an
 autonomous rotation files none (per `CLAUDE.md` → "Blocking
 relations"). Recording file overlap is a separate job, owned by
@@ -28,8 +31,9 @@ It is **finite**: it runs the seven units once, files what they surface
 a single `DONE` line. There is **no `/loop`, no finding cap, and no
 re-invocation** — the rotation *is* the bound. To audit more, run
 `/audit` again; each run is one independent rotation. `housekeeping`
-runs exactly one rotation inline when invoked with its `audit` flag
-(`/housekeeping audit`).
+runs exactly one rotation inline **by default** (skipped only with its
+`no-audit` flag) — the repo is continuously audited, which is
+affordable precisely because findings land parked.
 
 This skill sets `disable-model-invocation: false`, so it can be invoked
 through the Skill tool directly (e.g. by `housekeeping`).
@@ -85,8 +89,8 @@ pushes, or force-updates.
 
 **Where to run it.** Run `/audit` from a dedicated, throwaway worktree
 you never commit in. Because the skill keeps **no local state** (see
-below), the worktree stays pure scratch space while findings land in
-the Dropset Linear Backlog.
+below), the worktree stays pure scratch space while findings land
+parked in the Dropset Linear project.
 
 ## No local state — Linear is the source of truth
 
@@ -113,12 +117,27 @@ isn't refiled when surrounding code moves):
 
 - **FILE findings.** The agent's `fingerprint_slug` is
   `<topic-slug>:<detail-slug>` (the *what*, with no file component).
-  The stored fingerprint prepends the file's basename:
-  `fingerprint = "<basename>:<fingerprint_slug>"`
-  = `<basename>:<topic-slug>:<detail-slug>`, e.g.
-  `swap.rs:slippage:no-min-out`. `<basename>` is the final path
-  component including extension (`swap.rs`), **not** the full path — so
-  a moved file keeps its key.
+  The stored fingerprint prepends a **dotless domain token** derived
+  from the file:
+  `fingerprint = "<domain-token>:<fingerprint_slug>"`
+  = `<domain-token>:<topic-slug>:<detail-slug>`, e.g.
+  `swap:slippage:no-min-out`.
+
+  **Deriving `<domain-token>`:** take the final path component, **drop
+  the extension**, and replace any remaining `.` with `-`. So
+  `programs/dropset/src/swap.rs` → `swap`. It is derived from the
+  basename rather than the full path, so **a moved file keeps its
+  key**. When the stem is a generic module name — `mod`, `main`,
+  `lib`, `index` — it says nothing on its own, so prefix the parent
+  directory: `feeds/src/mod.rs` → `feeds-mod`.
+
+  **The extension must go.** A bare `swap.rs` is hostname-valid (`.rs`
+  is a real TLD), and Linear **linkifies** a fingerprint line that
+  starts with one — storing `[swap.rs](<http://swap.rs>):…` and
+  corrupting the key the dedup search matches on. Dropping the
+  extension is what makes the token safe, and it costs nothing:
+  the extension was never load-bearing for dedup.
+
 - **Structural findings** (SUBSYSTEM / INTERFACE / LAYOUT). There is no
   single basename, so the agent's `fingerprint_slug` is
   `<lens>:<topic-slug>` where `<lens>` is the subsystem name
@@ -129,6 +148,7 @@ isn't refiled when surrounding code moves):
   e.g. `arch:program-sdk-clients:idl-event-drift`. The `arch:` prefix
   is shared across all three structural units, so it stays continuous
   with fingerprints filed by earlier rotations.
+
 - **Slugging.** Every `<…-slug>` is lowercased, with each run of
   non-alphanumeric characters collapsed to a single `-` and
   leading/trailing `-` trimmed, so the transform is deterministic and
@@ -300,14 +320,44 @@ filing**. A resolved match means the finding was already triaged
 (Done / Won't-fix / Canceled); refiling it would reopen settled noise.
 Only findings that survive the check proceed.
 
-**File the confirmed findings as Backlog issues** — folded into the
+**File the confirmed findings as parked issues** — folded into the
 fewest coherent PRs (see "Fold coupled findings into the fewest coherent
 issues" below), one issue per PR-group rather than one per finding.
 File exactly as the
-`linear-task` skill does: a **plain Backlog issue with no parent**,
-assigned to the configured assignee, into the shared destination.
-There is **no umbrella issue** — the project Backlog is the queue, and
+`linear-task` skill does: a **plain issue with no parent**,
+assigned to the configured assignee, into the shared destination —
+**and stamped with the `Audit findings` project milestone**.
+There is **no umbrella issue**, and
 `sync-blockers` records file collisions between its issues.
+
+**Why the milestone, and why it is not the Backlog.** The Backlog is
+the **pullable set** — the queue an implementation session pulls from
+(see `.claude/skills/plan/SKILL.md` step 1 for the three-tier board
+schema). Filing findings straight into it injects work into the pull
+queue with no sequencing decision having been made, and thirty or forty
+queued findings is both board bloat and bootstrap-read bloat for the
+most expensive session in the rotation. A **project milestone means
+parked**: Linear collapses it out of the default view, so a parked
+finding costs a planning bootstrap nothing while remaining a
+first-class open issue for **dedup, collision detection, and search**.
+
+Everything else about filing is **unchanged** — the `**Fingerprint**:`
+dedup, the `**Touches**:` globs, the fewest-coherent-PRs fold, the
+`Claude:` prefix, and the per-issue collision sweep all behave exactly
+as before. The milestone is the only addition.
+
+*Rejected alternative, recorded so it is not re-derived:* a doc-based
+inbox (by analogy to the session-metrics / `trim-context` pair) was
+considered and rejected. It relocates the bloat into the planning
+session rather than removing it — worse, given where that context is
+paid — and, decisively, it **breaks audit's own dedup**: dedup searches
+open *issues* for a fingerprint, so findings living in a document are
+invisible to the next rotation and every finding gets re-filed each
+pass.
+
+**The `Audit findings` milestone already exists** in the Dropset
+project. Use it; never create a second one.
+
 Resolve the destination
 IDs from the environment exactly as `linear-task` does — never
 hard-code them — with a bare `printenv` per variable (each reduces to
@@ -331,6 +381,7 @@ mcp__claude_ai_Linear__save_issue(
   project: "<$LINEAR_PROJECT_ID>",
   assignee: "<$LINEAR_ASSIGNEE_ID>",
   state: "Backlog",
+  milestone: "Audit findings",   // parked — see above
   title: "<file>: <imperative fix, no trailing period>",
   description: "<markdown body, literal newlines>",
   priority: 3  // 2 for high-severity security
@@ -365,7 +416,7 @@ and is unaffected by this.
 **Fold coupled findings into the fewest coherent issues.** A rotation
 should file the **fewest coherent PRs**, not one issue per finding.
 Whenever findings belong in the **same PR**, file them as **one combined
-Backlog issue**: one title, the per-finding notes under per-source
+parked issue**: one title, the per-finding notes under per-source
 sub-headings, a `**Fingerprint**:` line for **each** finding (the
 union), and a union `**Touches**:`.
 
@@ -436,7 +487,8 @@ The description must let a cold agent act on it in its own worktree
   one-off.
 
 - `**Fingerprint**: <fingerprint>` — the exact dedup key (e.g.
-  `swap.rs:slippage:no-min-out`). This line is **mandatory**: it is
+  `swap:slippage:no-min-out`; note the **dotless** leading token —
+  see Fingerprints above). This line is **mandatory**: it is
   what makes dedup durable. Step 1 reads it back to rebuild the dedup
   set, so a wiped worktree recovers dedup state from Linear instead of
   refiling everything.
@@ -488,7 +540,8 @@ collision between two issues the coherence floor kept separate is a
 candidate for landing them as one PR, which is the human's call.
 
 **Structural findings** (SUBSYSTEM / INTERFACE / LAYOUT) are filed the
-same way (plain Backlog issue, same IDs, no parent) but as **one
+same way (plain parked issue, same IDs, same milestone, no parent) but
+as **one
 detailed proposal issue each** — they are not atomically fixable, so
 don't pretend otherwise. Don't include the "safe to fix in isolation"
 line; use this body instead:
@@ -514,8 +567,18 @@ Priority 3; these are proposals for the user to triage, not
 pre-approved work. Title them by area, e.g.
 `arch: decouple the matcher from Market storage layout`.
 
-**Announce.** For each newly filed issue, print a prominent line:
-`FILED ENG-### [<dimension>/<severity>] <subject> — <title>`. If at
+**Announce — counts and titles only, and say they are parked.** For
+each newly filed issue, print a prominent line:
+`FILED ENG-### [<dimension>/<severity>] <subject> — <title>`. Then
+close the announcement by stating plainly that the findings are
+**parked under the Audit findings milestone and await sequencing** —
+a rotation must not read as having queued work, because it hasn't.
+
+Do **not** print finding bodies or rationale in the announcement; the
+issues carry those, and a planning session fetches a body only for a
+finding it is actually promoting.
+
+If at
 least one **high-severity** issue was filed this rotation, send exactly
 **one** `PushNotification` summarizing the top one — so a background or
 inline run interrupts you only when it matters. If nothing was filed,
@@ -529,7 +592,7 @@ so there is no end-of-rotation sweep. Print a single final line and
 **stop** — there is no re-invocation:
 
 ```txt
-DONE audit | filed <t> (h/m/l) | deduped <d> | collisions linked
+DONE audit | filed <t> parked (h/m/l) | deduped <d> | collisions linked
 ```
 
 To run another rotation later, just invoke `/audit` again — it samples
