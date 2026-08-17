@@ -60,6 +60,81 @@ export class Quote {
 if (Symbol.dispose) Quote.prototype[Symbol.dispose] = Quote.prototype.free;
 
 /**
+ * Both sides of the reconstructed resting book, as parallel flat arrays.
+ *
+ * Each side is two equal-length arrays rather than an array of level
+ * objects: wasm-bindgen maps `Vec<u32>` / `Vec<u64>` onto `Uint32Array` /
+ * `BigUint64Array`, so a book crosses the boundary as four typed arrays
+ * instead of one JS object per level, each of which the caller would have
+ * to `free()`. `prices[i]` and `sizes[i]` describe level `i`.
+ *
+ * `sizes` are **base atoms on both sides** — an ask carries base directly,
+ * a bid's matchable quote leg is converted to base at the level price (and
+ * saturated to `u64`) by [`resting_levels`](crate::matching::resting_levels)
+ * — so the two sides are directly comparable.
+ */
+export class RestingBook {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(RestingBook.prototype);
+        obj.__wbg_ptr = ptr;
+        RestingBookFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        RestingBookFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_restingbook_free(ptr, 0);
+    }
+    /**
+     * Ask prices as raw `Price` bits, best (lowest) first.
+     * @returns {Uint32Array}
+     */
+    get ask_prices() {
+        const ret = wasm.restingbook_ask_prices(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Ask depth in base atoms, aligned with [`Self::ask_prices`].
+     * @returns {BigUint64Array}
+     */
+    get ask_sizes() {
+        const ret = wasm.restingbook_ask_sizes(this.__wbg_ptr);
+        var v1 = getArrayU64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * Bid prices as raw `Price` bits, best (highest) first.
+     * @returns {Uint32Array}
+     */
+    get bid_prices() {
+        const ret = wasm.restingbook_bid_prices(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Bid depth in base atoms, aligned with [`Self::bid_prices`].
+     * @returns {BigUint64Array}
+     */
+    get bid_sizes() {
+        const ret = wasm.restingbook_bid_sizes(this.__wbg_ptr);
+        var v1 = getArrayU64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+}
+if (Symbol.dispose) RestingBook.prototype[Symbol.dispose] = RestingBook.prototype.free;
+
+/**
  * `quote / price`, rounded toward zero (saturated to u64).
  * @param {number} bits
  * @param {bigint} quote
@@ -110,6 +185,39 @@ export function price_is_valid(bits) {
 export function price_quote_for_base(bits, base) {
     const ret = wasm.price_quote_for_base(bits, base);
     return BigInt.asUintN(64, ret);
+}
+
+/**
+ * Reconstruct **both sides** of the resting book from a market account's
+ * raw data (including the 8-byte discriminator) — the depth view behind an
+ * order-book UI, and the same book [`simulate_swap`] fills against.
+ *
+ * Level expiry is **dual-domain**: `now_slot` is the current slot and
+ * `now_unix` the current wall-clock time in unix **seconds**, and a level
+ * rests only while it is inside both of its deadlines. Passing one where
+ * the other belongs silently resurrects expired levels (or kills live
+ * ones).
+ *
+ * Both sides come from one `MarketView::load`, so a UI polling the book
+ * pays a single decode per account fetch. An empty side means either no
+ * live levels or a book the engine would reject (a corrupt active list) —
+ * a router must not show depth the engine won't fill.
+ *
+ * Note the side mapping: `SwapSide::Buy` *takes from* the asks, so the ask
+ * side is collected with `Buy` and the bid side with `Sell`.
+ * @param {Uint8Array} market_data
+ * @param {number} now_slot
+ * @param {number} now_unix
+ * @returns {RestingBook}
+ */
+export function resting_book(market_data, now_slot, now_unix) {
+    const ptr0 = passArray8ToWasm0(market_data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.resting_book(ptr0, len0, now_slot, now_unix);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return RestingBook.__wrap(ret[0]);
 }
 
 /**
@@ -171,10 +279,39 @@ function __wbg_get_imports() {
 const QuoteFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_quote_free(ptr >>> 0, 1));
+const RestingBookFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_restingbook_free(ptr >>> 0, 1));
+
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
+function getArrayU64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getBigUint64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+}
+
+let cachedBigUint64ArrayMemory0 = null;
+function getBigUint64ArrayMemory0() {
+    if (cachedBigUint64ArrayMemory0 === null || cachedBigUint64ArrayMemory0.byteLength === 0) {
+        cachedBigUint64ArrayMemory0 = new BigUint64Array(wasm.memory.buffer);
+    }
+    return cachedBigUint64ArrayMemory0;
+}
 
 function getStringFromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return decodeText(ptr, len);
+}
+
+let cachedUint32ArrayMemory0 = null;
+function getUint32ArrayMemory0() {
+    if (cachedUint32ArrayMemory0 === null || cachedUint32ArrayMemory0.byteLength === 0) {
+        cachedUint32ArrayMemory0 = new Uint32Array(wasm.memory.buffer);
+    }
+    return cachedUint32ArrayMemory0;
 }
 
 let cachedUint8ArrayMemory0 = null;
@@ -218,6 +355,8 @@ let wasmModule, wasm;
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
+    cachedBigUint64ArrayMemory0 = null;
+    cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;

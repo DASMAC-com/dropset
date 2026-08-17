@@ -74,6 +74,30 @@ export function isValidPrice(bits: PriceBits): boolean {
   return sig >= SIGNIFICAND_MIN && sig <= SIGNIFICAND_MAX;
 }
 
+/**
+ * Whether `bits` can anchor a matchable book — a real price rather than a
+ * sentinel or a garbage bit pattern: {@link isValidPrice} and neither
+ * {@link PRICE_ZERO} nor {@link PRICE_INFINITY}. Mirrors
+ * `Price::is_matchable`.
+ *
+ * This is the **matching gate** the engine applies per vault: a vault whose
+ * reference price fails it is skipped entirely rather than aborting the
+ * swap, so the two sentinels double as a way to take a book dark without
+ * touching its `LiquidityProfile` — which is how the maker bot invalidates
+ * stale quotes, making a zero reference price a routine runtime state
+ * rather than a theoretical one.
+ *
+ * Exposed as one predicate because a reader that decides "is this vault
+ * quoting?" has to agree with the engine bit for bit, and an open-coded
+ * conjunction is where that drifts — Rust consolidated five copies into
+ * `Price::is_matchable` for the same reason. Composed here from the three
+ * predicates the conformance vectors already pin, so it inherits their
+ * pinning rather than adding a fourth thing to keep in sync.
+ */
+export function isMatchablePrice(bits: PriceBits): boolean {
+  return isValidPrice(bits) && !isZeroPrice(bits) && !isInfinityPrice(bits);
+}
+
 /** Assemble raw bits from a validated significand and **biased** exponent. */
 export function priceFromParts(
   significand: number,

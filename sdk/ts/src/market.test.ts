@@ -1,17 +1,40 @@
 /**
- * Unit-test the market slab decode + level materialization against a
- * hand-built fixture — the TS counterpart to the Rust `matching.rs` tests.
- * The fixture mirrors those: a one-vault EUR/USD market, exercised on both
- * the stored `remaining` path and the flush `LiquidityProfile` path.
+ * Unit-test the market reader against a hand-built fixture — the TS
+ * counterpart to the Rust `matching.rs` tests. The fixture mirrors those: a
+ * one-vault EUR/USD market, exercised on both the stored `remaining` path
+ * and the flush `LiquidityProfile` path.
+ *
+ * **What this file pins, now that the reader delegates to the engine.** The
+ * decode and the book math live in Rust and reach TS through the WASM
+ * binding, so these tests are not re-testing the materialization rules —
+ * `matching.rs` owns those, and its own tests cover them. What they test is
+ * the seam: that the byte layout written below is the byte layout the engine
+ * reads, and that both sides marshal back across the boundary intact.
+ *
+ * That makes the offset constants here load-bearing in a way they were not
+ * before. They used to be a second copy of the same constants the reader
+ * itself declared, so the two agreed with each other whether or not either
+ * agreed with the chain — which is exactly how the layout drifted once. Now
+ * the fixture is the input and the engine is the oracle: if `layout.rs`
+ * moves a field and this file doesn't follow, these tests go red instead of
+ * quietly agreeing with a stale mirror.
  *
  * Run: `pnpm --filter @dropset/sdk test`.
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { decodeMarketSlab, marketViewFromSlab } from './market';
+import { decodeDropsetMarketView } from './market';
 import { baseForQuote, priceFromParts } from './price';
+import { initSimulator } from './simulate';
+
+// `initSimulator` resolves the `.wasm` asset relative to the module by
+// default, which needs a bundler's asset pipeline; under Node we hand it the
+// committed bytes. The market reader and the swap simulator share one module
+// instance, so this single init covers both.
+await initSimulator(readFileSync(new URL('./wasm/dropset_interface_bg.wasm', import.meta.url)));
 
 // Slab layout constants (mirror `layout.rs`): discriminator + on-chain
 // MarketHeader (253) = the offset of the u32 slab length; the first sector
@@ -109,7 +132,7 @@ function remainingMarket(): Uint8Array {
 }
 
 test('remaining asks are best-first and base-sized', () => {
-  const view = marketViewFromSlab(decodeMarketSlab(remainingMarket()), 1, 1);
+  const view = decodeDropsetMarketView(remainingMarket(), 1, 1);
   assert.deepEqual(view.asks, [
     { price: enc(10_904_000), size: 1_000_000n },
     { price: enc(11_393_000), size: 800_000n },
@@ -117,7 +140,7 @@ test('remaining asks are best-first and base-sized', () => {
 });
 
 test('remaining bids are best-first and normalized to base', () => {
-  const view = marketViewFromSlab(decodeMarketSlab(remainingMarket()), 1, 1);
+  const view = decodeDropsetMarketView(remainingMarket(), 1, 1);
   const best = enc(10_796_000);
   const next = enc(10_416_000);
   assert.deepEqual(view.bids, [
@@ -126,9 +149,18 @@ test('remaining bids are best-first and normalized to base', () => {
   ]);
 });
 
+test('the header decodes alongside the book', () => {
+  // The header comes from the IDL-generated codec and the book from the
+  // engine; this pins that the two agree on where the header ends, which is
+  // the one offset the TS side still has to know.
+  const view = decodeDropsetMarketView(remainingMarket(), 1, 1);
+  assert.equal(view.header.head, 0);
+  assert.equal(view.header.activeCount, 1);
+});
+
 test('levels expired at the current slot are excluded', () => {
   // Every level expires at u32::MAX; past it the book is empty both sides.
-  const view = marketViewFromSlab(decodeMarketSlab(remainingMarket()), NULL_SECTOR, NULL_SECTOR);
+  const view = decodeDropsetMarketView(remainingMarket(), NULL_SECTOR, NULL_SECTOR);
   assert.equal(view.asks.length, 0);
   assert.equal(view.bids.length, 0);
 });
@@ -145,21 +177,21 @@ test('flush-armed vault materializes levels from its profile', () => {
     writeProfileLevel(dv, b + V_PROFILE_ASKS, 500, 10_000, 1_000);
     writeProfileLevel(dv, b + V_PROFILE_BIDS, 500, 10_000, 1_000);
   });
-  const view = marketViewFromSlab(decodeMarketSlab(data), 1, 1);
+  const view = decodeDropsetMarketView(data, 1, 1);
   // ref × (1e6 ± 500)/1e6: 10_850_000 → 10_855_425 (ask) / 10_844_575 (bid).
   assert.deepEqual(view.asks, [{ price: enc(10_855_425), size: 1_000_000n }]);
   const bidPrice = enc(10_844_575);
   assert.deepEqual(view.bids, [{ price: bidPrice, size: baseForQuote(bidPrice, 1_000_000n) }]);
 });
 
-// The two datums, deliberately far apart, so a transposition in `levelState`
-// moves a materialized deadline by ~1.7e9 rather than by a few units. The
-// other fixtures set both to 0, which would let a swap pass unnoticed — both
-// are plain `number`s, so nothing else would catch it.
+// The two datums, deliberately far apart, so a transposition of the two
+// expiry fields moves a materialized deadline by ~1.7e9 rather than by a few
+// units. The other fixtures set both to 0, which would let a swap pass
+// unnoticed — both are plain `number`s, so nothing else would catch it.
 const FIX_QUOTE_SLOT = 7;
 const FIX_QUOTE_UNIX = 1_700_000_000;
 /** Absolute deadlines for the stored-`remaining` fixture, far apart so a
- * transposed decode offset moves one by ~1.7e9. */
+ * transposed offset moves one by ~1.7e9. */
 const SLOT_DEADLINE = 1_000;
 const WALL_DEADLINE = 1_700_000_600;
 
@@ -177,10 +209,6 @@ function boundedFlushMarket(secs: number, slots: number): Uint8Array {
   });
 }
 
-// Mirrors the Rust `each_expiry_conjunct_is_independently_live`. Without it,
-// deleting either conjunct from `collectSideLevels` leaves the whole TS suite
-// green — every other fixture pushes both clocks past both deadlines at once,
-// and `writePosition` defaults the slot bound wide open.
 /** A `remaining`-path vault (no flush) with distinct finite deadlines. */
 function boundedRemainingMarket(): Uint8Array {
   return buildMarket((dv, b) => {
@@ -188,57 +216,67 @@ function boundedRemainingMarket(): Uint8Array {
     dv.setUint32(b + V_REF_PRICE, enc(10_850_000), true);
     dv.setBigUint64(b + V_BASE_ATOMS, 10_000_000n, true);
     dv.setBigUint64(b + V_QUOTE_ATOMS, 10_000_000n, true);
-    writePosition(dv, b + V_REMAINING_ASKS, enc(10_904_000), 1_000_000n, WALL_DEADLINE, SLOT_DEADLINE);
+    writePosition(
+      dv,
+      b + V_REMAINING_ASKS,
+      enc(10_904_000),
+      1_000_000n,
+      WALL_DEADLINE,
+      SLOT_DEADLINE,
+    );
   });
 }
 
-// The flush path has its own coverage below, but the stored-`remaining`
-// path is read by a *different* branch of `levelState` and decoded by
-// `readRemainingPositions` at two adjacent u32 offsets. Every other
-// non-flush fixture writes both deadlines to the same value, so swapping
-// `o + 12` / `o + 16` — or the two fields in the non-flush return — leaves
-// the suite green. Distinct deadlines here make that a red test.
+// The stored-`remaining` path writes its two deadlines to two adjacent u32
+// fields (`o + 12` / `o + 16`). Every other non-flush fixture writes both to
+// the same value, so transposing them here would leave the suite green.
+// Distinct deadlines make a swapped pair — in the fixture or in `layout.rs`
+// — a red test.
 test('the stored remaining path reads each deadline from its own field', () => {
-  const slab = decodeMarketSlab(boundedRemainingMarket());
+  const data = boundedRemainingMarket();
   assert.equal(
-    marketViewFromSlab(slab, SLOT_DEADLINE - 1, WALL_DEADLINE - 1).asks.length,
+    decodeDropsetMarketView(data, SLOT_DEADLINE - 1, WALL_DEADLINE - 1).asks.length,
     1,
     'inside both stored deadlines the level rests',
   );
   assert.equal(
-    marketViewFromSlab(slab, SLOT_DEADLINE, WALL_DEADLINE - 1).asks.length,
+    decodeDropsetMarketView(data, SLOT_DEADLINE, WALL_DEADLINE - 1).asks.length,
     0,
     'the stored slot deadline must kill it on its own',
   );
   assert.equal(
-    marketViewFromSlab(slab, SLOT_DEADLINE - 1, WALL_DEADLINE).asks.length,
+    decodeDropsetMarketView(data, SLOT_DEADLINE - 1, WALL_DEADLINE).asks.length,
     0,
     'the stored wall deadline must kill it on its own',
   );
 });
 
+// Mirrors the Rust `each_expiry_conjunct_is_independently_live`, across the
+// boundary: it pins that both clocks reach the engine in the right argument
+// slots, which a transposed `now_slot` / `now_unix` at the call site would
+// otherwise hide.
 test('each expiry conjunct kills a level on its own', () => {
   const SECS_OFF = 600;
   const SLOT_OFF = 50;
   const wallDeadline = FIX_QUOTE_UNIX + SECS_OFF;
   const slotDeadline = FIX_QUOTE_SLOT + SLOT_OFF;
-  const slab = decodeMarketSlab(boundedFlushMarket(SECS_OFF, SLOT_OFF));
+  const data = boundedFlushMarket(SECS_OFF, SLOT_OFF);
 
   // Inside both bounds.
   assert.equal(
-    marketViewFromSlab(slab, slotDeadline - 1, wallDeadline - 1).asks.length,
+    decodeDropsetMarketView(data, slotDeadline - 1, wallDeadline - 1).asks.length,
     1,
     'a level inside both deadlines must rest',
   );
   // Slot bound passed, wall bound still open.
   assert.equal(
-    marketViewFromSlab(slab, slotDeadline, wallDeadline - 1).asks.length,
+    decodeDropsetMarketView(data, slotDeadline, wallDeadline - 1).asks.length,
     0,
     'the slot conjunct must kill the level on its own',
   );
   // Wall bound passed, slot bound still open.
   assert.equal(
-    marketViewFromSlab(slab, slotDeadline - 1, wallDeadline).asks.length,
+    decodeDropsetMarketView(data, slotDeadline - 1, wallDeadline).asks.length,
     0,
     'the wall conjunct must kill the level on its own',
   );
@@ -248,12 +286,12 @@ test('a zero offset is dead in either domain, whatever the datum', () => {
   // Zero slot offset against a live wall TIF, then the mirror. Materialization
   // encodes zero as the dead sentinel rather than letting the datum stand in.
   assert.equal(
-    marketViewFromSlab(decodeMarketSlab(boundedFlushMarket(600, 0)), 1, FIX_QUOTE_UNIX).asks.length,
+    decodeDropsetMarketView(boundedFlushMarket(600, 0), 1, FIX_QUOTE_UNIX).asks.length,
     0,
     'a zero slot offset never rests, however long the wall TIF',
   );
   assert.equal(
-    marketViewFromSlab(decodeMarketSlab(boundedFlushMarket(0, 600)), FIX_QUOTE_SLOT, 1).asks.length,
+    decodeDropsetMarketView(boundedFlushMarket(0, 600), FIX_QUOTE_SLOT, 1).asks.length,
     0,
     'a zero wall offset never rests, however long the slot bound',
   );
@@ -274,8 +312,16 @@ test('oversized flush side is skipped, the healthy side still materializes', () 
     writeProfileLevel(dv, b + V_PROFILE_ASKS, 500, 20_000, 1_000); // Σ ask = 20000 > BPS
     writeProfileLevel(dv, b + V_PROFILE_BIDS, 500, 5_000, 1_000); // Σ bid = 5000, healthy
   });
-  const view = marketViewFromSlab(decodeMarketSlab(data), 1, 1);
+  const view = decodeDropsetMarketView(data, 1, 1);
   assert.equal(view.asks.length, 0, 'oversized ask side contributes no depth');
   const bidPrice = enc(10_844_575);
   assert.deepEqual(view.bids, [{ price: bidPrice, size: baseForQuote(bidPrice, 500_000n) }]);
+});
+
+test('a buffer too short to hold the header is rejected', () => {
+  assert.throws(
+    () => decodeDropsetMarketView(new Uint8Array(16), 1, 1),
+    /too small/,
+    'a truncated account must surface as a layout error',
+  );
 });
