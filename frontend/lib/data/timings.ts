@@ -58,9 +58,10 @@ export const BALANCE_REFETCH_DELAY_MS = 1_500;
 // ───────────── Order book ─────────────
 
 // Live-poll cadence for the on-chain order-book viz. One getAccountInfo +
-// getSlot + getBlockTime per tick against the local (or mainnet) RPC (expiry
-// is dual-domain, and both halves are read from the chain — see
-// lib/eclob/chainClock.ts). 1 s reads as live —
+// getSlot per tick against the local (or mainnet) RPC, plus an occasional
+// getBlockTime (expiry is dual-domain: the slot comes from the chain, the
+// wall clock from the device, chain-checked and corrected only when it drifts
+// out of tolerance — see lib/eclob/chainClock.ts). 1 s reads as live —
 // the maker bot's flashed depth appears within a tick — without hammering
 // the node the way the alpha viz's 500 ms poll did.
 export const ORDER_BOOK_REFRESH_MS = 1_000;
@@ -72,17 +73,28 @@ export const ORDER_BOOK_REFRESH_MS = 1_000;
 // Sized between the two error scales it separates: an NTP-synced device is
 // within a second or so, and `getBlockTime` — a stake-weighted mean of vote
 // timestamps — carries noise of its own, while the skew actually worth
-// correcting runs to tens of seconds. Small against the top tier's lifetime,
-// so a tolerated offset can't meaningfully misjudge a level.
+// correcting runs to tens of seconds. Note this exceeds the safety margin
+// below, so a device sitting near the edge of the band can still misjudge a
+// level by a few seconds in either direction; the band buys immunity to
+// measurement noise, not exactness.
 export const CLOCK_SKEW_TOLERANCE_SECS = 5;
 
 // Forward nudge applied to the gate whichever clock it ends up using, so a
 // level inside its last moments is dropped here rather than quoted and then
-// dropped by the engine mid-swap. Covers one poll tick plus the RPC round-trip
-// that follows it. The two directions are not symmetric — briefly
-// under-showing a dying level costs a sliver of displayed depth, while
-// over-showing one costs the taker a soft revert plus fees.
+// dropped by the engine mid-swap. Covers the order book's 1 s tick and the
+// read that follows it; on the 2 s quote paths it is the tick alone, which is
+// why it is a nudge rather than a guarantee. The two directions are not
+// symmetric — briefly under-showing a dying level costs a sliver of displayed
+// depth, while over-showing one costs the taker a soft revert plus fees.
 export const CLOCK_SAFETY_MARGIN_SECS = 2;
+
+// How long one chain reading serves before another is taken. Skew drifts at
+// parts-per-million, so a reading stays good far longer than a poll tick —
+// and without this every consumer's tick would issue its own `getBlockTime`,
+// which on the swap page (a 1 s book poll plus two 2 s quote polls) is ~2.5
+// calls a second of a method several providers rate-limit or disable. One
+// reading serves every consumer until it ages out.
+export const CLOCK_RESYNC_INTERVAL_SECS = 30;
 
 // ───────────── Recent fills ─────────────
 

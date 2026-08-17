@@ -153,9 +153,9 @@ export const useRouterQuote = (
 
         // Only our own book needs the clocks, so an aggregator-only tick reads
         // neither — which on mainnet today, where we have no market yet, is
-        // every tick. When the leg is live both halves of the dual-domain gate
-        // come from the chain: the slot directly, the wall clock from the
-        // offset `syncChainClock` refreshes off that same slot.
+        // every tick. When the leg is live the slot comes from the chain and
+        // the wall clock is checked against it, corrected only when the device
+        // has drifted out of tolerance. See lib/eclob/chainClock.ts.
         let nowSlot: number | undefined;
         let nowUnix: number | undefined;
         if (eclobLeg) {

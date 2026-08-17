@@ -104,11 +104,12 @@ export async function executeEclobSwap(
 
   // Level expiry is dual-domain, so the re-simulation needs both clocks: the
   // chain's slot and the wall clock each quote's datums are measured from. A
-  // level rests only inside both of its deadlines — and the engine measures
-  // the second against cluster time, so both halves are read from the chain
-  // here. This is the sizing that sets `minOut` below: a device clock running
-  // slow would size against levels the engine has already dropped, and the
-  // swap would soft-revert on `minOut` with the taker still paying fees.
+  // level rests only inside both of its deadlines, and the engine measures the
+  // second against cluster time — so the device clock is checked against the
+  // chain here (lib/eclob/chainClock.ts) rather than trusted. This is the
+  // sizing that sets `minOut` below: a device clock running slow would size
+  // against levels the engine has already dropped, and the swap would
+  // soft-revert on `minOut` with the taker still paying fees.
   const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
   await syncChainClock(rpc, slot);
 

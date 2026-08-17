@@ -97,10 +97,10 @@ export const useEclobQuote = (
         // agreement to the atom.
         const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
         if (cancelled || gen !== generation) return;
-        // Both halves of the dual-domain gate come from the chain: the slot
-        // directly, the wall clock via the offset this refreshes. Quoting
-        // against the device clock would let a skewed browser price levels the
-        // engine has already expired.
+        // Keep the wall-clock half of the gate honest against the cluster —
+        // see lib/eclob/chainClock.ts. Quoting against an unchecked device
+        // clock would let a skewed browser price levels the engine has already
+        // expired.
         await syncChainClock(rpc, slot);
         if (cancelled || gen !== generation) return;
 

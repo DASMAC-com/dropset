@@ -1,5 +1,5 @@
-// The wall-clock half of the dual-domain expiry gate, sourced from the chain
-// rather than from the visitor's device.
+// The wall-clock half of the dual-domain expiry gate, checked against the
+// chain rather than taken on trust from the visitor's device.
 //
 // A resting level is live only inside *both* of its deadlines — a slot
 // deadline and a wall-clock one — and the engine measures the second against
@@ -19,26 +19,38 @@
 //   * within CLOCK_SKEW_TOLERANCE_SECS — the device clock is fine, use it.
 //     `getBlockTime` is itself a stake-weighted mean of validator vote
 //     timestamps, so it carries its own noise; correcting unconditionally
-//     would import that noise into an already-good clock.
+//     would import that noise into an already-good clock. This is the common
+//     path, so most of the time the gate *is* the device clock — vouched for
+//     by the chain, not replaced by it.
 //   * beyond it — gate with the offset-corrected estimate instead. Silent:
 //     a skewed clock is not something the visitor can act on.
 //   * no reading yet (cold start, or a slot the RPC won't time) — the device
 //     clock stands.
 //
-// The offset lives at module scope, so every consumer benefits from whichever
-// one refreshed it last, and a tick that can't get a reading carries the
-// last-known one rather than snapping back to the raw device clock.
+// The offset lives at module scope and is re-read on an interval rather than
+// per tick, so every consumer shares one reading and four poll chains cost one
+// request per interval between them. A tick that can't get a reading carries
+// the last-known one rather than snapping back to the raw device clock.
+//
+// Deliberately NOT done here: hysteresis around the tolerance edge, and a
+// plausibility floor on the reading itself. Both are real (a device parked at
+// the boundary can flap between the two paths, and a node answering in
+// milliseconds would write a nonsense offset), and both are tracked as
+// follow-ups rather than folded into the ratified shape.
 
 import {
+  CLOCK_RESYNC_INTERVAL_SECS,
   CLOCK_SAFETY_MARGIN_SECS,
   CLOCK_SKEW_TOLERANCE_SECS,
 } from "../data/timings";
 
-// Minimal structural shape of the one RPC method this needs. Declared here
-// rather than imported so the module stays independent of which client the
-// caller holds — the same reason the SDK types its own `SlotRpc` this way.
-// `getBlockTime` answers with the block's production time in unix seconds, or
-// null for a slot the node has no block for.
+/**
+ * Minimal structural shape of the one RPC method this needs. Declared here
+ * rather than imported so the module stays independent of which client the
+ * caller holds — the same reason the SDK types its own `SlotRpc` this way.
+ * `getBlockTime` answers with the block's production time in unix seconds, or
+ * null for a slot the node has no block for.
+ */
 export type BlockTimeRpc = {
   getBlockTime: (...args: never[]) => { send: () => Promise<bigint | null> };
 };
@@ -49,6 +61,18 @@ export type BlockTimeRpc = {
 // cluster, so a reading taken by any of them is good for all of them.
 let offsetSecs: number | null = null;
 
+// Raw device time of the last sync *attempt*, and the debug skew in force at
+// it. Attempt rather than success on purpose: a node that rejects or
+// rate-limits `getBlockTime` must back off like any other, not retry on every
+// tick behind the silent `catch` below.
+let lastSyncAt: number | null = null;
+let lastSyncSkewSecs = 0;
+
+// Dedupes concurrent syncs. Three hooks poll on independent timers, so without
+// this their calls overlap and the slowest response — derived from the oldest
+// slot — lands last and wins.
+let inFlight: Promise<void> | null = null;
+
 // Artificial device-clock skew in seconds, for exercising the correction
 // without physically mis-setting the machine's clock:
 //
@@ -58,8 +82,10 @@ let offsetSecs: number | null = null;
 //
 // Set it from the browser console against a running book: the ladder and the
 // quote should be unmoved either way, because the offset read off the chain
-// cancels whatever is set here. Compiled out of a production build, and inert
-// until something sets it.
+// cancels whatever is set here. Changing it forces the next call to re-read
+// rather than wait out the resync interval, so the effect is visible on the
+// following tick. Compiled out of a production build, and inert until
+// something sets it.
 const debugSkewSecs = (): number => {
   if (process.env.NODE_ENV === "production") return 0;
   const skew = (globalThis as { __dropsetClockSkewSecs?: unknown })
@@ -67,35 +93,71 @@ const debugSkewSecs = (): number => {
   return typeof skew === "number" && Number.isFinite(skew) ? skew : 0;
 };
 
-// The device clock, in the unix seconds the on-chain fields store.
-const deviceNowUnix = (): number =>
-  Math.floor(Date.now() / 1_000) + debugSkewSecs();
+// The real device clock, in the unix seconds the on-chain fields store. Used
+// to age the cached reading, so the debug skew can't shift the resync clock.
+const rawDeviceNowUnix = (): number => Math.floor(Date.now() / 1_000);
+
+// The device clock as the gate sees it — the real one plus any debug skew.
+const deviceNowUnix = (): number => rawDeviceNowUnix() + debugSkewSecs();
+
+const readChainClock = async (
+  rpc: BlockTimeRpc,
+  slot: bigint | number,
+): Promise<void> => {
+  // Sample the device clock BEFORE the request. The value that comes back
+  // describes a block produced at or before the send, so pairing it with a
+  // device time read *after* the round-trip would fold the whole request
+  // latency into the offset — and that latency is unbounded on a congested
+  // endpoint. Left that way it inverts the fix: a slow enough response drives
+  // the offset past the tolerance on a perfectly-synced device and then drags
+  // its gate backwards, behind cluster time, which is precisely the
+  // over-showing this module exists to prevent.
+  const device = deviceNowUnix();
+  try {
+    const chainSecs = await rpc.getBlockTime(slot as never).send();
+    if (chainSecs === null) return;
+    offsetSecs = Number(chainSecs) - device;
+  } catch {
+    // Leave `offsetSecs` alone — a stale offset beats no correction, and the
+    // caller's own error handling owns whatever else this tick was doing.
+  }
+};
 
 /**
  * Refresh the cached chain-minus-device offset from a slot the caller has
- * already read. Best-effort: a slot the node won't time (skipped, or aged out
- * of its ledger) and any transport error both leave the previous offset in
- * place, since clock skew drifts far more slowly than a poll tick.
+ * already read. Safe and cheap to call on every tick: a reading is reused for
+ * CLOCK_RESYNC_INTERVAL_SECS, and concurrent callers share one request.
  *
- * The reading runs a beat behind true cluster time — it is the production time
- * of an already-confirmed block, read across a round-trip — so the offset
- * carries a bias of order a second, biased *backwards*. That is well inside
- * CLOCK_SKEW_TOLERANCE_SECS, so it can't by itself push a healthy clock onto
- * the corrected path, and on the corrected path the forward safety margin
- * absorbs it.
+ * Best-effort. A transport error, a rate-limit rejection, or a slot the node
+ * declines to time all leave the previous offset in place, since clock skew
+ * drifts far more slowly than the interval. The failure is silent by design;
+ * the cost of it is that the gate quietly falls back to the device clock,
+ * which is the behavior that predates this module rather than a regression.
+ *
+ * The reading is still a beat behind true cluster time — it is the production
+ * time of an already-confirmed block — so the offset carries a backwards bias
+ * of roughly the block age. Sampling the device clock before the send keeps
+ * the request latency out of that bias; what remains is irreducible, since
+ * nothing knows cluster time more recently than the last block.
  */
 export const syncChainClock = async (
   rpc: BlockTimeRpc,
   slot: bigint | number,
 ): Promise<void> => {
-  try {
-    const chainSecs = await rpc.getBlockTime(slot as never).send();
-    if (chainSecs === null) return;
-    offsetSecs = Number(chainSecs) - deviceNowUnix();
-  } catch {
-    // Leave `offsetSecs` alone — a stale offset beats no correction, and the
-    // caller's own error handling owns whatever else this tick was doing.
-  }
+  const skew = debugSkewSecs();
+  const fresh =
+    lastSyncAt !== null &&
+    skew === lastSyncSkewSecs &&
+    rawDeviceNowUnix() - lastSyncAt < CLOCK_RESYNC_INTERVAL_SECS;
+  if (fresh) return;
+  if (inFlight) return inFlight;
+
+  lastSyncAt = rawDeviceNowUnix();
+  lastSyncSkewSecs = skew;
+  inFlight = readChainClock(rpc, slot).finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
 };
 
 /**
@@ -105,7 +167,7 @@ export const syncChainClock = async (
  * last moments is dropped here before the engine drops it mid-swap.
  *
  * Reads the offset cached by {@link syncChainClock}; call that first each tick
- * if a fresh reading matters. Cheap and synchronous, so it can be called at
+ * so the reading stays current. Cheap and synchronous, so it can be called at
  * the point of use rather than threaded through.
  */
 export const gateNowUnix = (): number => {
@@ -116,10 +178,3 @@ export const gateNowUnix = (): number => {
       : device;
   return corrected + CLOCK_SAFETY_MARGIN_SECS;
 };
-
-/**
- * The cached offset in seconds, or null before any reading landed. Exported
- * for the skew test hook and for diagnostics; nothing in the render path needs
- * it, since {@link gateNowUnix} already applies it.
- */
-export const chainClockOffsetSecs = (): number | null => offsetSecs;

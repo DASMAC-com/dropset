@@ -144,9 +144,9 @@ export function useOrderBook(
         }
 
         // Read the slot here rather than letting the fetch resolve it, so the
-        // same slot can be priced for its block time: the wall-clock half of
-        // the gate comes from the cluster, not from this device's clock. One
-        // getSlot either way, plus the getBlockTime inside the sync.
+        // same slot can be priced for its block time and the account fetch is
+        // pinned to the same commitment. One getSlot either way; the sync's
+        // own read is throttled, not per-tick. See lib/eclob/chainClock.ts.
         const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
         if (cancelled || gen !== generation) return;
         await syncChainClock(rpc, slot);
