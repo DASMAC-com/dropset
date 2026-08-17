@@ -123,6 +123,7 @@ ohlcv
 oneline
 onramps
 openxmlformats
+parallelizable
 pathspec
 paytrie
 pdas

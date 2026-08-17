@@ -7,8 +7,6 @@ model: fable
 
 <!-- cspell:word startable -->
 
-<!-- cspell:word parallelizable -->
-
 <!-- cspell:word backticked -->
 
 # `plan`

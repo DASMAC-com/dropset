@@ -82,8 +82,8 @@ ranks nothing, and never folds or closes an issue (consolidation is
 compares just the named, just-filed issue against the backlog (the
 bounded file-time path the filing skills call after `save_issue`); a
 bare invocation is the full pairwise sweep for occasional
-reconciliation, reporting **collision clusters** (the input to
-`housekeeping`'s merge-group proposal), the surviving human-declared
+reconciliation, reporting **collision clusters** (the input to the
+`plan` skill's merge-group proposal), the surviving human-declared
 **semantic blocks**, and the two scheduling **smells**;
 and `--report-todo-blocks` prints those smells alone as JSON. (A
 `--demote` migration mode also existed; it ran once, is spent, and was
@@ -162,8 +162,10 @@ filing skills emit them and `sync-blockers` parses them:
 
 File overlap is reported as a **cluster** — the issues that collide on
 one shared path — rather than as an ordering. A cluster is the candidate
-set for "these would land as one PR", which is what `housekeeping`'s
-merge-group proposal step consumes. Grouping is **per path**, not by
+set for "these would land as one PR", which is what the `plan` skill's
+merge-group proposal step consumes (it also picks the parallelizable
+batch when promoting parked audit findings). Grouping is **per path**,
+not by
 connected component: coupling chains through shared files, so the
 transitive reading collapsed 25 of 27 open issues into one cluster,
 which proposes nothing. Clusters therefore overlap — an issue appears
@@ -466,6 +468,22 @@ avoidable cost. Never compensate — re-read.
 
 **The op payload field is `text`, not `content`.** An invalid-input
 error naming the patch field is what a wrong field name looks like.
+
+**A ticked checkbox stores as `- [X]`, uppercase.** Linear normalizes
+the `x` on write, so a later op anchoring on `- [x] …` matches nothing
+even though that is exactly what the previous write sent. Anchor a
+re-tick or an un-tick on `- [X]`, and read the box state back from the
+stored body rather than from what you wrote.
+
+**Ticking many boxes is three ops, not one per box.** A `replace` with
+`replace_all` over the bare `- [ ]` prefix ticks every open box in one
+op; follow it, in the same array, with one `replace` per box that
+should stay open, flipping it back. Ops apply **in order and
+atomically**, so the result is "all but these". This matters at scale:
+a consolidated issue can carry more boxes than the 50-op cap allows,
+and it keeps the write anchor-based — which is what makes it fail
+loudly instead of clobbering a concurrent amendment. A full-body
+`description` write would silently overwrite one.
 
 ### Two write-mangle rules for every body you file
 
