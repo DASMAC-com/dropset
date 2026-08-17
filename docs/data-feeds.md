@@ -627,6 +627,17 @@ Four queries: the basis against an FX anchor in bps, and — the three
 that need only the venue's own candles — weekend versus weekday,
 behavior by FX session, and realized volatility by hour and regime.
 
+The dashboard is ordered **raw first**: the plain price series for one
+selected venue and product, beside a table of what the store holds per
+source and product, then the three regime panels below. The basis is a
+committed query but deliberately **not** a panel in this pass — a
+two-leg panel is only meaningful when both legs are the same currency
+family, nothing enforces that yet, and an anchor picker that falls back
+to another currency's rate renders a large, stable, meaningless number
+rather than failing visibly. Grouping products by currency family, which
+is what would let the pairing be checked rather than trusted, is a
+schema change tracked separately.
+
 Being single-leg is what let three of the four produce results before
 any FX feed existed: a cold collector backfills 60 days, so the history
 is on disk minutes after first start rather than accruing over calendar
@@ -658,6 +669,16 @@ New York 1.57 against Sydney 1.05 and Tokyo 1.13); and the intraday
 profile carries FX's fingerprints, peaking at 13:00 UTC in the
 London/New York overlap with a second spike near the 21:00 UTC daily
 roll, neither of which appears on weekends.
+
+The basis itself became measurable once an FX anchor existed for a
+currency with a liquid venue leg. Over 48,668 aligned minutes,
+`coinbase` / `EURC-USDC` tracks `oanda` / `EUR-USD` to a mean of
+**+0.16 bps** with a standard deviation of **1.86 bps**, reaching −87
+and +65 bps at the extremes — a tight peg with fat tails, which is the
+structure a basis series should have. The same measurement on the AUD
+pair returns 26 points and a mean of +22 bps: the anchor there is sound
+and the venue leg is what starves it, so that figure reflects a thin
+tape rather than a wider basis.
 
 **EUR/USD leads the analytics; AUD is carried as a case study.** The
 reason is measured rather than editorial — over the same window and

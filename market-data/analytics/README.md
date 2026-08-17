@@ -114,6 +114,16 @@ deliverable. Measured on `coinbase` / `EURC-USDC` / 60s over
   London/New York overlap and the usual US release slot, with a second
   spike at 21:00 UTC around the FX daily roll. Neither peak appears on
   weekends.
+- **The peg is tight, with fat tails.** Against `oanda` / `EUR-USD`
+  over 48,668 aligned minutes, the basis has a mean of +0.16 bps and a
+  standard deviation of 1.86 bps, reaching −87 and +65 bps at the
+  extremes. That is the structure a basis series should have, and it is
+  the first two-leg result the store has been able to produce.
+
+The same basis measurement on `AUDD-USDC` against `oanda` / `AUD-USD`
+returns **26 points** and a mean of +22 bps. The anchor is sound; the
+venue leg starves it. Read that number as a thin tape rather than as a
+wider basis — it is the density problem below, not a market fact.
 
 ## A hazard when the FX anchor lands
 
