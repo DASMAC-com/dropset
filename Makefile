@@ -24,6 +24,8 @@
 .PHONY: explorer-down
 .PHONY: frontend
 .PHONY: frontend-localnet
+.PHONY: fx-collectors-down
+.PHONY: fx-collectors-up
 .PHONY: grafana
 .PHONY: grafana-down
 .PHONY: idl
@@ -476,6 +478,22 @@ grafana: check-docker
 grafana-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf grafana
+
+# The free-tier FX collectors (docs/data-feeds.md §9, "The free-tier FX
+# roster").
+# Separate from `collectors-up` because these three need API credentials while
+# the Coinbase feed is keyless: that target must keep working on a machine with
+# no keys at all. Each service reads its credential from the environment and
+# refuses to start without one, naming the variable it wanted.
+#
+# Set FX_PRODUCT_ID to collect a pair other than the AUD-USD default. It is the
+# canonical BASE-QUOTE form; each venue's own spelling is derived from it.
+fx-collectors-up: check-docker
+	docker compose -f infra/localnet/docker-compose.yml --profile fx \
+		up -d --quiet-pull postgres migrate oanda twelvedata alphavantage
+fx-collectors-down: check-docker
+	docker compose -f infra/localnet/docker-compose.yml --profile fx \
+		rm -sf oanda twelvedata alphavantage
 
 # Localnet bot stack: the maker bot (infra/localnet). It signs with the repo
 # keys/ keypairs and reaches the host-run validator at

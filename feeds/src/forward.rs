@@ -13,7 +13,7 @@ use tokio::sync::broadcast;
 /// The channel is bounded and **drops to the latest** for a slow consumer: a
 /// lagging receiver observes [`broadcast::error::RecvError::Lagged`] and is
 /// fast-forwarded to the newest record, so one slow bot never stalls a source
-/// shared with a store sink (docs/data-feeds.md §7). A bot wants freshest, not
+/// shared with a store sink (docs/data-feeds.md §13). A bot wants freshest, not
 /// complete.
 pub struct ForwardSink<R> {
     tx: broadcast::Sender<R>,

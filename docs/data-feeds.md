@@ -445,13 +445,13 @@ regimes, and its failure modes belong to
 [`market-making.md`](market-making.md) §1; what follows is which
 sources feed each leg and on what terms.
 
-| Role                             | Source                                                                              |
-| -------------------------------- | ----------------------------------------------------------------------------------- |
-| FX anchor (`fiat/USD`)           | Pyth Hermes FX (wired); OANDA / CME 6E in session; ECB / Frankfurter daily fallback |
-| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC` (wired), Kraken `<token>/USD` (wired)                       |
-| Peg truth                        | Kraken `USDC/USD` (wired); Circle / issuer redemption rate                          |
-| Token/USD, last resort           | CoinGecko / CoinMarketCap — reflexive, never the anchor                             |
-| Macro overlay                    | Econ-calendar loader (ECB / FOMC / CPI / NFP times)                                 |
+| Role                             | Source                                                                            |
+| -------------------------------- | --------------------------------------------------------------------------------- |
+| FX anchor (`fiat/USD`)           | Pyth Hermes FX + the FX roster below, all wired; ECB / Frankfurter daily fallback |
+| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC` (wired), Kraken `<token>/USD` (wired)                     |
+| Peg truth                        | Kraken `USDC/USD` (wired); Circle / issuer redemption rate                        |
+| Token/USD, last resort           | CoinGecko / CoinMarketCap — reflexive, never the anchor                           |
+| Macro overlay                    | Econ-calendar loader (ECB / FOMC / CPI / NFP times)                               |
 
 ### What is wired, and why the rest is not
 
@@ -474,9 +474,13 @@ was probed and ruled out on evidence:
   issuer-rate proxy — but nothing subscribes to it yet: the maker's roster
   asks only for `<token>/USD` plus the shared `USDC/USD`. A credentialed
   Circle Mint feed supersedes both when keys exist.
-- **OANDA is the same story** — credentialed, and Pyth Hermes already covers
-  every roster currency for free, with a confidence half-width OANDA would
-  have to be asked for separately.
+- **OANDA is credentialed but the credential is free**, which is why it is now
+  wired rather than deferred: a practice account issues a v20 token at no cost
+  and serves minute FX bars back **years**. Pyth Hermes remains the streaming
+  anchor with its confidence half-width, which OANDA would have to be asked
+  for separately; OANDA is the deep *history* the store needs and the
+  independent second opinion the fusion estimator needs. The two are
+  complements, not alternatives.
 
 **Coverage is asymmetric, permanently.** Of the seven demo tokens only EURC
 reaches a CEX (Coinbase `EURC-USDC`, Kraken `EURC/USD`). The other six trade
@@ -498,6 +502,80 @@ public REST API is keyless and reachable; its candles endpoint returns
 300 buckets per request, epoch `start` / `end` accepted), which
 backfills and polls cleanly — it validated the whole framework end to
 end before any harder source.
+
+### The free-tier FX roster
+
+Three FX vendors are wired, each on a free credential. What each is
+*for* follows from what its free tier actually serves, measured against
+a live key rather than read off a pricing page:
+
+| Source         | Bars  | Free-tier budget        | History       | Volume     |
+| -------------- | ----- | ----------------------- | ------------- | ---------- |
+| `oanda`        | M1    | 100 req/s (a guideline) | 3+ years      | tick count |
+| `twelvedata`   | 1min  | 800 credits/day, 8/min  | 60 d verified | **none**   |
+| `alphavantage` | daily | **25 req/day**, account | to 2007       | **none**   |
+
+- **OANDA is the anchor.** Deep minute history, a per-candle `complete`
+  flag, 5000 candles per request, and a budget so loose the cadence is
+  chosen for freshness rather than to dodge a limit.
+- **Twelve Data is the cross-check.** It defaults to *exchange-local*
+  time — a default AUD/USD request returned `10:26` when UTC was `00:26`,
+  i.e. Sydney — so every request pins `timezone=UTC`. A ten-hour skew in
+  `bucket_start` would look entirely plausible in the store.
+- **Alpha Vantage is a daily corroboration only.** `FX_INTRADAY` is
+  premium-gated (`"This is a premium endpoint."`), so no polling cadence
+  buys a minute bar here. Its 25 requests/day is the whole account.
+- **TraderMade was dropped**: no free key is obtainable. Its pricing page
+  lists only paid plans and its signup is a sales form, while its own
+  tutorials still advertise a free tier.
+
+Two sources publish **no volume at all**, so their rows carry `0.0`.
+`cex_prices.volume` is therefore comparable only *within* a source,
+never across two.
+
+**Weekend behavior differs by source, and the difference is the useful
+part.** Real FX is closed from Friday evening to Sunday evening, and the
+vendors disagree about what to publish then:
+
+- **OANDA publishes nothing** — a weekend window returns zero candles.
+- **Twelve Data publishes a complete minute grid**, all 1440 bars.
+
+Observed live in `cex_prices` across one Friday close (21:00 UTC), both
+collectors running against the same pair:
+
+```text
+source      | newest bar (UTC)    | bars after Fri 21:00
+oanda       | 2026-08-14 20:59:00 |    0
+twelvedata  | 2026-08-14 22:02:00 |   63
+```
+
+That run also exercised the thing a weekend breaks: OANDA's cursor
+advanced past 21:00 to the present despite having no candle to show for
+it. A source that anchored its cursor on the newest row returned would
+park at every Friday close and never resume on Monday.
+
+So **prefer the zero-bar source when the question is whether a session
+existed**; bar *absence* is the cleanest signal available, and it is what
+the crypto-only weekend regime should engage on. Never pool the two into
+one volatility figure — they disagree about whether a market was open.
+
+What this is **not** is evidence that either vendor is fabricating. A
+measured Saturday range of 3.68 bps on Twelve Data's AUD/USD sits in the
+same band as a genuinely traded 24/7 crypto tape's 6.92 bps
+(EURC-USDC, same Saturday), and distinct-close counts do not separate
+them either. It is a vendor coverage convention — Twelve Data returns a
+gap-free grid on trading days too — and nothing more.
+
+**The canonical symbol is ours, not the venue's.** These three spell one
+pair three ways (`AUD_USD`, `AUD/USD`, and a split `from` / `to` pair),
+so the stored `product_id` is a canonical hyphenated ISO-4217
+`BASE-QUOTE` (`AUD-USD`) and each adapter is handed the spelling it wants
+at construction. Storing venue-native symbols would land one pair under
+three keys and make a cross-source comparison impossible. It is what
+makes the join work: over 1608 overlapping minutes, `oanda` and
+`twelvedata` agree to a mean absolute difference of **0.686 bps**
+(r = 0.993), which is the end-to-end check that both decoders and both
+timestamp paths are right.
 
 ### The venue principle
 
@@ -539,9 +617,39 @@ be allocated rather than assumed.
 | ---------------------- | --------------------------------- | -------------------------------------- |
 | FX anchor (streaming)  | Push; no poll                     | Maker first; collector taps the stream |
 | CEX basis venues       | Slow poll, batched across symbols | Maker first                            |
+| `oanda` candles        | 60 s                              | Collector                              |
+| `twelvedata` bars      | 300 s                             | Collector                              |
+| `alphavantage` daily   | 6 h                               | Collector                              |
 | Issuer / peg rates     | Order of a day                    | Collector                              |
 | Econ calendar          | Order of a day, static download   | Collector                              |
 | On-chain (indexer RPC) | Framework poll interval           | Indexer                                |
+
+Those cadences govern the **caught-up** state only — while a source
+backfills, the runner loops without pausing and only the shared client's
+minimum interval (below) paces it. That is the trap worth naming:
+**steady-state polling and catch-up draw on the same budget but are
+governed by different knobs**, so a cadence sized correctly for the
+caught-up state says nothing about what a cold backfill will do. At the
+250 ms default a backfill issues ~240 requests a minute — 30× Twelve
+Data's 8/minute tier.
+
+So the two FX sources stricter than that default raise their own floor at
+construction: **Twelve Data to 8 s** (7.5/minute, and about two minutes'
+overhead across a whole 60-day backfill) and **Alpha Vantage to 1 h**
+(24/day against its 25/day account). OANDA needs none — at 100 req/s
+allowed the default is already ~400× stricter than the venue asks.
+
+The three FX cadences span two orders of magnitude, and the reason is
+worth stating because it is counter-intuitive: **a tight request budget
+constrains poll frequency, not bar width.** These are OHLCV *window*
+endpoints — one request returns many bars — so Twelve Data on 800
+credits/day still yields a continuous 60-second series; it just arrives
+in less frequent batches. A 60-second tick there would spend 1440
+credits and exhaust the account before the day was out, so 300 s (≈288
+requests/day, about a third of the budget) leaves room for restarts and
+a backfill running alongside. Alpha Vantage's 25 requests/day is the
+whole account, and a daily bar changes once a day, so six hours buys
+everything a tighter tick would.
 
 The maker stays **one multi-market process**, which is what makes
 batching natural — a single poll serves every market it quotes. If
@@ -672,11 +780,13 @@ ______________________________________________________________________
   per price tier and the highest-`nonce_after` fill per market, so a
   lagged receiver loses nothing the reconcile needs and a slow bot never
   stalls a source shared with a store sink.
+
 - **Streaming adapter phasing.** *Resolved.* The first streaming adapter
   is the RPC `logsSubscribe` fill socket, landed as the maker bot's fill
   feed through the `ChannelSource` stream seam (§4). A CEX socket for
   the basis leg follows when polling it at the §10 cadence proves too
   slow for quoting — not before.
+
 - **Backfill windowing.** *Resolved — the framework owns a paged
   backfill (`feeds/src/backfill.rs`) that any poll source can adopt; the
   RPC source is the first.* (It is a helper a source drives, not
@@ -697,6 +807,7 @@ ______________________________________________________________________
   resumes where it stopped. Emission is two-phase for the same reason a
   cursor is conservative — the page stays queued until the batch is
   built, so a source error retries it instead of skipping it.
+
 - **Observability hook.** *Resolved — `FeedMetrics`, a two-callback
   trait (`on_batch` / `on_error`) with no-op defaults that the runner
   emits through; `run_with_metrics` / `run_until_with_metrics` carry a
@@ -707,15 +818,40 @@ ______________________________________________________________________
   knows whether its position is a timestamp, a slot, or a signature, so
   the framework exposes `caught_up` and leaves the lag derivation to the
   recorder. The indexer is the first consumer.
-- **FX bar source.** Pyth Benchmarks vs. a paid FX vendor, and its cost
-  and history depth.
+
+- **FX bar source.** *Resolved — three free-tier vendors, no paid one
+  needed (§9 "The free-tier FX roster").* The question assumed the
+  choice was Pyth Benchmarks against a paid vendor, and the cost turned
+  out to be zero: OANDA's practice tier issues a free v20 token and
+  serves minute bars back three or more years, which is deeper than any
+  consumer has asked for. It is the anchor; Twelve Data is an
+  independent minute-bar cross-check and Alpha Vantage a daily
+  corroboration, both free. History depth — the half of this question
+  that mattered — is therefore not a constraint at all.
+
+  Two things this resolution *did* settle that the question did not
+  anticipate. **Symbol spelling has to be ours**: the vendors disagree
+  three ways, so the stored `product_id` is canonical and the venue's
+  form is derived. And **weekend coverage is a vendor convention, not a
+  fact about the market**: OANDA publishes nothing, Twelve Data
+  publishes a complete grid, so session detection reads bar absence from
+  the former rather than trusting either alone.
+
+  What remains genuinely open is narrower: whether a *streaming* FX
+  source (Pyth Hermes, already wired, or an OANDA price stream) should
+  also feed the store rather than only the maker. That is a latency
+  question for the quote path, not a history question, and it waits on a
+  consumer that needs sub-minute FX.
+
 - **Econ-calendar source.** Which static feed for the ECB / FOMC / CPI /
   NFP times.
+
 - **History depth before the estimates are significant.** The §11
   characterizations need enough repeats of each regime — weekend gaps,
   macro events — to mean anything. The retired survey guessed a 60–90
   day backfill for a one-shot gate; a standing collector instead needs a
   stated depth per estimate, below which the number is reported as
   provisional rather than used to set a band.
+
 - **Retention.** How much history stays in Postgres before it rolls to
   the S3 archival tier, and whether the analytics read across the seam.
