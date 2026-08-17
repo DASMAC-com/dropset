@@ -14,6 +14,7 @@ audd
 audm
 autocorrelated
 awsmcp
+barchart
 bareverb
 bindgen
 birdeye
@@ -55,6 +56,7 @@ dropset
 dtolnay
 eclob
 econia
+equi
 etherfuse
 eurau
 eurc
@@ -70,6 +72,7 @@ frontmatter
 getpid
 gifs
 globbable
+granularities
 griefer
 gyen
 générale
@@ -97,6 +100,7 @@ libc
 litesvm
 localnet
 localtime
+lpad
 macropod
 memcpy
 memecoins
@@ -137,6 +141,7 @@ prefund
 prefunded
 presentationml
 programdata
+psql
 pubkeys
 pullable
 pytest
@@ -161,6 +166,7 @@ rollup
 rollups
 rsplit
 rustc
+samp
 sbpf
 seedable
 serde

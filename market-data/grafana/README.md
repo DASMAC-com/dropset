@@ -18,8 +18,39 @@ dashboard. Append `?kiosk` to the URL for a chrome-free view — no nav,
 no side menu — which is what you want on a screenshare or a screenshot.
 
 The dashboard is deliberately named just `market-data`, not something
-narrower: its panels are ingestion-focused today, but maker telemetry
-and the analytics panels land in this same tree later.
+narrower: its panels are ingestion-focused, and maker telemetry lands in
+this same tree later.
+
+A second dashboard, **FX analytics** (`fx-analytics`), now sits beside
+it. The split is by question rather than by subject: `market-data`
+answers *is ingestion alive and any good*, and `FX analytics` answers
+*what does the collected history say*. Keeping them apart matters for
+the ingestion view in particular, whose value is that a wall of green
+means a feeds change works; mixing regime analytics into it would
+dilute that read.
+
+`FX analytics` is ordered **raw first**. The top row is the plain price
+series for one selected venue and product, beside a table of everything
+the store holds — per source and product, its bar count, newest bar, and
+age. Those answer *is there data and does it make sense* before
+anything derived is shown, and the table is a table rather than a tile
+per feed precisely because the roster grows. Below them sit the three
+regime panels: realized volatility by hour, by FX trading session, and
+weekend against weekday.
+
+It deliberately reads **one product at a time** rather than overlaying
+the roster. Selecting a currency and getting every pair that involves it
+is a better interface and is tracked separately; it needs products
+tagged by currency family, which is a schema change rather than a
+dashboard one.
+
+The **basis against an FX anchor** is not a panel in this pass. Its
+query is committed and works — see `market-data/analytics/` — but a
+two-leg panel is only meaningful when both legs are the same currency
+family, and nothing in the dashboard enforces that yet. An anchor picker
+that silently falls back to another currency's rate renders a large,
+stable, entirely meaningless number instead of failing visibly, which is
+worse than showing nothing.
 
 ## The tree
 

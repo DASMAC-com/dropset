@@ -1,0 +1,528 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Raw collected series first, then the regime analytics derived from them. The top row answers 'is there data, and can I see it' for one venue and product at a time, plus what the store holds across every venue. The row below answers what that data says about volatility by session, hour, and weekend. Deliberately shows ONE product at a time rather than overlaying the roster, so it stays legible as currencies are added.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "The raw closing price of the selected venue and product, straight off the collected candles with no derivation. This is the panel to check first: if it is empty, nothing below it means anything. A sparse line with visible gaps is not a fault \u2014 a venue emits no candle for a minute with no trades, so a thinly traded book genuinely looks like scattered points rather than a continuous line.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "close",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 5,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  source || ' ' || product_id AS metric,\n  close AS value\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = '$venue_source'\n  AND product_id = '$venue_product'\n  AND granularity_secs = $granularity\nORDER BY bucket_start",
+          "refId": "A"
+        }
+      ],
+      "title": "Price \u2014 $venue_product on $venue_source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Everything the store holds, one row per venue and product, independent of the pickers and of the dashboard time range. A table rather than a tile per feed, because the roster grows and a wall of tiles stops being readable well before it stops fitting. `age_secs` is the recency check: a collector that is running keeps it near its own granularity, while a series left behind by a re-pointed or stopped collector shows its age directly. Note only one product per collector service is ever current, so several stale rows beside one fresh row is the expected picture today rather than a fault.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_secs"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 300
+                    },
+                    {
+                      "color": "red",
+                      "value": 3600
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  source,\n  product_id,\n  count(*) AS bars,\n  to_timestamp(max(bucket_start)) AS last_bar,\n  (extract(epoch FROM now()) - max(bucket_start))::bigint AS age_secs\nFROM cex_prices\nGROUP BY source, product_id\nORDER BY source, product_id",
+          "refId": "A"
+        }
+      ],
+      "title": "What is in the store",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Per-bar realized volatility in bps, by hour of day, split into weekday and weekend. This is the vol-ladder's sigma input. Returns are computed between genuinely ADJACENT buckets only: a venue emits no candle for a minute with no trades, and interbank FX leaves a ~48-hour hole every weekend, so a plain window function would bridge those gaps and dump one enormous pseudo-return into a single hour \u2014 which reads exactly like a real time-of-day effect. On a sparse book these per-hour cells fall to single digits, where a standard deviation is arithmetic rather than information; check the bar count in the summary table below before trusting a thin cell.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "bps per bar",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 3,
+      "options": {
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = '$venue_source'\n    AND product_id = '$venue_product'\n    AND granularity_secs = $granularity\n),\nreturns AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - $granularity\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM bars\n  WINDOW w AS (ORDER BY bucket_start)\n),\nclassified AS (\n  SELECT\n    EXTRACT(HOUR FROM bucket_ts AT TIME ZONE '$hour_tz')::int AS hour_of_day,\n    CASE\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 6\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 0\n           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') < 17\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 5\n           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') >= 17\n        THEN 'weekend'\n      ELSE 'weekday'\n    END AS regime,\n    r\n  FROM returns\n)\nSELECT\n  lpad(hour_of_day::text, 2, '0') AS hour,\n  stddev_samp(r) FILTER (WHERE regime = 'weekday') * 10000 AS weekday,\n  stddev_samp(r) FILTER (WHERE regime = 'weekend') * 10000 AS weekend\nFROM classified\nGROUP BY hour_of_day\nORDER BY hour_of_day",
+          "refId": "A"
+        }
+      ],
+      "title": "Realized vol by hour ($hour_tz)",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Per-bar realized volatility in bps, by FX trading session. Answers whether an FX stablecoin inherits the rhythm of its underlying currency's home session or trades on crypto's own flat 24/7 clock. Sessions are local wall-clock windows in each centre, resolved per timestamp, so daylight saving is handled rather than approximated; the hemispheres shift in opposite directions, which no fixed UTC range can express. Sessions OVERLAP and a bar is counted in each it falls in, so the counts sum to more than the total \u2014 deliberate, since the London/New York overlap is the highest-liquidity window of the FX day and collapsing it into an exclusive bucket would hide the effect being measured. Compare sessions to each other; do not add them up.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "bps per bar",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 4,
+      "options": {
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = '$venue_source'\n    AND product_id = '$venue_product'\n    AND granularity_secs = $granularity\n),\nreturns AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - $granularity\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM bars\n  WINDOW w AS (ORDER BY bucket_start)\n),\nsessions (session, tz, open_hour, close_hour) AS (\n  VALUES\n    ('1 Sydney',   'Australia/Sydney', 8, 17),\n    ('2 Tokyo',    'Asia/Tokyo',       9, 18),\n    ('3 London',   'Europe/London',    8, 17),\n    ('4 New York', 'America/New_York', 8, 17)\n)\nSELECT\n  s.session,\n  stddev_samp(r.r) * 10000 AS vol_bps_per_bar\nFROM returns r\nJOIN sessions s\n  ON EXTRACT(HOUR FROM r.bucket_ts AT TIME ZONE s.tz) >= s.open_hour\n AND EXTRACT(HOUR FROM r.bucket_ts AT TIME ZONE s.tz) < s.close_hour\n AND EXTRACT(DOW FROM r.bucket_ts AT TIME ZONE s.tz) BETWEEN 1 AND 5\nGROUP BY s.session\nORDER BY s.session",
+          "refId": "A"
+        }
+      ],
+      "title": "Realized vol by FX session",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Weekend against weekday for the selected product. The FX week runs Sunday 17:00 to Friday 17:00 New York time, expressed in that city's local clock so the boundary stays correct across daylight saving. `bars` is the column to read first: it is what tells you whether a volatility number beside it is measurement or arithmetic. `distinct_closes` is texture, NOT a fabrication detector \u2014 a genuinely traded weekend carries very few distinct prices, and on this repo's own data weekends show MORE distinct closes per bar than weekdays, so any rule keyed on that ratio fires on honest data.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 5,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close, high, low\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = '$venue_source'\n    AND product_id = '$venue_product'\n    AND granularity_secs = $granularity\n),\nregimes AS (\n  SELECT\n    bucket_start,\n    close,\n    high,\n    low,\n    CASE\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 6\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 0\n           AND EXTRACT(HOUR FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') < 17\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 5\n           AND EXTRACT(HOUR FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') >= 17\n        THEN 'weekend'\n      ELSE 'weekday'\n    END AS regime\n  FROM bars\n),\nreturns AS (\n  SELECT\n    regime,\n    close,\n    high,\n    low,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - $granularity\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM regimes\n  WINDOW w AS (ORDER BY bucket_start)\n)\nSELECT\n  regime,\n  count(*) AS bars,\n  count(r) AS return_pairs,\n  stddev_samp(r) * 10000 AS vol_bps_per_bar,\n  avg(abs(r)) * 10000 AS mean_abs_move_bps,\n  max(abs(r)) * 10000 AS max_abs_move_bps,\n  count(DISTINCT close) AS distinct_closes,\n  count(*) FILTER (WHERE high = low) AS zero_range_bars\nFROM returns\nGROUP BY regime\nORDER BY regime",
+          "refId": "A"
+        }
+      ],
+      "title": "Weekend vs weekday",
+      "type": "table"
+    }
+  ],
+  "preload": false,
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": [
+    "market-data"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "coinbase",
+          "value": "coinbase"
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
+        "description": "The venue whose collected series is being shown. Single-select: this dashboard deliberately reads one product at a time rather than overlaying the roster, so that it stays legible as currencies are added.",
+        "includeAll": false,
+        "label": "Venue source",
+        "multi": false,
+        "name": "venue_source",
+        "options": [],
+        "query": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "EURC-USDC",
+          "value": "EURC-USDC"
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT product_id FROM cex_prices WHERE source = '$venue_source' ORDER BY 1",
+        "description": "The product to show, listing only what the selected venue actually carries. The filter on the source is load-bearing rather than cosmetic: an unfiltered list offers every product any source has ever written, so it invites selecting a symbol the chosen venue does not and could not quote. The committed default is the product with the densest traded tape, which is the one to verify against when checking that a panel renders.",
+        "includeAll": false,
+        "label": "Venue product",
+        "multi": false,
+        "name": "venue_product",
+        "options": [],
+        "query": "SELECT DISTINCT product_id FROM cex_prices WHERE source = '$venue_source' ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "60",
+          "value": "60"
+        },
+        "description": "Bucket size, in seconds. A fixed list rather than a query on the data, so it is never empty on a cold database. 60 is the collector default and today the only value written.",
+        "label": "Granularity",
+        "name": "granularity",
+        "options": [],
+        "query": "60,300,900,3600,21600,86400",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "UTC",
+          "value": "UTC"
+        },
+        "description": "Wall clock the hour-of-day profile is expressed in. UTC is neutral and right for comparing across currencies; pick a centre's own zone to read the profile as a local trading day. The weekday/weekend split is always computed on the New York FX week regardless of this setting.",
+        "label": "Hour timezone",
+        "name": "hour_tz",
+        "options": [],
+        "query": "UTC,Europe/London,America/New_York,Australia/Sydney,Asia/Tokyo",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "FX analytics",
+  "uid": "fx-analytics",
+  "version": 1,
+  "weekStart": ""
+}

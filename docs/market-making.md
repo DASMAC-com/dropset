@@ -2,8 +2,6 @@
 
 <!-- cspell:word illiquidity -->
 
-<!-- cspell:word intraday -->
-
 <!-- cspell:word lehalle -->
 
 <!-- cspell:word parameterizes -->
