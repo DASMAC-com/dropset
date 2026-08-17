@@ -6,6 +6,7 @@ import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
 import { stablecoinDecimals, stablecoinMint } from "../data/currencies";
 import { ORDER_BOOK_REFRESH_MS } from "../data/timings";
+import { gateNowUnix, syncChainClock } from "../eclob/chainClock";
 import { resolveEclobRoute } from "../eclob/route";
 
 // One side of the pair, resolved to the market's own base/quote orientation.
@@ -142,8 +143,19 @@ export function useOrderBook(
           quote = tokenFor(route.side === "sell" ? pairB : pairA);
         }
 
+        // Read the slot here rather than letting the fetch resolve it, so the
+        // same slot can be priced for its block time and the account fetch is
+        // pinned to the same commitment. One getSlot either way; the sync's
+        // own read is throttled, not per-tick. See lib/eclob/chainClock.ts.
+        const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
+        if (cancelled || gen !== generation) return;
+        await syncChainClock(rpc, slot);
+        if (cancelled || gen !== generation) return;
+
         const view = await fetchDropsetMarketView(rpc, market, {
           commitment: "confirmed",
+          nowSlot: slot,
+          nowUnix: gateNowUnix(),
         });
         if (cancelled || gen !== generation) return;
         setState({ status: "ready", view, market, base, quote });

@@ -4,7 +4,6 @@ import {
   DROPSET_PROGRAM_ADDRESS,
   getSwapInstructionAsync,
   initSimulator,
-  nowUnix,
   simulateSwap,
 } from "@dropset/sdk";
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
@@ -33,6 +32,7 @@ import {
 } from "../dflow/dflowSwap";
 import { PLATFORM_FEE } from "../env";
 import { getErrorMessage } from "../guards";
+import { gateNowUnix, syncChainClock } from "./chainClock";
 import { platformFeeBpsFor, resolveEclobRoute } from "./route";
 
 type Rpc = SolanaClientRuntime["rpc"];
@@ -102,10 +102,16 @@ export async function executeEclobSwap(
     throw new SwapError("No Dropset market for this pair", "api");
   }
 
-  // Level expiry is dual-domain, so the re-simulation needs both clocks:
-  // the chain's slot and the wall clock each quote's datums are measured
-  // from. A level rests only inside both of its deadlines.
+  // Level expiry is dual-domain, so the re-simulation needs both clocks: the
+  // chain's slot and the wall clock each quote's datums are measured from. A
+  // level rests only inside both of its deadlines, and the engine measures the
+  // second against cluster time — so the device clock is checked against the
+  // chain here (lib/eclob/chainClock.ts) rather than trusted. This is the
+  // sizing that sets `minOut` below: a device clock running slow would size
+  // against levels the engine has already dropped, and the swap would
+  // soft-revert on `minOut` with the taker still paying fees.
   const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
+  await syncChainClock(rpc, slot);
 
   // Declare the same configured rate the DFlow route declares, paid to the
   // same wallet DFlow's `feeAccount` names, so revenue from both routes lands
@@ -150,7 +156,7 @@ export async function executeEclobSwap(
     atomicAmount,
     route.limitPriceBits,
     Number(slot),
-    nowUnix(),
+    gateNowUnix(),
     platformFeeBps,
   );
   if (quote.outAmount === 0n) {
