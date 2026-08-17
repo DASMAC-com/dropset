@@ -86,10 +86,17 @@ at 60s granularity:
 
 `AUDD-USDC` prints in roughly 1% of minutes. That is enough for a
 daily-resolution basis level and not enough for an intraday session or
-volatility read — a Saturday there produced 8 bars with a 113 bps range
-between them. The queries are all product-generic, so nothing needs
-rewriting if that book deepens; point them at a different
-`product_id`.
+volatility read.
+
+The sparsity is **not** a weekend effect, which is worth stating because
+that is the natural assumption on an FX-stablecoin pair and it is wrong
+here. Wednesday 2026-08-12 carried 8 bars spanning 114 bps, against 12
+bars and 91 bps on the preceding Saturday — a mid-week trading day
+thinner than the weekend beside it. The book simply does not trade, and
+no regime slice rescues that.
+
+The queries are all product-generic, so nothing needs rewriting if that
+book deepens; point them at a different `product_id`.
 
 The thinness is itself a finding worth keeping rather than a gap to
 apologize for: a barely-traded centralized book is the clearest argument
