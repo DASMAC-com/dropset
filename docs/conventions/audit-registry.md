@@ -194,6 +194,17 @@ db-schema <-> grafana dashboards: db-schema/migrations owns the
   market-data/analytics read cex_prices and feed_cursors by column
   name, so a renamed or dropped column breaks a dashboard or a query
   silently — nothing compiles this SQL.
+util <-> frontend: the human-price / atoms-ratio decimal-gap conversion
+  is forked across languages — util/src/decimals.rs (which the TUI and
+  the maker bot share) and the frontend's humanPrice
+  (frontend/components/orderbook/format.ts). Two languages means the
+  fork cannot be hoisted away, so the contract is the arithmetic
+  association: both scale by 10^base / 10^quote as separate powers
+  rather than the algebraically equal 10^(base-quote), whose single
+  exponentiation is not correctly rounded — so the two panes would
+  otherwise disagree by an ulp on the same level. A Rust-side test
+  pins the grouping; nothing pins the TS side, so a change to either
+  must track the other.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit
