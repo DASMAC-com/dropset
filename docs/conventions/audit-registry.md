@@ -190,9 +190,10 @@ db-schema <-> grafana dashboards: db-schema/migrations owns the
   dropset_ro reader role and the SELECT grants behind it, which the
   provisioned datasource
   (market-data/grafana/provisioning/datasources) logs in as; the panel
-  SQL in market-data/grafana/dashboards reads cex_prices and
-  feed_cursors by column name, so a renamed or dropped column breaks a
-  dashboard silently — nothing compiles this SQL.
+  SQL in market-data/grafana/dashboards and the standalone queries in
+  market-data/analytics read cex_prices and feed_cursors by column
+  name, so a renamed or dropped column breaks a dashboard or a query
+  silently — nothing compiles this SQL.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit
