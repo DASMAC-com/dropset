@@ -12,6 +12,7 @@
 use crate::accounts::MarketView;
 use dropset_sdk::matching::BookLevel;
 use dropset_sdk::price::Price;
+use dropset_util::decimals::atoms_ratio_to_human;
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -136,9 +137,16 @@ const PRICE_PROBE_ATOMS: u64 = 1_000_000_000_000_000_000;
 /// of the one-base-unit form and so its own copy of the resolution bug —
 /// two call sites, one of them silently stale, is exactly what a shared
 /// helper prevents.
+///
+/// The probing is this function's own business; the decimal-gap rescale that
+/// follows is not, so it defers to
+/// [`dropset_util::decimals::atoms_ratio_to_human`] — which preserves the
+/// two-power association this fork and the frontend's `humanPrice` are pinned
+/// to. What `quote_for_base` returns per probe atom *is* the atoms-ratio, so
+/// the helper takes it directly.
 pub(crate) fn human_price(price: Price, base_dec: u8, quote_dec: u8) -> f64 {
     let per_probe = price.quote_for_base(PRICE_PROBE_ATOMS) as f64 / PRICE_PROBE_ATOMS as f64;
-    per_probe * 10f64.powi(base_dec as i32) / 10f64.powi(quote_dec as i32)
+    atoms_ratio_to_human(per_probe, base_dec, quote_dec)
 }
 
 /// Aggregate the raw best-first `levels` into at most [`MAX_LEVELS`] display

@@ -48,9 +48,15 @@ export function humanPrice(
   quoteDecimals: number,
 ): number {
   // Grouped left-to-right to match the Rust fork's association exactly
-  // (`per_probe * 10^base / 10^quote`). Forming the decimals ratio first
+  // (`ratio * 10^base / 10^quote`). Forming the decimals ratio first
   // instead would round differently — 10**b / 10**q is not exactly
   // representable when b < q — and the two panes would disagree by an ulp.
+  //
+  // The Rust half of this pin is `atoms_ratio_to_human` in `util/src/decimals.rs`,
+  // which every Rust caller now shares (the TUI book pane among them); it
+  // carries a test asserting the association, so collapsing it to a single
+  // exponentiation fails there rather than drifting silently away from
+  // this file.
   const perProbe = quoteForBase(bits, PRICE_PROBE_ATOMS);
   return (
     ((Number(perProbe) / Number(PRICE_PROBE_ATOMS)) * 10 ** baseDecimals) /

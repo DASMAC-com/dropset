@@ -3,7 +3,7 @@
 //!
 //! Three parallel copies of this code had drifted across `tui/`,
 //! `bots/maker-bot/`, and `bots/taker-bot/`; hoisting it here means a fix
-//! lands once. The two halves serve unrelated paths and are kept apart as
+//! lands once. The parts serve unrelated paths and are kept apart as
 //! modules:
 //!
 //! * [`localnet`] — **SPL plumbing** for seeding a local validator: the SPL
@@ -16,6 +16,11 @@
 //! * [`rpc`] — the Agave `http`→`ws` PubSub-endpoint derivation the fill
 //!   subscriptions share. Not localnet-specific: the maker's `logsSubscribe`
 //!   path needs it against any cluster.
+//! * [`decimals`] — the human-price ↔ on-chain atoms-ratio conversion, whose
+//!   open-coded copies had reached four call sites across the TUI and the
+//!   maker, one of them carrying a bug the others did not. Pure `f64`
+//!   arithmetic, so it pulls in no on-chain dependency.
 
+pub mod decimals;
 pub mod localnet;
 pub mod rpc;

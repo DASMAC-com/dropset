@@ -70,7 +70,8 @@ pub struct PairConfig {
     /// and to check the pair is quotable at all: tokens span orders of
     /// magnitude (EURC ~$1.14 … IDRX ~$0.000056), and the price the maker will
     /// stamp has to survive the conversion to the on-chain atoms-ratio (see
-    /// [`reference_atoms_ratio`]).
+    /// [`dropset_util::decimals::human_to_atoms_ratio`], which this module's
+    /// tests range-check every pair through).
     pub reference_price: f64,
     /// How many **seconds** after the quote each ladder rung expires. The
     /// bootstrap stamps this on the seeded profile; `u32::MAX` means never
@@ -159,21 +160,6 @@ pub const DEFAULT_SPREAD_BPS: u32 = 50;
 /// the widen / tighten controls step this by ±5 bps, keeping all four levels.
 pub fn ladder_at_spread_bps(spread_bps: u32) -> [(u32, u16); 4] {
     seed_ladder_scaled_offsets(spread_bps as f64 / 100.0)
-}
-
-/// Convert a pair's human quote-per-base price into the atoms-ratio the
-/// on-chain `Price` encodes — `quote_atoms` per `base_atoms`. They coincide
-/// only when both legs share decimals; a token with more decimals than USDC
-/// scales the ratio down, fewer scales it up.
-///
-/// The bootstrap no longer stamps a reference (markets open dark, see
-/// [`seed_vault`]), so nothing converts a price at bring-up time any more.
-/// What the conversion still serves is the config range check in this
-/// module's tests: a pair whose declared price can't encode as a `Price`
-/// would be unquotable once a maker did stamp it. That is now caught by
-/// `cargo test`, not by a bootstrap that refuses to bring the market up.
-pub fn reference_atoms_ratio(config: &PairConfig) -> f64 {
-    config.reference_price * 10f64.powi(config.quote.decimals as i32 - config.base.decimals as i32)
 }
 
 /// The leader's opening deposit `(base_atoms, quote_atoms)`, sized so each leg
@@ -515,16 +501,21 @@ pub fn seed_ladder_scaled_offsets(scale: f64) -> [(u32, u16); 4] {
 mod tests {
     use super::*;
     use dropset_sdk::price::Price;
+    use dropset_util::decimals::human_to_atoms_ratio;
 
     /// Every market's reference price must encode as a `Price` once scaled to
     /// the atoms-ratio — the wide unit-price spread (EURC ~$1.14 down to IDRX
     /// ~$0.000056) plus mixed decimals all has to land inside the codec range.
     /// The bootstrap doesn't stamp it, but the maker bot stamps ≈ this ratio,
     /// so a pair that fell outside the range would be permanently unquotable.
+    ///
+    /// Scaled through the same shared helper the maker stamps with, so this
+    /// cannot range-check a formula the maker no longer uses — the drift a
+    /// local copy of the conversion had made possible.
     #[test]
     fn every_market_reference_encodes() {
         for c in PAIRS {
-            let ratio = reference_atoms_ratio(c);
+            let ratio = human_to_atoms_ratio(c.reference_price, c.base.decimals, c.quote.decimals);
             assert!(
                 Price::from_value(ratio).is_some(),
                 "{} ratio {ratio} out of Price range",
