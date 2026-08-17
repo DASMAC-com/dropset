@@ -51,9 +51,15 @@ services:
     #
     # Keyed, so it sits behind the `fx` profile with the other two: a plain
     # `docker compose up` and `make collectors-up` stay keyless and always work,
-    # and `make fx-collectors-up` starts these. The `:?` on the key makes a
-    # missing credential a clear compose error rather than a crash-looping
-    # container.
+    # and `make fx-collectors-up` starts these.
+    #
+    # The credential is passed as `${VAR:-}`, NOT the `${VAR:?}` required form,
+    # even though the latter would catch a missing key at compose time. The
+    # explorer-image workflow runs `docker compose config` over this whole file
+    # with no environment at all, purely to read the explorer's `image:` tag —
+    # and `:?` fails that parse for every service in the file, so a required
+    # credential here breaks an unrelated image build. The collector rejects an
+    # empty credential at startup instead, naming the variable.
     build:
       context: '../..'
       dockerfile: 'market-data/Dockerfile'
@@ -63,7 +69,7 @@ services:
       migrate:
         condition: 'service_completed_successfully'
     environment:
-      ALPHA_VANTAGE_API_KEY: '${ALPHA_VANTAGE_API_KEY:?required}'
+      ALPHA_VANTAGE_API_KEY: '${ALPHA_VANTAGE_API_KEY:-}'
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
@@ -303,7 +309,7 @@ services:
     environment:
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
-      OANDA_API_KEY: '${OANDA_API_KEY:?required}'
+      OANDA_API_KEY: '${OANDA_API_KEY:-}'
       PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
       RUST_LOG: 'info'
     profiles:
@@ -389,7 +395,7 @@ services:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
       RUST_LOG: 'info'
-      TWELVE_DATA_API_KEY: '${TWELVE_DATA_API_KEY:?required}'
+      TWELVE_DATA_API_KEY: '${TWELVE_DATA_API_KEY:-}'
     profiles:
     - 'fx'
     restart: 'unless-stopped'

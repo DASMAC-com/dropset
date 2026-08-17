@@ -111,15 +111,27 @@ fn default_start(granularity: i64, backfill_days: u64) -> i64 {
 ///
 /// **This is the single place a collector reads a secret**, deliberately: how a
 /// secret is delivered is an open design question (a 1Password-backed local
-/// enclave mirroring AWS Secrets Manager naming, per the ENG-640 secrets
-/// provider abstraction), and it is settled in a planning session rather than
-/// here. Today it reads the process environment, which is the `env/file` local
-/// implementation that abstraction already names. When the provider lands, this
-/// function's body changes and nothing else does — no adapter reads the
-/// environment at all (docs/data-feeds.md §4).
+/// enclave mirroring AWS Secrets Manager naming, per the secrets-provider
+/// abstraction the mainnet deploy issue owns), and it is settled in a planning
+/// session rather than here. Today it reads the process environment, which is
+/// the `env/file` local implementation that abstraction already names. When the
+/// provider lands, this function's body changes and nothing else does — no
+/// adapter reads the environment at all (docs/data-feeds.md §4).
+///
+/// An **empty** value is rejected as firmly as an absent one. That is not
+/// pedantry: the compose services pass these through as `${VAR:-}`, so an
+/// unset credential arrives as an empty string rather than as a missing
+/// variable, and a bare `env::var` would hand the venue an empty key and turn a
+/// configuration mistake into a puzzling 401.
 pub fn secret(name: &str) -> Result<String> {
-    std::env::var(name)
-        .with_context(|| format!("{name} is required (the API credential for this feed)"))
+    let value = std::env::var(name)
+        .with_context(|| format!("{name} is required (the API credential for this feed)"))?;
+    if value.trim().is_empty() {
+        return Err(anyhow!(
+            "{name} is empty (the API credential for this feed is required)"
+        ));
+    }
+    Ok(value)
 }
 
 /// Split a canonical `BASE-QUOTE` symbol into its two ISO-4217 legs.
@@ -195,6 +207,25 @@ mod tests {
         assert!(split_canonical("AU1-USD").is_err());
         // The legitimate shape still passes, in either case.
         assert!(split_canonical("aud-usd").is_ok());
+    }
+
+    #[test]
+    fn an_empty_credential_is_rejected_like_an_absent_one() {
+        // The compose services pass credentials through as `${VAR:-}`, so an
+        // unset key arrives as an empty string rather than as a missing
+        // variable. Accepting it would hand the venue an empty key and turn a
+        // configuration mistake into a puzzling 401.
+        //
+        // Scoped to a name nothing else uses, since the process environment is
+        // shared across tests in a binary.
+        let name = "DROPSET_FX_SECRET_EMPTY_CASE";
+        std::env::set_var(name, "   ");
+        let err = secret(name).unwrap_err().to_string();
+        assert!(err.contains("is empty"), "{err}");
+
+        std::env::set_var(name, "a-real-key");
+        assert_eq!(secret(name).unwrap(), "a-real-key");
+        std::env::remove_var(name);
     }
 
     #[test]

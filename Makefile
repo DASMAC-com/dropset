@@ -483,9 +483,8 @@ grafana-down: check-docker
 # roster").
 # Separate from `collectors-up` because these three need API credentials while
 # the Coinbase feed is keyless: that target must keep working on a machine with
-# no keys at all. Each service requires its credential in the environment and
-# compose fails with a named variable if one is missing, rather than starting a
-# container that crash-loops.
+# no keys at all. Each service reads its credential from the environment and
+# refuses to start without one, naming the variable it wanted.
 #
 # Set FX_PRODUCT_ID to collect a pair other than the AUD-USD default. It is the
 # canonical BASE-QUOTE form; each venue's own spelling is derived from it.
