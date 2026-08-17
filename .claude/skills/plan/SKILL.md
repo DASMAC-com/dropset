@@ -144,12 +144,20 @@ drop is **client-side**: request the `projectMilestone`
 field and ignore every issue carrying one.
 
 Prefer the compact listing for this — it is the same
-information for a fraction of the echo:
+information for a fraction of the echo. **Both tiers, two
+calls**: `list` defaults to the Backlog, so the Todo half —
+the live tracks you are about to say out loud — needs its
+own invocation.
 
 ```sh
 python3 .claude/tools/board_batch.py list
 ```
 
+```sh
+python3 .claude/tools/board_batch.py list --state Todo
+```
+
+Milestoned (parked) issues are dropped from both by default.
 Pull a full body only when a decision turns on it.
 
 **What keeps the Todo set small:** a planning session either
@@ -161,6 +169,12 @@ the only thing that stops the bootstrap re-growing.
 "these meta tracks are open: …". The operator should not have
 to remember to ask which tracks exist; that is exactly the
 context the session was started to hold.
+
+**And fire step 8's parked-findings offer here**, as part of
+this same bootstrap. It is written up as step 8 because
+`audit` and `housekeeping` both cite it by that name, but it
+**runs now** — a count and a prompt, alongside the umbrellas.
+Do not defer it to the end of the session.
 
 **Reconcile file collisions once, here.** The full sweep is
 mechanical bookkeeping — it files `related` links only, never
@@ -235,6 +249,12 @@ Place the operator's decided edges in one batch:
 python3 .claude/tools/board_batch.py edges --pairs <file>
 ```
 
+Removing an operator-retired edge is the same command with
+`--remove`. **Rehearse either with `--dry-run` first** — a
+blocking edge drops an issue out of the available set, so a
+wrong one is expensive, and the flag is accepted in either
+position.
+
 That subcommand is the **planning session's hands**, not a
 new writer: it takes an explicit pair list, has no discovery
 mode, and refuses an empty list. It executes a human's
@@ -289,8 +309,8 @@ skill binds it too:
   See `CLAUDE.md` → "Structured filing fields".
 
 - **Field-only writes go through the tool, not the MCP.**
-  Priority, state, parent, milestone, labels, assignee, and
-  relation add/remove change no body, yet `save_issue` echoes
+  Priority, state, parent, milestone, labels and assignee
+  change no body, yet `save_issue` echoes
   the whole stored body back for each one. One session made
   **17 field-only writes and paid ≈40k** for confirmations
   that fit on 17 lines:

@@ -606,8 +606,10 @@ files.
   cross-check (per structural unit, and inside `audit-scope` for
   files), live-Linear dedup, a bounded seven-unit rotation, and
   high-severity-only push notifications.
-- Filing is autonomous by design. The project Backlog is the review
-  queue; triage there, not at file time.
+- Filing is autonomous by design, and lands **parked**: the
+  `Audit findings` milestone is the review queue, not the Backlog.
+  Triage there — a planning session slates findings in (`plan` step 8);
+  a rotation never does, and never triages at file time.
 - The subsystems, interfaces, and skip-globs are not pinned in this
   skill — they live in `docs/conventions/audit-registry.md` and grow on
   the PR path (`review-pr`) as new subsystems, seams, and

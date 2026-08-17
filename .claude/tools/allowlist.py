@@ -65,7 +65,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -130,34 +129,26 @@ class AllowlistError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
 
 
-def find_main_checkout() -> Path | None:
-    """The worktree whose branch is ``refs/heads/main`` — where Claude Code
-    resolves ``settings.local.json`` to. ``None`` if it can't be determined."""
-    try:
-        out = subprocess.run(
-            ["git", "worktree", "list", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout
-    except (OSError, ValueError):
-        return None
-    current: str | None = None
-    for line in out.splitlines():
-        if line.startswith("worktree "):
-            current = line[len("worktree ") :].strip()
-        elif line.strip() == "branch refs/heads/main" and current:
-            return Path(current)
-    return None
+# Re-exported so callers and tests have one name for it; the implementation
+# lives in firm_core because firm_last.py needs the identical answer, and two
+# separately-written copies of it drifted.
+find_main_checkout = firm_core.main_checkout
 
 
-def resolve_settings_path(path: Path, *, explicit: bool = False) -> Path:
+def resolve_settings_path(path: Path | None, *, explicit: bool = False) -> Path:
     """Where the settings file actually lives.
 
     Claude Code resolves ``.claude/settings.local.json`` through a worktree to
-    the **main checkout**, so a worktree has no copy of its own and the cwd-
-    relative default will not exist there. When the *default* path is absent,
-    fall back to the main checkout's copy.
+    the **main checkout**, so a worktree has no copy of its own. When the
+    caller did not name a path, the main checkout's copy is used
+    **unconditionally** — not only when it already exists.
+
+    That unconditional-ness is the point. Keying the fallback on
+    ``resolved.exists()`` looked safer but inverted the fix: on a main checkout
+    with no allowlist yet, ``add`` would scaffold into the *worktree* instead —
+    a file nothing ever reads, which then exists forever and shadows the real
+    one on every later call. ``firm_last`` refuses outright in that situation;
+    this now agrees with it by writing where the file belongs.
 
     An ``explicit`` ``--settings`` path is **never** redirected, even when it
     does not exist. A caller that names a file means that file: silently
@@ -165,13 +156,17 @@ def resolve_settings_path(path: Path, *, explicit: bool = False) -> Path:
     the one asked for, and would leave a caller-supplied path impossible to
     scaffold.
     """
-    if explicit or path.exists():
+    if explicit:
+        if path is None:
+            raise AllowlistError("an explicit --settings path cannot be empty")
         return path
-    base = find_main_checkout()
-    if base is None:
-        return path
-    resolved = base / DEFAULT_SETTINGS
-    return resolved if resolved.exists() else path
+    resolved = firm_core.main_settings_path()
+    if resolved is not None:
+        return resolved
+    # No main checkout resolvable (git unavailable, or nothing on `main`).
+    # Fall back to the cwd-relative default so a read still has something to
+    # look at, rather than erroring on a path we cannot compute.
+    return path if path is not None else Path(DEFAULT_SETTINGS)
 
 
 def load_allow(path: Path) -> list[str]:
@@ -371,8 +366,14 @@ def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="allowlist.py")
     parser.add_argument(
         "--settings",
-        default=DEFAULT_SETTINGS,
-        help=f"path to the settings file (default {DEFAULT_SETTINGS})",
+        # A `None` sentinel, NOT the default string: value-equality against
+        # DEFAULT_SETTINGS cannot tell "not passed" from "passed the literal
+        # default", so a caller who typed the default path explicitly would be
+        # silently redirected — contradicting resolve_settings_path's contract
+        # that an explicit path is never redirected.
+        default=None,
+        help=f"path to the settings file (default: {DEFAULT_SETTINGS} at the "
+        "main checkout)",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -385,11 +386,12 @@ def run(argv: list[str]) -> int:
     sub.add_parser("cruft", help="return only the suspicious entries")
 
     args = parser.parse_args(argv[1:])
-    # Resolve the *default* through the worktree to the main checkout when the
-    # cwd has no copy — the normal shape of a worktree, not an error. An
+    # Resolve the default to the main checkout — Claude Code resolves the file
+    # that way, so a worktree legitimately has no copy of its own. An
     # explicitly passed --settings is honored verbatim.
     settings_path = resolve_settings_path(
-        Path(args.settings), explicit=args.settings != DEFAULT_SETTINGS
+        Path(args.settings) if args.settings is not None else None,
+        explicit=args.settings is not None,
     )
 
     if args.cmd == "add":

@@ -221,10 +221,11 @@ class MainFlow(unittest.TestCase):
         self.assertEqual(wt, [])
         self.assertIn("Bash(git add:*)", base)
 
-    def test_no_base_repo_firms_nothing(self):
+    def test_no_base_repo_firms_nothing_and_exits_non_zero(self):
+        """Reporting success on a no-op is how a missed rule goes unnoticed."""
         lines = [_use("t1", "Bash", {"command": "git add -A"}), _result("t1", "ok")]
         rc, wt, base = self._run_with(lines, [], with_base=False)
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)
         self.assertEqual(wt, [])
         self.assertEqual(base, [])
 

@@ -348,8 +348,11 @@ so a mutation selecting `success` alone returns a single boolean:
 python3 .claude/tools/board_batch.py fields --updates <file>
 ```
 
-Use it for **every non-body update** — priority, state, parent,
-milestone, labels, assignee, and relation add/remove. One planning
+Use it for **every non-body issue field** — priority, state, parent,
+milestone, labels, assignee. (Relations are not issue fields; they are a
+separate mutation pair, so adding or removing a blocking edge is the
+`edges` subcommand below, not `fields`. Passing a relation key to
+`fields` is rejected.) One planning
 session made 21 writes of which **17 touched no body at all** (a
 priority change, three parent/state/priority moves, eleven milestone
 stamps, one relation removal) and paid roughly **40k** echoing bodies to
@@ -543,6 +546,13 @@ needs *some* tool to execute the operator's decision:
 ```sh
 python3 .claude/tools/board_batch.py edges --pairs <file>
 ```
+
+Add `--remove` to delete the named edges instead — retiring an edge is
+the same human decision in reverse, and it is the other half of what a
+planning session does to the blocking graph. Rehearse either direction
+with `--dry-run` first (accepted in either position): a blocking edge
+drops an issue out of the operator's available set, so a wrong one
+costs more than the rehearsal.
 
 Read it as the human's hands, not as a new writer. It takes an
 **explicit pair list**, has **no discovery mode**, and **refuses an

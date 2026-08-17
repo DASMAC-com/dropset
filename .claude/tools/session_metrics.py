@@ -533,7 +533,15 @@ _DETERMINISTIC_PROGRAMS = {"printenv", "basename", "dirname"}
 
 # Script interpreters, whose *script* names the shape rather than the
 # interpreter — otherwise every repo tool collapses into one shape.
-_INTERPRETERS = {"python3", "python", "python3.11", "python3.12", "node"}
+# Matched by regex rather than an enumerated set so a new point release
+# (`python3.13`) doesn't silently fall back to the collapsing behavior.
+_INTERPRETER_RE = re.compile(r"^(?:python(?:\d+(?:\.\d+)?)?|node|deno|bun)$")
+
+# Script suffixes an interpreter can be given. `node`/`deno`/`bun` were in the
+# interpreter set while only `.py` was recognized, so a `node foo.js` call
+# collapsed to a bare `node` — the exact bug this naming exists to fix, left
+# standing for the non-Python entries.
+_SCRIPT_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts")
 
 
 def is_repo_tool_shape(signature: str) -> bool:
@@ -547,6 +555,11 @@ def is_repo_tool_shape(signature: str) -> bool:
     genuine token sink — that is what the sinks table is for.
     """
     program = signature.split()[0] if signature.split() else ""
+    # `.py` only, deliberately narrower than `_SCRIPT_SUFFIXES`. That set
+    # exists so every script is *named* by its script; this exclusion is the
+    # different question of whether the script is one of the repo's own
+    # `.claude/tools/` Python tools. A `node …/build.mjs` should be named
+    # after its script AND still be eligible as a hardening candidate.
     return program.endswith(".py")
 
 
@@ -618,12 +631,21 @@ def bash_signature(command: str) -> str:
     tokens = _unwrap_run_quiet(tokens)
     if not tokens:
         return ""
-    if tokens[0] in _INTERPRETERS:
-        for tok in tokens[1:]:
+    if _INTERPRETER_RE.match(tokens[0]):
+        module_mode = False
+        for i, tok in enumerate(tokens[1:], start=1):
+            if tok in ("-m", "--module"):
+                module_mode = True
+                continue
             if tok.startswith("-"):
-                continue  # an interpreter flag (`-m`, `-c`) isn't the script
-            if tok.endswith(".py"):
-                tokens = [tok.rsplit("/", 1)[-1], *tokens[tokens.index(tok) + 1 :]]
+                continue  # any other interpreter flag isn't the script
+            if module_mode:
+                # `python3 -m unittest …` → `unittest`. Without this the head
+                # stayed a bare `python3`, so every `-m` invocation collapsed
+                # into one shape — the same defect the script case fixes.
+                tokens = [tok, *tokens[i + 1 :]]
+            elif tok.endswith(_SCRIPT_SUFFIXES):
+                tokens = [tok.rsplit("/", 1)[-1], *tokens[i + 1 :]]
             break
     head = [tokens[0]]
     for tok in tokens[1:]:

@@ -29,6 +29,7 @@ from board_batch import (  # noqa: E402
     index_by_number,
     normalize_priority,
     place_edges,
+    resolve_issue,
     run,
 )
 
@@ -86,6 +87,54 @@ class UpdateInputTests(unittest.TestCase):
     def test_empty_field_map_is_rejected(self):
         with self.assertRaises(BoardBatchError):
             build_update_input({})
+
+    def test_labels_maps_to_labelIds_and_requires_a_list(self):
+        """The only list-valued field, and the only one whose argument name
+        differs non-trivially — a wrong mapping would otherwise ship green."""
+        self.assertEqual(
+            build_update_input({"labels": ["a", "b"]}), {"labelIds": ["a", "b"]}
+        )
+        with self.assertRaises(BoardBatchError):
+            build_update_input({"labels": "not-a-list"})
+
+    def test_a_relation_key_is_rejected(self):
+        """Relations are a separate mutation pair and live in `edges`; three
+        docs once promised `fields` handled them."""
+        for key in ("relation", "blocks", "relations"):
+            with self.subTest(key=key), self.assertRaises(BoardBatchError):
+                build_update_input({key: "ENG-1"})
+
+
+class ResolveIssueTests(unittest.TestCase):
+    def setUp(self):
+        self.by_number = index_by_number([_issue(10), _issue(11)])
+
+    def test_a_bare_number_resolves(self):
+        self.assertEqual(resolve_issue(10, self.by_number)["identifier"], "ENG-10")
+        self.assertEqual(resolve_issue("10", self.by_number)["identifier"], "ENG-10")
+
+    def test_a_matching_prefix_resolves(self):
+        self.assertEqual(
+            resolve_issue("ENG-10", self.by_number)["identifier"], "ENG-10"
+        )
+
+    def test_a_foreign_team_prefix_is_refused_not_silently_resolved(self):
+        """Linear numbers are per-team, so discarding the prefix would let
+        FIN-10 mutate ENG-10."""
+        with self.assertRaises(BoardBatchError) as ctx:
+            resolve_issue("FIN-10", self.by_number)
+        self.assertIn("FIN", str(ctx.exception))
+
+    def test_a_non_positive_or_unreadable_number_is_refused(self):
+        for bad in ("-5", "0", "abc", "ENG-", True):
+            with self.subTest(bad=bad), self.assertRaises(BoardBatchError):
+                resolve_issue(bad, self.by_number)
+
+    def test_a_duplicate_number_makes_the_index_refuse_to_guess(self):
+        dup = [_issue(10), _issue(10, ident="FIN-10")]
+        with self.assertRaises(BoardBatchError) as ctx:
+            index_by_number(dup)
+        self.assertIn("ambiguous", str(ctx.exception))
 
 
 class ListingTests(unittest.TestCase):
@@ -220,6 +269,89 @@ class EdgesTests(unittest.TestCase):
         posted.assert_not_called()
         self.assertTrue(lines[0].startswith("WOULD LINK"))
 
+    def test_a_bad_pair_late_in_the_batch_places_no_edge_at_all(self):
+        """Pre-flight: a half-applied set of blocking edges is worse than none
+        — it silently drops issues out of the operator's available set."""
+        pairs = [
+            {"blocker": 10, "blocked": 11},
+            {"blocker": 10, "blocked": 999},
+        ]
+        with mock.patch.object(bb, "_post") as posted:
+            with self.assertRaises(BoardBatchError):
+                place_edges("k", pairs, self.by_number)
+        posted.assert_not_called()
+
+    def test_remove_deletes_the_matching_relation(self):
+        calls = []
+
+        def fake_post(api_key, query, variables):
+            calls.append((query, variables))
+            if "relations" in query:
+                return {
+                    "issue": {
+                        "relations": {
+                            "nodes": [
+                                {
+                                    "id": "rel-1",
+                                    "type": "blocks",
+                                    "relatedIssue": {
+                                        "id": "uuid-11",
+                                        "identifier": "ENG-11",
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                }
+            return {"issueRelationDelete": {"success": True}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            lines = place_edges(
+                "k", [{"blocker": 10, "blocked": 11}], self.by_number, remove=True
+            )
+        self.assertEqual(lines, ["UNLINKED ENG-10 blocks ENG-11"])
+        self.assertEqual(calls[-1][1], {"id": "rel-1"})
+
+    def test_remove_reports_an_absent_edge_without_raising(self):
+        """The operator's intended end state is reached either way; aborting
+        would strand the rest of the batch."""
+
+        def fake_post(api_key, query, variables):
+            return {"issue": {"relations": {"nodes": []}}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            lines = place_edges(
+                "k", [{"blocker": 10, "blocked": 11}], self.by_number, remove=True
+            )
+        self.assertTrue(lines[0].startswith("ABSENT"))
+
+    def test_remove_ignores_a_relation_of_another_type_or_target(self):
+        def fake_post(api_key, query, variables):
+            return {
+                "issue": {
+                    "relations": {
+                        "nodes": [
+                            {
+                                "id": "rel-x",
+                                "type": "related",
+                                "relatedIssue": {"id": "uuid-11"},
+                            },
+                            {
+                                "id": "rel-y",
+                                "type": "blocks",
+                                "relatedIssue": {"id": "uuid-99"},
+                            },
+                        ]
+                    }
+                }
+            }
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            lines = place_edges(
+                "k", [{"blocker": 10, "blocked": 11}], self.by_number, remove=True
+            )
+        self.assertTrue(lines[0].startswith("ABSENT"))
+
 
 class CliTests(unittest.TestCase):
     def setUp(self):
@@ -274,6 +406,87 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(BoardBatchError) as ctx:
                 run(["board_batch.py", "list"])
         self.assertIn("LINEAR_API_KEY", str(ctx.exception))
+
+    def test_a_non_printable_api_key_is_refused_without_echoing_it(self):
+        """An embedded newline otherwise reaches http.client's header
+        validation, whose ValueError message quotes the credential."""
+        secret = "sk-live-SENTINEL\nX"
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": secret}):
+            with self.assertRaises(BoardBatchError) as ctx:
+                run(["board_batch.py", "list"])
+        self.assertNotIn("SENTINEL", str(ctx.exception))
+
+    def test_edges_cli_is_wired(self):
+        calls = []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                return {"issues": {"nodes": [_issue(10), _issue(11)]}}
+            calls.append(variables)
+            return {"issueRelationCreate": {"success": True}}
+
+        path = self._write([{"blocker": 10, "blocked": 11}])
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            rc = run(["board_batch.py", "edges", "--pairs", path])
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls[0]["input"]["type"], "blocks")
+
+    def test_edges_rejects_a_non_list_payload(self):
+        path = self._write({"blocker": 10})
+        with mock.patch.object(
+            bb, "_post", return_value={"issues": {"nodes": [_issue(10)]}}
+        ):
+            with self.assertRaises(BoardBatchError):
+                run(["board_batch.py", "edges", "--pairs", path])
+
+    def test_dry_run_is_accepted_after_the_subcommand(self):
+        """Registered only at the top level, `edges --pairs f --dry-run` — the
+        form anyone would type — exited 2 on an unrecognized argument."""
+        posted = []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                return {"issues": {"nodes": [_issue(10), _issue(11)]}}
+            posted.append(variables)
+            return {"issueRelationCreate": {"success": True}}
+
+        path = self._write([{"blocker": 10, "blocked": 11}])
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            rc = run(["board_batch.py", "edges", "--pairs", path, "--dry-run"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(posted, [])
+
+    def test_dry_run_before_the_subcommand_is_not_reset_by_the_subparser(self):
+        """A `False` default on the subparser would overwrite the top-level
+        value after parsing — turning the rehearsal flag into a live run."""
+        posted = []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                return {"issues": {"nodes": [_issue(10), _issue(11)]}}
+            posted.append(variables)
+            return {"issueRelationCreate": {"success": True}}
+
+        path = self._write([{"blocker": 10, "blocked": 11}])
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            rc = run(["board_batch.py", "--dry-run", "edges", "--pairs", path])
+        self.assertEqual(rc, 0)
+        self.assertEqual(posted, [])
+
+    def test_a_bad_entry_late_in_a_fields_batch_writes_nothing(self):
+        posted = []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                return {"issues": {"nodes": [_issue(10), _issue(11)]}}
+            posted.append(variables)
+            return {"issueUpdate": {"success": True}}
+
+        path = self._write({"10": {"priority": 1}, "999": {"priority": 1}})
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            with self.assertRaises(BoardBatchError):
+                run(["board_batch.py", "fields", "--updates", path])
+        self.assertEqual(posted, [])
 
 
 if __name__ == "__main__":

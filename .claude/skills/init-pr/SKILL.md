@@ -304,7 +304,7 @@ files resolve across worktrees".
 
 What a cold worktree genuinely lacks is untracked
 per-directory *content* — `frontend/node_modules` and
-`frontend/.env.local` — which is what steps 3 and 4 handle.
+`frontend/.env.local` — which is what step 3 handles.
 
 ## Steps
 
@@ -398,12 +398,14 @@ per-directory *content* — `frontend/node_modules` and
    (`docs/conventions/context-economy.md`), and the runner
    prints one line on success and the failing tail otherwise.
 
-   **Spell it `--dir`, not `-C`.** The two are synonyms to
-   pnpm but *not* to the permission matcher: `review-pr`'s
-   lint step already prescribes the `--dir` form and it is
-   firmed, so a `-C` here would be a second rule for the same
-   command — and a fresh prompt in every cold worktree, which
-   is exactly the population this step exists to serve.
+   **Spell it `--dir`, not `-C`** — for consistency with
+   `review-pr`'s lint step, which prescribes the same form.
+   Note the permission-matcher argument for it does **not**
+   apply to this call any more: wrapped in the quiet runner,
+   the matcher sees the `python3 .claude/tools/` prefix, so
+   the two spellings are indistinguishable to it here. The
+   `--dir`/`-C` distinction still matters for an *unwrapped*
+   `pnpm` call, which is why the rule stands elsewhere.
 
    **This is not only a frontend-task concern.** `make lint`
    runs the whole hook set over the tree, and those two are

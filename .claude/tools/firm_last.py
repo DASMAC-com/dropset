@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -179,23 +178,15 @@ def most_recent_approved_call(calls: list[dict]) -> dict | None:
 
 
 def find_base_repo() -> str | None:
-    """The path of the worktree whose branch is ``refs/heads/main``."""
-    try:
-        out = subprocess.run(
-            ["git", "worktree", "list", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    current = None
-    for line in out.splitlines():
-        if line.startswith("worktree "):
-            current = line[len("worktree ") :].strip()
-        elif line.strip() == "branch refs/heads/main":
-            return current
-    return None
+    """The path of the worktree whose branch is ``refs/heads/main``.
+
+    A thin wrapper over ``firm_core.main_checkout`` — the single owner, so this
+    and ``allowlist.py`` can never disagree about where the shared
+    ``settings.local.json`` lives. They previously had separate copies of this
+    scan, and the copies drifted into a real behavioral divergence.
+    """
+    base = firm_core.main_checkout()
+    return None if base is None else str(base)
 
 
 # The settings read/write pair lives in ``firm_core`` so ``allowlist.py``'s
@@ -257,8 +248,14 @@ def main(argv: list[str] | None = None) -> int:
     # ever reads — worse than useless, because it looks live.
     base = find_base_repo()
     if base is None:
-        print("firm-last: no main worktree found — nothing firmed.")
-        return 0
+        # Non-zero: nothing was firmed, and `/f` reporting success on a no-op
+        # is how a missed rule goes unnoticed.
+        print(
+            "firm-last: no worktree is on `main`, so the shared "
+            "settings.local.json can't be located — nothing firmed.",
+            file=sys.stderr,
+        )
+        return 1
     target = Path(base) / ".claude" / "settings.local.json"
 
     try:

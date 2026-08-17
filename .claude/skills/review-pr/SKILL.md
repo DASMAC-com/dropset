@@ -2989,9 +2989,10 @@ PR-authoring **writes** (`create_pull_request`,
      fast-firm, which made sense only when this step ran
      mid-run. The sweep collects every approval this run made
      (sub-agent and `session-metrics` commands included),
-     generalizes and dedupes them, and propagates the result
-     to this worktree and the base repo behind its
-     propose-then-confirm gate. Relay what it firmed.
+     generalizes and dedupes them, and writes the result to
+     the one shared `settings.local.json` at the main
+     checkout behind its propose-then-confirm gate — live in
+     every worktree at once. Relay what it firmed.
 
      Watch for what it reports as **unfirmable**: a
      `find / … | head`, a `sed … | grep`, or a heredoc is

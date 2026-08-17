@@ -95,7 +95,7 @@ order:
 
 - **The `cspell` flag** — when the invocation includes
   `cspell` (e.g. `housekeeping cspell` or
-  `housekeeping audit cspell`, and likewise under
+  `housekeeping no-audit cspell`, and likewise under
   `/loop 30m housekeeping cspell`), the pass runs the
   opt-in spelling-escape check (step 3); without it that
   step is skipped.
@@ -202,7 +202,7 @@ Three constraints on it:
 This skill used to analyze the board: a full collision
 sweep, a Backlog-wide scan for merge groups, and a
 scheduling-smell report. **All three moved to the `plan`
-skill** (its steps 1–3).
+skill** (its steps 1 and 2).
 
 The reason is not that the work stopped mattering — it is
 that planning sessions now exist as a distinct session kind,
@@ -270,7 +270,7 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 3–6 file and reconcile Backlog issues and mine the
+Steps 3–6 file Backlog issues and mine the
 Session Metrics doc, so they use the
 same env-resolved Linear destination as `linear-task` /
 `sync-blockers`. Resolve each variable with its **own**
@@ -312,7 +312,7 @@ parsed worktree list; step 2 reuses it.
 Once confirmed, fast-forward `main` so the pass runs
 on the latest committed code — the up-to-date version
 of **this** skill and of the sub-skills it invokes
-(`cspell-audit`, `sync-blockers`), rather than whatever
+(`cspell-audit`, `trim-context`, `audit`), rather than whatever
 was current when the worktree was last synced. The base
 repo has `main` checked out, so pull it in place (a bare
 `git pull` reduces to the `Bash(git pull:*)` allow-rule):
@@ -594,8 +594,9 @@ freshness lens does on the PR path — here, periodically.
 
 **This step does not analyze the board.** No collision
 sweep, no Backlog-wide merge-group scan, no scheduling-smell
-report — all three moved to the `plan` skill (its steps 1–3),
-which is where somebody is actually deciding sequencing.
+report — all three moved to the `plan` skill (its steps 1
+and 2), which is where somebody is actually deciding
+sequencing.
 See "Why the board belongs to `plan`" below.
 
 What remains is a narrow carve-out, and it exists because
