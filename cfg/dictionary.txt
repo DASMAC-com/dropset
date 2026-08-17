@@ -98,6 +98,7 @@ libc
 litesvm
 localnet
 localtime
+lpad
 macropod
 memcpy
 memecoins

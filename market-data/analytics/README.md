@@ -50,9 +50,11 @@ start rather than accumulating over calendar time.
 | `deviation_from_anchor.sql` | two  | The basis: venue price vs. its FX anchor, in bps.               |
 
 Three of the four are **single-leg** — they need only the venue's own
-candles. That is why they produce results today while the FX anchor feed
-is still being built: the anchor is required for the basis series and
-for nothing else.
+candles. That is what let them produce results before any FX anchor was
+collected: the anchor is required for the basis series and for nothing
+else. An anchor now exists, so all four run — but the split still
+matters, because a venue whose currency has no anchor collected yet
+keeps three of the four working.
 
 ## Two invariants every query here holds
 
@@ -74,7 +76,7 @@ any multi-month window, which is exactly the window these run over.
 
 ## Which pair leads
 
-**EUR/USD leads the analytics and the exportable chart.** The AUD pair
+**EUR/USD leads the analytics.** The AUD pair
 is carried as a case study rather than the headline, and the reason is
 measured rather than editorial. Over the same 60-day window and venue,
 at 60s granularity:
