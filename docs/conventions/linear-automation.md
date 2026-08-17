@@ -1,3 +1,5 @@
+<!-- cspell:word basenames -->
+
 # Linear automation
 
 Skills that **file** Linear issues (`linear-task`, `audit`,
@@ -80,8 +82,8 @@ ranks nothing, and never folds or closes an issue (consolidation is
 compares just the named, just-filed issue against the backlog (the
 bounded file-time path the filing skills call after `save_issue`); a
 bare invocation is the full pairwise sweep for occasional
-reconciliation, reporting **collision clusters** (the input to
-`housekeeping`'s merge-group proposal), the surviving human-declared
+reconciliation, reporting **collision clusters** (the input to the
+`plan` skill's merge-group proposal), the surviving human-declared
 **semantic blocks**, and the two scheduling **smells**;
 and `--report-todo-blocks` prints those smells alone as JSON. (A
 `--demote` migration mode also existed; it ran once, is spent, and was
@@ -101,9 +103,35 @@ Every filed issue carries machine-readable fields the automation reads
 back, on top of the human prose. Keep the field **names** stable — the
 filing skills emit them and `sync-blockers` parses them:
 
-- `**Fingerprint**: <basename>:<slug>` — the dedup key `audit`
+- `**Fingerprint**: <domain-token>:<slug>` — the dedup key `audit`
   matches on so a finding is never refiled. Mandatory on audit
   findings; one line per finding (a merged issue carries several).
+
+  **The first token is a dotless domain token, never a bare
+  `name.ext`.** Write `feeds-http:get-json-response-size-cap`, not
+  `http.rs:get-json-response-size-cap`. Linear's writer **linkifies a
+  hostname-valid basename**: a line beginning `http.rs` was stored as
+  `[http.rs](<http://http.rs>):…`, corrupting the key. Underscores are
+  invalid in DNS labels, which is why most multi-word snake_case
+  basenames survived by accident while short ones (`http.rs`, `app.rs`,
+  `main.rs`, anything ending `.io` / `.sh` / `.md`) are the hazard
+  class. Derive the token from the path instead of the basename — it is
+  more legible anyway, since `http.rs` alone does not say *whose*.
+
+  **Do not escape it with backticks instead.** A code span dodges the
+  linkifier but reintroduces two worse problems: it is a poor `patch`
+  anchor, and it can come back corrupted from a wholesale document
+  rewrite (see "Anchors must match the *stored* text"). One prescribed
+  form keeps the dedup search single-shaped; two would not.
+
+  **What actually breaks is search, not a parser.** No tool parses this
+  field — `sync_blockers.py` and `merge_tasks.py` read `**Touches**:`
+  only, and `merge_tasks.py` merely carries fingerprint lines through
+  verbatim. Dedup is done by a filing skill **searching open issues**
+  for the key, so a mangled fingerprint degrades that search rather
+  than crashing anything. The rule stands regardless: a key that cannot
+  be found is a key that does not dedup.
+
 - `**Touches**: <glob>[, <glob>…]` — the path globs the fix will
   edit, comma-separated. Declare the **directory** when the work
   spans a dir (`tui/`), the **file** when it's one file
@@ -119,12 +147,25 @@ filing skills emit them and `sync-blockers` parses them:
   issue that predates the `**Touches**:` convention has no globs to
   check; backfill one and re-run the sweep.
 
+  **Glob-vs-diff drift is mechanically detectable, and deliberately not
+  automated yet.** An issue whose merged PR touched paths outside its
+  declared globs is exactly the shape of a prose-widened scope that
+  never updated the field, and could be flagged after the fact. It is
+  recorded here as *evaluated, not built*: the check needs the merged
+  PR's file list, which means `sync_blockers.py` would take a GitHub
+  dependency it currently does not have — it is Linear-only and
+  stdlib-only by design. Adding one to catch a class the amendment rule
+  (see the `plan` skill, step 4) already addresses at the source is the
+  wrong order. Revisit if the rule proves insufficient in practice.
+
 ### Collision clusters, not serial chains
 
 File overlap is reported as a **cluster** — the issues that collide on
 one shared path — rather than as an ordering. A cluster is the candidate
-set for "these would land as one PR", which is what `housekeeping`'s
-merge-group proposal step consumes. Grouping is **per path**, not by
+set for "these would land as one PR", which is what the `plan` skill's
+merge-group proposal step consumes (it also picks the parallelizable
+batch when promoting parked audit findings). Grouping is **per path**,
+not by
 connected component: coupling chains through shared files, so the
 transitive reading collapsed 25 of 27 open issues into one cluster,
 which proposes nothing. Clusters therefore overlap — an issue appears
@@ -297,6 +338,45 @@ transition echoes the whole body too — and `save_document` returns a
 **truncated** `content` in every one of those cases. The echo is a fixed
 cost per call, so the lever on it is **fewer calls**, not `patch`.
 
+### Field-only writes go through `board_batch.py`, not the MCP
+
+There is one way to make the echo vanish entirely, and it is to leave
+the MCP. Linear's `issueUpdate` returns whatever the caller **selects**,
+so a mutation selecting `success` alone returns a single boolean:
+
+```sh
+python3 .claude/tools/board_batch.py fields --updates <file>
+```
+
+Use it for **every non-body issue field** — priority, state, parent,
+milestone, labels, assignee. (Relations are not issue fields; they are a
+separate mutation pair, so adding or removing a blocking edge is the
+`edges` subcommand below, not `fields`. Passing a relation key to
+`fields` is rejected.) One planning
+session made 21 writes of which **17 touched no body at all** (a
+priority change, three parent/state/priority moves, eleven milestone
+stamps, one relation removal) and paid roughly **40k** echoing bodies to
+confirm changes that fit on 17 lines. The same session then cleared four
+priorities through a throwaway script for about **60 tokens** of output
+carrying identical information.
+
+Its `list` subcommand is the same trade for reads: a compact
+`number | priority | title` listing measured ~600 tokens where the MCP
+`list_issues` equivalent measured ~11k, on a call the planning and
+filing skills make every pass.
+
+**Body edits stay on the MCP `patch` path**, and that is a deliberate
+boundary rather than an unfinished job. Linear's API has no patch
+primitive — `description` is a whole string — so a Python body-writer
+would have to fetch, apply locally, and write back **wholesale**, which
+costs the read anyway and reintroduces the round-trip corruption hazard
+documented above. The MCP `patch` does anchor matching with **atomic
+abort on ambiguity**, and that safety is load-bearing: it has correctly
+refused writes whose anchor matched two locations rather than guessing.
+
+`edges` is covered under "Blocking relations" below — it executes an
+operator's decision and is never called by automation.
+
 ### The echo budget is per issue, per **session** — not per skill
 
 "Fewer calls" is easy to satisfy inside one skill and still lose, because
@@ -383,6 +463,67 @@ an earlier fetch. `patch`'s atomicity and exactly-once anchors are the
 real protection: they fail loudly instead of clobbering a concurrent
 edit.
 
+**A stale echo is not evidence the write failed.** A `description`
+write has been observed returning the *pre-write* body with an
+unchanged `updatedAt`; the session concluded it hadn't landed and
+compensated with an append, which was that run's single largest
+avoidable cost. Never compensate — re-read.
+
+**The op payload field is `text`, not `content`.** An invalid-input
+error naming the patch field is what a wrong field name looks like.
+
+**A ticked checkbox stores as `- [X]`, uppercase.** Linear normalizes
+the `x` on write, so a later op anchoring on `- [x] …` matches nothing
+even though that is exactly what the previous write sent. Anchor a
+re-tick or an un-tick on `- [X]`, and read the box state back from the
+stored body rather than from what you wrote.
+
+**Ticking many boxes is three ops, not one per box.** A `replace` with
+`replace_all` over the bare `- [ ]` prefix ticks every open box in one
+op; follow it, in the same array, with one `replace` per box that
+should stay open, flipping it back. Ops apply **in order and
+atomically**, so the result is "all but these". This matters at scale:
+a consolidated issue can carry more boxes than the 50-op cap allows,
+and it keeps the write anchor-based — which is what makes it fail
+loudly instead of clobbering a concurrent amendment. A full-body
+`description` write would silently overwrite one.
+
+### Two write-mangle rules for every body you file
+
+Linear's writer rewrites some markdown on the way in, so two shapes
+must never appear in a filed body:
+
+- **No emphasis span may wrap a newline.** A bolded run crossing a line
+  break stores garbled — `**a\nb**` comes back as `**a****\n****b**`.
+  Close the emphasis on the line that opens it.
+- **No machine-parsed field may start with a bare hostname-valid
+  `name.ext`.** It gets linkified. This is the fingerprint rule in
+  "Structured filing fields", stated once more here because it binds
+  any field a reader or a search is expected to match on.
+
+A **wholesale** content replacement re-parses the entire body, so it is
+where both rules bite hardest — see the `plan` skill's close-out step,
+which additionally composes without inline code spans for this reason.
+
+### The write floor assumes the body is read once
+
+The per-issue floor above ("buffer folds; write them once") assumes a
+session reads the body at the start and holds it. **Amendment breaks
+that assumption**, and the resulting extra write is expected rather
+than a lapse.
+
+Concretely: when a planning session appends checkboxes to an issue an
+implementation session is *already working from*, that session cannot
+see them until its next echo returns them — so a second write it could
+not have batched is structural, not indiscipline. Do not read the floor
+as blaming a session for a cost it had no way to avoid.
+
+**The avoidance is a message, not a tighter budget.** A planning
+session amending an in-flight issue should **tell the worktree session
+directly** — the `plan` skill already has a coordinate-with-in-flight-
+sessions step. That turns an invisible amendment into a message and
+removes the wasted round trip entirely.
+
 ## Blocking relations
 
 **No automated writer files a blocking edge — ever.** Not
@@ -397,6 +538,28 @@ it is made where somebody is actually deciding the order — the `plan`
 skill's session in the base repo, human-directed, one edge at a time.
 That is the whole of the exception: not "a skill that is allowed to",
 but "the place a human does it".
+
+**The mechanism is `board_batch.py edges`**, and it changes none of the
+above. There is no MCP path for relations at all, so a planning session
+needs *some* tool to execute the operator's decision:
+
+```sh
+python3 .claude/tools/board_batch.py edges --pairs <file>
+```
+
+Add `--remove` to delete the named edges instead — retiring an edge is
+the same human decision in reverse, and it is the other half of what a
+planning session does to the blocking graph. Rehearse either direction
+with `--dry-run` first (accepted in either position): a blocking edge
+drops an issue out of the operator's available set, so a wrong one
+costs more than the rehearsal.
+
+Read it as the human's hands, not as a new writer. It takes an
+**explicit pair list**, has **no discovery mode**, and **refuses an
+empty list** — so it cannot originate an edge, only carry one out. It
+is never called by a filing skill or by any automated pass.
+`sync_blockers.py` remains the **only** automated relation writer and
+files `related` links exclusively.
 
 The reason is that the board's **available-vs-blocked view is a
 scheduling instrument the human drives**: a hand-built blocking queue

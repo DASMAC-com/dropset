@@ -189,42 +189,53 @@ class MainFlow(unittest.TestCase):
                 rc = fl.main(argv)
             return rc, _allow(worktree), _allow(base)
 
-    def test_generalized_firm_writes_worktree(self):
+    def test_generalized_firm_writes_base(self):
         lines = [
             _use("t1", "Bash", {"command": "cargo test -p dropset"}),
             _result("t1", "ok"),
         ]
-        rc, wt, base = self._run_with(lines, [])
+        rc, wt, base = self._run_with(lines, [], with_base=True)
         self.assertEqual(rc, 0)
-        self.assertIn("Bash(cargo test:*)", wt)
+        self.assertIn("Bash(cargo test:*)", base)
 
     def test_exact_mode_writes_verbatim(self):
         lines = [
             _use("t1", "Bash", {"command": "cargo test -p dropset"}),
             _result("t1", "ok"),
         ]
-        rc, wt, base = self._run_with(lines, ["exact"])
-        self.assertIn("Bash(cargo test -p dropset:*)", wt)
+        rc, wt, base = self._run_with(lines, ["exact"], with_base=True)
+        self.assertIn("Bash(cargo test -p dropset:*)", base)
 
-    def test_writes_both_worktree_and_base(self):
+    def test_writes_only_the_base_never_the_worktree(self):
+        # settings.local.json resolves through a worktree to the main
+        # checkout, so a worktree-local copy would be a file nothing reads.
         lines = [_use("t1", "Bash", {"command": "git add -A"}), _result("t1", "ok")]
         rc, wt, base = self._run_with(lines, [], with_base=True)
-        self.assertIn("Bash(git add:*)", wt)
         self.assertIn("Bash(git add:*)", base)
+        self.assertEqual(wt, [])
 
-    def test_base_only_writes_base_skips_worktree(self):
+    def test_base_only_flag_is_accepted_and_ignored(self):
         lines = [_use("t1", "Bash", {"command": "git add -A"}), _result("t1", "ok")]
         rc, wt, base = self._run_with(lines, ["--base-only"], with_base=True)
+        self.assertEqual(rc, 0)
         self.assertEqual(wt, [])
         self.assertIn("Bash(git add:*)", base)
+
+    def test_no_base_repo_firms_nothing_and_exits_non_zero(self):
+        """Reporting success on a no-op is how a missed rule goes unnoticed."""
+        lines = [_use("t1", "Bash", {"command": "git add -A"}), _result("t1", "ok")]
+        rc, wt, base = self._run_with(lines, [], with_base=False)
+        self.assertEqual(rc, 1)
+        self.assertEqual(wt, [])
+        self.assertEqual(base, [])
 
     def test_bareverb_is_not_written(self):
         lines = [
             _use("t1", "Bash", {"command": "curl https://example.com/x"}),
             _result("t1", "ok"),
         ]
-        rc, wt, base = self._run_with(lines, [])
-        self.assertEqual(wt, [])
+        rc, wt, base = self._run_with(lines, [], with_base=True)
+        self.assertEqual(base, [])
 
 
 if __name__ == "__main__":

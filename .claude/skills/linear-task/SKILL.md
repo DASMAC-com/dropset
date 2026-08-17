@@ -93,6 +93,17 @@ what to file.
      another issue. See `CLAUDE.md` → "Structured filing
      fields".
 
+     **Two shapes Linear's writer mangles**, so keep them
+     out of the body:
+
+     - **No emphasis span may wrap a newline** — a bolded
+       run crossing a line break stores garbled.
+     - **No machine-parsed field may start with a bare
+       hostname-valid `name.ext`** — it gets linkified
+       (`http.rs` stores as a link), which corrupts a key a
+       later search has to match. Use a dotless domain
+       token instead.
+
    - If the to-do came out of an open PR or branch,
      add a `links` entry to that PR so the issue
      traces back to where the blocker surfaced. Resolve

@@ -223,15 +223,16 @@ Concrete rules:
   so one rule firms the whole family. Don't approve the per-tag,
   per-arg variant; it only ever matches that one call.
 
-- When per-worktree or per-arg approvals have already piled up in
+- When per-arg approvals have already piled up in
   `settings.local.json`, run **`/firm-perms sweep`**. It collapses the
   one-off entries into globs (per the rules above), dedupes them, and
-  writes the firmed allowlist to **both** this worktree and the base
-  repo so future worktrees inherit it — proposing the changes for
+  writes the firmed allowlist back — proposing the changes for
   your approval before it writes. That's the full sweep. To memorialize
   a *single* just-approved command instead, a bare `/firm-perms` (or the
   `/f` shorthand) takes the **fast firm** — it firms just that one
-  command into both files immediately, with no propose-then-confirm gate.
+  command immediately, with no propose-then-confirm gate. Both write to
+  the one shared file at the main checkout, so the result is live in
+  every worktree.
 
 ## Patterns that always re-prompt — never author these
 
@@ -295,12 +296,12 @@ other local integrations in
 
 Baseline permission allow-rules (the `Bash(prefix:*)` globs this doc's
 rules produce) go in `.claude/settings.json` or `settings.local.json` —
-the `firm-perms` skill maintains the local allowlist for you. Because
-neither settings file is tracked, a worktree does **not** inherit the
-base repo's copy automatically; `firm-perms`' full sweep is what
-propagates a firmed allowlist from the base repo into a worktree (and
-back), so run it once in a cold worktree if the guard or a familiar
-allow-rule is missing.
+the `firm-perms` skill maintains the local allowlist for you.
+`settings.local.json` is **one shared file resolved through worktrees
+to the main checkout**, so a firmed rule is live in every worktree at
+once and there is nothing to propagate; see
+[local-integrations](local-integrations.md) → "How settings files
+resolve across worktrees".
 
 ## Why the `git grep` ban stays absolute
 

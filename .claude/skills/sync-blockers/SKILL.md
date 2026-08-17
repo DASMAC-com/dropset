@@ -173,7 +173,7 @@ links. They are text, not JSON, because every consumer is a
 reader — a human, or the model driving `housekeeping`.
 
 - **collision clusters** — issues grouped **per shared
-  path**. This is the direct input to `housekeeping`'s
+  path**. This is the direct input to the `plan` skill's
   merge-group proposal step: a cluster is the candidate set
   for "these would land as one PR", e.g. *these three issues
   all touch `bots/maker-bot/src/model/feeds.rs`*. Paths whose

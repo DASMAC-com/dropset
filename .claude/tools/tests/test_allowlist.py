@@ -13,15 +13,19 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from unittest import mock
+
 import firm_core
 
 from allowlist import (
+    DEFAULT_SETTINGS,
     AllowlistError,
     add,
     classify,
     covers,
     cruft,
     load_allow,
+    resolve_settings_path,
     run,
 )
 
@@ -38,9 +42,21 @@ class LoadTests(unittest.TestCase):
                 json.dump(_settings(["Bash(git status:*)", "Read(/a/**)"]), fh)
             self.assertEqual(load_allow(Path(p)), ["Bash(git status:*)", "Read(/a/**)"])
 
-    def test_missing_file_errors(self):
-        with self.assertRaises(AllowlistError):
-            load_allow(Path("/no/such/settings.json"))
+    def test_missing_file_is_empty_not_an_error(self):
+        """Under the shared-file model a worktree has no copy of its own, so
+        an absent file is the normal case rather than a bad path."""
+        self.assertEqual(load_allow(Path("/no/such/settings.json")), [])
+
+    def test_malformed_file_still_errors(self):
+        """A corrupt file is a real defect — treating it as empty would hide
+        it, which is the one thing the permissive missing-file path must not
+        start doing."""
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "settings.local.json")
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write("{not json")
+            with self.assertRaises(AllowlistError):
+                load_allow(Path(p))
 
     def test_malformed_allow_is_empty(self):
         with tempfile.TemporaryDirectory() as d:
@@ -48,6 +64,115 @@ class LoadTests(unittest.TestCase):
             with open(p, "w", encoding="utf-8") as fh:
                 json.dump({"permissions": {}}, fh)
             self.assertEqual(load_allow(Path(p)), [])
+
+
+class ResolveSettingsPathTests(unittest.TestCase):
+    """The contract: the DEFAULT always resolves to the main checkout; an
+    EXPLICIT path is never redirected. Note these patch
+    `allowlist.firm_core.main_settings_path`, the single owner — patching a
+    re-exported alias would leave the real resolver running and silently reach
+    the developer's own checkout."""
+
+    def _base(self, d, rules=("Bash(ls:*)",)):
+        base = Path(d) / "base"
+        (base / ".claude").mkdir(parents=True)
+        (base / DEFAULT_SETTINGS).write_text(
+            json.dumps(_settings(list(rules))), encoding="utf-8"
+        )
+        return base
+
+    def test_the_default_resolves_to_the_main_checkout(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = self._base(d)
+            with mock.patch(
+                "allowlist.firm_core.main_settings_path",
+                return_value=base / DEFAULT_SETTINGS,
+            ):
+                self.assertEqual(resolve_settings_path(None), base / DEFAULT_SETTINGS)
+
+    def test_the_default_resolves_there_even_when_that_file_does_not_exist_yet(
+        self,
+    ):
+        """The bug this fixes: keying the fallback on `resolved.exists()` sent
+        `add` to scaffold a worktree-local file that nothing ever reads, which
+        then shadowed the real one forever."""
+        with tempfile.TemporaryDirectory() as d:
+            absent = Path(d) / "base" / DEFAULT_SETTINGS
+            with mock.patch(
+                "allowlist.firm_core.main_settings_path", return_value=absent
+            ):
+                self.assertEqual(resolve_settings_path(None), absent)
+
+    def test_with_no_main_checkout_it_falls_back_to_the_cwd_default(self):
+        with mock.patch("allowlist.firm_core.main_settings_path", return_value=None):
+            self.assertEqual(resolve_settings_path(None), Path(DEFAULT_SETTINGS))
+
+    def test_an_explicit_path_is_never_redirected(self):
+        """A caller that names a file means that file — retargeting it would
+        send an `add` write to a different allowlist than the one asked for."""
+        with tempfile.TemporaryDirectory() as d:
+            base = self._base(d)
+            named = Path(d) / "elsewhere" / "settings.local.json"
+            with mock.patch(
+                "allowlist.firm_core.main_settings_path",
+                return_value=base / DEFAULT_SETTINGS,
+            ):
+                self.assertEqual(resolve_settings_path(named, explicit=True), named)
+
+    def test_an_explicit_path_equal_to_the_default_string_is_still_explicit(self):
+        """Value-equality against DEFAULT_SETTINGS could not tell "not passed"
+        from "passed the literal default"; run() uses a None sentinel."""
+        with tempfile.TemporaryDirectory() as d:
+            base = self._base(d)
+            named = Path(DEFAULT_SETTINGS)
+            with mock.patch(
+                "allowlist.firm_core.main_settings_path",
+                return_value=base / DEFAULT_SETTINGS,
+            ):
+                self.assertEqual(resolve_settings_path(named, explicit=True), named)
+
+    def test_resolution_then_load_yields_the_main_checkout_allowlist(self):
+        """The end-to-end shape of the bug: a worktree with no settings file
+        of its own read an empty allowlist (or errored) instead of the real
+        one at the main checkout."""
+        with tempfile.TemporaryDirectory() as d:
+            base = self._base(d, ["Bash(git status:*)"])
+            with mock.patch(
+                "allowlist.firm_core.main_settings_path",
+                return_value=base / DEFAULT_SETTINGS,
+            ):
+                allow = load_allow(resolve_settings_path(None))
+            self.assertEqual(allow, ["Bash(git status:*)"])
+
+
+class WorktreeScanTests(unittest.TestCase):
+    """`main_checkout`'s parsing half, which was previously only ever mocked."""
+
+    def test_finds_the_worktree_on_main(self):
+        porcelain = (
+            "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\n"
+            "worktree /repo/.claude/worktrees/eng-1\nHEAD def\n"
+            "branch refs/heads/eng-1\n"
+        )
+        self.assertEqual(firm_core.parse_worktree_list(porcelain), Path("/repo"))
+
+    def test_finds_main_when_it_is_not_first(self):
+        porcelain = (
+            "worktree /repo/wt\nHEAD def\nbranch refs/heads/eng-1\n\n"
+            "worktree /repo\nHEAD abc\nbranch refs/heads/main\n"
+        )
+        self.assertEqual(firm_core.parse_worktree_list(porcelain), Path("/repo"))
+
+    def test_returns_none_when_nothing_is_on_main(self):
+        porcelain = "worktree /repo\nHEAD abc\nbranch refs/heads/feature\n"
+        self.assertIsNone(firm_core.parse_worktree_list(porcelain))
+
+    def test_a_detached_worktree_does_not_match(self):
+        porcelain = "worktree /repo\nHEAD abc\ndetached\n"
+        self.assertIsNone(firm_core.parse_worktree_list(porcelain))
+
+    def test_empty_output_returns_none(self):
+        self.assertIsNone(firm_core.parse_worktree_list(""))
 
 
 class CoversTests(unittest.TestCase):

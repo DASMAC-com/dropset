@@ -259,6 +259,92 @@ class BashSignatures(unittest.TestCase):
     def test_an_unwrapped_command_still_normalizes(self):
         self.assertEqual(sm.bash_signature("make lint"), "make lint")
 
+    def test_a_repo_tool_is_named_by_its_script_not_by_python3(self):
+        """Otherwise every repo tool collapses into one `python3` shape, which
+        three sessions then reported as their top hardening candidate."""
+        self.assertEqual(
+            sm.bash_signature("python3 .claude/tools/search_source.py 'pat'"),
+            "search_source.py",
+        )
+        self.assertEqual(
+            sm.bash_signature("python3 .claude/tools/sync_blockers.py --for ENG-1"),
+            "sync_blockers.py",
+        )
+
+    def test_distinct_repo_tools_get_distinct_shapes(self):
+        a = sm.bash_signature("python3 .claude/tools/allowlist.py cruft")
+        b = sm.bash_signature("python3 .claude/tools/board_batch.py list")
+        self.assertNotEqual(a, b)
+
+    def test_run_quiet_still_unwraps_rather_than_naming_itself(self):
+        """The unwrap must win over the script-naming rule."""
+        self.assertEqual(
+            sm.bash_signature("python3 .claude/tools/run_quiet.py -- make lint"),
+            "make lint",
+        )
+
+    def test_a_module_invocation_is_named_by_its_module(self):
+        """`-m` used to leave the head a bare `python3`, so every `-m` call
+        collapsed into one shape — the same defect the script case fixes."""
+        sig = sm.bash_signature("python3 -m unittest discover -s tests")
+        self.assertTrue(sig.startswith("unittest discover"), sig)
+        self.assertNotIn("python3", sig)
+        # Two different modules must not share a shape.
+        self.assertNotEqual(sig, sm.bash_signature("python3 -m pytest -q"))
+
+    def test_a_point_release_interpreter_is_recognized(self):
+        """An enumerated set silently fell back to collapsing on a new
+        release."""
+        self.assertEqual(
+            sm.bash_signature("python3.13 .claude/tools/board_batch.py list"),
+            "board_batch.py list",
+        )
+
+    def test_a_non_python_script_is_named_by_its_script_too(self):
+        self.assertEqual(
+            sm.bash_signature("node decks/scripts/fetch-remote-assets.mjs"),
+            "fetch-remote-assets.mjs",
+        )
+
+    def test_a_bare_interpreter_with_no_script_is_unchanged(self):
+        self.assertEqual(sm.bash_signature("python3 foo bar.py"), "python3 foo")
+
+
+class RepoToolExclusion(unittest.TestCase):
+    def test_repo_tool_shapes_are_recognized(self):
+        self.assertTrue(sm.is_repo_tool_shape("search_source.py"))
+        self.assertFalse(sm.is_repo_tool_shape("make lint"))
+        self.assertFalse(sm.is_repo_tool_shape("git worktree list"))
+        self.assertFalse(sm.is_repo_tool_shape(""))
+
+    def test_a_non_python_script_is_still_a_hardening_candidate(self):
+        """Naming and exclusion are different questions: a build script is
+        named by its script, but it is not one of the repo's Python
+        skill-tools, so it must stay eligible."""
+        self.assertFalse(sm.is_repo_tool_shape("fetch-remote-assets.mjs"))
+
+    def test_a_repo_tool_is_kept_out_of_the_hardening_table(self):
+        """It is already the hardened form; nominating it crowds out real
+        candidates. A non-tool repeat in the same run still lands."""
+        agg = sm.SessionAggregator()
+        commands = [
+            "python3 .claude/tools/search_source.py 'pat'",
+            "python3 .claude/tools/search_source.py 'other'",
+            "make lint",
+            "make lint",
+        ]
+        for i, cmd in enumerate(commands):
+            agg.ingest_main_line(
+                assistant(
+                    '{"output_tokens":1}',
+                    tool_use(f"b{i}", "Bash", json.dumps({"command": cmd})),
+                )
+            )
+        report = agg.finish()
+        sigs = {c.signature for c in report["hardening_candidates"]}
+        self.assertNotIn("search_source.py", sigs)
+        self.assertIn("make lint", sigs)
+
     def test_deterministic_classification(self):
         self.assertTrue(sm.is_deterministic_shape("git worktree list"))
         self.assertTrue(sm.is_deterministic_shape("git branch"))

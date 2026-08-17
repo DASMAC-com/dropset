@@ -119,6 +119,13 @@ SEARCH_EXCLUDE_DIRS = (
     ".ruff_cache",
     ".pytest_cache",
     ".mypy_cache",
+    # Live worktrees, which sit under the base repo's `.claude/worktrees/` and
+    # are each a *full checkout of this same repo*. Searching from the base
+    # repo therefore returns every match once per live worktree: one measured
+    # planning session paid ~10.7k across two sweeps that were ~6x duplicated.
+    # A worktree's own session searches its own root, so nothing is lost by
+    # pruning the tree here.
+    "worktrees",
 )
 
 # Which per-lens slice a changed path belongs to, for ``--split``. Ordered

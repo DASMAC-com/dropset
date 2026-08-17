@@ -62,7 +62,11 @@ output to a log and surfaces only a summary — see
 step 5's diff-and-freshness gate, which also **owns** the three path
 lists that decide the review's excludes and which CI-mirroring gates
 run), `sync_blockers.py` (the deterministic core of the
-`sync-blockers` skill), `search_source.py` (the one scoped-search
+`sync-blockers` skill), `board_batch.py` (the planning session's
+batched board writes and its compact board read — `list`, `fields`,
+`priorities`, `edges`; it exists because every MCP write echoes the
+issue's whole body back, and `issueUpdate` selecting `success` alone
+does not), `search_source.py` (the one scoped-search
 shape, which takes its exclude lists from `review_diff.py`),
 `lens_preamble.py` (composes the standing half of a lens brief from the
 [sub-agent brief](sub-agent-brief.md) plus a skill's own committed
@@ -75,13 +79,64 @@ optional dependency, per the lazy-import rule above), alongside the
 top-level `tools/` tree.
 
 A `make` target is the usual interface, but not the only one:
-`sync_blockers.py`, `review_diff.py`, and `init_pr_branch.py` are all
-driven directly with `python3`. Where a skill does that, the allow-rule
-it needs is
-the **directory-wide** `Bash(python3 .claude/tools/:*)` rather than a
-per-tool rule — and for a skill that runs in a **fresh worktree**
-(`init-pr`), that rule has to live in `~/.claude/settings.json`, since
-user level is the only scope a brand-new worktree inherits.
+`sync_blockers.py`, `review_diff.py`, `board_batch.py`, and
+`init_pr_branch.py` are all driven directly with `python3`. Where a
+skill does that, the allow-rule it needs is the **directory-wide**
+`Bash(python3 .claude/tools/:*)` rather than a per-tool rule, so that
+one rule covers every tool however its arguments vary.
+
+Put that rule in the project scope like any other. A worktree needs no
+copy of its own: `settings.local.json` is one shared file resolved
+through worktrees to the main checkout, so a rule firmed anywhere is
+live everywhere (see [local-integrations](local-integrations.md) →
+"How settings files resolve across worktrees"). The criterion for
+promoting a rule to `~/.claude/settings.json` is **cross-*repo*
+portability** — you want it in other projects too — and nothing to do
+with worktrees.
+
+### Temp output goes in a `claude-<tool-name>/` directory
+
+A skill-tool that writes temp output writes it to a directory named
+`claude-<tool-name>/` under the system temp root — `run_quiet.py` to
+`claude-run-quiet/`, `render_review.py` to `claude-render-review/`,
+and so on. The matching **tool-scoped** Read glob goes into the
+documented allowlist setup **in the same PR that adds the tool**:
+
+```txt
+Read(/var/folders/**/claude-run-quiet/**)
+```
+
+Two reasons this is structural rather than a preference.
+
+**The temp root's prefix rotates.** On macOS the per-boot temp root is
+`/var/folders/<hash>/T/…` and the hash changes **every boot**, so a
+literal firmed path under it can never survive a reboot. The leading
+`**` is what absorbs the rotating prefix; a per-tool directory name is
+what keeps the glob narrow enough to grant. The broad
+`Read(/var/folders/**)` form stays **refused** — an unscoped root over
+the whole system temp tree is exactly what the `firm-perms` safety
+floor exists to reject.
+
+**Nothing will catch it later.** `firm-perms`' sweep can only
+generalize approvals it can *see*; a recurring prompt that the operator
+keeps approving one-off never surfaces as a pattern to harvest. This
+one was found by hand-probing after the prompts got annoying, not by
+any tooling. So the allow-rule is part of adding the tool, in the same
+PR, or it does not happen.
+
+Two related notes, so neither gets re-diagnosed:
+
+- **The harvest blind spot is a known bound, not a bug to fix.** A
+  sweep over approvals cannot see a prompt that was approved without
+  being firmed. Rather than have `firm-perms` probe the known
+  `claude-*` temp directories on every run — speculative work for a
+  case this convention now prevents at the source — the limitation is
+  recorded here and the fix is placed at tool-authoring time.
+- **After a reboot, `allowlist.py cruft` flags previously-firmed
+  literal `/var/folders/<old-hash>` rules under its
+  `machine-path-stale` category.** That is **expected rot**, resolved
+  by dropping those rules in favor of the tool-scoped globs above — not
+  a fresh diagnosis.
 
 Repo build tooling that is neither a workspace crate nor Claude-skill
 glue lives **with what it serves**, not in a tooling tree:

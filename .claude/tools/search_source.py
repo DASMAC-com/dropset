@@ -130,6 +130,11 @@ DEFAULT_MAX = 200
 # A file this large is a generated or vendored blob whatever its extension says.
 MAX_FILE_BYTES = 2_000_000
 
+# A matched line longer than this is truncated. Real source lines sit well
+# under it; what runs past are minified bundles and embedded data URIs, where
+# the whole line can cost thousands of tokens to answer a yes/no question.
+MAX_LINE_CHARS = 400
+
 
 class SearchSourceError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
@@ -463,20 +468,63 @@ def search(
     }
 
 
+def clip(line: str) -> str:
+    """A matched line, truncated past ``MAX_LINE_CHARS`` with the cut stated.
+
+    A single line can be arbitrarily long — a minified bundle, or a generated
+    SVG carrying a base64 data URI — and echoing one whole costs far more than
+    the question was worth: one existence check under ``--all-text`` paid ~5.2k
+    for exactly that. Truncating keeps the match visible (you can still see
+    *that* it matched, and where) while bounding what it can cost.
+    """
+    if len(line) <= MAX_LINE_CHARS:
+        return line
+    return f"{line[:MAX_LINE_CHARS]}… [+{len(line) - MAX_LINE_CHARS} chars]"
+
+
+def merge_context_blocks(matches: list[dict]) -> list[tuple[str, int, list[str]]]:
+    """Collapse overlapping context windows into one block each.
+
+    Several matches a few lines apart otherwise emit near-identical windows
+    that re-quote the same source: one ``--context 12`` call against a file
+    with five nearby matches returned five overlapping blocks, ~2.2k for
+    roughly 400 tokens of distinct content. Adjacent or overlapping windows in
+    the same file become a single block covering their union.
+
+    Returns ``(path, start_line, lines)`` triples in input order.
+    """
+    blocks: list[tuple[str, int, list[str]]] = []
+    for match in matches:
+        path = match["path"]
+        start = match["context_start"]
+        lines = list(match["context"])
+        end = start + len(lines) - 1
+        if blocks:
+            prev_path, prev_start, prev_lines = blocks[-1]
+            prev_end = prev_start + len(prev_lines) - 1
+            # `+ 1` so strictly adjacent windows merge too — a one-line gap
+            # between two blocks costs a separator worth more than the line.
+            if prev_path == path and start <= prev_end + 1:
+                if end > prev_end:
+                    prev_lines.extend(lines[prev_end - start + 1 :])
+                continue
+        blocks.append((path, start, lines))
+    return blocks
+
+
 def print_result(result: dict, files_only: bool, context: int) -> None:
     """Emit ``grep -n``-shaped lines on stdout and one summary line on stderr."""
     if files_only:
         for path in result["files"]:
             print(path)
+    elif context:
+        for path, start, lines in merge_context_blocks(result["matches"]):
+            for offset, line in enumerate(lines):
+                print(f"{path}:{start + offset}:{clip(line)}")
+            print("--")
     else:
         for match in result["matches"]:
-            if context:
-                start = match["context_start"]
-                for offset, line in enumerate(match["context"]):
-                    print(f"{match['path']}:{start + offset}:{line}")
-                print("--")
-            else:
-                print(f"{match['path']}:{match['line']}:{match['text']}")
+            print(f"{match['path']}:{match['line']}:{clip(match['text'])}")
 
     summary = (
         f"search-source | {result['total']} match(es) in {len(result['files'])} file(s)"
@@ -492,14 +540,25 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
         summary += (
             f" | {len(skipped)} file(s) skipped as oversized: {', '.join(skipped)}"
         )
-    if not result["total"] and result.get("narrowed_by_default"):
-        # The third silent-cap risk, and the one that reads most like a real
-        # negative: nothing matched, but prose was never searched. Naming the
-        # remedy inline is what stops the reader falling back to a bare `grep`.
-        summary += (
-            " | NOTE: searched the source set only (no --ext/--all-text given), "
-            "so .md and other prose was not looked at — retry with --ext md"
-        )
+    if result.get("narrowed_by_default"):
+        # The third silent-cap risk. It fires on **every** default-narrowed
+        # run, not just an empty one: a search that finds some matches while
+        # silently skipping every .md file reads as a complete answer, and a
+        # non-empty result is *more* misleading than an empty one, not less —
+        # an empty result at least prompts a second look. This exact shape
+        # produced a wrong "referenced by nothing" conclusion about a tool that
+        # three .md files reference.
+        if result["total"]:
+            summary += (
+                " | NOTE: source set only (no --ext/--all-text), so .md and "
+                "other prose was NOT searched — these matches may be partial"
+            )
+        else:
+            summary += (
+                " | NOTE: searched the source set only (no --ext/--all-text "
+                "given), so .md and other prose was not looked at — retry "
+                "with --ext md"
+            )
     if result.get("globbed") and not result.get("scanned"):
         # Distinguish the two ways a globbed run can search nothing. Blaming a
         # path typo for an extension mismatch sends the reader to the wrong fix.

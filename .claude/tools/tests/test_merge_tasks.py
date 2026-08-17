@@ -16,6 +16,7 @@ from merge_tasks import (
     assemble,
     build_patch_ops,
     extract_touches,
+    highest_part_number,
     is_meta_glob,
     parse_token,
     plan,
@@ -92,6 +93,18 @@ class TouchesTests(unittest.TestCase):
         self.assertNotIn("**Touches**:", clean)
         self.assertEqual(globs, ["tui/", "sdk/rs/**"])
 
+    def test_highest_part_number_finds_the_largest_heading(self):
+        body = "intro\n\n# Part 1 — a\n\n# Part 2 — b\n\n# Part 11 — c\n"
+        self.assertEqual(highest_part_number(body), 11)
+
+    def test_highest_part_number_is_zero_when_never_folded(self):
+        self.assertEqual(highest_part_number("just a body\n"), 0)
+
+    def test_highest_part_number_ignores_prose_mentions(self):
+        """`Part 9` inside a sentence must not inflate the next number."""
+        body = "See Part 9 for context.\n\n# Part 2 — real\n"
+        self.assertEqual(highest_part_number(body), 2)
+
     def test_extract_touches_keeps_fingerprint(self):
         body = "**Fingerprint**: a:b\n**Touches**: x/\n"
         clean, globs = extract_touches(body)
@@ -147,6 +160,36 @@ class AssembleTests(unittest.TestCase):
         self.assertIn("**Fingerprint**: stage:tweak", out["description"])
         # the folded issue's Claude: title prefix is stripped in the heading
         self.assertNotIn("# Part 1 — Claude:", out["description"])
+
+    def test_a_second_fold_continues_the_survivors_numbering(self):
+        """A survivor already carrying Parts 1-2 must gain Part 3, not a
+        second Part 1 — the shape that had to be hand-corrected in practice."""
+        payload = {
+            "survivor": "ENG-615",
+            "issues": [
+                {
+                    "id": "ENG-615",
+                    "number": 615,
+                    "title": "Survivor",
+                    "description": (
+                        "Intro.\n\n# Part 1 — earlier fold\n\nbody\n\n"
+                        "# Part 2 — another fold\n\nbody\n\n"
+                        "**Touches**: .claude/skills/audit/**\n"
+                    ),
+                },
+                {
+                    "id": "ENG-700",
+                    "number": 700,
+                    "title": "New fold",
+                    "description": "New body.\n\n**Touches**: .claude/tools/**\n",
+                },
+            ],
+        }
+        out = assemble(payload)
+        self.assertIn("# Part 3 — New fold", out["description"])
+        # The pre-existing headings survive, and no duplicate Part 1 appears.
+        self.assertEqual(out["description"].count("# Part 1 —"), 1)
+        self.assertEqual(out["description"].count("# Part 3 —"), 1)
 
     def test_unions_touches_into_one_line(self):
         out = assemble(self._issues())

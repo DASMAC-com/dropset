@@ -46,8 +46,8 @@ Full detail — every env var and which skill reads it:
 Board work — staging issues, keeping the Queue honest, placing
 blocking edges, carrying direction across days — happens in a
 **planning session**, the complement to a worktree implementation
-session. It runs in the base repo (`naps planning-<day>` /
-`rnaps planning-<day>`, never a worktree), bootstraps from the
+session. It runs in the base repo (started and resumed with `paps`,
+never a worktree), bootstraps from the
 "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), and writes its
 decisions back there. The `plan` skill is its method; the document is
 the state. Detail — the env var, and why blocking edges are placed
@@ -56,8 +56,14 @@ only here: `docs/conventions/linear-automation.md`.
 ### Structured filing fields
 
 Every filed issue carries stable machine-readable fields the automation
-parses: `**Fingerprint**: <basename>:<slug>` (the dedup key) and
+parses: `**Fingerprint**: <domain-token>:<slug>` (the dedup key) and
 `**Touches**: <glob>[, …]` (the path globs, for collision detection).
+The fingerprint's first token is a **dotless domain token, never a bare
+`name.ext`** — Linear linkifies a hostname-valid basename and corrupts
+the key (`feeds-http:…`, not `http.rs:…`). Two further Linear
+write-mangle rules bind every filed body: **never let an emphasis span
+wrap a newline**, and **never start a machine-parsed field with a bare
+hostname-valid `name.ext`**.
 A rotation folds coupled findings into the **fewest coherent PRs** —
 fold every set that would land as one PR (same subsystem / crate /
 language-domain) into a single issue, keeping each finding's own
@@ -207,8 +213,10 @@ expensive slip), the iTerm2 tab-color integration, and the `~/.zshrc`
 setup they lean on — including the **session secrets**, which are
 resolved from 1Password at session launch rather than written into the
 shell file. Both settings files are git-ignored, so all of it
-is opt-in — a fresh worktree gets none of it until it is wired into
-that checkout's own `settings.json`. Each guard's **script** is committed; its
+is opt-in — nothing is enforced on a checkout until you wire it up.
+`settings.local.json` is **one shared file resolved through worktrees
+to the main checkout**, so wiring it once makes it live in every
+worktree. Each guard's **script** is committed; its
 `PreToolUse` **wiring** is not. Full detail — every hook's wiring and
 the iTerm setup: `docs/conventions/local-integrations.md`.
 

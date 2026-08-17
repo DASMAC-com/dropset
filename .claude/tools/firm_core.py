@@ -29,8 +29,59 @@ import json
 import os
 import re
 import shlex
+import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
+
+# The settings file's canonical repo-relative location. Claude Code resolves it
+# through a worktree to the main checkout, so this path is only ever joined
+# onto `main_checkout()` — never onto the cwd.
+SETTINGS_RELPATH = ".claude/settings.local.json"
+
+
+def parse_worktree_list(porcelain: str) -> Path | None:
+    """The worktree checked out on ``main``, parsed from
+    ``git worktree list --porcelain`` output. ``None`` if there isn't one.
+
+    Split out from the subprocess call so the parsing — which is the part that
+    can actually regress on porcelain ordering or a detached worktree — is
+    testable without spawning git.
+    """
+    current: str | None = None
+    for line in porcelain.splitlines():
+        if line.startswith("worktree "):
+            current = line[len("worktree ") :].strip()
+        elif line.strip() == "branch refs/heads/main" and current:
+            return Path(current)
+    return None
+
+
+def main_checkout() -> Path | None:
+    """The main checkout — the one worktree whose branch is ``refs/heads/main``.
+
+    This is where ``settings.local.json`` actually lives: Claude Code resolves
+    that file through a worktree to the main checkout for reads *and* writes,
+    so every tool that touches the allowlist must agree on this one answer.
+    It lives here rather than in each tool because two separately-written
+    copies of it drifted, and the drift was a real behavioral divergence.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+    except (OSError, ValueError):
+        return None
+    return parse_worktree_list(out)
+
+
+def main_settings_path() -> Path | None:
+    """``settings.local.json`` at the main checkout, or ``None``."""
+    base = main_checkout()
+    return None if base is None else base / SETTINGS_RELPATH
+
 
 # Programs whose bare-verb wildcard (``git:*``, ``rm:*``) would grant far more
 # than any single approval, so the safety floor refuses to auto-firm one without

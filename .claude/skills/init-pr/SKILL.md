@@ -5,6 +5,8 @@ disable-model-invocation: true
 user-invocable: true
 ---
 
+<!-- cspell:word ETIMEDOUT -->
+
 # `init-pr`
 
 Bootstrap the current worktree: fetch main, set up the
@@ -232,6 +234,22 @@ not only to the sub-agents you brief:
   (`target/` alone is multi-GB and `grep -r` does not honor
   gitignore), and it reduces to one stable allow-rule however
   the pattern and filters vary.
+- **Match the search shape to the question type.** This is the
+  single most recurring trim lever across mined sessions, and
+  it is missed *here*, in the implement phase, because the rule
+  reads as belonging to `review-pr`'s hoisted-grep step. It
+  does not — it is phase-neutral (see
+  `docs/conventions/context-economy.md` → "The levers"). When
+  the question is **where is it** or **does it exist**, ask
+  `--files-only` and stop; take `--context N` only when the
+  question is genuinely *what does this code do*. Seven
+  separate sessions answered a location question with a full
+  context sweep, one paying ≈3.6k to find a three-line
+  function.
+- **Verify a list-producing flag with a count, not the list.**
+  One session's largest single result (≈5.8k) was a new tool's
+  `--print` dumping ~600 paths to answer the yes/no question
+  "did the flag work".
 
 ## The branch/worktree helper tool
 
@@ -265,17 +283,28 @@ Steps 1, 2, 3, and 4 read their answers from this one call.
 
 **Why `--link-env` is a flag and not a shell step.** The env
 symlink used to be prose here: two existence checks plus an
-`ln -s` against an **absolute base-repo path**. That
-re-prompted on *every* bootstrap, and firming it can't help —
-the allow-rule lands in the new worktree's
-`settings.local.json`, and every `/init-pr` runs in a
-brand-new worktree that has none (`.claude/settings.json` is
-deliberately gitignored). Folding the step into the call
-above means the command line carries **no absolute path** for
-the file-access heuristic to gate. For the same reason
-`Bash(python3 .claude/tools/:*)` belongs in
-**`~/.claude/settings.json`** — user level is the only scope a
-fresh worktree inherits.
+`ln -s` against an **absolute base-repo path**, which
+re-prompted on *every* bootstrap because the file-access
+heuristic gates on the absolute path. Folding the step into
+the call above means the command line carries **no absolute
+path** at all, so there is nothing left to gate.
+
+**A note on where allow-rules live, since this skill used to
+state it wrongly.** `settings.local.json` is **one shared
+file, resolved through worktrees to the main checkout** — a
+fresh worktree carries no copy of its own and needs none, and
+a rule firmed in any worktree is immediately live in all of
+them. So `Bash(python3 .claude/tools/:*)` works fine at
+project scope; the old rationale here ("user level is the
+only scope a fresh worktree inherits") was **false**. Promote
+a rule to `~/.claude/settings.json` when you want it in
+**other repos**, which is a different question entirely. See
+`docs/conventions/local-integrations.md` → "How settings
+files resolve across worktrees".
+
+What a cold worktree genuinely lacks is untracked
+per-directory *content* — `frontend/node_modules` and
+`frontend/.env.local` — which is what step 3 handles.
 
 ## Steps
 
@@ -358,15 +387,25 @@ fresh worktree inherits.
    `Command "biome" not found` and have to be re-run:
 
    ```sh
-   pnpm --dir frontend install
+   python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install
    ```
 
-   **Spell it `--dir`, not `-C`.** The two are synonyms to
-   pnpm but *not* to the permission matcher: `review-pr`'s
-   lint step already prescribes the `--dir` form and it is
-   firmed, so a `-C` here would be a second rule for the same
-   command — and a fresh prompt in every cold worktree, which
-   is exactly the population this step exists to serve.
+   **Route it through the quiet runner.** A cold install's
+   output is nearly all registry `ETIMEDOUT` retries and
+   peer-dependency trees — one session's single largest result
+   (≈2.0k) for a command whose informative content is "it
+   worked". It is the verbose-by-refresh class
+   (`docs/conventions/context-economy.md`), and the runner
+   prints one line on success and the failing tail otherwise.
+
+   **Spell it `--dir`, not `-C`** — for consistency with
+   `review-pr`'s lint step, which prescribes the same form.
+   Note the permission-matcher argument for it does **not**
+   apply to this call any more: wrapped in the quiet runner,
+   the matcher sees the `python3 .claude/tools/` prefix, so
+   the two spellings are indistinguishable to it here. The
+   `--dir`/`-C` distinction still matters for an *unwrapped*
+   `pnpm` call, which is why the rule stands elsewhere.
 
    **This is not only a frontend-task concern.** `make lint`
    runs the whole hook set over the tree, and those two are

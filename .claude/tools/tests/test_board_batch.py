@@ -1,0 +1,493 @@
+#!/usr/bin/env python3
+# cspell:word proirity
+"""Unit tests for board_batch.py.
+
+Every network call goes through ``_post``, so the tests patch that one seam
+and assert on the GraphQL operations the tool would have sent. Nothing here
+touches Linear.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import board_batch as bb  # noqa: E402
+from board_batch import (  # noqa: E402
+    BoardBatchError,
+    apply_fields,
+    build_update_input,
+    drop_milestoned,
+    format_listing,
+    index_by_number,
+    normalize_priority,
+    place_edges,
+    resolve_issue,
+    run,
+)
+
+
+def _issue(number, title="A title", priority=0, milestone=None, ident=None):
+    return {
+        "id": f"uuid-{number}",
+        "identifier": ident or f"ENG-{number}",
+        "number": number,
+        "title": title,
+        "priority": priority,
+        "state": {"name": "Backlog", "type": "backlog"},
+        "projectMilestone": {"name": milestone} if milestone else None,
+    }
+
+
+class PriorityTests(unittest.TestCase):
+    def test_names_map_to_the_linear_scale(self):
+        self.assertEqual(normalize_priority("urgent"), 1)
+        self.assertEqual(normalize_priority("Medium"), 3)
+        self.assertEqual(normalize_priority("none"), 0)
+
+    def test_integers_pass_through(self):
+        self.assertEqual(normalize_priority(2), 2)
+
+    def test_out_of_range_and_garbage_are_rejected(self):
+        for bad in (7, -1, "sideways", None, True):
+            with self.subTest(bad=bad), self.assertRaises(BoardBatchError):
+                normalize_priority(bad)
+
+
+class UpdateInputTests(unittest.TestCase):
+    def test_maps_field_names_to_mutation_arguments(self):
+        got = build_update_input({"priority": "high", "parent": "uuid-1"})
+        self.assertEqual(got, {"priority": 2, "parentId": "uuid-1"})
+
+    def test_a_null_milestone_passes_through_to_clear_it(self):
+        """Clearing the milestone is how a parked audit finding is promoted,
+        so `null` must reach the mutation rather than being dropped."""
+        self.assertEqual(
+            build_update_input({"milestone": None}), {"projectMilestoneId": None}
+        )
+
+    def test_unknown_field_names_are_rejected(self):
+        """A typo that silently updated nothing would report success."""
+        with self.assertRaises(BoardBatchError) as ctx:
+            build_update_input({"proirity": 1})
+        self.assertIn("proirity", str(ctx.exception))
+
+    def test_description_is_not_an_accepted_field(self):
+        """Body edits stay on the MCP patch path by design."""
+        with self.assertRaises(BoardBatchError):
+            build_update_input({"description": "nope"})
+
+    def test_empty_field_map_is_rejected(self):
+        with self.assertRaises(BoardBatchError):
+            build_update_input({})
+
+    def test_labels_maps_to_labelIds_and_requires_a_list(self):
+        """The only list-valued field, and the only one whose argument name
+        differs non-trivially — a wrong mapping would otherwise ship green."""
+        self.assertEqual(
+            build_update_input({"labels": ["a", "b"]}), {"labelIds": ["a", "b"]}
+        )
+        with self.assertRaises(BoardBatchError):
+            build_update_input({"labels": "not-a-list"})
+
+    def test_a_relation_key_is_rejected(self):
+        """Relations are a separate mutation pair and live in `edges`; three
+        docs once promised `fields` handled them."""
+        for key in ("relation", "blocks", "relations"):
+            with self.subTest(key=key), self.assertRaises(BoardBatchError):
+                build_update_input({key: "ENG-1"})
+
+
+class ResolveIssueTests(unittest.TestCase):
+    def setUp(self):
+        self.by_number = index_by_number([_issue(10), _issue(11)])
+
+    def test_a_bare_number_resolves(self):
+        self.assertEqual(resolve_issue(10, self.by_number)["identifier"], "ENG-10")
+        self.assertEqual(resolve_issue("10", self.by_number)["identifier"], "ENG-10")
+
+    def test_a_matching_prefix_resolves(self):
+        self.assertEqual(
+            resolve_issue("ENG-10", self.by_number)["identifier"], "ENG-10"
+        )
+
+    def test_a_foreign_team_prefix_is_refused_not_silently_resolved(self):
+        """Linear numbers are per-team, so discarding the prefix would let
+        FIN-10 mutate ENG-10."""
+        with self.assertRaises(BoardBatchError) as ctx:
+            resolve_issue("FIN-10", self.by_number)
+        self.assertIn("FIN", str(ctx.exception))
+
+    def test_a_non_positive_or_unreadable_number_is_refused(self):
+        for bad in ("-5", "0", "abc", "ENG-", True):
+            with self.subTest(bad=bad), self.assertRaises(BoardBatchError):
+                resolve_issue(bad, self.by_number)
+
+    def test_a_duplicate_number_makes_the_index_refuse_to_guess(self):
+        dup = [_issue(10), _issue(10, ident="FIN-10")]
+        with self.assertRaises(BoardBatchError) as ctx:
+            index_by_number(dup)
+        self.assertIn("ambiguous", str(ctx.exception))
+
+
+class ListingTests(unittest.TestCase):
+    def test_listing_is_one_compact_line_per_issue_sorted_by_number(self):
+        lines = format_listing([_issue(20, "Later"), _issue(3, "Earlier", 1)])
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("ENG-3 "))
+        self.assertIn("urgent", lines[0])
+        self.assertIn("Earlier", lines[0])
+        self.assertTrue(lines[1].startswith("ENG-20 "))
+
+    def test_listing_carries_no_description_field(self):
+        joined = "\n".join(format_listing([_issue(1, "T")]))
+        self.assertNotIn("description", joined)
+
+    def test_milestoned_issues_are_dropped_client_side(self):
+        issues = [_issue(1), _issue(2, milestone="Audit findings")]
+        self.assertEqual([i["number"] for i in drop_milestoned(issues)], [1])
+
+    def test_show_milestone_appends_the_name(self):
+        lines = format_listing([_issue(1, milestone="Hardening")], show_milestone=True)
+        self.assertIn("[Hardening]", lines[0])
+
+
+class ApplyFieldsTests(unittest.TestCase):
+    def setUp(self):
+        self.by_number = index_by_number([_issue(10), _issue(11)])
+
+    def test_sends_one_mutation_per_issue_and_reports_a_line_each(self):
+        calls = []
+
+        def fake_post(api_key, query, variables):
+            calls.append(variables)
+            return {"issueUpdate": {"success": True}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            lines = apply_fields(
+                "k", {"10": {"priority": "low"}, "11": {"priority": 1}}, self.by_number
+            )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["input"], {"priority": 4})
+        self.assertEqual(calls[1]["input"], {"priority": 1})
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(all(line.startswith("SET ENG-1") for line in lines))
+
+    def test_the_mutation_selects_success_only(self):
+        """The whole point: no body comes back."""
+        seen = {}
+
+        def fake_post(api_key, query, variables):
+            seen["query"] = query
+            return {"issueUpdate": {"success": True}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            apply_fields("k", {"10": {"priority": 1}}, self.by_number)
+        self.assertIn("success", seen["query"])
+        self.assertNotIn("description", seen["query"])
+        self.assertNotIn("title", seen["query"])
+
+    def test_an_eng_prefixed_number_resolves(self):
+        with mock.patch.object(
+            bb, "_post", return_value={"issueUpdate": {"success": True}}
+        ):
+            lines = apply_fields("k", {"ENG-10": {"priority": 1}}, self.by_number)
+        self.assertIn("ENG-10", lines[0])
+
+    def test_an_unknown_issue_number_is_refused_not_guessed(self):
+        with self.assertRaises(BoardBatchError) as ctx:
+            apply_fields("k", {"999": {"priority": 1}}, self.by_number)
+        self.assertIn("999", str(ctx.exception))
+
+    def test_a_failed_mutation_raises(self):
+        with mock.patch.object(
+            bb, "_post", return_value={"issueUpdate": {"success": False}}
+        ):
+            with self.assertRaises(BoardBatchError):
+                apply_fields("k", {"10": {"priority": 1}}, self.by_number)
+
+    def test_dry_run_writes_nothing(self):
+        with mock.patch.object(bb, "_post") as posted:
+            lines = apply_fields(
+                "k", {"10": {"priority": 1}}, self.by_number, dry_run=True
+            )
+        posted.assert_not_called()
+        self.assertTrue(lines[0].startswith("WOULD SET"))
+
+
+class EdgesTests(unittest.TestCase):
+    def setUp(self):
+        self.by_number = index_by_number([_issue(10), _issue(11)])
+
+    def test_places_a_blocks_relation(self):
+        calls = []
+
+        def fake_post(api_key, query, variables):
+            calls.append(variables)
+            return {"issueRelationCreate": {"success": True}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            lines = place_edges("k", [{"blocker": 10, "blocked": 11}], self.by_number)
+        self.assertEqual(
+            calls[0]["input"],
+            {"issueId": "uuid-10", "relatedIssueId": "uuid-11", "type": "blocks"},
+        )
+        self.assertEqual(lines, ["LINKED ENG-10 blocks ENG-11"])
+
+    def test_an_empty_pair_list_is_refused(self):
+        """No discovery mode: an edge nobody decided is the spurious edge the
+        human-curated rule exists to prevent."""
+        with self.assertRaises(BoardBatchError) as ctx:
+            place_edges("k", [], self.by_number)
+        self.assertIn("empty", str(ctx.exception))
+
+    def test_a_self_edge_is_refused(self):
+        with self.assertRaises(BoardBatchError):
+            place_edges("k", [{"blocker": 10, "blocked": 10}], self.by_number)
+
+    def test_a_malformed_pair_is_refused(self):
+        for bad in ([{"blocker": 10}], [{"blocked": 11}], ["ENG-10"]):
+            with self.subTest(bad=bad), self.assertRaises(BoardBatchError):
+                place_edges("k", bad, self.by_number)
+
+    def test_an_unknown_endpoint_is_refused_not_guessed(self):
+        with self.assertRaises(BoardBatchError):
+            place_edges("k", [{"blocker": 10, "blocked": 999}], self.by_number)
+
+    def test_dry_run_writes_nothing(self):
+        with mock.patch.object(bb, "_post") as posted:
+            lines = place_edges(
+                "k", [{"blocker": 10, "blocked": 11}], self.by_number, dry_run=True
+            )
+        posted.assert_not_called()
+        self.assertTrue(lines[0].startswith("WOULD LINK"))
+
+    def test_a_bad_pair_late_in_the_batch_places_no_edge_at_all(self):
+        """Pre-flight: a half-applied set of blocking edges is worse than none
+        — it silently drops issues out of the operator's available set."""
+        pairs = [
+            {"blocker": 10, "blocked": 11},
+            {"blocker": 10, "blocked": 999},
+        ]
+        with mock.patch.object(bb, "_post") as posted:
+            with self.assertRaises(BoardBatchError):
+                place_edges("k", pairs, self.by_number)
+        posted.assert_not_called()
+
+    def test_remove_deletes_the_matching_relation(self):
+        calls = []
+
+        def fake_post(api_key, query, variables):
+            calls.append((query, variables))
+            if "relations" in query:
+                return {
+                    "issue": {
+                        "relations": {
+                            "nodes": [
+                                {
+                                    "id": "rel-1",
+                                    "type": "blocks",
+                                    "relatedIssue": {
+                                        "id": "uuid-11",
+                                        "identifier": "ENG-11",
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                }
+            return {"issueRelationDelete": {"success": True}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            lines = place_edges(
+                "k", [{"blocker": 10, "blocked": 11}], self.by_number, remove=True
+            )
+        self.assertEqual(lines, ["UNLINKED ENG-10 blocks ENG-11"])
+        self.assertEqual(calls[-1][1], {"id": "rel-1"})
+
+    def test_remove_reports_an_absent_edge_without_raising(self):
+        """The operator's intended end state is reached either way; aborting
+        would strand the rest of the batch."""
+
+        def fake_post(api_key, query, variables):
+            return {"issue": {"relations": {"nodes": []}}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            lines = place_edges(
+                "k", [{"blocker": 10, "blocked": 11}], self.by_number, remove=True
+            )
+        self.assertTrue(lines[0].startswith("ABSENT"))
+
+    def test_remove_ignores_a_relation_of_another_type_or_target(self):
+        def fake_post(api_key, query, variables):
+            return {
+                "issue": {
+                    "relations": {
+                        "nodes": [
+                            {
+                                "id": "rel-x",
+                                "type": "related",
+                                "relatedIssue": {"id": "uuid-11"},
+                            },
+                            {
+                                "id": "rel-y",
+                                "type": "blocks",
+                                "relatedIssue": {"id": "uuid-99"},
+                            },
+                        ]
+                    }
+                }
+            }
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            lines = place_edges(
+                "k", [{"blocker": 10, "blocked": 11}], self.by_number, remove=True
+            )
+        self.assertTrue(lines[0].startswith("ABSENT"))
+
+
+class CliTests(unittest.TestCase):
+    def setUp(self):
+        self.env = mock.patch.dict(
+            os.environ,
+            {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"},
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def _write(self, payload):
+        d = tempfile.mkdtemp()
+        path = Path(d) / "payload.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return str(path)
+
+    def test_priorities_widens_a_flat_map(self):
+        calls = []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                return {"issues": {"nodes": [_issue(10)]}}
+            calls.append(variables)
+            return {"issueUpdate": {"success": True}}
+
+        path = self._write({"10": "urgent"})
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            rc = run(["board_batch.py", "priorities", "--updates", path])
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls[0]["input"], {"priority": 1})
+
+    def test_list_drops_milestoned_issues_by_default(self):
+        nodes = [_issue(1, "Live"), _issue(2, "Parked", milestone="Audit findings")]
+        with mock.patch.object(bb, "_post", return_value={"issues": {"nodes": nodes}}):
+            with mock.patch("sys.stdout") as out:
+                rc = run(["board_batch.py", "list"])
+        self.assertEqual(rc, 0)
+        printed = "".join(c.args[0] for c in out.write.call_args_list if c.args)
+        self.assertIn("Live", printed)
+        self.assertNotIn("Parked", printed)
+
+    def test_an_empty_updates_file_is_refused(self):
+        path = self._write({})
+        with mock.patch.object(
+            bb, "_post", return_value={"issues": {"nodes": [_issue(10)]}}
+        ):
+            with self.assertRaises(BoardBatchError):
+                run(["board_batch.py", "fields", "--updates", path])
+
+    def test_a_missing_env_var_is_a_clean_error(self):
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": ""}):
+            with self.assertRaises(BoardBatchError) as ctx:
+                run(["board_batch.py", "list"])
+        self.assertIn("LINEAR_API_KEY", str(ctx.exception))
+
+    def test_a_non_printable_api_key_is_refused_without_echoing_it(self):
+        """An embedded newline otherwise reaches http.client's header
+        validation, whose ValueError message quotes the credential."""
+        secret = "sk-live-SENTINEL\nX"
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": secret}):
+            with self.assertRaises(BoardBatchError) as ctx:
+                run(["board_batch.py", "list"])
+        self.assertNotIn("SENTINEL", str(ctx.exception))
+
+    def test_edges_cli_is_wired(self):
+        calls = []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                return {"issues": {"nodes": [_issue(10), _issue(11)]}}
+            calls.append(variables)
+            return {"issueRelationCreate": {"success": True}}
+
+        path = self._write([{"blocker": 10, "blocked": 11}])
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            rc = run(["board_batch.py", "edges", "--pairs", path])
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls[0]["input"]["type"], "blocks")
+
+    def test_edges_rejects_a_non_list_payload(self):
+        path = self._write({"blocker": 10})
+        with mock.patch.object(
+            bb, "_post", return_value={"issues": {"nodes": [_issue(10)]}}
+        ):
+            with self.assertRaises(BoardBatchError):
+                run(["board_batch.py", "edges", "--pairs", path])
+
+    def test_dry_run_is_accepted_after_the_subcommand(self):
+        """Registered only at the top level, `edges --pairs f --dry-run` — the
+        form anyone would type — exited 2 on an unrecognized argument."""
+        posted = []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                return {"issues": {"nodes": [_issue(10), _issue(11)]}}
+            posted.append(variables)
+            return {"issueRelationCreate": {"success": True}}
+
+        path = self._write([{"blocker": 10, "blocked": 11}])
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            rc = run(["board_batch.py", "edges", "--pairs", path, "--dry-run"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(posted, [])
+
+    def test_dry_run_before_the_subcommand_is_not_reset_by_the_subparser(self):
+        """A `False` default on the subparser would overwrite the top-level
+        value after parsing — turning the rehearsal flag into a live run."""
+        posted = []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                return {"issues": {"nodes": [_issue(10), _issue(11)]}}
+            posted.append(variables)
+            return {"issueRelationCreate": {"success": True}}
+
+        path = self._write([{"blocker": 10, "blocked": 11}])
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            rc = run(["board_batch.py", "--dry-run", "edges", "--pairs", path])
+        self.assertEqual(rc, 0)
+        self.assertEqual(posted, [])
+
+    def test_a_bad_entry_late_in_a_fields_batch_writes_nothing(self):
+        posted = []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                return {"issues": {"nodes": [_issue(10), _issue(11)]}}
+            posted.append(variables)
+            return {"issueUpdate": {"success": True}}
+
+        path = self._write({"10": {"priority": 1}, "999": {"priority": 1}})
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            with self.assertRaises(BoardBatchError):
+                run(["board_batch.py", "fields", "--updates", path])
+        self.assertEqual(posted, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

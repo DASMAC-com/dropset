@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear Backlog issues. The shared audit engine that `audit` drives one file at a time.
+description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear issues, each parked under the `Audit findings` project milestone rather than dropped into the pull queue. The shared audit engine that `audit` drives one file at a time.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -10,25 +10,27 @@ user-invocable: true
 # `audit-scope`
 
 Audit a defined scope of the codebase and file the
-confirmed findings as Linear **Backlog** issues — folded
+confirmed findings as Linear issues **parked under the
+`Audit findings` project milestone** — folded
 into the fewest coherent PRs (coupled findings that share a
 PR become one issue; see Notes), in the same destination and
-format `linear-task` and `audit` use. Use when a milestone
-lands, a feature ships, or before declaring a subsystem
-"stable", and as the engine `audit` calls for its per-file
-passes.
+format `linear-task` and `audit` use. Use when a project
+milestone lands, a feature ships, or before declaring a
+subsystem "stable", and as the engine `audit` calls for its
+per-file passes.
 
 This replaces the old `audit-codebase`, which wrote a
-gitignored checklist. Findings now live in the Backlog,
-so they're picked up as normal PRs (their file collisions
-recorded by `sync-blockers`) instead of a scratch
-file.
+gitignored checklist. Findings now live as real Linear
+issues — so they dedup, collide-match, and search like any
+other — but **parked**, so filing them does not put work in
+the pull queue. A planning session decides which get slated
+in (`plan` step 8).
 
 ## Two ways it runs
 
 - **Directly (you invoke it).** Plan-gated: you give a
   scope, confirm the plan, and the skill files the
-  surviving findings as Backlog issues itself.
+  surviving findings as parked issues itself.
 - **Delegated (`audit` invokes it).** The caller has
   already picked the file and owns selection + dedup, so
   audit-scope skips the plan gate, runs the audit, and
@@ -220,11 +222,22 @@ Optional (ask on a direct run if not provided):
      the caller dedups against live Linear first. Stop here.
 
    - **Direct run:** file the surviving findings as Linear
-     **Backlog** issues, exactly as `linear-task` does —
+     issues **parked under the `Audit findings` project
+     milestone**, otherwise exactly as `linear-task` does —
      **folding coupled findings into the fewest coherent
      PRs** (see the folding rule in Notes), one issue per
-     PR-group rather than one per finding. Resolve the
-     destination IDs from the
+     PR-group rather than one per finding.
+
+     Parked means *not in the pull queue*: a first-class
+     open issue for dedup, collision detection and search,
+     but out of scope for a planning bootstrap until
+     somebody slates it in. That promotion is the `plan`
+     skill's call (its step 8), never this one's, and it is
+     done by **clearing the milestone** — not by closing the
+     finding and filing a fresh copy. The milestone already
+     exists; never create a second.
+
+     Resolve the destination IDs from the
      environment (never hard-code them) with a bare
      `printenv` per variable (each reduces to the same
      `Bash(printenv:*)` allow-rule):
@@ -251,6 +264,7 @@ Optional (ask on a direct run if not provided):
        project: "<$LINEAR_PROJECT_ID>",
        assignee: "<$LINEAR_ASSIGNEE_ID>",
        state: "Backlog",
+       milestone: "Audit findings",   // parked — see above
        title: "<file>: <imperative fix, no trailing period>",
        description: "<markdown body, literal newlines>",
        priority: 3  // 2 for high-severity security
@@ -299,9 +313,17 @@ Optional (ask on a direct run if not provided):
      - `**Lint**:` *(when applicable)* the rule or config
        that would catch this class going forward.
 
-     - `**Fingerprint**: <basename>:<fingerprint_slug>` —
-       the dedup key (e.g. `swap.rs:slippage:no-min-out`),
+     - `**Fingerprint**: <domain-token>:<fingerprint_slug>`
+       — the dedup key (e.g. `swap:slippage:no-min-out`),
        so `audit` and re-runs recognize it. Mandatory.
+
+       `<domain-token>` is the file's basename with the
+       **extension dropped** and any remaining `.` replaced
+       by `-` (`swap.rs` → `swap`); prefix the parent
+       directory when the stem is generic (`mod`, `main`,
+       `lib`, `index`). It must be **dotless**: Linear
+       linkifies a hostname-valid `name.ext` at the start of
+       the line and corrupts the key.
 
        **The fingerprint is the stable key; a `file:line`
        is not.** Every citation and quoted snippet above is

@@ -35,6 +35,78 @@ class ExcludeListTests(unittest.TestCase):
         self.assertIn("pnpm-lock.yaml", names)
         self.assertNotIn("generated", names)
 
+    def test_the_worktrees_tree_is_pruned(self):
+        """Each live worktree is a full checkout of this same repo, so
+        searching from the base repo would return every match once per
+        worktree."""
+        self.assertIn("worktrees", ss.excluded_dir_names())
+
+
+class ClipTests(unittest.TestCase):
+    def test_a_normal_line_is_untouched(self):
+        line = 'fn main() { println!("hi"); }'
+        self.assertEqual(ss.clip(line), line)
+
+    def test_a_very_long_line_is_truncated_and_says_so(self):
+        line = "data:image/png;base64," + ("A" * 5000)
+        got = ss.clip(line)
+        self.assertLess(len(got), 500)
+        self.assertIn("…", got)
+        self.assertIn("chars]", got)
+
+    def test_truncation_keeps_the_start_so_the_match_stays_identifiable(self):
+        line = "SENTINEL" + ("x" * 5000)
+        self.assertTrue(ss.clip(line).startswith("SENTINEL"))
+
+
+class MergeContextBlockTests(unittest.TestCase):
+    def _match(self, path, start, lines):
+        return {"path": path, "context_start": start, "context": lines}
+
+    def test_overlapping_windows_in_one_file_become_one_block(self):
+        matches = [
+            self._match("a.rs", 10, ["l10", "l11", "l12", "l13"]),
+            self._match("a.rs", 12, ["l12", "l13", "l14", "l15"]),
+        ]
+        blocks = ss.merge_context_blocks(matches)
+        self.assertEqual(len(blocks), 1)
+        path, start, lines = blocks[0]
+        self.assertEqual((path, start), ("a.rs", 10))
+        self.assertEqual(lines, ["l10", "l11", "l12", "l13", "l14", "l15"])
+
+    def test_adjacent_windows_merge_too(self):
+        matches = [
+            self._match("a.rs", 1, ["l1", "l2"]),
+            self._match("a.rs", 3, ["l3", "l4"]),
+        ]
+        blocks = ss.merge_context_blocks(matches)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0][2], ["l1", "l2", "l3", "l4"])
+
+    def test_a_fully_contained_window_adds_nothing(self):
+        matches = [
+            self._match("a.rs", 10, ["l10", "l11", "l12", "l13"]),
+            self._match("a.rs", 11, ["l11", "l12"]),
+        ]
+        blocks = ss.merge_context_blocks(matches)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0][2], ["l10", "l11", "l12", "l13"])
+
+    def test_distant_windows_stay_separate(self):
+        matches = [
+            self._match("a.rs", 1, ["l1"]),
+            self._match("a.rs", 50, ["l50"]),
+        ]
+        self.assertEqual(len(ss.merge_context_blocks(matches)), 2)
+
+    def test_windows_in_different_files_never_merge(self):
+        matches = [
+            self._match("a.rs", 10, ["l10", "l11"]),
+            self._match("b.rs", 10, ["l10", "l11"]),
+        ]
+        blocks = ss.merge_context_blocks(matches)
+        self.assertEqual([b[0] for b in blocks], ["a.rs", "b.rs"])
+
 
 class SearchTests(unittest.TestCase):
     def setUp(self):
@@ -114,6 +186,26 @@ class SearchTests(unittest.TestCase):
         out = ss.search("needle", self.root)
         self.assertEqual(out["total"], 0)
         self.assertTrue(out["narrowed_by_default"])
+
+    def test_a_partial_hit_is_still_flagged_as_defaulted(self):
+        """A non-empty result that silently skipped every .md is MORE
+        misleading than an empty one — it reads as a complete answer. This
+        shape produced a wrong 'referenced by nothing' conclusion about a
+        tool that three .md files reference."""
+        self.write("tui/src/ui.rs", "fn needle() {}\n")
+        self.write("docs/notes.md", "the needle in prose\n")
+        out = ss.search("needle", self.root)
+        self.assertEqual(out["total"], 1)  # only the .rs hit
+        self.assertTrue(out["narrowed_by_default"])
+
+    def test_the_partial_warning_reaches_the_summary_line(self):
+        self.write("tui/src/ui.rs", "fn needle() {}\n")
+        self.write("docs/notes.md", "the needle in prose\n")
+        out = ss.search("needle", self.root)
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            ss.print_result(out, files_only=True, context=0)
+        self.assertIn("may be partial", err.getvalue())
 
     def test_an_explicit_extension_set_is_not_flagged_as_defaulted(self):
         """`--ext md` found nothing means nothing is there — don't second-guess

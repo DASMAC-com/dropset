@@ -51,6 +51,7 @@ deque
 devnet
 dflow
 discordapp
+dotless
 drainable
 dropset
 dtolnay
@@ -97,6 +98,9 @@ laggy
 lamports
 letterspaced
 libc
+linkified
+linkifier
+linkifies
 litesvm
 localnet
 localtime
@@ -106,6 +110,7 @@ memcpy
 memecoins
 metas
 meteora
+milestoned
 mispriced
 moneyness
 mpsc
@@ -122,6 +127,7 @@ ohlcv
 oneline
 onramps
 openxmlformats
+parallelizable
 pathspec
 paytrie
 pdas
