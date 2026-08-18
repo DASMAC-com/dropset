@@ -39,8 +39,22 @@ runs:
         ~/.cargo/bin/anchor
         ~/.local/share/solana
   # Assumes the caller has checked out a tree containing the Makefile.
+  #
+  # PURGE_ALLOWED gates the self-heal that repairs an incomplete entry, and is
+  # deliberately narrower than "whenever one is found". A cache save is scoped
+  # to the ref that made it, so only a default-branch push can both delete the
+  # main-scoped entry and republish one in its place; a PR run would delete
+  # what every other run is using and republish only into its own scope. It
+  # also means no fork PR — whose GITHUB_TOKEN is read-only — ever reaches the
+  # delete. The caller must grant `actions: write` for it to work; without it
+  # the probe falls back to warning, which is why the grant is not asserted
+  # here.
   - env:
       CACHE_HIT: '${{ steps.cache-toolchain.outputs.cache-hit }}'
+      GH_TOKEN: '${{ github.token }}'
+      PURGE_ALLOWED: >-
+        ${{ github.event_name == 'push'
+        && github.ref == 'refs/heads/main' }}
     id: 'probe'
     name: 'Probe restored toolchain'
     run: '${{ github.action_path }}/scripts/probe-toolchain.sh'
@@ -61,9 +75,17 @@ runs:
     name: 'Verify toolchain'
     run: 'make check-toolchain'
     shell: 'sh'
-  # Only reached once the install above has been verified, and only on a
-  # genuine miss — the probe warns about a hit that restored incomplete
-  # rather than re-saving over it, since cache keys are immutable.
+  # Only reached once the install above has been verified, and only when the
+  # key is known to be free: either a genuine miss, or a hit that probed
+  # incomplete and was then purged. Keys are immutable, so the probe never
+  # re-saves over an entry it did not first delete.
+  #
+  # Expect benign noise here on any run that installs. All the toolchain jobs
+  # reach this save at roughly the same moment, where the post-step saves this
+  # replaced staggered by job runtime instead, so two of them will log `unable
+  # to reserve cache` / already-exists. That cannot fail the step: the cache
+  # action wraps its whole save body in try/catch and logs a warning, then
+  # exits 0. It is not the self-heal misbehaving.
   - if: 'steps.probe.outputs.save == ''true'''
     name: 'Save toolchain components'
     uses: 'actions/cache/save@v5'
