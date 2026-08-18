@@ -232,19 +232,23 @@ whole reason the vocabulary is worth writing down:
   it a Backlog task with nothing blocking it — by resolving
   or re-scoping what blocks it, **never** by silently
   dropping a real dependency.
+
 - **Priority within Next is the pull order.** The operator
   launches an implementation session by pulling the
   highest-priority item there, so setting a high priority in
   Next *is* how a planning session decides what gets built
   next. It is the lever, not a label.
+
 - **Blocking edges and priorities are curated here**, in the
   planning session orchestrating those implementation
   sessions. Implementation sessions never place edges (see
   `CLAUDE.md` → "Blocking relations").
+
 - **`Claude:`-prefixed meta-work is always Urgent once
   unblocked** (operator rule, 2026-08-17). When a meta issue
   enters Next, set it Urgent, so agent-infra improvements are
   the next pull rather than queuing behind product work.
+
 - **The serial meta chain** (operator rule, 2026-08-18). Open
   `Claude:`-prefixed issues are kept blocking one another in
   **one serial chain**: file a new meta issue, and this

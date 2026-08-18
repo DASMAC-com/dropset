@@ -171,8 +171,8 @@ def accumulate_flag(values: list[str] | None) -> tuple[str, ...] | None:
     for value in values:
         for part in value.split(","):
             part = part.strip()
-            # Dedupe, preserving first-seen order: `--ext ts --ext ts,tsx` is a
-            # plausible thing to type and must not search `ts` twice.
+            # Drop repeats, preserving first-seen order: `--ext ts --ext ts,tsx`
+            # is a plausible thing to type and must not search `ts` twice.
             if part and part not in out:
                 out.append(part)
     return tuple(out)
@@ -676,8 +676,7 @@ def run(argv: list[str]) -> int:
         "--ext",
         action="append",
         default=None,
-        help="extensions, no dot; comma-separated, and repeatable — values "
-        "accumulate",
+        help="extensions, no dot; comma-separated, and repeatable — values accumulate",
     )
     parser.add_argument(
         "--all-text",

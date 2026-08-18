@@ -54,9 +54,7 @@ class RepoFixture(unittest.TestCase):
 class ScanTests(RepoFixture):
     def test_a_committed_script_with_no_entry_is_reported_unwired(self):
         result = hw.scan(self.repo, self.no_user)
-        self.assertEqual(
-            result["unwired"], ["no_compound_bash.py", "no_git_grep.py"]
-        )
+        self.assertEqual(result["unwired"], ["no_compound_bash.py", "no_git_grep.py"])
         self.assertEqual(result["wired"], {})
 
     def test_a_wired_script_is_not_reported(self):
@@ -83,11 +81,13 @@ class ScanTests(RepoFixture):
         self._write("settings.json", _settings([WIRING]))
         self._write(
             "settings.local.json",
-            _settings(['python3 .claude/hooks/no_git_grep.py']),
+            _settings(["python3 .claude/hooks/no_git_grep.py"]),
         )
         result = hw.scan(self.repo, self.no_user)
         self.assertEqual(result["unwired"], [])
-        self.assertEqual(result["wired"]["no_compound_bash.py"], [".claude/settings.json"])
+        self.assertEqual(
+            result["wired"]["no_compound_bash.py"], [".claude/settings.json"]
+        )
         self.assertEqual(
             result["wired"]["no_git_grep.py"], [".claude/settings.local.json"]
         )
@@ -101,9 +101,7 @@ class ScanTests(RepoFixture):
     def test_a_hook_on_another_event_still_counts_as_wired(self):
         """Reporting a PostToolUse hook as unwired would be a false positive,
         and false positives are what make a checker get ignored."""
-        self._write(
-            "settings.local.json", _settings([WIRING], event="PostToolUse")
-        )
+        self._write("settings.local.json", _settings([WIRING], event="PostToolUse"))
         result = hw.scan(self.repo, self.no_user)
         self.assertNotIn("no_compound_bash.py", result["unwired"])
 
@@ -135,18 +133,14 @@ class ScanTests(RepoFixture):
             {"hooks": {"PreToolUse": ["not-a-dict", {"hooks": [{"command": 7}]}]}},
         )
         result = hw.scan(self.repo, self.no_user)
-        self.assertEqual(
-            result["unwired"], ["no_compound_bash.py", "no_git_grep.py"]
-        )
+        self.assertEqual(result["unwired"], ["no_compound_bash.py", "no_git_grep.py"])
 
     def test_hooks_key_of_the_wrong_shape_is_tolerated(self):
         self._write("settings.local.json", {"hooks": []})
         self.assertEqual(hw.scan(self.repo, self.no_user)["wired"], {})
 
     def test_non_python_files_in_the_hooks_dir_are_ignored(self):
-        (self.repo / ".claude" / "hooks" / "README.md").write_text(
-            "", encoding="utf-8"
-        )
+        (self.repo / ".claude" / "hooks" / "README.md").write_text("", encoding="utf-8")
         result = hw.scan(self.repo, self.no_user)
         self.assertNotIn("README.md", result["unwired"])
 
@@ -165,9 +159,7 @@ class CliTests(RepoFixture):
         return code, out.getvalue(), err.getvalue()
 
     def test_exits_one_when_a_guard_is_unwired(self):
-        code, out, _ = self._capture(
-            ["hook_wiring.py", "--repo", str(self.repo)]
-        )
+        code, out, _ = self._capture(["hook_wiring.py", "--repo", str(self.repo)])
         self.assertEqual(code, 1)
         self.assertIn("UNWIRED", out)
         self.assertIn("no_git_grep.py", out)
@@ -177,17 +169,13 @@ class CliTests(RepoFixture):
             "settings.local.json",
             _settings([WIRING, "python3 .claude/hooks/no_git_grep.py"]),
         )
-        code, out, _ = self._capture(
-            ["hook_wiring.py", "--repo", str(self.repo)]
-        )
+        code, out, _ = self._capture(["hook_wiring.py", "--repo", str(self.repo)])
         self.assertEqual(code, 0)
         self.assertIn("every committed hook is wired", out)
         self.assertNotIn("UNWIRED", out)
 
     def test_the_report_names_the_script_not_a_settings_diff(self):
-        code, out, _ = self._capture(
-            ["hook_wiring.py", "--repo", str(self.repo)]
-        )
+        code, out, _ = self._capture(["hook_wiring.py", "--repo", str(self.repo)])
         self.assertIn("no_compound_bash.py", out)
         # The wiring block itself must not be echoed: the operator decides, and
         # a diff would read as a change proposal rather than a report.
@@ -203,9 +191,7 @@ class CliTests(RepoFixture):
         )
         self.assertEqual(code, 1)
         parsed = json.loads(out)
-        self.assertEqual(
-            parsed["unwired"], ["no_compound_bash.py", "no_git_grep.py"]
-        )
+        self.assertEqual(parsed["unwired"], ["no_compound_bash.py", "no_git_grep.py"])
 
     def test_a_bad_repo_errors_rather_than_reporting_clean(self):
         with self.assertRaises(hw.HookWiringError):

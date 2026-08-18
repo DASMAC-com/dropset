@@ -213,9 +213,7 @@ def run(argv: list[str]) -> int:
         default=None,
         help="main checkout to scan (default: the worktree that is on `main`)",
     )
-    parser.add_argument(
-        "--json", action="store_true", help="machine-readable output"
-    )
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args(argv[1:])
 
     if args.repo:

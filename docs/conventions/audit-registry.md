@@ -24,6 +24,18 @@ radius: a wrong instruction breaks no build, but it silently degrades
 every session that reads it, which is an unusually wide failure mode
 for a low-risk surface.
 
+**Check committed command blocks against the real CLI**, including
+external ones (`claude`, `gh`, `op`), not only this repo's tools. A
+fenced block invoking a flag is **mechanically verifiable** — run the
+CLI's `--help` and read it — and unlike prose it either works or does
+not. This is worth its own pass because such a block is never
+executed by CI and rarely by a reader, so it can be wrong from the day
+it lands: the `paps` helper published in `local-integrations.md` probed
+a `--list-sessions` flag that has never existed in any spelling, and
+resumed by a name that `--resume` cannot take, and both survived until
+somebody tried to wire it up. Treat a hedge in place of a check ("adjust
+this to whatever form your CLI supports") as the finding itself.
+
 ```txt
 program (solana-program, high): programs/dropset/src/**
 sdk-math (rust-lib, high): sdk/math-core/src/**, sdk/interface/src/**

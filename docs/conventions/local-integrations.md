@@ -1,11 +1,3 @@
-<!-- cspell:word cdds -->
-
-<!-- cspell:word rpaps -->
-
-<!-- cspell:word unpadded -->
-
-<!-- cspell:word unwired -->
-
 <!-- cspell:word zshrc -->
 
 <!-- cspell:word reorderer -->
@@ -496,29 +488,37 @@ automation needs its ids in the environment. Put all of it in one place:
 - **`DISABLE_AUTO_TITLE=true`** — stops the shell from re-titling the
   tab out from under the integration.
 
-### Session secrets (`~/.zshrc`)
+### Session secrets
 
 `LINEAR_API_KEY` and `GITHUB_MCP_PAT` are secrets, so unlike the ids
-above they are never written into the shell file. A `_ds_secrets`
-helper resolves them from 1Password, and every session-*starting*
-helper below calls it before launching Claude Code (`cdds` does not —
-it only changes directory):
+above they are never written into a config file. A `_ds_secrets` helper
+resolves them from 1Password, and every session-*starting* helper calls
+it before launching Claude Code (`cdds` does not — it only changes
+directory).
+
+**The function is committed; its coordinates are not.** `_ds_secrets`
+lives in `.claude/shell/init.zsh` with the rest of the family, and reads
+the account, vault, and item names from an **untracked file outside the
+repo** — `~/.config/dropset/secrets.zsh`, or wherever
+`DROPSET_SECRETS_FILE` points:
 
 ```sh
-_ds_secrets() {
-  local account='<account>.1password.com'
-  export LINEAR_API_KEY="${LINEAR_API_KEY:-$(op read --account "$account" \
-    'op://<vault>/<linear-item>/credential')}"
-  export GITHUB_MCP_PAT="${GITHUB_MCP_PAT:-$(op read --account "$account" \
-    'op://<vault>/<github-item>/credential')}"
-
-  [[ -z "$LINEAR_API_KEY" ]] &&
-    print -u2 '_ds_secrets: LINEAR_API_KEY unresolved'
-  [[ -z "$GITHUB_MCP_PAT" ]] &&
-    print -u2 '_ds_secrets: GITHUB_MCP_PAT unresolved'
-  return 0
-}
+DS_OP_ACCOUNT='<account>.1password.com'
+DS_OP_LINEAR_REF='op://<vault>/<linear-item>/credential'
+DS_OP_GITHUB_REF='op://<vault>/<github-item>/credential'
 ```
+
+That split is the point of the boundary. An `op://` reference is a
+*pointer*, not a value, so committing one would leak no credential — but
+it would publish the layout of a personal secret store into permanent
+git history, and history does not forget. The coordinates file sits
+outside the checkout deliberately: a path *inside* it could be swept up
+by an errant `git add -A`, and this boundary should not depend on
+`.gitignore` staying correct.
+
+With no coordinates file present the helper resolves nothing and warns;
+an already-exported `LINEAR_API_KEY` / `GITHUB_MCP_PAT` still wins, so
+pinning a key by hand remains the escape hatch.
 
 Four things about that shape are load-bearing:
 
@@ -543,19 +543,45 @@ Four things about that shape are load-bearing:
   startup.
 
 The coordinates above are placeholders. The real account domain, vault
-name, and item titles appear only in `~/.zshrc` — a plain untracked
-file, not a symlink into a tracked config repo — so substitute your
-own. Naming the real ones here would buy a reader nothing (they have
-to substitute regardless) and would publish the layout of a personal
-secret store.
+name, and item titles appear only in the untracked coordinates file — a
+plain file, not a symlink into a tracked config repo — so substitute
+your own. Naming the real ones here would buy a reader nothing (they
+have to substitute regardless).
 
-### Session helpers (`~/.zshrc`)
+### Session helpers (`.claude/shell/init.zsh`)
 
-The same file carries the small function family that starts and resumes
-Claude Code sessions. They're referenced by the zshrc's own comments and
-by the skills (`init-pr` names `aps` when it explains why a branch
-arrives as `worktree-eng-###`), so they're documented here so the setup
-can be rebuilt from version control. One line each:
+The function family that starts and resumes Claude Code sessions is
+**committed**, at `.claude/shell/init.zsh`. The shell profile's whole
+share of it is one guarded line:
+
+```sh
+[[ -r ~/repos/dropset/.claude/shell/init.zsh ]] &&
+  source ~/repos/dropset/.claude/shell/init.zsh
+```
+
+Source the **base checkout's** copy, mirroring how `settings.local.json`
+resolves: exactly one live version exists and worktree copies are inert.
+The script says so itself — it derives the repo root from its own
+sourced location and warns if that lands inside `.claude/worktrees/`,
+because a worktree copy would otherwise make every helper treat that
+worktree as the base repo, quietly and plausibly. Guard the line so a
+moved checkout costs a no-op rather than a broken shell.
+
+**This replaces hand-copying.** These functions previously existed only
+as reference implementations in this doc, which the operator copied into
+an untracked `~/.zshrc` — the same failure class as a guard hook with no
+wiring: documented, executable nowhere, and drifting with nobody able to
+see the drift. It was not hypothetical; the `paps` block published here
+never worked (below). Committing the functions makes this doc describe
+something that actually runs.
+
+**What cannot ride this file:** the guard hooks' `settings.json` wiring.
+That is JSON read by the harness, not shell read by zsh, so sourcing
+this changes nothing about it — `make hook-wiring` remains the answer
+there.
+
+The family, one line each (`init-pr` names `aps` when it explains why a
+branch arrives as `worktree-eng-###`):
 
 - **`cdds`** — `cd` to the base repo checkout. The starting point for
   anything that must not run inside a worktree (`housekeeping`, a
@@ -576,7 +602,12 @@ can be rebuilt from version control. One line each:
 
 - **`rnaps <name>`** — resume a named session by the same name. The
   counterpart to `naps`, as `raps` is to `aps`; added so a long-running
-  session survives a closed terminal.
+  session survives a closed terminal. **A bare name pre-filters the
+  interactive picker rather than resuming deterministically** —
+  `-r/--resume` matches on session *ID*, and a name is not one, so
+  expect to pick from a list. That is the same underlying fact that made
+  the old `paps` wrong, and it is why `paps` / `haps` compute an id of
+  their own instead.
 
 - **`paps`** — start **or resume** a **planning** session. Takes no
   argument: it derives the session name `plan-<day-of-month>` from
@@ -610,38 +641,53 @@ can be rebuilt from version control. One line each:
   and the older `planning-<day>` session naming. `naps` / `rnaps`
   remain, for named sessions that aren't planning sessions.
 
-  Reference implementation — `paps` is the one helper here a reader is
-  likely to have to write from scratch, so unlike the one-liners above
-  it is given in full:
-
-  <!-- markdownlint-disable MD013 -->
-
-  ```sh
-  paps() {
-    local name="plan-$(date +%-d)"
-    local repo="$HOME/repos/dropset"
-    cd "$repo" || return 1
-    # Resume today's session if it exists, otherwise start it.
-    if claude --list-sessions 2>/dev/null | grep -qx -- "$name"; then
-      claude --resume "$name"
-    else
-      claude --session-name "$name" --model claude-fable-5 /plan
-    fi
-  }
-  ```
-
-  <!-- markdownlint-enable MD013 -->
-
   `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not
-  `plan-05` — match whatever `naps`/`rnaps` already do on your machine
-  so old sessions stay resumable. Adjust the existence probe to
-  whichever session-listing form your Claude Code CLI supports; the
-  behavior that matters is create-or-resume under one name.
+  `plan-05`.
 
-The split is deliberate and matches the two session kinds: worktree
+- **`haps`** — start **or resume** today's **housekeeping** session, so
+  a day's upkeep is one verb rather than a hand-started session. Same
+  contract as `paps`, with three substitutions: the display name is
+  `housekeeping-<day-of-month>`, the initial prompt is `/housekeeping`,
+  and the session-id seed carries its own prefix so a day's planning and
+  housekeeping sessions cannot collide. **No model pin**, deliberately —
+  housekeeping is upkeep, not board decisions, so it does not inherit
+  the planning tier and runs on the saved default.
+
+#### Why `paps` and `haps` compute a session id
+
+The idempotency is **forced, not over-engineered**, and the reasoning is
+worth recording because the obvious implementation is the one that was
+published here and never worked. Verified against `claude --help`:
+
+- There is **no session-listing flag**, in any spelling. The block this
+  doc used to carry probed `claude --list-sessions`, and hedged with
+  "adjust the existence probe to whichever form your CLI supports" —
+  pointing at a dead end, since none does.
+- **`-n/--name` sets only a *display* name** (prompt box, `/resume`
+  picker, terminal title). Nothing resolves a session *by* it.
+- **`-r/--resume` takes a session ID.** A bare string opens an
+  interactive picker filtered by that term, so the old block's
+  `claude --resume "$name"` was non-deterministic too — both halves
+  were wrong, not just the probe.
+
+So the only deterministic handle is an id the helper computes itself: a
+**per-day session UUID** seeded from kind + full date, with the on-disk
+transcript as the existence check. The seed carries the **full** date so
+`plan-18` in August and `plan-18` in September cannot collide — the
+display name stays day-only by operator choice, and the id is what
+disambiguates. The transcript-path slug replaces every `/` and `.` with
+`-`, the same rule `.claude/tools/firm_last.py`'s slugify encodes.
+
+The lesson generalizes past this one block: **a committed code block
+that invokes a CLI flag is checkable against that CLI's `--help`**, and
+this one would have been caught at filing time rather than at wiring
+time.
+
+The split is deliberate and matches the session kinds: worktree
 sessions (`aps` / `raps`) run one deterministic spec to completion and
-are addressed by their Linear number; planning sessions (`paps`) run in
-the base repo, span days, and are addressed by the day they started.
+are addressed by their Linear number; the standing sessions (`paps`,
+`haps`) run in the base repo, recur daily, and are addressed by the day
+they started.
 
 ### iTerm2 manual setup (can't be committed)
 

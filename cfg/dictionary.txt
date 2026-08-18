@@ -27,6 +27,7 @@ bytemuck
 cadc
 cagr
 cargobill
+cdds
 cdylib
 cfgs
 clippy
@@ -176,6 +177,7 @@ rlib
 rnaps
 rollup
 rollups
+rpaps
 rsplit
 rustc
 samp
@@ -226,9 +228,11 @@ unfillable
 unfirmable
 unitless
 unmirrored
+unpadded
 unpullable
 unrouted
 unstarted
+unwired
 unwritable
 upserts
 ureq
