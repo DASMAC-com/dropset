@@ -482,14 +482,21 @@ def search(
     files.sort()
     matches.sort(key=lambda m: (m["path"], m["line"]))
 
-    # A *fourth* way a globbed run can search nothing, and the one that reads
+    # A *fourth* way a globbed run can under-report, and the one that reads
     # most like a typo: the glob names a path that really is there, and the
     # exclude lists prune it. `--glob sdk/idl/dropset.json` is the live case —
     # a generated family, so it is answered "matched no files", which sends the
     # reader off to re-check a path sitting in plain sight. Resolving only
     # wildcard-free patterns keeps this to one `stat` apiece and no second walk.
+    #
+    # Computed whenever globs were given, NOT only when nothing matched. Since
+    # globs accumulate, `--glob live.rs --glob sdk/idl/dropset.json` is now the
+    # encouraged spelling, and there the run *does* scan something — so keying
+    # this on an empty result would let the pruned path vanish behind the
+    # matched one. That is the same indistinguishable-false-negative shape this
+    # diagnostic exists to kill, so it must survive a partial match.
     pruned: list[str] = []
-    if globs and not stats["glob_hits"]:
+    if globs:
         excluded_files = excluded_file_names()
         excluded_dirs = excluded_dir_names()
         for pattern in globs:
@@ -525,8 +532,9 @@ def search(
         "scanned": scanned,
         "glob_hits": stats["glob_hits"],
         "globbed": globs is not None,
-        # Which of those named paths exist but are pruned as a generated family
-        # or a never-search tree. Empty unless the glob selected nothing at all.
+        # Which named paths exist but are pruned as a generated family or a
+        # never-search tree — reported even when *other* globs matched, since a
+        # partial match is exactly where a silently-dropped path hides.
         "glob_pruned": sorted(pruned),
         # True when the run fell back to `SOURCE_EXTENSIONS` because the caller
         # named no extension. Only meaningful on an empty result, where it is the
@@ -626,11 +634,11 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
                 "given), so .md and other prose was not looked at — retry "
                 "with --ext md"
             )
+    pruned = result.get("glob_pruned") or []
     if result.get("globbed") and not result.get("scanned"):
         # Distinguish the two ways a globbed run can search nothing. Blaming a
         # path typo for an extension mismatch sends the reader to the wrong fix.
         if not result.get("glob_hits"):
-            pruned = result.get("glob_pruned") or []
             if pruned:
                 # Naming the reason turns a dead end into a decision: the path
                 # is there, it is excluded on purpose, and no spelling of
@@ -649,6 +657,16 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
                 f" | WARNING: --glob matched {result['glob_hits']} file(s), but "
                 f"--ext excluded all of them — nothing was searched"
             )
+    elif pruned:
+        # The partial case, and the more dangerous one: other globs matched, so
+        # the run returns results and reads as complete, while a path the
+        # caller named by hand was never searched at all. An empty result at
+        # least prompts a second look; this one does not.
+        summary += (
+            f" | WARNING: {len(pruned)} --glob path(s) exist but are excluded "
+            f"as a generated family or never-search tree, so they were NOT "
+            f"searched: {', '.join(pruned)}"
+        )
     print(summary, file=sys.stderr)
 
 

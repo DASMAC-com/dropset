@@ -118,9 +118,12 @@ rebase). A filer that believes a real dependency exists **proposes** it
 via `AskUserQuestion` with the concrete evidence and writes it only on
 an explicit yes; the default in any autonomous run is **no edge**, with
 the suspicion recorded as prose. Human-placed edges are authoritative
-and never rewritten. File overlap is **not** a dependency: it is
-`related`-linked and reported as a collision cluster. Detail:
-`docs/conventions/linear-automation.md`.
+and never rewritten. **One standing exception, operator-ratified:** a
+planning session chains `Claude:`-prefixed meta-work into a single
+serial blocking chain as routine bookkeeping, with no per-edge
+proposal — automated filers still place none. File overlap is **not** a
+dependency: it is `related`-linked and reported as a collision cluster.
+Detail: `docs/conventions/linear-automation.md`.
 
 ## GitHub via MCP
 

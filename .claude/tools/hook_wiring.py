@@ -127,7 +127,14 @@ def load_settings(path: Path) -> dict:
 
 
 def committed_hooks(repo: Path) -> list[str]:
-    """Base names of the committed guard scripts under ``.claude/hooks/``."""
+    """Base names of every ``.py`` under ``.claude/hooks/``.
+
+    Tracked-ness is deliberately not checked: the directory holds committed
+    guards, so listing it is the same answer without shelling out to git. The
+    residual is that an untracked scratch script dropped in there reports as
+    ``UNWIRED`` — noise in a report whose value depends on not crying wolf, but
+    a cheaper failure than a git call that has to work in a worktree.
+    """
     hooks_dir = repo / ".claude" / "hooks"
     if not hooks_dir.is_dir():
         return []

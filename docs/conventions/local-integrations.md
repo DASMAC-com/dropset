@@ -11,8 +11,14 @@
 This doc covers the **user-local Claude Code configuration** the repo
 *documents but does not commit*: the compound-shell guard hook, the
 git-grep guard hook, the worktree edit-path guard hook, the iTerm2
-tab-color integration, and the shell (`~/.zshrc`) setup they lean on.
-None of it is enforced on a checkout.
+tab-color integration, and the shell setup they lean on. None of it is
+enforced on a checkout.
+
+**One exception, and it is new:** the **session helpers** are
+*committed*, at `.claude/shell/init.zsh` — the shell profile keeps only
+a one-line `source` of them, and only their 1Password coordinates stay
+untracked. See "Session helpers" below for why that half moved into the
+repo while everything else here stayed out of it.
 
 Both `.claude/settings.json` (hook + permission wiring) and
 `.claude/settings.local.json` (the per-machine allowlist) are
@@ -49,6 +55,13 @@ It names every committed hook nothing points at, and **writes
 nothing** — wiring a hook grants it the right to block tool calls,
 which stays the operator's decision. `housekeeping` runs it each pass
 (its step 7b) so the gap cannot re-open silently.
+
+`housekeeping` deliberately calls
+`python3 .claude/tools/hook_wiring.py` rather than this `make` target:
+that spelling already falls under the pre-approved
+`Bash(python3 .claude/tools/:*)` rule, so an unattended pass never
+stops to ask. The `make` target is the operator-facing spelling. Both
+run the same check — don't collapse them into one.
 
 ## The compound-shell guard hook
 

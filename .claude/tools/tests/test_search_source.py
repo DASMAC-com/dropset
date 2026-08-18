@@ -734,6 +734,47 @@ class CliTests(unittest.TestCase):
         self.assertIn("Cargo.lock", err)
         self.assertNotIn("--glob matched no files", err)
 
+    def test_a_pruned_glob_is_reported_even_when_another_glob_matched(self):
+        """The partial case, and the more dangerous one. Because globs now
+        accumulate, `--glob live --glob pruned` is the encouraged spelling —
+        and there the run returns results and reads as complete while a path
+        the caller named by hand was never searched at all."""
+        (self.root / "Cargo.lock").write_text("needle\n", encoding="utf-8")
+        code, out, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "a.rs",
+                "--glob",
+                "Cargo.lock",
+                "--all-text",
+                "--files-only",
+            ]
+        )
+        # The live glob still returns its match...
+        self.assertEqual(code, 0)
+        self.assertEqual(set(out.split()), {"a.rs"})
+        # ...and the pruned one is named rather than silently dropped.
+        self.assertIn("excluded as a generated family", err)
+        self.assertIn("Cargo.lock", err)
+
+    def test_no_pruned_warning_when_every_glob_was_searchable(self):
+        _, _, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "a.rs",
+                "--files-only",
+            ]
+        )
+        self.assertNotIn("excluded as a generated family", err)
+
     def test_a_glob_naming_a_genuinely_absent_path_still_blames_the_path(self):
         _, _, err = self._capture(
             [
