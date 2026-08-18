@@ -325,20 +325,20 @@ export type GatedEclobLeg = {
 /** Price our own book, folding every failure mode into a {@link Candidate}. */
 async function eclobCandidate(
   rpc: AccountRpc & SlotRpc,
-  eclob: GatedEclobLeg | null,
+  gated: GatedEclobLeg | null,
   amount: bigint,
   platformFeeBps: number | undefined,
 ): Promise<Candidate<EclobQuote>> {
-  if (!eclob) {
+  if (!gated) {
     return { status: 'unavailable', quote: null, reason: 'not requested' };
   }
   try {
     return classifyEclobQuote(
       await quoteEclob(rpc, {
-        leg: eclob.leg,
+        leg: gated.leg,
         amount,
-        nowSlot: eclob.nowSlot,
-        nowUnix: eclob.nowUnix,
+        nowSlot: gated.nowSlot,
+        nowUnix: gated.nowUnix,
         platformFeeBps,
       }),
       amount,
@@ -423,10 +423,11 @@ export async function quoteBestRoute(
     amount: bigint;
     /**
      * Our own leg together with the clocks that gate its book, or `null` to
-     * price the aggregator alone. The clocks sit here rather than alongside
-     * `amount` because they are meaningful only for this leg — and because
-     * nesting them is what makes `nowUnix` required exactly when there is a
-     * book to gate, rather than optional everywhere and silently defaulted.
+     * price the aggregator alone. The clocks are nested here, rather than
+     * sitting beside `amount`, so that `nowUnix` is required exactly when
+     * there is a book to gate and absent when there is not — a flat field
+     * could not express that. See {@link GatedEclobLeg} for why the wall
+     * clock is the required half.
      */
     eclob: GatedEclobLeg | null;
     aggregator: AggregatorLeg | null;

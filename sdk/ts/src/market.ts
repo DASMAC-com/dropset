@@ -153,10 +153,7 @@ export function nowUnix(): number {
  * defaults to `getSlot` unless pinned via `config.nowSlot`. The wall clock
  * has no such fallback and is **required**: the engine judges that deadline
  * against cluster time, so a caller that cannot bound its own clock must
- * gate against a chain-read time rather than a device one. Defaulting it
- * here made the unsound case the silent one — omitting the argument
- * produced correct-looking depth off an unbounded consumer clock, with no
- * type error and nothing on the page for a reviewer to catch.
+ * gate against a chain-read time rather than a device one.
  *
  * Instantiates the shared WASM binding on first use (idempotent, and the
  * same module the swap simulator uses), so callers need no separate init

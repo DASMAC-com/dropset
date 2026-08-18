@@ -34,10 +34,16 @@ test('a failed init is not memoized, so a later call retries', async () => {
 
   // The retry. If the rejection had been cached this would replay it rather
   // than instantiating, which is the regression being guarded.
-  await initSimulator(readFileSync(WASM_PATH));
+  const succeeded = initSimulator(readFileSync(WASM_PATH));
+  await succeeded;
 
-  // And the *successful* instantiation is memoized: a third call resolves
-  // against the same module instead of re-instantiating. Passing the corrupt
-  // bytes here would reject if the memo had not taken.
-  await initSimulator(CORRUPT);
+  // And the *successful* instantiation is memoized: a later call hands back
+  // the very same promise instead of instantiating again.
+  //
+  // Asserted by identity rather than by passing corrupt bytes and expecting
+  // them to be ignored. The wasm-bindgen shim short-circuits on its own
+  // module-scope state once instantiated (`if (wasm !== undefined) return
+  // wasm`), so a corrupt-input call resolves whether or not this memo took —
+  // it would pass with the memo deleted entirely, and prove nothing.
+  assert.equal(initSimulator(CORRUPT), succeeded);
 });

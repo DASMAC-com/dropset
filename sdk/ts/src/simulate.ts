@@ -67,6 +67,12 @@ let initPromise: Promise<void> | null = null;
  * run self-healing retry loops, and caching the rejection would latch a
  * transient load failure (a network blip, a tab restore) until page reload,
  * leaving those loops spinning against a promise that can never resolve.
+ *
+ * Note the retry instantiates from whichever `input` the *next* caller
+ * supplies, not the one that failed — so a consumer that mixes explicit
+ * bytes with the no-argument form would retry against a different source
+ * than it first asked for. Every caller here is consistent in its arity, and
+ * the case was unreachable while a rejection latched forever.
  */
 export function initSimulator(input?: InitInput): Promise<void> {
   if (initPromise === null) {
