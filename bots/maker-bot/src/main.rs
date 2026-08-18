@@ -22,8 +22,8 @@
 use anyhow::{anyhow, Context, Result};
 use dropset_fair_value::{FairValueConfig, FairValueEngine, Reading, Regime};
 use dropset_feeds::venues::{
-    BatchQuotes, CmcSource, CoinGeckoSource, CoinbaseTicker, FrankfurterSource, KrakenSource,
-    PythFeed, PythHermesSource,
+    CmcSource, CoinGeckoSource, CoinbaseTicker, FrankfurterSource, KrakenSource, PythFeed,
+    PythHermesSource,
 };
 use dropset_feeds::{forward_channel, run_until, RunConfig, Sink, Source};
 use dropset_maker_bot::config::{

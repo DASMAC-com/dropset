@@ -27,7 +27,7 @@
 //! AssetPairs` lists them as `altname` — and a pair that still doesn't match is
 //! omitted like any unquoted symbol, never guessed at.
 
-use super::{BatchQuotes, Quotes};
+use super::Quotes;
 use crate::{Batch, HttpClient, Source};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -48,13 +48,11 @@ impl KrakenSource {
             pairs,
         })
     }
-}
 
-#[async_trait]
-impl BatchQuotes for KrakenSource {
-    type Symbol = String;
-
-    async fn poll(&self) -> Result<Quotes<String>> {
+    /// Fetch every pair this source was built with, in one request. Pairs
+    /// Kraken does not quote are **omitted** rather than erroring, per the
+    /// batched-poll convention in [`super`].
+    pub async fn poll(&self) -> Result<Quotes<String>> {
         if self.pairs.is_empty() {
             return Ok(Quotes::new());
         }

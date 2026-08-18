@@ -21,8 +21,8 @@
 //! remove nothing.
 //!
 //! The endpoint is keyed by a single product, so this adapter is deliberately
-//! **not** a [`super::BatchQuotes`] venue: one source covers one product, and a
-//! roster is several sources rather than one batched poll.
+//! **not** a batched quote venue ([`super`]): one source covers one product, and
+//! a roster is several sources rather than one batched poll.
 
 use super::Candle;
 use crate::time::now_secs;
@@ -153,7 +153,7 @@ impl Source for CoinbaseCandles {
 /// this is a separate source over `/products/{id}/ticker` rather than a mode of
 /// the candle feed: no cursor, no backfill, and each poll simply replaces the
 /// last reading. Like the candles endpoint it is keyed by a single product, so
-/// it is not a [`super::BatchQuotes`] venue either.
+/// it is not a batched quote venue either.
 ///
 /// Which products a consumer subscribes to is the consumer's business — this
 /// crate quotes whatever it is handed (docs/data-feeds.md §9).

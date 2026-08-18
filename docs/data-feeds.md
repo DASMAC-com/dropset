@@ -234,13 +234,22 @@ the Solana or streaming trees.
 
 The venue's endpoint, not taste, decides an adapter's shape:
 
-- **Batched quote venues** implement a `BatchQuotes` contract — built
-  with a whole symbol set, one request per poll returning a
-  `symbol → USD` map. CoinGecko, CoinMarketCap, and ECB/Frankfurter are
-  the three today. This is the per-venue budget's main lever (§10): one
-  poll for N markets rather than N polls. A symbol the venue does not
-  quote is omitted, never an error — one unlisted token must not dark
-  the rest of the roster.
+- **Batched quote venues** follow a stated batched-poll convention —
+  built with a whole symbol set, one inherent `poll` per source
+  returning a `symbol → USD` map. CoinGecko, CoinMarketCap,
+  ECB/Frankfurter, and Kraken are the four today. This is the per-venue
+  budget's main lever (§10): one poll for N markets rather than N polls.
+  A symbol the venue does not quote is omitted, never an error — one
+  unlisted token must not dark the rest of the roster.
+
+  The convention is held by review rather than by a trait, on purpose.
+  Each venue keys symbols its own way (CoinGecko slugs are strings,
+  CoinMarketCap listing ids are numeric), so no single collection could
+  ever hold these adapters polymorphically, and no caller consumes them
+  that way — the polymorphic seam for ingestion is `Source` / `Sink`,
+  one layer up. A future uniform poller that wants a common consumer
+  designs that abstraction against its own needs.
+
 - **Per-product history venues** get one source per product, because
   batching is not on offer. Coinbase's candles endpoint is the case; it
   pages its own backfill instead and emits only closed buckets.
@@ -250,6 +259,16 @@ adapter takes its key as a constructor argument, so *where the secret
 comes from* stays a deployment decision the consuming app owns — the
 maker reads `CMC_API_KEY` from its own config today, and a secrets
 provider can supply it later without the adapter changing.
+
+**A credential rides the transport as a sensitive header.** An adapter
+that authenticates with a header passes it to
+`HttpClient::with_secret_header`, never plain `with_header`: the value is
+marked sensitive, which keeps it out of any `Debug` render of the header
+map and out of HTTP/2's HPACK dynamic table. This is a constructor-level
+guarantee on purpose — whether a key can leak must not depend on which
+types happen not to derive `Debug` yet. Plain `with_header` remains the
+right call for a benign header, such as OANDA's UNIX datetime-format
+preference, where debug visibility is worth keeping.
 
 ______________________________________________________________________
 
