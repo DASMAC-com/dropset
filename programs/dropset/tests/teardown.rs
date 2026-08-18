@@ -761,7 +761,20 @@ fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
         qev.accrued_fee, accrued_quote,
         "and reports the quote counter, not the base one"
     );
-    assert_eq!(qev.drained, accrued_quote);
+    // The split, on a leg that exhibits it without being staged: this
+    // treasury holds the accrued fee *plus* the one exact-in residue atom
+    // the sweep above left behind, so `drained` exceeds `accrued_fee` by
+    // exactly the atoms no counter claimed.
+    assert_eq!(
+        qev.drained,
+        accrued_quote + 1,
+        "everything that left, revenue and residue alike"
+    );
+    assert_eq!(
+        qev.drained - qev.accrued_fee,
+        1,
+        "and the excess is the unattributed residue, not revenue"
+    );
     // Both counters, not just the base one: the handler's leg select is a
     // hand-written `if is_base { … } else { … }`, so without the quote
     // assertion a handler that zeroed the base counter in both arms would
