@@ -21,7 +21,7 @@ option, so it precedes the subcommand
 * ``add RULE`` — the **write** counterpart of ``covers``, closing the loop so a
   hand-firm never has to read the allowlist at all. ``covers`` already computes
   where the rule would land; ``add`` performs that append (via
-  ``firm_core.firm_into``, the same writer ``/f`` uses, so subsumed narrower
+  ``firm_core.firm_into``, the same writer the fast firm uses, so subsumed narrower
   entries are pruned in the same pass) and prints
   ``{rule, added, covered, refused, count}``. This exists because ``Edit``
   requires a prior ``Read`` of the file it edits: firming one Bash rule by hand
@@ -211,7 +211,7 @@ def covers(rule: str, allow: list[str]) -> dict:
 def add(rule: str, path: Path) -> dict:
     """Append ``rule`` to ``path``'s allow array unless already covered.
 
-    Delegates the write to ``firm_core.firm_into`` — the same writer ``/f`` uses,
+    Delegates the write to ``firm_core.firm_into`` — the writer the fast firm uses,
     so subsumed narrower entries are pruned identically — and neither path needs
     the allowlist in context. Re-reads the array afterwards only to report the
     new ``count``; the array itself never leaves this process.
@@ -219,7 +219,7 @@ def add(rule: str, path: Path) -> dict:
     **The safety floor is enforced here, not in the writer.** ``firm_into`` has
     no floor of its own — ``firm_last.py`` checks ``is_bareverb_wildcard`` in its
     *caller* and returns before writing. So a write path that called
-    ``firm_into`` directly would grant exactly what ``/f`` refuses, and because
+    ``firm_into`` directly would grant exactly what the fast firm refuses, and because
     this tool runs under the pre-approved directory-wide
     ``Bash(python3 .claude/tools/:*)`` rule, that would be a single
     non-prompting call that widens the agent's own Bash grant to a whole

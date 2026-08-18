@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """firm_last.py — firm the single just-approved tool call into the allowlist.
 
-The deterministic core of the ``/f`` fast-firm skill. ``/f`` is typed right
+The deterministic core of ``firm-perms``' fast firm. That is typed right
 after you one-time-approve a permission prompt, so the just-approved command is
 the most recent *executed* tool call in the session transcript. This tool finds
 it, generalizes it into a reusable allow-rule (via ``firm_core``), and writes
@@ -95,12 +95,14 @@ def _content_text(content) -> str:
 
 
 def _is_self_call(name: str, tool_input: dict) -> bool:
-    """Whether a tool call is part of the /f machinery itself (this tool's own
+    """Whether a tool call is part of the firm machinery itself (this tool's own
     Bash run, or the skill invocation), which must never be the firm target.
     """
     if name == "Skill":
-        # Only the /f and /firm-perms invocations are the firm machinery; other
-        # skills are ordinary calls the user might legitimately want to firm.
+        # Only the firm-perms invocation is the firm machinery; other skills are
+        # ordinary calls the user might legitimately want to firm. The retired
+        # `f` shorthand is kept in this set on purpose: it costs nothing, and a
+        # transcript written before the retirement still carries that name.
         skill = tool_input.get("skill") or tool_input.get("name")
         return skill in {"f", "firm-perms"}
     if name == "Bash":
@@ -166,7 +168,7 @@ def iter_tool_calls(lines) -> list[dict]:
 
 def most_recent_approved_call(calls: list[dict]) -> dict | None:
     """The most recent executed (has a result), non-denied tool call that isn't
-    part of the /f machinery — the one ``/f`` means to firm.
+    part of the firm machinery — the one the fast firm means to firm.
     """
     for entry in reversed(calls):
         if _is_self_call(entry["name"], entry["input"]):
@@ -190,7 +192,7 @@ def find_base_repo() -> str | None:
 
 
 # The settings read/write pair lives in ``firm_core`` so ``allowlist.py``'s
-# ``add`` writes byte-identically to what ``/f`` writes. Re-exported here under
+# ``add`` writes byte-identically to what this tool writes. Re-exported here under
 # the names this module has always used.
 firm_into = firm_core.firm_into
 load_settings = firm_core.load_settings
@@ -248,8 +250,8 @@ def main(argv: list[str] | None = None) -> int:
     # ever reads — worse than useless, because it looks live.
     base = find_base_repo()
     if base is None:
-        # Non-zero: nothing was firmed, and `/f` reporting success on a no-op
-        # is how a missed rule goes unnoticed.
+        # Non-zero: nothing was firmed, and a fast firm reporting success on a
+        # no-op is how a missed rule goes unnoticed.
         print(
             "firm-last: no worktree is on `main`, so the shared "
             "settings.local.json can't be located — nothing firmed.",
