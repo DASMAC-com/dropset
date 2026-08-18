@@ -25,9 +25,17 @@ describe("token icon resolution", () => {
   it("keeps the canonical URL distinct from the mirror", () => {
     // Without this the loop below is vacuous: an empty manifest makes every
     // fallback "", the body never runs, and the test passes asserting nothing.
-    // The manifest is generated (and gitignored), so its being populated is a
-    // precondition of the assertion, not something the assertion can assume.
-    expect(symbols.some((s) => tokenIconFallbackUrl(s) !== "")).toBe(true);
+    //
+    // This is the one assertion here that is not hermetic. `postinstall` runs
+    // the fetch scripts WITHOUT --strict, so an offline or proxied install
+    // still writes the manifest — just empty. The message matters more than
+    // usual because the bare failure would read as a logic bug rather than as
+    // "your install could not reach the issuer CDNs".
+    expect(
+      symbols.some((s) => tokenIconFallbackUrl(s) !== ""),
+      "icon-manifest.gen.json is empty — run `pnpm --dir frontend install` " +
+        "with network access so the mirror is populated",
+    ).toBe(true);
     for (const symbol of symbols) {
       const fallback = tokenIconFallbackUrl(symbol);
       if (fallback) {

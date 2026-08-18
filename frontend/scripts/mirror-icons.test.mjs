@@ -34,6 +34,20 @@ describe("sniffExt", () => {
       sniffExt(Buffer.from('<?xml version="1.0"?>\n<svg viewBox="0 0 1 1"/>')),
     ).toBe("svg");
     expect(sniffExt(Buffer.from("\n  <!-- a note -->\n<svg/>"))).toBe("svg");
+    // A DOCTYPE carrying an internal subset, which Illustrator emits. The
+    // brackets contain a `>`, so a naive `[^>]*` stops early and rejects a
+    // legitimate icon — and under --strict that fails the merge queue.
+    expect(
+      sniffExt(
+        Buffer.from(
+          '<?xml version="1.0"?>\n' +
+            '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"' +
+            ' "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"' +
+            ' [<!ENTITY ns_extend "http://ns.adobe.com/Extensibility/1.0/">]>\n' +
+            '<svg version="1.1"/>',
+        ),
+      ),
+    ).toBe("svg");
   });
 
   // The regression this module exists to prevent. A CDN challenge or error

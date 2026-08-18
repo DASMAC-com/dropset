@@ -40,7 +40,9 @@ import { type PriceBits, quoteForBase } from "@dropset/sdk";
 // widest product (1e18 x the largest representable price, ~1e16, giving ~1e34)
 // also clears. This fork has neither ceiling — `quoteForBase` takes and returns
 // `bigint` — so the constant is bounded by the Rust twin, not by anything here.
-const PRICE_PROBE_ATOMS = 10n ** 18n;
+// Exported for the association test, which has to probe at the same size the
+// implementation does in order to compare against the explicit two-power form.
+export const PRICE_PROBE_ATOMS = 10n ** 18n;
 
 export function humanPrice(
   bits: PriceBits,

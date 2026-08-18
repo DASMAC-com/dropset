@@ -68,6 +68,12 @@ jobs:
     # flooring bug that collapsed adjacent ladder levels onto one displayed
     # price. Runs before the build because a logic failure is faster to
     # report and easier to read than a build log.
+    #
+    # Keep this AFTER the icon steps above. The currencies suite asserts the
+    # mirror manifest is populated, and it is the strict token step that
+    # guarantees that — `postinstall` writes the manifest either way, empty
+    # included. Moving the fast deterministic tests first looks like an
+    # obvious cleanup and would break them.
     - name: 'Frontend unit tests'
       run: 'pnpm --filter dropset-frontend test'
     # Nothing else in CI runs the frontend's `next build`: lint.yml stops at

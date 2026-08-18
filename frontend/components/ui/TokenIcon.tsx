@@ -62,7 +62,12 @@ export function TokenIcon({
       <span
         aria-hidden
         className={className}
-        style={{ width: size, height: size }}
+        // inline-block because width/height do nothing on an inline
+        // non-replaced element — every current call site sits in a flex
+        // container, which makes it a block box anyway, but the placeholder
+        // should reserve the same box as the <img> it stands in for
+        // regardless of where it is used.
+        style={{ display: "inline-block", width: size, height: size }}
         title={title}
       />
     );

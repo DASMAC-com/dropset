@@ -58,9 +58,14 @@ const startsWith = (buf, bytes) =>
 // interstitial this whole function exists to reject, and CDN challenge pages
 // routinely carry one. Only the head is scanned: a prolog longer than this is
 // not something an issuer serves as its icon.
+//
+// The DOCTYPE branch has to tolerate an internal subset — Illustrator emits
+// `<!DOCTYPE svg PUBLIC "…" "…" [<!ENTITY …>]>` — because a false REJECT here
+// is not cosmetic: under the --strict gate it fails the merge queue on a
+// perfectly good icon.
 const SVG_HEAD_BYTES = 1024;
 const SVG_OPENS_DOCUMENT =
-  /^﻿?\s*(?:<\?xml[^>]*\?>\s*|<!--[\s\S]*?-->\s*|<!DOCTYPE\s+svg[^>]*>\s*)*<svg[\s/>]/i;
+  /^﻿?\s*(?:<\?xml[^>]*\?>\s*|<!--[\s\S]*?-->\s*|<!DOCTYPE\s+svg[^>[]*(?:\[[\s\S]*?\]\s*)?>\s*)*<svg[\s/>]/i;
 
 // Identify a format from its magic bytes. Returns undefined for anything
 // unrecognized, which keeps an HTML interstitial rejected even when it
