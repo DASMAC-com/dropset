@@ -88,6 +88,17 @@ jobs:
   test:
     name: 'Tests'
     needs: 'changes'
+    # `actions: write` is what lets install-toolchain delete a cache entry
+    # that restored incomplete, so the run which reinstalls also republishes a
+    # good entry instead of leaving a poisoned one for every run after it. The
+    # probe only spends it on a push to main (see the action), and falls back
+    # to warning if the grant is ever absent. Naming permissions explicitly
+    # also drops this job to the two scopes it actually uses: checkout needs
+    # `contents: read`, and the cache actions ride ACTIONS_RUNTIME_TOKEN
+    # rather than GITHUB_TOKEN, so nothing else here is affected.
+    permissions:
+      actions: 'write'
+      contents: 'read'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
@@ -108,9 +119,23 @@ jobs:
     # unchanged. Wired only onto the nextest step below (step-level
     # RUSTC_WRAPPER); kept off every make target — the SBF build (poor
     # fit, already .so-cached) and make idl alike.
+    #
+    # `version` is pinned rather than left to default, in all four jobs that
+    # use this action. Left empty the action resolves the newest sccache by
+    # calling the GitHub API for mozilla/sccache's latest release on every
+    # run, which both floats the compiler cache onto whatever shipped that
+    # morning and puts a network round-trip in front of every job — one that
+    # has already failed a run here with a TLS `HttpError`. Now that every
+    # check is required, such a failure takes the PR out of the merge queue
+    # rather than costing a re-run, so the call is worth not making. Pinning
+    # skips that lookup entirely. It does not make the step network-free — the
+    # binary download remains, though the action checksums it — but it removes
+    # one of the two fetches, and specifically the one that has failed.
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'mozilla-actions/sccache-action@v0.0.10'
+      with:
+        version: 'v0.17.0'
     # rust-cache caches ~/.cargo/{registry,git} plus only the *dependency*
     # build artifacts in target/ (workspace crates are pruned), and re-saves
     # whenever the lockfile/toolchain change — so the cache never freezes at a
@@ -188,6 +213,10 @@ jobs:
   test-no-teardown:
     name: 'Tests (no teardown)'
     needs: 'changes'
+    # Same toolchain-cache self-heal grant as the `test` job above.
+    permissions:
+      actions: 'write'
+      contents: 'read'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
@@ -207,6 +236,8 @@ jobs:
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'mozilla-actions/sccache-action@v0.0.10'
+      with:
+        version: 'v0.17.0'
     # Shares the `test` job's dep-artifact cache via the same shared-key:
     # the dependency builds are identical across the two feature sets, so a
     # cold no-teardown run warms from that cache and only the dropset crate
@@ -273,6 +304,10 @@ jobs:
   test-parity:
     name: 'Tests (asm parity)'
     needs: 'changes'
+    # Same toolchain-cache self-heal grant as the `test` job above.
+    permissions:
+      actions: 'write'
+      contents: 'read'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
@@ -288,6 +323,8 @@ jobs:
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'mozilla-actions/sccache-action@v0.0.10'
+      with:
+        version: 'v0.17.0'
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'Swatinem/rust-cache@v2'
@@ -356,6 +393,8 @@ jobs:
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'mozilla-actions/sccache-action@v0.0.10'
+      with:
+        version: 'v0.17.0'
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'Swatinem/rust-cache@v2'
