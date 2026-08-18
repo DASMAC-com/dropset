@@ -90,7 +90,7 @@ pub struct MarketView {
     /// leader the accounts pane shows as the MM bot. Drives the leader's
     /// liveness (freshness against the poll's head slot). `None` when the market
     /// has no live vault; `Some(0)` for a vault that has never quoted (reads as
-    /// maximally stale).
+    /// [`Liveness::Unknown`], not stale — see `maker_liveness`).
     pub leader_quote_slot: Option<u32>,
     /// The first live vault's stamped reference price, in human quote-per-base
     /// units — the fair value the maker pegs to, shown per market in the markets
@@ -115,8 +115,9 @@ pub struct MarketView {
 /// without any bot-side heartbeat account. For the maker it is derived purely
 /// from how recently it stamped a reference price on chain — its vault's
 /// `quote_slot` versus the poll's head slot — so a bot that is quoting reads
-/// [`Liveness::Live`] and one that has gone quiet reads [`Liveness::Stale`],
-/// independent of who launched it. The taker leaves no such on-chain footprint
+/// [`Liveness::Live`], one that has gone quiet reads [`Liveness::Stale`], and
+/// one that has never quoted at all reads [`Liveness::Unknown`], independent
+/// of who launched it. The taker leaves no such on-chain footprint
 /// (its flow is deliberately quiet between bursts, so activity would flap), so
 /// its liveness is process-based: the TUI reads it [`Liveness::Live`] exactly
 /// while it is running that market's taker child (set after the poll, in
@@ -273,11 +274,22 @@ pub fn poll(
 
 /// Classify the maker's liveness from its last quote slot against the poll's
 /// head slot: quoting within [`MAKER_LIVE_WITHIN_SLOTS`] is [`Liveness::Live`],
-/// anything older (including a vault that has never quoted, `quote_slot == 0`)
-/// is [`Liveness::Stale`]. Without a head slot (validator down) there is nothing
-/// to compare against, so the result is [`Liveness::Unknown`].
+/// anything older is [`Liveness::Stale`]. Without a head slot (validator down)
+/// there is nothing to compare against, so the result is [`Liveness::Unknown`].
+///
+/// A vault that has **never** quoted carries `quote_slot == 0`, which is not a
+/// stale quote but the absence of one, so it reads [`Liveness::Unknown`] too.
+/// The distinction is the whole point of the two variants: `Stale` says a
+/// maker is there and has fallen behind — booting, wedged, or stopped — and
+/// invites you to go look at it, while `Unknown` says nothing has been
+/// observed. Since markets open dark, a freshly bootstrapped demo has
+/// `quote_slot == 0` on every market, so reading that as `Stale` would show a
+/// yellow "quotes have aged" dot for a maker that was never launched — the
+/// default opening state, not a corner case.
 fn maker_liveness(head_slot: Option<u64>, quote_slot: Option<u32>) -> Liveness {
     match (head_slot, quote_slot) {
+        // Never quoted — no signal, not an aged one.
+        (_, Some(0)) => Liveness::Unknown,
         (Some(head), Some(quoted)) => {
             if head.saturating_sub(quoted as u64) <= MAKER_LIVE_WITHIN_SLOTS {
                 Liveness::Live
@@ -570,8 +582,17 @@ mod tests {
             maker_liveness(Some(1_001 + MAKER_LIVE_WITHIN_SLOTS), Some(1_000)),
             Liveness::Stale
         );
-        // A vault that has never quoted (`quote_slot == 0`) reads as stale.
-        assert_eq!(maker_liveness(Some(1_000_000), Some(0)), Liveness::Stale);
+        // A vault that has never quoted (`quote_slot == 0`) has no signal at
+        // all rather than an aged one, so it reads unknown, not stale — the
+        // opening state of every market now that they bootstrap dark. It
+        // stays unknown however far the head slot has advanced, and whether
+        // or not a head slot was read.
+        assert_eq!(maker_liveness(Some(1_000_000), Some(0)), Liveness::Unknown);
+        assert_eq!(maker_liveness(Some(1), Some(0)), Liveness::Unknown);
+        assert_eq!(maker_liveness(None, Some(0)), Liveness::Unknown);
+        // One slot of quoting history is enough to distinguish the two: that
+        // is a real quote, merely an old one.
+        assert_eq!(maker_liveness(Some(1_000_000), Some(1)), Liveness::Stale);
         // A future-dated quote (clock skew) saturates to zero age, not stale.
         assert_eq!(maker_liveness(Some(10), Some(1_000)), Liveness::Live);
         // No head slot (validator down) or no live vault → unknown.

@@ -14,6 +14,7 @@ use dropset_sdk::layout::MarketView as SlabView;
 use dropset_sdk::price::Price;
 use dropset_sdk::quoting::{set_liquidity_profile_ix, set_reference_price_ix, PROFILE_BYTES};
 use dropset_sdk::DROPSET_ID;
+use dropset_util::decimals::{atoms_ratio_to_human, human_to_atoms_ratio};
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
@@ -29,23 +30,6 @@ use crate::context::{MarketAddrs, VaultSnapshot};
 /// Decode scale for a `Price` to a float — `value × 10^9`, matching the SDK's
 /// `quoting` module.
 const PRICE_SCALE: u64 = 1_000_000_000;
-
-/// Convert a human quote-per-base price (USD per token, as the feeds report it)
-/// into the **atoms-ratio** the on-chain `Price` encodes — `quote_atoms` per
-/// `base_atoms`. They coincide only when both legs share decimals (an
-/// equal-decimals market stamps the human price directly); a token with more
-/// decimals than USDC scales down, fewer scales up. This is the per-market
-/// decimal handling the wide-unit-price roster (EURC ~$1.14 … IDRX ~$0.000056)
-/// needs so each market's reference encodes correctly.
-pub fn human_to_atoms_ratio(human: f64, base_decimals: u8, quote_decimals: u8) -> f64 {
-    human * 10f64.powi(quote_decimals as i32 - base_decimals as i32)
-}
-
-/// Inverse of [`human_to_atoms_ratio`] — decode an on-chain atoms-ratio back to
-/// the human quote-per-base price for display.
-pub fn atoms_ratio_to_human(ratio: f64, base_decimals: u8, quote_decimals: u8) -> f64 {
-    ratio * 10f64.powi(base_decimals as i32 - quote_decimals as i32)
-}
 
 /// SPL Token Mint `decimals` byte offset (after `COption<Pubkey>` authority +
 /// `u64` supply).
@@ -348,29 +332,5 @@ mod tests {
         // `from_value(0.0)` is the sentinel too, so the ordinary encoder can't
         // accidentally produce a live-looking zero.
         assert!(!Price::from_value(0.0).expect("zero encodes").is_matchable());
-    }
-
-    #[test]
-    fn atoms_ratio_is_identity_at_equal_decimals() {
-        // EURC (6) / USDC (6): the human price stamps unchanged.
-        assert!((human_to_atoms_ratio(1.14, 6, 6) - 1.14).abs() < 1e-12);
-    }
-
-    #[test]
-    fn atoms_ratio_scales_with_the_decimal_gap() {
-        // VCHF (9) / USDC (6): 1 VCHF-atom is 10^-3 of a token, so the
-        // atoms-ratio is the human price × 10^(6-9).
-        assert!((human_to_atoms_ratio(1.235, 9, 6) - 1.235e-3).abs() < 1e-12);
-        // IDRX (2) / USDC (6): the atoms-ratio scales up.
-        assert!((human_to_atoms_ratio(0.000056, 2, 6) - 0.56).abs() < 1e-12);
-    }
-
-    #[test]
-    fn atoms_ratio_round_trips_to_human() {
-        for (human, base, quote) in [(1.14, 6, 6), (1.235, 9, 6), (0.000056, 2, 6)] {
-            let ratio = human_to_atoms_ratio(human, base, quote);
-            let back = atoms_ratio_to_human(ratio, base, quote);
-            assert!((back - human).abs() / human < 1e-12, "round-trip {human}");
-        }
     }
 }

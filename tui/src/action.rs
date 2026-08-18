@@ -20,6 +20,7 @@ use anyhow::{Context, Result};
 use dropset_sdk::matching::SwapSide;
 use dropset_sdk::price::Price;
 use dropset_sdk::quoting::{set_liquidity_profile_ix, set_reference_price_ix};
+use dropset_util::decimals::atoms_ratio_to_human;
 use solana_keypair::Keypair;
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
@@ -573,7 +574,7 @@ fn do_repeg(
     // success line makes the repeg's effect obvious — the atoms-ratio scales
     // back by the pair's decimal gap.
     let human = market::config_for(repo_root, &base_mint)
-        .map(|c| bumped * 10f64.powi(c.base.decimals as i32 - c.quote.decimals as i32));
+        .map(|c| atoms_ratio_to_human(bumped, c.base.decimals, c.quote.decimals));
     Ok(match human {
         Some(p) => format!(
             "Re-pegged {bps:+} bps \u{2192} reference now {} \u{2014} whole book shifts",
