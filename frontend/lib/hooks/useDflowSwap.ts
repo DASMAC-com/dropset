@@ -3,17 +3,14 @@
 import { useSolanaClient, useWallet } from "@solana/react-hooks";
 import { useCallback, useRef, useState } from "react";
 import { stablecoinDecimals, stablecoinMint } from "../data/currencies";
-import {
-  executeDflowSwap,
-  SwapError,
-  type SwapOutcome,
-  waitForSwapConfirmation,
-} from "../dflow/dflowSwap";
+import { executeDflowSwap } from "../dflow/dflowSwap";
 import { emit } from "../events";
 import { parseAmountToBase } from "../format/balance";
 import { percentToBps } from "../format/percent";
 import { getErrorMessage } from "../guards";
 import { type Slippage, useSwapStore } from "../store";
+import { waitForSwapConfirmation } from "../swap/confirm";
+import { SwapError, type SwapOutcome } from "../swap/types";
 
 export type SwapStatus =
   | "idle"

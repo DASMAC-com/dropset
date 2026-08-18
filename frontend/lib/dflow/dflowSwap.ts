@@ -10,14 +10,10 @@ import {
   type Signature,
   type Transaction,
 } from "@solana/kit";
-import {
-  DFLOW_ORDER_TIMEOUT_MS,
-  SWAP_CONFIRM_MAX_UNKNOWN_POLLS,
-  SWAP_CONFIRMATION_POLL_MS,
-  SWAP_CONFIRMATION_TIMEOUT_MS,
-} from "../data/timings";
+import { DFLOW_ORDER_TIMEOUT_MS } from "../data/timings";
 import { DFLOW_ORDER_URL, PLATFORM_FEE } from "../env";
 import { getErrorMessage } from "../guards";
+import { CANCEL_PATTERN, SwapError, type SwapOutcome } from "../swap/types";
 import {
   type ParsedDflowOrder,
   parseDflowOrder,
@@ -60,45 +56,6 @@ export type DflowSwapInput = {
   // mint exists on-chain before declaring the fee to DFlow.
   rpc: SolanaClientRuntime["rpc"];
 };
-
-export type SwapOutcome = {
-  signature: Signature;
-  inAmount: bigint;
-  outAmount: bigint;
-};
-
-export type SwapErrorKind =
-  | "network" // fetch threw — likely offline or DNS failure
-  | "api" // /order returned non-2xx
-  | "wallet" // wallet adapter failed in a non-user-cancel way
-  | "rejected"; // user explicitly cancelled in the wallet UI
-
-export class SwapError extends Error {
-  readonly kind: SwapErrorKind;
-  readonly httpStatus?: number;
-  readonly code?: string;
-  constructor(
-    message: string,
-    kind: SwapErrorKind,
-    httpStatus?: number,
-    code?: string,
-  ) {
-    super(message);
-    this.name = "SwapError";
-    this.kind = kind;
-    this.httpStatus = httpStatus;
-    this.code = code;
-  }
-}
-
-// Common wallets each surface user-rejection with a slightly different
-// message. Match conservatively — we'd rather classify a true wallet
-// failure as "rejected" (and prompt the user to retry) than classify a
-// real cancel as a generic wallet error. Shared with the eCLOB swap path,
-// which hands the wallet the same `sendTransaction` and sees the same
-// rejection messages.
-export const CANCEL_PATTERN =
-  /user (?:reject|cancel|denied|declined)|reject(?:ed)?(?: by user| the request)|cancelled in wallet|approval denied|transaction (?:was )?(?:declined|cancelled|rejected)/i;
 
 // Execute a swap end-to-end:
 //   1. GET /order with `allowAsyncExec=false` so DFlow returns a sync single
@@ -224,50 +181,4 @@ export async function executeDflowSwap(
     inAmount: order.inAmount,
     outAmount: order.outAmount,
   };
-}
-
-// Wallet `sendTransaction` returns after submission, not after the chain has
-// confirmed the tx — so balance re-fetches fired immediately after see stale
-// data. Poll `getSignatureStatuses` until the signature reaches `confirmed`
-// (or `finalized`) and bail with an error on revert or timeout.
-export async function waitForSwapConfirmation(
-  rpc: SolanaClientRuntime["rpc"],
-  signature: Signature,
-  {
-    timeoutMs = SWAP_CONFIRMATION_TIMEOUT_MS,
-    pollIntervalMs = SWAP_CONFIRMATION_POLL_MS,
-  } = {},
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let unknownPolls = 0;
-  while (Date.now() < deadline) {
-    const { value } = await rpc.getSignatureStatuses([signature]).send();
-    const status = value[0];
-    if (status === null) {
-      unknownPolls++;
-      if (unknownPolls >= SWAP_CONFIRM_MAX_UNKNOWN_POLLS) {
-        throw new SwapError(
-          "RPC has no record of the submitted signature — the transaction was likely dropped before reaching a leader.",
-          "wallet",
-        );
-      }
-      await new Promise((r) => setTimeout(r, pollIntervalMs));
-      continue;
-    }
-    if (status?.err) {
-      // `@solana/kit` parses RPC integer fields as BigInt, so a stock
-      // JSON.stringify on a TransactionError (e.g. `{ InstructionError:
-      // [0, { Custom: 6005 }] }`) throws "Do not know how to serialize a
-      // BigInt" and masks the real revert. Coerce BigInts to strings so
-      // the on-chain error survives intact.
-      const errStr = JSON.stringify(status.err, (_, v) =>
-        typeof v === "bigint" ? v.toString() : v,
-      );
-      throw new SwapError(`Transaction reverted on-chain: ${errStr}`, "wallet");
-    }
-    const cs = status?.confirmationStatus;
-    if (cs === "confirmed" || cs === "finalized") return;
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
-  }
-  throw new SwapError("Timed out waiting for swap confirmation", "wallet");
 }

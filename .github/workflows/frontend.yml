@@ -47,13 +47,33 @@ jobs:
     # it recovers or the URL is pointed somewhere else. A live asset served
     # under an odd content-type does NOT block — the script falls back to
     # sniffing the bytes, so only genuinely unusable responses fail.
+    #
+    # Both asset sets are gated, on the same reasoning and through the same
+    # engine (frontend/scripts/mirror-icons.mjs). Wallet icons add five more
+    # externally-controlled URLs that can red-line the queue, which is a real
+    # widening of the exposure described above; they are gated anyway because
+    # leaving a set unchecked is exactly how the token icons came to carry a
+    # silently broken mirror in the first place. The issuers are also a smaller
+    # and more stable set than the stablecoin ones, so the added risk is modest.
     - name: 'Token icon URLs are live'
       run: 'node frontend/scripts/fetch-token-icons.mjs --strict'
-    # Nothing else in CI runs `next build`: lint.yml stops at biome + tsc and
-    # test.yml excludes frontend/** entirely, so a build break only surfaced
-    # on Vercel. This also runs the `prebuild` asset chain, which is the only
-    # thing that exercises copy-brand-assets and copy-flags at all — they are
-    # prebuild-only, so before this job they ran in CI zero times.
+    - name: 'Wallet icon URLs are live'
+      run: 'node frontend/scripts/fetch-wallet-icons.mjs --strict'
+    # The frontend's unit tests. They run here rather than in test.yml, whose
+    # paths filter excludes frontend/** entirely; this job is the only one that
+    # installs the frontend's dependencies. Scoped to pure logic (price and
+    # decimals conversion, icon-source resolution) — the price helper is one
+    # half of a cross-language pair whose Rust twin in tui/src/book.rs is
+    # covered, so without this the TS fork was the only side that could drift
+    # unnoticed. Runs before the build because a logic failure is faster to
+    # report and easier to read than a build log.
+    - name: 'Frontend unit tests'
+      run: 'pnpm --filter dropset-frontend test'
+    # Nothing else in CI runs `next build`: lint.yml stops at biome + tsc, so a
+    # build break only surfaced on Vercel. This also runs the `prebuild` asset
+    # chain, which is the only thing that exercises copy-brand-assets and
+    # copy-flags at all — they are prebuild-only, so before this job they ran
+    # in CI zero times.
     - name: 'Frontend builds'
       run: 'pnpm --filter dropset-frontend build'
 name: 'Frontend'

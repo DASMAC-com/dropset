@@ -1,10 +1,10 @@
 "use client";
 
 import { CopyButton } from "@/components/ui/CopyButton";
+import { TokenIcon } from "@/components/ui/TokenIcon";
 import {
   type Stablecoin,
   shortenMint,
-  tokenIconUrl,
   truncateTokenName,
 } from "@/lib/data/currencies";
 import { EXPLORER_NAME, explorerTokenUrl } from "@/lib/explorer";
@@ -27,13 +27,9 @@ export function StableTokenIdentity({
   const illiquid = liquidityOf(s.mint) === "illiquid";
   return (
     <>
-      {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-      <img
-        src={tokenIconUrl(s.symbol)}
-        alt=""
-        aria-hidden
-        width={20}
-        height={20}
+      <TokenIcon
+        symbol={s.symbol}
+        size={20}
         className="h-5 w-5 shrink-0 rounded-full"
       />
       <span className="flex min-w-0 flex-1 flex-col text-sm">

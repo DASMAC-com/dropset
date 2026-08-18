@@ -14,6 +14,7 @@ import {
   type SortDir,
   type SortState,
 } from "@/components/ui/SortableHeader";
+import { TokenIcon } from "@/components/ui/TokenIcon";
 import { VaultActionDialog } from "@/components/vaults/VaultActionDialog";
 import { shortenMint } from "@/lib/data/currencies";
 import { allTimePnl, positionPnl } from "@/lib/data/pnl";
@@ -141,6 +142,9 @@ function PositionValue({
 }
 
 // Two overlapping circular token icons (the stablecoin logos are round).
+// The two tokens of a pair, overlapped. Takes symbols rather than URLs (the
+// FlagPair above still takes URLs) so each icon resolves its own mirror and
+// remote fallback through TokenIcon.
 function TokenPair({
   base,
   quote,
@@ -152,22 +156,10 @@ function TokenPair({
 }) {
   return (
     <span className="flex shrink-0 items-center">
-      {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-      <img
-        src={base}
-        alt=""
-        aria-hidden
-        width={size}
-        height={size}
-        className="rounded-full"
-      />
-      {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-      <img
-        src={quote}
-        alt=""
-        aria-hidden
-        width={size}
-        height={size}
+      <TokenIcon symbol={base} size={size} className="rounded-full" />
+      <TokenIcon
+        symbol={quote}
+        size={size}
         className="-ml-1.5 rounded-full ring-1 ring-background"
       />
     </span>
@@ -282,11 +274,7 @@ function VaultRow({
               size={16}
             />
           )}
-          <TokenPair
-            base={market.baseIconUrl}
-            quote={market.quoteIconUrl}
-            size={28}
-          />
+          <TokenPair base={market.base} quote={market.quote} size={28} />
           <span className="font-mono font-medium text-foreground">
             {market.label}
           </span>
