@@ -236,7 +236,12 @@ scope but never loosen the shell rules.
 Refer to users in the abstract, never by name, in any committed doc or
 skill. **Spelling (cspell):** `cfg/dictionary.txt` is for terms in
 **≥ 2 files**; a word in just one file gets a top-of-file inline
-`cspell:word` escape (one word per directive). Full detail:
+`cspell:word` escape (one word per directive). The dictionary carries a
+`merge=union` attribute, so **never hand-resolve a conflict in it** —
+git keeps both sides and the `--unique` sorter hook re-sorts on the next
+commit. A sorted list is a merge-conflict generator, which is also why
+each Makefile target declares its own `.PHONY` beside its rule rather
+than in one central sorted block. Full detail:
 `docs/conventions/docs-and-style.md`.
 
 ## Audit registry

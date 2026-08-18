@@ -59,7 +59,12 @@ repos:
   # gate, so don't let the fixer fight regeneration.
   - exclude: '(.*.rs|^sdk/ts/src/generated/|^sdk/idl/)'
     id: 'end-of-file-fixer'
-  - files: 'cfg/dictionary.txt'
+  # `--unique` is what makes the dictionary's union merge (see .gitattributes)
+  # self-healing: git takes both sides' lines without sorting or deduping, and
+  # the next commit touching the file restores both properties.
+  - args:
+    - '--unique'
+    files: 'cfg/dictionary.txt'
     id: 'file-contents-sorter'
   - id: 'mixed-line-ending'
   # JSON under frontend/ is handled by biome.

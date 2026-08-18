@@ -1,0 +1,18 @@
+# The cspell dictionary is one alphabetically sorted word per line, so two
+# branches that each add a word collide at the same line by construction — a
+# conflict whose only correct resolution is "keep both sides". `merge=union`
+# is git's built-in driver for exactly that: it takes both sides' lines
+# instead of raising a conflict. It needs no local configuration, so it
+# applies to every merge and rebase, in any clone.
+#
+# Union merge does not sort or de-duplicate, so it can leave the file unsorted
+# and with a word twice. Both are self-healing: the `file-contents-sorter` in
+# cfg/pre-commit-lint.yml runs with `--unique`, so the next commit touching
+# the file re-sorts and de-duplicates it, and neither state breaks anything
+# before then — cspell tolerates both, and the dictionary-hygiene check reads
+# the file into a set.
+#
+# Do NOT extend this to a file where a dropped or doubled line changes
+# meaning. It is sound here only because the dictionary is an unordered set
+# that happens to be stored sorted.
+cfg/dictionary.txt merge=union

@@ -82,6 +82,27 @@ python3 .claude/tools/cspell_place.py scan \
 CLI); `verdict WORD...` skips cspell and just places words you already
 have.
 
+**The dictionary union-merges — don't resolve its conflicts by hand.**
+One sorted word per line means two branches that each add a word collide
+at the same line by construction, and with several worktrees live that
+was a recurring tax paid for a conflict with no semantic content. So
+`.gitattributes` gives `cfg/dictionary.txt` git's built-in
+`merge=union` driver: git keeps both sides' lines instead of raising a
+conflict, in every clone, with no local configuration. Union merge
+neither sorts nor de-duplicates, so the merged file can be out of order
+with a word twice — both are self-healing, because the
+`file-contents-sorter` hook runs with `--unique` and the next commit
+touching the file restores them. Nothing breaks in between: cspell
+tolerates both, and every reader of the file loads it into a set.
+
+Union merge is sound here **only** because the dictionary is an
+unordered set that happens to be stored sorted. Do not extend the
+attribute to a file where a doubled or reordered line changes meaning.
+The same reasoning is why the Makefile declares each target's `.PHONY`
+beside its own rule instead of in one central sorted block — a sorted
+list is a merge-conflict generator, so prefer a layout that has no
+single insertion point over resolving the collisions it creates.
+
 The `cspell-audit` skill reconciles the dictionary against actual usage
 **and** normalizes escape placement on this rule; run it when the
 dictionary grows or escapes drift. `housekeeping` runs the same check

@@ -10,6 +10,8 @@ user-invocable: true
 
 <!-- cspell:word retarget -->
 
+<!-- cspell:word sortedness -->
+
 # `review-pr`
 
 Act as an adversarial reviewer before the human
@@ -138,6 +140,31 @@ PR-authoring **writes** (`create_pull_request`,
      a **blocking** issue (step 7), and tell the user
      to rebase and resolve manually, then re-run — this
      skill does not auto-resolve conflicts.
+
+     **The rule is absolute on purpose, and the obvious
+     carve-out does not hold.** It keys on "a conflict
+     occurred" rather than "the conflict has semantic
+     content", so it fires on an adjacent insertion into a
+     sorted list, which genuinely has none — the tempting
+     safeguard is "resolve it and let the linter verify".
+     That gives no protection: **a linter verifies
+     sortedness, not completeness.** A sorted list that
+     silently lost one side's entry lints perfectly clean,
+     and dropping a side is exactly the outcome this rule
+     exists to prevent. If a carve-out is ever added, its
+     verification must be completeness against **both merge
+     parents** — every line added by either parent appears
+     in the resolution, checked mechanically — not "the
+     linter passed".
+
+     The better lever is removing the collision class at
+     the source, which is strictly better because it fixes
+     every session at once with no agent judgment anywhere:
+     the Makefile declares each target's `.PHONY` beside its
+     own rule instead of in one sorted block, and
+     `.gitattributes` gives the cspell dictionary a
+     `merge=union` driver so git takes both sides itself.
+     Reach for that before reconsidering this rule.
 
      **Enumerate the conflicted files with git, not a
      search.** The question is "which files conflict",
