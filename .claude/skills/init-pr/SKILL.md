@@ -461,15 +461,24 @@ per-directory *content* — `frontend/node_modules` and
    automatically in this skill.
 
 1. Create an empty, **signed** commit so there is
-   something to push:
+   something to push. Its message is a **conforming
+   semantic subject**, not the bare tag:
 
    ```sh
-   git commit --allow-empty -S -m "<ENG-###>"
+   git commit --allow-empty -S -m "chore(<ENG-###>): Bootstrap the worktree"
    ```
 
    The `-S` is mandatory: branch protection on
    this repo requires every commit to have a
    verified signature.
+
+   **Why the message conforms.** The next-but-one step
+   opens the PR with this exact string as the title, and
+   the Semantic PR workflow validates *both* — see the
+   rationale there. Keep the two byte-identical: with a
+   single commit on the branch, the workflow's
+   `validateSingleCommitMatchesPrTitle` compares them and
+   fails on any divergence.
 
 1. Push the branch:
 
@@ -477,23 +486,49 @@ per-directory *content* — `frontend/node_modules` and
    git push -u origin <eng-###>
    ```
 
-1. Create a draft PR with the Linear tag as the
-   title and an empty body, via the GitHub MCP. This
-   repo is `DASMAC-com/dropset`, so pass
-   `owner: "DASMAC-com"`, `repo: "dropset"`; the head
-   is the branch you just pushed and the base is `main`:
+1. Create a draft PR with an empty body, via the GitHub
+   MCP, titled with the **same string as the bootstrap
+   commit** — not the bare tag. This repo is
+   `DASMAC-com/dropset`, so pass `owner: "DASMAC-com"`,
+   `repo: "dropset"`; the head is the branch you just
+   pushed and the base is `main`:
 
    ```txt
    mcp__github__create_pull_request(
      owner: "DASMAC-com",
      repo: "dropset",
-     title: "<ENG-###>",
+     title: "chore(<ENG-###>): Bootstrap the worktree",
      head: "<eng-###>",
      base: "main",
      body: "",
      draft: true,
    )
    ```
+
+   **Why not the bare tag, which is what this step used
+   to pass.** `ENG-###` alone cannot satisfy the Semantic
+   PR workflow — it requires a type and a scope
+   (`scopes: ^ENG-[0-9]+$`) and a capitalized subject — so
+   the `opened`-triggered run **always failed**, every
+   time, on every PR this skill has ever created. Nothing
+   merged unguarded (GitHub evaluates a required check
+   against the *latest* run per context, and
+   `pr-title-description` renames the title during review,
+   whose `edited` trigger reruns and passes), but the
+   failed run stays in the rollup — `gh pr checks`, the UI
+   checks list — forever. On PR #329 that residue read as
+   a semantic-check bypass and cost an operator
+   investigation. The merge-queue leg is a deliberate
+   auto-pass (a merge group cannot see a PR title), so the
+   PR-path run is the *only* real enforcement, and it
+   should never carry guaranteed-failure noise.
+
+   A conforming seed costs nothing: `pr-title-description`
+   still rewrites the final title during review exactly as
+   before, so this changes only what the title is *between*
+   open and review. `chore` is the honest type for an empty
+   bootstrap commit, and it is in the action's default type
+   set.
 
    The call returns the PR object, including its
    `html_url` and `number` — keep both (the number for
