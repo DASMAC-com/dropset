@@ -38,14 +38,22 @@ Usage::
     python3 .claude/tools/search_source.py '^#' --glob docs/fx-survey.md
     python3 .claude/tools/search_source.py 'pnpm --dir' --ext md   # prose
 
-Options: ``--ext`` (comma-separated extensions, no dot; default is the source set
-below), ``--all-text`` (every extension, not just the source set), ``--dir``
-(comma-separated roots to search under; default the repo root), ``--glob``
-(comma-separated path globs a file must match — see below), ``--context N``
-(lines of context each side), ``--files-only`` (just the matching paths),
-``--fixed`` (treat the pattern as a literal, not a regex), ``--ignore-case``,
-``--max N`` (cap on reported matches, default 200), ``--root`` (repo root,
-default cwd).
+Options: ``--ext`` (extensions, no dot; default is the source set below),
+``--all-text`` (every extension, not just the source set), ``--dir`` (roots to
+search under; default the repo root), ``--glob`` (path globs a file must match —
+see below), ``--context N`` (lines of context each side), ``--files-only`` (just
+the matching paths), ``--fixed`` (treat the pattern as a literal, not a regex),
+``--ignore-case``, ``--max N`` (cap on reported matches, default 200),
+``--root`` (repo root, default cwd).
+
+``--ext``, ``--dir`` and ``--glob`` each take a comma-separated list **and**
+accumulate across repetitions, so ``--ext ts,tsx`` and ``--ext ts --ext tsx``
+are the same request. They were not always: argparse's default ``store`` kept
+only the last occurrence, so the repeated spelling searched ``tsx`` alone and
+reported a clean ``0 match(es)`` — a false negative indistinguishable from a
+true one, on the tool ``review-pr`` leans on to prove repo-wide negatives.
+Passing one of them *empty* is now refused rather than silently widening the
+search back to the default.
 
 ``--dir`` and ``--glob`` narrow along different axes, and the gap between them
 was measured: getting the section map of **three named docs** cost 3.0k because
@@ -138,6 +146,36 @@ MAX_LINE_CHARS = 400
 
 class SearchSourceError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
+
+
+def accumulate_flag(values: list[str] | None) -> tuple[str, ...] | None:
+    """Flatten a repeatable comma-separated flag into one ordered tuple.
+
+    ``--ext ts --ext tsx`` and ``--ext ts,tsx`` name the same request, so both
+    spellings have to reach the search as ``("ts", "tsx")``. They did not:
+    argparse's default ``store`` kept only the **last** occurrence, so the
+    repeated form searched ``tsx`` alone and reported a clean
+    ``0 match(es) in 0 file(s)`` with grep's non-zero exit — a false negative
+    **indistinguishable from a true one**, on the very tool `CLAUDE.md`
+    prescribes for proving a repo-wide negative (`review-pr`'s straggler and
+    uniqueness sweeps exist to do exactly that, and would have shipped a
+    dangling reference without a word of warning).
+
+    Returns ``None`` only when the flag was never given, so a caller can still
+    distinguish "unset" from "given, but empty" and refuse the latter loudly
+    rather than silently widening the search.
+    """
+    if values is None:
+        return None
+    out: list[str] = []
+    for value in values:
+        for part in value.split(","):
+            part = part.strip()
+            # Dedupe, preserving first-seen order: `--ext ts --ext ts,tsx` is a
+            # plausible thing to type and must not search `ts` twice.
+            if part and part not in out:
+                out.append(part)
+    return tuple(out)
 
 
 def excluded_dir_names() -> set[str]:
@@ -443,6 +481,32 @@ def search(
 
     files.sort()
     matches.sort(key=lambda m: (m["path"], m["line"]))
+
+    # A *fourth* way a globbed run can search nothing, and the one that reads
+    # most like a typo: the glob names a path that really is there, and the
+    # exclude lists prune it. `--glob sdk/idl/dropset.json` is the live case —
+    # a generated family, so it is answered "matched no files", which sends the
+    # reader off to re-check a path sitting in plain sight. Resolving only
+    # wildcard-free patterns keeps this to one `stat` apiece and no second walk.
+    pruned: list[str] = []
+    if globs and not stats["glob_hits"]:
+        excluded_files = excluded_file_names()
+        excluded_dirs = excluded_dir_names()
+        for pattern in globs:
+            if "*" in pattern or "?" in pattern:
+                continue
+            candidate = base / pattern
+            if not candidate.exists():
+                continue
+            try:
+                parts = candidate.resolve().relative_to(base).parts
+            except ValueError:
+                continue
+            if candidate.name in excluded_files or any(
+                part in excluded_dirs for part in parts
+            ):
+                pruned.append(pattern)
+
     return {
         "matches": matches,
         "files": files,
@@ -461,6 +525,9 @@ def search(
         "scanned": scanned,
         "glob_hits": stats["glob_hits"],
         "globbed": globs is not None,
+        # Which of those named paths exist but are pruned as a generated family
+        # or a never-search tree. Empty unless the glob selected nothing at all.
+        "glob_pruned": sorted(pruned),
         # True when the run fell back to `SOURCE_EXTENSIONS` because the caller
         # named no extension. Only meaningful on an empty result, where it is the
         # difference between a real negative and an unasked question.
@@ -563,7 +630,20 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
         # Distinguish the two ways a globbed run can search nothing. Blaming a
         # path typo for an extension mismatch sends the reader to the wrong fix.
         if not result.get("glob_hits"):
-            summary += " | WARNING: --glob matched no files, so nothing was searched"
+            pruned = result.get("glob_pruned") or []
+            if pruned:
+                # Naming the reason turns a dead end into a decision: the path
+                # is there, it is excluded on purpose, and no spelling of
+                # --glob will reach it.
+                summary += (
+                    f" | WARNING: --glob named {len(pruned)} path(s) that exist "
+                    f"but are excluded as a generated family or never-search "
+                    f"tree, so nothing was searched: {', '.join(pruned)}"
+                )
+            else:
+                summary += (
+                    " | WARNING: --glob matched no files, so nothing was searched"
+                )
         else:
             summary += (
                 f" | WARNING: --glob matched {result['glob_hits']} file(s), but "
@@ -576,16 +656,28 @@ def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="search_source.py")
     parser.add_argument("pattern", help="regex (or literal with --fixed)")
     parser.add_argument("--root", default=".", help="repo root (default cwd)")
-    parser.add_argument("--dir", default=None, help="comma-separated roots to search")
     parser.add_argument(
-        "--glob",
+        "--dir",
+        action="append",
         default=None,
-        help="comma-separated path globs a file must match; searches every "
-        "extension unless --ext/--all-text is given. Supports * ? and "
-        "segment-wise **, but not [classes] or {braces}",
+        help="roots to search; comma-separated, and repeatable — values "
+        "accumulate rather than the last one winning",
     )
     parser.add_argument(
-        "--ext", default=None, help="comma-separated extensions, no dot"
+        "--glob",
+        action="append",
+        default=None,
+        help="path globs a file must match; comma-separated, and repeatable — "
+        "values accumulate. Searches every extension unless --ext/--all-text "
+        "is given. Supports * ? and segment-wise **, but not [classes] or "
+        "{braces}",
+    )
+    parser.add_argument(
+        "--ext",
+        action="append",
+        default=None,
+        help="extensions, no dot; comma-separated, and repeatable — values "
+        "accumulate",
     )
     parser.add_argument(
         "--all-text",
@@ -604,34 +696,41 @@ def run(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv[1:])
 
-    if args.ext and args.all_text:
-        raise SearchSourceError("--ext and --all-text are alternatives")
+    # Each of these three is repeatable, so flatten every occurrence into one
+    # ordered tuple before anything reads it.
+    exts = accumulate_flag(args.ext)
+    globs = accumulate_flag(args.glob)
+    dirs = accumulate_flag(args.dir)
 
-    # Key on `is not None`, NOT on truthiness: `--glob ''` is falsy, so a
-    # truthiness test would skip both this parse and the guard below, silently
-    # dropping the filter and sweeping the whole tree — the broad, noisy result
-    # `--glob` exists to prevent, delivered without a word of warning.
-    globs = None
-    if args.glob is not None:
-        globs = tuple(g.strip() for g in args.glob.split(",") if g.strip())
-        if not globs:
-            raise SearchSourceError("--glob was given no patterns")
+    # Key on `is not None`, NOT on truthiness: `--glob ''` flattens to an empty
+    # tuple, so a truthiness test would skip the guard and silently drop the
+    # filter, sweeping the whole tree — the broad, noisy result `--glob` exists
+    # to prevent, delivered without a word of warning. The same silent-widening
+    # trap applies to an empty `--ext` (falls back to the default set) and an
+    # empty `--dir` (searches every root), so all three are refused alike.
+    if exts is not None and not exts:
+        raise SearchSourceError("--ext was given no extensions")
+    if globs is not None and not globs:
+        raise SearchSourceError("--glob was given no patterns")
+    if dirs is not None and not dirs:
+        raise SearchSourceError("--dir was given no roots")
+
+    if exts and args.all_text:
+        raise SearchSourceError("--ext and --all-text are alternatives")
 
     if args.all_text:
         extensions = None
-    elif args.ext:
-        extensions = tuple(e for e in args.ext.split(",") if e.strip())
+    elif exts:
+        extensions = exts
     else:
         # Let `search` resolve it, so the CLI and the library agree on what an
         # unspecified extension set means under `--glob`.
         extensions = DEFAULT_EXTENSIONS
 
-    dirs = [d.strip() for d in args.dir.split(",") if d.strip()] if args.dir else None
-
     result = search(
         args.pattern,
         Path(args.root),
-        dirs=dirs,
+        dirs=list(dirs) if dirs is not None else None,
         extensions=extensions,
         context=args.context,
         fixed=args.fixed,
