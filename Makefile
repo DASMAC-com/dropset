@@ -482,12 +482,31 @@ grafana-down: check-docker
 # no keys at all. Each service reads its credential from the environment and
 # refuses to start without one, naming the variable it wanted.
 #
+# Credentials come from the local secrets enclave (docs/data-feeds.md §12):
+# `op run` resolves the `op://` references in the git-ignored
+# infra/localnet/secrets.local.env and exports the values into the compose
+# invocation's environment. The containers themselves have no `op` and no
+# vault access — they are handed resolved values, which is exactly the shape
+# the hosted deploy has with Secrets Manager.
+#
+# The enclave is optional, hence the fallback branch rather than a hard
+# dependency: a machine with the three keys exported by hand still works, and
+# so does CI. `op run` resolves eagerly, so a bad reference stops the stack
+# here instead of starting a collector that 401s a minute later.
+#
 # Set FX_PRODUCT_ID to collect a pair other than the AUD-USD default. It is the
 # canonical BASE-QUOTE form; each venue's own spelling is derived from it.
+FX_SECRETS_ENV = infra/localnet/secrets.local.env
+FX_COLLECTORS_UP = docker compose -f infra/localnet/docker-compose.yml \
+	--profile fx up -d --quiet-pull postgres migrate oanda twelvedata \
+	alphavantage
 .PHONY: fx-collectors-up
 fx-collectors-up: check-docker
-	docker compose -f infra/localnet/docker-compose.yml --profile fx \
-		up -d --quiet-pull postgres migrate oanda twelvedata alphavantage
+	@if [ -f $(FX_SECRETS_ENV) ]; then \
+		op run --env-file=$(FX_SECRETS_ENV) -- $(FX_COLLECTORS_UP); \
+	else \
+		echo 'No $(FX_SECRETS_ENV) (cp its .example) — using exported keys.'; \
+		$(FX_COLLECTORS_UP); fi
 .PHONY: fx-collectors-down
 fx-collectors-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml --profile fx \

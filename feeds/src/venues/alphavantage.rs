@@ -32,6 +32,9 @@ use std::time::Duration;
 /// The only bucket width this source can serve.
 pub const GRANULARITY_SECS: i64 = 86_400;
 
+/// The canonical name of this venue's credential ([`crate::secrets`]).
+pub const SECRET_NAME: &str = "alphavantage/api-key";
+
 /// The floor between two requests on this venue.
 ///
 /// The free tier allows **25 requests per day for the whole account**, so an

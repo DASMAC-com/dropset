@@ -12,7 +12,7 @@
 
 use dropset_feeds::{
     connect, run,
-    venues::{Candle, TwelveDataCandles},
+    venues::{twelvedata, Candle, TwelveDataCandles},
     CursorStore, PgCursorStore, RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = FxConfig::from_env(&DEFAULTS)?;
-    let api_key = secret("TWELVE_DATA_API_KEY")?;
+    let api_key = secret(twelvedata::SECRET_NAME)?;
     let symbol = twelvedata_symbol(&cfg.product_id)?;
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;

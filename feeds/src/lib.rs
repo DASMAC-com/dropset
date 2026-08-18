@@ -24,12 +24,17 @@
 //! never skips the middle of it, and [`FeedMetrics`] is the seam the runner
 //! reports batches and errors through, so a deployed feed is observable
 //! without per-feed wiring.
+//!
+//! A keyed venue's credential is resolved through [`secrets`], never read from
+//! the environment by an adapter: an adapter takes its key as an argument, and
+//! the app decides which store it came from.
 
 mod backfill;
 mod cursor;
 mod forward;
 mod record;
 mod runner;
+pub mod secrets;
 mod sink;
 mod source;
 mod time;

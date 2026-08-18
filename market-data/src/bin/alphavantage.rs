@@ -14,7 +14,10 @@
 
 use dropset_feeds::{
     connect, run,
-    venues::{alphavantage::GRANULARITY_SECS, AlphaVantageDaily, Candle},
+    venues::{
+        alphavantage::{self, GRANULARITY_SECS},
+        AlphaVantageDaily, Candle,
+    },
     CursorStore, PgCursorStore, RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
@@ -42,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = FxConfig::from_env(&DEFAULTS)?;
-    let api_key = secret("ALPHA_VANTAGE_API_KEY")?;
+    let api_key = secret(alphavantage::SECRET_NAME)?;
     let (from_symbol, to_symbol) = split_canonical(&cfg.product_id)?;
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;

@@ -42,6 +42,11 @@ use std::time::Duration;
 /// keeps that unreachable.
 pub const MAX_BARS_PER_REQUEST: usize = 5000;
 
+/// The canonical name of this venue's credential ([`crate::secrets`]). The
+/// provider segment is one word — `twelve-data` would fold to the same
+/// environment variable as a `twelve/data` name.
+pub const SECRET_NAME: &str = "twelvedata/api-key";
+
 /// The floor between two requests on this venue.
 ///
 /// The free tier allows **8 requests per minute**, which is far stricter than
