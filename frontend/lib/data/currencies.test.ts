@@ -23,6 +23,11 @@ describe("token icon resolution", () => {
   // Whichever source wins, the two must never be the same URL — a fallback
   // that points back at the thing that just failed is not a fallback.
   it("keeps the canonical URL distinct from the mirror", () => {
+    // Without this the loop below is vacuous: an empty manifest makes every
+    // fallback "", the body never runs, and the test passes asserting nothing.
+    // The manifest is generated (and gitignored), so its being populated is a
+    // precondition of the assertion, not something the assertion can assume.
+    expect(symbols.some((s) => tokenIconFallbackUrl(s) !== "")).toBe(true);
     for (const symbol of symbols) {
       const fallback = tokenIconFallbackUrl(symbol);
       if (fallback) {

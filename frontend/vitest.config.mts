@@ -20,9 +20,12 @@ export default defineConfig({
     tsconfigPaths: true,
   },
   test: {
-    include: ["**/*.test.ts"],
-    // next's own build output and the mirrored assets have nothing to run.
-    exclude: ["node_modules/**", ".next/**"],
+    // `.mjs` is here for the build scripts and `.tsx` so the first component
+    // test does not silently match nothing; a bare `**/*.test.ts` would.
+    include: ["**/*.test.{ts,tsx,mjs}"],
+    // This replaces vitest's default exclude list rather than extending it,
+    // so anything that must stay unmatched has to be named here.
+    exclude: ["node_modules/**", ".next/**", "dist/**", "coverage/**"],
     // Modules under lib/ read their config through lib/env, which throws on a
     // missing value for any of its three `required` vars. Unit tests must not
     // depend on a developer's .env.local (CI has none), and nothing here makes

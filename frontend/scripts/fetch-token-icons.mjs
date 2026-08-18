@@ -1,8 +1,8 @@
 // Mirror stablecoin icons into public/token-icons at build time, so the
 // browser hits our origin once instead of ~13 third-party CDNs per page load.
-// Writes lib/data/icon-manifest.gen.json (symbol → /token-icons/<file>)
-// which currencies.ts overlays onto the canonical remote URLs in
-// currencies.json.
+// Writes lib/data/icon-manifest.gen.json (symbol → /token-icons/<file>),
+// which currencies.ts prefers over the canonical remote URL in
+// currencies.json while keeping that URL reachable as a render-side fallback.
 //
 // Pass --strict (CI does, for the icon-liveness job) to also exit non-zero
 // when any symbol is missing from the manifest. Without it this script

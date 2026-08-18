@@ -142,23 +142,23 @@ function PositionValue({
 }
 
 // Two overlapping circular token icons (the stablecoin logos are round).
-// The two tokens of a pair, overlapped. Takes symbols rather than URLs (the
-// FlagPair above still takes URLs) so each icon resolves its own mirror and
-// remote fallback through TokenIcon.
+// Named `*Symbol` because the sibling FlagPair on the same row takes URLs, and
+// a bare `base`/`quote` pair would make the two indistinguishable at the call
+// site; TokenIcon resolves each symbol's mirror and remote fallback itself.
 function TokenPair({
-  base,
-  quote,
+  baseSymbol,
+  quoteSymbol,
   size,
 }: {
-  base: string;
-  quote: string;
+  baseSymbol: string;
+  quoteSymbol: string;
   size: number;
 }) {
   return (
     <span className="flex shrink-0 items-center">
-      <TokenIcon symbol={base} size={size} className="rounded-full" />
+      <TokenIcon symbol={baseSymbol} size={size} className="rounded-full" />
       <TokenIcon
-        symbol={quote}
+        symbol={quoteSymbol}
         size={size}
         className="-ml-1.5 rounded-full ring-1 ring-background"
       />
@@ -274,7 +274,11 @@ function VaultRow({
               size={16}
             />
           )}
-          <TokenPair base={market.base} quote={market.quote} size={28} />
+          <TokenPair
+            baseSymbol={market.base}
+            quoteSymbol={market.quote}
+            size={28}
+          />
           <span className="font-mono font-medium text-foreground">
             {market.label}
           </span>

@@ -2,8 +2,10 @@
 // Shared engine behind fetch-token-icons.mjs and fetch-wallet-icons.mjs.
 // Both mirror third-party images into public/ at build time so the browser
 // hits our own origin instead of an issuer CDN, and both write a manifest
-// (key → /<prefix>/<file>) that the corresponding data module overlays onto
-// the canonical remote URLs.
+// (key → /<prefix>/<file>) that the corresponding data module reads alongside
+// the canonical remote URLs. The two consume it differently: currencies.ts
+// treats it as a lookup and keeps the canonical URL reachable as a fallback,
+// while wallets.ts still overlays it onto the URL in place.
 //
 // The two scripts were byte-identical in shape but not in rigor: the token
 // one grew timeouts, retries, a body-size floor and magic-byte sniffing
@@ -39,7 +41,7 @@ const GENERIC_CTS = new Set([
 // empty or near-empty body, which would otherwise mirror as a file that
 // looks valid on disk but that no browser can render.
 const MIN_BYTES = 64;
-export const ATTEMPTS = 3;
+const ATTEMPTS = 3;
 const BACKOFF_MS = 500;
 const TIMEOUT_MS = 10_000;
 
@@ -49,10 +51,25 @@ const startsWith = (buf, bytes) =>
   buf.length >= bytes.length &&
   buf.subarray(0, bytes.length).equals(Buffer.from(bytes));
 
+// An SVG is XML, so a real one OPENS with `<svg` — at most behind a BOM, an
+// XML declaration, comments, or a DOCTYPE. Testing for `<svg` anywhere in the
+// body instead (the obvious spelling, and what this used to do) accepts any
+// HTML error page that happens to embed an inline logo — which is exactly the
+// interstitial this whole function exists to reject, and CDN challenge pages
+// routinely carry one. Only the head is scanned: a prolog longer than this is
+// not something an issuer serves as its icon.
+const SVG_HEAD_BYTES = 1024;
+const SVG_OPENS_DOCUMENT =
+  /^﻿?\s*(?:<\?xml[^>]*\?>\s*|<!--[\s\S]*?-->\s*|<!DOCTYPE\s+svg[^>]*>\s*)*<svg[\s/>]/i;
+
 // Identify a format from its magic bytes. Returns undefined for anything
 // unrecognized, which keeps an HTML interstitial rejected even when it
 // arrives under a generic content-type.
-const sniffExt = (buf) => {
+//
+// Exported for the unit test: the single assertion that pins this module's
+// reason to exist is that an HTML page sniffs as undefined rather than as an
+// image.
+export const sniffExt = (buf) => {
   if (startsWith(buf, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
     return "png";
   if (startsWith(buf, [0xff, 0xd8, 0xff])) return "jpg";
@@ -65,7 +82,8 @@ const sniffExt = (buf) => {
     return "webp";
   }
   if (buf.subarray(4, 12).toString() === "ftypavif") return "avif";
-  if (buf.includes("<svg")) return "svg";
+  if (SVG_OPENS_DOCUMENT.test(buf.subarray(0, SVG_HEAD_BYTES).toString("utf8")))
+    return "svg";
   return undefined;
 };
 
@@ -120,18 +138,18 @@ const fetchWithRetry = async (url) => {
   throw lastError;
 };
 
-/**
- * Mirror a set of remote icons into a public directory and write the
- * manifest the corresponding data module imports.
- *
- * `items` are `{ key, url, label }` — `key` is the manifest key and the
- * mirrored basename, `label` is what a failure is reported under (the
- * token script adds the mint, so a maintainer can identify the entry
- * without a second lookup).
- *
- * Sets `process.exitCode` rather than returning a status: both callers are
- * top-level scripts whose only job is this call.
- */
+// Mirror a set of remote icons into a public directory and write the manifest
+// the corresponding data module imports.
+//
+// `items` are `{ key, url, label }` — `key` is the manifest key and the
+// mirrored basename, `label` is what a failure is reported under (the token
+// script adds the mint, so a maintainer can identify the entry without a
+// second lookup). `key` is interpolated into the written path, which is safe
+// because both callers source it from committed JSON; a key from an untrusted
+// source would need sanitizing first.
+//
+// Sets `process.exitCode` rather than returning a status: both callers are
+// top-level scripts whose only job is this call.
 export const mirrorIcons = async ({
   items,
   dst,
