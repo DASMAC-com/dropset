@@ -800,7 +800,7 @@ fn a_level_is_dead_at_exactly_its_wall_deadline() {
     // Re-stamp the same price at a known datum, so the level's deadline
     // is exactly `datum + TIF` rather than whatever the seed stamped.
     let price_bits = f.vault(0).reference_price.price.as_u32();
-    let datum = f.now_unix();
+    let datum = f.now_unix().get();
     f.svm.expire_blockhash();
     f.set_reference_price_at(&f.authority.insecure_clone(), 0, price_bits, 0, datum)
         .expect("fresh quote at a known datum");

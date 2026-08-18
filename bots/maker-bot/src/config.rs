@@ -16,7 +16,7 @@
 //! decimals the localnet bootstrap and inventory valuation need.
 
 use dropset_fair_value::FairValueConfig;
-use dropset_sdk::quoting::NO_SLOT_BOUND;
+use dropset_sdk::clock::{SlotSpan, WallSpan};
 use std::time::Duration;
 
 /// Default localnet RPC endpoint (the `solana-test-validator` the TUI spawns).
@@ -282,11 +282,11 @@ pub struct LadderLevel {
     pub size_bps: u16,
     /// Seconds after the quote's `quote_unix` wall-clock datum at which
     /// this level expires.
-    pub expiry_offset_secs: u32,
+    pub expiry_offset_secs: WallSpan,
     /// Slots after the quote's `quote_slot` datum at which this level
-    /// expires — the second, independent bound. [`NO_SLOT_BOUND`] leaves
-    /// a level bounded only in wall time.
-    pub expiry_offset_slots: u32,
+    /// expires — the second, independent bound.
+    /// [`SlotSpan::UNBOUNDED`] leaves a level bounded only in wall time.
+    pub expiry_offset_slots: SlotSpan,
 }
 
 /// The spec's hand-shaped ladder (§2 + the §3 expiry table): top-of-book at
@@ -304,7 +304,8 @@ pub struct LadderLevel {
 /// policy — it is the §3 tier table — and the slot bound exists for the
 /// regime where the cluster clock misbehaves, so it must never be the
 /// conjunct that governs a healthy book. The deepest tier goes
-/// [`NO_SLOT_BOUND`], leaving its stratified wall decay to govern it.
+/// [`SlotSpan::UNBOUNDED`], leaving its stratified wall decay to govern
+/// it.
 ///
 /// **Why not a sub-second slot bound.** The protocol supports one, and
 /// against a prop-cadence quoter that re-stamps every block or two a
@@ -329,26 +330,26 @@ pub const DEFAULT_LADDER: [LadderLevel; 4] = [
     LadderLevel {
         offset_ppm: 5_000,
         size_bps: 4_000,
-        expiry_offset_secs: 36,
-        expiry_offset_slots: 120,
+        expiry_offset_secs: WallSpan::new(36),
+        expiry_offset_slots: SlotSpan::new(120),
     },
     LadderLevel {
         offset_ppm: 10_000,
         size_bps: 3_000,
-        expiry_offset_secs: 120,
-        expiry_offset_slots: 375,
+        expiry_offset_secs: WallSpan::new(120),
+        expiry_offset_slots: SlotSpan::new(375),
     },
     LadderLevel {
         offset_ppm: 20_000,
         size_bps: 2_000,
-        expiry_offset_secs: 480,
-        expiry_offset_slots: 1_500,
+        expiry_offset_secs: WallSpan::new(480),
+        expiry_offset_slots: SlotSpan::new(1_500),
     },
     LadderLevel {
         offset_ppm: 50_000,
         size_bps: 1_000,
-        expiry_offset_secs: 2_880,
-        expiry_offset_slots: NO_SLOT_BOUND,
+        expiry_offset_secs: WallSpan::new(2_880),
+        expiry_offset_slots: SlotSpan::UNBOUNDED,
     },
 ];
 
@@ -678,7 +679,7 @@ mod tests {
         // level can never outlive the bound and expire on its own instead.
         let deepest = DEFAULT_LADDER
             .iter()
-            .map(|l| l.expiry_offset_secs)
+            .map(|l| l.expiry_offset_secs.get())
             .max()
             .expect("ladder is non-empty");
         // `expiry_offset_secs` is wall-clock seconds, so the tier's life
@@ -722,7 +723,7 @@ mod tests {
 
         let tightest = DEFAULT_LADDER
             .iter()
-            .map(|l| l.expiry_offset_slots)
+            .map(|l| l.expiry_offset_slots.get())
             .min()
             .expect("ladder is non-empty");
         assert!(
@@ -743,12 +744,16 @@ mod tests {
         // reaching for, and unlike a band it actually catches it: a
         // seconds value left in a slots field is a 2.5x *shortening* at
         // 400 ms/slot, which lands under the wall bound and fails here.
+        // Since the two spans became distinct types that particular
+        // mix-up no longer compiles, but the *policy* this pins — the
+        // slot conjunct must never govern a healthy book — is a tuning
+        // question no type can answer, so the check stays.
         for l in DEFAULT_LADDER.iter() {
-            if l.expiry_offset_slots == NO_SLOT_BOUND {
+            if l.expiry_offset_slots == SlotSpan::UNBOUNDED {
                 continue;
             }
-            let slot_life_secs = (l.expiry_offset_slots as u64) * SLOT_MS / 1_000;
-            let wall = l.expiry_offset_secs as u64;
+            let slot_life_secs = (l.expiry_offset_slots.get() as u64) * SLOT_MS / 1_000;
+            let wall = l.expiry_offset_secs.get() as u64;
             assert!(
                 slot_life_secs >= wall,
                 "tier {}bps: slot bound ~{slot_life_secs}s is under its \

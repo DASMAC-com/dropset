@@ -15,6 +15,7 @@
 
 use anyhow::{anyhow, Context as _, Result};
 use dropset_sdk::accounts::MARKET_HEADER_DISCRIMINATOR;
+use dropset_sdk::clock::{SlotTime, WallTime};
 use dropset_sdk::instructions::SwapBuilder;
 use dropset_sdk::layout::MarketView;
 use dropset_sdk::matching::{simulate_swap, SwapSide};
@@ -326,8 +327,8 @@ fn takeable_depth_atoms(
     view: &MarketView<'_>,
     side: SwapSide,
     limit_price: Price,
-    now_slot: u32,
-    now_unix: u32,
+    now_slot: SlotTime,
+    now_unix: WallTime,
 ) -> u64 {
     // No platform fee, matching the take this depth measurement sizes. The
     // fee comes off the *output* leg and never changes `in_amount`, so it
@@ -381,8 +382,8 @@ pub fn size_against_book(
     order: &Order,
     slippage: f64,
     max_depth_fraction: f64,
-    now_slot: u32,
-    now_unix: u32,
+    now_slot: SlotTime,
+    now_unix: WallTime,
 ) -> Option<SizedSwap> {
     let price = market_reference_price(view)?;
 
@@ -456,7 +457,7 @@ pub fn size_order(
     let view = MarketView::load(&account.data).map_err(|e| anyhow!("decode market: {e:?}"))?;
     // Expiry is dual-domain, so the book filter needs both clocks — the
     // chain's slot and the host's wall clock (see `dropset_sdk::time`).
-    let now_slot = client.get_slot().context("get_slot")? as u32;
+    let now_slot = SlotTime::new(client.get_slot().context("get_slot")? as u32);
     let now_unix = dropset_sdk::time::now_unix_u32();
     Ok(size_against_book(
         &view,
@@ -551,8 +552,13 @@ mod tests {
     /// The instant every sizing test prices at, in each expiry domain —
     /// both comfortably before the fixture's level deadlines, so its
     /// levels are live.
-    const NOW_SLOT: u32 = 10;
-    const NOW_UNIX: u32 = 1_700_000_000;
+    const NOW_SLOT_RAW: u32 = 10;
+    const NOW_UNIX_RAW: u32 = 1_700_000_000;
+    /// The same two clocks, domain-typed for the matcher call. The raw
+    /// forms above stay for the fixture's byte-level deadline writes,
+    /// which are wire code.
+    const NOW_SLOT: SlotTime = SlotTime::new(NOW_SLOT_RAW);
+    const NOW_UNIX: WallTime = WallTime::new(NOW_UNIX_RAW);
     /// Per-leg vault inventory ample enough that a fixture's depth is set by
     /// its level sizes — unless a test deliberately starves it, which is what
     /// distinguishes the depth probe from a sum over the resting levels.
@@ -605,14 +611,14 @@ mod tests {
         for (i, &(price, size)) in asks.iter().enumerate() {
             v.remaining.asks[i].price = price.as_u32().into();
             v.remaining.asks[i].size = size.into();
-            v.remaining.asks[i].expires_at_unix = (NOW_UNIX + 600).into();
-            v.remaining.asks[i].expires_at_slot = (NOW_SLOT + 100).into();
+            v.remaining.asks[i].expires_at_unix = (NOW_UNIX_RAW + 600).into();
+            v.remaining.asks[i].expires_at_slot = (NOW_SLOT_RAW + 100).into();
         }
         for (i, &(price, size)) in bids.iter().enumerate() {
             v.remaining.bids[i].price = price.as_u32().into();
             v.remaining.bids[i].size = size.into();
-            v.remaining.bids[i].expires_at_unix = (NOW_UNIX + 600).into();
-            v.remaining.bids[i].expires_at_slot = (NOW_SLOT + 100).into();
+            v.remaining.bids[i].expires_at_unix = (NOW_UNIX_RAW + 600).into();
+            v.remaining.bids[i].expires_at_slot = (NOW_SLOT_RAW + 100).into();
         }
 
         let mut buf = vec![0u8; 8]; // discriminator (unchecked by `load`)

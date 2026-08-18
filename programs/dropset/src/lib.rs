@@ -22,6 +22,14 @@ pub use state::*;
 // existing `crate::Price` paths keep resolving.
 pub use dropset_math_core::Price;
 
+// The two expiry clock domains, likewise shared: the engine and the
+// off-chain mirror both measure level life against a slot datum and a
+// wall datum, and these `repr(transparent)` newtypes are what keep the
+// two from being handed to each other's half of the gate. Layout- and
+// IDL-invisible — the stored fields keep their `PodU32`s and hand these
+// out through typed accessors (see `state::market::layout`).
+pub use dropset_math_core::clock::{self, SlotSpan, SlotTime, WallSpan, WallTime};
+
 declare_id!("AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV");
 
 // Link the hand-written sBPF entrypoint (`src/asm/entrypoint.s`, expanded

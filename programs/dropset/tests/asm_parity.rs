@@ -185,6 +185,29 @@ fn asm_offsets_match_layout() {
         &0x100F_0E0Du32.to_le_bytes(),
         "IX_QUOTE_UNIX_OFF"
     );
+
+    // ── The fused-copy contract ──────────────────────────────────────
+    //
+    // The disc-5 payload moves the two clock datums as a single
+    // `ldxdw`/`stxdw` pair rather than two word copies. That is legal
+    // only while the pair is adjacent *and in the same order* on both
+    // sides of the copy — the instruction data and the vault record —
+    // so pin both halves here, where a break names the assembly.
+    //
+    // `layout.rs` const-asserts the vault-side adjacency too, and that
+    // fires at compile time; this one covers the wire side, which no
+    // const-assert can see, and states the contract in one place.
+    assert_eq!(
+        rp + offset_of!(ReferencePrice, quote_unix),
+        rp + offset_of!(ReferencePrice, quote_slot) + 4,
+        "vault-side datum pair must stay adjacent for the fused stxdw"
+    );
+    assert_eq!(
+        &wire[9..17],
+        &0x100F_0E0D_0C0B_0A09u64.to_le_bytes(),
+        "ix-side datum pair must read as one little-endian u64 \
+         (quote_slot low, quote_unix high) for the fused ldxdw"
+    );
 }
 
 /// The stamped reference price (`stamp`, `price`, `quote_slot`,
@@ -548,7 +571,7 @@ fn stamp_cu(mut f: Fixture) -> u64 {
     f.create_vault(0, auth, false, Pubkey::default())
         .expect("create_vault");
     let signer = f.authority.insecure_clone();
-    let now = f.now_unix();
+    let now = f.now_unix().get();
     f.set_reference_price_meta(&signer, 0, valid_price(), 0, now)
         .expect("set_reference_price")
         .compute_units_consumed

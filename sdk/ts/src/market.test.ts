@@ -26,6 +26,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
+import { slotTime, wallTime } from './clock';
 import { decodeDropsetMarketView } from './market';
 import { baseForQuote, priceFromParts } from './price';
 import { initSimulator } from './simulate';
@@ -132,7 +133,7 @@ function remainingMarket(): Uint8Array {
 }
 
 test('remaining asks are best-first and base-sized', () => {
-  const view = decodeDropsetMarketView(remainingMarket(), 1, 1);
+  const view = decodeDropsetMarketView(remainingMarket(), slotTime(1), wallTime(2));
   assert.deepEqual(view.asks, [
     { price: enc(10_904_000), size: 1_000_000n },
     { price: enc(11_393_000), size: 800_000n },
@@ -140,7 +141,7 @@ test('remaining asks are best-first and base-sized', () => {
 });
 
 test('remaining bids are best-first and normalized to base', () => {
-  const view = decodeDropsetMarketView(remainingMarket(), 1, 1);
+  const view = decodeDropsetMarketView(remainingMarket(), slotTime(1), wallTime(2));
   const best = enc(10_796_000);
   const next = enc(10_416_000);
   assert.deepEqual(view.bids, [
@@ -153,14 +154,18 @@ test('the header decodes alongside the book', () => {
   // The header comes from the IDL-generated codec and the book from the
   // engine; this pins that the two agree on where the header ends, which is
   // the one offset the TS side still has to know.
-  const view = decodeDropsetMarketView(remainingMarket(), 1, 1);
+  const view = decodeDropsetMarketView(remainingMarket(), slotTime(1), wallTime(2));
   assert.equal(view.header.head, 0);
   assert.equal(view.header.activeCount, 1);
 });
 
 test('levels expired at the current slot are excluded', () => {
   // Every level expires at u32::MAX; past it the book is empty both sides.
-  const view = decodeDropsetMarketView(remainingMarket(), NULL_SECTOR, NULL_SECTOR);
+  const view = decodeDropsetMarketView(
+    remainingMarket(),
+    slotTime(NULL_SECTOR),
+    wallTime(NULL_SECTOR),
+  );
   assert.equal(view.asks.length, 0);
   assert.equal(view.bids.length, 0);
 });
@@ -177,7 +182,7 @@ test('flush-armed vault materializes levels from its profile', () => {
     writeProfileLevel(dv, b + V_PROFILE_ASKS, 500, 10_000, 1_000);
     writeProfileLevel(dv, b + V_PROFILE_BIDS, 500, 10_000, 1_000);
   });
-  const view = decodeDropsetMarketView(data, 1, 1);
+  const view = decodeDropsetMarketView(data, slotTime(1), wallTime(2));
   // ref × (1e6 ± 500)/1e6: 10_850_000 → 10_855_425 (ask) / 10_844_575 (bid).
   assert.deepEqual(view.asks, [{ price: enc(10_855_425), size: 1_000_000n }]);
   const bidPrice = enc(10_844_575);
@@ -235,17 +240,18 @@ function boundedRemainingMarket(): Uint8Array {
 test('the stored remaining path reads each deadline from its own field', () => {
   const data = boundedRemainingMarket();
   assert.equal(
-    decodeDropsetMarketView(data, SLOT_DEADLINE - 1, WALL_DEADLINE - 1).asks.length,
+    decodeDropsetMarketView(data, slotTime(SLOT_DEADLINE - 1), wallTime(WALL_DEADLINE - 1)).asks
+      .length,
     1,
     'inside both stored deadlines the level rests',
   );
   assert.equal(
-    decodeDropsetMarketView(data, SLOT_DEADLINE, WALL_DEADLINE - 1).asks.length,
+    decodeDropsetMarketView(data, slotTime(SLOT_DEADLINE), wallTime(WALL_DEADLINE - 1)).asks.length,
     0,
     'the stored slot deadline must kill it on its own',
   );
   assert.equal(
-    decodeDropsetMarketView(data, SLOT_DEADLINE - 1, WALL_DEADLINE).asks.length,
+    decodeDropsetMarketView(data, slotTime(SLOT_DEADLINE - 1), wallTime(WALL_DEADLINE)).asks.length,
     0,
     'the stored wall deadline must kill it on its own',
   );
@@ -264,19 +270,20 @@ test('each expiry conjunct kills a level on its own', () => {
 
   // Inside both bounds.
   assert.equal(
-    decodeDropsetMarketView(data, slotDeadline - 1, wallDeadline - 1).asks.length,
+    decodeDropsetMarketView(data, slotTime(slotDeadline - 1), wallTime(wallDeadline - 1)).asks
+      .length,
     1,
     'a level inside both deadlines must rest',
   );
   // Slot bound passed, wall bound still open.
   assert.equal(
-    decodeDropsetMarketView(data, slotDeadline, wallDeadline - 1).asks.length,
+    decodeDropsetMarketView(data, slotTime(slotDeadline), wallTime(wallDeadline - 1)).asks.length,
     0,
     'the slot conjunct must kill the level on its own',
   );
   // Wall bound passed, slot bound still open.
   assert.equal(
-    decodeDropsetMarketView(data, slotDeadline - 1, wallDeadline).asks.length,
+    decodeDropsetMarketView(data, slotTime(slotDeadline - 1), wallTime(wallDeadline)).asks.length,
     0,
     'the wall conjunct must kill the level on its own',
   );
@@ -286,12 +293,14 @@ test('a zero offset is dead in either domain, whatever the datum', () => {
   // Zero slot offset against a live wall TIF, then the mirror. Materialization
   // encodes zero as the dead sentinel rather than letting the datum stand in.
   assert.equal(
-    decodeDropsetMarketView(boundedFlushMarket(600, 0), 1, FIX_QUOTE_UNIX).asks.length,
+    decodeDropsetMarketView(boundedFlushMarket(600, 0), slotTime(1), wallTime(FIX_QUOTE_UNIX)).asks
+      .length,
     0,
     'a zero slot offset never rests, however long the wall TIF',
   );
   assert.equal(
-    decodeDropsetMarketView(boundedFlushMarket(0, 600), FIX_QUOTE_SLOT, 1).asks.length,
+    decodeDropsetMarketView(boundedFlushMarket(0, 600), slotTime(FIX_QUOTE_SLOT), wallTime(2)).asks
+      .length,
     0,
     'a zero wall offset never rests, however long the slot bound',
   );
@@ -312,7 +321,7 @@ test('oversized flush side is skipped, the healthy side still materializes', () 
     writeProfileLevel(dv, b + V_PROFILE_ASKS, 500, 20_000, 1_000); // Σ ask = 20000 > BPS
     writeProfileLevel(dv, b + V_PROFILE_BIDS, 500, 5_000, 1_000); // Σ bid = 5000, healthy
   });
-  const view = decodeDropsetMarketView(data, 1, 1);
+  const view = decodeDropsetMarketView(data, slotTime(1), wallTime(2));
   assert.equal(view.asks.length, 0, 'oversized ask side contributes no depth');
   const bidPrice = enc(10_844_575);
   assert.deepEqual(view.bids, [{ price: bidPrice, size: baseForQuote(bidPrice, 500_000n) }]);
@@ -320,7 +329,7 @@ test('oversized flush side is skipped, the healthy side still materializes', () 
 
 test('a buffer too short to hold the header is rejected', () => {
   assert.throws(
-    () => decodeDropsetMarketView(new Uint8Array(16), 1, 1),
+    () => decodeDropsetMarketView(new Uint8Array(16), slotTime(1), wallTime(2)),
     /too small/,
     'a truncated account must surface as a layout error',
   );

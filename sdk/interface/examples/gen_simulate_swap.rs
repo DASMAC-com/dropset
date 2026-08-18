@@ -31,6 +31,7 @@
 //! generator solana-free and in-crate.
 
 use bytemuck::{bytes_of, cast_slice, Zeroable};
+use dropset_interface::clock::{SlotTime, WallTime};
 use dropset_interface::layout::{
     MarketHeader, MarketView, Position, ReferencePrice, Vault, ACCOUNT_DISCRIMINATOR_LEN,
     NULL_SECTOR, VAULT_ALIGN,
@@ -145,8 +146,8 @@ fn case_json(view: &MarketView<'_>, c: &Case) -> Value {
         c.side,
         c.amount_in,
         c.limit,
-        c.now_slot,
-        c.now_unix,
+        SlotTime::new(c.now_slot),
+        WallTime::new(c.now_unix),
         c.platform_fee_bps,
     );
     json!({

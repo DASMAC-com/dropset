@@ -45,6 +45,7 @@ import {
   type ReadonlyUint8Array,
 } from '@solana/kit';
 
+import { type SlotTime, slotTime, type WallTime, wallTime } from './clock';
 import { getMarketHeaderDecoder, getMarketHeaderSize, type MarketHeader } from './generated';
 import { initSimulator } from './simulate';
 import { resting_book as wasmRestingBook, type RestingBook } from './wasm/dropset_interface';
@@ -82,7 +83,11 @@ function zipSide(prices: Uint32Array, sizes: BigUint64Array): BookLevel[] {
  * the engine would reject, since a router must not show depth that won't
  * fill. Level expiry is **dual-domain**: a level rests only while it is
  * inside both its slot deadline and its wall-clock deadline, so passing one
- * clock where the other belongs silently resurrects expired levels.
+ * clock where the other belongs silently resurrects expired levels — the
+ * two are therefore domain-branded ({@link SlotTime} / {@link WallTime},
+ * see `./clock`), which makes that swap a type error rather than a silent
+ * mis-filter. They are unwrapped to bare numbers only on the line that
+ * crosses into WASM, which is the one place the distinction cannot travel.
  *
  * {@link initSimulator} must have resolved first, else the binding throws;
  * {@link fetchDropsetMarketView} handles that. Throws
@@ -90,8 +95,8 @@ function zipSide(prices: Uint32Array, sizes: BigUint64Array): BookLevel[] {
  */
 export function decodeDropsetMarketView(
   data: ReadonlyUint8Array,
-  nowSlot: number | bigint,
-  nowUnix: number | bigint,
+  nowSlot: SlotTime | bigint,
+  nowUnix: WallTime | bigint,
 ): DropsetMarketView {
   // `getMarketHeaderSize()` is the discriminator + header length. Guarded
   // here so a short buffer reports as a layout error rather than surfacing
@@ -137,9 +142,12 @@ export type SlotRpc = { getSlot: (...args: never[]) => { send: () => Promise<big
  * can bound its own: a host with disciplined time (the bots, the TUI). A
  * browser cannot, and must gate against a chain-read time instead — which is
  * why no entry point here reaches for this as a default.
+ *
+ * Domain-branded, so it cannot be handed to the slot half of the dual gate —
+ * the slot "now" comes from {@link SlotRpc}, and the two are different types.
  */
-export function nowUnix(): number {
-  return Math.floor(Date.now() / 1000);
+export function nowUnix(): WallTime {
+  return wallTime(Math.floor(Date.now() / 1000));
 }
 
 /**
@@ -162,7 +170,7 @@ export function nowUnix(): number {
 export async function fetchDropsetMarketView(
   rpc: Parameters<typeof fetchEncodedAccount>[0] & SlotRpc,
   address: Address,
-  config: FetchAccountConfig & { nowSlot?: number | bigint; nowUnix: number | bigint },
+  config: FetchAccountConfig & { nowSlot?: SlotTime | bigint; nowUnix: WallTime | bigint },
 ): Promise<DropsetMarketView> {
   // The account fetch and the WASM instantiation are independent, so overlap
   // them; `initSimulator` is idempotent, so a polling caller pays the
@@ -172,6 +180,11 @@ export async function fetchDropsetMarketView(
     initSimulator(),
   ]);
   assertAccountExists(account);
-  const nowSlot = config.nowSlot ?? (await rpc.getSlot().send());
+  // `getSlot` hands back a bare bigint, so this is the slot domain's
+  // boundary on the fetch path — brand it here rather than letting an
+  // untagged number reach the gate. `nowUnix` takes no such default: it is
+  // a required argument precisely so a caller that cannot bound its own
+  // clock has to supply a chain-read one.
+  const nowSlot = config.nowSlot ?? slotTime(Number(await rpc.getSlot().send()));
   return decodeDropsetMarketView(account.data, nowSlot, config.nowUnix);
 }

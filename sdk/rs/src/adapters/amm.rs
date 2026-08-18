@@ -20,6 +20,7 @@
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 
+use crate::clock::{SlotTime, WallTime};
 use crate::generated::instructions::{Swap as SwapAccounts, SwapInstructionArgs};
 use crate::layout::{LayoutError, MarketView};
 use crate::matching::{simulate_swap, SwapSide};
@@ -79,15 +80,17 @@ pub struct DropsetQuoteParams {
     pub output_mint: Pubkey,
     pub amount: u64,
     /// Current slot, for the slot half of per-level expiry filtering.
-    pub now_slot: u32,
+    pub now_slot: SlotTime,
     /// Current wall-clock time in unix **seconds**, for the wall half.
     ///
     /// Expiry is dual-domain — a level rests only inside both of its
     /// deadlines — so a router must supply both from its clock cache
     /// (e.g. Jupiter's `AmmContext.clock_ref` carries `slot` and
-    /// `unix_timestamp` together). Supplying one for the other silently
-    /// mis-filters the book.
-    pub now_unix: u32,
+    /// `unix_timestamp` together). Supplying one for the other used to
+    /// silently mis-filter the book; both are domain-typed now, so it is
+    /// a compile error instead. Wrap at the clock read:
+    /// `SlotTime::new(clock.slot)`, `WallTime::new(clock.unix_timestamp)`.
+    pub now_unix: WallTime,
 }
 
 /// A quote result. The router traits return `{ in_amount, out_amount }`;
@@ -377,8 +380,8 @@ mod tests {
                 input_mint: Pubkey::from([2u8; 32]),
                 output_mint: Pubkey::from([1u8; 32]),
                 amount: 1_000_000,
-                now_slot: 10,
-                now_unix: 1_700_000_010,
+                now_slot: SlotTime::new(10),
+                now_unix: WallTime::new(1_700_000_010),
             })
             .unwrap();
         assert_eq!(q.out_amount, 500_000, "fills the whole ask level");
@@ -395,8 +398,8 @@ mod tests {
                 input_mint: Pubkey::from([2u8; 32]),
                 output_mint: Pubkey::from([1u8; 32]),
                 amount: 0,
-                now_slot: 10,
-                now_unix: 1_700_000_010,
+                now_slot: SlotTime::new(10),
+                now_unix: WallTime::new(1_700_000_010),
             })
             .unwrap();
         assert_eq!(q, DropsetQuote::default());
@@ -470,8 +473,8 @@ mod tests {
             input_mint: Pubkey::from([3u8; 32]),
             output_mint: Pubkey::from([1u8; 32]),
             amount: 1,
-            now_slot: 0,
-            now_unix: 0,
+            now_slot: SlotTime::new(0),
+            now_unix: WallTime::new(0),
         });
         assert_eq!(err, Err(AmmError::MintMismatch));
     }

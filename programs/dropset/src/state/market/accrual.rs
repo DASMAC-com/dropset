@@ -123,8 +123,10 @@ impl Vault {
         // the live clock: this flush runs lazily inside the first taker's
         // swap, so a clock read here would be attacker-scheduled — in the
         // halt scenario that first taker is the pick-off flow itself.
-        let ref_unix = self.reference_price.quote_unix.get();
-        let ref_slot = self.reference_price.quote_slot.get();
+        // They are read through `Level::deadlines` below, which takes the
+        // whole record, so neither datum is ever in hand as a bare `u32`
+        // that could be paired with the other domain's offset.
+        let reference = self.reference_price;
         let stamp = self.reference_price.stamp.get();
         let base_atoms = self.base_atoms.get();
         let quote_atoms = self.quote_atoms.get();
@@ -143,10 +145,8 @@ impl Vault {
                 0
             }
             .into();
-            self.remaining.bids[i].expires_at_unix =
-                Self::deadline(ref_unix, bid.expiry_offset_secs.get());
-            self.remaining.bids[i].expires_at_slot =
-                Self::deadline(ref_slot, bid.expiry_offset_slots.get());
+            let (bid_wall, bid_slot) = bid.deadlines(&reference);
+            self.remaining.bids[i].set_deadlines(bid_wall, bid_slot);
             self.remaining.asks[i].price =
                 flush_level_price(ref_price, ask.price_offset.get(), true);
             self.remaining.asks[i].size = if asks_ok {
@@ -155,31 +155,10 @@ impl Vault {
                 0
             }
             .into();
-            self.remaining.asks[i].expires_at_unix =
-                Self::deadline(ref_unix, ask.expiry_offset_secs.get());
-            self.remaining.asks[i].expires_at_slot =
-                Self::deadline(ref_slot, ask.expiry_offset_slots.get());
+            let (ask_wall, ask_slot) = ask.deadlines(&reference);
+            self.remaining.asks[i].set_deadlines(ask_wall, ask_slot);
         }
         self.reference_price.stamp = (stamp & !FLUSH_BIT).into();
-    }
-
-    /// One domain's absolute deadline: `datum + offset`, saturating —
-    /// except that a **zero offset materializes to zero**, the dead
-    /// sentinel, rather than to the bare datum.
-    ///
-    /// That special case is what makes "zero in either domain is dead"
-    /// true independently of the datum. Without it, a leader stamping a
-    /// future datum would give a zero-life level a deadline still ahead
-    /// of the clock and it would match. Folding the check in here — at
-    /// flush time, which runs once per quote — also keeps the taker's
-    /// per-level gate a single unconditional compare per domain rather
-    /// than a compare plus a zero test.
-    #[inline(always)]
-    fn deadline(datum: u32, offset: u32) -> PodU32 {
-        if offset == 0 {
-            return 0u32.into();
-        }
-        datum.saturating_add(offset).into()
     }
 }
 

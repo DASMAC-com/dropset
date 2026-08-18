@@ -1,3 +1,5 @@
+<!-- cspell:word alpenclock -->
+
 <!-- cspell:word clmm -->
 
 <!-- cspell:word custodying -->
@@ -1603,11 +1605,38 @@ shares the same preamble there). It mirrors the solana-free
 (feature-off, `dropset_ref.so`) runs the same kernel through the plain
 Anchor entrypoint and serves as the parity oracle (`tests/asm_parity.rs`
 deploys both and asserts identical stamps and domain error codes). On
-litesvm the fast path costs ~49 CU versus ~260 for the Rust entrypoint —
-a ~81% saving. (Adding the `quote_unix` datum cost exactly the one extra
-load/store pair it predicted: ~47 → ~49.) The offsets the assembly
-hardcodes are pinned against the live layout by an `offset_of!` test, so
-a `layout.rs` change breaks the build rather than silently mis-stamping.
+litesvm the fast path costs ~47 CU versus ~260 for the Rust entrypoint —
+a ~82% saving. The offsets the assembly hardcodes are pinned against the
+live layout by an `offset_of!` test, so a `layout.rs` change breaks the
+build rather than silently mis-stamping.
+
+**Minimize copies: fuse adjacent 32-bit fields into one 64-bit move.**
+Registers are 64-bit, so a word-at-a-time copy of two adjacent `u32`s
+wastes half of every load and store. `quote_slot` and `quote_unix` are
+adjacent, in the same order, on both sides of the stamp — instruction
+data `+9`/`+13` and vault `+84`/`+88` — so the pair moves as a single
+`ldxdw`/`stxdw` rather than two `ldxw`/`stxw` pairs. That is worth
+exactly the two instructions it removes: adding the `quote_unix` datum
+originally cost one extra load/store pair (~47 → ~49 CU), and fusing the
+pair gives it back (~49 → ~47), so the second expiry domain is now free
+relative to the single-datum baseline.
+
+This is a general rule for the hot path, not a one-off: **when new
+fields land here, place same-width ones adjacently and move them
+together.** The rest of the entrypoint already obeys it — the
+`quote_authority` compare reads 32 bytes as 4×`u64`, and the profile
+write is one `sol_memcpy_` rather than 20 hand-rolled pairs — and the
+remaining single-word accesses (the discriminator byte, `vault_idx`,
+`price`) have no adjacent same-domain partner to pair with, so they are
+already minimal.
+
+The adjacency the fusion depends on is **pinned, not conventional**.
+`layout.rs` const-asserts `quote_unix == quote_slot + 4` (and the same
+for the `Level` and `Position` domain pairs), and `asm_parity.rs`
+asserts the instruction-data side reads as one little-endian `u64`. A
+field reorder that split a pair would leave every size assert green and
+Rust correct while silently turning the fused store into one that writes
+the wall datum into the slot field — so it breaks the build instead.
 
 Off-chain pre-signing: because both datums are supplied by the leader
 rather than read from the clock, a quote can be signed at slot N and
@@ -1636,6 +1665,26 @@ answer different failure modes:
   which the wall domain cannot express at the resolution required (see
   the ~15 s floor under **LiquidityProfile → Flush**).
 
+**The two domains are typed apart.** A slot count and a unix second are
+both `u32`, and the layout deliberately keeps each pair adjacent (see
+the ASM note above), so every surface that touches expiry carried two
+same-typed values side by side — and a review's mutation experiment
+showed a transposition left the whole Rust and TS suites green until the
+fixtures were given distinguished values. The guard is now structural
+rather than conventional: `dropset-math-core`'s `clock` module defines
+`SlotTime`/`SlotSpan` and `WallTime`/`WallSpan` as `repr(transparent)`
+newtypes, with branded mirrors in `sdk/ts/src/clock.ts`, and the only
+arithmetic offered is `Time + Span → Time` within a domain plus
+comparison within a domain. All four ways the domains were confusable —
+datum/datum, offset/offset, now/now, and a datum paired with the wrong
+offset — are compile errors in both languages, pinned by `compile_fail`
+doctests in Rust and `@ts-expect-error` assertions in TS. The types are
+layout- and IDL-invisible: stored fields keep their alignment-1 pod
+wrappers and hand these out through typed accessors, and the assembly
+never sees them. Instruction arguments and the conformance fixtures stay
+raw `u32` — they are wire formats — so the distinguished-fixture-values
+convention still covers those.
+
 **Safety.** Both datums can only shorten or lengthen the life of the
 leader's *own* levels, so the write path keeps its no-validation stance
 and no trust boundary moves. Note the lemma's *shape* differs from a
@@ -1661,24 +1710,57 @@ binding domain depends on the cluster's clock:
   timestamp stamp and no consensus rejection. The clamp is also what
   allows a post-restart *jump* equal to the accumulated fast headroom,
   which is what kills a pre-halt book in block 1.
-- Under a **leader-stamped** clock (the SIMD-0363 direction — closed
-  stale, implemented in the Alpenglow feature branch, and *unratified*;
-  SIMD-0326 removes the vote transactions today's clock is derived
-  from), there is no post-restart jump: cluster time recovers an
-  outage-sized deficit at roughly 2× pace. Wall-TIF halt protection
-  weakens there, and the slot conjunct — slots resume ticking at
-  restart — becomes the fast protection instead. That design also
-  carries its own caveat: a run of byzantine or bribed consecutive
-  leaders can hold the clock back by Δ, with ~Δ recovery.
+
+- Under a **leader-stamped** clock, there is no post-restart jump:
+  cluster time recovers an outage-sized deficit at roughly 2× pace.
+  Wall-TIF halt protection weakens there, and the slot conjunct — slots
+  resume ticking at restart — becomes the fast protection instead. That
+  design also carries its own caveat: a run of byzantine or bribed
+  consecutive leaders can hold the clock back by Δ, with ~Δ recovery.
+
+  This is **shipped code awaiting activation**, not a direction. The
+  0363-design clock is in the Agave 4.3 line (verified against Agave
+  master: `block_component_processor.rs`, `bank.rs`); the mainnet
+  activation window opens **2026-09-28**, October is targeted, and the
+  feature gate is not yet in the tracker queue. SIMD-0363 itself was
+  closed unmerged and SIMD-0307 specifies only the footer field, so the
+  *ratified* artifact never matched the implementation — which is why
+  the earlier "direction, not decision" framing read the situation
+  wrong. SIMD-0326 separately removes the vote transactions today's
+  clock is derived from.
+
+  Three refinements matter for expiry:
+
+  - Programs read the **parent block's** footer stamp. The footer
+    arrives at block end, so the sysvar is one block stale by
+    construction — a bounded, known offset rather than a source of
+    drift.
+  - The 2× catch-up bound is computed from **actual per-slot
+    durations**, not a hardcoded 400 ms. SIMD-0525 stages four gates
+    (350 / 300 / 250 / 200 ms), with mainnet 350 ms activating from
+    ~2026-08-17.
+  - The transition is a **hard switch** — a mid-epoch genesis
+    certificate, with one block written twice — not a parallel-operation
+    period. Nothing should assume the two clock regimes overlap.
+
+  A **nanosecond clock account** exists in the same code but is
+  consensus-internal and **not a design input**: a private PDA (seeded
+  `"alpenclock"` off the Alpenglow feature-gate id), system-owned, an
+  8-byte wincode `i64`, with no SDK-declared id, no sysvar access path,
+  and no ratified SIMD behind it. Do not integrate against it. The
+  seconds-granularity `Clock` sysvar remains our only clock interface,
+  so the ~15 s wall-TIF floor stands.
 
 The dual gate is therefore robust under **both** regimes, which is why
 it is adopted rather than either single-domain design. A residual
-remains for slot-*unbounded* deep tiers under a 0363-style clock (they
-survive roughly half their wall TIF of post-restart chain time at
+remains for slot-*unbounded* deep tiers under a leader-stamped clock
+(they survive roughly half their wall TIF of post-restart chain time at
 pre-halt prices); that is a tier-policy question for the ladder retune,
 not a layout one. Avoid hardcoding a slot duration in either docs or bot
 math — SIMD-0525 stages slots 400 → 200 ms without touching
-`unix_timestamp`; prefer cluster-provided parameters.
+`unix_timestamp`; prefer cluster-provided parameters. Local rehearsal
+against the new regime is possible with the validator's opt-in
+`--alpenglow` flag (v4.2+).
 
 The unconditional mitigation — bot startup / reconnect quote
 invalidation — is independent of all of this and stays required.

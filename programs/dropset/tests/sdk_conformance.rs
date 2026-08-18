@@ -23,6 +23,7 @@ mod common;
 use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{ladder_profile, Fixture};
 
+use dropset_sdk::clock::{SlotTime, WallTime};
 use dropset_sdk::layout::MarketView;
 use dropset_sdk::matching::{simulate_swap, Quote, SwapSide};
 use dropset_sdk::price::Price;
@@ -314,7 +315,15 @@ fn sdk_simulate_swap_skips_oversize_ask_side_not_the_whole_take() {
     // crucially not an abort. The SDK predicts the same empty quote.
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1, 0);
+    let q = simulate_swap(
+        &view,
+        SwapSide::Buy,
+        500_000,
+        Price::INFINITY,
+        SlotTime::new(1),
+        WallTime::new(2),
+        0,
+    );
     assert_eq!(
         q,
         Quote::default(),
@@ -378,7 +387,15 @@ fn sdk_simulate_swap_rejects_cyclic_vault_list() {
 
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1, 0);
+    let q = simulate_swap(
+        &view,
+        SwapSide::Buy,
+        500_000,
+        Price::INFINITY,
+        SlotTime::new(1),
+        WallTime::new(2),
+        0,
+    );
     assert_eq!(
         q,
         Quote::default(),
@@ -416,7 +433,15 @@ fn sdk_simulate_swap_rejects_out_of_range_vault_next() {
 
     let data = market_bytes(&f);
     let view = MarketView::load(&data).expect("SDK decodes the market account");
-    let q = simulate_swap(&view, SwapSide::Buy, 500_000, Price::INFINITY, 1, 1, 0);
+    let q = simulate_swap(
+        &view,
+        SwapSide::Buy,
+        500_000,
+        Price::INFINITY,
+        SlotTime::new(1),
+        WallTime::new(2),
+        0,
+    );
     assert_eq!(
         q,
         Quote::default(),

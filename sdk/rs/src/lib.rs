@@ -35,6 +35,11 @@ pub mod time;
 // simulator live in `dropset-interface` (which depends on math-core).
 pub use dropset_interface::{layout, matching};
 pub use dropset_math_core::price;
+// The two expiry clock domains. Re-exported at the crate root as well as
+// under `clock`, because they are the vocabulary the matcher entry points
+// and `DropsetQuoteParams` speak — a router should not have to reach past
+// this crate to name the type of its own clock reading.
+pub use dropset_math_core::clock::{self, SlotSpan, SlotTime, WallSpan, WallTime};
 
 // The Codama renderer references some siblings as `crate::shared` /
 // `crate::types` (crate-root) and others as `crate::generated::types`.

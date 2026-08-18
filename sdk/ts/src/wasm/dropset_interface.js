@@ -196,7 +196,9 @@ export function price_quote_for_base(bits, base) {
  * `now_unix` the current wall-clock time in unix **seconds**, and a level
  * rests only while it is inside both of its deadlines. Passing one where
  * the other belongs silently resurrects expired levels (or kills live
- * ones).
+ * ones) — this signature is the JS boundary, so the two arrive as bare
+ * `u32`s and the domain types are applied inside; the TS caller gets the
+ * same distinction from the branded types in `sdk/ts/src/clock.ts`.
  *
  * Both sides come from one `MarketView::load`, so a UI polling the book
  * pays a single decode per account fetch. An empty side means either no
@@ -228,7 +230,10 @@ export function resting_book(market_data, now_slot, now_unix) {
  * `now_unix` the current wall-clock time in unix **seconds**, and a
  * level is shown only while it is inside both of its deadlines. Passing
  * one where the other belongs silently resurrects expired levels (or
- * kills live ones). `platform_fee_bps`: the integrator fee
+ * kills live ones) — this signature is the JS boundary, so the two
+ * arrive as bare `u32`s and the domain types are applied on the line
+ * below; the TS caller gets the same distinction from the branded types
+ * in `sdk/ts/src/clock.ts`. `platform_fee_bps`: the integrator fee
  * the caller will declare on the `swap` instruction — `0` for an
  * unrouted quote. A rate above the market's ceiling yields an all-zero
  * `Quote`, matching the engine's refusal.

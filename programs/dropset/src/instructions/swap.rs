@@ -50,7 +50,7 @@ use crate::{
     errors::DropsetError,
     events::{FillEvent, PlatformFeeEvent},
     state::{Market, VaultAccess, FLUSH_BIT},
-    Price, N_LEVELS,
+    Price, SlotTime, WallTime, N_LEVELS,
 };
 
 /// Side of a taker fill — `Buy` consumes asks (taker pays quote, gets
@@ -591,12 +591,16 @@ impl Swap {
         // sysvar value would wrap into the far future and resurrect every
         // expired level) and above at `u32::MAX`, the width
         // `Position.expires_at_unix` stores.
-        let now_unix = self.clock.unix_timestamp.clamp(0, u32::MAX as i64) as u32;
+        //
+        // Both are wrapped into their clock domain right here, at the one
+        // point the sysvar's bare integers enter the matcher, so the rest
+        // of the walk cannot confuse them (see `crate::clock`).
+        let now_unix = WallTime::new(self.clock.unix_timestamp.clamp(0, u32::MAX as i64) as u32);
         // Saturate rather than truncate, for the same reason the clamp
         // above exists: a bare `as u32` past 2^32 wraps to a small value
         // and resurrects every expired level. ~54 years out at today's
         // pace, but the two casts should not disagree on the point.
-        let now_slot = self.clock.slot.min(u32::MAX as u64) as u32;
+        let now_slot = SlotTime::new(self.clock.slot.min(u32::MAX as u64) as u32);
         let head = self.market.head.get();
 
         // Walk the active DLL from `market.head` via `Vault.next`.
@@ -688,9 +692,12 @@ impl Swap {
                     // leader-supplied bounds. Zero in either domain is
                     // dead, which materialization already encoded as a
                     // zero deadline, so each domain is one compare.
+                    // `is_live_at` is domain-typed, so the two conjuncts
+                    // cannot be crossed over (see `crate::clock`); it
+                    // compiles to the same single unconditional compare.
                     if size == 0
-                        || lvl.expires_at_unix.get() <= now_unix
-                        || lvl.expires_at_slot.get() <= now_slot
+                        || !lvl.wall_deadline().is_live_at(now_unix)
+                        || !lvl.slot_deadline().is_live_at(now_slot)
                         || price.is_zero()
                         || price.is_infinity()
                         || !price.is_valid()

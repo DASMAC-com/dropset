@@ -38,6 +38,8 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::clock::WallTime;
+
 /// Host wall-clock time as unix seconds.
 ///
 /// Returns `0` if the host clock is somehow before the unix epoch, which
@@ -51,11 +53,17 @@ pub fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-/// [`now_unix`] narrowed to the `u32` the on-chain fields store, for the
-/// book-filtering call sites (`simulate_swap` / `resting_levels`).
-/// Saturates rather than wrapping at both ends.
-pub fn now_unix_u32() -> u32 {
-    now_unix().clamp(0, u32::MAX as i64) as u32
+/// [`now_unix`] narrowed to the `u32` width the on-chain fields store and
+/// tagged with its clock domain, for the book-filtering call sites
+/// (`simulate_swap` / `resting_levels`). Saturates rather than wrapping
+/// at both ends.
+///
+/// Returning a [`WallTime`] rather than a bare `u32` is the point: this
+/// is the wall domain's entry into every off-chain consumer, and the
+/// slot domain's `now` is a different type, so the two can no longer be
+/// handed to each other's half of the dual gate.
+pub fn now_unix_u32() -> WallTime {
+    WallTime::new(now_unix().clamp(0, u32::MAX as i64) as u32)
 }
 
 #[cfg(test)]
@@ -69,6 +77,6 @@ mod tests {
     fn now_is_a_plausible_epoch_second() {
         // 2020-01-01T00:00:00Z — any correct host clock is past this.
         assert!(now_unix() > 1_577_836_800);
-        assert_eq!(now_unix_u32() as i64, now_unix());
+        assert_eq!(now_unix_u32().get() as i64, now_unix());
     }
 }

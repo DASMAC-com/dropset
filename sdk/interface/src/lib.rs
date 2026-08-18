@@ -24,7 +24,15 @@
 // Re-export the math spine so downstream `dropset_interface::{price,
 // matching_math}` paths resolve without a separate import, and so the
 // `Price` codec the layout/matching modules use is the one canonical impl.
-pub use dropset_math_core::{matching_math, price, price::Price};
+// `clock` comes along for the same reason: the two expiry domains are the
+// vocabulary this crate's matcher signatures speak, and a caller must be
+// able to name them without depending on math-core directly.
+pub use dropset_math_core::{
+    clock,
+    clock::{SlotSpan, SlotTime, WallSpan, WallTime},
+    matching_math, price,
+    price::Price,
+};
 
 pub mod layout;
 
