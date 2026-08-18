@@ -2,10 +2,10 @@
 
 import { CircleAlert, CircleCheck, ExternalLink, X } from "@/components/icons";
 import { stablecoinDecimals } from "@/lib/data/currencies";
-import type { SwapError } from "@/lib/dflow/dflowSwap";
 import { explorerTxUrl } from "@/lib/explorer";
 import { formatBaseAmount, groupThousands } from "@/lib/format/balance";
 import type { CompletedSwap, SwapStatus } from "@/lib/hooks/useDflowSwap";
+import type { SwapError } from "@/lib/swap/types";
 
 export function SwapResult({
   status,

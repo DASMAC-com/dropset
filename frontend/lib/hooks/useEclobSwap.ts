@@ -3,13 +3,14 @@
 import { useSolanaClient, useWallet } from "@solana/react-hooks";
 import { useCallback, useRef, useState } from "react";
 import { stablecoinDecimals, stablecoinMint } from "../data/currencies";
-import { SwapError, waitForSwapConfirmation } from "../dflow/dflowSwap";
 import { executeEclobSwap } from "../eclob/eclobSwap";
 import { emit } from "../events";
 import { parseAmountToBase } from "../format/balance";
 import { percentToBps } from "../format/percent";
 import { getErrorMessage } from "../guards";
 import { type Slippage, useSwapStore } from "../store";
+import { waitForSwapConfirmation } from "../swap/confirm";
+import { SwapError } from "../swap/types";
 import type { CompletedSwap, SwapStatus, UseDflowSwap } from "./useDflowSwap";
 
 // eCLOB has no server-side "auto" slippage sizing (that's a DFlow feature), so

@@ -14,6 +14,7 @@ import {
   compareSortValues,
   SortableHeader,
 } from "@/components/ui/SortableHeader";
+import { TokenIcon } from "@/components/ui/TokenIcon";
 import {
   CURRENCIES,
   currencyFlagUrl,
@@ -286,13 +287,9 @@ const StablecoinRow = memo(function StablecoinRow({
       <td className="whitespace-nowrap border-border border-r px-3 py-2 align-top last:border-r-0">
         <div className="flex items-center gap-2">
           {showFlag && <Flag url={currencyFlagUrl(code)} size={20} />}
-          {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-          <img
-            src={s.icon}
-            alt=""
-            aria-hidden
-            width={28}
-            height={28}
+          <TokenIcon
+            symbol={s.symbol}
+            size={28}
             className="h-7 w-7 shrink-0 rounded-full"
           />
           <span className="font-mono text-foreground">{s.symbol}</span>

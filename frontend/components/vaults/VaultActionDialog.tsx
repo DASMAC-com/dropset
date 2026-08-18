@@ -7,6 +7,7 @@ import { ChevronDown, ExternalLink, Wallet, X } from "@/components/icons";
 import { BalancePercentControl } from "@/components/ui/BalancePercentControl";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
+import { TokenIcon } from "@/components/ui/TokenIcon";
 import { shortenMint, stablecoinDecimals } from "@/lib/data/currencies";
 import {
   allTimePnl,
@@ -55,29 +56,18 @@ const detailRow = (label: ReactNode, node: ReactNode) => (
   </div>
 );
 
-// Small round token logo, used in place of the words "Base"/"Quote".
-function TokenIcon({ src, symbol }: { src: string; symbol: string }) {
-  return (
-    // biome-ignore lint/performance/noImgElement: small static icon, no optimization needed
-    <img
-      src={src}
-      alt=""
-      aria-hidden
-      width={16}
-      height={16}
-      className="rounded-full"
-      title={symbol}
-    />
-  );
-}
-
 // A token chip: round icon + symbol. The single source of truth for how a
 // token is shown in the dialog — the holding/withdraw breakdowns and each
 // deposit leg all render through this, so the icon size and symbol weight stay
 // consistent across the popup.
-const tokenLabel = (src: string, symbol: string): ReactNode => (
+const tokenLabel = (symbol: string): ReactNode => (
   <span className="flex shrink-0 items-center gap-1.5 font-mono font-medium text-foreground text-sm">
-    <TokenIcon src={src} symbol={symbol} />
+    <TokenIcon
+      symbol={symbol}
+      size={16}
+      className="rounded-full"
+      title={symbol}
+    />
     {symbol}
   </span>
 );
@@ -225,11 +215,11 @@ function PositionDetail({
           Holding
         </span>
         {detailRow(
-          tokenLabel(market.baseIconUrl, market.base),
+          tokenLabel(market.base),
           amountUsd(baseOut, market.base, baseOut * refNow * quoteUsd),
         )}
         {detailRow(
-          tokenLabel(market.quoteIconUrl, market.quote),
+          tokenLabel(market.quote),
           amountUsd(quoteOut, market.quote, quoteOut * quoteUsd),
         )}
       </div>
@@ -294,7 +284,7 @@ function WithdrawSection({
         )}
         <div className="flex flex-col gap-1.5">
           {detailRow(
-            tokenLabel(market.baseIconUrl, market.base),
+            tokenLabel(market.base),
             amountUsd(
               preview.baseOut,
               market.base,
@@ -302,7 +292,7 @@ function WithdrawSection({
             ),
           )}
           {detailRow(
-            tokenLabel(market.quoteIconUrl, market.quote),
+            tokenLabel(market.quote),
             amountUsd(
               preview.quoteOut,
               market.quote,
@@ -349,7 +339,6 @@ function WithdrawSection({
 // — that leg is filled to match the other, and editing it makes it the one the
 // user is driving.
 function DepositLeg({
-  iconUrl,
   symbol,
   otherSymbol,
   value,
@@ -359,7 +348,6 @@ function DepositLeg({
   usdValue,
   disabled,
 }: {
-  iconUrl: string;
   symbol: string;
   // The other leg's symbol, named in the "Auto" tooltip.
   otherSymbol: string;
@@ -381,7 +369,7 @@ function DepositLeg({
       <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted px-3 py-2.5">
         {/* Token chip beside the large amount input. */}
         <div className="flex items-center justify-between gap-2">
-          {tokenLabel(iconUrl, symbol)}
+          {tokenLabel(symbol)}
           <input
             type="text"
             inputMode="decimal"
@@ -627,7 +615,6 @@ export function VaultActionDialog({
               <>
                 <div className="flex flex-col gap-2">
                   <DepositLeg
-                    iconUrl={market.baseIconUrl}
                     symbol={market.base}
                     otherSymbol={market.quote}
                     value={baseAmount}
@@ -638,7 +625,6 @@ export function VaultActionDialog({
                     disabled={depositBlocked}
                   />
                   <DepositLeg
-                    iconUrl={market.quoteIconUrl}
                     symbol={market.quote}
                     otherSymbol={market.base}
                     value={quoteAmount}

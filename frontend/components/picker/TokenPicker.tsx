@@ -3,13 +3,13 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Search, X } from "@/components/icons";
+import { TokenIcon } from "@/components/ui/TokenIcon";
 import {
   CURRENCIES,
   currencyName,
   type IsoCurrencyCode,
   type Stablecoin,
   SUPPORTED,
-  tokenIconUrl,
 } from "@/lib/data/currencies";
 import { useAppEvent } from "@/lib/events";
 import { sortByVolumeDesc, useInfoLookup } from "@/lib/hooks/useUsdQuote";
@@ -197,13 +197,9 @@ export function TokenPicker({ side }: { side: Side }) {
             : "hover:border-accent hover:text-accent focus-visible:border-accent focus-visible:text-accent"
         }`}
       >
-        {/* biome-ignore lint/performance/noImgElement: small static icon, no optimization needed */}
-        <img
-          src={tokenIconUrl(stablecoin)}
-          alt=""
-          aria-hidden
-          width={24}
-          height={24}
+        <TokenIcon
+          symbol={stablecoin}
+          size={24}
           className="h-6 w-6 shrink-0 rounded-full"
         />
         <span className="font-mono font-medium">{stablecoin}</span>

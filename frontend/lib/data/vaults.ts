@@ -4,7 +4,6 @@ import {
   currencyForStablecoin,
   currencyName,
   type IsoCurrencyCode,
-  tokenIconUrl,
 } from "./currencies";
 import vaultsData from "./vaults.json";
 
@@ -66,8 +65,6 @@ export type VaultMarket = {
   quoteCurrency: IsoCurrencyCode;
   baseFlagUrl: string;
   quoteFlagUrl: string;
-  baseIconUrl: string;
-  quoteIconUrl: string;
   label: string;
   fxMove24h: number;
   vaults: Vault[];
@@ -150,8 +147,6 @@ const VAULT_MARKETS: VaultMarket[] = (
     quoteCurrency,
     baseFlagUrl: currencyFlagUrl(baseCurrency),
     quoteFlagUrl: currencyFlagUrl(quoteCurrency),
-    baseIconUrl: tokenIconUrl(m.base),
-    quoteIconUrl: tokenIconUrl(m.quote),
     label: `${m.base} / ${m.quote}`,
     fxMove24h: m.fxMove24h,
     vaults: m.vaults,

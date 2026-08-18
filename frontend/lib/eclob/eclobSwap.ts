@@ -25,13 +25,9 @@ import {
   findAssociatedTokenPda,
   getCreateAssociatedTokenIdempotentInstructionAsync,
 } from "@solana-program/token";
-import {
-  CANCEL_PATTERN,
-  SwapError,
-  type SwapOutcome,
-} from "../dflow/dflowSwap";
 import { PLATFORM_FEE } from "../env";
 import { getErrorMessage } from "../guards";
+import { CANCEL_PATTERN, SwapError, type SwapOutcome } from "../swap/types";
 import { gateNowUnix, syncChainClock } from "./chainClock";
 import { platformFeeBpsFor, resolveEclobRoute } from "./route";
 

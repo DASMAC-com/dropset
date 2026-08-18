@@ -206,9 +206,13 @@ util <-> frontend: the human-price / atoms-ratio decimal-gap conversion
   association: both scale by 10^base / 10^quote as separate powers
   rather than the algebraically equal 10^(base-quote), whose single
   exponentiation is not correctly rounded — so the two panes would
-  otherwise disagree by an ulp on the same level. A Rust-side test
-  pins the grouping; nothing pins the TS side, so a change to either
-  must track the other.
+  otherwise disagree by an ulp on the same level. Both sides now pin the
+  grouping — util/src/decimals.rs and
+  frontend/components/orderbook/format.test.ts — so a change to either
+  fails its own suite rather than drifting silently. Note the probe that
+  sizes the ratio is TS-only: humanPrice measures at 10^18 base atoms
+  before scaling, and atoms_ratio_to_human takes an already-computed
+  ratio, so that half of the frontend helper has no Rust counterpart.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit

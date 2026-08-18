@@ -35,7 +35,8 @@
     "@types/topojson-client": "^3.1.5",
     "babel-plugin-react-compiler": "^1.0.0",
     "tailwindcss": "^4.3.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
   },
   "name": "dropset-frontend",
   "packageManager": "pnpm@10.30.3",
@@ -55,7 +56,8 @@
     "prebuild": "pnpm run copy-brand-assets && pnpm run copy-flags && pnpm run fetch-token-icons && pnpm run fetch-wallet-icons",
     "predev": "pnpm run copy-brand-assets && pnpm run copy-flags && pnpm run fetch-token-icons && pnpm run fetch-wallet-icons",
     "setup-fee-atas": "node scripts/setup-fee-atas.mjs",
-    "start": "next start"
+    "start": "next start",
+    "test": "vitest run"
   },
   "version": "0.1.0"
 }

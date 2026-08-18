@@ -47,13 +47,41 @@ jobs:
     # it recovers or the URL is pointed somewhere else. A live asset served
     # under an odd content-type does NOT block — the script falls back to
     # sniffing the bytes, so only genuinely unusable responses fail.
+    #
+    # Both asset sets are gated, on the same reasoning and through the same
+    # engine (frontend/scripts/mirror-icons.mjs). Wallet icons add five more
+    # externally-controlled URLs that can red-line the queue, which is a real
+    # widening of the exposure described above; they are gated anyway because
+    # leaving a set unchecked is exactly how the token icons came to carry a
+    # silently broken mirror in the first place. The issuers are also a smaller
+    # and more stable set than the stablecoin ones, so the added risk is modest.
     - name: 'Token icon URLs are live'
       run: 'node frontend/scripts/fetch-token-icons.mjs --strict'
-    # Nothing else in CI runs `next build`: lint.yml stops at biome + tsc and
-    # test.yml excludes frontend/** entirely, so a build break only surfaced
-    # on Vercel. This also runs the `prebuild` asset chain, which is the only
-    # thing that exercises copy-brand-assets and copy-flags at all — they are
-    # prebuild-only, so before this job they ran in CI zero times.
+    - name: 'Wallet icon URLs are live'
+      run: 'node frontend/scripts/fetch-wallet-icons.mjs --strict'
+    # The frontend's unit tests. They run here rather than in test.yml, whose
+    # paths filter excludes frontend/** entirely, so a test step placed there
+    # would never fire for a frontend-only change. Scoped to pure logic:
+    # price and decimals conversion, and icon-source resolution. The decimals
+    # half of the price helper is mirrored in Rust by util/src/decimals.rs,
+    # but its probe step is TS-only, so these are the sole coverage of the
+    # flooring bug that collapsed adjacent ladder levels onto one displayed
+    # price. Runs before the build because a logic failure is faster to
+    # report and easier to read than a build log.
+    #
+    # Keep this AFTER the icon steps above. The currencies suite asserts the
+    # mirror manifest is populated, and it is the strict token step that
+    # guarantees that — `postinstall` writes the manifest either way, empty
+    # included. Moving the fast deterministic tests first looks like an
+    # obvious cleanup and would break them.
+    - name: 'Frontend unit tests'
+      run: 'pnpm --filter dropset-frontend test'
+    # Nothing else in CI runs the frontend's `next build`: lint.yml stops at
+    # biome + tsc for frontend/**, so a build break only surfaced on Vercel
+    # (lint.yml does build decks/, but that is a separate app). This also runs
+    # the `prebuild` asset chain, which is the only thing that exercises
+    # copy-brand-assets and copy-flags at all — they are prebuild-only, so
+    # before this job they ran in CI zero times.
     - name: 'Frontend builds'
       run: 'pnpm --filter dropset-frontend build'
 name: 'Frontend'
