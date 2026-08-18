@@ -619,7 +619,12 @@ pass just list the suggestions and merge nothing. The
 If no meta-work duplicates are open, say "no meta-work
 merges proposed" and move on.
 
-**7. Audit the base-repo permission allowlist for cruft.**
+**7. Audit the base repo's settings files.** Two checks over
+the same git-ignored pair, both of which only this session is
+positioned to run — it is the one that works from the base
+repo, where those files resolve.
+
+**7a. The permission allowlist, for cruft.**
 `firm-perms` only ever **adds** to
 `<base>/.claude/settings.local.json` (unions, generalizes),
 never prunes — so dead weight accumulates. Get the suspicious
@@ -685,6 +690,38 @@ the add-only half, and the allowlist is `settings.local.json`
 `allowlist.py cruft` helper above is what keeps the full file
 out of context — it returns only the shortlist, so this step
 never reads the whole ~250-entry array.
+
+**7b. The guard hooks, for wiring.** A guard script under
+`.claude/hooks/` is **inert until a `PreToolUse` entry points
+at it**, and that wiring is deliberately uncommitted — so a
+guard can sit committed, documented, and never firing, with
+nothing anywhere checking that the script and the wiring are
+connected. That is not hypothetical: as of 2026-08-14 all
+three guards were committed and only `no_compound_bash.py`
+was wired, leaving the worktree edit-path guard — which
+exists for a slip the conventions call recurring and
+expensive — as documentation of a protection that did not
+exist.
+
+CI cannot catch it (git-ignored settings, so a CI runner has
+none to inspect), which is why it lands here:
+
+```sh
+python3 .claude/tools/hook_wiring.py
+```
+
+Exit `0` clean, `1` when something is unwired, `2` when the
+scan itself could not run — a clean scan and a broken one
+must never read alike.
+
+**Report it; never wire it.** Wiring a hook grants it the
+right to block tool calls, which is the operator's decision,
+not this session's — the same posture as the rest of
+`local-integrations.md`. So name the unwired scripts in the
+step-12 report and, in an attended pass, raise it at the
+closing gate; write nothing either way. The tool prints the
+pointer to each guard's paste-ready block rather than a
+settings diff, for the same reason.
 
 **8. Review saved auto-memory for staleness.** The saved
 auto-memory (`~/.claude/projects/<slug>/memory/*.md` plus the
@@ -844,6 +881,10 @@ again, run `/housekeeping` (or `/audit`) again.
 - Permission allowlist: the `settings.local.json`
   entries flagged as cruft and, for an attended pass, which
   the human approved removing — or that it was clean.
+- Guard-hook wiring: the committed `.claude/hooks/` scripts
+  that **nothing wires** (named individually — an unwired
+  guard is a documented protection that does not exist), or
+  that all are wired; or that the scan couldn't run.
 - Auto-memory: the memory slugs flagged stale (with the
   one-line reason each) and, for an attended pass, which
   were purged — or that all are fresh; or that the scan was

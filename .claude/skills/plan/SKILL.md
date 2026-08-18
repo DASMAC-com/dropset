@@ -245,6 +245,23 @@ whole reason the vocabulary is worth writing down:
   unblocked** (operator rule, 2026-08-17). When a meta issue
   enters Next, set it Urgent, so agent-infra improvements are
   the next pull rather than queuing behind product work.
+- **The serial meta chain** (operator rule, 2026-08-18). Open
+  `Claude:`-prefixed issues are kept blocking one another in
+  **one serial chain**: file a new meta issue, and this
+  session chains it behind the current tail. So exactly
+  **one** meta issue is ever unblocked in Next — Urgent, per
+  the rule above — and meta improvements land one batch at a
+  time as each head merges, instead of several sessions
+  rewriting the same skills at once.
+
+  This is the **one standing exception** to the
+  proposal-per-edge rule: an operator-ratified edge *class*,
+  so a planning session places a chain edge as routine
+  bookkeeping without a fresh per-edge `AskUserQuestion`. It
+  changes nothing for anyone else — **automated filers still
+  place no edges, ever** (`CLAUDE.md` → "Blocking
+  relations"). The exception is this session's, and it is
+  scoped to this one chain.
 
 When an issue isn't: reorder it behind what it depends on,
 re-scope it, or split the first genuinely actionable unit

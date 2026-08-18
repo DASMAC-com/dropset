@@ -35,6 +35,29 @@ The `$CLAUDE_PROJECT_DIR` variable used in the wiring below resolves to
 the active checkout root, so the same `settings.json` block works in the
 base repo and in every worktree.
 
+**A committed guard is inert until it is wired.** Committing the script
+is *not* the job — half of it is, and it is the half that leaves no
+trace when the other half is missing. A guard with no `PreToolUse` entry
+pointing at it never runs, while the repo goes on documenting it as a
+protection; the script sitting there in `.claude/hooks/` reads as
+evidence that it does. Two of the three guards below spent an unknown
+stretch in exactly that state, discovered only when someone asked an
+unrelated question about hook reach (2026-08-14).
+
+Because the wiring is git-ignored, **CI cannot check this** — a PR
+cannot install wiring and a CI runner has none to inspect. The check
+therefore runs where the settings actually resolve, on the operator's
+machine:
+
+```sh
+make hook-wiring
+```
+
+It names every committed hook nothing points at, and **writes
+nothing** — wiring a hook grants it the right to block tool calls,
+which stays the operator's decision. `housekeeping` runs it each pass
+(its step 7b) so the gap cannot re-open silently.
+
 ## The compound-shell guard hook
 
 The [shell-commands](shell-commands.md) conventions are enforced
@@ -145,6 +168,16 @@ wires **only** `no_compound_bash.py`. `no_git_grep.py` and
 currently fires — including the worktree edit-path guard, which exists
 specifically for worktree sessions. Wire the ones you want using the
 blocks in each guard's section below.
+
+Don't trust that paragraph's date — **ask**, since the answer is
+per-machine and changes the moment someone edits a git-ignored file:
+
+```sh
+make hook-wiring
+```
+
+That is the authority on which guards are live here; the prose above is
+only the finding that prompted the check.
 
 ## The git-grep guard hook
 
