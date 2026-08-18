@@ -2,11 +2,17 @@
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_quote_free: (a: number, b: number) => void;
+export const __wbg_restingbook_free: (a: number, b: number) => void;
 export const quote_fee_amount: (a: number) => bigint;
 export const quote_in_amount: (a: number) => bigint;
 export const quote_legs: (a: number) => number;
 export const quote_out_amount: (a: number) => bigint;
 export const quote_platform_fee_amount: (a: number) => bigint;
+export const resting_book: (a: number, b: number, c: number, d: number) => [number, number, number];
+export const restingbook_ask_prices: (a: number) => [number, number];
+export const restingbook_ask_sizes: (a: number) => [number, number];
+export const restingbook_bid_prices: (a: number) => [number, number];
+export const restingbook_bid_sizes: (a: number) => [number, number];
 export const simulate_swap: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number, h: number) => [number, number, number];
 export const price_base_for_quote: (a: number, b: bigint) => bigint;
 export const price_decode: (a: number) => number;
@@ -16,4 +22,5 @@ export const price_quote_for_base: (a: number, b: bigint) => bigint;
 export const __wbindgen_externrefs: WebAssembly.Table;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_start: () => void;

@@ -45,10 +45,13 @@ const tokenFor = (symbol: string): BookToken => ({
 });
 
 // Live-poll the on-chain order book for the selected pair, reading the book
-// straight from the market account via the SDK (no indexer) — the pure-TS
-// `fetchDropsetMarketView`, not the WASM swap simulator, so this decode is
-// independent of the swap-quote path. Resolves the market once (both
-// orientations, like the eCLOB quote route), then re-fetches the book every
+// straight from the market account via the SDK (no indexer).
+// `fetchDropsetMarketView` reconstructs it through the same WASM binding the
+// swap simulator uses — the engine's own decode rather than a TS mirror of
+// it — so the ladder rendered here and the quote shown on the swap path
+// agree by construction. It instantiates that binding itself, so there is no
+// init step to sequence here. Resolves the market once (both orientations,
+// like the eCLOB quote route), then re-fetches the book every
 // ORDER_BOOK_REFRESH_MS so the maker bot's flashed depth appears live.
 //
 // The loop mirrors useEclobQuote's lifecycle: it pauses when the tab is

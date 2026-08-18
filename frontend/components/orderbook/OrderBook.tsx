@@ -148,9 +148,9 @@ function OrderBookView({
 }) {
   const { askRows, bidRows, maxTotal, fractionDigits, spread, spreadPct } =
     useMemo(() => {
-      // restingLevels is best-first: asks ascending (cheapest first), bids
-      // descending (highest first). Cumulative totals accumulate from the
-      // spread outward on each side.
+      // The reconstructed book is best-first: asks ascending (cheapest
+      // first), bids descending (highest first). Cumulative totals
+      // accumulate from the spread outward on each side.
       const asks = levelsToRows(
         view?.asks ?? [],
         base.decimals,

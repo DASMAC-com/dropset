@@ -153,11 +153,15 @@ maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   ages the FX anchor (not receipt time), so a change to that field's
   meaning silently changes when the weekend crypto-only regime engages.
 sdk-clients <-> sdk-math: the TS market reader (sdk/ts/src/market.ts)
-  hand-decodes the opaque Vault slab and reconstructs the resting book,
-  mirroring the on-chain byte layout (sdk/interface/src/layout.rs) and the
-  Rust matcher (resting_levels / BookLevel) — the slab is opaque to the
-  IDL, so the generated client can't catch drift; market.ts's byte offsets
-  and level materialization must track layout.rs / matching.rs.
+  reads the opaque Vault slab through the WASM binding built from
+  sdk/interface (resting_book, over matching::resting_levels), so the
+  slab decode and the book reconstruction have one implementation rather
+  than a hand-mirror. The slab is still opaque to the IDL, so the
+  generated client cannot catch drift here; what must now track
+  sdk/interface is the binding's marshalling — the parallel price/size
+  arrays market.ts zips back into levels — and the hand-built fixture
+  offsets in sdk/ts/src/market.test.ts, which encode layout.rs's Vault
+  stride in order to feed the engine.
 frontend <-> sdk-clients: the trades tape decodes emit_cpi FillEvents
   through the hand-written TS events codec (sdk/ts/src/events.ts), which
   hand-copies the anchor event-CPI tag and the 8-byte discriminator from

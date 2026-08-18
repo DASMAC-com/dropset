@@ -11,7 +11,16 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { baseForQuote, decodePrice, encodePrice, isValidPrice, quoteForBase } from './price';
+import {
+  baseForQuote,
+  decodePrice,
+  encodePrice,
+  isMatchablePrice,
+  isValidPrice,
+  PRICE_INFINITY,
+  PRICE_ZERO,
+  quoteForBase,
+} from './price';
 
 type DecodeCase = { bits: number; valid: boolean; value: number | null };
 type EncodeCase = { value: number; bits: number | null };
@@ -41,6 +50,25 @@ test('decode vectors match', () => {
       assert.ok(Math.abs(got - c.value) <= tol, `decode ${c.value} got ${got}`);
     }
   }
+});
+
+// Mirrors the Rust `is_matchable_*` unit tests (sdk/math-core/src/price.rs).
+// Driven off the decode vectors so the predicate is exercised against every
+// bit pattern the generator emits — including the invalid ones — rather than
+// a hand-picked few: matchable is exactly "valid, and neither sentinel".
+// Worth pinning even though it composes three already-pinned predicates,
+// because it is the matching gate the engine applies per vault, so a reader
+// that disagrees with it silently reports a live book as dark or vice versa.
+test('is_matchable rejects both sentinels and every invalid pattern', () => {
+  assert.equal(isMatchablePrice(PRICE_ZERO), false, 'ZERO is not matchable');
+  assert.equal(isMatchablePrice(PRICE_INFINITY), false, 'INFINITY is not matchable');
+  let sawRegular = false;
+  for (const c of vectors.decode) {
+    const expected = c.valid && c.bits !== PRICE_ZERO && c.bits !== PRICE_INFINITY;
+    assert.equal(isMatchablePrice(c.bits), expected, `matchable(${c.bits})`);
+    sawRegular ||= expected;
+  }
+  assert.ok(sawRegular, 'vectors must include at least one matchable price');
 });
 
 test('encode vectors match', () => {
