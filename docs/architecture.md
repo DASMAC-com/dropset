@@ -1685,7 +1685,7 @@ offset — are compile errors in **Rust**, pinned by `compile_fail`
 doctests. TypeScript catches three of the four: a branded `number` is
 still assignable to `number`, so a *relational comparison* across domains
 (`slotSpan(a) < wallSpan(b)`) type-checks, while assignment and parameter
-passing do not. The nine `@ts-expect-error` assertions in
+passing do not. The `@ts-expect-error` assertions in
 `sdk/ts/src/clock.test.ts` pin what TS does catch, and record that gap
 explicitly rather than implying parity. The types are
 layout- and IDL-invisible: stored fields keep their alignment-1 pod

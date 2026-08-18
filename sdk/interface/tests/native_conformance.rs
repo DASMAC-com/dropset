@@ -38,7 +38,7 @@
 //! case *name* instead.
 
 use dropset_interface::clock::{SlotTime, WallTime};
-use dropset_interface::layout::MarketView;
+use dropset_interface::layout::{MarketView, N_LEVELS};
 use dropset_interface::matching::{simulate_swap, SwapSide};
 use dropset_interface::price::Price;
 use serde_json::Value;
@@ -144,15 +144,26 @@ fn the_fixture_still_carries_both_expiry_domains() {
          live and dead); found {expiry:?}"
     );
 
-    // Each domain must be pinned on its own, or a regeneration could keep
-    // six cases that all exercise one axis.
-    assert!(
-        expiry.iter().any(|n| n.contains("slot")),
-        "no slot-domain expiry case in {expiry:?}"
-    );
-    assert!(
-        expiry.iter().any(|n| n.contains("wall")),
-        "no wall-domain expiry case in {expiry:?}"
+    // Each domain must be pinned on its own. Note this cannot be an
+    // `any(contains("slot"))` / `any(contains("wall"))` pair: the cross
+    // cases name *both* domains (`expiry_slot_dead_wall_live`), so a
+    // single such case would satisfy both predicates and six copies of it
+    // would pass the count above too. Group by which domain the case is
+    // *about* — its prefix — so each axis has to be present on its own.
+    let slot_axis = expiry
+        .iter()
+        .filter(|n| n.starts_with("expiry_slot"))
+        .count();
+    let wall_axis = expiry
+        .iter()
+        .filter(|n| n.starts_with("expiry_wall"))
+        .count();
+    assert_eq!(
+        (slot_axis, wall_axis),
+        (3, 3),
+        "expected three slot-led and three wall-led expiry cases (each \
+         domain: the cross case, plus its boundary live and dead); found \
+         {expiry:?}"
     );
 }
 
@@ -197,6 +208,43 @@ fn each_expiry_conjunct_binds_against_an_independent_oracle() {
             "{name}: an expiry case must say in its name which domains \
              are dead or live — this oracle reads `_dead` / `_live`"
         );
+
+        // Pinning the *outcome* alone would not pin which conjunct
+        // produced it: a generator change that made BOTH domains dead in
+        // `expiry_slot_dead_wall_live` would keep the outcome correct
+        // while the case silently stopped isolating the slot bound. So
+        // check the clocks land where the name says, against the very
+        // deadlines the matcher will gate on — read through the typed
+        // accessors this change introduced.
+        let now_slot = SlotTime::new(u64_at(c, "now_slot") as u32);
+        let now_unix = WallTime::new(u64_at(c, "now_unix") as u32);
+        for (sector, vault) in view.active_vaults() {
+            for i in 0..N_LEVELS {
+                let lvl = vault.remaining.asks[i];
+                if lvl.size.get() == 0 {
+                    continue;
+                }
+                let slot_live = lvl.slot_deadline().is_live_at(now_slot);
+                let wall_live = lvl.wall_deadline().is_live_at(now_unix);
+                if name.contains("slot_dead") {
+                    assert!(
+                        !slot_live && wall_live,
+                        "{name} (sector {sector} ask {i}): the name says \
+                         the slot bound is what kills this level and the \
+                         wall bound is still open, but slot_live \
+                         ={slot_live} wall_live={wall_live}"
+                    );
+                } else if name.contains("wall_dead") {
+                    assert!(
+                        !wall_live && slot_live,
+                        "{name} (sector {sector} ask {i}): the name says \
+                         the wall bound is what kills this level and the \
+                         slot bound is still open, but slot_live \
+                         ={slot_live} wall_live={wall_live}"
+                    );
+                }
+            }
+        }
 
         let side = match u64_at(c, "side") {
             0 => SwapSide::Buy,

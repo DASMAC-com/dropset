@@ -50,6 +50,11 @@
 # set_reference_price payload
 .equ IX_PRICE_BITS_OFF, 5         # u32
 .equ IX_QUOTE_SLOT_OFF, 9         # u32
+# No instruction references this any more — the fused ldxdw at
+# IX_QUOTE_SLOT_OFF spans both datums. Kept because it documents the wire
+# layout that fusion depends on, but note nothing mechanically ties it to
+# anything: asm_parity pins the literal 13, and uses this name only as an
+# assertion message. Same for RP_QUOTE_UNIX_OFF below.
 .equ IX_QUOTE_UNIX_OFF, 13        # u32
 # set_liquidity_profile payload
 .equ IX_PROFILE_OFF, 5            # [u8; 224], past disc(1) + vault_idx(4)

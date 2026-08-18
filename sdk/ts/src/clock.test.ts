@@ -24,7 +24,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  DEAD_SLOT_SPAN,
   DEAD_SLOT_TIME,
+  DEAD_WALL_SPAN,
   DEAD_WALL_TIME,
   NO_SLOT_BOUND,
   NO_WALL_BOUND,
@@ -96,9 +98,11 @@ test('the honest form does type-check', () => {
 
 test('a zero span is dead whatever the datum', () => {
   // The whole point of the special case: a far-future datum must not
-  // resurrect a level with no life in this domain.
-  assert.equal(wallDeadlineAfter(wallTime(0xffff_fffe), wallSpan(0)), DEAD_WALL_TIME);
-  assert.equal(slotDeadlineAfter(slotTime(1_000_000), slotSpan(0)), DEAD_SLOT_TIME);
+  // resurrect a level with no life in this domain. Written through the
+  // named DEAD spans rather than a bare `slotSpan(0)` so the constants
+  // the Rust mirror exercises (`SlotSpan::DEAD`) are exercised here too.
+  assert.equal(wallDeadlineAfter(wallTime(0xffff_fffe), DEAD_WALL_SPAN), DEAD_WALL_TIME);
+  assert.equal(slotDeadlineAfter(slotTime(1_000_000), DEAD_SLOT_SPAN), DEAD_SLOT_TIME);
 });
 
 test('the dead deadline is dead at every now', () => {

@@ -131,14 +131,25 @@ fn asm_offsets_match_layout() {
     // at exactly 92.
     //
     // Note what the fusion changed about the STAKES of these offset
-    // asserts. Before it, a drifted RP_QUOTE_SLOT_OFF wrote four
-    // attacker-supplied bytes inside the clock-datum pair, and corrupting
-    // a datum is fail-SAFE — levels read as expired and stop matching.
-    // After it, the same drift writes eight bytes across this boundary,
-    // putting attacker-supplied bytes into an inventory `u64`, which is
-    // fail-DANGEROUS. These asserts are therefore load-bearing for fund
-    // safety now, not merely for correctness: any future proposal to
-    // relax, `#[ignore]`, or `#[cfg]`-gate them is a fund-safety change.
+    // asserts. It widened the blast radius of a drift rather than
+    // creating one: `RP_QUOTE_UNIX_OFF` at 88 drifting +4 could already
+    // put four leader-supplied bytes into `base_atoms`'s low half, so
+    // this bound was fund-safety-relevant before. What changed is that a
+    // single drifted offset now carries eight bytes across the boundary
+    // instead of four, and the pair moves as one store rather than two
+    // independently-targeted ones.
+    //
+    // (Resist the tempting shorthand that a corrupted datum is simply
+    // fail-safe. It is fail-safe *downward* — a datum pushed back makes
+    // levels read expired and stop matching — but a datum pushed forward
+    // saturates `deadline_after` toward `u32::MAX` and makes them
+    // effectively immortal instead. The slot/unix transposition this
+    // change guards against happens to land on the safe side; arbitrary
+    // corruption does not.)
+    //
+    // Either way these asserts are load-bearing for fund safety, not
+    // merely for correctness: any future proposal to relax, `#[ignore]`,
+    // or `#[cfg]`-gate them is a fund-safety change.
     assert_eq!(
         offset_of!(Vault, base_atoms),
         92,

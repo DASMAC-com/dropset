@@ -507,12 +507,23 @@ const _: () = assert!(core::mem::offset_of!(MarketHeader, free_head) == 16);
 // adjacent 32-bit fields move as one 64-bit copy wherever layout allows*
 // — recorded in architecture.md § **SetReferencePrice → ASM fast path**.
 //
-// These are load-bearing in a way the size asserts above are not: a
-// reorder that split a pair would leave every size assert green, leave
-// Rust correct, and silently turn the assembly's fused copy into a
-// *misaligned* one — writing the wall datum into the slot field. The
-// `offset_of!` test that pins the assembly's absolute offsets catches a
-// shift of the whole record; this catches a swap *within* it.
+// The `ReferencePrice` pin is load-bearing in a way the size asserts
+// above are not: a reorder that split that pair would leave every size
+// assert green, leave Rust correct, and silently leave the assembly's
+// fused copy **mis-targeted** — writing the wall datum into the slot
+// field. (Mis-targeted, not misaligned: the store stays 8-byte-shaped
+// and lands where it always did; it is the *fields* underneath that
+// moved.) The `offset_of!` test that pins the assembly's absolute
+// offsets catches a shift of the whole record; this catches a swap
+// *within* it.
+//
+// The `Level` and `Position` pins are a weaker claim, and deliberately
+// so — the assembly reads neither. `Level` crosses in the profile blob
+// via one `sol_memcpy_`, and `Position` is written by Rust at flush
+// time. They are pinned to keep all three domain pairs shaped alike, so
+// a future hot path can fuse those too without a layout change, and so
+// a reorder is a build break rather than a silent divergence between
+// the two mirrors.
 const _: () = assert!(
     core::mem::offset_of!(ReferencePrice, quote_unix)
         == core::mem::offset_of!(ReferencePrice, quote_slot) + 4

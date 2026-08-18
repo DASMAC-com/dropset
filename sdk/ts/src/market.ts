@@ -89,6 +89,15 @@ function zipSide(prices: Uint32Array, sizes: BigUint64Array): BookLevel[] {
  * mis-filter. They are unwrapped to bare numbers only on the line that
  * crosses into WASM, which is the one place the distinction cannot travel.
  *
+ * **The `bigint` arm is an unguarded residual, deliberately kept.** It
+ * exists because `rpc.getSlot()` returns a `bigint` and callers pass it
+ * straight through, but a `bigint` is assignable to *both* parameters —
+ * so `decodeDropsetMarketView(data, 1_700_000_000n, 57n)` still
+ * type-checks transposed. The brands guard branded values; they cannot
+ * guard a caller that opts out of them. Prefer handing these
+ * {@link slotTime} / {@link wallTime} values, which is what
+ * {@link fetchDropsetMarketView} does for its own default.
+ *
  * {@link initSimulator} must have resolved first, else the binding throws;
  * {@link fetchDropsetMarketView} handles that. Throws
  * {@link MarketLayoutError} when the bytes aren't a well-formed market slab.
