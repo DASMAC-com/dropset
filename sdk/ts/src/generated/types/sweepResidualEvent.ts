@@ -16,8 +16,11 @@ mint: Address;
  * one account the caller chooses freely — every other account on the
  * instruction is pinned by a constraint — so it is the one term of
  * the read-out an account diff can't attribute on its own.
+ *
+ * Named to match the two close-payout instructions, which pay out to
+ * a `token_recipient` of exactly this kind.
  */
-destination: Address; 
+tokenRecipient: Address; 
 /** `treasury.amount` read before the transfer. */
 treasuryAmount: bigint; 
 /** `Σ vault.<leg>_atoms` over every sector in the slab. */
@@ -38,8 +41,11 @@ mint: Address;
  * one account the caller chooses freely — every other account on the
  * instruction is pinned by a constraint — so it is the one term of
  * the read-out an account diff can't attribute on its own.
+ *
+ * Named to match the two close-payout instructions, which pay out to
+ * a `token_recipient` of exactly this kind.
  */
-destination: Address; 
+tokenRecipient: Address; 
 /** `treasury.amount` read before the transfer. */
 treasuryAmount: number | bigint; 
 /** `Σ vault.<leg>_atoms` over every sector in the slab. */
@@ -53,11 +59,11 @@ accruedFee: number | bigint;
 swept: number | bigint;  };
 
 export function getSweepResidualEventEncoder(): FixedSizeEncoder<SweepResidualEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['mint', getAddressEncoder()], ['destination', getAddressEncoder()], ['treasuryAmount', getU64Encoder()], ['vaultSum', getU64Encoder()], ['accruedFee', getU64Encoder()], ['swept', getU64Encoder()]]);
+    return getStructEncoder([['market', getAddressEncoder()], ['mint', getAddressEncoder()], ['tokenRecipient', getAddressEncoder()], ['treasuryAmount', getU64Encoder()], ['vaultSum', getU64Encoder()], ['accruedFee', getU64Encoder()], ['swept', getU64Encoder()]]);
 }
 
 export function getSweepResidualEventDecoder(): FixedSizeDecoder<SweepResidualEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['mint', getAddressDecoder()], ['destination', getAddressDecoder()], ['treasuryAmount', getU64Decoder()], ['vaultSum', getU64Decoder()], ['accruedFee', getU64Decoder()], ['swept', getU64Decoder()]]);
+    return getStructDecoder([['market', getAddressDecoder()], ['mint', getAddressDecoder()], ['tokenRecipient', getAddressDecoder()], ['treasuryAmount', getU64Decoder()], ['vaultSum', getU64Decoder()], ['accruedFee', getU64Decoder()], ['swept', getU64Decoder()]]);
 }
 
 export function getSweepResidualEventCodec(): FixedSizeCodec<SweepResidualEventArgs, SweepResidualEvent> {

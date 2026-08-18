@@ -33,13 +33,14 @@ use anchor_spl_v2::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use crate::{errors::DropsetError, state::Market, Registry};
+use crate::{errors::DropsetError, events::CloseMarketTreasuryEvent, state::Market, Registry};
 
 use super::transfer_out_leg;
 use crate::VaultAccess;
 
 // ── close_market_treasury ─────────────────────────────────────────────
 
+#[event_cpi]
 #[derive(Accounts)]
 pub struct CloseMarketTreasury {
     /// Registry admin — authorized via the registry admin set.
@@ -80,7 +81,14 @@ pub struct CloseMarketTreasury {
     /// fee plus any unsolicited transfer — immediately before the close.
     /// Any admin-chosen token account for `mint`; left unconstrained
     /// beyond "is a token account" because `transfer_checked` enforces
-    /// the mint match itself, matching `sweep_residual`'s destination.
+    /// the mint match itself, matching `sweep_residual`'s recipient.
+    ///
+    /// That justification is **conditional on there being something to
+    /// pay**: `transfer_out_leg` skips a zero amount, so on the
+    /// zero-balance close — the majority of teardown calls, and every call
+    /// against a market that never charged a fee — no CPI runs and nothing
+    /// validates the mint at all. Harmless, because nothing moves; a
+    /// wrong-mint recipient is only ever rejected on the paying path.
     ///
     /// Distinct from `rent_recipient` below, which receives the account's
     /// **lamports**: this one is a token account and takes the balance,
@@ -95,8 +103,10 @@ pub struct CloseMarketTreasury {
 }
 
 impl CloseMarketTreasury {
+    /// Returns the [`CloseMarketTreasuryEvent`] payload for `lib.rs` to
+    /// dispatch through `emit_cpi!`.
     #[inline(always)]
-    pub fn close_market_treasury(&mut self) -> Result<()> {
+    pub fn close_market_treasury(&mut self) -> Result<CloseMarketTreasuryEvent> {
         // Admin-only — gated at the dispatcher's feature-on arm via
         // `require_registry_admin` (`lib.rs`), so the caller is already a
         // known admin here.
@@ -170,11 +180,35 @@ impl CloseMarketTreasury {
         // `remainder` transferred just above is the whole balance — the
         // accrued fee *and* any unattributed residual (exact-in change, an
         // unsolicited transfer) that no `sweep_residual` collected first.
-        if is_base {
+        //
+        // So read the counter before zeroing it: it is the protocol-revenue
+        // share of that `remainder`, and the event below is the only place
+        // the split between the two survives the close.
+        let accrued_fee = if is_base {
+            let accrued = self.market.accrued_base_fee_atoms.get();
             self.market.accrued_base_fee_atoms = 0u64.into();
+            accrued
         } else {
+            let accrued = self.market.accrued_quote_fee_atoms.get();
             self.market.accrued_quote_fee_atoms = 0u64.into();
-        }
+            accrued
+        };
+
+        // Assemble the read-out from values already in hand. Placement is
+        // free — nothing here touches `treasury`, so this would compile
+        // just as well below the close; it sits with the counter read
+        // because that is where the two amount terms are established. The
+        // ordering that *is* load-bearing happened earlier: `remainder`
+        // had to be read before the transfer, not before the close.
+        let event = CloseMarketTreasuryEvent {
+            market: *self.market.address(),
+            mint: mint_addr,
+            is_base,
+            token_recipient: *self.token_recipient.address(),
+            rent_recipient: *self.rent_recipient.address(),
+            drained: remainder,
+            accrued_fee,
+        };
 
         // Close the ATA, signed by the market PDA. Lamports flow to
         // `rent_recipient` inside the token program's `CloseAccount`.
@@ -188,7 +222,7 @@ impl CloseMarketTreasury {
             &signer_seeds,
         );
         close_account(cpi)?;
-        Ok(())
+        Ok(event)
     }
 }
 

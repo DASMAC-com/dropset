@@ -5,6 +5,8 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
+pub(crate) mod r#close_market_treasury_event;
+pub(crate) mod r#close_registry_fee_vault_event;
 pub(crate) mod r#close_vault_event;
 pub(crate) mod r#create_vault_event;
 pub(crate) mod r#deposit_event;
@@ -23,6 +25,8 @@ pub(crate) mod r#set_taker_fee_event;
 pub(crate) mod r#sweep_residual_event;
 pub(crate) mod r#withdraw_event;
 
+pub use self::r#close_market_treasury_event::*;
+pub use self::r#close_registry_fee_vault_event::*;
 pub use self::r#close_vault_event::*;
 pub use self::r#create_vault_event::*;
 pub use self::r#deposit_event::*;

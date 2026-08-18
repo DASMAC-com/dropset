@@ -24,12 +24,13 @@ use anchor_spl_v2::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use crate::{errors::DropsetError, Registry};
+use crate::{errors::DropsetError, events::CloseRegistryFeeVaultEvent, Registry};
 
 use super::transfer_out_leg;
 
 // ── close_registry_fee_vault ──────────────────────────────────────────
 
+#[event_cpi]
 #[derive(Accounts)]
 pub struct CloseRegistryFeeVault {
     /// Registry admin — authorized via the registry admin set.
@@ -62,6 +63,11 @@ pub struct CloseRegistryFeeVault {
     /// account" because `transfer_checked` enforces the mint match
     /// itself, matching `close_market_treasury` and `sweep_residual`.
     ///
+    /// Conditional for the same reason as those two: `transfer_out_leg`
+    /// skips a zero amount, so a never-used fee vault closes with no CPI
+    /// and nothing validates the mint. The guarantee covers the paying
+    /// path only.
+    ///
     /// Distinct from `rent_recipient` below, which receives the account's
     /// **lamports**: this one is a token account and takes the balance,
     /// that one is any address and takes the rent.
@@ -74,8 +80,10 @@ pub struct CloseRegistryFeeVault {
 }
 
 impl CloseRegistryFeeVault {
+    /// Returns the [`CloseRegistryFeeVaultEvent`] payload for `lib.rs` to
+    /// dispatch through `emit_cpi!`.
     #[inline(always)]
-    pub fn close_registry_fee_vault(&mut self) -> Result<()> {
+    pub fn close_registry_fee_vault(&mut self) -> Result<CloseRegistryFeeVaultEvent> {
         // Admin-only — gated at the dispatcher's feature-on arm via
         // `require_registry_admin` (`lib.rs`), so the caller is already a
         // known admin here.
@@ -117,6 +125,17 @@ impl CloseRegistryFeeVault {
             &signer_seeds,
         )?;
 
+        // Assembled from values already in hand; nothing here reads
+        // `fee_vault`, so the placement is free (see the same note in
+        // `close_market.rs`). `collected` is the term that had to be read
+        // before the transfer.
+        let event = CloseRegistryFeeVaultEvent {
+            fee_mint: *self.fee_mint.address(),
+            token_recipient: *self.token_recipient.address(),
+            rent_recipient: *self.rent_recipient.address(),
+            collected,
+        };
+
         let cpi = CpiContext::new_with_signer(
             self.token_program.address(),
             CloseAccount {
@@ -127,7 +146,7 @@ impl CloseRegistryFeeVault {
             &signer_seeds,
         );
         close_account(cpi)?;
-        Ok(())
+        Ok(event)
     }
 }
 

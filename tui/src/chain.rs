@@ -390,6 +390,8 @@ pub fn build_close_market_treasury_ix(
         treasury: *treasury,
         token_recipient: *token_recipient,
         rent_recipient: *rent_recipient,
+        event_authority: event_authority(),
+        program: DROPSET_ID,
     }
     .instruction()
 }
@@ -433,6 +435,8 @@ pub fn build_close_registry_fee_vault_ix(
         fee_vault: associated_token_address(&registry, fee_mint, fee_token_program),
         token_recipient: *token_recipient,
         rent_recipient: *rent_recipient,
+        event_authority: event_authority(),
+        program: DROPSET_ID,
     }
     .instruction()
 }

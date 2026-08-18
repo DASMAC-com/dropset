@@ -213,7 +213,14 @@
             "fee plus any unsolicited transfer — immediately before the close.",
             "Any admin-chosen token account for `mint`; left unconstrained",
             "beyond \"is a token account\" because `transfer_checked` enforces",
-            "the mint match itself, matching `sweep_residual`'s destination.",
+            "the mint match itself, matching `sweep_residual`'s recipient.",
+            "",
+            "That justification is **conditional on there being something to",
+            "pay**: `transfer_out_leg` skips a zero amount, so on the",
+            "zero-balance close — the majority of teardown calls, and every call",
+            "against a market that never charged a fee — no CPI runs and nothing",
+            "validates the mint at all. Harmless, because nothing moves; a",
+            "wrong-mint recipient is only ever rejected on the paying path.",
             "",
             "Distinct from `rent_recipient` below, which receives the account's",
             "**lamports**: this one is a token account and takes the balance,",
@@ -229,6 +236,44 @@
             "chooses where reclaimed rent lands."
           ],
           "writable": true
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
         }
       ],
       "args": []
@@ -354,6 +399,11 @@
             "account\" because `transfer_checked` enforces the mint match",
             "itself, matching `close_market_treasury` and `sweep_residual`.",
             "",
+            "Conditional for the same reason as those two: `transfer_out_leg`",
+            "skips a zero amount, so a never-used fee vault closes with no CPI",
+            "and nothing validates the mint. The guarantee covers the paying",
+            "path only.",
+            "",
             "Distinct from `rent_recipient` below, which receives the account's",
             "**lamports**: this one is a token account and takes the balance,",
             "that one is any address and takes the rent."
@@ -367,6 +417,44 @@
             "CHECK: rent destination only."
           ],
           "writable": true
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
         }
       ],
       "args": []
@@ -2801,14 +2889,21 @@
           "writable": true
         },
         {
-          "name": "destination",
+          "name": "token_recipient",
           "docs": [
             "Where the residual lands — any admin-chosen token account for",
             "`mint`. Left unconstrained beyond \"is a token account\" on purpose:",
             "`transfer_checked` re-derives and enforces the mint match itself, so",
             "a `token::mint` constraint would only duplicate a check the CPI",
             "already runs, and the admin may legitimately want a non-ATA",
-            "destination."
+            "recipient.",
+            "",
+            "That delegation is **conditional**, exactly as on the two",
+            "close-payout instructions: `transfer_out_leg` skips a zero amount,",
+            "so a zero-residual sweep — the healthy case, and the one this",
+            "handler still emits a read-out for — makes no CPI at all and",
+            "nothing validates the mint. Harmless, since nothing moves; but the",
+            "justification above only covers the paying path."
           ],
           "writable": true
         },
@@ -3191,6 +3286,32 @@
     }
   ],
   "events": [
+    {
+      "name": "CloseMarketTreasuryEvent",
+      "discriminator": [
+        234,
+        64,
+        141,
+        172,
+        128,
+        178,
+        239,
+        232
+      ]
+    },
+    {
+      "name": "CloseRegistryFeeVaultEvent",
+      "discriminator": [
+        82,
+        31,
+        124,
+        13,
+        220,
+        141,
+        65,
+        50
+      ]
+    },
     {
       "name": "CloseVaultEvent",
       "discriminator": [
@@ -3635,6 +3756,146 @@
     }
   ],
   "types": [
+    {
+      "name": "CloseMarketTreasuryEvent",
+      "docs": [
+        "Emitted by `close_market_treasury` as a market treasury leg is drained",
+        "and destroyed during teardown.",
+        "",
+        "The close is the **only** path that moves a leg's accrued taker fee out",
+        "of custody — `sweep_residual` subtracts the accrued counters by design",
+        "and no other harvest instruction exists. Without this record an indexer",
+        "reconciling fee revenue would see `accrued_<leg>_fee_atoms` read zero on",
+        "its next poll and then the treasury account disappear, with no on-chain",
+        "statement of where the atoms went. `drained` and `accrued_fee` together",
+        "split the outbound transfer into the protocol's revenue and everything",
+        "else (unsolicited transfers, dust), so the payout reconciles without",
+        "reading state that no longer exists."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "docs": [
+              "Leg closed — one of the market's two mints."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "is_base",
+            "docs": [
+              "`true` when `mint` is the market's base leg. Carried explicitly",
+              "because the market account is closed moments later, so a consumer",
+              "cannot re-derive the leg from chain state afterwards."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "token_recipient",
+            "docs": [
+              "Token account the drain was aimed at. What it *received* is",
+              "`drained` less any transfer fee the mint withheld in transit, so on",
+              "a Token-2022 transfer-fee mint the credit is smaller than the debit",
+              "recorded below."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "rent_recipient",
+            "docs": [
+              "Address the treasury's rent lamports were paid to."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "drained",
+            "docs": [
+              "`treasury.amount` read immediately before the drain — every atom",
+              "that left, protocol revenue and residual alike."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "accrued_fee",
+            "docs": [
+              "The leg's `accrued_<leg>_fee_atoms` at close, zeroed by this",
+              "instruction: the protocol-revenue share of `drained`. The rest,",
+              "`drained.saturating_sub(accrued_fee)`, is residual that no counter",
+              "claimed — normally an unsolicited transfer that arrived after the",
+              "last sweep, or a balance adopted with a squatted ATA at market",
+              "birth.",
+              "",
+              "**Saturate that subtraction.** `accrued_fee` can exceed `drained`",
+              "on a transfer-fee mint, where atoms were booked to the counter but",
+              "withheld in transit — the same pre-existing shortfall",
+              "`sweep_residual` saturates against. Both terms are reported raw so",
+              "the shortfall stays visible; it is the consumer that must not",
+              "underflow."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CloseRegistryFeeVaultEvent",
+      "docs": [
+        "Emitted by `close_registry_fee_vault` as a registry fee ATA is drained",
+        "and destroyed during teardown.",
+        "",
+        "The registry-side counterpart to [`CloseMarketTreasuryEvent`], and",
+        "outbound for the same reason: nothing else moves tokens out of a fee",
+        "ATA, so this close is where collected `create_market` / `create_vault`",
+        "fee revenue leaves custody. A registry may hold one such ATA per",
+        "historical fee mint, each closed by its own call, so `fee_mint` is what",
+        "distinguishes the records."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "fee_mint",
+            "docs": [
+              "Mint of the fee vault closed — the discriminator across a",
+              "registry's several historical fee ATAs."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_recipient",
+            "docs": [
+              "Token account the drain was aimed at. As on the market-treasury",
+              "event, what it received is `collected` less any transfer fee the",
+              "mint withheld in transit."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "rent_recipient",
+            "docs": [
+              "Address the fee vault's rent lamports were paid to."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "collected",
+            "docs": [
+              "`fee_vault.amount` read immediately before the drain: the fees this",
+              "vault accumulated over its life, plus anything sent to it",
+              "unsolicited. The registry tracks no per-mint counter to split those",
+              "two apart, so unlike the market-treasury event there is no accrued",
+              "term to carry."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
     {
       "name": "CloseVaultEvent",
       "docs": [
@@ -4524,12 +4785,15 @@
             "type": "pubkey"
           },
           {
-            "name": "destination",
+            "name": "token_recipient",
             "docs": [
               "Token account the residual was paid to. Recorded because it is the",
               "one account the caller chooses freely — every other account on the",
               "instruction is pinned by a constraint — so it is the one term of",
-              "the read-out an account diff can't attribute on its own."
+              "the read-out an account diff can't attribute on its own.",
+              "",
+              "Named to match the two close-payout instructions, which pay out to",
+              "a `token_recipient` of exactly this kind."
             ],
             "type": "pubkey"
           },

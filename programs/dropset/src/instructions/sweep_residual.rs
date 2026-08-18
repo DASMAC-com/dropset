@@ -21,6 +21,10 @@
 //!   `compute_fill`). This is the common case — it accrues on ordinary
 //!   taker-bound swaps, which makes this instruction routine collection
 //!   rather than an exceptional recovery path.
+//! * A balance **adopted at market birth**. `init` and `create_market`
+//!   adopt a pre-existing treasury ATA rather than rejecting one, so a
+//!   squatter can fund the address before the market exists — a market can
+//!   open holding a residual, before it has filled anything at all.
 //!
 //! What the residual can no longer do on its own is distinguish those
 //! from a rounding error, a share-math slip, or a botched rollback that
@@ -85,9 +89,16 @@ pub struct SweepResidual {
     /// `transfer_checked` re-derives and enforces the mint match itself, so
     /// a `token::mint` constraint would only duplicate a check the CPI
     /// already runs, and the admin may legitimately want a non-ATA
-    /// destination.
+    /// recipient.
+    ///
+    /// That delegation is **conditional**, exactly as on the two
+    /// close-payout instructions: `transfer_out_leg` skips a zero amount,
+    /// so a zero-residual sweep — the healthy case, and the one this
+    /// handler still emits a read-out for — makes no CPI at all and
+    /// nothing validates the mint. Harmless, since nothing moves; but the
+    /// justification above only covers the paying path.
     #[account(mut)]
-    pub destination: InterfaceAccount<TokenAccount>,
+    pub token_recipient: InterfaceAccount<TokenAccount>,
 }
 
 impl SweepResidual {
@@ -146,7 +157,7 @@ impl SweepResidual {
             self.token_program.address(),
             self.treasury.cpi_handle_mut(),
             self.mint.cpi_handle(),
-            self.destination.cpi_handle_mut(),
+            self.token_recipient.cpi_handle_mut(),
             self.market.cpi_handle(),
             swept,
             self.mint.decimals(),
@@ -156,7 +167,7 @@ impl SweepResidual {
         Ok(SweepResidualEvent {
             market: *self.market.address(),
             mint: mint_addr,
-            destination: *self.destination.address(),
+            token_recipient: *self.token_recipient.address(),
             treasury_amount,
             vault_sum: vault_sum.min(u64::MAX as u128) as u64,
             accrued_fee: accrued,

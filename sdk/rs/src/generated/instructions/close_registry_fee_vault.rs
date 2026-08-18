@@ -36,6 +36,11 @@ pub struct CloseRegistryFeeVault {
     /// account" because `transfer_checked` enforces the mint match
     /// itself, matching `close_market_treasury` and `sweep_residual`.
     ///
+    /// Conditional for the same reason as those two: `transfer_out_leg`
+    /// skips a zero amount, so a never-used fee vault closes with no CPI
+    /// and nothing validates the mint. The guarantee covers the paying
+    /// path only.
+    ///
     /// Distinct from `rent_recipient` below, which receives the account's
     /// **lamports**: this one is a token account and takes the balance,
     /// that one is any address and takes the rent.
@@ -43,6 +48,10 @@ pub struct CloseRegistryFeeVault {
     /// Receives the fee vault's rent lamports on close.
     /// CHECK: rent destination only.
     pub rent_recipient: solana_pubkey::Pubkey,
+    /// CHECK: Only the event authority can invoke self-CPI
+    pub event_authority: solana_pubkey::Pubkey,
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub program: solana_pubkey::Pubkey,
 }
 
 impl CloseRegistryFeeVault {
@@ -55,7 +64,7 @@ impl CloseRegistryFeeVault {
         &self,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(9 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.admin, true,
         ));
@@ -78,6 +87,14 @@ impl CloseRegistryFeeVault {
         ));
         accounts.push(solana_instruction::AccountMeta::new(
             self.rent_recipient,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.event_authority,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.program,
             false,
         ));
         accounts.extend_from_slice(remaining_accounts);
@@ -128,6 +145,8 @@ impl Default for CloseRegistryFeeVaultInstructionData {
 ///   4. `[writable]` fee_vault
 ///   5. `[writable]` token_recipient
 ///   6. `[writable]` rent_recipient
+///   7. `[]` event_authority
+///   8. `[]` program
 #[derive(Clone, Debug, Default)]
 pub struct CloseRegistryFeeVaultBuilder {
     admin: Option<solana_pubkey::Pubkey>,
@@ -137,6 +156,8 @@ pub struct CloseRegistryFeeVaultBuilder {
     fee_vault: Option<solana_pubkey::Pubkey>,
     token_recipient: Option<solana_pubkey::Pubkey>,
     rent_recipient: Option<solana_pubkey::Pubkey>,
+    event_authority: Option<solana_pubkey::Pubkey>,
+    program: Option<solana_pubkey::Pubkey>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
@@ -188,6 +209,11 @@ impl CloseRegistryFeeVaultBuilder {
     /// account" because `transfer_checked` enforces the mint match
     /// itself, matching `close_market_treasury` and `sweep_residual`.
     ///
+    /// Conditional for the same reason as those two: `transfer_out_leg`
+    /// skips a zero amount, so a never-used fee vault closes with no CPI
+    /// and nothing validates the mint. The guarantee covers the paying
+    /// path only.
+    ///
     /// Distinct from `rent_recipient` below, which receives the account's
     /// **lamports**: this one is a token account and takes the balance,
     /// that one is any address and takes the rent.
@@ -201,6 +227,18 @@ impl CloseRegistryFeeVaultBuilder {
     #[inline(always)]
     pub fn rent_recipient(&mut self, rent_recipient: solana_pubkey::Pubkey) -> &mut Self {
         self.rent_recipient = Some(rent_recipient);
+        self
+    }
+    /// CHECK: Only the event authority can invoke self-CPI
+    #[inline(always)]
+    pub fn event_authority(&mut self, event_authority: solana_pubkey::Pubkey) -> &mut Self {
+        self.event_authority = Some(event_authority);
+        self
+    }
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    #[inline(always)]
+    pub fn program(&mut self, program: solana_pubkey::Pubkey) -> &mut Self {
+        self.program = Some(program);
         self
     }
     /// Add an additional account to the instruction.
@@ -230,6 +268,8 @@ impl CloseRegistryFeeVaultBuilder {
             fee_vault: self.fee_vault.expect("fee_vault is not set"),
             token_recipient: self.token_recipient.expect("token_recipient is not set"),
             rent_recipient: self.rent_recipient.expect("rent_recipient is not set"),
+            event_authority: self.event_authority.expect("event_authority is not set"),
+            program: self.program.expect("program is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(&self.__remaining_accounts)
@@ -261,6 +301,11 @@ pub struct CloseRegistryFeeVaultCpiAccounts<'a, 'b> {
     /// account" because `transfer_checked` enforces the mint match
     /// itself, matching `close_market_treasury` and `sweep_residual`.
     ///
+    /// Conditional for the same reason as those two: `transfer_out_leg`
+    /// skips a zero amount, so a never-used fee vault closes with no CPI
+    /// and nothing validates the mint. The guarantee covers the paying
+    /// path only.
+    ///
     /// Distinct from `rent_recipient` below, which receives the account's
     /// **lamports**: this one is a token account and takes the balance,
     /// that one is any address and takes the rent.
@@ -268,6 +313,10 @@ pub struct CloseRegistryFeeVaultCpiAccounts<'a, 'b> {
     /// Receives the fee vault's rent lamports on close.
     /// CHECK: rent destination only.
     pub rent_recipient: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Only the event authority can invoke self-CPI
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
 /// `close_registry_fee_vault` CPI instruction.
@@ -297,6 +346,11 @@ pub struct CloseRegistryFeeVaultCpi<'a, 'b> {
     /// account" because `transfer_checked` enforces the mint match
     /// itself, matching `close_market_treasury` and `sweep_residual`.
     ///
+    /// Conditional for the same reason as those two: `transfer_out_leg`
+    /// skips a zero amount, so a never-used fee vault closes with no CPI
+    /// and nothing validates the mint. The guarantee covers the paying
+    /// path only.
+    ///
     /// Distinct from `rent_recipient` below, which receives the account's
     /// **lamports**: this one is a token account and takes the balance,
     /// that one is any address and takes the rent.
@@ -304,6 +358,10 @@ pub struct CloseRegistryFeeVaultCpi<'a, 'b> {
     /// Receives the fee vault's rent lamports on close.
     /// CHECK: rent destination only.
     pub rent_recipient: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Only the event authority can invoke self-CPI
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
 impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
@@ -320,6 +378,8 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
             fee_vault: accounts.fee_vault,
             token_recipient: accounts.token_recipient,
             rent_recipient: accounts.rent_recipient,
+            event_authority: accounts.event_authority,
+            program: accounts.program,
         }
     }
     #[inline(always)]
@@ -345,7 +405,7 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(9 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.admin.key,
             true,
@@ -374,6 +434,14 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
             *self.rent_recipient.key,
             false,
         ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.event_authority.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.program.key,
+            false,
+        ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
                 pubkey: *remaining_account.0.key,
@@ -390,7 +458,7 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(8 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(10 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.admin.clone());
         account_infos.push(self.registry.clone());
@@ -399,6 +467,8 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
         account_infos.push(self.fee_vault.clone());
         account_infos.push(self.token_recipient.clone());
         account_infos.push(self.rent_recipient.clone());
+        account_infos.push(self.event_authority.clone());
+        account_infos.push(self.program.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -422,6 +492,8 @@ impl<'a, 'b> CloseRegistryFeeVaultCpi<'a, 'b> {
 ///   4. `[writable]` fee_vault
 ///   5. `[writable]` token_recipient
 ///   6. `[writable]` rent_recipient
+///   7. `[]` event_authority
+///   8. `[]` program
 #[derive(Clone, Debug)]
 pub struct CloseRegistryFeeVaultCpiBuilder<'a, 'b> {
     instruction: Box<CloseRegistryFeeVaultCpiBuilderInstruction<'a, 'b>>,
@@ -438,6 +510,8 @@ impl<'a, 'b> CloseRegistryFeeVaultCpiBuilder<'a, 'b> {
             fee_vault: None,
             token_recipient: None,
             rent_recipient: None,
+            event_authority: None,
+            program: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -488,6 +562,11 @@ impl<'a, 'b> CloseRegistryFeeVaultCpiBuilder<'a, 'b> {
     /// account" because `transfer_checked` enforces the mint match
     /// itself, matching `close_market_treasury` and `sweep_residual`.
     ///
+    /// Conditional for the same reason as those two: `transfer_out_leg`
+    /// skips a zero amount, so a never-used fee vault closes with no CPI
+    /// and nothing validates the mint. The guarantee covers the paying
+    /// path only.
+    ///
     /// Distinct from `rent_recipient` below, which receives the account's
     /// **lamports**: this one is a token account and takes the balance,
     /// that one is any address and takes the rent.
@@ -507,6 +586,21 @@ impl<'a, 'b> CloseRegistryFeeVaultCpiBuilder<'a, 'b> {
         rent_recipient: &'b solana_account_info::AccountInfo<'a>,
     ) -> &mut Self {
         self.instruction.rent_recipient = Some(rent_recipient);
+        self
+    }
+    /// CHECK: Only the event authority can invoke self-CPI
+    #[inline(always)]
+    pub fn event_authority(
+        &mut self,
+        event_authority: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.event_authority = Some(event_authority);
+        self
+    }
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    #[inline(always)]
+    pub fn program(&mut self, program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.program = Some(program);
         self
     }
     /// Add an additional account to the instruction.
@@ -568,6 +662,13 @@ impl<'a, 'b> CloseRegistryFeeVaultCpiBuilder<'a, 'b> {
                 .instruction
                 .rent_recipient
                 .expect("rent_recipient is not set"),
+
+            event_authority: self
+                .instruction
+                .event_authority
+                .expect("event_authority is not set"),
+
+            program: self.instruction.program.expect("program is not set"),
         };
         instruction.invoke_signed_with_remaining_accounts(
             signers_seeds,
@@ -586,6 +687,8 @@ struct CloseRegistryFeeVaultCpiBuilderInstruction<'a, 'b> {
     fee_vault: Option<&'b solana_account_info::AccountInfo<'a>>,
     token_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
     rent_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
+    event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
+    program: Option<&'b solana_account_info::AccountInfo<'a>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }
