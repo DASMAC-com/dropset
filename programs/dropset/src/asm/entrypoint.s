@@ -249,12 +249,26 @@ quote_write:
     # silently turning this into a store that writes the wall datum into
     # the slot field.
     #
-    # Alignment is a non-issue and is already settled by shipping code:
-    # &vault is only 4-aligned (VAULT_SIZE 692 and SLAB_ITEMS_OFF 268 are
-    # both ≡ 4 mod 8, so every even sector sits at a 4-aligned address),
-    # which means the stxdw at RP_STAMP_OFF above has always been a
-    # 4-aligned 8-byte store. sBPF permits it; asm_parity has been proving
-    # so on every run.
+    # Alignment is a non-issue, and both halves of the pair are settled by
+    # shipping code — they need DIFFERENT precedents, so take them
+    # separately.
+    #
+    # The STORE is the weaker claim: &vault is only 4-aligned (VAULT_SIZE
+    # 692 and SLAB_ITEMS_OFF 268 are both ≡ 4 mod 8, so every even sector
+    # sits at a 4-aligned address), which means the stxdw at RP_STAMP_OFF
+    # above has always been a 4-aligned 8-byte store.
+    #
+    # The LOAD is the novel one and that precedent does NOT cover it.
+    # Instruction data starts 8-aligned, so [r2 + 9] is 1 mod 8 — a fully
+    # byte-aligned 8-byte read, weaker than anything on the store side.
+    # What covers it is the pre-existing word loads on the same register:
+    # ldxw [r2 + IX_VAULT_IDX_OFF] (+1) and ldxw [r2 + IX_PRICE_BITS_OFF]
+    # (+5) are both 1 mod 4 and have always shipped. A VM applying any
+    # size-relative alignment rule to ldx would already reject those, so it
+    # applies none, and the width of the access is irrelevant.
+    #
+    # asm_parity proves both empirically on the real VM every run, with a
+    # fixture that stamps distinguished byte patterns through this path.
     #
     # Bounds are unchanged: this still reads at most to ix_data+17, so the
     # truncated-payload audit under the error codes above still holds

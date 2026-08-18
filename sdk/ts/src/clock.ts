@@ -91,6 +91,16 @@ export const DEAD_WALL_SPAN = wallSpan(0);
  * The offset meaning **no slot bound** — a level bounded only by its
  * wall TIF. Mirrors the Rust `SlotSpan::UNBOUNDED`.
  *
+ * Note the one place the Rust↔TS transliteration rule breaks: the `DEAD`
+ * constants map mechanically (`SlotSpan::DEAD` ↔ {@link DEAD_SLOT_SPAN}),
+ * but `UNBOUNDED` does not — this is `NO_SLOT_BOUND`, not
+ * `UNBOUNDED_SLOT_SPAN`. That is deliberate rather than drift:
+ * `NO_SLOT_BOUND` predates the domain types and is already exported from
+ * `@dropset/sdk`, so renaming it to chase symmetry would leave two live
+ * spellings of one value in TypeScript — exactly the duplication these
+ * types were introduced to remove. One asymmetric name across languages
+ * beats two synonymous names within one.
+ *
  * Expressed as the maximum offset rather than a reserved sentinel, so
  * the match gate stays one unconditional compare per domain. The `u32`
  * ceiling is ~4.3e9 slots, decades of chain time even at the fastest

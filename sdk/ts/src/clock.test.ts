@@ -11,7 +11,13 @@
  * "Unused '@ts-expect-error' directive" if the line below it ever
  * compiles cleanly. So if someone widens {@link SlotTime} back to a bare
  * `number`, or drops a brand, `pnpm exec tsc --noEmit` goes red here.
- * These lines are never executed — the type checker is the assertion.
+ *
+ * The type checker is the assertion, but note the lines below **do** run:
+ * they sit in a `node:test` callback and the brands are erased at
+ * runtime, so `slotDeadlineAfter(slotTime(7), wallSpan(600))` really
+ * executes. That is harmless while these factories are identity
+ * functions, and worth knowing if one ever starts validating and
+ * throwing.
  */
 
 import assert from 'node:assert/strict';
@@ -60,6 +66,16 @@ test('a domain transposition does not type-check', () => {
   // brand has to be applied deliberately, at a boundary.
   // @ts-expect-error — a bare number is not a SlotTime
   slotIsLiveAt(slotTime(57), 56);
+
+  // The one axis TS canNOT guard, recorded so nobody assumes it does:
+  // a relational compare of two spans from different domains type-checks
+  // cleanly, because `<` only requires both operands be assignable to
+  // `number` and a branded number is. Verified: putting
+  // `// @ts-expect-error` above `slotSpan(120) < wallSpan(36)` makes tsc
+  // report TS2578 "Unused directive". Rust's newtypes DO catch this (it
+  // is the fourth `compile_fail` doctest in `dropset-math-core::clock`),
+  // so the two guards are not at parity and the docs say so.
+  assert.ok(true);
 
   // The assertion is the type check above; this keeps the runtime test
   // honest about having executed.

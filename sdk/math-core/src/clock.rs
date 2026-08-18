@@ -96,7 +96,19 @@
 //! let live = wall_deadline.is_live_at(WallTime::new(1_700_000_599))
 //!     && slot_deadline.is_live_at(SlotTime::new(56));
 //! assert!(live);
+//!
+//! // Comparison WITHIN a domain is fine, and this line is load-bearing:
+//! // it is the positive control for the fourth `compile_fail` above.
+//! // Without it, dropping `PartialOrd` from the spans entirely would
+//! // keep that doctest failing — for the wrong reason — and it would
+//! // still report green.
+//! assert!(SlotSpan::new(36) < SlotSpan::new(120));
 //! ```
+//!
+//! Every symbol the negative blocks use also appears in the positive
+//! block above, which must compile — so a rename, a dropped
+//! constructor, or a misspelled method turns *that* red rather than
+//! letting a negative pass vacuously.
 
 use bytemuck::{Pod, Zeroable};
 

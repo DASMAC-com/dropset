@@ -125,6 +125,25 @@ fn asm_offsets_match_layout() {
         88,
         "RP_QUOTE_UNIX_OFF"
     );
+    // The field immediately past the fused 8-byte store, pinned so
+    // "nothing bleeds" is self-evident here rather than left to
+    // arithmetic: the store covers vault+84..92 and `base_atoms` begins
+    // at exactly 92.
+    //
+    // Note what the fusion changed about the STAKES of these offset
+    // asserts. Before it, a drifted RP_QUOTE_SLOT_OFF wrote four
+    // attacker-supplied bytes inside the clock-datum pair, and corrupting
+    // a datum is fail-SAFE — levels read as expired and stop matching.
+    // After it, the same drift writes eight bytes across this boundary,
+    // putting attacker-supplied bytes into an inventory `u64`, which is
+    // fail-DANGEROUS. These asserts are therefore load-bearing for fund
+    // safety now, not merely for correctness: any future proposal to
+    // relax, `#[ignore]`, or `#[cfg]`-gate them is a fund-safety change.
+    assert_eq!(
+        offset_of!(Vault, base_atoms),
+        92,
+        "fused store's upper bound"
+    );
     assert_eq!(offset_of!(Vault, profile), 148, "VAULT_PROFILE_OFF");
     assert_eq!(size_of::<LiquidityProfile>(), 224, "PROFILE_SIZE");
 

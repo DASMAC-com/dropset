@@ -1632,8 +1632,12 @@ already minimal.
 
 The adjacency the fusion depends on is **pinned, not conventional**.
 `layout.rs` const-asserts `quote_unix == quote_slot + 4` (and the same
-for the `Level` and `Position` domain pairs), and `asm_parity.rs`
-asserts the instruction-data side reads as one little-endian `u64`. A
+for the `Level` and `Position` domain pairs), while `asm_parity.rs`
+asserts the **absolute** offsets the assembly hardcodes (84 / 88, plus
+`base_atoms` at 92 as the fused store's upper bound) and that the
+instruction-data side reads as one little-endian `u64` — the wire half,
+which no const-assert can see. Both are needed: the const-assert pins
+adjacency but would stay green if the whole record moved. A
 field reorder that split a pair would leave every size assert green and
 Rust correct while silently turning the fused store into one that writes
 the wall datum into the slot field — so it breaks the build instead.
@@ -1677,8 +1681,13 @@ newtypes, with branded mirrors in `sdk/ts/src/clock.ts`, and the only
 arithmetic offered is `Time + Span → Time` within a domain plus
 comparison within a domain. All four ways the domains were confusable —
 datum/datum, offset/offset, now/now, and a datum paired with the wrong
-offset — are compile errors in both languages, pinned by `compile_fail`
-doctests in Rust and `@ts-expect-error` assertions in TS. The types are
+offset — are compile errors in **Rust**, pinned by `compile_fail`
+doctests. TypeScript catches three of the four: a branded `number` is
+still assignable to `number`, so a *relational comparison* across domains
+(`slotSpan(a) < wallSpan(b)`) type-checks, while assignment and parameter
+passing do not. The nine `@ts-expect-error` assertions in
+`sdk/ts/src/clock.test.ts` pin what TS does catch, and record that gap
+explicitly rather than implying parity. The types are
 layout- and IDL-invisible: stored fields keep their alignment-1 pod
 wrappers and hand these out through typed accessors, and the assembly
 never sees them. Instruction arguments and the conformance fixtures stay

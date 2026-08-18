@@ -51,6 +51,7 @@ deque
 devnet
 dflow
 discordapp
+doctest
 doctests
 dotless
 drainable
