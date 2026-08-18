@@ -130,7 +130,14 @@ export function decodeDropsetMarketView(
  */
 export type SlotRpc = { getSlot: (...args: never[]) => { send: () => Promise<bigint> } };
 
-/** Wall-clock now, in the unix seconds level expiry is denominated in. */
+/**
+ * Wall-clock now, in the unix seconds level expiry is denominated in.
+ *
+ * Read straight off the device clock, so it is only sound for a caller that
+ * can bound its own: a host with disciplined time (the bots, the TUI). A
+ * browser cannot, and must gate against a chain-read time instead — which is
+ * why no entry point here reaches for this as a default.
+ */
 export function nowUnix(): number {
   return Math.floor(Date.now() / 1000);
 }
@@ -142,8 +149,11 @@ export function nowUnix(): number {
  *
  * Level expiry is **dual-domain** — each level carries a slot deadline and
  * a wall-clock deadline and rests only inside both — so the filter needs
- * both clocks. The slot comes from `getSlot` unless pinned via
- * `config.nowSlot`; the wall clock defaults to the browser's.
+ * both clocks. The two are not symmetric. The slot is a chain read, so it
+ * defaults to `getSlot` unless pinned via `config.nowSlot`. The wall clock
+ * has no such fallback and is **required**: the engine judges that deadline
+ * against cluster time, so a caller that cannot bound its own clock must
+ * gate against a chain-read time rather than a device one.
  *
  * Instantiates the shared WASM binding on first use (idempotent, and the
  * same module the swap simulator uses), so callers need no separate init
@@ -152,7 +162,7 @@ export function nowUnix(): number {
 export async function fetchDropsetMarketView(
   rpc: Parameters<typeof fetchEncodedAccount>[0] & SlotRpc,
   address: Address,
-  config?: FetchAccountConfig & { nowSlot?: number | bigint; nowUnix?: number | bigint },
+  config: FetchAccountConfig & { nowSlot?: number | bigint; nowUnix: number | bigint },
 ): Promise<DropsetMarketView> {
   // The account fetch and the WASM instantiation are independent, so overlap
   // them; `initSimulator` is idempotent, so a polling caller pays the
@@ -162,6 +172,6 @@ export async function fetchDropsetMarketView(
     initSimulator(),
   ]);
   assertAccountExists(account);
-  const nowSlot = config?.nowSlot ?? (await rpc.getSlot().send());
-  return decodeDropsetMarketView(account.data, nowSlot, config?.nowUnix ?? nowUnix());
+  const nowSlot = config.nowSlot ?? (await rpc.getSlot().send());
+  return decodeDropsetMarketView(account.data, nowSlot, config.nowUnix);
 }

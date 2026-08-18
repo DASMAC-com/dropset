@@ -60,12 +60,30 @@ let initPromise: Promise<void> | null = null;
  * (turbopack / webpack) emit automatically; pass an {@link InitInput}
  * (URL, `Response`, bytes, or a compiled `Module`) to override — e.g. in a
  * Node test where there is no asset pipeline.
+ *
+ * Only a *fulfilled* instantiation is memoized. A rejection clears the memo
+ * so the next call retries: the callers that depend on this — quoting and,
+ * since the book is read through the same module, the order-book poll — all
+ * run self-healing retry loops, and caching the rejection would latch a
+ * transient load failure (a network blip, a tab restore) until page reload,
+ * leaving those loops spinning against a promise that can never resolve.
+ *
+ * Note the retry instantiates from whichever `input` the *next* caller
+ * supplies, not the one that failed — so a consumer that mixes explicit
+ * bytes with the no-argument form would retry against a different source
+ * than it first asked for. Every caller here is consistent in its arity, and
+ * the case was unreachable while a rejection latched forever.
  */
 export function initSimulator(input?: InitInput): Promise<void> {
   if (initPromise === null) {
     initPromise = initWasm(
       input === undefined ? undefined : { module_or_path: input },
-    ).then(() => undefined);
+    )
+      .then(() => undefined)
+      .catch((e: unknown) => {
+        initPromise = null;
+        throw e;
+      });
   }
   return initPromise;
 }
