@@ -3,6 +3,7 @@
 import {
   DflowError,
   type DflowErrorKind,
+  type GatedEclobLeg,
   NoRouteError,
   quoteBestRoute,
 } from "@dropset/sdk";
@@ -156,23 +157,28 @@ export const useRouterQuote = (
         // every tick. When the leg is live the slot comes from the chain and
         // the wall clock is checked against it, corrected only when the device
         // has drifted out of tolerance. See lib/eclob/chainClock.ts.
-        let nowSlot: number | undefined;
-        let nowUnix: number | undefined;
+        //
+        // The SDK takes the leg and its clocks as one object, so that pairing
+        // is structural rather than a convention this hook has to remember:
+        // there is no way to price our book without naming the wall clock
+        // that gates it, and no clock to supply when there is no book.
+        let gatedEclob: GatedEclobLeg | null = null;
         if (eclobLeg) {
           const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
           if (cancelled || gen !== generation) return;
           await syncChainClock(rpc, slot);
           if (cancelled || gen !== generation) return;
-          nowSlot = Number(slot);
-          nowUnix = gateNowUnix();
+          gatedEclob = {
+            leg: eclobLeg,
+            nowSlot: Number(slot),
+            nowUnix: gateNowUnix(),
+          };
         }
 
         const { best, aggregator } = await quoteBestRoute(rpc, {
           amount: atomic,
-          nowSlot,
-          nowUnix,
           signal: controller.signal,
-          eclob: eclobLeg,
+          eclob: gatedEclob,
           // Our own leg declares the fee on the `swap` instruction, clamped by
           // the router to the market's on-chain ceiling. Unlike DFlow's it has
           // no ATA precondition — the instruction creates the fee account — so

@@ -52,7 +52,7 @@ import {
   platformFeeBpsFor,
   resolveEclobRoute,
 } from './route';
-import { nowUnix, type SlotRpc } from './market';
+import type { SlotRpc } from './market';
 import { initSimulator, simulateSwap } from './simulate';
 
 /** Which venue a quote came from. */
@@ -213,9 +213,13 @@ export async function quoteEclob(
     /** Current slot for the slot half of level-expiry filtering; read via
      * `getSlot` when omitted. */
     nowSlot?: number;
-    /** Wall-clock unix seconds for the wall half; the browser clock when
-     * omitted. */
-    nowUnix?: number;
+    /**
+     * Wall-clock unix seconds for the wall half. **Required** — the engine
+     * judges this deadline against cluster time, so a caller that cannot
+     * bound its own clock (a browser) must pass a chain-read time. See
+     * {@link ./market | nowUnix}, which remains available to hosts that can.
+     */
+    nowUnix: number;
     /** Configured integrator fee in bps; clamped to the market ceiling. */
     platformFeeBps?: number;
   },
@@ -227,7 +231,6 @@ export async function quoteEclob(
 
   const platformFeeBps = platformFeeBpsFor(route, input.platformFeeBps ?? 0);
   const resolvedNowSlot = input.nowSlot ?? Number(await rpc.getSlot().send());
-  const resolvedNowUnix = input.nowUnix ?? nowUnix();
   await initSimulator();
   const q = simulateSwap(
     route.marketData,
@@ -235,7 +238,7 @@ export async function quoteEclob(
     input.amount,
     route.limitPriceBits,
     resolvedNowSlot,
-    resolvedNowUnix,
+    input.nowUnix,
     platformFeeBps,
   );
   return {
@@ -302,21 +305,42 @@ export function selectBestRoute(
   throw new NoRouteError(eclob, aggregator);
 }
 
+/**
+ * An eCLOB leg paired with the clocks that scope level expiry against it.
+ *
+ * Level expiry is dual-domain — a level rests only inside **both** its slot
+ * deadline and its wall-clock deadline — and the two halves are sourced
+ * differently. `nowSlot` is a chain read, so it is optional and filled from
+ * `getSlot`. `nowUnix` is not: the engine judges it against cluster time, so
+ * it is required and must come from a clock the caller can actually bound.
+ */
+export type GatedEclobLeg = {
+  leg: EclobLeg;
+  /** Current slot; read via `getSlot` when omitted. */
+  nowSlot?: number;
+  /** Wall-clock unix seconds, from a bounded clock — never a raw device one. */
+  nowUnix: number;
+};
+
 /** Price our own book, folding every failure mode into a {@link Candidate}. */
 async function eclobCandidate(
   rpc: AccountRpc & SlotRpc,
-  leg: EclobLeg | null,
+  eclob: GatedEclobLeg | null,
   amount: bigint,
-  nowSlot: number | undefined,
-  nowUnix: number | undefined,
   platformFeeBps: number | undefined,
 ): Promise<Candidate<EclobQuote>> {
-  if (!leg) {
+  if (!eclob) {
     return { status: 'unavailable', quote: null, reason: 'not requested' };
   }
   try {
     return classifyEclobQuote(
-      await quoteEclob(rpc, { leg, amount, nowSlot, nowUnix, platformFeeBps }),
+      await quoteEclob(rpc, {
+        leg: eclob.leg,
+        amount,
+        nowSlot: eclob.nowSlot,
+        nowUnix: eclob.nowUnix,
+        platformFeeBps,
+      }),
       amount,
     );
   } catch (e) {
@@ -397,10 +421,15 @@ export async function quoteBestRoute(
   rpc: AccountRpc & SlotRpc,
   input: {
     amount: bigint;
-    eclob: EclobLeg | null;
+    /**
+     * Our own leg together with the clocks that gate its book, or `null` to
+     * price the aggregator alone. The clocks sit here rather than alongside
+     * `amount` because they are meaningful only for this leg — and because
+     * nesting them is what makes `nowUnix` required exactly when there is a
+     * book to gate, rather than optional everywhere and silently defaulted.
+     */
+    eclob: GatedEclobLeg | null;
     aggregator: AggregatorLeg | null;
-    nowSlot?: number;
-    nowUnix?: number;
     signal?: AbortSignal;
     /**
      * Configured integrator fee for the **eCLOB** leg, in bps — clamped to the
@@ -411,9 +440,9 @@ export async function quoteBestRoute(
     platformFeeBps?: number;
   },
 ): Promise<BestRoute> {
-  const { amount, nowSlot, nowUnix, signal, platformFeeBps } = input;
+  const { amount, signal, platformFeeBps } = input;
   const [eclob, aggregator] = await Promise.all([
-    eclobCandidate(rpc, input.eclob, amount, nowSlot, nowUnix, platformFeeBps),
+    eclobCandidate(rpc, input.eclob, amount, platformFeeBps),
     aggregatorCandidate(rpc, input.aggregator, amount, signal),
   ]);
   return { best: selectBestRoute(eclob, aggregator), eclob, aggregator };
