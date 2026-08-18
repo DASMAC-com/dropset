@@ -2,11 +2,18 @@ import { encodePrice } from "@dropset/sdk";
 import { describe, expect, it } from "vitest";
 import { formatPrice, humanPrice, priceFractionDigits } from "./format";
 
-// The TS side of a cross-language pair. `humanPrice` here and `human_price` in
-// tui/src/book.rs implement the same conversion against the same encoding, and
-// the Rust one carries a regression test for the bug below. This is that test's
-// twin, so the two forks cannot drift silently — which they did until there was
-// somewhere in frontend/ to put it.
+// `humanPrice` has two halves, and they are covered in two different places.
+//
+// The decimals scaling is shared with Rust: `atoms_ratio_to_human` in
+// util/src/decimals.rs is the same conversion, and its own tests pin the
+// two-power association this file's grouping mirrors. The first test below is
+// the TS side of that pair.
+//
+// The *probe* is not shared. `atoms_ratio_to_human` takes an already-computed
+// ratio, so the PRICE_PROBE_ATOMS step — the part that stops a low-decimal base
+// from flooring adjacent levels onto one number — exists only here. The second
+// test is therefore the only coverage of that property anywhere in the repo,
+// which is why it spells out the mechanism rather than just asserting values.
 describe("humanPrice", () => {
   // A raw `Price` is an *atoms* ratio, so the displayed rate only coincides
   // with the decoded value when both mints share a decimal count. Every 6-vs-6

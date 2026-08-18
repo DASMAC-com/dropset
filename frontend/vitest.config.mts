@@ -2,9 +2,9 @@ import { defineConfig } from "vitest/config";
 
 // The frontend's unit runner. Deliberately scoped to pure logic — the
 // price/decimal conversions, the icon-source resolution — because that is the
-// class of bug that has actually shipped here, and because a Rust twin of the
-// same price logic already gets covered, leaving the TS fork as the only
-// untested side of a cross-language pair.
+// class of bug that has actually shipped here. Part of that price logic has a
+// Rust counterpart that is covered (util/src/decimals.rs); the rest of it, and
+// all of the icon resolution, is covered nowhere else.
 //
 // It is NOT a hook or integration harness: the availability-latch class of bug
 // needs a live validator, which is a separate build. Adding jsdom and

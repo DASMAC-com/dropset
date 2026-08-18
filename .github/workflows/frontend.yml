@@ -62,11 +62,12 @@ jobs:
     # The frontend's unit tests. They run here rather than in test.yml, whose
     # paths filter excludes frontend/** entirely; this job is the only one that
     # installs the frontend's dependencies. Scoped to pure logic (price and
-    # decimals conversion, icon-source resolution) — the price helper is one
-    # half of a cross-language pair whose Rust twin in tui/src/book.rs is
-    # covered, so without this the TS fork was the only side that could drift
-    # unnoticed. Runs before the build because a logic failure is faster to
-    # report and easier to read than a build log.
+    # decimals conversion, icon-source resolution). The decimals half of the
+    # price helper is mirrored in Rust by util/src/decimals.rs, but its probe
+    # step is TS-only, so these are the sole coverage of the flooring bug that
+    # collapsed adjacent ladder levels onto one displayed price. Runs before
+    # the build because a logic failure is faster to report and easier to read
+    # than a build log.
     - name: 'Frontend unit tests'
       run: 'pnpm --filter dropset-frontend test'
     # Nothing else in CI runs `next build`: lint.yml stops at biome + tsc, so a
