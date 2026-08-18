@@ -815,8 +815,11 @@ impl Swap {
             // Size the leg (mirror-symmetric across sides; see
             // `compute_fill`). A zero fill skips the leg entirely;
             // `Exhausted` means the taker's remainder can't buy an
-            // output atom here or at any worse level below, so it is
-            // consumed as residue and the walk stops.
+            // output atom here or at any worse level below, so the walk
+            // stops and the remainder stays with the taker. That arm
+            // absorbs nothing on purpose — the taker traded at no price
+            // here, so this level's price is not one they accepted; only
+            // `Fill` carries a `residue_in`. See [`LegFill::Exhausted`].
             let (fill_base, fill_quote, residue_in) = match side.compute_fill(
                 price,
                 taker_unfilled_in,
