@@ -1,11 +1,11 @@
 ---
-name: continue
+name: proceed
 description: Resume whatever was in progress after an accidental interruption — you hit escape, stopped the session, or usage ran out mid-task. Reconstruct the in-flight work from the conversation and task list and pick it back up as if nothing had happened, without re-asking what to do.
 disable-model-invocation: true
 user-invocable: true
 ---
 
-# `/continue`
+# `/proceed`
 
 You were interrupted mid-task — an accidental escape, a stopped session,
 or usage running out — and this session has resumed. Pick the work back
