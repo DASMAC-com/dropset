@@ -49,8 +49,10 @@ pub struct HttpClient {
     base_url: String,
     client: reqwest::Client,
     /// Headers sent on every request — the seam for an auth key a source's API
-    /// requires on each call (CoinMarketCap's `X-CMC_PRO_API_KEY`, a Circle
-    /// bearer token), set with [`HttpClient::with_header`].
+    /// requires on each call (CoinMarketCap's `X-CMC_PRO_API_KEY`, OANDA's
+    /// `Authorization: Bearer`). A credential is set with
+    /// [`HttpClient::with_secret_header`], anything benign with
+    /// [`HttpClient::with_header`].
     headers: HeaderMap,
     min_interval: Duration,
     max_response_bytes: usize,
@@ -80,15 +82,56 @@ impl HttpClient {
         })
     }
 
-    /// Add a header sent on every request, for an API that authenticates a poll
-    /// with a static key (an errored `name` / `value` is rejected here rather
-    /// than per request). Chains from [`HttpClient::new`].
+    /// Add a header sent on every request (an errored `name` / `value` is
+    /// rejected here rather than per request). Chains from [`HttpClient::new`].
+    ///
+    /// This is for a **benign** header — a response-format preference, an
+    /// `Accept`. A credential goes through
+    /// [`HttpClient::with_secret_header`] instead.
     pub fn with_header(mut self, name: &str, value: &str) -> Result<Self> {
-        let name = HeaderName::from_bytes(name.as_bytes())
-            .with_context(|| format!("invalid header name {name:?}"))?;
-        let value = HeaderValue::from_str(value).context("invalid header value")?;
+        let (name, value) = Self::header_pair(name, value)?;
         self.headers.insert(name, value);
         Ok(self)
+    }
+
+    /// Add a **credential** header sent on every request — an API key, a bearer
+    /// token — with its value marked sensitive.
+    ///
+    /// Same wiring as [`HttpClient::with_header`] plus the one difference that
+    /// is the whole point: `HeaderValue::set_sensitive` keeps the value out of
+    /// a `Debug` render of the header map, and tells the HTTP/2 stack not to
+    /// store it in HPACK's dynamic table, where a compression side channel
+    /// could otherwise recover it.
+    ///
+    /// Nothing on the path to a header map derives `Debug` today, so the
+    /// exposure this closes is latent rather than live — which is precisely why
+    /// it belongs on the constructor. Whether a key leaks must not be decided
+    /// by which types happen not to derive `Debug` yet.
+    ///
+    /// Every adapter that authenticates **by header** goes through here
+    /// (`CmcSource`, `OandaCandles`), as must any added later. Note the bound:
+    /// Alpha Vantage and Twelve Data are keyed too, but pass their key as an
+    /// `apikey` query parameter and so touch no header at all. A URL-borne
+    /// credential is a separate exposure this constructor does not address —
+    /// the effective URL rides a `reqwest` error's own `Display`.
+    pub fn with_secret_header(mut self, name: &str, value: &str) -> Result<Self> {
+        let (name, mut value) = Self::header_pair(name, value)?;
+        value.set_sensitive(true);
+        self.headers.insert(name, value);
+        Ok(self)
+    }
+
+    /// Validate a header `name` / `value` pair for the two constructors above.
+    ///
+    /// The error context names only the header *name*, never the value: a
+    /// credential that fails to encode must not echo itself into whatever log
+    /// the caller's error lands in.
+    fn header_pair(name: &str, value: &str) -> Result<(HeaderName, HeaderValue)> {
+        let header = HeaderName::from_bytes(name.as_bytes())
+            .with_context(|| format!("invalid header name {name:?}"))?;
+        let value = HeaderValue::from_str(value)
+            .with_context(|| format!("invalid header value for {name:?}"))?;
+        Ok((header, value))
     }
 
     /// Raise this source's minimum interval above [`DEFAULT_MIN_INTERVAL`] —
@@ -234,10 +277,11 @@ mod tests {
 
     #[test]
     fn with_header_accepts_a_valid_pair_and_rejects_a_malformed_name() {
-        // A valid auth-style header composes onto the client.
+        // A valid benign header composes onto the client. (A credential would
+        // go through `with_secret_header` instead.)
         let ok = HttpClient::new("https://example.test")
             .unwrap()
-            .with_header("X-CMC_PRO_API_KEY", "secret");
+            .with_header("Accept-Datetime-Format", "UNIX");
         assert!(ok.is_ok());
         // A space is not legal in a header name — caught at wiring time, not on
         // the first (network) request.
@@ -245,6 +289,56 @@ mod tests {
             .unwrap()
             .with_header("bad name", "v");
         assert!(bad.is_err());
+    }
+
+    #[test]
+    fn with_secret_header_marks_the_value_sensitive_and_keeps_it_out_of_debug() {
+        let keyed = HttpClient::new("https://example.test")
+            .unwrap()
+            .with_secret_header("X-CMC_PRO_API_KEY", "super-secret-key")
+            .unwrap();
+        let value = keyed.headers.get("X-CMC_PRO_API_KEY").unwrap();
+        assert!(value.is_sensitive());
+        // The invariant that matters: a `Debug` render of the map — what any
+        // later `#[derive(Debug)]` on the path would reach — shows a redaction
+        // marker, not the key.
+        let rendered = format!("{:?}", keyed.headers);
+        assert!(!rendered.contains("super-secret-key"), "{rendered}");
+        // Assert the marker too, not just the absence: this pins the keyed half
+        // on its own, so the negative above cannot quietly go vacuous if the
+        // map's `Debug` ever stops rendering values at all.
+        assert!(rendered.contains("Sensitive"), "{rendered}");
+
+        // A benign header stays debug-visible on purpose: marking everything
+        // sensitive would cost the diagnostics this one is kept for.
+        let plain = HttpClient::new("https://example.test")
+            .unwrap()
+            .with_header("Accept-Datetime-Format", "UNIX")
+            .unwrap();
+        let plain_value = plain.headers.get("Accept-Datetime-Format").unwrap();
+        assert!(!plain_value.is_sensitive());
+        assert!(format!("{:?}", plain.headers).contains("UNIX"));
+    }
+
+    #[test]
+    fn a_rejected_secret_value_does_not_echo_itself_in_the_error() {
+        // A newline is illegal in a header value. The error names the header so
+        // the mistake is diagnosable, and omits the value so the credential does
+        // not ride the error path into a log.
+        // `.err()` rather than `unwrap_err()`: the latter would require
+        // `HttpClient: Debug`, which this type deliberately does not derive —
+        // the very habit `with_secret_header` refuses to depend on.
+        let err = HttpClient::new("https://example.test")
+            .unwrap()
+            .with_secret_header("Authorization", "Bearer super-secret-token\ntail")
+            .err()
+            .expect("a newline in a header value is rejected");
+        let rendered = format!("{err:?}");
+        assert!(rendered.contains("Authorization"), "{rendered}");
+        // Assert on the whole distinctive phrase, not a short fragment of it: a
+        // three-character needle would risk a false failure the day the error
+        // chain happens to render an unrelated string containing it.
+        assert!(!rendered.contains("super-secret-token"), "{rendered}");
     }
 
     #[test]

@@ -7,7 +7,7 @@
 //! tier — daily ECB reference rates, not a streaming primary — so it carries
 //! the anchor until Pyth Hermes / OANDA land (docs/data-feeds.md §9).
 
-use super::{BatchQuotes, Quotes};
+use super::Quotes;
 use crate::{Batch, HttpClient, Source};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -28,13 +28,11 @@ impl FrankfurterSource {
             currencies,
         })
     }
-}
 
-#[async_trait]
-impl BatchQuotes for FrankfurterSource {
-    type Symbol = String;
-
-    async fn poll(&self) -> Result<Quotes<String>> {
+    /// Fetch every currency this source was built with, in one request.
+    /// Currencies the ECB set does not carry are **omitted** rather than
+    /// erroring, per the batched-poll convention in [`venues`](super).
+    pub async fn poll(&self) -> Result<Quotes<String>> {
         let csv = self.currencies.join(",");
         let body: Value = self
             .http

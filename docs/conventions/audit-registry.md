@@ -132,19 +132,21 @@ market-data <-> feeds: the collector app is the first consumer of the
 maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   live (forward) sink — its price Sources are now the shared venue
   adapters (feeds/src/venues/coingecko.rs, coinmarketcap.rs,
-  frankfurter.rs, kraken.rs) behind the BatchQuotes contract, plus two
-  that deliberately sit OUTSIDE it: pyth.rs (whose FxQuote record
-  carries a confidence half-width and a publish_time that BatchQuotes'
+  frankfurter.rs, kraken.rs) following the batched-poll convention —
+  stated in feeds/src/venues/mod.rs's module docs and docs/data-feeds.md
+  §4, and held by review rather than by a trait — plus two that
+  deliberately sit OUTSIDE it: pyth.rs (whose FxQuote record
+  carries a confidence half-width and a publish_time that a Quotes map's
   bare f64 cannot express) and coinbase.rs's CoinbaseTicker (keyed by a
   single product, so there is nothing to batch). Those two are the
-  reason "every price Source is a BatchQuotes venue" is NOT an
-  invariant of this seam — a change to BatchQuotes does not reach them,
-  and a change to Source reaches all six. It implements
+  reason "every price Source is a batched quote venue" is NOT an
+  invariant of this seam — the batched-poll convention does not reach
+  them, and a change to Source reaches all six. It implements
   Source itself only for the logs-subscription fill socket bridged
   through ChannelSource (bots/maker-bot/src/fills.rs), driving both with
   run_until onto a ForwardSink its synchronous tick loop drains through
   the broadcast receiver (bots/maker-bot/src/tasks.rs) — so the
-  Source/Sink signatures, the BatchQuotes contract, the Batch/caught_up
+  Source/Sink signatures, the batched-poll convention, the Batch/caught_up
   contract, and the forward sink's bounded drop-to-latest policy must
   track the framework. The venue adapters are shared with market-data,
   so a change to one moves both consumers.

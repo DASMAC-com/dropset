@@ -82,6 +82,7 @@ générale
 headshot
 headshots
 heredocs
+hpack
 hyperliquid
 idempotently
 idrx

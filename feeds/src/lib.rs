@@ -56,10 +56,10 @@ mod http;
 #[cfg(feature = "http")]
 pub use http::HttpClient;
 
-// Not gated, on purpose: the `BatchQuotes` contract needs no transport, so a
-// streaming venue can implement it without pulling in `http`. Each venue
-// submodule carries its own transport's gate instead — every adapter shipped
-// today polls REST, so today they all ride `http`.
+// Not gated, on purpose: the module's shared vocabulary (`Quotes`, `Candle`)
+// needs no transport, so a streaming venue can land here without pulling in
+// `http`. Each venue submodule carries its own transport's gate instead — every
+// adapter shipped today polls REST, so today they all ride `http`.
 pub mod venues;
 
 #[cfg(feature = "rpc")]

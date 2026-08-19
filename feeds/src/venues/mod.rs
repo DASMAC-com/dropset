@@ -11,18 +11,41 @@
 //!
 //! - **Batched quote venues** — one request prices many symbols, so the source
 //!   is built with the whole symbol set and yields a [`Quotes`] map per poll.
-//!   These implement [`BatchQuotes`]; [`coingecko`], [`coinmarketcap`],
-//!   [`frankfurter`], and [`kraken`] are the four today. Batching is the
-//!   per-venue budget's main lever (§10): one poll for N markets, not N polls.
+//!   [`coingecko`], [`coinmarketcap`], [`frankfurter`], and [`kraken`] are the
+//!   four today. Batching is the per-venue budget's main lever (§10): one poll
+//!   for N markets, not N polls.
 //! - **Per-product venues** — the endpoint is keyed by a single product, so
 //!   batching is not on offer and one source covers one product. [`coinbase`]
 //!   is both cases: its candles endpoint pages its own backfill, and its
-//!   ticker endpoint yields one spot price. Neither implements [`BatchQuotes`].
+//!   ticker endpoint yields one spot price.
 //! - **Batched venues richer than a price** — [`pyth`] batches like the first
 //!   group but yields a confidence half-width and a publish time alongside each
-//!   rate, so it cannot ride [`Quotes`]' bare `f64` and does not implement
-//!   [`BatchQuotes`] either. That extra payload is precisely what makes it the
-//!   FX anchor's *primary* tier rather than another fallback.
+//!   rate, so it cannot ride [`Quotes`]' bare `f64`. That extra payload is
+//!   precisely what makes it the FX anchor's *primary* tier rather than another
+//!   fallback.
+//!
+//! **The batched-poll contract — stated here, not encoded in a trait.** Every
+//! batched quote venue above exposes exactly one inherent `poll` covering its
+//! full roster, and **omits** symbols the venue does not quote rather than
+//! failing the whole batch: a roster with one unlisted token still prices the
+//! rest. That `poll` stays **public** alongside the adapter's [`crate::Source`]
+//! impl, whose `next` is just the same poll wrapped in a batch, so one adapter
+//! drives the runner *and* answers a caller that wants a single synchronous
+//! reading (a `--dry-run` credentials check) with no runner at all.
+//!
+//! The contract is a convention held by review, and deliberately not a trait. A
+//! venue's symbol key is its own — CoinGecko slugs are `String`, CoinMarketCap
+//! listing ids are `u32` — so no `dyn` collection could ever unify these
+//! adapters, and nothing consumes them generically: every caller holds a
+//! concrete source. The polymorphic seam for ingestion already lives one layer
+//! up, at [`crate::Source`] / [`crate::Sink`], and a venue-level trait would
+//! only duplicate it with incompatible types while signalling a polymorphism
+//! that does not exist.
+//!
+//! If a future uniform poller (one poller per venue, sharing that venue's
+//! budget) wants a common consumer, it designs the abstraction there, against
+//! its own real needs — the heterogeneous symbol keys mean such a thing wants
+//! closure- or [`crate::Source`]-shaped erasure rather than a bare venue trait.
 //!
 //! Each adapter splits its decode out into free `parse_*` functions, which need
 //! no network: they are unit tested against captured responses, so a venue's
@@ -35,13 +58,10 @@
 //! came from — a process environment today, a secrets provider later — and no
 //! adapter has to change when that answer does.
 
-use anyhow::Result;
-use async_trait::async_trait;
 use std::collections::HashMap;
-use std::hash::Hash;
 
-// Each venue rides its own transport's gate, not the module's — the contract
-// below is transport-free, so a future streaming venue lands here too.
+// Each venue rides its own transport's gate, not the module's — the `Quotes`
+// alias below is transport-free, so a future streaming venue lands here too.
 #[cfg(feature = "http")]
 pub mod alphavantage;
 #[cfg(feature = "http")]
@@ -109,22 +129,3 @@ pub struct Candle {
 /// are numeric — because translating them here would just move the mapping
 /// into the adapter and hide it from the caller that owns the roster.
 pub type Quotes<K> = HashMap<K, f64>;
-
-/// A venue whose endpoint quotes **many symbols in one request**.
-///
-/// The adapter is built with its full symbol set and fetches all of them per
-/// poll, which is what lets one process serve a whole roster inside a keyless
-/// tier's budget (docs/data-feeds.md §10). Implementors also implement
-/// [`crate::Source`], whose `next` is just this poll wrapped in a batch — so
-/// the same adapter drives the runner *and* answers a caller that wants one
-/// synchronous reading (a `--dry-run` credentials check) with no runner at all.
-#[async_trait]
-pub trait BatchQuotes: Send + Sync {
-    /// The venue's symbol key.
-    type Symbol: Eq + Hash + Send + Sync;
-
-    /// Fetch every symbol this adapter was built with, in one request.
-    /// Symbols the venue does not quote are **omitted** rather than erroring:
-    /// a roster with one unlisted token still prices the rest.
-    async fn poll(&self) -> Result<Quotes<Self::Symbol>>;
-}

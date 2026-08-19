@@ -8,7 +8,7 @@
 //! today, a secrets provider later), so nothing in this adapter changes when
 //! that answer does.
 
-use super::{BatchQuotes, Quotes};
+use super::Quotes;
 use crate::{Batch, HttpClient, Source};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -28,16 +28,14 @@ impl CmcSource {
     /// Build the source over `base_url`, authenticating with `api_key` and
     /// batching `ids` in every poll.
     pub fn new(base_url: &str, ids: Vec<u32>, api_key: &str) -> Result<Self> {
-        let http = HttpClient::new(base_url)?.with_header(API_KEY_HEADER, api_key)?;
+        let http = HttpClient::new(base_url)?.with_secret_header(API_KEY_HEADER, api_key)?;
         Ok(Self { http, ids })
     }
-}
 
-#[async_trait]
-impl BatchQuotes for CmcSource {
-    type Symbol = u32;
-
-    async fn poll(&self) -> Result<Quotes<u32>> {
+    /// Fetch every id this source was built with, in one request. Ids
+    /// CoinMarketCap does not list are **omitted** rather than erroring, per the
+    /// batched-poll convention in [`venues`](super).
+    pub async fn poll(&self) -> Result<Quotes<u32>> {
         let csv = self
             .ids
             .iter()

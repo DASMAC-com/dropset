@@ -25,7 +25,7 @@
 //! the Coinbase adapter's, and for the same reason.
 //!
 //! Like Coinbase's, this endpoint is keyed by a single instrument, so it is
-//! deliberately **not** a [`super::BatchQuotes`] venue: one source covers one
+//! deliberately **not** a batched quote venue (see [`venues`](super)): one source covers one
 //! pair, and a roster is several sources rather than one batched poll.
 
 use super::Candle;
@@ -121,7 +121,7 @@ impl OandaCandles {
         default_start: i64,
     ) -> Result<Self> {
         let http = HttpClient::new(base_url)?
-            .with_header("Authorization", &format!("Bearer {api_key}"))?
+            .with_secret_header("Authorization", &format!("Bearer {api_key}"))?
             .with_header(DATETIME_FORMAT_HEADER, "UNIX")?;
         let next_start = match resume {
             Some(cursor) => cursor.get::<FxCursor>()?.next_start,

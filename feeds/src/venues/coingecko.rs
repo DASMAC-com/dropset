@@ -6,7 +6,7 @@
 //! crypto-only (weekend / localnet) regime; it is never the FX anchor — laggy
 //! and reflexive against the venues it prices (market-making.md §1).
 
-use super::{BatchQuotes, Quotes};
+use super::Quotes;
 use crate::{Batch, HttpClient, Source};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -27,13 +27,11 @@ impl CoinGeckoSource {
             ids,
         })
     }
-}
 
-#[async_trait]
-impl BatchQuotes for CoinGeckoSource {
-    type Symbol = String;
-
-    async fn poll(&self) -> Result<Quotes<String>> {
+    /// Fetch every id this source was built with, in one request. Ids CoinGecko
+    /// does not list are **omitted** rather than erroring, per the batched-poll
+    /// convention in [`venues`](super).
+    pub async fn poll(&self) -> Result<Quotes<String>> {
         let csv = self.ids.join(",");
         let body: Value = self
             .http
