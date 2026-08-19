@@ -46,7 +46,7 @@
 //!
 //! ```
 //! use std::time::Duration;
-//! use dropset_fair_value::{FairValueConfig, FairValueEngine, Legs, Reading};
+//! use dropset_fair_value::{ClockCtx, FairValueConfig, FairValueEngine, Legs, Reading};
 //!
 //! let mut engine = FairValueEngine::new(FairValueConfig::default());
 //! let legs = Legs {
@@ -55,7 +55,7 @@
 //!     usdc_usd: Some(Reading::new(1.0, Duration::from_secs(1))),
 //!     static_usd: 1.14,
 //! };
-//! let fair = engine.compose(legs, Duration::from_secs(5), false);
+//! let fair = engine.compose(legs, Duration::from_secs(5), ClockCtx::in_session());
 //! assert!(fair.fair.is_some());
 //! ```
 
@@ -64,6 +64,9 @@ mod config;
 mod engine;
 mod reading;
 
-pub use config::FairValueConfig;
-pub use engine::{Anchor, Degrade, FairValue, FairValueEngine, Health, Legs, Regime};
+pub use basis::Fold;
+pub use config::{ConfigError, FairValueConfig};
+pub use engine::{
+    observed_basis, Anchor, ClockCtx, Degrade, FairValue, FairValueEngine, Health, Legs, Regime,
+};
 pub use reading::Reading;

@@ -32,7 +32,7 @@ use crate::model::ladder::{self, Side};
 use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
 use anyhow::Result;
-use dropset_fair_value::{Legs, Reading};
+use dropset_fair_value::{ClockCtx, Legs, Reading};
 use dropset_feeds::venues::FxQuote;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
@@ -405,6 +405,7 @@ pub fn run_supervisor(
         // and the same second dates every Pyth reading this cycle.
         let wall = SystemTime::now();
         let weekend = is_weekend(wall);
+        let clock = ClockCtx { weekend };
         let tick = TickCtx {
             now,
             now_unix: unix_secs(wall) as i64,
@@ -418,7 +419,7 @@ pub fn run_supervisor(
                 .last_compose
                 .map_or(Duration::ZERO, |t| now.duration_since(t));
             ctx.last_compose = Some(now);
-            let fair = ctx.engine.compose(legs, dt, weekend);
+            let fair = ctx.engine.compose(legs, dt, clock);
             let got_fill = routed.get(&ctx.market.market).copied();
             if let Err(e) = quote_market(ctx, &cfg, now, fair, got_fill) {
                 eprintln!("[{}] tick error: {e}", ctx.cfg.symbol);
@@ -1247,7 +1248,7 @@ mod tests {
             usdc_usd: None,
             static_usd: mxne.static_usd,
         };
-        let fair = ctx.engine.compose(legs, Duration::from_secs(1), false);
+        let fair = ctx.engine.compose(legs, Duration::from_secs(1), ClockCtx::in_session());
         assert_eq!(fair.regime, Regime::FxPinned);
         assert_eq!(fair.health, Health::Unverified);
         assert!(!fair.basis_breach);
@@ -1256,7 +1257,7 @@ mod tests {
         // unpinned market built the same way composes normally.
         let eurc = *MARKETS.iter().find(|m| m.symbol == "EURC").unwrap();
         let mut ctx = offline_ctx_with(&dir, eurc);
-        let fair = ctx.engine.compose(legs, Duration::from_secs(1), false);
+        let fair = ctx.engine.compose(legs, Duration::from_secs(1), ClockCtx::in_session());
         assert_ne!(fair.regime, Regime::FxPinned);
     }
 

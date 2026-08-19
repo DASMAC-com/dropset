@@ -20,7 +20,7 @@
 //!                          coingecko | cmc | fx
 
 use anyhow::{anyhow, Context, Result};
-use dropset_fair_value::{FairValueConfig, FairValueEngine, Reading, Regime};
+use dropset_fair_value::{ClockCtx, FairValueEngine, Reading, Regime};
 use dropset_feeds::venues::{
     CmcSource, CoinGeckoSource, CoinbaseTicker, FrankfurterSource, KrakenSource, PythFeed,
     PythHermesSource,
@@ -585,11 +585,11 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         // basis is per-market, so it is layered onto the shared calibration
         // here exactly as the live path does in `Context`.
         let legs = build_legs(fx_q, basis_q, usdc_q, m.static_usd);
-        let mut engine = FairValueEngine::new(FairValueConfig {
-            pinned_basis: m.pinned_basis,
-            ..cfg.fair_value
-        });
-        let fair = engine.compose(legs, now, false);
+        let mut engine =
+            FairValueEngine::new(cfg.fair_value.with_pinned_basis(m.pinned_basis));
+        // A dry run reports the in-session composition; it is a wiring check,
+        // not a clock simulation.
+        let fair = engine.compose(legs, now, ClockCtx::in_session());
         let anchor = format!("{:?}", fair.anchor);
         // Rendered to a String first: a derived `Debug` ignores width specifiers,
         // so `{:<11?}` would not pad and the column would drift on the longer

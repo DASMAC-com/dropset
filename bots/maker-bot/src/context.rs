@@ -170,12 +170,12 @@ impl Context {
             .and_then(|age| now.checked_sub(age))
             .unwrap_or(now);
         // The calibration is shared across markets but the pinned basis is a
-        // property of *this* market's source coverage, so it is layered on here
-        // — the one place the per-market engine is built.
-        let fair_value = FairValueConfig {
-            pinned_basis: cfg.pinned_basis,
-            ..fair_value
-        };
+        // property of *this* market's source coverage, so it is layered on here.
+        // Routed through the crate helper rather than spelled out, because this
+        // is not the only site that builds an engine — the dry-run path does too
+        // — and a site that forgot the pin would quietly quote the market on the
+        // no-basis-leg degrade path with no failing test behind it.
+        let fair_value = fair_value.with_pinned_basis(cfg.pinned_basis);
         Self {
             quote_state,
             reference_invalidated: false,
