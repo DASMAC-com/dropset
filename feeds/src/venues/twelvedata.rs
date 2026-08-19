@@ -292,6 +292,17 @@ fn decode(raw: &RawBar) -> Result<Candle> {
 mod tests {
     use super::*;
     use crate::time::civil_to_epoch_secs;
+    use crate::venues::requests_per_window;
+
+    #[test]
+    fn the_floor_stays_inside_the_free_tiers_eight_per_minute() {
+        let per_minute = requests_per_window(MIN_REQUEST_INTERVAL, Duration::from_secs(60));
+        assert!(
+            per_minute <= 8.0,
+            "{per_minute} requests/minute exceeds Twelve Data's documented 8/min \
+             free tier"
+        );
+    }
 
     /// A captured response: two AUD/USD 1min bars, newest-first, as returned
     /// with `timezone=UTC`.

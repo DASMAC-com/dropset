@@ -30,6 +30,20 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::time::Duration;
+
+/// The floor between two requests on this venue.
+///
+/// Hermes documents **10 requests every 10 seconds per IP** across its
+/// endpoints — 1 a second, 4× stricter than the shared client's 250 ms default
+/// — and answers a breach with a 429 for the following 60 seconds. Since this
+/// is the *primary* anchor, that 60-second penalty is the expensive one in the
+/// roster: it darks the anchor leg rather than one basis input, so the floor is
+/// set to the documented rate rather than left to the default.
+///
+/// It does not bind today: one request prices every feed and the maker polls
+/// every 5 s. It binds if anything ever issues back-to-back requests here.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
 
 /// One FX reading from Hermes: the rate in USD per fiat unit, the publisher's
 /// symmetric confidence half-width in the same units, and the epoch second the
@@ -107,7 +121,7 @@ impl PythHermesSource {
     /// batching every feed in `feeds` into each poll.
     pub fn new(base_url: &str, feeds: Vec<PythFeed>) -> Result<Self> {
         Ok(Self {
-            http: HttpClient::new(base_url)?,
+            http: HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL),
             feeds,
         })
     }
@@ -242,7 +256,18 @@ fn parse_scaled(v: &Value) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::venues::requests_per_window;
     use serde_json::json;
+
+    #[test]
+    fn the_floor_stays_inside_hermes_documented_ten_per_ten_seconds() {
+        let per_window = requests_per_window(MIN_REQUEST_INTERVAL, Duration::from_secs(10));
+        assert!(
+            per_window <= 10.0,
+            "{per_window} requests/10s exceeds Hermes' documented 10 — a breach \
+             costs a 429 for the next 60s on the primary anchor"
+        );
+    }
 
     /// A captured Hermes response: EUR/USD direct, USD/ZAR inverted.
     fn body() -> Value {

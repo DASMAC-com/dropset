@@ -262,10 +262,22 @@ The venue's endpoint, not taste, decides an adapter's shape:
 adapter takes its key as a constructor argument, so *where the secret
 comes from* stays a deployment decision the consuming app owns. That
 decision is now the secrets provider (§12): the collectors resolve
-through it, while the maker still reads `CMC_API_KEY` from its own
-config. Neither is visible to the adapter — the only thing it declares
-is its credential's canonical name, next to the constructor that wants
-it.
+through it. It is not visible to the adapter — the only thing an adapter
+declares is its credential's canonical name, next to the constructor that
+wants it. The maker resolves nothing at all, because no venue in its
+cascade is keyed.
+
+**Prefer a venue's keyless route where one exists, and not only for
+convenience.** A keyed free tier tends to price access as a *quota* —
+credits per month — while a keyless public route prices it as a *rate*,
+answered with a 429. Rate is a thing this crate's shared client can hold
+(§10); a monthly quota is not, because a minimum interval is in-process
+state that resets on restart. So the keyless route removes a class of
+exposure rather than merely relocating it, and it keeps the maker's whole
+feed cascade secret-free. CoinMarketCap is the worked example: its keyed
+`Basic` plan caps out at 15,000 credits/month *and* is licensed for
+personal use only, where its keyless `/public-api/v1/simple/price` is
+neither metered by month nor so restricted.
 
 **A credential rides the transport as a sensitive header.** An adapter
 that authenticates with a header passes it to
@@ -669,11 +681,52 @@ caught-up state says nothing about what a cold backfill will do. At the
 250 ms default a backfill issues ~240 requests a minute — 30× Twelve
 Data's 8/minute tier.
 
-So the two FX sources stricter than that default raise their own floor at
-construction: **Twelve Data to 8 s** (7.5/minute, and about two minutes'
-overhead across a whole 60-day backfill) and **Alpha Vantage to 1 h**
-(24/day against its 25/day account). OANDA needs none — at 100 req/s
-allowed the default is already ~400× stricter than the venue asks.
+The resolution is that **every venue states its own floor, sized to its
+own documented limit**, rather than most of them inheriting a default
+that happens to be wrong for them. A floor set to the venue's real limit
+makes the trap structurally unreachable: whoever adds the next pager
+inherits a correct number instead of having to remember this section.
+Recording the limit beside its adapter is half the point — the number is
+what decays, so it lives in one place, cited.
+
+| Venue                   | Documented free / keyless limit  | Floor   |
+| ----------------------- | -------------------------------- | ------- |
+| Coinbase (public)       | 10 req/s, burst 15, per IP       | default |
+| OANDA                   | 100 req/s                        | default |
+| Kraken (public)         | ~1 call/s, counter-based         | 1 s     |
+| Pyth Hermes             | 10 req per 10 s per IP           | 1 s     |
+| CoinMarketCap (keyless) | unpublished; per-IP pooling, 429 | 2 s     |
+| Frankfurter             | unpublished; soft fair-use       | 1 s     |
+| Twelve Data             | 8 req/min (800 credits/day)      | 8 s     |
+| CoinGecko (keyless)     | 5–15 calls/min, dynamic          | 12 s    |
+| Alpha Vantage           | 25 req/day, whole account        | 1 h     |
+
+Two venues keep the 250 ms default because it is *already* stricter than
+what they allow: **Coinbase** at 10 req/s (the default is 4, so a paged
+candle backfill running flat out sits 2.5× inside the limit — the sharp
+case that turned out not to be sharp) and **OANDA** at 100 req/s, where
+the default is ~400× stricter than asked. Everything else raises its own.
+
+Two of those numbers are **ours, not the venue's** — Frankfurter and
+keyless CoinMarketCap publish no rate — and both are marked as such at
+the adapter so nobody later mistakes a judgement call for a citation.
+
+Note what the floor is sized against in each case: a **rate**. Three
+venues in the roster express their free tier as a **quota** instead —
+Alpha Vantage 25/day, Twelve Data 800 credits/day, and CoinMarketCap's
+*keyed* plan 15,000/month — and a minimum interval cannot enforce one.
+It is in-process state: it paces requests while the process is up and
+resets when it restarts, so an interval chosen to satisfy a daily budget
+holds only across a single continuous run. A crash-loop, or a few local
+stack cycles in an afternoon, exhausts the quota while every individual
+pacing decision stays correct — and the gap is invisible precisely
+because the steady-state arithmetic checks out.
+
+Nothing here closes that gap; a durable per-venue counter beside the feed
+cursors would, and is not built. What the roster does instead is prefer
+the route that has no quota to breach: CoinMarketCap is on its keyless
+public endpoint for exactly this reason (§4), which is also why the
+maker's feed cascade needs no credential at all.
 
 The three FX cadences span two orders of magnitude, and the reason is
 worth stating because it is counter-intuitive: **a tight request budget
@@ -687,11 +740,36 @@ a backfill running alongside. Alpha Vantage's 25 requests/day is the
 whole account, and a daily bar changes once a day, so six hours buys
 everything a tighter tick would.
 
-The maker stays **one multi-market process**, which is what makes
-batching natural — a single poll serves every market it quotes. If
-per-market maker processes are ever split out they would need a local
-price fan-out; that is the trigger to revisit this, not a problem to
-pre-solve.
+The maker is **built to be one multi-market process**, which is what makes
+batching natural: a single poll serves every market it quotes, and that is
+the shape the compose stack runs (one `maker-bot` service, no `--market`).
+
+**The TUI runs it the other way, and that is a multiplier to keep in
+view.** So the demo can start and stop markets individually, it launches
+one process per market (`--market <symbol>`, `tui/src/bot.rs`), which
+means up to seven makers each polling every venue on their own — seven
+times the request rate the single-process arithmetic above assumes, from
+one egress IP. Nothing in the client can see across process boundaries to
+correct for it (see the cross-process note below): a per-client floor is
+per *process*, so seven processes get seven floors.
+
+**CoinGecko is the one venue where that shape does not clearly fit, and
+the number is worth stating rather than rounding off.** Seven makers at a
+60 s cadence is 7 polls/minute against a keyless tier documented as a
+*dynamic* 5–15/minute — comfortably inside the top of that band and
+around 40% over the bottom of it. Which end applies is not ours to know,
+so the honest description is that the per-market demo shape can be
+throttled here, by design tolerance rather than by accident: a 429 records
+its cooldown and surfaces (below), the basis leg then falls through to
+CoinMarketCap — keyless, so there is no quota being spent on the retry —
+and the FX anchor is a different venue entirely and unaffected. The cost
+of the tightest case is a degraded basis tier for a cooldown, not a dark
+market. Every other venue in the roster fits the seven-process shape with
+room to spare.
+
+A local price fan-out — one poller feeding N quoting tasks — is what would
+remove the multiplier properly. That is the trigger to revisit this if the
+per-market shape ever outgrows the demo, not a problem to pre-solve.
 
 ### How the shared client enforces it
 
@@ -700,12 +778,24 @@ Every venue adapter reaches the network through one
 for all of them at once rather than per adapter.
 
 - **A minimum interval per client**, 250 ms by default and raised per
-  venue with `with_min_interval`. It is a floor on back-to-back
-  requests — a paged backfill, a burst after an outage — not a cadence:
-  steady-state polling rate stays with the runner's `poll_interval`.
-  Clones share one gate, so a cloned client draws on the same venue
-  budget instead of opening a second one, and an idle stretch banks no
-  credit for a later burst.
+  venue with `with_min_interval` (the table above gives every venue's).
+  It is a floor on back-to-back requests — a paged backfill, a burst
+  after an outage — not a cadence: steady-state polling rate stays with
+  the runner's `poll_interval`. Clones share one gate, so a cloned client
+  draws on the same venue budget instead of opening a second one, and an
+  idle stretch banks no credit for a later burst.
+- **The gate is per client, so a venue polled by several sources needs
+  one client cloned across them.** This is the sharp edge of the bullet
+  above, and it cuts the other way: two *independently constructed*
+  clients for one venue each pace correctly on their own while together
+  spending double, because a keyless limit is per IP and neither knows
+  about the other. Coinbase's ticker is the case in the tree — its
+  endpoint is per product, so a roster of N tokens is N sources — and the
+  maker builds one client and hands each source a clone
+  (`CoinbaseTicker::with_client`). Reach for `with_client` (or the
+  equivalent seam) whenever a venue gets more than one source in a
+  process; `new` opening its own client is the convenience path for the
+  single-source case.
 - **A 429 records a cooldown and surfaces the error.** The venue's
   `Retry-After` — the delta-seconds form; an HTTP-date falls through to
   a 60 s default — is clamped to five minutes and held as the earliest

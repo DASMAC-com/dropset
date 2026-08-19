@@ -49,9 +49,8 @@ pub struct HttpClient {
     base_url: String,
     client: reqwest::Client,
     /// Headers sent on every request — the seam for an auth key a source's API
-    /// requires on each call (CoinMarketCap's `X-CMC_PRO_API_KEY`, OANDA's
-    /// `Authorization: Bearer`). A credential is set with
-    /// [`HttpClient::with_secret_header`], anything benign with
+    /// requires on each call (OANDA's `Authorization: Bearer`). A credential is
+    /// set with [`HttpClient::with_secret_header`], anything benign with
     /// [`HttpClient::with_header`].
     headers: HeaderMap,
     min_interval: Duration,

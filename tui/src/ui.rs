@@ -355,18 +355,6 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
         _ => {}
     }
 
-    // The maker's optional CoinMarketCap secondary feed key.
-    if std::env::var("CMC_API_KEY")
-        .ok()
-        .filter(|k| !k.is_empty())
-        .is_none()
-    {
-        alerts.push((
-            Color::DarkGray,
-            "CMC_API_KEY unset — maker FX feed uses CoinGecko → FX-rate → static.".to_string(),
-        ));
-    }
-
     // The live FX feed, as reported by the maker's streamed log lines.
     if app.feed_degraded {
         alerts.push((

@@ -262,8 +262,7 @@ services:
     # The leader market-maker: polls feeds, composes a fair mid, and drives
     # the relative-quoting hot + cold paths. Funds its leader (keys/EEEE.json)
     # from the localnet faucet over RPC, so it needs no host wallet — only the
-    # repo keys/ mount. CMC_API_KEY (host env, optional) arms the CoinMarketCap
-    # secondary tier; without it the feed cascades CoinGecko → FX-rate → static.
+    # repo keys/ mount. Every price feed is keyless, so no secret is passed in.
     build:
       context: '../..'
       dockerfile: 'infra/localnet/bots.Dockerfile'
@@ -272,7 +271,6 @@ services:
     - '--rpc'
     - 'http://host.docker.internal:8899'
     environment:
-      CMC_API_KEY: '${CMC_API_KEY:-}'
       RUST_LOG: 'info'
     extra_hosts:
     - 'host.docker.internal:host-gateway'

@@ -31,7 +31,7 @@
 //! rest. That `poll` stays **public** alongside the adapter's [`crate::Source`]
 //! impl, whose `next` is just the same poll wrapped in a batch, so one adapter
 //! drives the runner *and* answers a caller that wants a single synchronous
-//! reading (a `--dry-run` credentials check) with no runner at all.
+//! reading (a `--dry-run` reachability check) with no runner at all.
 //!
 //! The contract is a convention held by review, and deliberately not a trait. A
 //! venue's symbol key is its own — CoinGecko slugs are `String`, CoinMarketCap
@@ -54,9 +54,19 @@
 //!
 //! **Credentials arrive by injection, never by an environment read in here.**
 //! A keyed adapter takes its key as a constructor argument
-//! ([`coinmarketcap::CmcSource::new`]) so the caller decides where the secret
-//! came from — a process environment today, a secrets provider later — and no
-//! adapter has to change when that answer does.
+//! ([`oanda::OandaCandles::resume`]) so the caller decides where the secret came
+//! from — a process environment today, a secrets provider later — and no adapter
+//! has to change when that answer does. Most adapters here need none: every
+//! venue the maker's cascade reads is keyless, [`coinmarketcap`] deliberately so
+//! (§4 — its keyless route trades a monthly credit quota for a plain rate).
+//!
+//! **Every adapter states its own request floor, sized to its venue's
+//! documented limit** (docs/data-feeds.md §10 tabulates them). The shared
+//! client's 250 ms default is right for only two venues, and the runner
+//! tight-loops while a source backfills — so a venue that inherits the default
+//! without checking is a venue that will be throttled the first time anything
+//! pages. Each module's `MIN_REQUEST_INTERVAL` carries the documented number it
+//! was derived from, and a unit test asserts the arithmetic still holds.
 
 use std::collections::HashMap;
 
@@ -129,3 +139,20 @@ pub struct Candle {
 /// are numeric — because translating them here would just move the mapping
 /// into the adapter and hide it from the caller that owns the roster.
 pub type Quotes<K> = HashMap<K, f64>;
+
+/// How many requests a floor of `interval` permits per `window`, for the
+/// per-venue budget assertions each adapter's tests make.
+///
+/// This exists so a venue's documented limit is checked as *arithmetic* rather
+/// than restated as a constant: a test that asserts `MIN_REQUEST_INTERVAL == 8s`
+/// only proves the number was not edited, where one asserting it yields ≤ 8
+/// requests a minute proves it still satisfies the tier it was chosen for. The
+/// point is to catch a floor lowered without re-checking the venue — a one-time
+/// live measurement cannot, since it decays the moment either side changes.
+#[cfg(test)]
+pub(crate) fn requests_per_window(
+    interval: std::time::Duration,
+    window: std::time::Duration,
+) -> f64 {
+    window.as_secs_f64() / interval.as_secs_f64()
+}

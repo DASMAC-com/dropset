@@ -45,8 +45,8 @@ use tokio::sync::broadcast::{self, error::TryRecvError};
 /// tier. Each is the read end of a `feeds` forward (live) sink fed by that
 /// tier's source running on the background runtime (`main.rs`); the source owns
 /// its own poll cadence and error backoff, so the supervisor only reads the
-/// tail. CoinMarketCap is `None` when the secondary tier isn't wired up (no
-/// `CMC_API_KEY`).
+/// tail. CoinMarketCap is `None` when no selected market names a CMC id — the
+/// tier needs no credential, being on the keyless public route.
 pub struct FeedReceivers {
     /// Pyth Hermes — the primary FX anchor, carrying a confidence half-width
     /// and a publish time per reading.

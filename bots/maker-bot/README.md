@@ -17,10 +17,10 @@ failing over on a stale or errored tier:
 
 1. **CoinGecko** `/simple/price` — one batched call prices every token
    (the primary market feed).
-1. **CoinMarketCap** `/v2/cryptocurrency/quotes/latest` — batched by
-   numeric id, keyed from `CMC_API_KEY`. The free tier's quota rules out
-   a hot poll, so it is the secondary, polled only when CoinGecko is
-   down.
+1. **CoinMarketCap** `/public-api/v1/simple/price` — batched by numeric
+   id over the **keyless public** route, so it needs no key and carries
+   no monthly credit quota. The secondary, read when CoinGecko has no
+   price for a market.
 1. **ECB/Frankfurter** `/latest` — the keyless FX-rate tier: `USD/<ccy>`
    inverted to a USD-per-unit peg, a pure peg rate.
 1. **Static** — a per-market constant, the last resort.
@@ -83,9 +83,8 @@ cargo run -p dropset-maker-bot
 
 ### Environment
 
-- `CMC_API_KEY` — CoinMarketCap API key for the secondary tier. Without
-  it the CoinMarketCap fallback is skipped and the cascade goes
-  CoinGecko → FX-rate → static.
+Nothing to set: every feed in the cascade is keyless, so the bot prices
+its whole roster with no secret configured.
 
 ## Notes and deferrals
 

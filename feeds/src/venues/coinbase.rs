@@ -21,8 +21,29 @@
 //! remove nothing.
 //!
 //! The endpoint is keyed by a single product, so this adapter is deliberately
-//! **not** a batched quote venue (see [`venues`](super)): one source covers one product, and
-//! a roster is several sources rather than one batched poll.
+//! **not** a batched quote venue (see [`venues`](super)): one source covers
+//! one product, and a roster is several sources rather than one batched poll.
+//!
+//! **This is the one venue in the roster that needs no raised floor, and the
+//! number is recorded here so the next pager inherits it.** Coinbase documents
+//! its public (unauthenticated, IP-throttled) Exchange REST endpoints at **10
+//! requests per second, bursting to 15**, enforced per IP by a token bucket.
+//! The shared client's 250 ms default is 4 a second — 2.5× inside the sustained
+//! rate — so a paged candle backfill running flat out at the default is
+//! comfortably within budget, and `with_min_interval` would buy nothing.
+//!
+//! That makes this adapter the counter-example worth keeping in view: the
+//! backfill trap is real (docs/data-feeds.md §10) but it is a *per-venue*
+//! question, and here the answer is that the default already holds. The
+//! constraint that does bind is [`MAX_CANDLES_PER_REQUEST`], a page-size cap
+//! rather than a rate.
+//!
+//! The rate is per **IP**, though, not per client, so it is shared with every
+//! other Coinbase source on the host — the ticker sources below and the
+//! collector's candle backfill draw on one bucket. At 4 a second against 10
+//! there is room for all of them; a consumer that wants the floor to coordinate
+//! them must hand them one cloned client (see
+//! [`CoinbaseTicker::with_client`]).
 
 use super::Candle;
 use crate::time::now_secs;
@@ -164,14 +185,30 @@ pub struct CoinbaseTicker {
 }
 
 impl CoinbaseTicker {
-    /// Build the source over `base_url` for one product (e.g. `EURC-USDC`).
+    /// Build the source over `base_url` for one product (e.g. `EURC-USDC`),
+    /// on a client of its own.
+    ///
+    /// **Prefer [`CoinbaseTicker::with_client`] for a roster of more than one
+    /// product.** Each call here opens a *separate* rate gate, so N products
+    /// built this way pace independently against one venue and one egress IP —
+    /// which is the thing the shared floor exists to prevent.
     pub fn new(base_url: &str, product_id: impl Into<String>) -> Result<Self> {
+        Ok(Self::with_client(HttpClient::new(base_url)?, product_id))
+    }
+
+    /// Build the source on a caller-supplied client, so several products share
+    /// one venue budget.
+    ///
+    /// [`HttpClient`] clones share a single rate gate by construction, so a
+    /// caller building N ticker sources should build one client and clone it
+    /// per product rather than calling [`CoinbaseTicker::new`] N times.
+    pub fn with_client(http: HttpClient, product_id: impl Into<String>) -> Self {
         let product_id = product_id.into();
-        Ok(Self {
-            http: HttpClient::new(base_url)?,
+        Self {
+            http,
             name: format!("coinbase:{product_id}"),
             product_id,
-        })
+        }
     }
 
     /// Fetch this product's current price, or `None` when the venue answered
@@ -261,6 +298,35 @@ fn assemble(raw: Vec<CandleTuple>, next_start: i64, closed_boundary: i64) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::venues::requests_per_window;
+    use std::time::Duration;
+
+    #[test]
+    fn the_shared_default_already_fits_the_documented_ten_per_second() {
+        // The counter-example to every other venue's raised floor: this adapter
+        // keeps the shared 250 ms default *because* it is stricter than the
+        // venue's 10 req/s, so a flat-out paged backfill stays inside the limit.
+        // Checked here rather than only stated in prose, since this claim is
+        // what justifies the absence of a `with_min_interval` call.
+        let per_second = requests_per_window(Duration::from_millis(250), Duration::from_secs(1));
+        assert!(
+            per_second <= 10.0,
+            "{per_second} requests/second exceeds Coinbase's documented 10/s for \
+             public endpoints — this adapter would then need its own floor"
+        );
+    }
+
+    #[test]
+    fn several_products_can_share_one_clients_rate_gate() {
+        // Coinbase throttles by IP, so N ticker sources must be able to draw on
+        // one gate. `with_client` is that seam; `new` opening its own client is
+        // only right for a single source.
+        let http = HttpClient::new("https://example.test").unwrap();
+        let first = CoinbaseTicker::with_client(http.clone(), "EURC-USDC");
+        let second = CoinbaseTicker::with_client(http, "XSGD-USDC");
+        assert_eq!(first.name(), "coinbase:EURC-USDC");
+        assert_eq!(second.name(), "coinbase:XSGD-USDC");
+    }
 
     #[test]
     fn window_caps_at_the_bucket_budget_mid_backfill() {
