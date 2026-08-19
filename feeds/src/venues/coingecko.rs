@@ -30,7 +30,7 @@ impl CoinGeckoSource {
 
     /// Fetch every id this source was built with, in one request. Ids CoinGecko
     /// does not list are **omitted** rather than erroring, per the batched-poll
-    /// convention in [`super`].
+    /// convention in [`venues`](super).
     pub async fn poll(&self) -> Result<Quotes<String>> {
         let csv = self.ids.join(",");
         let body: Value = self

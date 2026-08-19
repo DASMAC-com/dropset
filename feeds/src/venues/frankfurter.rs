@@ -31,7 +31,7 @@ impl FrankfurterSource {
 
     /// Fetch every currency this source was built with, in one request.
     /// Currencies the ECB set does not carry are **omitted** rather than
-    /// erroring, per the batched-poll convention in [`super`].
+    /// erroring, per the batched-poll convention in [`venues`](super).
     pub async fn poll(&self) -> Result<Quotes<String>> {
         let csv = self.currencies.join(",");
         let body: Value = self

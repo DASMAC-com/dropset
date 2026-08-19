@@ -25,7 +25,7 @@
 //! the Coinbase adapter's, and for the same reason.
 //!
 //! Like Coinbase's, this endpoint is keyed by a single instrument, so it is
-//! deliberately **not** a batched quote venue ([`super`]): one source covers one
+//! deliberately **not** a batched quote venue (see [`venues`](super)): one source covers one
 //! pair, and a roster is several sources rather than one batched poll.
 
 use super::Candle;

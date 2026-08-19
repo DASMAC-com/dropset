@@ -236,11 +236,15 @@ The venue's endpoint, not taste, decides an adapter's shape:
 
 - **Batched quote venues** follow a stated batched-poll convention —
   built with a whole symbol set, one inherent `poll` per source
-  returning a `symbol → USD` map. CoinGecko, CoinMarketCap,
+  returning a `symbol → price` map. CoinGecko, CoinMarketCap,
   ECB/Frankfurter, and Kraken are the four today. This is the per-venue
   budget's main lever (§10): one poll for N markets rather than N polls.
   A symbol the venue does not quote is omitted, never an error — one
-  unlisted token must not dark the rest of the roster.
+  unlisted token must not dark the rest of the roster. That `poll` stays
+  **public** alongside the source's `Source` impl, whose `next` wraps the
+  same poll in a batch, so one adapter drives the runner *and* answers a
+  caller wanting a single synchronous reading — a `--dry-run` credentials
+  check — with no runner at all.
 
   The convention is held by review rather than by a trait, on purpose.
   Each venue keys symbols its own way (CoinGecko slugs are strings,
@@ -269,6 +273,14 @@ guarantee on purpose — whether a key can leak must not depend on which
 types happen not to derive `Debug` yet. Plain `with_header` remains the
 right call for a benign header, such as OANDA's UNIX datetime-format
 preference, where debug visibility is worth keeping.
+
+**That rule covers header-borne keys only, and two adapters are not.**
+Alpha Vantage and Twelve Data authenticate with an `apikey` **query
+parameter**, so no header marking reaches them. A URL-borne credential is
+a live and separate exposure — the effective URL, query string included,
+rides a `reqwest` error's own `Display` — and closing it needs its own
+mechanism rather than this one. Treat the sensitive-header rule as
+bounding the header path, not as settling credential exposure crate-wide.
 
 ______________________________________________________________________
 

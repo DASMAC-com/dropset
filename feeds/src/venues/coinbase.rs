@@ -21,7 +21,7 @@
 //! remove nothing.
 //!
 //! The endpoint is keyed by a single product, so this adapter is deliberately
-//! **not** a batched quote venue ([`super`]): one source covers one product, and
+//! **not** a batched quote venue (see [`venues`](super)): one source covers one product, and
 //! a roster is several sources rather than one batched poll.
 
 use super::Candle;

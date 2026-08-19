@@ -51,7 +51,7 @@ impl KrakenSource {
 
     /// Fetch every pair this source was built with, in one request. Pairs
     /// Kraken does not quote are **omitted** rather than erroring, per the
-    /// batched-poll convention in [`super`].
+    /// batched-poll convention in [`venues`](super).
     pub async fn poll(&self) -> Result<Quotes<String>> {
         if self.pairs.is_empty() {
             return Ok(Quotes::new());

@@ -108,8 +108,12 @@ impl HttpClient {
     /// it belongs on the constructor. Whether a key leaks must not be decided
     /// by which types happen not to derive `Debug` yet.
     ///
-    /// Every keyed venue adapter authenticates through here (`CmcSource`,
-    /// `OandaCandles`), and every keyed adapter added later must too.
+    /// Every adapter that authenticates **by header** goes through here
+    /// (`CmcSource`, `OandaCandles`), as must any added later. Note the bound:
+    /// Alpha Vantage and Twelve Data are keyed too, but pass their key as an
+    /// `apikey` query parameter and so touch no header at all. A URL-borne
+    /// credential is a separate exposure this constructor does not address —
+    /// the effective URL rides a `reqwest` error's own `Display`.
     pub fn with_secret_header(mut self, name: &str, value: &str) -> Result<Self> {
         let (name, mut value) = Self::header_pair(name, value)?;
         value.set_sensitive(true);
@@ -300,6 +304,10 @@ mod tests {
         // marker, not the key.
         let rendered = format!("{:?}", keyed.headers);
         assert!(!rendered.contains("super-secret-key"), "{rendered}");
+        // Assert the marker too, not just the absence: this pins the keyed half
+        // on its own, so the negative above cannot quietly go vacuous if the
+        // map's `Debug` ever stops rendering values at all.
+        assert!(rendered.contains("Sensitive"), "{rendered}");
 
         // A benign header stays debug-visible on purpose: marking everything
         // sensitive would cost the diagnostics this one is kept for.
@@ -322,12 +330,15 @@ mod tests {
         // the very habit `with_secret_header` refuses to depend on.
         let err = HttpClient::new("https://example.test")
             .unwrap()
-            .with_secret_header("Authorization", "Bearer tok\nen")
+            .with_secret_header("Authorization", "Bearer super-secret-token\ntail")
             .err()
             .expect("a newline in a header value is rejected");
         let rendered = format!("{err:?}");
         assert!(rendered.contains("Authorization"), "{rendered}");
-        assert!(!rendered.contains("tok"), "{rendered}");
+        // Assert on the whole distinctive phrase, not a short fragment of it: a
+        // three-character needle would risk a false failure the day the error
+        // chain happens to render an unrelated string containing it.
+        assert!(!rendered.contains("super-secret-token"), "{rendered}");
     }
 
     #[test]

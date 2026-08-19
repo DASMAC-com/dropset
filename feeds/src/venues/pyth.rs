@@ -93,7 +93,7 @@ impl PythFeed {
 /// A poll [`Source`] over Hermes' batched latest-price endpoint, keyed by the
 /// caller's currency codes.
 ///
-/// It deliberately does **not** follow the batched-quote shape ([`super`]):
+/// It deliberately does **not** follow the batched-quote shape (see [`venues`](super)):
 /// [`super::Quotes`] carries a bare `f64` per symbol, which would throw away the
 /// confidence and publish time that are this venue's whole reason for being the
 /// primary tier.

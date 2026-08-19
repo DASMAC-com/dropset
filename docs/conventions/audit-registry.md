@@ -132,8 +132,10 @@ market-data <-> feeds: the collector app is the first consumer of the
 maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   live (forward) sink — its price Sources are now the shared venue
   adapters (feeds/src/venues/coingecko.rs, coinmarketcap.rs,
-  frankfurter.rs, kraken.rs) following the batched-poll convention, plus
-  two that deliberately sit OUTSIDE it: pyth.rs (whose FxQuote record
+  frankfurter.rs, kraken.rs) following the batched-poll convention —
+  stated in feeds/src/venues/mod.rs's module docs and docs/data-feeds.md
+  §4, and held by review rather than by a trait — plus two that
+  deliberately sit OUTSIDE it: pyth.rs (whose FxQuote record
   carries a confidence half-width and a publish_time that a Quotes map's
   bare f64 cannot express) and coinbase.rs's CoinbaseTicker (keyed by a
   single product, so there is nothing to batch). Those two are the
