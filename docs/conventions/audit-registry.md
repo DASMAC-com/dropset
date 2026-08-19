@@ -129,6 +129,19 @@ market-data <-> feeds: the collector app is the first consumer of the
   db-schema/migrations, so the seam is row types + queries against that
   migration. require_schema gates only the migration VERSION, so a
   column-shape mismatch inside a version still surfaces at query time.
+secrets-enclave <-> feeds: a keyed venue declares its credential's
+  canonical <provider>/<secret> name beside its adapter
+  (feeds/src/venues/*.rs SECRET_NAME) and the provider
+  (feeds/src/secrets.rs) maps that one name onto every store by prefix
+  alone — env var, op:// reference, AWS secret id — so the three
+  spellings cannot drift. The contract leaves the crate twice: consumers
+  resolve by name (market-data/src/fx.rs), and the committed operator
+  template (infra/localnet/secrets.local.env.example) restates each
+  reference, pinned to the constants by
+  market-data/tests/secrets_example.rs. That test enumerates its own
+  roster, so a venue whose SECRET_NAME is absent from it is unguarded.
+  The op stderr classifier is coupled to the CLI's prose and is the
+  thing an op upgrade breaks first.
 maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   live (forward) sink — its price Sources are now the shared venue
   adapters (feeds/src/venues/coingecko.rs, coinmarketcap.rs,
