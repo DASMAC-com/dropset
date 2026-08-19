@@ -117,9 +117,9 @@ impl HttpClient {
     /// by which types happen not to derive `Debug` yet.
     ///
     /// Every adapter that authenticates **by header** goes through here
-    /// (`CmcSource`, `OandaCandles`), as must any added later. Note the bound:
-    /// Alpha Vantage and Twelve Data are keyed too, but pass their key as an
-    /// `apikey` query parameter and so touch no header at all. A URL-borne
+    /// (`OandaCandles` is the only one today), as must any added later. Note the
+    /// bound: Alpha Vantage and Twelve Data are keyed too, but pass their key as
+    /// an `apikey` query parameter and so touch no header at all. A URL-borne
     /// credential is a separate exposure this constructor does not address —
     /// the effective URL rides a `reqwest` error's own `Display`.
     pub fn with_secret_header(mut self, name: &str, value: &str) -> Result<Self> {
