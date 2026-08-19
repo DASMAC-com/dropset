@@ -1,6 +1,6 @@
 """Permission-rule generalization and coverage — the source of truth.
 
-Pure-stdlib helpers shared by ``firm_last.py`` (the ``/f`` fast-firm tool) and
+Pure-stdlib helpers shared by ``firm_last.py`` (the fast-firm tool) and
 ``allowlist.py`` (the ``firm-perms`` / ``housekeeping`` reader), and pointed at
 by the ``firm-perms`` skill's prose. Turns a just-approved tool call into the
 reusable allow-rule it should have been (``generalize``), decides whether an

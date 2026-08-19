@@ -1,6 +1,6 @@
 ---
 name: firm-perms
-description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. Bare `/firm-perms` (or `/firm-perms this`) is the deterministic fast firm: it memorializes the single command you just approved into the shared `settings.local.json` immediately, via the same `firm_last.py` tool `/f` runs — no sweep, no confirm gate. `/firm-perms sweep` (or a pasted permissions block) runs the full harvest-and-propose sweep: collect everything approved this session, generalize and dedupe it, and write the result behind a propose-then-confirm gate. That file is one shared file resolved through worktrees to the main checkout, so either mode takes effect in every worktree at once. Use the fast firm after an approval, the sweep at the end of a session.
+description: Generalize the local permission allowlist into reusable globs — Bash commands and file-access/`Read` paths alike. Bare `/firm-perms` (or `/firm-perms this`) is the deterministic fast firm: it memorializes the single command you just approved into the shared `settings.local.json` immediately, via the `firm_last.py` tool — no sweep, no confirm gate. `/firm-perms exact` firms that command verbatim instead of generalized. `/firm-perms sweep` (or a pasted permissions block) runs the full harvest-and-propose sweep: collect everything approved this session, generalize and dedupe it, and write the result behind a propose-then-confirm gate. That file is one shared file resolved through worktrees to the main checkout, so either mode takes effect in every worktree at once. Use the fast firm after an approval, the sweep at the end of a session.
 user-invocable: true
 ---
 
@@ -15,9 +15,9 @@ effect in this session *and* every other worktree at once.
 This skill has **two modes**, chosen by the invocation, with **no
 inference** between them:
 
-- **Fast firm** — bare `/firm-perms`, or `/firm-perms this`: firm the
-  single command you just approved. This is a thin alias for the `/f`
-  skill's tool; it delegates to `firm_last.py` and does nothing else.
+- **Fast firm** — bare `/firm-perms`, or `/firm-perms this` /
+  `/firm-perms exact`: firm the single command you just approved. It
+  delegates to `firm_last.py` and does nothing else.
 - **Full sweep** — `/firm-perms sweep`, or a pasted permissions block:
   the heavier harvest-and-propose cleanup.
 
@@ -34,19 +34,48 @@ option 2's "don't ask again for…" is almost always far too broad:
 does only that — it does **not** harvest the rest of the session, and it
 does **not** propose-then-wait.
 
-It is identical to `/f`: run the deterministic tool, which finds the most
-recent executed tool call, generalizes it, and writes the rule into the
+Because it is typed immediately after an approval, the just-approved
+command is deterministically the **most recent executed tool call** in
+the session transcript. The whole job is the deterministic tool
+`.claude/tools/firm_last.py`, which resolves the transcript, finds that
+call, generalizes it via `firm_core.py`, and writes the rule into the
 shared `settings.local.json` at the main checkout:
 
 ```sh
 python3 .claude/tools/firm_last.py
+python3 .claude/tools/firm_last.py exact
 ```
 
-Relay the tool's one-line result. `firm-perms this` behaves the same
-(the word "this" just names the just-approved command explicitly). If
-the verbatim command is what you want rather than the generalized glob,
-that maps to `/f exact` — `python3 .claude/tools/firm_last.py exact`. See
-the [`/f` skill](../f/SKILL.md); the two are the same tool.
+`exact` is the tool's **only** argument — pass it when, and only when,
+the invocation was `/firm-perms exact`. Don't forward the invocation
+word blindly: `sweep` belongs to the other mode entirely, and the tool
+would silently treat it as a bare fast firm.
+
+- Bare **`/firm-perms`** (or **`/firm-perms this`** — the word "this"
+  just names the just-approved command explicitly) → generalize the
+  command (collapse the worktree tag, keep the command + subcommand
+  literal, `:*` the trailing args) and firm that glob.
+- **`/firm-perms exact`** → firm the command **verbatim** (worktree tag
+  still collapsed), when the generalized glob would be wrong or too
+  broad.
+
+Then relay the tool's one-line result verbatim — it states exactly what
+rule was written and where, so the change stays trivially reversible.
+
+The tool handles the edge cases itself, so just report what it prints:
+
+- If the last call **can't reduce to a safe rule** (a compound, heredoc,
+  or interpreter one-liner), it says so and firms nothing — the fix is
+  to stop the *source* emitting that shape, not to allow-list it.
+- If generalizing would produce an **over-broad bare-verb wildcard**
+  (`git:*`, `pnpm:*`, `rm:*`), it refuses and asks you to narrow it by
+  hand. Try `exact` if the verbatim command is what you want.
+- If the rule is **already covered**, it no-ops and says so.
+
+Never firm a "don't ask again"-style broad approval this way — the fast
+firm is for the narrow one-time approval you just granted. (The tool
+only ever firms a single command and never widens to a bare verb, so
+this holds by construction.)
 
 ## Generalization and coverage rules
 
@@ -68,8 +97,8 @@ To **write** a single rule, use the same helper's `add` — never `Edit`.
 rule that way pulls a several-hundred-entry `settings.local.json` into
 context to append one line, which is exactly the cost this helper exists
 to avoid (one run paid a whole-file `Read` of a 338-entry allowlist for a
-single rule). `add` writes through the same `firm_core.firm_into` that
-`/f` uses, so it prunes any narrower entries the new rule subsumes and
+single rule). `add` writes through the same `firm_core.firm_into` the
+fast firm uses, so it prunes any narrower entries the new rule subsumes and
 produces a byte-identical file; it is idempotent, reporting
 `added: false` when the rule is already covered:
 
@@ -79,9 +108,10 @@ python3 .claude/tools/allowlist.py \
 ```
 
 `add` holds the **same safety floor** the fast firm does, and it has to:
-`firm_into` has no floor of its own — `/f` checks `is_bareverb_wildcard` in
-its *caller* and returns before writing — so a write path that skipped the
-check would grant exactly what `/f` refuses, through a single call that
+`firm_into` has no floor of its own — `firm_last.py` checks
+`is_bareverb_wildcard` in its *caller* and returns before writing — so a
+write path that skipped the check would grant exactly what the fast firm
+refuses, through a single call that
 never prompts (this tool runs under the pre-approved directory-wide
 `Bash(python3 .claude/tools/:*)` rule). So `add` refuses anything the
 `cruft` classifier would flag — a bare wildcard, a bare-verb wildcard, an

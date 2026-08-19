@@ -228,9 +228,9 @@ Concrete rules:
   one-off entries into globs (per the rules above), dedupes them, and
   writes the firmed allowlist back — proposing the changes for
   your approval before it writes. That's the full sweep. To memorialize
-  a *single* just-approved command instead, a bare `/firm-perms` (or the
-  `/f` shorthand) takes the **fast firm** — it firms just that one
-  command immediately, with no propose-then-confirm gate. Both write to
+  a *single* just-approved command instead, a bare `/firm-perms` takes
+  the **fast firm** — it firms just that one command immediately, with
+  no propose-then-confirm gate. Both write to
   the one shared file at the main checkout, so the result is live in
   every worktree.
 

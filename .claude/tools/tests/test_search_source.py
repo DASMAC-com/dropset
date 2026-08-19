@@ -575,6 +575,101 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 1)
 
+    def test_a_repeated_ext_accumulates_rather_than_the_last_one_winning(self):
+        """The filed defect: argparse's default `store` kept only the last
+        `--ext`, so the two-flag form searched `tsx` alone and reported a clean
+        `0 match(es)` — a false negative indistinguishable from a true one."""
+        (self.root / "a.ts").write_text("needle\n", encoding="utf-8")
+        (self.root / "b.tsx").write_text("needle\n", encoding="utf-8")
+
+        _, one, _ = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--ext",
+                "ts",
+                "--files-only",
+            ]
+        )
+        _, both, _ = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--ext",
+                "ts",
+                "--ext",
+                "tsx",
+                "--files-only",
+            ]
+        )
+        self.assertEqual(set(one.split()), {"a.ts"})
+        # The whole point: two flags is a superset of one, never a replacement.
+        self.assertTrue(set(one.split()) <= set(both.split()))
+        self.assertEqual(set(both.split()), {"a.ts", "b.tsx"})
+
+    def test_a_repeated_ext_matches_the_comma_separated_spelling(self):
+        (self.root / "a.ts").write_text("needle\n", encoding="utf-8")
+        (self.root / "b.tsx").write_text("needle\n", encoding="utf-8")
+        base = ["search_source.py", "needle", "--root", str(self.root), "--files-only"]
+        _, repeated, _ = self._capture(base + ["--ext", "ts", "--ext", "tsx"])
+        _, comma, _ = self._capture(base + ["--ext", "ts,tsx"])
+        self.assertEqual(set(repeated.split()), set(comma.split()))
+
+    def test_a_repeated_glob_accumulates(self):
+        (self.root / "a.ts").write_text("needle\n", encoding="utf-8")
+        (self.root / "b.tsx").write_text("needle\n", encoding="utf-8")
+        base = ["search_source.py", "needle", "--root", str(self.root), "--files-only"]
+        _, one, _ = self._capture(base + ["--glob", "a.ts"])
+        _, both, _ = self._capture(base + ["--glob", "a.ts", "--glob", "b.tsx"])
+        self.assertEqual(set(one.split()), {"a.ts"})
+        self.assertEqual(set(both.split()), {"a.ts", "b.tsx"})
+
+    def test_a_repeated_dir_accumulates(self):
+        (self.root / "one").mkdir()
+        (self.root / "two").mkdir()
+        (self.root / "one" / "a.rs").write_text("needle\n", encoding="utf-8")
+        (self.root / "two" / "b.rs").write_text("needle\n", encoding="utf-8")
+        base = ["search_source.py", "needle", "--root", str(self.root), "--files-only"]
+        _, one, _ = self._capture(base + ["--dir", "one"])
+        _, both, _ = self._capture(base + ["--dir", "one", "--dir", "two"])
+        self.assertEqual(set(one.split()), {"one/a.rs"})
+        self.assertEqual(set(both.split()), {"one/a.rs", "two/b.rs"})
+
+    def test_a_repeated_value_is_not_searched_twice(self):
+        """`--ext ts --ext ts,tsx` is a plausible thing to type."""
+        (self.root / "a.ts").write_text("needle\n", encoding="utf-8")
+        _, _, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--ext",
+                "ts",
+                "--ext",
+                "ts,tsx",
+            ]
+        )
+        self.assertIn("1 match(es) in 1 file(s)", err)
+
+    def test_an_empty_ext_is_refused_not_silently_widened(self):
+        """Symmetric with `--glob ''`: falling back to the default set on an
+        empty `--ext` silently answers a question the caller did not ask."""
+        with self.assertRaises(ss.SearchSourceError):
+            self._capture(
+                ["search_source.py", "needle", "--root", str(self.root), "--ext", ""]
+            )
+
+    def test_an_empty_dir_is_refused_not_silently_widened(self):
+        with self.assertRaises(ss.SearchSourceError):
+            self._capture(
+                ["search_source.py", "needle", "--root", str(self.root), "--dir", ""]
+            )
+
     def test_a_glob_matching_nothing_warns_rather_than_reading_as_a_negative(self):
         _, _, err = self._capture(
             [
@@ -618,6 +713,107 @@ class CliTests(unittest.TestCase):
         )
         self.assertIn("--ext excluded all of them", err)
         self.assertNotIn("--glob matched no files", err)
+
+    def test_a_glob_naming_a_pruned_path_says_so_rather_than_blaming_the_path(self):
+        """`--glob sdk/idl/dropset.json` named a file that is really there; the
+        old message ("matched no files") sent the reader to re-check a path
+        sitting in plain sight, when the answer is that it is excluded."""
+        (self.root / "Cargo.lock").write_text("needle\n", encoding="utf-8")
+        _, _, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "Cargo.lock",
+                "--all-text",
+            ]
+        )
+        self.assertIn("excluded as a generated family", err)
+        self.assertIn("Cargo.lock", err)
+        self.assertNotIn("--glob matched no files", err)
+
+    def test_a_pruned_glob_is_reported_even_when_another_glob_matched(self):
+        """The partial case, and the more dangerous one. Because globs now
+        accumulate, `--glob live --glob pruned` is the encouraged spelling —
+        and there the run returns results and reads as complete while a path
+        the caller named by hand was never searched at all."""
+        (self.root / "Cargo.lock").write_text("needle\n", encoding="utf-8")
+        code, out, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "a.rs",
+                "--glob",
+                "Cargo.lock",
+                "--all-text",
+                "--files-only",
+            ]
+        )
+        # The live glob still returns its match...
+        self.assertEqual(code, 0)
+        self.assertEqual(set(out.split()), {"a.rs"})
+        # ...and the pruned one is named rather than silently dropped.
+        self.assertIn("excluded as a generated family", err)
+        self.assertIn("Cargo.lock", err)
+
+    def test_a_pruned_glob_survives_the_ext_excluded_everything_branch(self):
+        """The last corner the nested form hid it in: another glob matched, but
+        --ext filtered out every file it matched, so the run reports the --ext
+        mismatch and nothing was searched — while the path the caller named by
+        hand goes unmentioned."""
+        (self.root / "Cargo.lock").write_text("needle\n", encoding="utf-8")
+        (self.root / "notes.md").write_text("needle\n", encoding="utf-8")
+        _, _, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "Cargo.lock",
+                "--glob",
+                "notes.md",
+                "--ext",
+                "rs",
+            ]
+        )
+        self.assertIn("--ext excluded all of them", err)
+        self.assertIn("excluded as a generated family", err)
+        self.assertIn("Cargo.lock", err)
+
+    def test_no_pruned_warning_when_every_glob_was_searchable(self):
+        _, _, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "a.rs",
+                "--files-only",
+            ]
+        )
+        self.assertNotIn("excluded as a generated family", err)
+
+    def test_a_glob_naming_a_genuinely_absent_path_still_blames_the_path(self):
+        _, _, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "Cargo.lock",
+                "--all-text",
+            ]
+        )
+        self.assertIn("--glob matched no files", err)
+        self.assertNotIn("excluded as a generated family", err)
 
     def test_truncation_is_announced_on_stderr(self):
         (self.root / "many.rs").write_text("needle\n" * 5, encoding="utf-8")

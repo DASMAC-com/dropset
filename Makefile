@@ -537,6 +537,18 @@ taker-down: check-docker
 lint:
 	python3 .claude/tools/lint_paths.py
 
+# Report committed guard hooks that no settings file wires. A script under
+# .claude/hooks/ does nothing until a PreToolUse entry points at it, and the
+# wiring is deliberately uncommitted (both settings files are git-ignored), so
+# a guard can sit committed and inert indefinitely — as two of three did until
+# 2026-08-14. CI cannot check this: it has no settings to inspect, which is why
+# it is a make target `housekeeping` drives from the base repo instead. Reports
+# only; wiring a guard is the operator's call. Exits 0 clean / 1 unwired /
+# 2 if the scan itself could not run.
+.PHONY: hook-wiring
+hook-wiring:
+	python3 .claude/tools/hook_wiring.py $(ARGS)
+
 # Account for where a session's tokens went (the deterministic core of the
 # session-metrics skill). A stdlib-only Python skill-tool under .claude/tools/
 # (not a Cargo workspace member — see CLAUDE.md "Skill tooling"). Resolves the

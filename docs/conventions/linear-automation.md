@@ -539,6 +539,21 @@ skill's session in the base repo, human-directed, one edge at a time.
 That is the whole of the exception: not "a skill that is allowed to",
 but "the place a human does it".
 
+**One standing edge class, ratified 2026-08-18: the serial meta
+chain.** Open `Claude:`-prefixed meta-work issues are kept blocking one
+another in a single chain, so exactly one is unblocked at a time and
+agent-infra work lands one batch at a time rather than several sessions
+rewriting the same skills at once. A planning session chains a newly
+filed meta issue behind the current tail as **routine bookkeeping**,
+without a fresh per-edge proposal — the operator ratified the class, so
+each instance does not need re-ratifying.
+
+This narrows nothing else. It is still the planning session placing it,
+still one chain, and **automated filers still place no edges at all** —
+a filing skill that notices a new meta issue does not chain it. Treat
+any other edge, semantic ones included, under the one-at-a-time rule
+above.
+
 **The mechanism is `board_batch.py edges`**, and it changes none of the
 above. There is no MCP path for relations at all, so a planning session
 needs *some* tool to execute the operator's decision:

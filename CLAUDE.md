@@ -118,9 +118,12 @@ rebase). A filer that believes a real dependency exists **proposes** it
 via `AskUserQuestion` with the concrete evidence and writes it only on
 an explicit yes; the default in any autonomous run is **no edge**, with
 the suspicion recorded as prose. Human-placed edges are authoritative
-and never rewritten. File overlap is **not** a dependency: it is
-`related`-linked and reported as a collision cluster. Detail:
-`docs/conventions/linear-automation.md`.
+and never rewritten. **One standing exception, operator-ratified:** a
+planning session chains `Claude:`-prefixed meta-work into a single
+serial blocking chain as routine bookkeeping, with no per-edge
+proposal — automated filers still place none. File overlap is **not** a
+dependency: it is `related`-linked and reported as a collision cluster.
+Detail: `docs/conventions/linear-automation.md`.
 
 ## GitHub via MCP
 
@@ -209,16 +212,24 @@ guard-safe carve-out), the **worktree edit-path guard** (blocks a
 file-mutating tool
 that targets a base-repo absolute path from a worktree session —
 editing the base copy the worktree build never sees is a recurring,
-expensive slip), the iTerm2 tab-color integration, and the `~/.zshrc`
-setup they lean on — including the **session secrets**, which are
-resolved from 1Password at session launch rather than written into the
-shell file. Both settings files are git-ignored, so all of it
+expensive slip), the iTerm2 tab-color integration, and the shell setup
+they lean on — including the **session secrets**, which are resolved
+from 1Password at session launch rather than written into a config
+file. Both settings files are git-ignored, so all of it
 is opt-in — nothing is enforced on a checkout until you wire it up.
 `settings.local.json` is **one shared file resolved through worktrees
 to the main checkout**, so wiring it once makes it live in every
 worktree. Each guard's **script** is committed; its
-`PreToolUse` **wiring** is not. Full detail — every hook's wiring and
-the iTerm setup: `docs/conventions/local-integrations.md`.
+`PreToolUse` **wiring** is not — and a committed guard is **inert until
+wired**, which `make hook-wiring` reports on (it names every hook
+nothing points at, and writes nothing; `housekeeping` runs the same
+check each pass). The **session helpers** (`cdds`, `aps`, `raps`,
+`naps`, `rnaps`, `paps`, `haps`) are the exception that *is* committed, at
+`.claude/shell/init.zsh`, sourced from the base checkout by one guarded
+line in the shell profile; only their 1Password coordinates stay
+untracked, in a file outside the repo. Full detail — every hook's
+wiring, the helper family, and the iTerm setup:
+`docs/conventions/local-integrations.md`.
 
 ## Briefing sub-agents
 

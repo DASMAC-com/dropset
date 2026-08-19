@@ -221,6 +221,52 @@ runs to completion without re-planning. So every unblocked
 issue must be genuinely startable *now*, without carrying
 refactor-later burden that a later issue is going to undo.
 
+**The operator calls this view "Next"** (earlier: "Q"). It is
+a Linear view over the same set this skill calls the Queue,
+so the two words name one thing and "put it in Next" needs no
+follow-up question. Four semantics follow, and they are the
+whole reason the vocabulary is worth writing down:
+
+- An issue appears in Next **iff** it is in Backlog with no
+  live blocking edge. So "add something to Next" means: make
+  it a Backlog task with nothing blocking it — by resolving
+  or re-scoping what blocks it, **never** by silently
+  dropping a real dependency.
+
+- **Priority within Next is the pull order.** The operator
+  launches an implementation session by pulling the
+  highest-priority item there, so setting a high priority in
+  Next *is* how a planning session decides what gets built
+  next. It is the lever, not a label.
+
+- **Blocking edges and priorities are curated here**, in the
+  planning session orchestrating those implementation
+  sessions. Implementation sessions never place edges (see
+  `CLAUDE.md` → "Blocking relations").
+
+- **`Claude:`-prefixed meta-work is always Urgent once
+  unblocked** (operator rule, 2026-08-17). When a meta issue
+  enters Next, set it Urgent, so agent-infra improvements are
+  the next pull rather than queuing behind product work.
+
+- **The serial meta chain** (operator rule, 2026-08-18). Open
+  `Claude:`-prefixed issues are kept blocking one another in
+  **one serial chain**: file a new meta issue, and this
+  session chains it behind the current tail. So exactly
+  **one** meta issue is ever unblocked in Next — Urgent, per
+  the rule above — and meta improvements land one batch at a
+  time as each head merges, instead of several sessions
+  rewriting the same skills at once.
+
+  This is the **one standing exception** to the
+  proposal-per-edge rule: an operator-ratified edge *class*,
+  so a planning session places a chain edge as routine
+  bookkeeping without a fresh per-edge `AskUserQuestion`. It
+  changes nothing for anyone else — **automated filers still
+  place no edges, ever** (`CLAUDE.md` → "Blocking
+  relations"). The exception is this session's, and it is
+  scoped to this one chain.
+
 When an issue isn't: reorder it behind what it depends on,
 re-scope it, or split the first genuinely actionable unit
 into its own pullable task. An issue that is startable only
