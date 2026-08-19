@@ -3,9 +3,9 @@
 // Both mirror third-party images into public/ at build time so the browser
 // hits our own origin instead of an issuer CDN, and both write a manifest
 // (key → /<prefix>/<file>) that the corresponding data module reads alongside
-// the canonical remote URLs. The two consume it differently: currencies.ts
-// treats it as a lookup and keeps the canonical URL reachable as a fallback,
-// while wallets.ts still overlays it onto the URL in place.
+// the canonical remote URLs. Both consume it the same way: as a lookup that
+// leaves the canonical URL reachable, so a mirrored file that is missing or
+// unreadable at runtime still has somewhere to fall back to.
 //
 // The two scripts were byte-identical in shape but not in rigor: the token
 // one grew timeouts, retries, a body-size floor and magic-byte sniffing

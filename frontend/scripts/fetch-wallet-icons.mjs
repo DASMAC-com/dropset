@@ -1,8 +1,9 @@
 // Mirror wallet brand icons into public/wallet-icons at build time, so the
 // picker hits our own origin instead of third-party CDNs (and so wallets that
 // aren't installed still show a real logo rather than a letter avatar).
-// Writes lib/data/wallet-manifest.gen.json (key → /wallet-icons/<file>) which
-// wallets.ts overlays onto the canonical remote URLs in wallets.json.
+// Writes lib/data/wallet-manifest.gen.json (key → /wallet-icons/<file>),
+// which wallets.ts prefers over the canonical remote URL in wallets.json
+// while keeping that URL reachable as a render-side fallback.
 //
 // Pass --strict (CI does, for the icon-liveness job) to also exit non-zero
 // when any wallet is missing from the manifest, on the same reasoning as the
