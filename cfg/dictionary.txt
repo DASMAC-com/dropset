@@ -14,6 +14,7 @@ audd
 audm
 autocorrelated
 awsmcp
+backgrounded
 barchart
 bareverb
 bindgen
@@ -162,6 +163,7 @@ rasterizing
 ratatui
 raydium
 readback
+reauthored
 regclass
 rels
 repeg
@@ -184,6 +186,7 @@ samp
 sbpf
 seedable
 serde
+setext
 shellcheck
 shfmt
 significand
@@ -229,7 +232,9 @@ unfirmable
 unitless
 unmirrored
 unpadded
+unparseable
 unpullable
+unpushed
 unrouted
 unstarted
 unwired

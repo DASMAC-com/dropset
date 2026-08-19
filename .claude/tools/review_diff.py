@@ -166,7 +166,7 @@ SLICE_NAMES = ("source", "tests", "docs")
 # runs-Rust-suites verdict and `review-pr` ran the 20-to-40-minute local suite to
 # mirror a CI job that was never going to run. ``tests/test_review_diff.py`` now
 # asserts parity against the workflow itself, which is what makes the next drift
-# loud instead — the freshness lens is a second line of defence, not the first.
+# loud instead — the freshness lens is a second check, not the first.
 CODE_FILTER_EXCLUDES = (
     "frontend/**",
     "decks/**",

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word noseparator
 """Unit tests for trim_levers.py.
 
 Every network call goes through ``_post``, so the tests patch that one seam and
@@ -182,9 +183,7 @@ class FileLeverTests(unittest.TestCase):
             if "States" in query:
                 return {
                     "team": {
-                        "states": {
-                            "nodes": [{"id": "st-1", "name": tl.PARKED_STATE}]
-                        }
+                        "states": {"nodes": [{"id": "st-1", "name": tl.PARKED_STATE}]}
                     }
                 }
             self.created = variables["input"]
@@ -331,9 +330,7 @@ class AppendEvidenceTests(unittest.TestCase):
                 evidence="New evidence.",
                 dry_run=False,
             )
-        self.assertEqual(
-            self.sent["description"], "Existing body.\n\nNew evidence.\n"
-        )
+        self.assertEqual(self.sent["description"], "Existing body.\n\nNew evidence.\n")
 
     def test_a_stored_body_ending_in_newlines_does_not_gain_a_gap(self):
         with mock.patch.object(tl, "_post", side_effect=self._fake("Body.\n\n\n")):

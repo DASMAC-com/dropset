@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# cspell:word lineterm
+# cspell:word tofile
 """Slice-reader over a persisted tool-result file — read a huge payload in *this*
 process and emit only the part that answers the question.
 
@@ -266,11 +268,15 @@ def run(argv: list[str]) -> int:
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
-        "--headings", action="store_true", help="list markdown headings with line numbers"
+        "--headings",
+        action="store_true",
+        help="list markdown headings with line numbers",
     )
     mode.add_argument("--section", default=None, metavar="RE", help="one heading block")
     mode.add_argument("--grep", default=None, metavar="RE", help="matching lines")
-    mode.add_argument("--slice", default=None, metavar="A:B", help="inclusive line range")
+    mode.add_argument(
+        "--slice", default=None, metavar="A:B", help="inclusive line range"
+    )
     mode.add_argument(
         "--diff", default=None, metavar="FILE", help="unified diff against FILE"
     )

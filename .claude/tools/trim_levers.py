@@ -296,9 +296,7 @@ def _paged(api_key: str, issue_filter: dict) -> list[dict]:
             return nodes
         after = info.get("endCursor")
         if not after:
-            raise TrimLeversError(
-                "Linear reported another page but returned no cursor"
-            )
+            raise TrimLeversError("Linear reported another page but returned no cursor")
     raise TrimLeversError(f"read did not terminate within {MAX_PAGES} pages")
 
 
@@ -456,9 +454,7 @@ def append_evidence(
     # re-parses — the setext-heading corruption the merge tool hit twice.
     grown = stored.rstrip("\n") + "\n\n" + evidence.strip() + "\n"
 
-    data = _post(
-        api_key, _UPDATE_MUTATION, {"id": issue["id"], "description": grown}
-    )
+    data = _post(api_key, _UPDATE_MUTATION, {"id": issue["id"], "description": grown})
     result = data.get("issueUpdate") or {}
     if not result.get("success"):
         raise TrimLeversError(f"issueUpdate failed for {identifier}")

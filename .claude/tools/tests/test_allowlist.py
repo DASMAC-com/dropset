@@ -1,4 +1,3 @@
-# cspell:word unparseable
 """Stdlib ``unittest`` tests for the settings.local.json allowlist helper.
 
 Run via the repo's ``make tools-tests`` (discovery adds ``.claude/tools`` as

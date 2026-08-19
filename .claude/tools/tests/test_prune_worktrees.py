@@ -57,12 +57,11 @@ class FakeGit:
     tree is clean and fully pushed, so tests opt in to a hazard via ``modified``
     (uncommitted changes), ``unpushed`` (commits never pushed), or
     ``no_upstream``. ``dirty`` is different from ``modified``: it makes ``git
-    worktree remove`` itself refuse, which is the *second* line of defence.
+    worktree remove`` itself refuse, which is the *second* check rather than
+    the pre-flight.
     """
 
-    def __init__(
-        self, porcelain, dirty=(), modified=(), unpushed=(), no_upstream=()
-    ):
+    def __init__(self, porcelain, dirty=(), modified=(), unpushed=(), no_upstream=()):
         self.porcelain = porcelain
         self.dirty = set(dirty)
         self.modified = set(modified)
@@ -82,7 +81,9 @@ class FakeGit:
         if args[0] == "-C":
             path = args[1]
             if args[2] == "status":
-                return (0, " M src/lib.rs\n", "") if path in self.modified else (0, "", "")
+                return (
+                    (0, " M src/lib.rs\n", "") if path in self.modified else (0, "", "")
+                )
             if args[2] == "rev-list":
                 branch = path.rsplit("/", 1)[-1]
                 if branch in self.no_upstream:

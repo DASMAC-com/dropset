@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word screenful
 """Query the localnet Postgres in one allow-rule, without psql's box drawing.
 
 SQL verification against the localnet database used to go through hand-written

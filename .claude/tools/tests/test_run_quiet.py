@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# cspell:word kwyjibo
+# cspell:word loneword
 """Unit tests for ``run_quiet.py`` (stdlib ``unittest``; no pytest)."""
 
 from __future__ import annotations
@@ -165,8 +167,8 @@ class UnknownWords(unittest.TestCase):
         return path
 
     def test_parses_word_and_location(self):
-        got = rq.parse_unknown_word("docs/foo.md:12:5 - Unknown word (foobarbaz)")
-        self.assertEqual(got, ("foobarbaz", "docs/foo.md:12:5"))
+        got = rq.parse_unknown_word("docs/foo.md:12:5 - Unknown word (kwyjibo)")
+        self.assertEqual(got, ("kwyjibo", "docs/foo.md:12:5"))
 
     def test_parses_a_forbidden_word_the_same_way(self):
         got = rq.parse_unknown_word("a.md:1:1 - Forbidden word (teh)")

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word foobarbaz
 """Run a command quietly: capture its output to a log, surface only a summary.
 
 Per the project's context-economy rule (docs/conventions/context-economy.md),
@@ -85,8 +86,8 @@ MAX_FAILED_LINES = 40
 # follow-up grep over the log to find the word, one of them four separate times.
 UNKNOWN_WORD_RE = re.compile(r"\b(?:Unknown|Forbidden) word \(([^)]+)\)")
 
-# Cap on distinct spelling offenders surfaced. A first-offence run on a new doc
-# can legitimately produce dozens; the index is meant to name the fix, not to
+# Cap on distinct spelling offenders surfaced. The first run over a new doc can
+# legitimately produce dozens; the index is meant to name the fix, not to
 # reproduce the log.
 MAX_UNKNOWN_WORDS = 40
 

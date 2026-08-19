@@ -770,7 +770,9 @@ def run(argv: list[str]) -> int:
     if not isinstance(pairs, list):
         raise BoardBatchError("edges expects a list of {blocker, blocked} objects")
     by_number = index_by_number(
-        fetch_issues_by_number(api_key, project_id, referenced_numbers(pair_refs(pairs)))
+        fetch_issues_by_number(
+            api_key, project_id, referenced_numbers(pair_refs(pairs))
+        )
     )
     place_edges(api_key, pairs, by_number, dry_run=args.dry_run, remove=args.remove)
     return 0

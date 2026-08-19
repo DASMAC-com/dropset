@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word justaname
 """Unit tests for localnet_psql.py.
 
 The argv assembly is pure, so it is tested directly — no container, no database.

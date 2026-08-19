@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word pageinfo
 # cspell:word proirity
 """Unit tests for board_batch.py.
 
@@ -450,7 +451,9 @@ class PaginationTests(unittest.TestCase):
         with mock.patch.object(bb, "_post", side_effect=fake_post):
             bb.fetch_issues_by_number("k", "p", numbers)
         self.assertEqual(len(chunks), 3)
-        self.assertEqual([len(c) for c in chunks], [bb.RESOLVE_CHUNK, bb.RESOLVE_CHUNK, 2])
+        self.assertEqual(
+            [len(c) for c in chunks], [bb.RESOLVE_CHUNK, bb.RESOLVE_CHUNK, 2]
+        )
         self.assertEqual(sorted(n for c in chunks for n in c), numbers)
 
     def test_an_empty_reference_set_reads_nothing_at_all(self):
@@ -521,7 +524,9 @@ class BoardSizeIndependenceTests(unittest.TestCase):
                 reads.append(variables["filter"]["number"]["in"])
                 return {
                     "issues": {
-                        "nodes": [_issue(n) for n in variables["filter"]["number"]["in"]]
+                        "nodes": [
+                            _issue(n) for n in variables["filter"]["number"]["in"]
+                        ]
                     }
                 }
             return {"issueRelationCreate": {"success": True}}

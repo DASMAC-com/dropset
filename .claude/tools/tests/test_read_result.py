@@ -73,9 +73,7 @@ class UnwrapTests(unittest.TestCase):
         self.assertEqual(unwrap(raw), "hello")
 
     def test_several_blocks_are_joined(self):
-        raw = json.dumps(
-            [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]
-        )
+        raw = json.dumps([{"type": "text", "text": "a"}, {"type": "text", "text": "b"}])
         self.assertEqual(unwrap(raw), "a\nb")
 
     def test_a_bare_json_string_is_unwrapped(self):
@@ -96,7 +94,9 @@ class UnwrapTests(unittest.TestCase):
 
 class ExtractFieldTests(unittest.TestCase):
     def test_a_top_level_field(self):
-        self.assertEqual(extract_field(json.dumps({"description": "hi"}), "description"), "hi")
+        self.assertEqual(
+            extract_field(json.dumps({"description": "hi"}), "description"), "hi"
+        )
 
     def test_a_dotted_path_and_a_list_index(self):
         text = json.dumps({"attachments": [{"url": "u0"}, {"url": "u1"}]})
