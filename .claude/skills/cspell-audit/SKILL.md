@@ -194,8 +194,8 @@ matching entries (still report the rest).
      that file's top block** (create the block if absent,
      append a line if it exists); for each *move-inline* or
      *dead* word, Edit `cfg/dictionary.txt` to drop the
-     line (removing lines preserves the file's existing
-     alphabetical order). For each **mis-placed** file,
+     line (removing lines preserves whatever order the
+     file is already in). For each **mis-placed** file,
      Edit it to gather its escapes into the top block in
      the file's comment style — **one word per directive,
      one per line, in every format** (in Markdown the
@@ -210,6 +210,26 @@ matching entries (still report the rest).
      for a mis-placed file: its path and that its escapes
      need regrouping — so the caller files them as one
      aggregated issue. See "Use from housekeeping".
+
+   **Two consequences of the dictionary's `merge=union`
+   attribute** (per `docs/conventions/docs-and-style.md` →
+   "Spelling (cspell)"), both bearing directly on this step:
+
+   - **Don't assume the file is sorted or duplicate-free.** A
+     union merge leaves it in whatever order it lands in,
+     possibly with a word twice, until the next `make lint`
+     re-sorts it. So an Edit that drops "the line" for a word
+     can hit a non-unique match — check for a second copy
+     rather than assuming one, and de-duplicate the lines when
+     counting a word's spread.
+   - **A removal is not durable, and a recurrence is not a
+     failed fix.** Union merge keeps a line the other side
+     deleted, so a word this skill drops can come back when
+     that removal merges against a nearby addition. Re-report
+     it and drop it again — do **not** read the repeat finding
+     as evidence the earlier pass never applied. This is the
+     accepted cost of the attribute, and the hygiene pass, not
+     the sorter, is what catches it.
 
 1. **Verify.** Run the spell check to confirm the tree is
    still clean after reconciliation — an escape in the

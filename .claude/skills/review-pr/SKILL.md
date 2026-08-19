@@ -166,6 +166,16 @@ PR-authoring **writes** (`create_pull_request`,
      `merge=union` driver so git takes both sides itself.
      Reach for that before reconsidering this rule.
 
+     **But that lever does not exist everywhere, and this is
+     the case the rule is really for.** A single ordered file
+     has no structural escape — yamllint's alphabetical keys
+     (`cfg/**`, `infra/aws/**`) were examined and left as they
+     are, because there is no layout that removes the shared
+     insertion point. So when the conflict is an adjacent
+     insertion into *those*, there is nothing to fix at the
+     source and the answer is still a manual rebase, not an
+     auto-resolve. Don't spend a round rediscovering that.
+
      **Enumerate the conflicted files with git, not a
      search.** The question is "which files conflict",
      and git already knows exactly:
@@ -2503,7 +2513,9 @@ PR-authoring **writes** (`create_pull_request`,
      PR has merge conflicts. Catalogue this as a **blocking** issue
      and do **not** mark the PR ready. Tell the user to rebase onto
      `origin/<base>` and resolve the conflicts (this skill does not
-     auto-resolve them), then re-run `/review-pr`.
+     auto-resolve them — the argument for why that stays absolute even
+     for a trivial-looking sorted-list collision is in step 2), then
+     re-run `/review-pr`.
    - `mergeable: "UNKNOWN"` → GitHub hasn't finished
      computing mergeability yet. Wait a few seconds and
      re-run the `gh pr view` call until it settles.
@@ -2850,7 +2862,8 @@ PR-authoring **writes** (`create_pull_request`,
      (or `mergeStateStatus: "DIRTY"`) → **do not** offer to
      enqueue and **do not** advance the issue. Report the
      conflict, tell the human to rebase onto `origin/<base>`
-     to resolve it (this skill does not auto-resolve), and leave
+     to resolve it (this skill does not auto-resolve — see
+     step 2 for why that holds even here), and leave
      the issue **In Progress**. Stop here — the enqueue offer
      is off the table until the rebase clears the conflict.
    - `mergeable: "UNKNOWN"` → GitHub hasn't finished

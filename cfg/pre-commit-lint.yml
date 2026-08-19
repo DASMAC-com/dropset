@@ -59,9 +59,11 @@ repos:
   # gate, so don't let the fixer fight regeneration.
   - exclude: '(.*.rs|^sdk/ts/src/generated/|^sdk/idl/)'
     id: 'end-of-file-fixer'
-  # `--unique` is what makes the dictionary's union merge (see .gitattributes)
-  # self-healing: git takes both sides' lines without sorting or deduping, and
-  # the next commit touching the file restores both properties.
+  # `--unique` is what heals the dictionary's union merge (see .gitattributes):
+  # git takes both sides' lines without sorting or de-duplicating, and the next
+  # `make lint` that includes the file restores both. This is a fixer, so it
+  # exits non-zero when it rewrites — which is what fails CI on an unsorted
+  # dictionary rather than letting one land quietly.
   - args:
     - '--unique'
     files: 'cfg/dictionary.txt'

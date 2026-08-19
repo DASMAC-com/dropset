@@ -91,10 +91,17 @@ was a recurring tax paid for a conflict with no semantic content. So
 conflict. Being built into git, it needs no `merge.*.driver`
 configuration, so any clone resolves an add/add collision the same way.
 Union merge neither sorts nor de-duplicates, so the merged file can be
-out of order with a word twice — both are self-healing, because the
-`file-contents-sorter` hook runs with `--unique` and the next commit
-touching the file restores them. Nothing breaks in between: cspell
-tolerates both, and every reader of the file loads it into a set.
+out of order with a word twice. Both of those heal, because the
+`file-contents-sorter` hook runs with `--unique`. Be precise about
+**when**, though: this repo does not install pre-commit as a git hook, so
+healing happens at the next **`make lint`** that includes the file — not
+at commit time, and not in the merge commit itself. That is still
+fail-closed rather than best-effort: the hook is a fixer, so it exits
+non-zero when it rewrites, which means CI's `Lint` job fails on an
+unsorted dictionary and `review-pr` runs `make lint` on every PR. An
+out-of-order dictionary cannot quietly survive a review; it just isn't
+the commit that fixes it. Nothing breaks in the interim either — cspell
+tolerates both states.
 
 One divergence is **not** self-healing, and `--unique` cannot help:
 union merge keeps a line the other side **deleted**, and an edit is a
@@ -107,7 +114,8 @@ next hygiene pass re-detects it. Don't expect the sorter to catch it.
 
 Union merge is sound here **only** because the dictionary is an
 unordered set that happens to be stored sorted. Do not extend the
-attribute to a file where a doubled or reordered line changes meaning.
+attribute to a file where a dropped, doubled, or reordered line changes
+meaning.
 The same reasoning is why the Makefile declares each target's `.PHONY`
 beside its own rule instead of in one central sorted block — a sorted
 list is a merge-conflict generator, so prefer a layout that has no

@@ -1,28 +1,17 @@
 # The cspell dictionary is one alphabetically sorted word per line, so two
 # branches that each add a word collide at the same line by construction — a
 # conflict whose only correct resolution is "keep both sides". `merge=union`
-# is git's built-in driver for exactly that: it takes both sides' lines
-# instead of raising a conflict. Being built in, it needs no `merge.*.driver`
-# configuration, so any clone resolves an add/add collision the same way.
+# is git's built-in driver for exactly that, so never hand-resolve a conflict
+# in this file.
 #
-# Union merge neither sorts nor de-duplicates, so it can leave the file out
-# of order and with a word twice. Both of those are self-healing: the
-# `file-contents-sorter` in cfg/pre-commit-lint.yml runs with `--unique`, so
-# the next commit touching the file restores both, and neither state breaks
-# anything before then — cspell tolerates them, and the dictionary-hygiene
-# check reads the file into a set.
+# Union merge neither sorts nor de-duplicates, and it keeps a line the other
+# side DELETED. The first two heal at the next `make lint`; the third does
+# not heal at all and is accepted. Sound here ONLY because the dictionary is
+# an unordered set that happens to be stored sorted — do not extend the
+# attribute to a file where a dropped, doubled, or reordered line changes
+# meaning.
 #
-# One divergence is NOT self-healing: union merge keeps a line the other side
-# DELETED, and an edit is a delete plus an add, so it also keeps both
-# spellings of a reworded word. `--unique` cannot undo either — it only
-# collapses exact duplicates. That is a live shape here, not a hypothetical,
-# because `cspell-audit` drops a word that has fallen to a single file, so
-# such a removal merged against a nearby addition can come back. It is
-# accepted rather than fixed: a resurrected entry only over-permits one
-# spelling, and the next hygiene pass re-detects it. The sorter is not what
-# catches this.
-#
-# Do NOT extend this to a file where a dropped, doubled, or reordered line
-# changes meaning. It is sound here only because the dictionary is an
-# unordered set that happens to be stored sorted.
+# The full argument lives in docs/conventions/docs-and-style.md under
+# "Spelling (cspell)". Keep it there, not here: two prose copies of one
+# rationale is the drift generator this very file exists to remove.
 cfg/dictionary.txt merge=union
