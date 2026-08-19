@@ -9,7 +9,7 @@
  *   - market(base=to,   quote=from): the taker spends the quote → a `buy`.
  *
  * The resolved {@link EclobRoute} carries everything both the quoter
- * ({@link ./simulate | simulateSwap}) and the swap-instruction builder need,
+ * (`simulateSwap` in `./simulate`) and the swap-instruction builder need,
  * including the market bytes already fetched during discovery — so a caller
  * that resolves a route does not pay a second `getAccountInfo` to quote it.
  */

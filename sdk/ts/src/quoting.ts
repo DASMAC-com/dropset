@@ -42,7 +42,7 @@ export { NO_SLOT_BOUND, NO_WALL_BOUND } from './clock';
 
 /** One level of a native (absolute-price) book. */
 export type NativeLevel = {
-  /** Absolute price as raw `Price` bits (see {@link encodePrice}). */
+  /** Absolute price as raw `Price` bits (see `encodePrice` in `./price`). */
   price: PriceBits;
   /** Allowance in atoms: base atoms for asks, quote atoms for bids. */
   size: bigint;
