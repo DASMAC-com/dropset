@@ -96,11 +96,13 @@ out of order with a word twice. Both of those heal, because the
 **when**, though: this repo does not install pre-commit as a git hook, so
 healing happens at the next **`make lint`** that includes the file — not
 at commit time, and not in the merge commit itself. That is still
-fail-closed rather than best-effort: the hook is a fixer, so it exits
-non-zero when it rewrites, which means CI's `Lint` job fails on an
-unsorted dictionary and `review-pr` runs `make lint` on every PR. An
-out-of-order dictionary cannot quietly survive a review; it just isn't
-the commit that fixes it. Nothing breaks in the interim either — cspell
+fail-closed rather than best-effort, and it is CI that closes it: the
+`Lint` job runs the hook set over `--all-files`, so `cfg/dictionary.txt`
+is in scope on **every** PR whether or not the PR touches it, and the
+hook is a fixer — it exits non-zero when it rewrites. An out-of-order
+dictionary therefore cannot survive a PR at all. A local `make lint` is
+the path-scoped counterpart, which is why the healing commit is whichever
+one happens to include the file. Nothing breaks in the interim either — cspell
 tolerates both states.
 
 One divergence is **not** self-healing, and `--unique` cannot help:

@@ -158,12 +158,16 @@ PR-authoring **writes** (`create_pull_request`,
      linter passed".
 
      The better lever is removing the collision class at
-     the source, which is strictly better because it fixes
-     every session at once with no agent judgment anywhere:
-     the Makefile declares each target's `.PHONY` beside its
-     own rule instead of in one sorted block, and
-     `.gitattributes` gives the cspell dictionary a
-     `merge=union` driver so git takes both sides itself.
+     the source, because it fixes every session at once
+     rather than one conflict at a time: the Makefile
+     declares each target's `.PHONY` beside its own rule
+     instead of in one sorted block, and `.gitattributes`
+     gives the cspell dictionary a `merge=union` driver so
+     git takes both sides itself. The Makefile half needs no
+     agent judgment at all; the dictionary half leaves one
+     accepted residual, since union merge resurrects a
+     deleted word (see `docs/conventions/docs-and-style.md`
+     → "Spelling (cspell)").
      Reach for that before reconsidering this rule.
 
      **But that lever does not exist everywhere, and this is
