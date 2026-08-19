@@ -1535,7 +1535,7 @@ mod tests {
     /// life of the process: the tiers beneath it never ran, and the market
     /// degraded on a stale leg instead of falling through to a live print. The
     /// cost was a missed recovery rather than a wrong price, which is why it
-    /// survived review — the engine still recognised the leg as stale.
+    /// survived review — the engine still treats the leg as stale.
     #[test]
     fn a_stale_basis_or_peg_tier_falls_through_instead_of_masking_the_next_one() {
         let (base, now_unix) = (Instant::now(), 1_786_579_250);
@@ -1549,10 +1549,10 @@ mod tests {
         let now = base + Duration::from_secs(20 * 60);
         let tick = tick_at(now, now_unix);
 
-        // With every gated tier stale, each leg lands on its ungated floor
-        // instead of holding the stale primary: CMC for the basis, CoinGecko
-        // for the peg. Those two are read without a gate on purpose — nothing
-        // sits below them to reach.
+        // With every gated tier stale, each leg lands on its floor tier instead
+        // of holding the stale primary: CMC for the basis, CoinGecko for the
+        // peg. Those two are read without a gate on purpose — nothing sits
+        // below them to reach.
         let legs = hub.legs(&m, &tick);
         assert_eq!(legs.usdc_usd.unwrap().value, 1.0000, "CoinGecko peg floor");
         assert_eq!(legs.crypto_usdc.unwrap().value, 1.1490, "CMC basis floor");
@@ -1562,7 +1562,8 @@ mod tests {
         // Coinbase and Kraken readings above simply masked them.
         hub.kraken
             .insert(m.kraken_pair.unwrap().to_string(), (1.1520, now));
-        hub.kraken.insert(USDC_KRAKEN_PAIR.to_string(), (0.9997, now));
+        hub.kraken
+            .insert(USDC_KRAKEN_PAIR.to_string(), (0.9997, now));
         let legs = hub.legs(&m, &tick);
         assert_eq!(legs.usdc_usd.unwrap().value, 0.9997);
         // Kraken quotes token/USD, so the peg converts it, as on the live path.
