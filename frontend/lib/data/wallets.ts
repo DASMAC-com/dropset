@@ -58,9 +58,11 @@ export type PickerWallet = {
   key?: string;
   name: string;
   icon?: string;
-  // The second icon source to try when `icon` fails to load, empty when there
-  // is none. Only ever set for a curated brand icon served from our mirror —
-  // see `buildPickerWallets`.
+  // The second icon source to try when `icon` fails to load, "" when there is
+  // none. Non-empty only for a curated brand icon served from our mirror —
+  // the one shape with a canonical vendor URL behind it. Optional because
+  // callers outside `buildPickerWallets` needn't supply it; that function
+  // always does.
   iconFallback?: string;
   detected: boolean;
   // Present iff connectable right now → render a connect button. Curated
@@ -99,17 +101,22 @@ export function buildPickerWallets(
     const connector = connectors.find((c) => matchesKey(c, w.key));
     const detected =
       w.key === "metamask" ? metamaskInstalled : connector !== undefined;
+    // One binding feeds both the source and its fallback, so the two can't
+    // disagree about what "the connector supplied an icon" means. `||` rather
+    // than `??` on purpose: an empty-string icon is no icon, and treating it
+    // as one would skip the mirror and render the vendor URL directly.
+    const connectorIcon = connector?.icon || undefined;
     return {
       id: connector?.id ?? `known:${w.key}`,
       key: w.key,
       name: w.name,
       // Prefer the live connector's own icon; fall back to the bundled brand
       // icon so not-installed wallets still show a real logo.
-      icon: connector?.icon ?? walletIconUrl(w.key),
+      icon: connectorIcon ?? walletIconUrl(w.key),
       // Only the bundled icon has a second source worth trying. A connector's
       // icon is an inline data URI carrying its own bytes, so there is no
       // fetch that can fail and nothing to promote it to.
-      iconFallback: connector?.icon ? "" : walletIconFallbackUrl(w.key),
+      iconFallback: connectorIcon ? "" : walletIconFallbackUrl(w.key),
       detected,
       connectorId: connector?.id,
       // Only offer the install link when there's no connector to connect to.
@@ -127,6 +134,10 @@ export function buildPickerWallets(
       id: c.id,
       name: c.name,
       icon: c.icon,
+      // No curated entry, so no canonical URL to promote to. Spelled "" like
+      // every other "nothing further to try" in this module rather than left
+      // absent, so the field is total across all three row shapes.
+      iconFallback: "",
       detected: true,
       connectorId: c.id,
     }));

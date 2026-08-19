@@ -27,28 +27,59 @@ describe("wallet icon resolution", () => {
     }
   });
 
-  // Whichever source wins, the two must never be the same URL — a fallback
-  // that points back at the thing that just failed is not a fallback.
-  it("keeps the canonical URL distinct from the mirror", () => {
-    // This is the one assertion here that is not hermetic. `postinstall` runs
-    // the fetch scripts WITHOUT --strict, so an offline or proxied install
-    // still writes the manifest — just empty. The message matters more than
-    // usual because the bare failure would read as a logic bug rather than as
-    // "your install could not reach the vendor CDNs".
+  // `KNOWN_BY_KEY` resolves icons by key, so two entries sharing one would
+  // silently collapse to whichever `Object.fromEntries` saw last — the first
+  // would render the second's logo. The old overlay read the icon off the
+  // entry it was iterating and had no such dependency, so this pins an
+  // assumption the lookup introduced.
+  it("has no duplicate keys", () => {
+    expect(new Set(keys).size).toEqual(keys.length);
+  });
+
+  // Every curated wallet resolves as exactly one of two shapes, and BOTH are
+  // asserted — an unmirrored wallet is not skipped. That matters because the
+  // partial-manifest state (a wallet added to wallets.json since the last
+  // mirror fetch) is precisely what the fallback exists to serve, and it is
+  // reachable on any developer machine: `postinstall` runs the fetch WITHOUT
+  // --strict, so an offline or proxied install still writes a manifest, just
+  // an incomplete one. Guarding the assertions on a non-empty fallback would
+  // let the suite go green while most rows had no fallback at all.
+  it("resolves every curated wallet as mirror-then-canonical or canonical-only", () => {
+    for (const key of keys) {
+      const primary = walletIconUrl(key);
+      const fallback = walletIconFallbackUrl(key);
+      if (primary.startsWith("/wallet-icons/")) {
+        // Mirrored: the canonical URL stays reachable behind it, and the two
+        // must never be the same URL — a fallback that points back at what
+        // just failed is not a fallback.
+        expect(
+          fallback,
+          `no canonical URL behind the mirror for ${key}`,
+        ).not.toEqual("");
+        expect(fallback.startsWith("http")).toBe(true);
+        expect(fallback).not.toEqual(primary);
+      } else {
+        // Not mirrored: the canonical URL is itself the primary, so there is
+        // nothing further to try and "" sends the renderer to the avatar.
+        expect(primary.startsWith("http"), `${key} resolves to neither`).toBe(
+          true,
+        );
+        expect(fallback).toEqual("");
+      }
+    }
+  });
+
+  // Not hermetic, and deliberately separate from the shapes above so it can
+  // fail on its own terms: an offline install writes an empty manifest, which
+  // is a healthy-code/unhealthy-environment state. The message matters because
+  // the bare failure would read as a logic bug rather than as "your install
+  // could not reach the vendor CDNs".
+  it("has a populated icon mirror", () => {
     expect(
       keys.some((k) => walletIconFallbackUrl(k) !== ""),
       "wallet-manifest.gen.json is empty — run `pnpm --dir frontend install` " +
         "with network access so the mirror is populated",
     ).toBe(true);
-    for (const key of keys) {
-      const fallback = walletIconFallbackUrl(key);
-      if (fallback) {
-        expect(fallback).not.toEqual(walletIconUrl(key));
-        // A mirrored entry serves from our own origin; the fallback is remote.
-        expect(walletIconUrl(key).startsWith("/wallet-icons/")).toBe(true);
-        expect(fallback.startsWith("http")).toBe(true);
-      }
-    }
   });
 
   // An unknown key must resolve to "" rather than to a broken URL, so
@@ -89,13 +120,14 @@ describe("buildPickerWallets icon sources", () => {
   });
 
   // An extra wallet has no curated entry to fall back to, so it must not
-  // inherit some other wallet's canonical URL.
+  // inherit some other wallet's canonical URL. Spelled "" like the other two
+  // shapes rather than left absent — the field is total.
   it("gives a wallet outside the curated list no fallback", () => {
     const { detected } = buildPickerWallets(
       [connector("brave:std", "Brave", "data:image/svg+xml;base64,BBBB")],
       false,
     );
     const row = detected.find((w) => w.name === "Brave");
-    expect(row?.iconFallback).toBeUndefined();
+    expect(row?.iconFallback).toEqual("");
   });
 });

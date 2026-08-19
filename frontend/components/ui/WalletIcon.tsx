@@ -50,6 +50,10 @@ export function WalletIcon({
   // Only ever read for the avatar's initial, so the component never needs the
   // whole PickerWallet.
   name,
+  // Pre-resolved by the caller, where TokenIcon takes a symbol and does its
+  // own lookup. It has to be: a live Wallet Standard connector can override
+  // the curated icon with its own data URI, and only `buildPickerWallets`
+  // knows whether one did.
   src,
   fallbackSrc,
   size,
@@ -69,6 +73,10 @@ export function WalletIcon({
   if (!resolved) {
     return (
       <div
+        // Decorative: the row already renders the wallet's name as text, so
+        // without this a screen reader announces the bare initial in front of
+        // it ("P Phantom"). Matches TokenIcon's placeholder.
+        aria-hidden
         className={`flex items-center justify-center bg-muted font-bold text-muted-fg text-xs ${className ?? ""}`}
         // Explicit dimensions because `className` is the caller's to choose and
         // may not carry any — the avatar should reserve the same box as the
@@ -84,6 +92,7 @@ export function WalletIcon({
     <Image
       src={resolved}
       alt=""
+      aria-hidden
       width={size}
       height={size}
       className={className}
