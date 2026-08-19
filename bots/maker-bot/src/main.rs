@@ -585,8 +585,7 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         // basis is per-market, so it is layered onto the shared calibration
         // here exactly as the live path does in `Context`.
         let legs = build_legs(fx_q, basis_q, usdc_q, m.static_usd);
-        let mut engine =
-            FairValueEngine::new(cfg.fair_value.with_pinned_basis(m.pinned_basis));
+        let mut engine = FairValueEngine::new(cfg.fair_value.with_pinned_basis(m.pinned_basis));
         // A dry run reports the in-session composition; it is a wiring check,
         // not a clock simulation.
         let fair = engine.compose(legs, now, ClockCtx::in_session());

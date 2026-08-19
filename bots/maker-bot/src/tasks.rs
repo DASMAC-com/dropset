@@ -463,12 +463,12 @@ fn check_first_basis(ctx: &mut Context, cfg: &BotConfig, legs: Legs) {
     if ctx.basis_checked || ctx.cfg.pinned_basis.is_some() {
         return;
     }
-    let Some(observed) = observable_basis(legs, cfg.fair_value.leg_stale) else {
+    let Some(observed) = legs.observed_basis(cfg.fair_value.leg_stale) else {
         return;
     };
     ctx.basis_checked = true;
     let (low, high) = (cfg.fair_value.basis_low, cfg.fair_value.basis_high);
-    if observed < low || observed > high {
+    if ctx.engine.basis_out_of_band(observed) {
         eprintln!(
             "[basis] {}: first observed basis {observed:.4} is outside the sane \
              band [{low:.2}, {high:.2}] — a first reading cannot be a peg event, \
@@ -477,18 +477,6 @@ fn check_first_basis(ctx: &mut Context, cfg: &BotConfig, legs: Legs) {
             ctx.cfg.symbol
         );
     }
-}
-
-/// The basis a pair of legs implies, when one is observable at all: both legs
-/// live, fresh, and the FX anchor positive. `None` means there is nothing to
-/// check this tick — the sources are still warming, or one has dropped out.
-///
-/// Split out from [`check_first_basis`] so the observability rule is testable
-/// without standing up a [`Context`] (which needs an RPC client and a keypair).
-fn observable_basis(legs: Legs, stale: Duration) -> Option<f64> {
-    let fx = legs.fx.filter(|r| r.fresh(stale))?;
-    let crypto = legs.crypto_usdc.filter(|r| r.fresh(stale))?;
-    (fx.value > 0.0).then(|| crypto.value / fx.value)
 }
 
 /// Kill every market's resting book that is too stale to leave matchable,
@@ -1136,67 +1124,6 @@ mod tests {
         assert!(!ctx.reference_invalidated, "no episode was opened");
     }
 
-    /// The startup check only spends its one shot on a basis that actually
-    /// exists: the feed sources warm asynchronously, so the early ticks have a
-    /// partial or empty leg set and must not count as "checked".
-    #[test]
-    fn a_basis_is_observable_only_when_both_legs_are_live_and_fresh() {
-        let stale = Duration::from_secs(300);
-        let fresh = |v: f64| Some(Reading::new(v, Duration::from_secs(1)));
-        let base = Legs {
-            fx: fresh(0.0573),
-            crypto_usdc: fresh(0.0573),
-            usdc_usd: fresh(1.0),
-            static_usd: 0.0573,
-        };
-
-        assert_eq!(observable_basis(base, stale), Some(1.0));
-        // Either leg missing — nothing to check yet.
-        assert_eq!(observable_basis(Legs { fx: None, ..base }, stale), None);
-        assert_eq!(
-            observable_basis(
-                Legs {
-                    crypto_usdc: None,
-                    ..base
-                },
-                stale
-            ),
-            None
-        );
-        // A leg present but stale is not a reading.
-        assert_eq!(
-            observable_basis(
-                Legs {
-                    fx: Some(Reading::new(0.0573, Duration::from_secs(600))),
-                    ..base
-                },
-                stale
-            ),
-            None
-        );
-        // A non-positive anchor would divide by zero.
-        assert_eq!(
-            observable_basis(
-                Legs {
-                    fx: fresh(0.0),
-                    ..base
-                },
-                stale
-            ),
-            None
-        );
-        // The MXNe shape the issue reported: a basis near 0.52.
-        let observed = observable_basis(
-            Legs {
-                crypto_usdc: fresh(0.03064),
-                ..base
-            },
-            stale,
-        )
-        .unwrap();
-        assert!((observed - 0.5347).abs() < 1e-3, "observed {observed}");
-    }
-
     /// A pinned market has no observation to validate, so the check must not
     /// consume its one shot — and must never report a band violation for a
     /// constant that was never measured.
@@ -1248,7 +1175,9 @@ mod tests {
             usdc_usd: None,
             static_usd: mxne.static_usd,
         };
-        let fair = ctx.engine.compose(legs, Duration::from_secs(1), ClockCtx::in_session());
+        let fair = ctx
+            .engine
+            .compose(legs, Duration::from_secs(1), ClockCtx::in_session());
         assert_eq!(fair.regime, Regime::FxPinned);
         assert_eq!(fair.health, Health::Unverified);
         assert!(!fair.basis_breach);
@@ -1257,7 +1186,9 @@ mod tests {
         // unpinned market built the same way composes normally.
         let eurc = *MARKETS.iter().find(|m| m.symbol == "EURC").unwrap();
         let mut ctx = offline_ctx_with(&dir, eurc);
-        let fair = ctx.engine.compose(legs, Duration::from_secs(1), ClockCtx::in_session());
+        let fair = ctx
+            .engine
+            .compose(legs, Duration::from_secs(1), ClockCtx::in_session());
         assert_ne!(fair.regime, Regime::FxPinned);
     }
 

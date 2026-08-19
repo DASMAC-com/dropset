@@ -86,6 +86,23 @@ impl ClockCtx {
     }
 }
 
+impl Legs {
+    /// The two-peg basis these legs imply, when it is observable at all: both
+    /// legs present and fresh, and the FX anchor a usable divisor. `None` means
+    /// there is nothing to observe this tick — a source is still warming, or one
+    /// has dropped out.
+    ///
+    /// Lives here rather than in the consumer so the gating rule and the
+    /// division are stated once. The consumer's copy had already drifted into
+    /// re-implementing the crate's leg gating alongside the arithmetic, which is
+    /// the shape this crate exists to prevent.
+    pub fn observed_basis(&self, stale: Duration) -> Option<f64> {
+        let fx = self.fx.filter(|r| r.fresh(stale))?;
+        let crypto = self.crypto_usdc.filter(|r| r.fresh(stale))?;
+        observed_basis(crypto.value, fx.value)
+    }
+}
+
 /// Which leg is anchoring the mid this tick — surfaced per market for the
 /// operator (§1 "the bot surfaces which source is live per leg").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,12 +142,44 @@ pub enum Regime {
     Paused,
 }
 
+impl Regime {
+    /// The health gate this regime implies (§4).
+    ///
+    /// Health is a **total function of the regime** — there is no arm in which
+    /// they disagree — so it is derived here rather than restated at each
+    /// composition site. It stays a public field on [`FairValue`] because it is
+    /// the documented kill-switch axis and is constructed independently by
+    /// consumers; what this removes is the possibility of the two drifting,
+    /// where a new degraded arm could set the regime and forget the health,
+    /// silently un-tightening every kill switch while the operator log still
+    /// read "degraded".
+    pub fn health(self) -> Health {
+        match self {
+            Self::Normal | Self::CryptoOnly => Health::Ok,
+            Self::FxPinned => Health::Unverified,
+            Self::Degraded(_) => Health::Degraded,
+            Self::Paused => Health::Pause,
+        }
+    }
+}
+
 /// Why the engine is degraded (§1 "degraded and halt conditions", §4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Degrade {
-    /// FX anchor stale outside the weekend regime — the crypto reference
-    /// carries the mid, but this is an unexpected gap, so run degraded (§4).
+    /// FX anchor stale or absent outside the weekend regime — the crypto
+    /// reference carries the mid, but this is an unexpected gap, so run
+    /// degraded (§4).
     FxStale,
+    /// FX anchor answering promptly with an unusable value — non-finite, zero,
+    /// or negative.
+    ///
+    /// Distinguished from [`Degrade::FxStale`] because the two call for
+    /// different operator responses and used to be indistinguishable: a dead
+    /// poller and a closed session are staleness, while this is a live feed
+    /// publishing garbage, which is a wiring or upstream-format problem. Both
+    /// degrade identically — every folded case is equally unusable — so this
+    /// changes what the operator is told, not what the bot does.
+    FxInvalid,
     /// FX anchor live but the crypto basis leg is down — anchor on FX with the
     /// last smoothed basis, on thinner information.
     NoBasisLeg,
@@ -215,6 +264,27 @@ pub struct FairValue {
 }
 
 impl FairValue {
+    /// The skeleton of a composition: the regime, what anchors it, and the mid,
+    /// with every guard signal off and no basis. Each arm fills in what it
+    /// actually observed via struct-update syntax.
+    ///
+    /// `health` is derived here and never passed, which is the whole point —
+    /// see [`Regime::health`].
+    fn of(regime: Regime, anchor: Anchor, fair: Option<f64>) -> Self {
+        Self {
+            fair,
+            anchor,
+            regime,
+            basis: None,
+            basis_age: None,
+            health: regime.health(),
+            uncertain: false,
+            basis_breach: false,
+            basis_outlier: false,
+            usdc_breach: false,
+        }
+    }
+
     /// Whether the kill-switch policy should run tightened (§4). True in every
     /// degraded regime; false when healthy, paused, or
     /// [`Health::Unverified`] — see that variant for why a permanently
@@ -313,22 +383,16 @@ impl FairValueEngine {
         // has no usable source for.
         if let (Some(pinned), Some(fx)) = (self.cfg.pinned_basis, fx) {
             return FairValue {
-                fair: Some(fx.value * pinned),
-                anchor: Anchor::Fx,
-                regime: Regime::FxPinned,
                 basis: Some(pinned),
                 // A pin is a constant, not an observation, so it has no age —
                 // reporting one would invite the operator to read staleness into
-                // a value that cannot go stale.
-                basis_age: None,
-                health: Health::Unverified,
+                // a value that cannot go stale. And a pinned constant cannot
+                // breach a band it was never measured against, so `basis_breach`
+                // stays off: reporting one would be the false alarm this whole
+                // path exists to remove.
                 uncertain: fx.uncertain(self.cfg.fx_max_confidence_frac),
-                // A pinned constant cannot breach a band it was never
-                // measured against; reporting one would be the false alarm
-                // this whole path exists to remove.
-                basis_breach: false,
-                basis_outlier: false,
                 usdc_breach,
+                ..FairValue::of(Regime::FxPinned, Anchor::Fx, Some(fx.value * pinned))
             };
         }
 
@@ -363,22 +427,19 @@ impl FairValueEngine {
                     );
                 };
 
-                let (regime, health) = if outlier {
-                    (Regime::Degraded(Degrade::NoBasisLeg), Health::Degraded)
+                let regime = if outlier {
+                    Regime::Degraded(Degrade::NoBasisLeg)
                 } else {
-                    (Regime::Normal, Health::Ok)
+                    Regime::Normal
                 };
                 FairValue {
-                    fair: Some(fx.value * basis),
-                    anchor: Anchor::Fx,
-                    regime,
                     basis: Some(basis),
                     basis_age: Some(self.since_basis),
-                    health,
                     uncertain: fx.uncertain(self.cfg.fx_max_confidence_frac),
                     basis_breach: observed_breach || self.basis_out_of_band(basis),
                     basis_outlier: outlier,
                     usdc_breach,
+                    ..FairValue::of(regime, Anchor::Fx, Some(fx.value * basis))
                 }
             }
             // FX live, basis leg down: anchor on FX with the last smoothed
@@ -390,38 +451,34 @@ impl FairValueEngine {
                     return self.without_usable_basis(legs.static_usd, usdc_breach, false, false);
                 };
                 FairValue {
-                    fair: Some(fx.value * basis),
-                    anchor: Anchor::Fx,
-                    regime: Regime::Degraded(Degrade::NoBasisLeg),
                     basis: Some(basis),
                     basis_age: Some(self.since_basis),
-                    health: Health::Degraded,
                     uncertain: fx.uncertain(self.cfg.fx_max_confidence_frac),
                     basis_breach: self.basis_out_of_band(basis),
-                    basis_outlier: false,
                     usdc_breach,
+                    ..FairValue::of(
+                        Regime::Degraded(Degrade::NoBasisLeg),
+                        Anchor::Fx,
+                        Some(fx.value * basis),
+                    )
                 }
             }
             // No live FX: the crypto reference is the anchor. Structural on a
             // weekend (healthy, §1 fm2); an unexpected degrade otherwise (§4).
             // No FX ⇒ no observable basis.
             (None, Some(crypto)) => {
-                let (regime, health) = if clock.weekend {
-                    (Regime::CryptoOnly, Health::Ok)
+                // A weekend is structural whatever the FX leg did, so the
+                // distinction below only refines an *unexpected* gap.
+                let regime = if clock.weekend {
+                    Regime::CryptoOnly
+                } else if legs.fx.is_some_and(|r| r.young(stale) && !r.valid()) {
+                    Regime::Degraded(Degrade::FxInvalid)
                 } else {
-                    (Regime::Degraded(Degrade::FxStale), Health::Degraded)
+                    Regime::Degraded(Degrade::FxStale)
                 };
                 FairValue {
-                    fair: Some(crypto.value),
-                    anchor: Anchor::CryptoReference,
-                    regime,
-                    basis: None,
-                    basis_age: None,
-                    health,
-                    uncertain: false,
-                    basis_breach: false,
-                    basis_outlier: false,
                     usdc_breach,
+                    ..FairValue::of(regime, Anchor::CryptoReference, Some(crypto.value))
                 }
             }
             // Nothing live: the static peg if configured, else pause.
@@ -477,34 +534,27 @@ impl FairValueEngine {
         basis_outlier: bool,
     ) -> FairValue {
         let usable_peg = static_usd.is_finite() && static_usd > 0.0;
+        let (regime, anchor) = if usable_peg {
+            (Regime::Degraded(degrade), Anchor::Static)
+        } else {
+            (Regime::Paused, Anchor::None)
+        };
         FairValue {
-            fair: usable_peg.then_some(static_usd),
-            anchor: if usable_peg {
-                Anchor::Static
-            } else {
-                Anchor::None
-            },
-            regime: if usable_peg {
-                Regime::Degraded(degrade)
-            } else {
-                Regime::Paused
-            },
-            basis: None,
-            basis_age: None,
-            health: if usable_peg {
-                Health::Degraded
-            } else {
-                Health::Pause
-            },
-            uncertain: false,
             basis_breach,
             basis_outlier,
             usdc_breach,
+            ..FairValue::of(regime, anchor, usable_peg.then_some(static_usd))
         }
     }
 
-    /// Whether a smoothed basis is outside its sane band (§4 basis-band breach).
-    pub(crate) fn basis_out_of_band(&self, basis: f64) -> bool {
+    /// Whether a basis is outside this market's sane band (§4 basis-band
+    /// breach).
+    ///
+    /// Public so a consumer banding a *raw first observation* — a wiring check,
+    /// asking a different question of a different quantity than the engine's
+    /// own test of the smoothed value — uses this market's configured band
+    /// rather than re-deriving the comparison.
+    pub fn basis_out_of_band(&self, basis: f64) -> bool {
         basis < self.cfg.basis_low || basis > self.cfg.basis_high
     }
 }
@@ -994,7 +1044,10 @@ mod tests {
         e.compose(normal(1.0), secs(5), ClockCtx::in_session());
         let r = e.compose(normal(0.52), secs(30), ClockCtx::in_session());
         assert!(r.basis_outlier, "0.52 against 1.0 is far outside the gate");
-        assert!(r.basis_breach, "and it is outside the sane band → peg event");
+        assert!(
+            r.basis_breach,
+            "and it is outside the sane band → peg event"
+        );
         assert_eq!(r.basis, Some(1.0), "the estimate is untouched");
         assert!(r.degraded());
     }
@@ -1073,6 +1126,59 @@ mod tests {
         assert_eq!(r.basis_age, None, "a constant has no observation age");
     }
 
+    /// A consumer's startup wiring check spends one shot on the first basis it
+    /// can observe, so "observable" has to mean both legs actually present and
+    /// fresh — the feed sources warm asynchronously, and an early partial leg
+    /// set must not count as checked.
+    #[test]
+    fn a_basis_is_observable_only_when_both_legs_are_live_and_fresh() {
+        let stale = secs(300);
+        let base = Legs {
+            fx: Some(fresh(0.0573)),
+            crypto_usdc: Some(fresh(0.0573)),
+            usdc_usd: Some(fresh(1.0)),
+            static_usd: 0.0573,
+        };
+        assert_eq!(base.observed_basis(stale), Some(1.0));
+
+        // Either leg missing — nothing to observe yet.
+        assert_eq!(Legs { fx: None, ..base }.observed_basis(stale), None);
+        assert_eq!(
+            Legs {
+                crypto_usdc: None,
+                ..base
+            }
+            .observed_basis(stale),
+            None
+        );
+        // A leg present but stale is not a reading.
+        assert_eq!(
+            Legs {
+                fx: Some(Reading::new(0.0573, secs(600))),
+                ..base
+            }
+            .observed_basis(stale),
+            None
+        );
+        // A non-positive anchor would divide by zero.
+        assert_eq!(
+            Legs {
+                fx: Some(fresh(0.0)),
+                ..base
+            }
+            .observed_basis(stale),
+            None
+        );
+        // The thin-market shape that motivated this work: a basis near 0.53.
+        let observed = Legs {
+            crypto_usdc: Some(fresh(0.03064)),
+            ..base
+        }
+        .observed_basis(stale)
+        .unwrap();
+        assert!((observed - 0.5347).abs() < 1e-3, "observed {observed}");
+    }
+
     #[test]
     fn observed_basis_is_the_documented_two_peg_quantity() {
         // (token/USDC) ÷ (fiat/USD). The division is embedded in the leg units,
@@ -1083,6 +1189,148 @@ mod tests {
         assert_eq!(observed_basis(1.141, -1.0), None);
         assert_eq!(observed_basis(1.141, f64::NAN), None);
         assert_eq!(observed_basis(f64::NAN, 1.14), None);
+    }
+
+    #[test]
+    fn a_garbage_fx_print_is_not_reported_as_a_stale_feed() {
+        // Same composition either way — both are unusable — but the operator is
+        // told which failure it is. A dead poller and a live feed publishing
+        // garbage previously carried the identical label.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: Some(fresh(f64::NAN)),
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Degraded(Degrade::FxInvalid));
+
+        let r = e.compose(
+            Legs {
+                fx: Some(Reading::new(1.14, secs(600))),
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Degraded(Degrade::FxStale));
+
+        let r = e.compose(
+            Legs {
+                fx: None,
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(
+            r.regime,
+            Regime::Degraded(Degrade::FxStale),
+            "absent is not invalid"
+        );
+    }
+
+    #[test]
+    fn a_weekend_stays_structural_whatever_the_fx_leg_did() {
+        // The refinement above must not turn a closed session into a fault.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: Some(fresh(f64::NAN)),
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::weekend(),
+        );
+        assert_eq!(r.regime, Regime::CryptoOnly);
+        assert_eq!(r.health, Health::Ok);
+    }
+
+    #[test]
+    fn health_is_a_total_function_of_regime() {
+        // Every variant, so a regime added later cannot quietly inherit a
+        // health that does not follow from it.
+        assert_eq!(Regime::Normal.health(), Health::Ok);
+        assert_eq!(Regime::CryptoOnly.health(), Health::Ok);
+        assert_eq!(Regime::FxPinned.health(), Health::Unverified);
+        assert_eq!(Regime::Paused.health(), Health::Pause);
+        for d in [
+            Degrade::FxStale,
+            Degrade::FxInvalid,
+            Degrade::NoBasisLeg,
+            Degrade::BasisUnusable,
+            Degrade::StaticPeg,
+        ] {
+            assert_eq!(Regime::Degraded(d).health(), Health::Degraded, "{d:?}");
+        }
+    }
+
+    #[test]
+    fn every_composition_reports_the_health_its_regime_implies() {
+        // The invariant the derivation exists to hold, checked through
+        // `compose` rather than on the mapping alone: whatever arm ran, the two
+        // fields agree.
+        let mut e = engine();
+        let cases = [
+            (normal(1.02), ClockCtx::in_session()),
+            (
+                Legs {
+                    crypto_usdc: None,
+                    ..normal(1.02)
+                },
+                ClockCtx::in_session(),
+            ),
+            (
+                Legs {
+                    fx: None,
+                    ..normal(1.02)
+                },
+                ClockCtx::weekend(),
+            ),
+            (
+                Legs {
+                    fx: None,
+                    ..normal(1.02)
+                },
+                ClockCtx::in_session(),
+            ),
+            (
+                Legs {
+                    fx: None,
+                    crypto_usdc: None,
+                    ..normal(1.02)
+                },
+                ClockCtx::in_session(),
+            ),
+            (
+                Legs {
+                    fx: None,
+                    crypto_usdc: None,
+                    static_usd: 0.0,
+                    ..normal(1.02)
+                },
+                ClockCtx::in_session(),
+            ),
+        ];
+        for (legs, clock) in cases {
+            let r = e.compose(legs, secs(5), clock);
+            assert_eq!(r.health, r.regime.health(), "regime {:?}", r.regime);
+        }
+
+        // And the pinned arm, which is the one regime a normal engine cannot
+        // reach.
+        let r = pinned_engine().compose(
+            Legs {
+                crypto_usdc: None,
+                ..normal(1.0)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::FxPinned);
+        assert_eq!(r.health, r.regime.health());
     }
 
     #[test]
