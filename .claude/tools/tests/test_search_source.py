@@ -350,6 +350,107 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(out["files"], [])
 
 
+class DirIsADirectoryTests(unittest.TestCase):
+    """``--dir`` given a file used to answer a confident zero.
+
+    The file cleared `exists()`, became a walk root, and `iter_files` swallowed
+    the resulting `iterdir` OSError — so the caller got `0 match(es)` and read it
+    as absence. Silent-wrong-answer class, not merely a wasted call.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def write(self, rel, text):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_a_file_passed_to_dir_is_refused_not_answered_with_zero(self):
+        self.write("tui/src/ui.rs", "fn needle() {}\n")
+        with self.assertRaises(ss.SearchSourceError) as caught:
+            ss.search("needle", self.root, dirs=["tui/src/ui.rs"])
+        message = str(caught.exception)
+        self.assertIn("takes a directory", message)
+        # The error has to name the flag that does what was meant, or the reader
+        # is left with a refusal and no next move.
+        self.assertIn("--glob", message)
+
+    def test_the_glob_the_error_recommends_actually_works(self):
+        self.write("tui/src/ui.rs", "fn needle() {}\n")
+        out = ss.search("needle", self.root, globs=("tui/src/ui.rs",))
+        self.assertEqual(out["total"], 1)
+
+    def test_a_real_directory_is_unaffected(self):
+        self.write("tui/src/ui.rs", "fn needle() {}\n")
+        self.assertEqual(ss.search("needle", self.root, dirs=["tui/src"])["total"], 1)
+
+    def test_a_missing_dir_still_reports_the_missing_path(self):
+        with self.assertRaises(ss.SearchSourceError) as caught:
+            ss.search("needle", self.root, dirs=["nope"])
+        self.assertIn("no such directory", str(caught.exception))
+
+
+class ContextNudgeTests(unittest.TestCase):
+    """The summary should say when `--context` was probably the wrong shape.
+
+    Nothing here is a wrong answer — these results are complete. The nudge exists
+    because the narrowness rule is missed while typing, not while reading.
+    """
+
+    def _summary(self, result, files_only=False, context=2):
+        err = io.StringIO()
+        # stdout is captured too, not just redirected for tidiness: `--files-only`
+        # prints the path list there, and letting it escape scribbles over the
+        # test runner's own output.
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            ss.print_result(result, files_only, context)
+        return err.getvalue()
+
+    def _result(self, total, files):
+        return {
+            "matches": [],
+            "files": [f"f{k}.rs" for k in range(files)],
+            "total": total,
+            "truncated": 0,
+        }
+
+    def test_context_over_many_files_suggests_files_only(self):
+        got = self._summary(self._result(20, ss.CONTEXT_FILE_NUDGE + 1))
+        self.assertIn("--files-only", got)
+        self.assertIn("WHERE", got)
+
+    def test_context_over_a_handful_of_files_says_nothing(self):
+        got = self._summary(self._result(5, ss.CONTEXT_FILE_NUDGE))
+        self.assertNotIn("NOTE: --context", got)
+
+    def test_matches_clustered_in_one_file_suggest_a_slice_read(self):
+        got = self._summary(self._result(ss.CONTEXT_DENSITY_NUDGE, 1))
+        self.assertIn("cluster in one file", got)
+        self.assertIn("slice Read", got)
+
+    def test_a_few_matches_in_one_file_say_nothing(self):
+        got = self._summary(self._result(2, 1))
+        self.assertNotIn("cluster in one file", got)
+
+    def test_no_nudge_without_context(self):
+        got = self._summary(self._result(50, 20), context=0)
+        self.assertNotIn("NOTE: --context", got)
+
+    def test_no_nudge_when_already_files_only(self):
+        got = self._summary(self._result(50, 20), files_only=True)
+        self.assertNotIn("NOTE: --context", got)
+
+    def test_no_nudge_on_an_empty_result(self):
+        # An empty result's problem is scope, not output form; the existing
+        # prose/glob diagnostics own that case.
+        got = self._summary(self._result(0, 0))
+        self.assertNotIn("NOTE: --context", got)
+
+
 class GlobFilterTests(unittest.TestCase):
     """``--glob`` picks *files*, where ``--dir`` picks subtrees.
 

@@ -159,8 +159,14 @@ SLICE_NAMES = ("source", "tests", "docs")
 # A mirror of the ``code`` filter in .github/workflows/test.yml, which runs with
 # ``predicate-quantifier: every`` — so a diff whose every path matches one of
 # these makes all three Tests jobs pass in seconds as path-filtered no-ops, and
-# running the Rust suites locally mirrors nothing. Keep in sync with that
-# workflow; the step-5 freshness lens covers exactly this kind of drift.
+# running the Rust suites locally mirrors nothing.
+#
+# Drift here is silent and its only symptom is wasted wall-clock: the list once
+# omitted the frontend workflow file, so a PR touching it got a false
+# runs-Rust-suites verdict and `review-pr` ran the 20-to-40-minute local suite to
+# mirror a CI job that was never going to run. ``tests/test_review_diff.py`` now
+# asserts parity against the workflow itself, which is what makes the next drift
+# loud instead — the freshness lens is a second line of defence, not the first.
 CODE_FILTER_EXCLUDES = (
     "frontend/**",
     "decks/**",
@@ -171,6 +177,7 @@ CODE_FILTER_EXCLUDES = (
     "sdk/codama/**",
     ".claude/**",
     ".github/workflows/explorer-image.yml",
+    ".github/workflows/frontend.yml",
     ".github/workflows/lint.yml",
     ".github/workflows/sdk.yml",
     ".github/workflows/semantic-pr.yml",
@@ -179,6 +186,9 @@ CODE_FILTER_EXCLUDES = (
     "cfg/**",
     "infra/**",
 )
+
+# Where that filter actually lives, for the parity test.
+TESTS_WORKFLOW = ".github/workflows/test.yml"
 
 # The sources each committed generated artifact is built from. A diff touching
 # none of these cannot have staled any of them, so the three regeneration gates

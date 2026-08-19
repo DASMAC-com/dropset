@@ -53,7 +53,16 @@ only the last occurrence, so the repeated spelling searched ``tsx`` alone and
 reported a clean ``0 match(es)`` — a false negative indistinguishable from a
 true one, on the tool ``review-pr`` leans on to prove repo-wide negatives.
 Passing one of them *empty* is now refused rather than silently widening the
-search back to the default.
+search back to the default. ``--dir`` likewise refuses a **file** path: a file
+clears the existence check, becomes a dead walk root, and the run then prints a
+confident ``0 match(es)`` — the same false-negative class, hit twice in one
+session before a third call found what was there all along.
+
+``--context`` is reported on, not just honored. When a context sweep spans more
+than a handful of files, or piles up in a single one, the summary says so: the
+narrowness rule is well documented and still gets missed at the moment of
+typing, so the reminder is attached to the result where it sits beside the cost
+it describes.
 
 ``--dir`` and ``--glob`` narrow along different axes, and the gap between them
 was measured: getting the section map of **three named docs** cost 3.0k because
@@ -423,6 +432,19 @@ def search(
             candidate = (root / name).resolve()
             if not candidate.exists():
                 raise SearchSourceError(f"no such directory: {name}")
+            if not candidate.is_dir():
+                # A *file* path clears `exists()`, becomes a walk root, and then
+                # `iter_files` swallows the `iterdir` OSError — so the run prints
+                # a confident `0 match(es)`. One session passed a file to --dir
+                # twice and read both zeros as "the identifier is absent" before
+                # a third call found it. Same silent-wrong-answer class as the
+                # repeated-flag defect, and the same fix: refuse, and name the
+                # flag that does what was meant.
+                raise SearchSourceError(
+                    f"--dir takes a directory, but {name} is a file — scope the "
+                    f"walk with the containing directory, or name the file with "
+                    f"--glob {name}"
+                )
             # Containment. `Path("/repo") / "/etc"` is `/etc`, so without this an
             # absolute (or `../..`) --dir searches outside the tree and prints
             # matching *lines* from it. This tool reduces to one blanket
@@ -587,6 +609,18 @@ def merge_context_blocks(matches: list[dict]) -> list[tuple[str, int, list[str]]
     return blocks
 
 
+# Above how many files a `--context` sweep gets told it is probably the wrong
+# shape. Three is "a handful": at four-plus files the windows are being read to
+# locate something, which `--files-only` answers for a fraction.
+CONTEXT_FILE_NUDGE = 3
+
+# And the opposite shape, from the same evidence: matches clustered in ONE file.
+# At this many, the merged context windows approach buying the file outright —
+# one measured sweep bought a file roughly twice over *after* --files-only had
+# already identified it — so a slice-read of the region is the cheaper move.
+CONTEXT_DENSITY_NUDGE = 10
+
+
 def print_result(result: dict, files_only: bool, context: int) -> None:
     """Emit ``grep -n``-shaped lines on stdout and one summary line on stderr."""
     if files_only:
@@ -663,6 +697,26 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
             f"as a generated family or never-search tree, so they were NOT "
             f"searched: {', '.join(pruned)}"
         )
+    # The output-form nudge. Unlike the warnings above, nothing here is wrong —
+    # the answer is complete. It fires because the discipline it defends fails at
+    # the moment of *typing*, not the moment of reading the convention: one
+    # session landed the doc rule and then violated it five times in the same
+    # run. So the reminder is attached to the result instead, where it is read
+    # right next to the cost it is describing.
+    if context and not files_only and result["total"]:
+        file_count = len(result["files"])
+        if file_count > CONTEXT_FILE_NUDGE:
+            summary += (
+                f" | NOTE: --context {context} across {file_count} file(s) — if "
+                "the question was WHERE something is, --files-only answers it "
+                "for a fraction; take context only to read what code does"
+            )
+        elif file_count == 1 and result["total"] >= CONTEXT_DENSITY_NUDGE:
+            summary += (
+                f" | NOTE: {result['total']} matches cluster in one file, so "
+                "these windows overlap toward buying it whole — --files-only "
+                "then a slice Read of the region is cheaper"
+            )
     print(summary, file=sys.stderr)
 
 

@@ -20,6 +20,114 @@ from pathlib import Path
 import review_diff as rd
 
 
+def _repo_root() -> Path:
+    """The repo root, from this test file's own location.
+
+    Resolved from ``__file__`` rather than the cwd so the parity test below reads
+    the real workflow whether it is run via ``make tools-tests`` from the root or
+    by pointing unittest at this file directly.
+    """
+    return Path(__file__).resolve().parents[3]
+
+
+def workflow_code_excludes(text: str) -> list[str]:
+    """The negated paths of the ``code`` filter in the Tests workflow.
+
+    A deliberately small hand parser rather than a YAML dependency: these tools
+    are stdlib-only, and the shape being read is three lines of literal list
+    syntax. It takes the ``code:`` block and collects every ``- '!…'`` entry until
+    the block ends, so a *new* negation nobody mirrored is picked up too — the
+    test has to fail on an addition, not just on a removal.
+    """
+    out: list[str] = []
+    in_code = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line == "code:":
+            in_code = True
+            continue
+        if not in_code:
+            continue
+        if not line.startswith("- "):
+            # The block ends at the next key (`predicate-quantifier:`) or any
+            # non-item line; comments inside it are skipped rather than ending it.
+            if line.startswith("#") or not line:
+                continue
+            break
+        entry = line[2:].strip().strip("'\"")
+        if entry.startswith("!"):
+            out.append(entry[1:])
+    return out
+
+
+class CodeFilterParityTests(unittest.TestCase):
+    """``CODE_FILTER_EXCLUDES`` must equal the workflow filter it mirrors.
+
+    Silent drift is this mirror's designed failure mode, and its only symptom is
+    a wasted 20-to-40-minute local Rust run — so the mirror is asserted against
+    the source of truth rather than trusted to be maintained by hand.
+    """
+
+    def setUp(self):
+        path = _repo_root() / rd.TESTS_WORKFLOW
+        if not path.is_file():
+            self.skipTest(f"{rd.TESTS_WORKFLOW} not found from {_repo_root()}")
+        self.excludes = workflow_code_excludes(path.read_text(encoding="utf-8"))
+
+    def test_the_parser_found_the_filter_at_all(self):
+        # Guard the guard: a workflow reshuffle that broke the parser would
+        # otherwise make this suite vacuously green.
+        self.assertGreater(len(self.excludes), 10)
+        self.assertIn("frontend/**", self.excludes)
+
+    def test_the_mirror_matches_the_workflow_exactly(self):
+        missing = [p for p in self.excludes if p not in rd.CODE_FILTER_EXCLUDES]
+        extra = [p for p in rd.CODE_FILTER_EXCLUDES if p not in self.excludes]
+        self.assertEqual(
+            (missing, extra),
+            ([], []),
+            "CODE_FILTER_EXCLUDES has drifted from "
+            f"{rd.TESTS_WORKFLOW}: missing {missing}, extra {extra}",
+        )
+
+    def test_the_frontend_workflow_is_mirrored(self):
+        # The specific omission that cost a full local suite run on PR #333.
+        self.assertIn(".github/workflows/frontend.yml", rd.CODE_FILTER_EXCLUDES)
+
+
+class WorkflowExcludeParserTests(unittest.TestCase):
+    """The hand parser itself, so the parity test rests on something tested."""
+
+    def test_collects_only_negated_entries_of_the_code_block(self):
+        text = "\n".join(
+            [
+                "        filters: |",
+                "          code:",
+                "          - '**'",
+                "          - '!docs/**'",
+                "          - '!**/*.md'",
+                "          predicate-quantifier: 'every'",
+                "          other:",
+                "          - '!not-mine/**'",
+            ]
+        )
+        self.assertEqual(workflow_code_excludes(text), ["docs/**", "**/*.md"])
+
+    def test_a_comment_inside_the_block_does_not_end_it(self):
+        text = "\n".join(
+            [
+                "          code:",
+                "          - '**'",
+                "          # a note",
+                "          - '!cfg/**'",
+            ]
+        )
+        self.assertEqual(workflow_code_excludes(text), ["cfg/**"])
+
+    def test_no_code_block_yields_nothing(self):
+        self.assertEqual(workflow_code_excludes("jobs:\n  build:\n"), [])
+
+
 class MatchesTests(unittest.TestCase):
     """The three pattern shapes the path lists use."""
 

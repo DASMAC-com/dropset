@@ -257,7 +257,11 @@ class AssembleTests(unittest.TestCase):
     def test_ops_reproduce_the_wholesale_description(self):
         data = self._issues()
         out = assemble(data)
-        stored = data["issues"][0]["description"]
+        # `rstrip` models Linear's store: the ops are applied to the body as it
+        # sits server-side, not to the local copy, which may carry a trailing
+        # newline the server dropped. Applying to the local copy is what let the
+        # separator arithmetic look correct here while corrupting real issues.
+        stored = data["issues"][0]["description"].rstrip("\n")
         self.assertEqual(
             apply_ops(stored, out["patch_ops"]).strip(),
             out["description"].strip(),
@@ -270,8 +274,9 @@ class AssembleTests(unittest.TestCase):
         out = assemble(data)
         self.assertEqual(out["patch_fallback_reason"], "")
         self.assertEqual([op["op"] for op in out["patch_ops"]], ["append", "append"])
+        stored = data["issues"][0]["description"].rstrip("\n")
         self.assertEqual(
-            apply_ops(data["issues"][0]["description"], out["patch_ops"]).strip(),
+            apply_ops(stored, out["patch_ops"]).strip(),
             out["description"].strip(),
         )
 
@@ -359,31 +364,64 @@ class PatchOpCapTests(unittest.TestCase):
 
 
 class PatchOpNewlineTests(unittest.TestCase):
-    """The lead-newline arithmetic, across every trailing-newline count."""
+    """The separator before the first appended part, across every input tail.
+
+    These used to assert an arithmetic that subtracted the body's trailing
+    newlines from the separator, and applied the ops to the string as *given*.
+    That is the wrong target: Linear stores a body with its trailing whitespace
+    stripped, so the count the tool measured locally could exceed the count that
+    actually preceded the append. When it did, the first append landed "\\n---"
+    against a body ending mid-paragraph and Linear re-parsed that paragraph as a
+    setext H2.
+
+    So `_merged` now models the store, and the invariant is a flat one: whatever
+    the input tail, exactly one blank line separates the survivor's last
+    paragraph from the rule.
+    """
 
     def _merged(self, stored, sections, globs):
         ops, reason = build_patch_ops(stored, sections, globs)
         self.assertEqual(reason, "")
-        return apply_ops(stored, ops)
+        # Linear strips the trailing whitespace when it stores a body, so the ops
+        # are applied to the stripped text — not to the local copy the tool read.
+        return apply_ops(stored.rstrip("\n"), ops)
+
+    def _assert_single_blank_line_before_the_rule(self, stored):
+        got = self._merged(stored, ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
+        self.assertIn("Survivor.\n\n---", got)
+        # The corruption this guards: a dash rule directly under a paragraph is
+        # setext heading syntax, which turns that paragraph into an H2.
+        self.assertNotIn("Survivor.\n---", got)
+        self.assertNotIn("Survivor.\n\n\n---", got)
 
     def test_no_trailing_newline(self):
-        got = self._merged("Survivor.", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
-        self.assertIn("Survivor.\n\n---", got)
+        self._assert_single_blank_line_before_the_rule("Survivor.")
 
     def test_one_trailing_newline(self):
-        got = self._merged("Survivor.\n", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
-        self.assertIn("Survivor.\n\n---", got)
+        self._assert_single_blank_line_before_the_rule("Survivor.\n")
 
     def test_two_trailing_newlines(self):
-        got = self._merged("Survivor.\n\n", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
-        self.assertIn("Survivor.\n\n---", got)
+        self._assert_single_blank_line_before_the_rule("Survivor.\n\n")
 
-    def test_three_or_more_trailing_newlines_is_a_known_divergence(self):
-        """The `max(0, 2 - trailing)` clamp cannot remove newlines already there,
-        so ops keep them where the wholesale path would rstrip. Documented
-        compromise — pinned here so it can't drift into a surprise."""
-        got = self._merged("Survivor.\n\n\n\n", ["---\n\n# Part 1 — t\n\nbody"], ["a/"])
-        self.assertIn("Survivor.\n\n\n\n---", got)
+    def test_many_trailing_newlines_no_longer_diverge(self):
+        # Previously a documented divergence, because the clamp could not remove
+        # newlines already present. Once the store is modelled, there are none to
+        # remove and the case collapses into the others.
+        self._assert_single_blank_line_before_the_rule("Survivor.\n\n\n\n")
+
+    def test_a_body_ending_mid_paragraph_does_not_become_a_heading(self):
+        """The reported defect, named directly.
+
+        Observed twice in one session on real issues, each costing a follow-up
+        patch write to repair.
+        """
+        got = self._merged(
+            "Intro.\n\nA closing operational fact with no trailing blank line.",
+            ["---\n\n# Part 1 — t\n\nbody"],
+            ["a/"],
+        )
+        self.assertIn("no trailing blank line.\n\n---", got)
+        self.assertNotIn("no trailing blank line.\n---", got)
 
     def test_a_first_line_touches_can_still_anchor(self):
         """Prefixing the anchor with a newline would leave a Touches-first body
