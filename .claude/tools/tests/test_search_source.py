@@ -761,6 +761,31 @@ class CliTests(unittest.TestCase):
         self.assertIn("excluded as a generated family", err)
         self.assertIn("Cargo.lock", err)
 
+    def test_a_pruned_glob_survives_the_ext_excluded_everything_branch(self):
+        """The last corner the nested form hid it in: another glob matched, but
+        --ext filtered out every file it matched, so the run reports the --ext
+        mismatch and nothing was searched — while the path the caller named by
+        hand goes unmentioned."""
+        (self.root / "Cargo.lock").write_text("needle\n", encoding="utf-8")
+        (self.root / "notes.md").write_text("needle\n", encoding="utf-8")
+        _, _, err = self._capture(
+            [
+                "search_source.py",
+                "needle",
+                "--root",
+                str(self.root),
+                "--glob",
+                "Cargo.lock",
+                "--glob",
+                "notes.md",
+                "--ext",
+                "rs",
+            ]
+        )
+        self.assertIn("--ext excluded all of them", err)
+        self.assertIn("excluded as a generated family", err)
+        self.assertIn("Cargo.lock", err)
+
     def test_no_pruned_warning_when_every_glob_was_searchable(self):
         _, _, err = self._capture(
             [

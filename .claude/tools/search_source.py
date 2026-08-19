@@ -638,17 +638,10 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
     if result.get("globbed") and not result.get("scanned"):
         # Distinguish the two ways a globbed run can search nothing. Blaming a
         # path typo for an extension mismatch sends the reader to the wrong fix.
+        # A pruned path is reported unconditionally below, so the only job here
+        # is to not *also* blame the spelling when that is already the answer.
         if not result.get("glob_hits"):
-            if pruned:
-                # Naming the reason turns a dead end into a decision: the path
-                # is there, it is excluded on purpose, and no spelling of
-                # --glob will reach it.
-                summary += (
-                    f" | WARNING: --glob named {len(pruned)} path(s) that exist "
-                    f"but are excluded as a generated family or never-search "
-                    f"tree, so nothing was searched: {', '.join(pruned)}"
-                )
-            else:
+            if not pruned:
                 summary += (
                     " | WARNING: --glob matched no files, so nothing was searched"
                 )
@@ -657,11 +650,14 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
                 f" | WARNING: --glob matched {result['glob_hits']} file(s), but "
                 f"--ext excluded all of them — nothing was searched"
             )
-    elif pruned:
-        # The partial case, and the more dangerous one: other globs matched, so
-        # the run returns results and reads as complete, while a path the
-        # caller named by hand was never searched at all. An empty result at
-        # least prompts a second look; this one does not.
+    # Deliberately NOT chained onto the branch above. Nesting it there hid it in
+    # two corners at once: when another glob matched (so the run looked
+    # complete), and when `--ext` filtered out everything the other globs
+    # matched. Both end with a path the caller named by hand never being
+    # searched and never being mentioned — the silent drop this whole
+    # diagnostic exists to prevent. Emitting it independently is what makes
+    # that unconditional rather than true-in-the-cases-we-thought-of.
+    if pruned:
         summary += (
             f" | WARNING: {len(pruned)} --glob path(s) exist but are excluded "
             f"as a generated family or never-search tree, so they were NOT "

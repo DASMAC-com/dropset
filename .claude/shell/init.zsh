@@ -73,6 +73,13 @@ cdds() {
 
 # Internal: the same move, for helpers that must launch from the base repo
 # rather than trusting the shell's cwd.
+#
+# It does not restore the previous directory, so a session helper leaves the
+# calling shell in the base repo after the session exits. That is a real side
+# effect and worth knowing — quit a session started from a worktree and the
+# next command runs in the base checkout, which is the slip the worktree
+# edit-path guard exists to catch. Left as-is deliberately: a subshell would
+# discard the `_ds_secrets` exports these helpers exist to set.
 _ds_base() {
   cd "$_DS_REPO" || return 1
 }

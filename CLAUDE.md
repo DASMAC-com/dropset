@@ -222,9 +222,9 @@ to the main checkout**, so wiring it once makes it live in every
 worktree. Each guard's **script** is committed; its
 `PreToolUse` **wiring** is not — and a committed guard is **inert until
 wired**, which `make hook-wiring` reports on (it names every hook
-nothing points at, and writes nothing; `housekeeping` runs it each
-pass). The **session helpers** (`cdds`, `aps`, `raps`, `naps`, `rnaps`,
-`paps`, `haps`) are the exception that *is* committed, at
+nothing points at, and writes nothing; `housekeeping` runs the same
+check each pass). The **session helpers** (`cdds`, `aps`, `raps`,
+`naps`, `rnaps`, `paps`, `haps`) are the exception that *is* committed, at
 `.claude/shell/init.zsh`, sourced from the base checkout by one guarded
 line in the shell profile; only their 1Password coordinates stay
 untracked, in a file outside the repo. Full detail — every hook's
