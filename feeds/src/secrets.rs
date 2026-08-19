@@ -1,3 +1,4 @@
+// cspell:word nocapture
 //! Secret resolution — one interface, one backend per store
 //! (docs/data-feeds.md §12).
 //!
@@ -536,14 +537,25 @@ mod tests {
     /// empty, so without it this test is compiled away and the command exits 0
     /// having verified nothing.
     ///
+    /// **`#[ignore]` is not what keeps this out of CI**, which is the trap it
+    /// looks like it avoids: the Postgres job runs `nextest --run-ignored all`
+    /// precisely so the store suites execute, so this runs there too. An
+    /// machine with no vault set is therefore a **skip**, not a failure — the
+    /// absence of a vault is that job's normal state, and panicking on it
+    /// reds the build for a machine that was never meant to resolve anything.
+    ///
     /// It asserts only that each credential resolves to something non-empty,
     /// and never prints a value.
     #[test]
     #[ignore]
     #[cfg(feature = "http")]
     fn the_enclave_resolves_the_whole_fx_roster() {
-        let vault = std::env::var(VAULT_ENV)
-            .expect("set DROPSET_OP_VAULT to the vault to check, or skip this test");
+        let Some(vault) = non_empty(VAULT_ENV) else {
+            // Visible under `--nocapture`, so a run that verified nothing does
+            // not read as a run that verified everything.
+            println!("no {VAULT_ENV} set — skipping the live enclave check");
+            return;
+        };
         let provider = SecretProvider::new(vec![Box::new(OnePasswordBackend::new(
             vault,
             non_empty(ACCOUNT_ENV),
