@@ -307,9 +307,9 @@ mod tests {
     fn the_floor_stays_inside_the_free_tiers_eight_per_minute() {
         let per_minute = requests_per_window(MIN_REQUEST_INTERVAL, Duration::from_secs(60));
         assert!(
-            per_minute <= 8.0,
-            "{per_minute} requests/minute exceeds Twelve Data's documented 8/min \
-             free tier"
+            per_minute < 8.0,
+            "{per_minute} requests/minute does not sit strictly inside Twelve \
+             Data's documented 8/min free tier"
         );
     }
 

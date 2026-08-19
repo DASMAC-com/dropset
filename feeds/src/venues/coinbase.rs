@@ -337,9 +337,10 @@ mod tests {
         // what justifies the absence of a `with_min_interval` call.
         let per_second = requests_per_window(Duration::from_millis(250), Duration::from_secs(1));
         assert!(
-            per_second <= 10.0,
-            "{per_second} requests/second exceeds Coinbase's documented 10/s for \
-             public endpoints — this adapter would then need its own floor"
+            per_second < 10.0,
+            "{per_second} requests/second does not sit strictly inside Coinbase's \
+             documented 10/s for public endpoints — this adapter would then need \
+             its own floor"
         );
     }
 

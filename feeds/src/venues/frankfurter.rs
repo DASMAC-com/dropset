@@ -16,9 +16,10 @@ use std::time::Duration;
 
 /// The floor between two requests on this venue.
 ///
-/// Frankfurter is the one venue in the roster that **publishes no rate limit**:
-/// it is keyless with soft, unpublished fair-use limits. So unlike every other
-/// floor in this crate, 1 s is *our* choice rather than the venue's number —
+/// Frankfurter **publishes no rate limit** — it is keyless with soft,
+/// unpublished fair-use limits — one of two venues in the roster in that
+/// position (keyless CoinMarketCap is the other). So unlike the floors derived
+/// from a documented number, 1 s is *our* choice rather than the venue's —
 /// picked because an unpublished limit is a reason for more caution, not less,
 /// and because the data cannot justify faster: these are ECB reference rates
 /// that change once a business day, so no consumer has a use for a tighter

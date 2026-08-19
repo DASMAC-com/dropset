@@ -275,9 +275,18 @@ answered with a 429. Rate is a thing this crate's shared client can hold
 state that resets on restart. So the keyless route removes a class of
 exposure rather than merely relocating it, and it keeps the maker's whole
 feed cascade secret-free. CoinMarketCap is the worked example: its keyed
-`Basic` plan caps out at 15,000 credits/month *and* is licensed for
-personal use only, where its keyless `/public-api/v1/simple/price` is
-neither metered by month nor so restricted.
+`Basic` plan caps out at 15,000 credits/month and its plan table bills
+that tier for personal use, where its keyless
+`/public-api/v1/simple/price` publishes no monthly allowance at all.
+
+Two caveats on that example, because it is the argument for the whole
+preference. The keyless route still reports a `credit_count` per
+response, so it is metered even though no allowance is published — the
+claim is "no published quota", not "no accounting". And only the keyed
+plan's personal-use billing was checked; the keyless route's licensing
+was **not** confirmed, and provider terms commonly bind all access
+however it is authenticated. Prefer the keyless route for the budget
+reason, which is verified; do not lean on it as a licensing finding.
 
 **A credential rides the transport as a sensitive header.** An adapter
 that authenticates with a header passes it to
@@ -707,7 +716,7 @@ difference in kind, not a difference in number.
 | ----------------------- | -------------------------------- | ------- |
 | Coinbase (public)       | 10 req/s, burst 15, per IP       | default |
 | OANDA                   | 100 req/s                        | default |
-| Kraken (public)         | ~1 call/s, counter-based         | 1 s     |
+| Kraken (public)         | ~1 call/s, counter-based         | 1.2 s   |
 | Pyth Hermes             | 10 req per 10 s per IP           | 1.2 s   |
 | CoinMarketCap (keyless) | unpublished; per-IP pooling, 429 | 2 s     |
 | Frankfurter             | unpublished; soft fair-use       | 1 s     |
@@ -716,9 +725,10 @@ difference in kind, not a difference in number.
 | Alpha Vantage           | 25 req/day, whole account        | 1 h     |
 
 **Each floor sits strictly inside its venue's limit, not on it.** Pyth's
-1.2 s is 8.3 requests per 10 s against a documented 10, and CoinGecko's
-15 s is 4/min against a 5/min low end — both deliberately short of the
-arithmetic maximum (1 s and 12 s would hit the cap exactly). Three things
+1.2 s is 8.3 requests per 10 s against a documented 10, CoinGecko's 15 s
+is 4/min against a 5/min low end, and Kraken's 1.2 s is 0.83/s against a
+documented ~1/s — each deliberately short of the arithmetic maximum
+(1 s, 12 s and 1 s respectively would hit the cap exactly). Three things
 make the exact-cap value the wrong choice: whether a venue meters a fixed
 or a sliding window decides whether a boundary request is the last
 allowed or the first refused; the limits are per **IP**, so a second
@@ -730,16 +740,21 @@ Two venues keep the 250 ms default because it is *already* stricter than
 what they allow: **Coinbase** at 10 req/s (the default is 4, so a paged
 candle backfill running flat out sits 2.5× inside the limit — the sharp
 case that turned out not to be sharp) and **OANDA** at 100 req/s, where
-the default is ~400× stricter than asked. Everything else raises its own.
+the default's 4 req/s is 25× stricter than asked. Everything else raises
+its own.
 
 Two of those numbers are **ours, not the venue's** — Frankfurter and
 keyless CoinMarketCap publish no rate — and both are marked as such at
 the adapter so nobody later mistakes a judgement call for a citation.
 
-Note what the floor is sized against in each case: a **rate**. Three
-venues in the roster express their free tier as a **quota** instead —
-Alpha Vantage 25/day, Twelve Data 800 credits/day, and CoinMarketCap's
-*keyed* plan 15,000/month — and a minimum interval cannot enforce one.
+Note what a floor can be sized against at all: a **rate**. Three venues
+express their free tier as a **quota** instead — Alpha Vantage 25/day,
+Twelve Data 800 credits/day, and CoinMarketCap's *keyed* plan
+15,000/month — and a minimum interval cannot enforce one. Two of the
+floors above are consequently doing something weaker than the rest:
+Alpha Vantage's hour is standing in for a quota outright (the venue
+publishes no rate), and Twelve Data's 8 s holds its 8/min rate while only
+the collector's cadence holds its daily credits.
 It is in-process state: it paces requests while the process is up and
 resets when it restarts, so an interval chosen to satisfy a daily budget
 holds only across a single continuous run. A crash-loop, or a few local
@@ -817,7 +832,7 @@ for all of them at once rather than per adapter.
   about the other. Coinbase's ticker is the case in the tree — its
   endpoint is per product, so a roster of N tokens is N sources — and the
   maker builds one client and hands each source a clone
-  (`CoinbaseTicker::with_client`). Reach for `with_client` (or the
+  (`CoinbaseTicker::from_client`). Reach for `from_client` (or the
   equivalent seam) whenever a venue gets more than one source in a
   process; `new` opening its own client is the convenience path for the
   single-source case.

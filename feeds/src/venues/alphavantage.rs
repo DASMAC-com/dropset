@@ -264,8 +264,9 @@ mod tests {
         // here; a quota cannot.
         let per_day = requests_per_window(MIN_REQUEST_INTERVAL, Duration::from_secs(24 * 3_600));
         assert!(
-            per_day <= 25.0,
-            "{per_day} requests/day exceeds Alpha Vantage's 25/day account budget"
+            per_day < 25.0,
+            "{per_day} requests/day does not sit strictly inside Alpha Vantage's \
+             25/day account budget"
         );
     }
 

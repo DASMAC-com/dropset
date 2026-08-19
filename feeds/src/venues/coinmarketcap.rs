@@ -4,15 +4,24 @@
 //!
 //! **This adapter is deliberately keyless, and that is a budget decision as
 //! much as a convenience one.** CoinMarketCap's keyed free (`Basic`) plan
-//! carries a **15,000 call-credit monthly quota** and is licensed for
-//! *personal* use, so it fits neither a standing collector nor a commercial
+//! carries a **15,000 call-credit monthly quota**, and its plan table bills it
+//! for *personal* use, so it fits neither a standing collector nor a commercial
 //! deployment: at a 60 s cadence one poller spends ~43,800 credits a month,
 //! nearly 3× the budget, and the per-market demo shape multiplies that again.
-//! The keyless public route (`/public-api/…`) has **no monthly quota** — its
-//! limits are per-IP rate pooling, answered with a 429. Rate is the kind of
-//! constraint a floor can hold at all, where a monthly quota is not (see
-//! [`MIN_REQUEST_INTERVAL`]), so choosing the route without a quota is what
-//! makes the cadence question go away rather than merely get managed.
+//! The keyless public route (`/public-api/…`) publishes **no monthly quota** —
+//! the documented contract is per-IP rate pooling, answered with a 429. Rate is
+//! the kind of constraint a floor can hold at all, where a monthly quota is not
+//! (see [`MIN_REQUEST_INTERVAL`]), so taking the route that prices access as a
+//! rate is what makes the cadence question go away rather than merely managed.
+//!
+//! **Two limits of that reasoning, since it is load-bearing.** First, the
+//! keyless route still returns a `credit_count` per response, so it is *metered*
+//! even though no monthly allowance is published — "no published quota" is the
+//! honest claim, not "no accounting". Second, what was checked is the keyed
+//! plan's personal-use billing; the keyless route's licensing terms were **not**
+//! confirmed, and provider terms commonly bind all access however it is
+//! authenticated. So treat the licensing half as a reason to prefer this route,
+//! not as a finding that it is unrestricted.
 //!
 //! **What that trade gives up, stated plainly:** the keyed plan's quota was
 //! per-account and therefore isolated, while a *pooled* per-IP limit is by
@@ -195,10 +204,17 @@ mod tests {
         assert!(SIMPLE_PRICE_PATH.starts_with("/public-api/"));
     }
 
-    /// The shape the keyless endpoint actually answers with, captured from
-    /// `/public-api/v1/simple/price?ids=1,1027,3408` — `data` is an array of
-    /// records, each carrying its own id, and the price is a bare number rather
-    /// than a nested USD quote.
+    /// The shape the keyless endpoint actually answers with: `data` is an array
+    /// of records, each carrying its own id, and the price is a bare number
+    /// rather than a nested USD quote.
+    ///
+    /// The **envelope** is copied from a live response
+    /// (`/public-api/v1/simple/price` on the configured host, which answered 200
+    /// with this structure); the **ids and prices** are this module's own
+    /// long-standing test values, substituted so the assertions below stay
+    /// comparable with the rest of the crate's fixtures. Recorded precisely
+    /// because "captured" and "shaped like a capture" are different claims, and
+    /// only the first would justify treating the field types as confirmed.
     fn captured_response() -> Value {
         json!({
             "data": [

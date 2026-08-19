@@ -5,11 +5,10 @@
 //! feed poll shared across them. `--dry-run` instead polls the tiered feeds
 //! once and prints the reference each market *would* stamp — the wiring check
 //! that every venue is reachable and decoding, with no validator and no writes.
-//! Pass `--drop <tier>`
-//! (repeatable: `pyth`, `coinbase`, `kraken`, `coingecko`, `cmc`, `fx`) in a
-//! dry run to suppress a tier and watch the cascade fall through to the next
-//! one — dropping `pyth` is how you check the Frankfurter FX fallback still
-//! carries the anchor.
+//! Pass `--drop <tier>` (repeatable: `pyth`, `coinbase`, `kraken`, `coingecko`,
+//! `cmc`, `fx`) in a dry run to suppress a tier and watch the cascade fall
+//! through to the next one — dropping `pyth` is how you check the Frankfurter
+//! FX fallback still carries the anchor.
 //!
 //! Flags:
 //!   --rpc <url>            RPC endpoint (default http://127.0.0.1:8899)
