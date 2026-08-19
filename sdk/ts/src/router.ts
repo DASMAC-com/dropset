@@ -108,8 +108,8 @@ export type Candidate<Q> = {
   /** Why it did not win, when it didn't. */
   reason: string | null;
   /**
-   * The error behind a `failed` status, unwrapped — e.g. a `DflowError` (from
-   * `./dflow`), whose `kind` tells a polling caller whether to back off (a
+   * The error behind a `failed` status, unwrapped — e.g. a `DflowError` in
+   * `./dflow`, whose `kind` tells a polling caller whether to back off (a
    * rate limit), stop (a rejected pair), or retry (a transport blip).
    */
   cause?: unknown;
@@ -215,9 +215,9 @@ export async function quoteEclob(
     nowSlot?: number;
     /**
      * Wall-clock unix seconds for the wall half. **Required** — the engine
-     * judges this deadline against cluster time, so a caller that cannot
-     * bound its own clock (a browser) must pass a chain-read time. See
-     * `nowUnix()` in `./market`, which remains available to hosts that can.
+     * judges this deadline against cluster time, so a caller that cannot bound
+     * its own clock (a browser) must pass a chain-read time. A host that *can*
+     * bound its own clock still has `nowUnix()` in `./market` for this.
      */
     nowUnix: number;
     /** Configured integrator fee in bps; clamped to the market ceiling. */

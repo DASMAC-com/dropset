@@ -11,7 +11,7 @@
  *
  * WASM must be instantiated once before the first {@link simulateSwap} call;
  * {@link initSimulator} does that and is idempotent. Pass the no-bound
- * `Price` sentinels in `./price` (`PRICE_INFINITY` for a market buy,
+ * `Price` sentinels from `./price` (`PRICE_INFINITY` for a market buy,
  * `PRICE_ZERO` for a market sell) as `limitPriceBits` to quote a market take.
  */
 

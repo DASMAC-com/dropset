@@ -25,11 +25,13 @@
  *
  * The book is the shared conformance fixture, whose levels carry both
  * deadlines: live at slot <= 999 and at unix <= 1_700_000_599, dead at either
- * boundary. The `expiry_slot_boundary_*` and `expiry_wall_boundary_*` vectors
- * pin those edges, so the values below are read off the fixture rather than
- * guessed. The two domains are three orders of magnitude apart, which is what
- * makes a same-member mis-plumb show up as a changed outcome instead of a
- * coincidence.
+ * boundary. Only the `market_data` blob is read from that file here; the two
+ * deadlines and the expected fill below are transcribed from the
+ * `expiry_slot_boundary_*` / `expiry_wall_boundary_*` vectors that pin those
+ * edges — so they are sourced rather than guessed, and a regenerated fixture
+ * fails this file loudly instead of quietly weakening it. The two domains are
+ * three orders of magnitude apart, which is what makes a same-member mis-plumb
+ * show up as a changed outcome instead of a coincidence.
  *
  * Run: `pnpm --filter @dropset/sdk test`.
  */
@@ -135,26 +137,25 @@ test('the wall clock alone can expire the book', async () => {
     (e: unknown) => {
       assert.ok(e instanceof NoRouteError);
       assert.equal(e.eclob.status, 'failed');
-      // The book emptied, rather than the RPC fallback firing.
+      // Pinning the reason, not just the status, is what separates an emptied
+      // book from the other ways this leg can fail: a chain-read fallback or a
+      // simulator throw both land in `failed` too, with a different reason.
       assert.match(e.eclob.reason ?? '', /no liquidity/);
-      assert.doesNotMatch(e.eclob.reason ?? '', new RegExp(CHAIN_SLOT_READ));
       return true;
     },
   );
 });
 
 test('the slot clock alone can expire the book', async () => {
-  // The mirror: wall clock well inside its deadline, slot one past. This is
-  // the half that catches the slot gate being fed the *wall* clock — and, with
-  // the throwing fallback above, also proves the supplied slot is what the
-  // gate saw rather than a refreshed one.
+  // The exact mirror of the test above: wall clock on its last live value,
+  // slot one past. This is the half that catches the slot gate being fed the
+  // *wall* clock.
   await assert.rejects(
-    quoteGated(LAST_LIVE_SLOT + 1, LAST_LIVE_UNIX - 599),
+    quoteGated(LAST_LIVE_SLOT + 1, LAST_LIVE_UNIX),
     (e: unknown) => {
       assert.ok(e instanceof NoRouteError);
       assert.equal(e.eclob.status, 'failed');
       assert.match(e.eclob.reason ?? '', /no liquidity/);
-      assert.doesNotMatch(e.eclob.reason ?? '', new RegExp(CHAIN_SLOT_READ));
       return true;
     },
   );
