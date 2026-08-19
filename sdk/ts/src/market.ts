@@ -26,7 +26,7 @@
  * `resting_levels` in TypeScript, which meant the on-chain layout was
  * restated in a second language with nothing mechanically holding the two
  * together — and it silently drifted when the `Vault` layout grew. Reading
- * through {@link ./simulate | the shared WASM module} removes the drift
+ * through the shared WASM module (`./simulate`) removes the drift
  * surface structurally rather than testing for it: there is only one
  * implementation of the book, and it is the one the chain runs.
  *

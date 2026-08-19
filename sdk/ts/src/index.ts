@@ -3,10 +3,10 @@
  *
  * Re-exports the Codama-generated `@solana/kit` client (instruction
  * builders, account & event codecs, PDA helpers, program constants) and
- * the hand-written {@link ./price | Price codec}. Regenerate the
+ * the hand-written `Price` codec (`./price`). Regenerate the
  * `generated/` tree with `make sdk` after `make idl`.
  *
- * For swap routing, start at {@link ./router | router}: `quoteEclob` prices
+ * For swap routing, start at `./router`: `quoteEclob` prices
  * our own book, `quoteBestRoute` prices it against an aggregator and returns
  * whichever is better.
  */

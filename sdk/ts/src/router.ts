@@ -20,7 +20,7 @@
  * Both `outAmount`s are **net** — what actually lands in the taker's account.
  * The eCLOB simulation subtracts the on-chain taker fee *and* the platform fee
  * it was quoted with, and the aggregator quote is fetched with its platform fee
- * declared (see {@link ./dflow | resolvePlatformFee}) so DFlow prices it in.
+ * declared (see {@link resolvePlatformFee}) so DFlow prices it in.
  * The two platform fees need not be equal — ours is clamped to the market's
  * on-chain ceiling while DFlow's is not — but each leg's figure is what that
  * route would deliver, which is what makes them comparable.
@@ -108,8 +108,8 @@ export type Candidate<Q> = {
   /** Why it did not win, when it didn't. */
   reason: string | null;
   /**
-   * The error behind a `failed` status, unwrapped — e.g. a {@link ./dflow |
-   * DflowError}, whose `kind` tells a polling caller whether to back off (a
+   * The error behind a `failed` status, unwrapped — e.g. a `DflowError` (from
+   * `./dflow`), whose `kind` tells a polling caller whether to back off (a
    * rate limit), stop (a rejected pair), or retry (a transport blip).
    */
   cause?: unknown;
@@ -200,7 +200,7 @@ const errorMessage = (e: unknown): string =>
  *
  * `platformFeeBps` is the integrator fee the caller intends to declare on the
  * `swap` instruction; it is clamped to the market's ceiling here (see
- * {@link ./route | platformFeeBpsFor}) so an over-configured rate under-charges
+ * {@link platformFeeBpsFor}) so an over-configured rate under-charges
  * rather than returning an all-zero quote. Quoting with the fee the executor
  * will actually declare is what keeps the displayed output equal to what lands
  * in the taker's account.
@@ -217,7 +217,7 @@ export async function quoteEclob(
      * Wall-clock unix seconds for the wall half. **Required** — the engine
      * judges this deadline against cluster time, so a caller that cannot
      * bound its own clock (a browser) must pass a chain-read time. See
-     * {@link ./market | nowUnix}, which remains available to hosts that can.
+     * `nowUnix()` in `./market`, which remains available to hosts that can.
      */
     nowUnix: number;
     /** Configured integrator fee in bps; clamped to the market ceiling. */

@@ -44,7 +44,7 @@
     "build": "tsup",
     "check": "tsc --noEmit",
     "prepack": "tsup",
-    "test": "node --import tsx --test src/conformance.test.ts src/events.test.ts src/market.test.ts src/quoting.conformance.test.ts src/route.test.ts src/router.test.ts src/share.conformance.test.ts src/simulate.conformance.test.ts src/simulate.init.test.ts src/wasm.conformance.test.ts"
+    "test": "node --import tsx --test src/conformance.test.ts src/events.test.ts src/market.test.ts src/quoting.conformance.test.ts src/route.test.ts src/router.expiry.test.ts src/router.test.ts src/share.conformance.test.ts src/simulate.conformance.test.ts src/simulate.init.test.ts src/wasm.conformance.test.ts"
   },
   "type": "module",
   "types": "./src/index.ts",

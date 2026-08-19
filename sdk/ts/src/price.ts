@@ -233,7 +233,7 @@ export function baseForQuote(bits: PriceBits, quote: bigint): bigint {
  * averaged by the integer weights, then re-encoded via {@link fromScaled}
  * (truncating toward zero — one ULP per merge, acceptable for cost-basis
  * bookkeeping). Backs the depositor cost-basis merge on a top-off deposit
- * ({@link mergeEntryBasis}).
+ * (`mergeEntryBasis` in `./share`).
  *
  * Returns `self` when both weights are zero; {@link PRICE_ZERO} if either
  * input is the ZERO sentinel; {@link PRICE_INFINITY} if either is INFINITY
