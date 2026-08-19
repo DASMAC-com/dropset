@@ -353,6 +353,187 @@ class EdgesTests(unittest.TestCase):
         self.assertTrue(lines[0].startswith("ABSENT"))
 
 
+class PaginationTests(unittest.TestCase):
+    """The 250-issue cliff, and the scoped resolver that removes it.
+
+    The tool shipped reading exactly one page and raising if it filled. That
+    held until the project crossed the page size in August 2026, at which point
+    the resolver read — project-wide and unfiltered — failed on *every* write
+    subcommand, and the documented fallback was the full-body MCP write the tool
+    exists to avoid. These pin both halves of the fix.
+    """
+
+    def test_a_listing_read_follows_the_cursor_across_pages(self):
+        pages = [
+            {
+                "issues": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+                    "nodes": [_issue(1)],
+                }
+            },
+            {
+                "issues": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [_issue(2)],
+                }
+            },
+        ]
+        seen = []
+
+        def fake_post(api_key, query, variables):
+            seen.append(variables.get("after"))
+            return pages[len(seen) - 1]
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            issues = bb.fetch_issues("k", "p")
+        self.assertEqual([i["number"] for i in issues], [1, 2])
+        self.assertEqual(seen, [None, "c1"])
+
+    def test_another_page_with_no_cursor_refuses_rather_than_looping(self):
+        with mock.patch.object(
+            bb,
+            "_post",
+            return_value={
+                "issues": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": None},
+                    "nodes": [_issue(1)],
+                }
+            },
+        ):
+            with self.assertRaises(BoardBatchError) as caught:
+                bb.fetch_issues("k", "p")
+        self.assertIn("no cursor", str(caught.exception))
+
+    def test_an_endless_cursor_trips_the_page_backstop(self):
+        with mock.patch.object(
+            bb,
+            "_post",
+            return_value={
+                "issues": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "always"},
+                    "nodes": [_issue(1)],
+                }
+            },
+        ):
+            with self.assertRaises(BoardBatchError) as caught:
+                bb.fetch_issues("k", "p")
+        self.assertIn("did not terminate", str(caught.exception))
+
+    def test_a_missing_pageinfo_is_treated_as_a_final_page(self):
+        with mock.patch.object(
+            bb, "_post", return_value={"issues": {"nodes": [_issue(1)]}}
+        ):
+            self.assertEqual(len(bb.fetch_issues("k", "p")), 1)
+
+    def test_the_resolver_read_filters_on_the_numbers_it_was_given(self):
+        seen = []
+
+        def fake_post(api_key, query, variables):
+            seen.append(variables["filter"])
+            return {"issues": {"nodes": [_issue(10), _issue(12)]}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            bb.fetch_issues_by_number("k", "p", [12, 10, 12])
+        self.assertEqual(len(seen), 1)
+        # Deduplicated, sorted, and scoped to the project as well as the numbers.
+        self.assertEqual(seen[0]["number"], {"in": [10, 12]})
+        self.assertEqual(seen[0]["project"], {"id": {"eq": "p"}})
+
+    def test_the_resolver_read_chunks_a_large_reference_set(self):
+        numbers = list(range(1, bb.RESOLVE_CHUNK * 2 + 3))
+        chunks = []
+
+        def fake_post(api_key, query, variables):
+            chunks.append(variables["filter"]["number"]["in"])
+            return {"issues": {"nodes": []}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            bb.fetch_issues_by_number("k", "p", numbers)
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual([len(c) for c in chunks], [bb.RESOLVE_CHUNK, bb.RESOLVE_CHUNK, 2])
+        self.assertEqual(sorted(n for c in chunks for n in c), numbers)
+
+    def test_an_empty_reference_set_reads_nothing_at_all(self):
+        with mock.patch.object(bb, "_post") as posted:
+            self.assertEqual(bb.fetch_issues_by_number("k", "p", []), [])
+        posted.assert_not_called()
+
+    def test_an_unparseable_reference_is_left_for_the_preflight_to_reject(self):
+        self.assertEqual(bb.referenced_numbers(["ENG-7", 9, "junk", "0"]), [7, 9])
+
+    def test_pair_refs_reads_both_ends_and_skips_a_malformed_pair(self):
+        pairs = [{"blocker": 1, "blocked": 2}, "nonsense", {"blocker": 3}]
+        self.assertEqual(bb.pair_refs(pairs), [1, 2, 3])
+
+
+class BoardSizeIndependenceTests(unittest.TestCase):
+    """A write must not care how large the board has grown.
+
+    This is the regression test the outage asked for: a project far past the page
+    size, an updates file naming a handful, and no error. Before the fix the
+    resolver read the whole project and raised before writing anything.
+    """
+
+    def setUp(self):
+        self.env = mock.patch.dict(
+            os.environ,
+            {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"},
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def _write(self, payload):
+        d = tempfile.mkdtemp()
+        path = Path(d) / "payload.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return str(path)
+
+    def test_fields_writes_on_a_board_far_past_the_page_size(self):
+        reads, writes = [], []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                reads.append(variables["filter"])
+                wanted = variables["filter"]["number"]["in"]
+                # The server answers the filter: only the named issues come back,
+                # however many the project holds in total.
+                return {"issues": {"nodes": [_issue(n) for n in wanted]}}
+            writes.append(variables)
+            return {"issueUpdate": {"success": True}}
+
+        path = self._write({"430": {"priority": "urgent"}, "889": {"priority": "high"}})
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            rc = run(["board_batch.py", "fields", "--updates", path])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(writes), 2)
+        # One scoped read, naming only the two issues the payload touches — no
+        # project-wide index, so a 575-issue board is indistinguishable from a
+        # 5-issue one from here.
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(reads[0]["number"], {"in": [430, 889]})
+
+    def test_edges_resolves_only_the_issues_its_pairs_name(self):
+        reads = []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                reads.append(variables["filter"]["number"]["in"])
+                return {
+                    "issues": {
+                        "nodes": [_issue(n) for n in variables["filter"]["number"]["in"]]
+                    }
+                }
+            return {"issueRelationCreate": {"success": True}}
+
+        path = self._write([{"blocker": "ENG-889", "blocked": 914}])
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            rc = run(["board_batch.py", "edges", "--pairs", path])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(reads, [[889, 914]])
+
+
 class CliTests(unittest.TestCase):
     def setUp(self):
         self.env = mock.patch.dict(

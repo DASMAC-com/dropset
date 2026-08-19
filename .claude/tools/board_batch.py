@@ -84,9 +84,23 @@ import urllib.request
 
 ENDPOINT = "https://api.linear.app/graphql"
 
-# How many issues a single listing query reads. The Dropset board is far under
-# this; `fetch_issues` errors rather than silently truncate if it's exceeded.
+# How many issues one page of a listing query reads. Reads follow the cursor, so
+# this is a page size and not a board ceiling. It used to be both, with a comment
+# asserting the board was "far under this" — that went false in August 2026 at
+# roughly 575 issues, and because the resolver read was project-wide and
+# unfiltered, every write subcommand failed outright until these reads paged.
 PAGE_SIZE = 250
+
+# How many issue numbers one resolver query names. A write path resolves only the
+# issues its own payload references, so this bounds a chunk of that lookup rather
+# than the board. Kept well under `PAGE_SIZE` so that even if several chunked
+# numbers collide across teams, a single page cannot fill and truncate.
+RESOLVE_CHUNK = 100
+
+# Runaway backstop on a cursor-following read: 40 pages is ~10k issues, far above
+# any real project, so tripping this means an endpoint returning a cursor that
+# never terminates rather than a board that grew.
+MAX_PAGES = 40
 
 # Overall per-request timeout, so a hung endpoint can't wedge a run.
 REQUEST_TIMEOUT = 30
@@ -169,8 +183,9 @@ def _post(api_key: str, query: str, variables: dict) -> dict:
 
 
 _ISSUES_QUERY = """
-query($filter: IssueFilter, $first: Int!) {
-  issues(filter: $filter, first: $first) {
+query($filter: IssueFilter, $first: Int!, $after: String) {
+  issues(filter: $filter, first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor }
     nodes {
       id
       identifier
@@ -185,27 +200,85 @@ query($filter: IssueFilter, $first: Int!) {
 """
 
 
+def _fetch_filtered(api_key: str, issue_filter: dict) -> list[dict]:
+    """Every issue matching ``issue_filter``, following the cursor to the end.
+
+    Selects only the fields a listing or a number-to-id lookup needs — never
+    ``description``, which is the whole point of this tool.
+
+    Paging rather than refusing is the fix for the failure this tool shipped
+    with: one page plus a guard meant that crossing the page size turned every
+    write into a hard error, and the documented fallback for that error was the
+    full-body MCP ``save_issue`` — the exact echo cost the tool exists to remove.
+    """
+    nodes: list[dict] = []
+    after: str | None = None
+    for _ in range(MAX_PAGES):
+        data = _post(
+            api_key,
+            _ISSUES_QUERY,
+            {"filter": issue_filter, "first": PAGE_SIZE, "after": after},
+        )
+        conn = data.get("issues") or {}
+        nodes.extend(conn.get("nodes") or [])
+        info = conn.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            return nodes
+        after = info.get("endCursor")
+        if not after:
+            raise BoardBatchError(
+                "Linear reported another page but returned no cursor — refusing "
+                "to loop or to report a truncated read"
+            )
+    raise BoardBatchError(
+        f"read did not terminate within {MAX_PAGES} pages of {PAGE_SIZE} — "
+        "refusing to keep paging; narrow the filter"
+    )
+
+
 def fetch_issues(
     api_key: str, project_id: str, states: list[str] | None = None
 ) -> list[dict]:
     """Issues in the project, optionally filtered to named workflow states.
 
-    Selects only the fields a listing or a number-to-id lookup needs — never
-    ``description``, which is the whole point of this tool.
+    The **listing** read. Write paths must not use this: they want
+    :func:`fetch_issues_by_number`, whose cost tracks the payload rather than
+    the board.
     """
     issue_filter: dict = {"project": {"id": {"eq": project_id}}}
     if states:
         issue_filter["state"] = {"name": {"in": states}}
-    data = _post(
-        api_key,
-        _ISSUES_QUERY,
-        {"filter": issue_filter, "first": PAGE_SIZE},
-    )
-    nodes = data.get("issues", {}).get("nodes", [])
-    if len(nodes) >= PAGE_SIZE:
-        raise BoardBatchError(
-            f"read hit the {PAGE_SIZE}-issue page size — refusing to report a "
-            "truncated board; raise PAGE_SIZE or narrow the filter"
+    return _fetch_filtered(api_key, issue_filter)
+
+
+def fetch_issues_by_number(
+    api_key: str, project_id: str, numbers: list[int]
+) -> list[dict]:
+    """Just the issues a write payload names, resolved for number-to-id lookup.
+
+    The resolver read. Indexing the whole project to resolve a handful of
+    numbers is what coupled every write to board size; filtering on the numbers
+    actually referenced removes the cliff instead of relocating it, and chunking
+    keeps a large updates file working too.
+
+    A number absent from the result is left absent — :func:`resolve_issue` turns
+    that into a hard error naming the reference, which is the same outcome as
+    before and still never a guess.
+    """
+    unique = sorted({int(n) for n in numbers})
+    if not unique:
+        return []
+    nodes: list[dict] = []
+    for start in range(0, len(unique), RESOLVE_CHUNK):
+        chunk = unique[start : start + RESOLVE_CHUNK]
+        nodes.extend(
+            _fetch_filtered(
+                api_key,
+                {
+                    "project": {"id": {"eq": project_id}},
+                    "number": {"in": chunk},
+                },
+            )
         )
     return nodes
 
@@ -421,6 +494,40 @@ def resolve_issue(raw, by_number: dict[int, dict], label: str = "issue") -> dict
                 "mutate a different team's issue"
             )
     return issue
+
+
+def referenced_numbers(refs) -> list[int]:
+    """The issue numbers an iterable of references names, to bound a read.
+
+    Deliberately lenient: a reference it cannot parse is skipped rather than
+    rejected, because :func:`apply_fields` and :func:`place_edges` already
+    pre-flight the whole payload and their errors name the offending entry
+    precisely. Raising here would duplicate that validation in a second place
+    and change those messages; the only consequence of a skip is that the
+    resolver does not fetch an issue the pre-flight is about to reject anyway.
+    """
+    numbers: list[int] = []
+    for raw in refs:
+        try:
+            numbers.append(_as_ref(raw)[1])
+        except BoardBatchError:
+            continue
+    return numbers
+
+
+def pair_refs(pairs: list) -> list:
+    """Every issue reference in an ``edges`` payload, in order.
+
+    Skips a malformed pair for the same reason :func:`referenced_numbers` skips
+    a malformed reference — :func:`place_edges` owns that error.
+    """
+    return [
+        pair[key]
+        for pair in pairs
+        if isinstance(pair, dict)
+        for key in ("blocker", "blocked")
+        if key in pair
+    ]
 
 
 _RELATION_MUTATION = """
@@ -641,10 +748,9 @@ def run(argv: list[str]) -> int:
         print(f"-- {len(lines)} issue(s)", file=sys.stderr)
         return 0
 
-    # Every write path resolves numbers to ids from one listing query.
-    issues = fetch_issues(api_key, project_id)
-    by_number = index_by_number(issues)
-
+    # Every write path loads its payload FIRST, then resolves numbers to ids from
+    # a read scoped to what that payload names — so a write's cost tracks the
+    # handful of issues it touches rather than the size of the board.
     if args.cmd in ("fields", "priorities"):
         raw = load_json_file(args.updates)
         updates = _normalize_priority_updates(raw) if args.cmd == "priorities" else raw
@@ -652,6 +758,9 @@ def run(argv: list[str]) -> int:
             raise BoardBatchError("fields expects an object of number -> fields")
         if not updates:
             raise BoardBatchError("nothing to update — the updates file is empty")
+        by_number = index_by_number(
+            fetch_issues_by_number(api_key, project_id, referenced_numbers(updates))
+        )
         # apply_fields reports each write as it lands (see its `emit`), so the
         # caller must not re-print the returned lines.
         apply_fields(api_key, updates, by_number, dry_run=args.dry_run)
@@ -660,6 +769,9 @@ def run(argv: list[str]) -> int:
     pairs = load_json_file(args.pairs)
     if not isinstance(pairs, list):
         raise BoardBatchError("edges expects a list of {blocker, blocked} objects")
+    by_number = index_by_number(
+        fetch_issues_by_number(api_key, project_id, referenced_numbers(pair_refs(pairs)))
+    )
     place_edges(api_key, pairs, by_number, dry_run=args.dry_run, remove=args.remove)
     return 0
 
