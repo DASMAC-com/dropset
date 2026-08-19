@@ -80,26 +80,146 @@ class ComposeTests(unittest.TestCase):
         doc.write_text(DOC, encoding="utf-8")
 
     def test_the_brief_lands_in_the_composed_output(self):
-        out = lp.compose(self.root, [])
+        out = lp.compose(self.root, [], ["No test harness exists."])
         self.assertIn("You are a **read-only** agent.", out)
         self.assertIn("Standing brief for this review", out)
 
     def test_appended_sections_follow_the_brief_in_order(self):
         (self.root / "a.md").write_text("## Alpha\n", encoding="utf-8")
         (self.root / "b.md").write_text("## Beta\n", encoding="utf-8")
-        out = lp.compose(self.root, [Path("a.md"), Path("b.md")])
+        out = lp.compose(self.root, [Path("a.md"), Path("b.md")], ["A fact."])
         self.assertLess(out.index("read-only"), out.index("## Alpha"))
         self.assertLess(out.index("## Alpha"), out.index("## Beta"))
 
     def test_a_missing_append_target_errors(self):
         with self.assertRaises(lp.LensPreambleError):
-            lp.compose(self.root, [Path("nope.md")])
+            lp.compose(self.root, [Path("nope.md")], ["A fact."])
 
     def test_a_missing_brief_doc_errors(self):
         empty = Path(self._tmp.name) / "empty"
         empty.mkdir()
         with self.assertRaises(lp.LensPreambleError):
-            lp.compose(empty, [])
+            lp.compose(empty, [], ["A fact."])
+
+
+class EstablishedFactsTests(unittest.TestCase):
+    """The required section.
+
+    Measured, not stylistic: the two cheapest review fan-outs on record both
+    credited an ad-hoc block of this shape, and its distinguishing content is the
+    **negatives** — which is exactly the half an ad-hoc block tends to drop.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        doc = self.root / lp.BRIEF_DOC
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text(DOC, encoding="utf-8")
+
+    def test_facts_appear_as_bullets_under_the_named_heading(self):
+        out = lp.compose(
+            self.root, [], ["No test harness exists.", "Zero call sites for foo."]
+        )
+        self.assertIn(lp.FACTS_HEADING, out)
+        self.assertIn("- No test harness exists.", out)
+        self.assertIn("- Zero call sites for foo.", out)
+
+    def test_the_framing_tells_a_lens_a_stated_absence_is_binding(self):
+        # Without this, a lens reads "there is no X" as an untested claim and goes
+        # looking — which is the cost the section exists to remove.
+        out = lp.compose(self.root, [], ["No central clock provider."])
+        self.assertIn("stated absence", out)
+        self.assertIn("do not go looking for it", out)
+
+    def test_omitting_facts_entirely_is_refused(self):
+        with self.assertRaises(lp.LensPreambleError) as caught:
+            lp.compose(self.root, [])
+        self.assertIn("--no-facts", str(caught.exception))
+
+    def test_no_facts_states_the_absence_rather_than_dropping_the_section(self):
+        out = lp.compose(self.root, [], [], no_facts=True)
+        self.assertIn(lp.FACTS_HEADING, out)
+        self.assertIn("Nothing was verified", out)
+
+    def test_facts_precede_the_skills_own_appended_scaffolding(self):
+        (self.root / "scope.md").write_text("## Your scope\n", encoding="utf-8")
+        out = lp.compose(self.root, [Path("scope.md")], ["A fact."])
+        self.assertLess(out.index(lp.FACTS_HEADING), out.index("## Your scope"))
+
+    def test_the_cli_accepts_repeated_fact_flags_and_counts_them(self):
+        target = self.root / "out.md"
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = lp.run(
+                [
+                    "lens_preamble.py",
+                    "--root",
+                    str(self.root),
+                    "--out",
+                    str(target),
+                    "--fact",
+                    "First fact.",
+                    "--fact",
+                    "Second fact.",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("2 established fact(s)", err.getvalue())
+        self.assertIn("- Second fact.", target.read_text(encoding="utf-8"))
+
+    def test_a_facts_file_is_read_and_its_comments_dropped(self):
+        facts = self.root / "facts.md"
+        facts.write_text(
+            "# gathered before the run\n\n- No test harness.\nZero call sites.\n",
+            encoding="utf-8",
+        )
+        target = self.root / "out.md"
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = lp.run(
+                [
+                    "lens_preamble.py",
+                    "--root",
+                    str(self.root),
+                    "--out",
+                    str(target),
+                    "--facts-file",
+                    str(facts),
+                ]
+            )
+        self.assertEqual(code, 0)
+        written = target.read_text(encoding="utf-8")
+        self.assertIn("- No test harness.", written)
+        self.assertIn("- Zero call sites.", written)
+        self.assertNotIn("gathered before the run", written)
+
+    def test_no_facts_alongside_facts_is_refused_as_contradictory(self):
+        with self.assertRaises(lp.LensPreambleError):
+            lp.run(
+                [
+                    "lens_preamble.py",
+                    "--root",
+                    str(self.root),
+                    "--out",
+                    str(self.root / "o.md"),
+                    "--fact",
+                    "A fact.",
+                    "--no-facts",
+                ]
+            )
+
+    def test_the_cli_refuses_a_run_with_no_facts_flag_at_all(self):
+        with self.assertRaises(lp.LensPreambleError):
+            lp.run(
+                [
+                    "lens_preamble.py",
+                    "--root",
+                    str(self.root),
+                    "--out",
+                    str(self.root / "o.md"),
+                ]
+            )
 
 
 class CliTests(unittest.TestCase):
@@ -126,6 +246,7 @@ class CliTests(unittest.TestCase):
                 str(self.root),
                 "--out",
                 str(target),
+                "--no-facts",
             ]
         )
         self.assertEqual(code, 0)
@@ -137,7 +258,14 @@ class CliTests(unittest.TestCase):
     def test_it_creates_the_output_directory(self):
         target = self.root / "a" / "b" / "c.md"
         code, _, _ = self._capture(
-            ["lens_preamble.py", "--root", str(self.root), "--out", str(target)]
+            [
+                "lens_preamble.py",
+                "--root",
+                str(self.root),
+                "--out",
+                str(target),
+                "--no-facts",
+            ]
         )
         self.assertEqual(code, 0)
         self.assertTrue(target.is_file())
@@ -154,6 +282,7 @@ class CliTests(unittest.TestCase):
                 str(target),
                 "--append",
                 "extra.md",
+                "--no-facts",
             ]
         )
         self.assertIn("1 appended section(s)", err)
@@ -180,9 +309,10 @@ class RealDocTests(unittest.TestCase):
         template = Path(".claude/skills/review-pr/lens-standing.md")
         if not (root / template).is_file():  # pragma: no cover
             self.skipTest(f"{template} not present")
-        out = lp.compose(root, [template])
+        out = lp.compose(root, [template], ["No test harness exists here."])
         self.assertIn("Negative scope", out)
         self.assertIn("read-only", out)
+        self.assertIn(lp.FACTS_HEADING, out)
 
 
 if __name__ == "__main__":

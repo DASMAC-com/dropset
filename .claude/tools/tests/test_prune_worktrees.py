@@ -51,11 +51,23 @@ class ParseTests(unittest.TestCase):
 
 
 class FakeGit:
-    """Records calls; ``remove`` fails for paths in ``dirty``."""
+    """Records calls; ``remove`` fails for paths in ``dirty``.
 
-    def __init__(self, porcelain, dirty=()):
+    ``status`` and ``rev-list`` answer the safety pre-flight. By default every
+    tree is clean and fully pushed, so tests opt in to a hazard via ``modified``
+    (uncommitted changes), ``unpushed`` (commits never pushed), or
+    ``no_upstream``. ``dirty`` is different from ``modified``: it makes ``git
+    worktree remove`` itself refuse, which is the *second* line of defence.
+    """
+
+    def __init__(
+        self, porcelain, dirty=(), modified=(), unpushed=(), no_upstream=()
+    ):
         self.porcelain = porcelain
         self.dirty = set(dirty)
+        self.modified = set(modified)
+        self.unpushed = dict(unpushed)
+        self.no_upstream = set(no_upstream)
         self.calls = []
 
     def __call__(self, args):
@@ -67,7 +79,78 @@ class FakeGit:
             if path in self.dirty:
                 return 1, "", "contains modified or untracked files, use --force"
             return 0, "", ""
+        if args[0] == "-C":
+            path = args[1]
+            if args[2] == "status":
+                return (0, " M src/lib.rs\n", "") if path in self.modified else (0, "", "")
+            if args[2] == "rev-list":
+                branch = path.rsplit("/", 1)[-1]
+                if branch in self.no_upstream:
+                    return 128, "", "no upstream configured"
+                return 0, "%s\n" % self.unpushed.get(branch, 0), ""
         return 0, "", ""
+
+
+class SafetyGateTests(unittest.TestCase):
+    """A merged PR is not sufficient — the tree must also hold no unsaved work.
+
+    Two worktrees were destroyed while their PRs were open, the second losing a
+    verified review fix that had to be reauthored from a transcript. `git worktree
+    remove` catches a dirty tree; nothing caught unpushed commits, and
+    `git branch -D` force-deletes them.
+    """
+
+    def test_a_tree_with_uncommitted_changes_is_skipped(self):
+        path = "/repo/dropset/.claude/worktrees/eng-701"
+        git = FakeGit(PORCELAIN, modified=[path])
+        out = prune({"eng-701", "eng-702"}, dry_run=False, git=git)
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-701"])
+        self.assertIn("uncommitted", out["skipped"][0]["reason"])
+        # Never reached the destructive calls at all.
+        self.assertNotIn(["worktree", "remove", path], git.calls)
+        self.assertNotIn(["branch", "-D", "eng-701"], git.calls)
+
+    def test_a_branch_with_unpushed_commits_is_skipped(self):
+        git = FakeGit(PORCELAIN, unpushed=[("eng-701", 2)])
+        out = prune({"eng-701", "eng-702"}, dry_run=False, git=git)
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-701"])
+        self.assertIn("2 unpushed commit(s)", out["skipped"][0]["reason"])
+        self.assertNotIn(["branch", "-D", "eng-701"], git.calls)
+        # The safe sibling still goes.
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-702"])
+
+    def test_a_branch_with_no_upstream_is_skipped_rather_than_assumed_pushed(self):
+        # Guessing in the destructive direction is the entire failure mode.
+        git = FakeGit(PORCELAIN, no_upstream=["eng-701"])
+        out = prune({"eng-701"}, dry_run=False, git=git)
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-701"])
+        self.assertIn("upstream", out["skipped"][0]["reason"])
+
+    def test_an_unreadable_status_is_skipped(self):
+        class Broken(FakeGit):
+            def __call__(self, args):
+                if args[0] == "-C" and args[2] == "status":
+                    self.calls.append(args)
+                    return 128, "", "not a git repository"
+                return super().__call__(args)
+
+        git = Broken(PORCELAIN)
+        out = prune({"eng-701"}, dry_run=False, git=git)
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-701"])
+        self.assertIn("unprovable", out["skipped"][0]["reason"])
+
+    def test_a_clean_pushed_tree_is_still_removed(self):
+        # The gate must not be so cautious that it never removes anything.
+        git = FakeGit(PORCELAIN)
+        out = prune({"eng-701"}, dry_run=False, git=git)
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-701"])
+        self.assertEqual(out["skipped"], [])
+
+    def test_a_dry_run_reports_the_skip_instead_of_promising_a_removal(self):
+        git = FakeGit(PORCELAIN, unpushed=[("eng-701", 1)])
+        out = prune({"eng-701"}, dry_run=True, git=git)
+        self.assertEqual(out["removed"], [])
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-701"])
 
 
 class PruneTests(unittest.TestCase):

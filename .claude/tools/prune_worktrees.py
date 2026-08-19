@@ -17,8 +17,10 @@ Prints JSON ``{removed: [{path, branch}], skipped: [{path, branch, reason}],
 left: [{path, branch}], pruned: bool, dry_run: bool}``:
 
 * ``removed`` — merged worktrees whose worktree + branch were dropped;
-* ``skipped`` — merged worktrees whose ``git worktree remove`` **refused** (a
-  dirty or locked tree — the safe outcome), left in place;
+* ``skipped`` — merged worktrees held back as unsafe, left in place: either the
+  pre-flight found uncommitted changes / unpushed commits / no upstream (see
+  ``unsafe_reason``), or ``git worktree remove`` itself **refused** (a dirty or
+  locked tree). Both are the safe outcome and both name their reason;
 * ``left`` — non-merged worktrees (PR still open / closed-without-merge / no
   PR), untouched;
 * ``pruned`` — whether ``git worktree prune`` ran (skipped in ``--dry-run``).
@@ -73,9 +75,49 @@ def _real_git(args: list[str]) -> tuple[int, str, str]:
     return proc.returncode, proc.stdout, proc.stderr
 
 
+def unsafe_reason(path: str, branch: str, git=_real_git) -> str | None:
+    """Why this worktree must not be removed, or ``None`` if it is safe to.
+
+    ``git worktree remove`` without ``--force`` already refuses a **dirty** tree,
+    which is why the tool got by without this check. What it does not refuse is a
+    branch carrying commits that were never pushed — and ``git branch -D`` below
+    then force-deletes them, because a squash-merged tip is not an ancestor of
+    main so ``-d`` would refuse. The result is that committed-but-unpushed work
+    can be destroyed with no diagnostic at all.
+
+    That is not hypothetical: two worktrees were removed while their PRs were
+    still open, and the second lost a verified, tested review fix that had to be
+    reauthored from the session transcript. It survived the first time only
+    because every commit happened to have been pushed. This function is the loud
+    refusal that makes the safe case explicit rather than incidental.
+
+    A branch with no upstream is treated as unsafe: pushed state cannot be
+    proven, and guessing in the destructive direction is the whole failure mode.
+    """
+    rc, out, _ = git(["-C", path, "status", "--porcelain"])
+    if rc != 0:
+        return "could not read the worktree's status, so safety is unprovable"
+    if out.strip():
+        return f"{len(out.strip().splitlines())} uncommitted change(s)"
+
+    rc, out, _ = git(
+        ["-C", path, "rev-list", "--count", f"{branch}@{{upstream}}..{branch}"]
+    )
+    if rc != 0:
+        return "no upstream branch, so unpushed commits cannot be ruled out"
+    count = out.strip()
+    if count and count != "0":
+        return f"{count} unpushed commit(s)"
+    return None
+
+
 def prune(merged: set[str], dry_run: bool, git=_real_git) -> dict:
-    """Remove each merged branch's worktree + local branch, skipping dirty ones.
-    ``git`` is an injectable ``(args) -> (rc, stdout, stderr)`` runner."""
+    """Remove each merged branch's worktree + local branch, skipping unsafe ones.
+
+    Two gates, and both matter: ``merged`` restricts the candidates to branches
+    whose PR is confirmed merged, and :func:`unsafe_reason` then refuses any of
+    those still holding uncommitted or unpushed work. ``git`` is an injectable
+    ``(args) -> (rc, stdout, stderr)`` runner."""
     rc, out, err = git(["worktree", "list", "--porcelain"])
     if rc != 0:
         raise RuntimeError(f"git worktree list failed: {err.strip()}")
@@ -90,6 +132,12 @@ def prune(merged: set[str], dry_run: bool, git=_real_git) -> dict:
         path, branch = tree["path"], tree["branch"]
         if branch not in merged:
             left.append({"path": path, "branch": branch})
+            continue
+        # Checked before the dry-run branch, so a dry run reports what it would
+        # actually do rather than promising a removal the real run would refuse.
+        reason = unsafe_reason(path, branch, git)
+        if reason is not None:
+            skipped.append({"path": path, "branch": branch, "reason": reason})
             continue
         if dry_run:
             removed.append({"path": path, "branch": branch})

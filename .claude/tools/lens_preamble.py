@@ -24,10 +24,28 @@ one owner per half: the convention doc owns the shell rules, the skill's own
 committed template owns its review-specific scaffolding. Neither is duplicated
 into this tool.
 
+**Established facts are a required section.** Every brief must carry the facts
+already verified before the run — including the **negatives** ("there is no test
+harness here", "this export has zero call sites", "there is no central clock
+provider"). This is measured, not a hunch: the two cheapest review fan-outs on
+record both credited an ad-hoc block of exactly this shape, one running all five
+lenses at or under their turn caps with zero overruns and two lenses reporting
+they needed no further reads, the other producing the review's sharpest findings
+from a lens that did **zero** cold reads. The excerpt rule covers what you have
+already read; this covers what you already know isn't there — and a lens cannot
+tell "nobody mentioned it" apart from "I had better go check".
+
+So ``--fact`` (repeatable) or ``--facts-file`` is mandatory, and a run with
+genuinely nothing to state must say so with ``--no-facts`` rather than omitting
+the section silently.
+
 Usage::
 
-    python3 .claude/tools/lens_preamble.py --out <scratchpad>/lens-preamble.md
+    python3 .claude/tools/lens_preamble.py --out <scratchpad>/lens-preamble.md \\
+        --fact 'No frontend test harness exists; do not look for one.' \\
+        --fact 'make lint covers biome + tsc + cspell over the whole tree.'
     python3 .claude/tools/lens_preamble.py --out <path> \\
+        --facts-file <scratchpad>/facts.md \\
         --append .claude/skills/review-pr/lens-standing.md
 
 Prints the written path on stdout and a one-line summary on stderr. Standard
@@ -96,13 +114,64 @@ def extract_brief(text: str) -> str:
     return "\n".join(quoted).rstrip()
 
 
-def compose(root: Path, appends: list[Path]) -> str:
-    """The full preamble: the canonical brief, then each appended section."""
+FACTS_HEADING = "## Established facts — do not re-derive"
+
+# The framing around the facts. Written here rather than left to each caller so
+# every lens in every run reads the same instruction about how to treat them —
+# in particular that a *negative* is a fact, which is the half that gets dropped
+# when the block is assembled ad hoc.
+FACTS_PREAMBLE = (
+    "These were verified before your run. Treat them as given: do not spend "
+    "turns re-deriving them, and do not raise a finding that contradicts one "
+    "without saying which fact you are contradicting and why. A stated absence "
+    "is as binding as a stated presence — if something is listed as not "
+    "existing, do not go looking for it."
+)
+
+NO_FACTS_NOTE = (
+    "Nothing was verified before this run, so treat every claim below as "
+    "unestablished. This is stated explicitly rather than left blank: an absent "
+    "section reads as an oversight, and a lens that cannot tell the difference "
+    "re-derives everything."
+)
+
+
+def facts_section(facts: list[str], no_facts: bool) -> list[str]:
+    """The established-facts block, as lines.
+
+    ``no_facts`` is the deliberate empty case and prints its own note, so the
+    section is present either way. That is the whole mechanism: the section
+    cannot be silently missing, only explicitly empty.
+    """
+    if no_facts:
+        return ["", FACTS_HEADING, "", NO_FACTS_NOTE]
+    body = ["", FACTS_HEADING, "", FACTS_PREAMBLE, ""]
+    body.extend(f"- {fact.strip()}" for fact in facts)
+    return body
+
+
+def compose(
+    root: Path,
+    appends: list[Path],
+    facts: list[str] | None = None,
+    no_facts: bool = False,
+) -> str:
+    """The full preamble: the canonical brief, the facts, then each append."""
     doc = root / BRIEF_DOC
     try:
         text = doc.read_text(encoding="utf-8")
     except OSError as e:
         raise LensPreambleError(f"cannot read {doc}: {e}") from e
+
+    facts = facts or []
+    if not facts and not no_facts:
+        raise LensPreambleError(
+            "no established facts given — pass --fact/--facts-file with what was "
+            "verified before this run (negatives included), or --no-facts to "
+            "state on the record that nothing was. The two cheapest review "
+            "fan-outs on record both credited this section; omitting it silently "
+            "is what this refusal prevents"
+        )
 
     parts = [
         "# Standing brief for this review",
@@ -115,6 +184,10 @@ def compose(root: Path, appends: list[Path]) -> str:
         "",
         extract_brief(text),
     ]
+
+    # Before the skill's own appended scaffolding: the facts change what a lens
+    # bothers to read, so they should be read before the scope detail, not after.
+    parts.extend(facts_section(facts, no_facts))
 
     for extra in appends:
         try:
@@ -137,10 +210,49 @@ def run(argv: list[str]) -> int:
         metavar="PATH",
         help="a committed standing section to append (repeatable)",
     )
+    parser.add_argument(
+        "--fact",
+        action="append",
+        default=[],
+        metavar="TEXT",
+        help="an established fact, negatives included (repeatable; required "
+        "unless --facts-file or --no-facts is given)",
+    )
+    parser.add_argument(
+        "--facts-file",
+        default=None,
+        metavar="PATH",
+        help="a file of established facts, one per line",
+    )
+    parser.add_argument(
+        "--no-facts",
+        action="store_true",
+        help="state on the record that nothing was verified before this run",
+    )
     args = parser.parse_args(argv[1:])
 
     root = Path(args.root)
-    text = compose(root, [Path(p) for p in args.append])
+    facts = list(args.fact)
+    if args.facts_file:
+        try:
+            raw = Path(args.facts_file).read_text(encoding="utf-8")
+        except OSError as e:
+            raise LensPreambleError(f"cannot read {args.facts_file}: {e}") from e
+        # Blank lines and comments are dropped so a hand-kept facts file can be
+        # annotated without the annotations reaching the brief.
+        facts.extend(
+            line.strip().lstrip("-").strip()
+            for line in raw.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+    facts = [f for f in facts if f]
+
+    if facts and args.no_facts:
+        raise LensPreambleError(
+            "--no-facts contradicts the facts given; drop one of them"
+        )
+
+    text = compose(root, [Path(p) for p in args.append], facts, args.no_facts)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -149,6 +261,7 @@ def run(argv: list[str]) -> int:
     print(out)
     print(
         f"lens-preamble | {len(text.splitlines())} line(s), "
+        f"{len(facts)} established fact(s), "
         f"{len(args.append)} appended section(s)",
         file=sys.stderr,
     )

@@ -464,12 +464,23 @@ class HardeningRanking(unittest.TestCase):
         self.assertTrue(candidate.via_run_quiet)
         self.assertEqual(candidate.cost_kind(), "wall-clock")
 
-    def test_a_quiet_runner_command_with_a_big_tail_is_still_context(self):
-        """A failing run_quiet call prints a real tail; bytes win over the label."""
-        cmd = "python3 .claude/tools/run_quiet.py -- make test"
+    def test_a_quiet_runner_command_with_a_big_tail_names_the_failures(self):
+        """A failing run_quiet call prints a real tail, so bytes win over the
+        wrapper — but the label has to say *why*, or the reader concludes the
+        wrapper is broken. One session filed a defect against `run_quiet.py` on
+        exactly that misreading; the classification was right all along."""
+        cmd = "python3 .claude/tools/run_quiet.py -- make lint"
         report = self._run([(cmd, "x" * 4000)] * 2)
         candidate = report["hardening_candidates"][0]
         self.assertTrue(candidate.via_run_quiet)
+        self.assertEqual(candidate.cost_kind(), "context (failures)")
+
+    def test_an_unwrapped_big_result_stays_plain_context(self):
+        """The two must stay distinguishable: unwrapped means the lever is to
+        wrap it, wrapped means the lever is to fail less."""
+        report = self._run([("make lint", "x" * 4000)] * 2)
+        candidate = report["hardening_candidates"][0]
+        self.assertFalse(candidate.via_run_quiet)
         self.assertEqual(candidate.cost_kind(), "context")
 
     def test_a_cheap_fast_repeat_is_prompt_churn(self):
