@@ -28,5 +28,12 @@ sdk/ts/dist/
 .claude/settings.json
 .claude/settings.local.json
 
+# The local secrets enclave's operator file: which 1Password vault this
+# machine resolves credentials from, and the reference per credential
+# (docs/data-feeds.md §12). It holds *references*, never secret values —
+# but the vault and item names are machine-local, so the tracked copy is
+# secrets.local.env.example with placeholders.
+infra/localnet/secrets.local.env
+
 # macOS metadata.
 .DS_Store

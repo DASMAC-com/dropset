@@ -260,9 +260,12 @@ The venue's endpoint, not taste, decides an adapter's shape:
 
 **Credentials are injected, never read inside an adapter.** A keyed
 adapter takes its key as a constructor argument, so *where the secret
-comes from* stays a deployment decision the consuming app owns — the
-maker reads `CMC_API_KEY` from its own config today, and a secrets
-provider can supply it later without the adapter changing.
+comes from* stays a deployment decision the consuming app owns. That
+decision is now the secrets provider (§12): the collectors resolve
+through it, while the maker still reads `CMC_API_KEY` from its own
+config. Neither is visible to the adapter — the only thing it declares
+is its credential's canonical name, next to the constructor that wants
+it.
 
 **A credential rides the transport as a sensitive header.** An adapter
 that authenticates with a header passes it to
@@ -536,9 +539,11 @@ end before any harder source.
 
 ### The free-tier FX roster
 
-Three FX vendors are wired, each on a free credential. What each is
-*for* follows from what its free tier actually serves, measured against
-a live key rather than read off a pricing page:
+Three FX vendors are wired, each on a free credential (they live in the
+local secrets enclave, §12 — the collectors name them
+`oanda/api-key`, `twelvedata/api-key`, and `alphavantage/api-key`).
+What each is *for* follows from what its free tier actually serves,
+measured against a live key rather than read off a pricing page:
 
 | Source         | Bars  | Free-tier budget        | History       | Volume     |
 | -------------- | ----- | ----------------------- | ------------- | ---------- |
@@ -890,6 +895,119 @@ Its placement is staged:
    the archival tier. The store sink targets a `PgPool`, so this is a
    connection-string change and a restore — one engine, one `sqlx` and
    migration toolchain, no dialect port.
+
+### Credentials — the local secrets enclave
+
+**1Password is the local mock of AWS Secrets Manager.** One provider
+interface (`feeds/src/secrets.rs`), one backend per store, and the same
+secret names in both — so a collector that resolves a key locally
+resolves it the same way once deployed, and configuration carries
+*where to look* rather than the secret itself.
+
+Every credential has one **canonical name**, `<provider>/<secret>`: the
+party that issued it, then which of its credentials this is.
+`oanda/api-key` is the OANDA key no matter who reads it, so a key the
+collectors and a bot share has one name, one entry per store, and one
+place to rotate. Naming a secret after its consumer
+(`market-data/oanda-key`) would force a rename the moment a second
+consumer appeared, and a rename that lands in one store but not the
+other is a silent outage.
+
+Each store only **prefixes** that name — nothing is translated, so no
+store needs a mapping table and the spellings cannot drift:
+
+| Store               | Key for `oanda/api-key`      |
+| ------------------- | ---------------------------- |
+| process environment | `OANDA_API_KEY`              |
+| 1Password           | `op://<vault>/oanda/api-key` |
+| AWS Secrets Manager | `dropset/oanda/api-key`      |
+
+**The 1Password mapping needs no escaping because the hierarchy lives
+in an item's fields, not its title.** A secret reference parses as
+`op://<vault>/<item>/[<section>/]<field>`, so a slash inside an item
+*title* is not quotable — it re-segments the reference and the item
+stops resolving. Measured against an item whose title contains one:
+
+```text
+$ op read 'op://<vault>/Vercel / v0/<field>'
+[ERROR] could not get item <vault>/Vercel : "Vercel " isn't an item
+```
+
+That rules out storing a hierarchical name as a title — but not
+hierarchy itself. An item's fields are addressable by label, which is
+exactly the two levels `<provider>/<secret>` needs, so the vault holds
+an item per provider and a named field per credential, and the
+canonical name is already a valid reference tail:
+
+```text
+<vault>
+├── oanda          api-key · account-id
+├── twelvedata     api-key
+└── alphavantage   api-key
+```
+
+A second credential from a provider already present is a field on that
+item rather than a new entry. Adding one an app actually resolves is a
+field, a line in the operator file, **and** a small code change — the
+`SECRET_NAME` constant beside its adapter, the call site, and the roster
+in `market-data/tests/secrets_example.rs` that keeps the template and
+the constants from drifting apart.
+
+**Setup is one git-ignored file.** Copy
+`infra/localnet/secrets.local.env.example` to `secrets.local.env` and
+replace `<vault>` with your own vault's name. That file holds
+references, never values, and it is the *only* place a real vault or
+item name appears — the tracked template carries placeholders, which is
+why every example here is written `op://<vault>/…`. The shell profile
+is deliberately not a secrets channel: no **credential** is ever
+exported to run the stack.
+
+**Do not `source` that file.** It holds `op://` *references*, and a
+reference is not a credential — sourcing it puts the reference string
+itself into `OANDA_API_KEY`, where the environment backend would find a
+perfectly non-empty value and hand it to the venue as an API key. The
+provider refuses an `op://` value outright for exactly this reason, so
+the mistake surfaces as a startup error naming it rather than as a 401
+from a vault that was never consulted.
+
+Three paths resolve from there, in the order the provider consults
+them:
+
+1. **The process environment**, always first — the override path, and
+   what CI uses. No `op`, no vault, no 1Password dependency in CI.
+
+1. **The containers**: `make fx-collectors-up` wraps the compose
+   invocation in `op run`, which resolves the references and exports
+   them under the derived variable names. A container never reaches a
+   secret store itself — it has no `op` and no session, and is handed
+   resolved values. That is the same shape the hosted deploy has, where
+   the instance role fetches from Secrets Manager.
+
+1. **A collector run straight from the host**, which resolves through
+   `op read` per key — no credential exported, and no `op run`:
+
+   ```sh
+   DROPSET_OP_VAULT=<vault> cargo run --bin market-data-oanda
+   ```
+
+   The provider reads that one variable from its **environment**; it
+   does not parse the operator file, which is why the vault is named on
+   the command line here. (`op run --env-file=… -- cargo run …` works
+   too, and is the better habit if the file also pins an account.)
+
+Resolution is **fetch-once-at-startup**: a backend is consulted while a
+binary wires itself up, never per request, so neither the `op`
+subprocess nor the eventual Secrets Manager round trip sits on a poll
+path. An empty value is treated as absent rather than as a secret,
+because the compose services pass credentials as `${VAR:-}` — without
+that, a shell that had ever sourced them would shadow the vault that
+does hold the key.
+
+Two things are deliberately **outside** this enclave. The maker's
+**signing keys** stay with the hosted-custody work — an instance-role
+fetch, never a local vault — and the maker's CoinMarketCap key still
+reads its own variable; its canonical name is declared with the adapter
+so that migration is a call-site change when it comes.
 
 ______________________________________________________________________
 

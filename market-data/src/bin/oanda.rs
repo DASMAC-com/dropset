@@ -11,7 +11,7 @@
 
 use dropset_feeds::{
     connect, run,
-    venues::{Candle, OandaCandles},
+    venues::{oanda, Candle, OandaCandles},
     CursorStore, PgCursorStore, RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = FxConfig::from_env(&DEFAULTS)?;
-    let api_key = secret("OANDA_API_KEY")?;
+    let api_key = secret(oanda::SECRET_NAME)?;
     let instrument = oanda_instrument(&cfg.product_id)?;
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;

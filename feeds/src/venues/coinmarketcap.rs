@@ -17,6 +17,12 @@ use serde_json::Value;
 /// The header CoinMarketCap authenticates each request with.
 const API_KEY_HEADER: &str = "X-CMC_PRO_API_KEY";
 
+/// The canonical name of this venue's credential ([`crate::secrets`]). Declared
+/// with the adapter like every other venue's, though the maker bot still reads
+/// this one from its own variable — that migration is deliberately not part of
+/// the collectors' enclave work.
+pub const SECRET_NAME: &str = "coinmarketcap/api-key";
+
 /// A poll [`Source`] over CoinMarketCap's batched quotes endpoint, keyed by its
 /// own numeric listing ids.
 pub struct CmcSource {

@@ -40,6 +40,10 @@ use serde::{Deserialize, Serialize};
 /// wider. It is the venue's constraint, so it lives with the venue.
 pub const MAX_CANDLES_PER_REQUEST: usize = 5000;
 
+/// The canonical name of this venue's credential
+/// ([`crate::secrets`]) — the v20 personal access token.
+pub const SECRET_NAME: &str = "oanda/api-key";
+
 /// The header that switches every timestamp in the response — and every
 /// timestamp accepted in a query — from RFC3339 to epoch seconds.
 const DATETIME_FORMAT_HEADER: &str = "Accept-Datetime-Format";

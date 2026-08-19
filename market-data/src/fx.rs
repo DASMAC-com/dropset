@@ -12,7 +12,7 @@
 //! adapter is handed the spelling it wants at construction.
 
 use anyhow::{anyhow, Context, Result};
-use dropset_feeds::now_secs;
+use dropset_feeds::{now_secs, secrets::SecretProvider};
 
 /// Default backfill depth, matching the Coinbase collector's — deep enough to
 /// span the weekend and macro-event regimes (docs/data-feeds.md §11). The FX
@@ -107,31 +107,22 @@ fn default_start(granularity: i64, backfill_days: u64) -> i64 {
     start - start.rem_euclid(granularity)
 }
 
-/// Resolve one credential by name.
+/// Resolve one credential by its canonical `<provider>/<secret>` name.
 ///
-/// **This is the single place a collector reads a secret**, deliberately: how a
-/// secret is delivered is an open design question (a 1Password-backed local
-/// enclave mirroring AWS Secrets Manager naming, per the secrets-provider
-/// abstraction the mainnet deploy issue owns), and it is settled in a planning
-/// session rather than here. Today it reads the process environment, which is
-/// the `env/file` local implementation that abstraction already names. When the
-/// provider lands, this function's body changes and nothing else does — no
-/// adapter reads the environment at all (docs/data-feeds.md §4).
+/// **This is the single place a collector reads a secret**, and it is now a
+/// thin call into the shared provider ([`dropset_feeds::secrets`]) rather than
+/// an `env::var`: the environment is consulted first, then the local 1Password
+/// enclave when `DROPSET_OP_VAULT` names a vault, and the AWS Secrets Manager
+/// backend slots into the same chain for hosted runs. No adapter reads the
+/// environment at all — a venue takes its key as an argument
+/// (docs/data-feeds.md §4).
 ///
-/// An **empty** value is rejected as firmly as an absent one. That is not
-/// pedantry: the compose services pass these through as `${VAR:-}`, so an
-/// unset credential arrives as an empty string rather than as a missing
-/// variable, and a bare `env::var` would hand the venue an empty key and turn a
-/// configuration mistake into a puzzling 401.
+/// Called **once per binary, at startup**. Nothing here is on a poll path, so
+/// the 1Password subprocess is paid once per process or not at all.
 pub fn secret(name: &str) -> Result<String> {
-    let value = std::env::var(name)
-        .with_context(|| format!("{name} is required (the API credential for this feed)"))?;
-    if value.trim().is_empty() {
-        return Err(anyhow!(
-            "{name} is empty (the API credential for this feed is required)"
-        ));
-    }
-    Ok(value)
+    SecretProvider::from_env()
+        .resolve(name)
+        .with_context(|| format!("{name} is required (the API credential for this feed)"))
 }
 
 /// Split a canonical `BASE-QUOTE` symbol into its two ISO-4217 legs.
@@ -172,6 +163,7 @@ pub fn twelvedata_symbol(product_id: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dropset_feeds::secrets::{env_var, validate_name, EnvBackend};
 
     #[test]
     fn each_venue_gets_its_own_spelling_of_one_canonical_pair() {
@@ -210,22 +202,50 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_credential_is_rejected_like_an_absent_one() {
-        // The compose services pass credentials through as `${VAR:-}`, so an
-        // unset key arrives as an empty string rather than as a missing
-        // variable. Accepting it would hand the venue an empty key and turn a
-        // configuration mistake into a puzzling 401.
+    fn a_credential_resolves_by_its_canonical_name() {
+        // The collectors name a secret canonically and never name a variable;
+        // the provider derives the environment spelling. This is the seam that
+        // keeps the same name valid against the 1Password enclave and, later,
+        // AWS Secrets Manager.
         //
         // Scoped to a name nothing else uses, since the process environment is
         // shared across tests in a binary.
-        let name = "DROPSET_FX_SECRET_EMPTY_CASE";
-        std::env::set_var(name, "   ");
-        let err = secret(name).unwrap_err().to_string();
-        assert!(err.contains("is empty"), "{err}");
-
-        std::env::set_var(name, "a-real-key");
+        let name = "fx-probe/api-key";
+        std::env::set_var(env_var(name), "a-real-key");
         assert_eq!(secret(name).unwrap(), "a-real-key");
-        std::env::remove_var(name);
+        std::env::remove_var(env_var(name));
+    }
+
+    #[test]
+    fn an_unresolvable_credential_names_the_feed_it_belongs_to() {
+        // Deliberately NOT routed through `secret()`, which builds its chain
+        // with `SecretProvider::from_env()`: on a machine that has the enclave
+        // exported — the machine this feature is built for — that would consult
+        // the 1Password backend for a probe name that does not exist, so a
+        // plain `cargo test` would spawn `op` against a live vault and could
+        // block on a biometric prompt. The assertion would still pass, so the
+        // cost would be invisible. An explicit env-only chain reproduces the
+        // same error path with no subprocess.
+        let provider = SecretProvider::new(vec![Box::new(EnvBackend)]);
+        let err = provider
+            .resolve("fx-probe/absent-case")
+            .context("the API credential for this feed")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("the API credential for this feed"), "{err}");
+    }
+
+    #[test]
+    fn every_fx_venue_names_its_credential_canonically() {
+        // A malformed constant would only surface when that collector ran, so
+        // assert the roster's three names parse here instead.
+        for name in [
+            dropset_feeds::venues::oanda::SECRET_NAME,
+            dropset_feeds::venues::twelvedata::SECRET_NAME,
+            dropset_feeds::venues::alphavantage::SECRET_NAME,
+        ] {
+            assert!(validate_name(name).is_ok(), "{name}");
+        }
     }
 
     #[test]

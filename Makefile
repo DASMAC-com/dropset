@@ -482,12 +482,42 @@ grafana-down: check-docker
 # no keys at all. Each service reads its credential from the environment and
 # refuses to start without one, naming the variable it wanted.
 #
+# Credentials come from the local secrets enclave (docs/data-feeds.md §12):
+# `op run` resolves the `op://` references in the git-ignored
+# infra/localnet/secrets.local.env and exports the values into the compose
+# invocation's environment. The containers themselves have no `op` and no
+# vault access — they are handed resolved values, which is exactly the shape
+# the hosted deploy has with Secrets Manager.
+#
+# The enclave is optional, hence the fallback branch rather than a hard
+# dependency: a machine with the three keys exported by hand still works, and
+# so does CI. `op run` resolves eagerly, so a bad reference stops the stack
+# here instead of starting a collector that 401s a minute later.
+#
+# The enclave file is `include`d as well as passed to `op run`, because the
+# two need different things from it. `op run` injects it into the *child*
+# process, so a `DROPSET_OP_ACCOUNT` line inside it never reaches `op` itself
+# — and on a machine signed in to more than one 1Password account, `op` fails
+# at client init before it reads any reference. Including the file makes that
+# value a make variable, so it can be passed as the `--account` flag it has to
+# be. The flag is conditional: a single-account machine deletes the line, and
+# an empty `--account` would swallow the next argument.
+#
 # Set FX_PRODUCT_ID to collect a pair other than the AUD-USD default. It is the
 # canonical BASE-QUOTE form; each venue's own spelling is derived from it.
+FX_ENV = infra/localnet/secrets.local.env
+-include $(FX_ENV)
+OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account '$(DROPSET_OP_ACCOUNT)',)
+FX_UP = docker compose -f infra/localnet/docker-compose.yml \
+	--profile fx up -d --quiet-pull postgres migrate oanda twelvedata \
+	alphavantage
 .PHONY: fx-collectors-up
 fx-collectors-up: check-docker
-	docker compose -f infra/localnet/docker-compose.yml --profile fx \
-		up -d --quiet-pull postgres migrate oanda twelvedata alphavantage
+	@if [ -f $(FX_ENV) ]; then \
+		op run $(OP_ACCT) --env-file=$(FX_ENV) -- $(FX_UP); \
+	else \
+		echo 'No $(FX_ENV) (cp its .example) — using exported keys.'; \
+		$(FX_UP); fi
 .PHONY: fx-collectors-down
 fx-collectors-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml --profile fx \

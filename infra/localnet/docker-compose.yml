@@ -60,6 +60,12 @@ services:
     # and `:?` fails that parse for every service in the file, so a required
     # credential here breaks an unrelated image build. The collector rejects an
     # empty credential at startup instead, naming the variable.
+    #
+    # The variable name is derived from the collector's canonical secret name
+    # (`alphavantage/api-key`, docs/data-feeds.md §12) rather than chosen here —
+    # `make fx-collectors-up` resolves the value from the 1Password enclave and
+    # exports it under exactly this spelling. A container never reaches a secret
+    # store itself: it has no `op`, and it is handed a resolved value.
     build:
       context: '../..'
       dockerfile: 'market-data/Dockerfile'
@@ -69,7 +75,7 @@ services:
       migrate:
         condition: 'service_completed_successfully'
     environment:
-      ALPHA_VANTAGE_API_KEY: '${ALPHA_VANTAGE_API_KEY:-}'
+      ALPHAVANTAGE_API_KEY: '${ALPHAVANTAGE_API_KEY:-}'
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
@@ -395,7 +401,7 @@ services:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
       RUST_LOG: 'info'
-      TWELVE_DATA_API_KEY: '${TWELVE_DATA_API_KEY:-}'
+      TWELVEDATA_API_KEY: '${TWELVEDATA_API_KEY:-}'
     profiles:
     - 'fx'
     restart: 'unless-stopped'
