@@ -137,6 +137,24 @@ pub enum Regime {
     /// The distinction is the same one this enum already draws between a
     /// weekend and an outage — a permanent state reported as a fault is a
     /// fault the operator learns to ignore.
+    ///
+    /// **A pinned market still has no leading price-divergence detection, and
+    /// the consensus filter does not give it any.** This is worth stating
+    /// plainly because the opposite was expected: a dispersion gate across
+    /// several sources is what would normally provide a second opinion without
+    /// a dedicated basis venue. It cannot here, because a pinned market is
+    /// *defined* by having no basis source to disperse against — there is
+    /// nothing to corroborate, which is the whole reason the basis is pinned.
+    /// The FX leg does gain the gate, so a bad anchor is caught; the basis is
+    /// still an assertion.
+    ///
+    /// What remains is therefore an **accepted** risk with a known sign: the
+    /// pin asserts a basis of 1.0, and every guard that survives for such a
+    /// market — the USDC common-mode check, the TVL floor, the
+    /// inventory-imbalance check — is a *trailing* detector that trips only
+    /// after the maker has been picked off. Exposure is bounded by the
+    /// top-of-book size. It closes when the market gains a real basis source,
+    /// not when this filter improves.
     FxPinned,
     /// Composed exactly as [`Regime::Normal`] or [`Regime::CryptoOnly`], but a
     /// contributing leg rests on a **single uncorroborated source**.
