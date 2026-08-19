@@ -155,8 +155,8 @@ export const useRouterQuote = (
         // Only our own book needs the clocks, so an aggregator-only tick reads
         // neither — which on mainnet today, where we have no market yet, is
         // every tick. When the leg is live the slot comes from the chain and
-        // the wall clock is checked against it, corrected only when the device
-        // has drifted out of tolerance. See lib/eclob/chainClock.ts.
+        // the wall clock is checked against it, corrected on a ramp as the
+        // device drifts out of tolerance. See lib/eclob/chainClock.ts.
         //
         // The SDK takes the leg and its clocks as one object, so that pairing
         // is structural rather than a convention this hook has to remember:
