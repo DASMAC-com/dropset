@@ -82,6 +82,47 @@ python3 .claude/tools/cspell_place.py scan \
 CLI); `verdict WORD...` skips cspell and just places words you already
 have.
 
+**The dictionary union-merges — don't resolve its conflicts by hand.**
+One sorted word per line means two branches that each add a word collide
+at the same line by construction, and with several worktrees live that
+was a recurring tax paid for a conflict with no semantic content. So
+`.gitattributes` gives `cfg/dictionary.txt` git's built-in
+`merge=union` driver: git keeps both sides' lines instead of raising a
+conflict. Being built into git, it needs no `merge.*.driver`
+configuration, so any clone resolves an add/add collision the same way.
+Union merge neither sorts nor de-duplicates, so the merged file can be
+out of order with a word twice. Both of those heal, because the
+`file-contents-sorter` hook runs with `--unique`. Be precise about
+**when**, though: this repo does not install pre-commit as a git hook, so
+healing happens at the next **`make lint`** that includes the file — not
+at commit time, and not in the merge commit itself. That is still
+fail-closed rather than best-effort, and it is CI that closes it: the
+`Lint` job runs the hook set over `--all-files`, so `cfg/dictionary.txt`
+is in scope on **every** PR whether or not the PR touches it, and the
+hook is a fixer — it exits non-zero when it rewrites. An out-of-order
+dictionary therefore cannot survive a PR at all. A local `make lint` is
+the path-scoped counterpart, which is why the healing commit is whichever
+one happens to include the file. Nothing breaks in the interim either — cspell
+tolerates both states.
+
+One divergence is **not** self-healing, and `--unique` cannot help:
+union merge keeps a line the other side **deleted**, and an edit is a
+delete plus an add, so it also keeps both spellings of a reworded word.
+That is a live shape rather than a hypothetical, because `cspell-audit`
+drops a word that has fallen to a single file — so such a removal,
+merged against a nearby addition, can come back. It is accepted rather
+than fixed: a resurrected entry only over-permits one spelling, and the
+next hygiene pass re-detects it. Don't expect the sorter to catch it.
+
+Union merge is sound here **only** because the dictionary is an
+unordered set that happens to be stored sorted. Do not extend the
+attribute to a file where a dropped, doubled, or reordered line changes
+meaning.
+The same reasoning is why the Makefile declares each target's `.PHONY`
+beside its own rule instead of in one central sorted block — a sorted
+list is a merge-conflict generator, so prefer a layout that has no
+single insertion point over resolving the collisions it creates.
+
 The `cspell-audit` skill reconciles the dictionary against actual usage
 **and** normalizes escape placement on this rule; run it when the
 dictionary grows or escapes drift. `housekeeping` runs the same check

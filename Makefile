@@ -1,63 +1,20 @@
 # cspell:word SIGTTIN
 
-.PHONY: all
-.PHONY: bots-down
-.PHONY: bots-up
-.PHONY: check-anchor
-.PHONY: check-conformance-vectors
-.PHONY: check-docker
-.PHONY: check-pnpm
-.PHONY: check-sbf
-.PHONY: check-solana
-.PHONY: check-toolchain
-.PHONY: check-wasm
-.PHONY: clean
-.PHONY: clean-docker
-.PHONY: collectors-down
-.PHONY: collectors-up
-.PHONY: conformance-vectors
-.PHONY: debugger
-.PHONY: decks
-.PHONY: decks-build
-.PHONY: demo
-.PHONY: explorer
-.PHONY: explorer-down
-.PHONY: frontend
-.PHONY: frontend-localnet
-.PHONY: fx-collectors-down
-.PHONY: fx-collectors-up
-.PHONY: grafana
-.PHONY: grafana-down
-.PHONY: idl
-.PHONY: indexer-down
-.PHONY: indexer-up
-.PHONY: install-anchor-v2
-.PHONY: lint
-.PHONY: program
-.PHONY: program-keypair
-.PHONY: program-no-teardown
-.PHONY: program-parity
-.PHONY: sdk
-.PHONY: sdk-test
-.PHONY: session-metrics
-.PHONY: taker-down
-.PHONY: taker-up
-.PHONY: teardown
-.PHONY: test
-.PHONY: test-no-teardown
-.PHONY: test-parity
-.PHONY: tools-tests
-.PHONY: tui
-.PHONY: tui-prebuild
-.PHONY: tui-prebuild-explorer
-.PHONY: wasm
+# Every target in this file is phony. Each `.PHONY:` declaration sits with its
+# own rule rather than in one central sorted block: a single sorted list makes
+# two branches that each add a target collide at the same line by
+# construction — a merge conflict with no semantic content. Keep a new
+# declaration adjacent to the rule it names.
 
+.PHONY: all
 all: lint test
+
 # Nuke this worktree's heavy build artifacts to reclaim disk: the Rust
 # target/ tree, every pnpm node_modules, and the Next.js .next build caches
 # (all cheaply rebuilt). Leaves the committed generated trees (sdk/idl,
 # sdk/ts, sdk/conformance) alone. Run at PR merge time (by review-pr) so a
 # worktree that lingers before it is pruned doesn't keep its build tree.
+.PHONY: clean
 clean:
 	cargo clean
 	rm -rf node_modules frontend/node_modules decks/node_modules \
@@ -83,17 +40,21 @@ clean:
 # solana-client 3.1 so its `fetch` RpcClient and the local validator agree
 # on wire/RPC (see sdk/rs/Cargo.toml). One prerequisite per tool keeps each
 # recipe body small enough to wrap under the Makefile linter's length cap.
+.PHONY: check-toolchain
 check-toolchain: check-anchor check-sbf check-solana
 
+.PHONY: check-anchor
 check-anchor:
 	@anchor --version | grep -q " 2\." \
 		|| { echo "anchor-cli 2.x required"; exit 1; }
 
+.PHONY: check-sbf
 check-sbf:
 	@command -v cargo-build-sbf >/dev/null \
 		|| { echo "cargo build-sbf not found (install Solana toolchain)"; \
 			exit 1; }
 
+.PHONY: check-solana
 check-solana:
 	@solana --version | grep -q " 3\.1\." \
 		|| { echo "solana-cli 3.1.x required"; exit 1; }
@@ -105,17 +66,20 @@ check-solana:
 # demands what it uses: the WASM binding build needs wasm-pack; the localnet
 # Docker stack (explorer / indexer / bots) needs Docker with the compose v2
 # plugin; the SDK and web dev servers need pnpm.
+.PHONY: check-wasm
 check-wasm:
 	@command -v wasm-pack >/dev/null \
 		|| { echo "wasm-pack not found (cargo install wasm-pack)"; \
 			exit 1; }
 
+.PHONY: check-docker
 check-docker:
 	@command -v docker >/dev/null \
 		|| { echo "docker not found (install Docker)"; exit 1; }
 	@docker compose version >/dev/null 2>&1 \
 		|| { echo "docker compose v2 plugin required"; exit 1; }
 
+.PHONY: check-pnpm
 check-pnpm:
 	@command -v pnpm >/dev/null \
 		|| { echo "pnpm not found (npm i -g pnpm)"; exit 1; }
@@ -127,10 +91,12 @@ check-pnpm:
 # check — and the litesvm tests in programs/dropset/tests/common/mod.rs
 # that read the file — see keypair == declare_id!. keys/AAAA.json is the
 # single committed source; target/deploy/ is a pure build artifact.
+.PHONY: program-keypair
 program-keypair:
 	mkdir -p target/deploy
 	cp keys/AAAA.json target/deploy/dropset-keypair.json
 
+.PHONY: program
 program: check-toolchain program-keypair
 	anchor keys sync && anchor build
 
@@ -139,6 +105,7 @@ program: check-toolchain program-keypair
 # `cargo build-sbf`, so this rebuilds `dropset.so` feature-off. Split out
 # from `test-no-teardown` so CI can cache this .so and skip the rebuild on
 # a cache hit (see .github/workflows/test.yml).
+.PHONY: program-no-teardown
 program-no-teardown: check-toolchain program-keypair
 	anchor build -- --no-default-features
 
@@ -147,28 +114,33 @@ program-no-teardown: check-toolchain program-keypair
 # build left in `dropset.so`. The reference build runs first because
 # `anchor build` always writes `dropset.so`; the trailing default build
 # restores the asm artifact every other test deploys.
+.PHONY: program-parity
 program-parity: check-toolchain program-keypair
 	anchor build -- --no-default-features --features admin-teardown
 	cp target/deploy/dropset.so target/deploy/dropset_ref.so
 	anchor build
 
+.PHONY: debugger
 debugger: program
 	anchor debugger
 
 # === Program tests ===
 
+.PHONY: test
 test: program
 	cargo test
 
 # Feature-off coverage: build the program WITHOUT `admin-teardown` and
 # assert every teardown instruction returns `TeardownDisabled` — only the
 # feature-off-gated test target is run.
+.PHONY: test-no-teardown
 test-no-teardown: program-no-teardown
 	cargo test --no-default-features --test teardown_disabled
 
 # Rust↔ASM parity: deploy both artifacts and assert the assembly fast path
 # (the default `dropset.so`) matches the reference kernel — identical stamp
 # bytes and domain error codes.
+.PHONY: test-parity
 test-parity: program-parity
 	cargo test --test asm_parity
 
@@ -180,12 +152,14 @@ test-parity: program-parity
 # Depend on program-keypair (like program: does) so the canonical
 # keys/AAAA.json is staged before the build — otherwise anchor syncs
 # declare_id! and the IDL `address` to a throwaway build keypair.
+.PHONY: idl
 idl: check-toolchain program-keypair
 	anchor idl build -o sdk/idl/dropset.json
 
 # Regenerate the TS + Rust clients from the checked-in IDL via Codama,
 # then normalize the Rust output with `cargo fmt` so it lands in canonical
 # form (clean under the rustfmt hook, reproducible by the SDK CI gate).
+.PHONY: sdk
 sdk: check-pnpm
 	cd sdk/codama && pnpm install && pnpm generate
 	cargo fmt -p dropset-sdk
@@ -196,6 +170,7 @@ sdk: check-pnpm
 # `simulate_swap` binding and the `Price` codec bindings. Emits the glue
 # straight into the TS SDK (sdk/ts/src/wasm) so `@dropset/sdk` can import it
 # and the SDK CI type-checks against it; the `simulate` module wraps it.
+.PHONY: wasm
 wasm: check-wasm
 	cd sdk/interface && wasm-pack build --target web \
 		--out-dir ../ts/src/wasm --features wasm
@@ -206,6 +181,7 @@ wasm: check-wasm
 # The `--write` flag makes each example write its canonical JSON straight
 # to sdk/conformance/*.json (instead of stdout, avoiding a shell redirect),
 # so the generators stay the single source of truth.
+.PHONY: conformance-vectors
 conformance-vectors:
 	cargo run -p dropset-math-core --example gen_conformance -- --write
 	cargo run -p dropset-math-core --example gen_quoting -- --write
@@ -217,12 +193,14 @@ conformance-vectors:
 # all fail the gate, not just in-place edits (mirrors the IDL/clients gate
 # in .github/workflows/sdk.yml). A generator / `Price` math change not
 # followed by `make conformance-vectors` is exactly what this catches.
+.PHONY: check-conformance-vectors
 check-conformance-vectors: conformance-vectors
 	git add -A -- sdk/conformance/
 	git diff --cached --exit-code -- sdk/conformance/
 
 # Run the SDK test suites: Rust (math-core + interface + dropset-sdk, incl.
 # the conformance vectors) and the TS conformance check.
+.PHONY: sdk-test
 sdk-test: check-pnpm
 	cargo test -p dropset-math-core -p dropset-interface -p dropset-sdk
 	cd sdk/ts && pnpm test
@@ -240,6 +218,7 @@ sdk-test: check-pnpm
 # and dies with `SectorOverflow`). The `tui-prebuild-explorer` prerequisite
 # warms the explorer's Docker image too, so after `make clean && make tui`
 # every in-TUI command runs without building.
+.PHONY: tui-prebuild
 tui-prebuild: check-toolchain program-keypair tui-prebuild-explorer
 	anchor keys sync && anchor build --no-idl
 	cargo build -p dropset-maker-bot -p dropset-taker-bot
@@ -254,6 +233,7 @@ tui-prebuild: check-toolchain program-keypair tui-prebuild-explorer
 # `--quiet-pull` drops the per-layer download progress cascade, keeping only the
 # final per-image line (per docs/conventions/context-economy.md — that cascade
 # is a top token sink when an agent runs this).
+.PHONY: tui-prebuild-explorer
 tui-prebuild-explorer:
 	@if command -v docker >/dev/null 2>&1; then \
 		docker compose -f infra/localnet/docker-compose.yml \
@@ -268,6 +248,7 @@ tui-prebuild-explorer:
 # panel auto-runs "Bootstrap all" once the localnet is up; override with
 # `make tui TUI_ARGS=` for the step-by-step manual control plane.
 TUI_ARGS ?= --bootstrap
+.PHONY: tui
 tui: tui-prebuild
 	cargo run -p dropset-tui -- $(TUI_ARGS)
 
@@ -276,6 +257,7 @@ tui: tui-prebuild
 # admin keypair and ARGS for the rest (e.g. a real cluster, which prompts for
 # confirmation — add --yes to skip that prompt in automation):
 # `make teardown WALLET=~/admin.json ARGS="--rpc-url <url> --yes"`.
+.PHONY: teardown
 teardown:
 	cargo run -p dropset-tui --bin dropset-teardown -- \
 		$(if $(WALLET),--wallet $(WALLET)) $(ARGS)
@@ -290,6 +272,7 @@ define open-browser
 endef
 
 # Run next dev and open the browser once it's accepting connections.
+.PHONY: frontend
 frontend: check-pnpm
 	cd frontend && pnpm install
 	$(call open-browser,3000)
@@ -300,6 +283,7 @@ frontend: check-pnpm
 # .env.local (a process env var wins over .env files in Next). Assumes a
 # validator is up with the markets seeded, which the `tui` control plane does;
 # run `make tui` alongside this, or use `make demo` to launch both.
+.PHONY: frontend-localnet
 frontend-localnet: check-pnpm
 	cd frontend && pnpm install
 	$(call open-browser,3000)
@@ -309,6 +293,7 @@ frontend-localnet: check-pnpm
 
 # Run the decks deck dev server (port 3300, set in the dev script) and
 # open the browser once it's accepting connections.
+.PHONY: decks
 decks: check-pnpm
 	cd decks && pnpm install
 	$(call open-browser,3300)
@@ -323,6 +308,7 @@ decks: check-pnpm
 # module for page: /_document", after compiling and type-checking cleanly. CI
 # always starts cold, so clearing first is also what makes a local run mean the
 # same thing as the gate.
+.PHONY: decks-build
 decks-build: check-pnpm
 	cd decks && pnpm install
 	rm -rf decks/.next
@@ -363,6 +349,7 @@ decks-build: check-pnpm
 # localnet is up. Wiping or tearing down does not re-bootstrap on its own —
 # re-run it from the menu.
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
+.PHONY: demo
 demo:
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
 	@set -m; $(MAKE) --no-print-directory frontend-localnet \
@@ -380,9 +367,11 @@ demo:
 # docker-compose.yml (with EXPLORER_REF in explorer.Dockerfile). Every `up`
 # target here passes `--quiet-pull` to drop the per-layer progress cascade
 # (per docs/conventions/context-economy.md).
+.PHONY: explorer
 explorer: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --quiet-pull explorer
+.PHONY: explorer-down
 explorer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf explorer
@@ -408,6 +397,7 @@ explorer-down: check-docker
 # `docker rmi` it by name (or `docker system prune`) for a fully cold explorer.
 # Note the `docker builder prune -f` is host-wide — it clears every project's
 # build cache on this machine, not only this stack's.
+.PHONY: clean-docker
 clean-docker: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		--profile taker down --rmi local -v --remove-orphans
@@ -437,9 +427,11 @@ clean-docker: check-docker
 # still runs its own migrator against what is now the shared database —
 # failing with a sqlx checksum mismatch rather than the fence's actionable
 # text. Run `make clean-docker` once, or `up --build`, after picking this up.
+.PHONY: indexer-up
 indexer-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --quiet-pull postgres migrate indexer indexer-api
+.PHONY: indexer-down
 indexer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf indexer indexer-api
@@ -455,9 +447,11 @@ indexer-down: check-docker
 # it writes. `collectors-down` stops it too — it has nothing to show once the
 # feeds are gone — while `make grafana` runs it against the history already
 # on the volume with no collector at all.
+.PHONY: collectors-up
 collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --quiet-pull postgres migrate coinbase grafana
+.PHONY: collectors-down
 collectors-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf coinbase grafana
@@ -472,9 +466,11 @@ collectors-down: check-docker
 # a committed dashboard shows up in the browser within the provider's refresh
 # interval — no restart, no rebuild. `grafana-down` leaves `postgres` alone,
 # like every other per-app target here.
+.PHONY: grafana
 grafana: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --quiet-pull postgres migrate grafana
+.PHONY: grafana-down
 grafana-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf grafana
@@ -488,9 +484,11 @@ grafana-down: check-docker
 #
 # Set FX_PRODUCT_ID to collect a pair other than the AUD-USD default. It is the
 # canonical BASE-QUOTE form; each venue's own spelling is derived from it.
+.PHONY: fx-collectors-up
 fx-collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml --profile fx \
 		up -d --quiet-pull postgres migrate oanda twelvedata alphavantage
+.PHONY: fx-collectors-down
 fx-collectors-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml --profile fx \
 		rm -sf oanda twelvedata alphavantage
@@ -502,9 +500,11 @@ fx-collectors-down: check-docker
 # image (slow); later runs reuse the cargo-chef dependency cache. The taker is
 # opt-in (`taker-up`), never started here — the demo market stays quiet until
 # an operator asks for organic flow.
+.PHONY: bots-up
 bots-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --quiet-pull maker-bot
+.PHONY: bots-down
 bots-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf maker-bot taker-bot
@@ -512,9 +512,11 @@ bots-down: check-docker
 # Opt-in localnet flow: start / stop the benign stochastic taker so the seeded
 # books move and the maker takes fills. Off by default (gated behind the compose
 # `taker` profile); flip it on for a walkthrough, off to leave the market quiet.
+.PHONY: taker-up
 taker-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		--profile taker up -d --quiet-pull taker-bot
+.PHONY: taker-down
 taker-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf taker-bot
@@ -531,6 +533,7 @@ taker-down: check-docker
 # are not the culprit) is in the tool's module docstring — read it before
 # swapping this back to `--all-files`. Pass a single hook after `--`, e.g.
 # `python3 .claude/tools/lint_paths.py -- cspell`.
+.PHONY: lint
 lint:
 	python3 .claude/tools/lint_paths.py
 
@@ -541,6 +544,7 @@ lint:
 # the working-directory project slug, reads it in its own process, and prints
 # a compact ranked-sink summary. Pass the session id:
 # `make session-metrics SESSION=<uuid>` (add ARGS=--json for JSON).
+.PHONY: session-metrics
 session-metrics:
 	python3 .claude/tools/session_metrics.py --session-id $(SESSION) $(ARGS)
 
@@ -550,12 +554,14 @@ session-metrics:
 # tab-ordering logic). The tools tests import their modules bare (`import
 # firm_core`), so discovery runs with the tests dir as start and the tool home
 # as top-level (`-t`) to keep those imports resolving. Run in CI's lint job.
+.PHONY: tools-tests
 tools-tests:
 	python3 -m unittest discover \
 		-s .claude/tools/tests -t .claude/tools -p 'test_*.py'
 	python3 -m unittest discover -s .claude/scripts -p 'test_*.py'
 
 # https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
+.PHONY: install-anchor-v2
 install-anchor-v2:
 	CARGO_PROFILE_RELEASE_LTO=off cargo install \
 		--git https://github.com/solana-foundation/anchor.git \

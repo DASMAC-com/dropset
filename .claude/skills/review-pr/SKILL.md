@@ -10,6 +10,8 @@ user-invocable: true
 
 <!-- cspell:word retarget -->
 
+<!-- cspell:word sortedness -->
+
 # `review-pr`
 
 Act as an adversarial reviewer before the human
@@ -138,6 +140,45 @@ PR-authoring **writes** (`create_pull_request`,
      a **blocking** issue (step 7), and tell the user
      to rebase and resolve manually, then re-run — this
      skill does not auto-resolve conflicts.
+
+     **The rule is absolute on purpose, and the obvious
+     carve-out does not hold.** It keys on "a conflict
+     occurred" rather than "the conflict has semantic
+     content", so it fires on an adjacent insertion into a
+     sorted list, which genuinely has none — the tempting
+     safeguard is "resolve it and let the linter verify".
+     That gives no protection: **a linter verifies
+     sortedness, not completeness.** A sorted list that
+     silently lost one side's entry lints perfectly clean,
+     and dropping a side is exactly the outcome this rule
+     exists to prevent. If a carve-out is ever added, its
+     verification must be completeness against **both merge
+     parents** — every line added by either parent appears
+     in the resolution, checked mechanically — not "the
+     linter passed".
+
+     The better lever is removing the collision class at
+     the source, because it fixes every session at once
+     rather than one conflict at a time: the Makefile
+     declares each target's `.PHONY` beside its own rule
+     instead of in one sorted block, and `.gitattributes`
+     gives the cspell dictionary a `merge=union` driver so
+     git takes both sides itself. The Makefile half needs no
+     agent judgment at all; the dictionary half leaves one
+     accepted residual, since union merge resurrects a
+     deleted word (see `docs/conventions/docs-and-style.md`
+     → "Spelling (cspell)").
+     Reach for that before reconsidering this rule.
+
+     **But that lever does not exist everywhere, and this is
+     the case the rule is really for.** A single ordered file
+     has no structural escape — yamllint's alphabetical keys
+     (`cfg/**`, `infra/aws/**`) were examined and left as they
+     are, because there is no layout that removes the shared
+     insertion point. So when the conflict is an adjacent
+     insertion into *those*, there is nothing to fix at the
+     source and the answer is still a manual rebase, not an
+     auto-resolve. Don't spend a round rediscovering that.
 
      **Enumerate the conflicted files with git, not a
      search.** The question is "which files conflict",
@@ -2476,7 +2517,9 @@ PR-authoring **writes** (`create_pull_request`,
      PR has merge conflicts. Catalogue this as a **blocking** issue
      and do **not** mark the PR ready. Tell the user to rebase onto
      `origin/<base>` and resolve the conflicts (this skill does not
-     auto-resolve them), then re-run `/review-pr`.
+     auto-resolve them — the argument for why that stays absolute even
+     for a trivial-looking sorted-list collision is in step 2), then
+     re-run `/review-pr`.
    - `mergeable: "UNKNOWN"` → GitHub hasn't finished
      computing mergeability yet. Wait a few seconds and
      re-run the `gh pr view` call until it settles.
@@ -2823,7 +2866,8 @@ PR-authoring **writes** (`create_pull_request`,
      (or `mergeStateStatus: "DIRTY"`) → **do not** offer to
      enqueue and **do not** advance the issue. Report the
      conflict, tell the human to rebase onto `origin/<base>`
-     to resolve it (this skill does not auto-resolve), and leave
+     to resolve it (this skill does not auto-resolve — see
+     step 2 for why that holds even here), and leave
      the issue **In Progress**. Stop here — the enqueue offer
      is off the table until the rebase clears the conflict.
    - `mergeable: "UNKNOWN"` → GitHub hasn't finished

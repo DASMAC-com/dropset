@@ -1,0 +1,17 @@
+# The cspell dictionary is one alphabetically sorted word per line, so two
+# branches that each add a word collide at the same line by construction — a
+# conflict whose only correct resolution is "keep both sides". `merge=union`
+# is git's built-in driver for exactly that, so never hand-resolve a conflict
+# in this file.
+#
+# Union merge neither sorts nor de-duplicates, and it keeps a line the other
+# side DELETED. The first two heal at the next `make lint`; the third does
+# not heal at all and is accepted. Sound here ONLY because the dictionary is
+# an unordered set that happens to be stored sorted — do not extend the
+# attribute to a file where a dropped, doubled, or reordered line changes
+# meaning.
+#
+# The full argument lives in docs/conventions/docs-and-style.md under
+# "Spelling (cspell)". Keep it there, not here: two prose copies of one
+# rationale is the drift generator this very file exists to remove.
+cfg/dictionary.txt merge=union
