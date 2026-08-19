@@ -8,7 +8,7 @@ mod common;
 
 use anchor_lang_v2::bytemuck;
 use anchor_v2_testing::Signer;
-use common::fixture::{dual_profile, simple_profile, Fixture};
+use common::fixture::{dual_profile, ladder_profile, simple_profile, Fixture};
 use dropset::{Price, FLUSH_BIT};
 use solana_pubkey::Pubkey;
 
@@ -716,6 +716,116 @@ fn multi_vault_spills_cheaper_then_pricier() {
         v1 < v0,
         "cheaper vault is more depleted than the pricier one"
     );
+}
+
+#[test]
+fn a_level_capped_fill_then_an_unaffordable_level_leaves_the_change() {
+    // The exact-in walk shape the residue accounting is easiest to get
+    // wrong, end-to-end through the real handler: a first leg that fills
+    // but is *level*-capped, then a second leg the taker cannot afford one
+    // output atom of, which stops the walk. Neither leg may charge beyond
+    // the priced input of what actually filled — a level-capped leg is not
+    // `taker_bound`, so it charges no residue, and `LegFill::Exhausted`
+    // deliberately absorbs nothing at all (see its doc: absorbing there
+    // would let a leader post a far-out tail level and confiscate the
+    // unspent budget of any taker whose walk reached it, with `min_out` no
+    // defense since residue never reduces output).
+    //
+    // Asserting the taker's *remaining input* is the whole point. The
+    // first cut of exact-in absorbed the unspent budget on the stopping
+    // leg, and the output amount cannot see that — which is exactly why
+    // `min_out` could not object to it.
+    let anchor = Price::encode(10_850_000, 0).unwrap().as_u32();
+    let mut f = Fixture::seeded_two_vaults(anchor, anchor);
+    let auth = f.authority.insecure_clone();
+
+    // Re-quote sector 0 with a single ask worth 1% of its base inventory
+    // — 10_000 of 1_000_000 atoms — so the *level* cap binds well before
+    // the taker's budget does. A real profile write bumps the nonce and
+    // re-arms FLUSH_BIT, so the 100-bps ladder is what materializes.
+    f.set_liquidity_profile(&auth, 0, ladder_profile(&[(5_000, 100, u32::MAX)], &[]))
+        .expect("sector 0 quotes one 100-bps ask");
+    // Re-stamp sector 1 at an astronomical reference, re-arming its
+    // FLUSH_BIT so its full ask ladder re-materializes there. The level is
+    // non-empty and its vault is funded — the only thing wrong with it is
+    // the price, which is what makes it the `Exhausted` arm rather than a
+    // `Skip`. Asks are visited cheapest-first, so it is reached last.
+    let far_out = Price::encode(10_000_000, 9).unwrap(); // 1e9 quote/base atom
+    f.set_reference_price(&auth, 1, far_out.as_u32(), 0)
+        .expect("sector 1 re-quotes far out of reach");
+
+    let budget = 200_000u64;
+    let taker = f.funded_depositor(0, budget);
+    f.assert_treasury_invariant();
+    f.swap(&taker, 0, budget, Price::INFINITY.as_u32(), 1)
+        .expect("the level-capped leg fills and the walk then stops");
+
+    // Leg 1 was level-capped, not taker-capped: the exact 10_000 is the
+    // level's materialized size, and matching it is what makes this the
+    // level-capped shape rather than a taker-bound one. The gap is wide —
+    // this budget can afford ~182_000 base at this price, so the level cap
+    // binds by more than an order of magnitude and no rounding can blur
+    // which of the two bound.
+    let filled = SEED_BASE - f.vault(0).base_atoms.get();
+    assert_eq!(filled, 10_000, "the 100-bps level cap bound the fill");
+    // The vault is debited the gross output either way; a taker fee is
+    // skimmed off it and accrued to the market, so account for it rather
+    // than depending on the registry's default rate being zero.
+    let accrued_base = f.market_header().accrued_base_fee_atoms.get();
+    assert_eq!(
+        f.token_balance(&f.base_ata(&taker.pubkey())) + accrued_base,
+        filled,
+        "the gross fill splits into the taker's payout and the accrued fee"
+    );
+
+    // Leg 2 stopped the walk without filling anything — and pin that it was
+    // a real, live, non-empty level the walk actually reached, rather than
+    // an absent or empty one. `remaining` materializes lazily at match
+    // time and sector 1 has never been swapped against, so a full-size
+    // level here is positive proof the walk visited it and flushed its
+    // ladder. Vault inventory alone cannot carry that: it reads identically
+    // whether the level returned `Exhausted`, returned `Skip` because it
+    // was empty, or was never considered at all — and only the first of
+    // those exercises the arm this test exists to pin. Without this
+    // assertion a change that stopped sector 1 materializing would leave
+    // the test green and silently vacuous.
+    assert_eq!(
+        f.vault(1).remaining.asks[0].size.get(),
+        SEED_BASE,
+        "sector 1's ask materialized at full size and went wholly unfilled"
+    );
+    assert_eq!(
+        f.vault(1).base_atoms.get(),
+        SEED_BASE,
+        "the unaffordable level filled nothing"
+    );
+
+    // The headline: the taker paid exactly the priced input leg of what
+    // filled and kept every other atom of `amount_in`, rather than the
+    // whole budget the pre-merge bug charged. The taker fee is skimmed off
+    // the *output* leg, so on a Buy nothing but residue can separate the
+    // taker's quote debit from the vault's quote credit — equality here is
+    // the residue-free assertion, stated in atoms the taker can feel.
+    let vault_credit = f.vault(0).quote_atoms.get() - SEED_QUOTE;
+    let spent = budget - f.token_balance(&f.quote_ata(&taker.pubkey()));
+    assert_eq!(
+        spent, vault_credit,
+        "the taker paid the priced input leg and nothing more"
+    );
+    assert!(
+        spent < budget / 10,
+        "a 1%-of-inventory fill costs a fraction of the budget, \
+         spent {spent} of {budget}"
+    );
+
+    // And the custody relation. `treasury_residual` checks the `>=` itself,
+    // and residue is the only thing a take can leave unattributed, so zero
+    // slack is the direct assertion that neither leg absorbed any: a change
+    // that absorbed on either arm shows up here as slack. Note this pins
+    // only that direction — a change re-tightening custody to equality
+    // would still satisfy `(0, 0)`, and is caught instead by the suite's
+    // non-zero-residual witnesses on taker-bound fills.
+    f.assert_treasury_invariant();
 }
 
 #[test]
