@@ -11,11 +11,20 @@ use tokio::time::{sleep_until, Instant};
 /// The floor between two requests on one client, applied unless a source
 /// raises it with [`HttpClient::with_min_interval`]. Collectors and the maker
 /// share one host and one egress IP and keyless tiers limit by IP
-/// (docs/data-feeds.md §10), so the budget holds by construction here rather
-/// than by every adapter remembering to pace itself. It is a floor, not a
-/// cadence: steady-state polling rate belongs to the runner's
-/// `RunConfig::poll_interval`, and this only binds on back-to-back requests
-/// such as a paged backfill.
+/// (docs/data-feeds.md §10), so a floor has to exist somewhere below every
+/// adapter; this is that backstop.
+///
+/// It is a floor, not a cadence: steady-state polling rate belongs to the
+/// runner's `RunConfig::poll_interval`, and this only binds on back-to-back
+/// requests such as a paged backfill.
+///
+/// **It is a backstop, not a budget — do not assume it fits your venue.** 250 ms
+/// is ~240 requests a minute, which most venues in this crate do not allow, and
+/// the runner tight-loops while a source backfills, so this is exactly what
+/// paces a cold catch-up. A new adapter should look its venue's limit up and
+/// state its own floor; the two that keep this default
+/// (`venues::coinbase`, `venues::oanda`) do so because their documented rates
+/// are higher than it permits, and each says so where it declines to raise it.
 const DEFAULT_MIN_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The response-body ceiling, applied unless a source raises it with
@@ -135,7 +144,25 @@ impl HttpClient {
 
     /// Raise this source's minimum interval above [`DEFAULT_MIN_INTERVAL`] —
     /// the seam for a venue whose keyless tier is stricter than the default
-    /// floor.
+    /// floor. Most venues need it: the default is right for only the two that
+    /// allow more than it permits (docs/data-feeds.md §10 tabulates them all).
+    ///
+    /// **This bounds a rate. It cannot bound a quota — do not read an interval
+    /// as a budget guarantee.** The gate is in-process state: it paces requests
+    /// while the process is up and resets when the process does. So an interval
+    /// chosen to satisfy a *per-day* or *per-month* allowance holds only across
+    /// one continuous run, and a crash-loop — or a few local stack cycles in an
+    /// afternoon — exhausts the allowance while every individual pacing
+    /// decision here stays correct. The gap is invisible precisely because the
+    /// steady-state arithmetic checks out.
+    ///
+    /// Holding a quota needs durable state (a persisted per-venue counter),
+    /// which this client does not have. Two adapters currently approximate a
+    /// daily allowance with an interval and carry the caveat at their own
+    /// constant: `venues::alphavantage` (25/day) and `venues::twelvedata`
+    /// (800 credits/day). Where a venue offers a route priced as a rate rather
+    /// than a quota, preferring it removes the exposure instead of managing it —
+    /// see `venues::coinmarketcap`.
     pub fn with_min_interval(mut self, interval: Duration) -> Self {
         self.min_interval = interval;
         self

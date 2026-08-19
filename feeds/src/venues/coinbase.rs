@@ -20,6 +20,27 @@
 //! only after the await. Adopting `Backfill` here would add indirection and
 //! remove nothing.
 //!
+//! **Two things about the page cap, measured against the venue rather than
+//! taken from its docs.** They matter because [`Source::next`] advances the
+//! cursor past the whole window it *asked for*, so anything the venue quietly
+//! declined to return would be skipped and never fetched again:
+//!
+//! - An over-wide range is **rejected, not truncated**: 301 buckets answers
+//!   `400` with "Count of aggregations requested exceeds 300". So there is no
+//!   silent-loss path here — the request either returns its whole window or
+//!   fails loudly — and [`MAX_CANDLES_PER_REQUEST`] is load-bearing rather than
+//!   belt-and-braces.
+//! - A window **inside** the cap can still return fewer rows than buckets
+//!   requested (a probe of 300 one-minute buckets returned 279), because the
+//!   venue omits buckets in which nothing traded. That is genuine absence, not
+//!   truncation, which is exactly why advancing to `end` is right: waiting for
+//!   the missing rows would stall the walk on a quiet stretch forever.
+//!
+//! The distinction is the whole reason a venue's cap has to be probed rather
+//! than trusted. A venue that *capped* its row count instead of rejecting the
+//! range would make this same cursor advance lossy, and nothing in the response
+//! shape would say so.
+//!
 //! The endpoint is keyed by a single product, so this adapter is deliberately
 //! **not** a batched quote venue (see [`venues`](super)): one source covers
 //! one product, and a roster is several sources rather than one batched poll.
