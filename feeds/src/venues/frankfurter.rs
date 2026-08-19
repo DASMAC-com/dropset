@@ -95,13 +95,15 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn the_floor_is_stricter_than_the_shared_default() {
+    fn the_frankfurter_floor_is_stricter_than_the_shared_default() {
         // This venue publishes no rate, so there is no documented number to
-        // check against — the only assertion available is that the floor was
-        // deliberately raised above the shared 250 ms default rather than left
-        // to inherit it. Tightening it further is fine; silently dropping back
-        // to the default is the regression this catches.
-        assert!(MIN_REQUEST_INTERVAL >= Duration::from_secs(1));
+        // check against and no venue arithmetic to assert. What can be checked
+        // is the claim the constant actually makes: that the floor was
+        // deliberately raised rather than left to inherit the shared default.
+        // Comparing against the default itself — rather than restating this
+        // constant's own literal — is what makes the test fail if either side
+        // moves.
+        assert!(MIN_REQUEST_INTERVAL > crate::http::DEFAULT_MIN_INTERVAL);
     }
 
     #[test]

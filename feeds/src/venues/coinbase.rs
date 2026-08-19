@@ -45,13 +45,14 @@
 //! **not** a batched quote venue (see [`venues`](super)): one source covers
 //! one product, and a roster is several sources rather than one batched poll.
 //!
-//! **This is the one venue in the roster that needs no raised floor, and the
-//! number is recorded here so the next pager inherits it.** Coinbase documents
-//! its public (unauthenticated, IP-throttled) Exchange REST endpoints at **10
-//! requests per second, bursting to 15**, enforced per IP by a token bucket.
-//! The shared client's 250 ms default is 4 a second — 2.5× inside the sustained
-//! rate — so a paged candle backfill running flat out at the default is
-//! comfortably within budget, and `with_min_interval` would buy nothing.
+//! **This venue needs no raised floor — one of two in the crate that keep the
+//! shared default (OANDA is the other) — and the number is recorded here so the
+//! next pager inherits it.** Coinbase documents its public (unauthenticated,
+//! IP-throttled) Exchange REST endpoints at **10 requests per second, bursting
+//! to 15**, enforced per IP by a token bucket. The shared client's 250 ms
+//! default is 4 a second — 2.5× inside the sustained rate — so a paged candle
+//! backfill running flat out at the default is comfortably within budget, and
+//! `with_min_interval` would buy nothing.
 //!
 //! That makes this adapter the counter-example worth keeping in view: the
 //! backfill trap is real (docs/data-feeds.md §10) but it is a *per-venue*
@@ -64,7 +65,7 @@
 //! collector's candle backfill draw on one bucket. At 4 a second against 10
 //! there is room for all of them; a consumer that wants the floor to coordinate
 //! them must hand them one cloned client (see
-//! [`CoinbaseTicker::with_client`]).
+//! [`CoinbaseTicker::from_client`]).
 
 use super::Candle;
 use crate::time::now_secs;
@@ -209,12 +210,12 @@ impl CoinbaseTicker {
     /// Build the source over `base_url` for one product (e.g. `EURC-USDC`),
     /// on a client of its own.
     ///
-    /// **Prefer [`CoinbaseTicker::with_client`] for a roster of more than one
+    /// **Prefer [`CoinbaseTicker::from_client`] for a roster of more than one
     /// product.** Each call here opens a *separate* rate gate, so N products
     /// built this way pace independently against one venue and one egress IP —
     /// which is the thing the shared floor exists to prevent.
     pub fn new(base_url: &str, product_id: impl Into<String>) -> Result<Self> {
-        Ok(Self::with_client(HttpClient::new(base_url)?, product_id))
+        Ok(Self::from_client(HttpClient::new(base_url)?, product_id))
     }
 
     /// Build the source on a caller-supplied client, so several products share
@@ -223,7 +224,12 @@ impl CoinbaseTicker {
     /// [`HttpClient`] clones share a single rate gate by construction, so a
     /// caller building N ticker sources should build one client and clone it
     /// per product rather than calling [`CoinbaseTicker::new`] N times.
-    pub fn with_client(http: HttpClient, product_id: impl Into<String>) -> Self {
+    ///
+    /// Named `from_client` rather than `with_client` because in this crate a
+    /// `with_*` method is a consuming builder step on an existing value
+    /// ([`HttpClient::with_min_interval`], [`HttpClient::with_header`]); this is
+    /// an associated constructor, which is what `from_*` conventionally marks.
+    pub fn from_client(http: HttpClient, product_id: impl Into<String>) -> Self {
         let product_id = product_id.into();
         Self {
             http,
@@ -338,13 +344,17 @@ mod tests {
     }
 
     #[test]
-    fn several_products_can_share_one_clients_rate_gate() {
-        // Coinbase throttles by IP, so N ticker sources must be able to draw on
-        // one gate. `with_client` is that seam; `new` opening its own client is
-        // only right for a single source.
+    fn from_client_builds_distinctly_named_sources_off_one_client() {
+        // Named for what it checks: that the seam accepts a cloned client and
+        // still names each source per product (so several do not collide in
+        // logs). That the clones then *share* a rate gate is a property of
+        // `HttpClient` itself, asserted where the gate is visible —
+        // `http::tests::a_clone_draws_on_the_same_budget`. Keeping those two
+        // claims in separate tests is deliberate: this one would otherwise read
+        // as proving the gate while only exercising the constructor.
         let http = HttpClient::new("https://example.test").unwrap();
-        let first = CoinbaseTicker::with_client(http.clone(), "EURC-USDC");
-        let second = CoinbaseTicker::with_client(http, "XSGD-USDC");
+        let first = CoinbaseTicker::from_client(http.clone(), "EURC-USDC");
+        let second = CoinbaseTicker::from_client(http, "XSGD-USDC");
         assert_eq!(first.name(), "coinbase:EURC-USDC");
         assert_eq!(second.name(), "coinbase:XSGD-USDC");
     }

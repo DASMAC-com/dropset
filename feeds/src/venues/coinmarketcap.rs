@@ -1,4 +1,4 @@
-//! The CoinMarketCap **keyless public** `/v1/simple/price` adapter — batched
+//! The CoinMarketCap **keyless public** `/public-api/v1/simple/price` adapter — batched
 //! token/USD quotes by numeric id, the basis-leg fallback when CoinGecko is
 //! stale.
 //!
@@ -9,11 +9,20 @@
 //! deployment: at a 60 s cadence one poller spends ~43,800 credits a month,
 //! nearly 3× the budget, and the per-market demo shape multiplies that again.
 //! The keyless public route (`/public-api/…`) has **no monthly quota** — its
-//! limits are per-IP rate pooling, answered with a 429 — which is a constraint
-//! this crate's shared client already handles. Rate is a thing a floor can
-//! hold; a monthly quota is not (see [`MIN_REQUEST_INTERVAL`]), so choosing the
-//! route without a quota is what makes the cadence question go away rather than
-//! merely get managed.
+//! limits are per-IP rate pooling, answered with a 429. Rate is the kind of
+//! constraint a floor can hold at all, where a monthly quota is not (see
+//! [`MIN_REQUEST_INTERVAL`]), so choosing the route without a quota is what
+//! makes the cadence question go away rather than merely get managed.
+//!
+//! **What that trade gives up, stated plainly:** the keyed plan's quota was
+//! per-account and therefore isolated, while a *pooled* per-IP limit is by
+//! definition shared — with the other maker processes on the host, and with
+//! every unrelated tenant behind the same egress IP. So this tier can now be
+//! throttled by traffic that is not ours, which the in-process floor cannot see
+//! or prevent. The cascade bounds the damage (this is the *secondary* basis
+//! tier, and a failed poll yields absence rather than a wrong price), and that
+//! containment is the reason the trade is acceptable — not an absence of
+//! downside.
 //!
 //! **Why `/v1/simple/price` rather than the keyless `/v3/cryptocurrency/quotes/
 //! latest`.** Both are in the keyless subset and both cost one credit, but this
@@ -48,6 +57,17 @@ const SIMPLE_PRICE_PATH: &str = "/public-api/v1/simple/price";
 /// reserved declaration, not as evidence that a key is in use.
 pub const SECRET_NAME: &str = "coinmarketcap/api-key";
 
+/// The response-body cap for this venue, well below the shared 8 MiB default.
+///
+/// A legitimate answer here is a few hundred bytes — one `{"id":…,"price":…}`
+/// record per requested id plus a small `status` object — so 8 MiB is six
+/// orders of magnitude of headroom nothing needs. That matters more on an
+/// **unauthenticated** route than on a keyed one: there is no account gating who
+/// can be induced to answer, and 8 MiB of minimal JSON records would parse into
+/// a transient `Vec<Value>` orders of magnitude larger in the maker's own
+/// process, on every poll. 64 KiB is ~100× the largest plausible response.
+const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+
 /// The floor between two requests on this venue.
 ///
 /// The keyless route publishes **no numeric rate limit** — the documented
@@ -75,7 +95,9 @@ impl CmcSource {
     /// Build the source over `base_url`, batching `ids` in every poll. No
     /// credential: see the module note on why this route is keyless.
     pub fn new(base_url: &str, ids: Vec<u32>) -> Result<Self> {
-        let http = HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL);
+        let http = HttpClient::new(base_url)?
+            .with_min_interval(MIN_REQUEST_INTERVAL)
+            .with_max_response_bytes(MAX_RESPONSE_BYTES);
         Ok(Self { http, ids })
     }
 
@@ -118,6 +140,11 @@ impl Source for CmcSource {
 /// `ids` therefore selects what the caller cares about, and anything the
 /// response omits is simply absent — the same contract every other batched
 /// venue in this module has.
+///
+/// If the same id appears twice, the **last** record wins. Nothing in the
+/// venue's contract forbids a duplicate and no reading of it is more correct
+/// than another, so this is documented rather than defended against: an
+/// arbitrary-but-stated choice beats an unstated one.
 pub fn parse_coinmarketcap(body: &Value, ids: &[u32]) -> Quotes<u32> {
     let mut out = Quotes::new();
     let Some(records) = body.get("data").and_then(Value::as_array) else {
@@ -149,12 +176,12 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn the_floor_is_stricter_than_the_shared_default() {
+    fn the_coinmarketcap_floor_is_stricter_than_the_shared_default() {
         // The keyless route publishes no numeric rate, so as with Frankfurter
-        // the assertion is that the floor was deliberately raised rather than
-        // inherited — the pool is shared across the egress IP and the demo runs
-        // several maker processes.
-        assert!(MIN_REQUEST_INTERVAL >= Duration::from_secs(2));
+        // the checkable claim is that the floor was deliberately raised rather
+        // than inherited — compared against the default itself, not against a
+        // restatement of this constant's own literal.
+        assert!(MIN_REQUEST_INTERVAL > crate::http::DEFAULT_MIN_INTERVAL);
     }
 
     #[test]
@@ -207,6 +234,36 @@ mod tests {
         });
         let out = parse_coinmarketcap(&body, &[20641, 8489]);
         assert!((out[&20641] - 1.1407).abs() < 1e-9);
+        assert!((out[&8489] - 0.7705).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_duplicated_id_resolves_to_the_last_record() {
+        // Pins the documented tie-break so it cannot drift silently.
+        let body = json!({
+            "data": [
+                { "id": 20641, "price": 1.1000 },
+                { "id": 20641, "price": 1.1407 }
+            ]
+        });
+        let out = parse_coinmarketcap(&body, &[20641]);
+        assert!((out[&20641] - 1.1407).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_record_whose_id_is_unusable_is_skipped_without_losing_the_others() {
+        // The `else { continue }` arm: a missing, non-numeric, or out-of-range
+        // id must drop only its own record.
+        let body = json!({
+            "data": [
+                { "price": 9.9 },
+                { "id": "20641", "price": 9.9 },
+                { "id": 4294967296u64, "price": 9.9 },
+                { "id": 8489, "price": 0.7705 }
+            ]
+        });
+        let out = parse_coinmarketcap(&body, &[20641, 8489]);
+        assert_eq!(out.len(), 1);
         assert!((out[&8489] - 0.7705).abs() < 1e-9);
     }
 

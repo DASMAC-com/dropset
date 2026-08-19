@@ -58,7 +58,8 @@
 //! from — a process environment today, a secrets provider later — and no adapter
 //! has to change when that answer does. Most adapters here need none: every
 //! venue the maker's cascade reads is keyless, [`coinmarketcap`] deliberately so
-//! (§4 — its keyless route trades a monthly credit quota for a plain rate).
+//! (docs/data-feeds.md §4 — its keyless route trades a monthly credit quota for
+//! a plain rate).
 //!
 //! **Every adapter states its own request floor, sized to its venue's
 //! documented limit** (docs/data-feeds.md §10 tabulates them). The shared

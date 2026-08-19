@@ -400,7 +400,7 @@ fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Res
         .map(|product| {
             spawn_feed(
                 rt,
-                CoinbaseTicker::with_client(coinbase_http.clone(), product.clone()),
+                CoinbaseTicker::from_client(coinbase_http.clone(), product.clone()),
                 RunConfig {
                     poll_interval: cfg.coinbase_poll,
                     error_backoff: FEED_ERROR_BACKOFF,
@@ -492,7 +492,7 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         // the per-product polls share a single rate gate against the venue.
         let http = HttpClient::new(&cfg.feeds.coinbase_base_url)?;
         for product in &roster.coinbase {
-            let ticker = CoinbaseTicker::with_client(http.clone(), product.clone());
+            let ticker = CoinbaseTicker::from_client(http.clone(), product.clone());
             if let Ok(Some(price)) = rt.block_on(ticker.poll()) {
                 coinbase.insert(product.clone(), price);
             }

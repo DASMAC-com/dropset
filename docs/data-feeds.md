@@ -689,17 +689,42 @@ inherits a correct number instead of having to remember this section.
 Recording the limit beside its adapter is half the point — the number is
 what decays, so it lives in one place, cited.
 
+**The alternative considered and rejected: a separate, slower backfill
+interval.** Since the trap is that catch-up and steady-state polling draw
+on one budget through different knobs, the obvious fix is a second knob —
+a `backfill_interval` the runner sleeps while `!caught_up`. It was
+rejected because the client already owns pacing, so this would create a
+*second* pacing authority able to disagree with the first, and because it
+does not actually remove the trap: a backfill interval still has to be
+set correctly per venue, so the failure mode becomes "someone forgot the
+second knob" rather than "someone forgot the first". Per-venue-correct
+floors need no new knob and cannot be forgotten, because the floor a
+pager inherits *is* the venue's limit. Revisit only if a venue ever needs
+catch-up paced genuinely differently from steady state — a real
+difference in kind, not a difference in number.
+
 | Venue                   | Documented free / keyless limit  | Floor   |
 | ----------------------- | -------------------------------- | ------- |
 | Coinbase (public)       | 10 req/s, burst 15, per IP       | default |
 | OANDA                   | 100 req/s                        | default |
 | Kraken (public)         | ~1 call/s, counter-based         | 1 s     |
-| Pyth Hermes             | 10 req per 10 s per IP           | 1 s     |
+| Pyth Hermes             | 10 req per 10 s per IP           | 1.2 s   |
 | CoinMarketCap (keyless) | unpublished; per-IP pooling, 429 | 2 s     |
 | Frankfurter             | unpublished; soft fair-use       | 1 s     |
 | Twelve Data             | 8 req/min (800 credits/day)      | 8 s     |
-| CoinGecko (keyless)     | 5–15 calls/min, dynamic          | 12 s    |
+| CoinGecko (keyless)     | 5–15 calls/min, dynamic          | 15 s    |
 | Alpha Vantage           | 25 req/day, whole account        | 1 h     |
+
+**Each floor sits strictly inside its venue's limit, not on it.** Pyth's
+1.2 s is 8.3 requests per 10 s against a documented 10, and CoinGecko's
+15 s is 4/min against a 5/min low end — both deliberately short of the
+arithmetic maximum (1 s and 12 s would hit the cap exactly). Three things
+make the exact-cap value the wrong choice: whether a venue meters a fixed
+or a sliding window decides whether a boundary request is the last
+allowed or the first refused; the limits are per **IP**, so a second
+process on the host is already over; and one retry after a transient
+failure adds a request the arithmetic never counted. The per-venue tests
+assert a strict inequality for exactly that reason.
 
 Two venues keep the 250 ms default because it is *already* stricter than
 what they allow: **Coinbase** at 10 req/s (the default is 4, so a paged

@@ -22,10 +22,12 @@ use tokio::time::{sleep_until, Instant};
 /// is ~240 requests a minute, which most venues in this crate do not allow, and
 /// the runner tight-loops while a source backfills, so this is exactly what
 /// paces a cold catch-up. A new adapter should look its venue's limit up and
-/// state its own floor; the two that keep this default
-/// (`venues::coinbase`, `venues::oanda`) do so because their documented rates
-/// are higher than it permits, and each says so where it declines to raise it.
-const DEFAULT_MIN_INTERVAL: Duration = Duration::from_millis(250);
+/// state its own floor; an adapter that keeps this default should say why, at
+/// the point where it declines to raise it. Which venues do which is recorded
+/// once, in [`crate::venues`] and docs/data-feeds.md §10 — deliberately not
+/// enumerated here, since a transport that names its consumers goes stale the
+/// first time one of them changes.
+pub(crate) const DEFAULT_MIN_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The response-body ceiling, applied unless a source raises it with
 /// [`HttpClient::with_max_response_bytes`]. Every venue this crate polls
@@ -122,6 +124,19 @@ impl HttpClient {
     /// an `apikey` query parameter and so touch no header at all. A URL-borne
     /// credential is a separate exposure this constructor does not address —
     /// the effective URL rides a `reqwest` error's own `Display`.
+    ///
+    /// **A cross-origin redirect is the other exposure it does not address, and
+    /// it discriminates by header *name*.** The client keeps `reqwest`'s default
+    /// policy of up to 10 hops, and on a cross-host hop `reqwest` strips only
+    /// the well-known credential headers — `Authorization`, `Cookie`,
+    /// `cookie2`, `Proxy-Authorization`, `WWW-Authenticate` (0.12.28,
+    /// `redirect::remove_sensitive_headers`). A **custom-named** key header is
+    /// not on that list and would be forwarded to whatever host the redirect
+    /// names; `set_sensitive` does not change this, since it governs `Debug`
+    /// rendering and HPACK indexing only. OANDA's `Authorization` is stripped,
+    /// so nothing in the crate is exposed today — but a venue keyed by an
+    /// `X-…-Api-Key` style header would be, and should pin a redirect policy
+    /// rather than rely on this constructor.
     pub fn with_secret_header(mut self, name: &str, value: &str) -> Result<Self> {
         let (name, mut value) = Self::header_pair(name, value)?;
         value.set_sensitive(true);
@@ -144,25 +159,31 @@ impl HttpClient {
 
     /// Raise this source's minimum interval above [`DEFAULT_MIN_INTERVAL`] —
     /// the seam for a venue whose keyless tier is stricter than the default
-    /// floor. Most venues need it: the default is right for only the two that
-    /// allow more than it permits (docs/data-feeds.md §10 tabulates them all).
+    /// floor. Most venues need it; docs/data-feeds.md §10 tabulates every
+    /// venue's documented limit and the floor derived from it.
     ///
     /// **This bounds a rate. It cannot bound a quota — do not read an interval
-    /// as a budget guarantee.** The gate is in-process state: it paces requests
-    /// while the process is up and resets when the process does. So an interval
-    /// chosen to satisfy a *per-day* or *per-month* allowance holds only across
-    /// one continuous run, and a crash-loop — or a few local stack cycles in an
-    /// afternoon — exhausts the allowance while every individual pacing
-    /// decision here stays correct. The gap is invisible precisely because the
-    /// steady-state arithmetic checks out.
+    /// as a budget guarantee.** This is the canonical statement of that
+    /// distinction; the adapters point here rather than restating it. The gate
+    /// is in-process state: it paces requests while the process is up and resets
+    /// when the process does. So an interval chosen to satisfy a *per-day* or
+    /// *per-month* allowance holds only across one continuous run, and a
+    /// crash-loop — or a few local stack cycles in an afternoon — exhausts the
+    /// allowance while every individual pacing decision here stays correct. The
+    /// gap is invisible precisely because the steady-state arithmetic checks
+    /// out. Holding a quota needs durable state (a persisted per-venue counter),
+    /// which this client does not have; where a venue offers a route priced as a
+    /// rate rather than a quota, preferring it removes the exposure instead of
+    /// managing it.
     ///
-    /// Holding a quota needs durable state (a persisted per-venue counter),
-    /// which this client does not have. Two adapters currently approximate a
-    /// daily allowance with an interval and carry the caveat at their own
-    /// constant: `venues::alphavantage` (25/day) and `venues::twelvedata`
-    /// (800 credits/day). Where a venue offers a route priced as a rate rather
-    /// than a quota, preferring it removes the exposure instead of managing it —
-    /// see `venues::coinmarketcap`.
+    /// **And it bounds a rate *per process*, which is narrower than most venue
+    /// limits.** A keyless tier is typically metered per IP, and this gate
+    /// cannot see across process boundaries — so N processes on one host get N
+    /// floors against one budget. Clones of a client *do* share one gate (see
+    /// the field docs on `next_allowed`), which is why a venue polled by several
+    /// sources in one process wants one client cloned rather than several built.
+    /// Note the asymmetry there: the gate is shared but `min_interval` is
+    /// per-clone, so raising the floor on one clone does not bind its siblings.
     pub fn with_min_interval(mut self, interval: Duration) -> Self {
         self.min_interval = interval;
         self

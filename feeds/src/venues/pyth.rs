@@ -35,15 +35,24 @@ use std::time::Duration;
 /// The floor between two requests on this venue.
 ///
 /// Hermes documents **10 requests every 10 seconds per IP** across its
-/// endpoints — 1 a second, 4× stricter than the shared client's 250 ms default
-/// — and answers a breach with a 429 for the following 60 seconds. Since this
-/// is the *primary* anchor, that 60-second penalty is the expensive one in the
-/// roster: it darks the anchor leg rather than one basis input, so the floor is
-/// set to the documented rate rather than left to the default.
+/// endpoints, and answers a breach with a 429 for the following 60 seconds.
+/// Since this is the *primary* anchor, that penalty is the expensive one in the
+/// roster — it darks the anchor leg rather than one basis input — so the floor
+/// is raised well clear of the shared client's 250 ms default (~240/min, 24×
+/// the tier).
+///
+/// **1.2 s rather than the 1 s the limit arithmetically permits.** A 1 s floor
+/// yields exactly 10 requests per 10 s, i.e. precisely the documented cap with
+/// no margin — and "exactly at the cap" is the wrong place to sit for three
+/// reasons: whether the venue meters a fixed or a sliding window decides
+/// whether a boundary request is the 10th or an 11th, the limit is per **IP**
+/// so a second process on the host is already over, and a retry after a
+/// transient failure adds a request the arithmetic never counted. 1.2 s is
+/// 8.3 per 10 s, which absorbs all three.
 ///
 /// It does not bind today: one request prices every feed and the maker polls
 /// every 5 s. It binds if anything ever issues back-to-back requests here.
-const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(1_200);
 
 /// One FX reading from Hermes: the rate in USD per fiat unit, the publisher's
 /// symmetric confidence half-width in the same units, and the epoch second the
@@ -261,11 +270,15 @@ mod tests {
 
     #[test]
     fn the_floor_stays_inside_hermes_documented_ten_per_ten_seconds() {
+        // Asserted strictly inside the cap, not at it: a floor yielding exactly
+        // 10 leaves no room for the sliding-vs-fixed window question, a second
+        // process on the same IP, or one retry. See MIN_REQUEST_INTERVAL.
         let per_window = requests_per_window(MIN_REQUEST_INTERVAL, Duration::from_secs(10));
         assert!(
-            per_window <= 10.0,
-            "{per_window} requests/10s exceeds Hermes' documented 10 — a breach \
-             costs a 429 for the next 60s on the primary anchor"
+            per_window < 10.0,
+            "{per_window} requests/10s does not sit strictly inside Hermes' \
+             documented 10 — a breach costs a 429 for the next 60s on the \
+             primary anchor"
         );
     }
 
