@@ -41,32 +41,47 @@
 //! # Usage
 //!
 //! One [`FairValueEngine`] per market (each carries its own basis history).
-//! Each tick, build [`Legs`] from the live feeds and call
-//! [`FairValueEngine::compose`]:
+//! Each tick, offer every source that answered for each leg and call
+//! [`FairValueEngine::compose`]. The engine resolves each leg by consensus —
+//! median across three or more, agree-or-degrade across two, an explicit
+//! single-source state for one — so the caller collects candidates rather than
+//! picking a winner:
 //!
 //! ```
 //! use std::time::Duration;
-//! use dropset_fair_value::{ClockCtx, FairValueConfig, FairValueEngine, Legs, Reading};
+//! use dropset_fair_value::{Candidates, ClockCtx, FairValueConfig, FairValueEngine, Legs, Reading};
 //!
+//! let age = Duration::from_secs(1);
 //! let mut engine = FairValueEngine::new(FairValueConfig::default());
 //! let legs = Legs {
-//!     fx: Some(Reading::new(1.14, Duration::from_secs(1))),       // EUR/USD
-//!     crypto_usdc: Some(Reading::new(1.141, Duration::from_secs(1))), // EURC/USDC
-//!     usdc_usd: Some(Reading::new(1.0, Duration::from_secs(1))),
+//!     // A first-party oracle may stand alone; everything else needs company.
+//!     fx: Candidates::none()
+//!         .push_trusted("pyth-hermes", Some(Reading::new(1.14, age))),   // EUR/USD
+//!     crypto_usdc: Candidates::none()
+//!         .push("coinbase", Some(Reading::new(1.141, age)))              // EURC/USDC
+//!         .push("kraken", Some(Reading::new(1.142, age)))
+//!         .push("coingecko", Some(Reading::new(1.140, age))),
+//!     usdc_usd: Candidates::none().push("kraken", Some(Reading::new(1.0, age))),
 //!     static_usd: 1.14,
 //! };
 //! let fair = engine.compose(legs, Duration::from_secs(5), ClockCtx::in_session());
 //! assert!(fair.fair.is_some());
+//! // Three sources agreed, so the basis leg is corroborated and none is an outlier.
+//! assert_eq!(fair.crypto_leg.n, 3);
+//! assert_eq!(fair.crypto_leg.outlier, None);
 //! ```
 
 mod basis;
 mod config;
+mod consensus;
 mod engine;
 mod reading;
 
 pub use basis::Fold;
 pub use config::{ConfigError, FairValueConfig};
+pub use consensus::{Candidate, Candidates, Consensus, ConsensusState, MAX_CANDIDATES};
 pub use engine::{
-    observed_basis, Anchor, ClockCtx, Degrade, FairValue, FairValueEngine, Health, Legs, Regime,
+    observed_basis, Anchor, ClockCtx, Degrade, FairValue, FairValueEngine, Health, LegReport, Legs,
+    Regime,
 };
 pub use reading::Reading;

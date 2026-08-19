@@ -114,6 +114,18 @@ pub struct FairValueConfig {
     pub usdc_low: f64,
     pub usdc_high: f64,
 
+    /// How far apart a leg's healthy sources may sit before the leg is flagged
+    /// as dispersed, as a fraction of the consensus value.
+    ///
+    /// This is the generalization of the one-shot startup wiring check: a
+    /// first-reading disagreement is a config error, while the same
+    /// disagreement appearing at runtime is a sick source. Both are the same
+    /// measurement, so both are made here, every tick, per leg.
+    /// TBD(analytics): the band follows from the observed cross-venue spread
+    /// distribution per leg, which differs by orders of magnitude between the
+    /// FX anchor and a thin aggregate.
+    pub leg_dispersion_frac: f64,
+
     /// FX confidence half-width, as a fraction of the anchor value, past which
     /// the anchor is *fresh-but-uncertain* — quote, but widen the spread — as
     /// opposed to stale (§1 fm6). TBD(analytics).
@@ -191,6 +203,9 @@ impl FairValueConfig {
         if !is_fraction(self.basis_max_jump_frac) {
             return Err(ConfigError::NotAFraction("basis_max_jump_frac"));
         }
+        if !is_fraction(self.leg_dispersion_frac) {
+            return Err(ConfigError::NotAFraction("leg_dispersion_frac"));
+        }
         Ok(())
     }
 
@@ -249,6 +264,11 @@ impl Default for FairValueConfig {
             // Placeholder USDC/USD common-mode band. TBD(analytics).
             usdc_low: 0.97,
             usdc_high: 1.03,
+            // Placeholder: 2% spread across a leg's healthy sources. Loose
+            // enough that ordinary cross-venue basis differences do not flag,
+            // tight enough to catch a source printing a different asset.
+            // TBD(analytics), per leg.
+            leg_dispersion_frac: 0.02,
             // Placeholder: 1% confidence half-width. TBD(analytics).
             fx_max_confidence_frac: 0.01,
         }

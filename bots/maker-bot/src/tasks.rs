@@ -32,7 +32,7 @@ use crate::model::ladder::{self, Side};
 use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
 use anyhow::Result;
-use dropset_fair_value::{ClockCtx, Legs, Reading};
+use dropset_fair_value::{Candidates, ClockCtx, Legs, Reading};
 use dropset_feeds::venues::FxQuote;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
@@ -157,102 +157,94 @@ impl FeedHub {
         drain_into(&mut rx.frankfurter, &mut self.fx, now);
     }
 
-    /// This market's cached readings, aged to `now`, mapped onto the engine's
-    /// [`Legs`] (§1) by walking each leg's tiers in the order
-    /// [`crate::model::fair_mid`] tables.
+    /// This market's cached readings, aged to `now`, offered to the engine as
+    /// each leg's **candidate set** (§1).
+    ///
+    /// This used to walk each leg's tiers and take the first that answered, so
+    /// one source became the answer with nothing to contradict it. It now
+    /// collects every source that answered and lets the engine resolve them by
+    /// consensus. The tier order below survives only as the order candidates are
+    /// offered in, which decides who survives a set too thin to resolve — not
+    /// what the leg is worth.
     fn legs(&self, market: &MarketConfig, tick: &TickCtx) -> Legs {
         let now = tick.now;
         let aged =
             |o: Option<&(f64, Instant)>| o.map(|(v, t)| Reading::new(*v, now.duration_since(*t)));
 
-        // Any tier with another tier beneath it is read through `live`, which
-        // drops a reading the engine would reject so the walk falls through
-        // instead of pinning the leg on a dead source. Tiering on *presence*
-        // alone is not merely imprecise here: these caches never evict, so one
-        // source dying once masks every tier below it for the life of the
-        // process rather than self-healing on the next tick.
+        // FX anchor. Pyth is the one source here designated believable on its
+        // own: it publishes a confidence half-width (the fresh-but-uncertain
+        // regime, §1 fm6, is unobservable without one) and is aged from the
+        // publisher's own clock — see `pyth_reading`. That designation is also
+        // what lets it stand when it and the daily ECB reference drift apart,
+        // which they legitimately can.
         //
-        // `Reading::fresh` is a three-part predicate — younger than the bound,
-        // finite, and positive — so `live` also steps over a `0.0` or `NaN`
-        // print. That is deliberate and costs nothing: such a reading never
-        // satisfied the engine either, so seating it only darkened the leg.
-        //
-        // The **last** tier of each leg is deliberately read with bare `aged`.
-        // Nothing sits below it to fall through to, and `compose` re-checks
-        // every leg with `Reading::fresh` regardless, so gating the floor would
-        // only turn "stale" into "missing" — which its `is_some_and` guards
-        // cannot even tell apart. The FX anchor below has the same shape: Pyth
-        // gated, Frankfurter not.
-        //
-        // One asymmetry that argument does not cover: the peg leg has a
-        // *second* consumer, `usdc_per_usd` below, which reads only `.value`
-        // and re-checks nothing. So a stale peg floor can still divide a Kraken
-        // basis print, and the converted reading inherits the token's age
-        // rather than the older of the two. Gating that divisor is the
-        // principled fix and is deliberately left out of this change.
-        let live = |o: Option<&(f64, Instant)>| aged(o).filter(|r| r.fresh(tick.leg_stale));
-
-        // FX anchor. Pyth is preferred for two reasons: it publishes a
-        // confidence half-width (the fresh-but-uncertain regime, §1 fm6, is
-        // unobservable without one), and it is aged from the publisher's own
-        // clock — see `pyth_reading`.
-        //
-        // The hand-off to Frankfurter is gated on the **engine's own**
-        // staleness bound, not on some looser ceiling: a Pyth reading the
-        // engine would reject as stale must not sit in the slot and mask a
-        // live fallback, or a 20-minute Hermes outage would dark the anchor
-        // while a perfectly good ECB rate went unread.
+        // Staleness is no longer filtered here: the engine drops any candidate
+        // it would reject anyway, so a stale Pyth reading simply does not count
+        // toward the set and cannot mask a live fallback.
         let fx_pyth = self
             .pyth
             .get(market.currency)
-            .map(|(q, t)| pyth_reading(q, *t, now, tick.now_unix))
-            .filter(|r| r.fresh(tick.leg_stale));
+            .map(|(q, t)| pyth_reading(q, *t, now, tick.now_unix));
 
-        // …and the fallback is suppressed while the FX session is closed.
-        // Frankfurter is aged from *receipt*, so it reads fresh all weekend
-        // even though ECB published its last rate on Friday. Letting it stand
-        // in would keep the engine in the Normal regime on a dead market —
+        // The ECB reference is suppressed while the FX session is closed.
+        // Frankfurter is aged from *receipt*, so it reads fresh all weekend even
+        // though ECB published its last rate on Friday. Letting it stand in
+        // would keep the engine in the Normal regime on a dead market —
         // precisely the "fall back to a stale peg" behavior §1 fm2 rejects in
         // favor of switching the anchor to the crypto reference.
-        let fx = match (fx_pyth, tick.weekend) {
-            (Some(r), _) => Some(r),
-            (None, true) => None,
-            (None, false) => aged(self.fx.get(market.currency)),
-        };
+        let fx_reference = (!tick.weekend)
+            .then(|| aged(self.fx.get(market.currency)))
+            .flatten();
+
+        let fx = Candidates::none()
+            .push_trusted(SOURCE_PYTH, fx_pyth)
+            .push(SOURCE_FRANKFURTER, fx_reference);
 
         // USDC/USD common-mode leg, shared across every market.
-        let usdc_usd = live(self.kraken.get(USDC_KRAKEN_PAIR))
-            .or_else(|| aged(self.cg.get(USDC_COINGECKO_ID)));
+        let usdc_usd = Candidates::none()
+            .push(SOURCE_KRAKEN, aged(self.kraken.get(USDC_KRAKEN_PAIR)))
+            .push(SOURCE_COINGECKO, aged(self.cg.get(USDC_COINGECKO_ID)));
 
         // Crypto basis leg, in **USDC per token**. Coinbase quotes that
         // directly. Kraken quotes the token in *USD*, so it is converted with
-        // the peg leg above rather than assumed equal: the `usdc_usd` guard
-        // only *alarms* at a 3% deviation, it does not correct one, and
-        // leaving it uncorrected would make the basis jump whenever the tier
-        // flipped between Coinbase and Kraken. CoinGecko and CMC are the
+        // the peg leg's own consensus rather than assumed equal: the `usdc_usd`
+        // guard only *alarms* at a deviation, it does not correct one, and
+        // leaving it uncorrected would make a Kraken candidate disagree with a
+        // Coinbase one purely by the width of the peg. CoinGecko and CMC are the
         // reflexive last resort (§1 fm5) and carry the same USD-for-USDC
-        // approximation as before — untouched here.
-        let usdc_per_usd = usdc_usd.map(|r| r.value).filter(|v| *v > 0.0);
-        let crypto_usdc = market
-            .coinbase_product
-            .and_then(|p| live(self.coinbase.get(p)))
-            .or_else(|| {
-                market.kraken_pair.and_then(|p| {
-                    live(self.kraken.get(p)).map(|r| match usdc_per_usd {
-                        Some(peg) => Reading {
-                            value: r.value / peg,
-                            ..r
-                        },
-                        None => r,
-                    })
-                })
+        // approximation as before.
+        let usdc_per_usd = usdc_usd
+            .resolve(tick.leg_stale, tick.leg_dispersion)
+            .reading
+            .map(|r| r.value)
+            .filter(|v| *v > 0.0);
+        let kraken_usdc = market.kraken_pair.and_then(|p| {
+            aged(self.kraken.get(p)).map(|r| match usdc_per_usd {
+                Some(peg) => Reading {
+                    value: r.value / peg,
+                    ..r
+                },
+                None => r,
             })
-            .or_else(|| market.coingecko_id.and_then(|id| live(self.cg.get(id))))
-            .or_else(|| {
+        });
+        let crypto_usdc = Candidates::none()
+            .push(
+                SOURCE_COINBASE,
+                market
+                    .coinbase_product
+                    .and_then(|p| aged(self.coinbase.get(p))),
+            )
+            .push(SOURCE_KRAKEN, kraken_usdc)
+            .push(
+                SOURCE_COINGECKO,
+                market.coingecko_id.and_then(|id| aged(self.cg.get(id))),
+            )
+            .push(
+                SOURCE_CMC,
                 market
                     .coinmarketcap_id
-                    .and_then(|id| aged(self.cmc.get(&id)))
-            });
+                    .and_then(|id| aged(self.cmc.get(&id))),
+            );
 
         build_legs(fx, crypto_usdc, usdc_usd, market.static_usd)
     }
@@ -266,13 +258,28 @@ struct TickCtx {
     now: Instant,
     /// The same instant on the wall clock, for `publish_time` arithmetic.
     now_unix: i64,
-    /// The engine's per-leg staleness bound. The tiering needs it so a stale
-    /// primary hands off instead of masking its fallback.
+    /// The engine's per-leg staleness bound, so the one place that has to
+    /// resolve a leg early (the peg leg, to convert a USD-quoted candidate)
+    /// applies the same rule the engine will.
     leg_stale: Duration,
+    /// The engine's dispersion band, for that same early resolution.
+    leg_dispersion: f64,
     /// Whether the FX session is closed (§1 fm2) — suppresses the receipt-aged
     /// FX fallback so the crypto-only regime can engage.
     weekend: bool,
 }
+
+/// Source names carried on every candidate, so a dispersed leg can name which
+/// venue diverged. These are the strings an operator reads, and they match the
+/// per-source feed-health tags the runner emits — one vocabulary for "which
+/// source is misbehaving", whether the answer came from a failed poll or from a
+/// reading that disagreed with its peers.
+const SOURCE_PYTH: &str = "pyth-hermes";
+const SOURCE_FRANKFURTER: &str = "frankfurter";
+const SOURCE_COINBASE: &str = "coinbase";
+const SOURCE_KRAKEN: &str = "kraken";
+const SOURCE_COINGECKO: &str = "coingecko";
+const SOURCE_CMC: &str = "coinmarketcap";
 
 /// A ceiling on the age [`pyth_reading`] will report, so a wildly skewed clock
 /// or a bogus `publish_time` degrades to "stale" rather than to a negative or
@@ -410,6 +417,7 @@ pub fn run_supervisor(
             now,
             now_unix: unix_secs(wall) as i64,
             leg_stale: cfg.fair_value.leg_stale,
+            leg_dispersion: cfg.fair_value.leg_dispersion_frac,
             weekend,
         };
         for ctx in &mut markets {
@@ -463,7 +471,9 @@ fn check_first_basis(ctx: &mut Context, cfg: &BotConfig, legs: Legs) {
     if ctx.basis_checked || ctx.cfg.pinned_basis.is_some() {
         return;
     }
-    let Some(observed) = legs.observed_basis(cfg.fair_value.leg_stale) else {
+    let Some(observed) =
+        legs.observed_basis(cfg.fair_value.leg_stale, cfg.fair_value.leg_dispersion_frac)
+    else {
         return;
     };
     ctx.basis_checked = true;
@@ -1030,7 +1040,12 @@ mod tests {
     use crate::config::MARKETS;
     use crate::context::MarketAddrs;
     use crate::quote_state::QuoteStateStore;
-    use dropset_fair_value::{FairValueConfig, Health, Regime};
+    use dropset_fair_value::{Consensus, ConsensusState, FairValueConfig, Health, Regime};
+
+    /// A leg offered by one named source, fresh as of this tick.
+    fn one(source: &'static str, value: f64) -> Candidates {
+        Candidates::none().push(source, Some(Reading::new(value, Duration::from_secs(1))))
+    }
     use solana_keypair::Keypair;
 
     /// A `Context` that never talks to a validator. `RpcClient::new` doesn't
@@ -1133,10 +1148,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let cfg = BotConfig::default();
         let legs = Legs {
-            fx: Some(Reading::new(0.0573, Duration::from_secs(1))),
+            fx: one("pyth-hermes", 0.0573),
             // Deliberately garbage: were this market not pinned, it would trip.
-            crypto_usdc: Some(Reading::new(0.03064, Duration::from_secs(1))),
-            usdc_usd: Some(Reading::new(1.0, Duration::from_secs(1))),
+            crypto_usdc: one("coingecko", 0.03064),
+            usdc_usd: one("kraken", 1.0),
             static_usd: 0.0573,
         };
 
@@ -1170,10 +1185,9 @@ mod tests {
 
         let mut ctx = offline_ctx_with(&dir, mxne);
         let legs = Legs {
-            fx: Some(Reading::new(0.0573, Duration::from_secs(1))),
-            crypto_usdc: None,
-            usdc_usd: None,
+            fx: one("pyth-hermes", 0.0573),
             static_usd: mxne.static_usd,
+            ..Legs::default()
         };
         let fair = ctx
             .engine
@@ -1209,10 +1223,10 @@ mod tests {
             &mut ctx,
             &cfg,
             Legs {
-                fx: Some(Reading::new(1.14, Duration::from_secs(1))),
-                crypto_usdc: Some(Reading::new(1.14, Duration::from_secs(1))),
-                usdc_usd: None,
+                fx: one("pyth-hermes", 1.14),
+                crypto_usdc: one("coinbase", 1.14),
                 static_usd: 1.14,
+                ..Legs::default()
             },
         );
         assert!(ctx.basis_checked);
@@ -1370,12 +1384,14 @@ mod tests {
             now,
             now_unix,
             leg_stale: BotConfig::default().fair_value.leg_stale,
+            leg_dispersion: BotConfig::default().fair_value.leg_dispersion_frac,
             weekend: false,
         }
     }
 
-    /// A hub with one reading in every tier, each at a distinguishable value so
-    /// a test can tell which one the cascade picked.
+    /// A hub with one reading in every source's cache, each at a distinguishable
+    /// value so a test can tell which ones reached a leg and what they resolved
+    /// to.
     fn full_hub(now: Instant, now_unix: i64) -> FeedHub {
         let m = eurc();
         let mut hub = FeedHub::new();
@@ -1404,22 +1420,76 @@ mod tests {
         hub
     }
 
-    #[test]
-    fn every_leg_prefers_its_primary_tier() {
-        let (now, now_unix) = (Instant::now(), 1_786_579_250);
-        let legs = full_hub(now, now_unix).legs(&eurc(), &tick_at(now, now_unix));
-        // Pyth over Frankfurter, and it carries the half-width Frankfurter
-        // cannot publish.
-        assert_eq!(legs.fx.unwrap().value, 1.1500);
-        assert_eq!(legs.fx.unwrap().confidence, Some(0.0001));
-        // Coinbase token/USDC over Kraken token/USD over the indices.
-        assert_eq!(legs.crypto_usdc.unwrap().value, 1.1530);
-        // Kraken's market print over the CoinGecko index.
-        assert_eq!(legs.usdc_usd.unwrap().value, 0.9997);
+    /// The resolved value of a leg, under the same rules the engine will apply.
+    fn resolved(legs: &Legs, leg: fn(&Legs) -> Candidates, tick: &TickCtx) -> Consensus {
+        leg(legs).resolve(tick.leg_stale, tick.leg_dispersion)
     }
 
     #[test]
-    fn each_leg_falls_through_to_the_next_tier_when_its_primary_is_absent() {
+    fn every_source_that_answered_is_offered_to_its_leg() {
+        // The shape that changed: a leg used to hold one winner, and now holds
+        // everything that spoke. Nothing is dropped for being lower down the
+        // list — that ordering only decides who survives an over-full set.
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let legs = full_hub(now, now_unix).legs(&eurc(), &tick_at(now, now_unix));
+        assert_eq!(legs.fx.iter().count(), 2, "Pyth and Frankfurter");
+        assert_eq!(legs.crypto_usdc.iter().count(), 4, "two CEX, two indices");
+        assert_eq!(legs.usdc_usd.iter().count(), 2);
+    }
+
+    #[test]
+    fn the_trusted_fx_source_anchors_its_leg_and_keeps_its_half_width() {
+        // Pyth is the one source designated believable alone, so it anchors
+        // rather than averaging with the daily reference — and it must keep the
+        // confidence half-width Frankfurter cannot publish, or the
+        // fresh-but-uncertain regime (§1 fm6) goes unobservable.
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let tick = tick_at(now, now_unix);
+        let legs = full_hub(now, now_unix).legs(&eurc(), &tick);
+        let fx = resolved(&legs, |l| l.fx, &tick);
+        assert_eq!(fx.reading.unwrap().value, 1.1500);
+        assert_eq!(fx.reading.unwrap().confidence, Some(0.0001));
+        assert_eq!(
+            fx.state,
+            ConsensusState::Agreed,
+            "corroborated by the ECB rate"
+        );
+    }
+
+    #[test]
+    fn the_basis_leg_resolves_to_the_median_of_its_sources() {
+        // No source under this leg is designated trustworthy, so none of them
+        // wins outright — which is the entire point. The four cached prints are
+        // Coinbase 1.1530, Kraken 1.1520 converted by the peg, CoinGecko 1.1510
+        // and CMC 1.1490; the answer is the middle of them, not the first.
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let tick = tick_at(now, now_unix);
+        let legs = full_hub(now, now_unix).legs(&eurc(), &tick);
+        let basis = resolved(&legs, |l| l.crypto_usdc, &tick);
+        assert_eq!(basis.n, 4);
+        assert_eq!(basis.state, ConsensusState::Corroborated);
+        let v = basis.reading.unwrap().value;
+        assert!(
+            v > 1.1490 && v < 1.1530,
+            "inside the set, not at an edge: {v}"
+        );
+        // The peg leg itself resolves before converting Kraken's USD quote —
+        // Kraken's 0.9997 print and CoinGecko's 1.0000 index, so 0.99985 —
+        // which is the point of doing the conversion off a consensus rather
+        // than off whichever peg source happened to be listed first.
+        let kraken_usdc = 1.1520 / ((0.9997 + 1.0000) / 2.0);
+        assert!(
+            (v - (1.1510 + kraken_usdc) / 2.0).abs() < 1e-9,
+            "the mean of the middle pair, got {v}"
+        );
+    }
+
+    #[test]
+    fn a_leg_still_resolves_when_its_strongest_sources_go_absent() {
+        // The old ladder's fall-through, restated: nothing special happens, the
+        // remaining sources simply are the set. What has changed is that the
+        // last source standing is reported as uncorroborated rather than
+        // silently believed.
         let (now, now_unix) = (Instant::now(), 1_786_579_250);
         let tick = tick_at(now, now_unix);
         let m = eurc();
@@ -1427,20 +1497,42 @@ mod tests {
         hub.pyth.clear();
         hub.coinbase.clear();
         hub.kraken.remove(USDC_KRAKEN_PAIR);
-        let legs = hub.legs(&m, &tick);
-        assert_eq!(legs.fx.unwrap().value, 1.1400); // Frankfurter
-        assert_eq!(legs.fx.unwrap().confidence, None); // and no half-width
-        assert_eq!(legs.usdc_usd.unwrap().value, 1.0000); // CoinGecko index
-                                                          // Kraken quotes token/USD, so the peg leg converts it to token/USDC —
-                                                          // it is not the raw 1.1520 sitting in the cache.
-        assert_eq!(legs.crypto_usdc.unwrap().value, 1.1520 / 1.0000);
 
-        // Drop the CEX tier entirely: the indices carry the basis, which is the
-        // permanent state for the six markets no CEX lists.
-        hub.kraken.clear();
-        assert_eq!(hub.legs(&m, &tick).crypto_usdc.unwrap().value, 1.1510);
+        let legs = hub.legs(&m, &tick);
+        let fx = resolved(&legs, |l| l.fx, &tick);
+        assert_eq!(fx.reading.unwrap().value, 1.1400, "Frankfurter alone");
+        assert_eq!(fx.reading.unwrap().confidence, None, "and no half-width");
+        assert_eq!(
+            fx.state,
+            ConsensusState::SingleUnverified,
+            "the ECB rate is not designated believable on its own"
+        );
+
+        // Kraken quotes token/USD, so the peg leg's consensus converts it —
+        // the raw 1.1520 in the cache is not what reaches the leg.
         hub.cg.remove(m.coingecko_id.unwrap());
-        assert_eq!(hub.legs(&m, &tick).crypto_usdc.unwrap().value, 1.1490);
+        hub.cmc.clear();
+        let legs = hub.legs(&m, &tick);
+        let basis = resolved(&legs, |l| l.crypto_usdc, &tick);
+        assert_eq!(basis.n, 1);
+        assert_eq!(basis.reading.unwrap().value, 1.1520 / 1.0000);
+    }
+
+    #[test]
+    fn a_disagreeing_source_is_named_rather_than_silently_outvoted() {
+        // The operator-facing half: outvoting a bad source is necessary but not
+        // sufficient, because a source that is quietly wrong stays wrong.
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let tick = tick_at(now, now_unix);
+        let m = eurc();
+        let mut hub = full_hub(now, now_unix);
+        // The thin-aggregate shape: the index prints roughly half the peg.
+        hub.cg
+            .insert(m.coingecko_id.unwrap().to_string(), (0.5800, now));
+        let legs = hub.legs(&m, &tick);
+        let basis = resolved(&legs, |l| l.crypto_usdc, &tick);
+        assert!(basis.reading.unwrap().value > 1.14, "the median holds");
+        assert_eq!(basis.outlier, Some("coingecko"));
     }
 
     /// The regression the review caught: a Pyth reading too stale for the
@@ -1465,81 +1557,15 @@ mod tests {
                 t,
             ),
         );
-        let legs = hub.legs(&m, &tick_at(now, now_unix));
+        let tick = tick_at(now, now_unix);
+        let legs = hub.legs(&m, &tick);
+        let fx = resolved(&legs, |l| l.fx, &tick);
         assert_eq!(
-            legs.fx.unwrap().value,
+            fx.reading.unwrap().value,
             1.1400,
             "Frankfurter should carry it"
         );
-    }
-
-    /// The same regression on the two legs that were left tiering on
-    /// *presence*. `aged` returns `Some` for a reading of any age and these
-    /// caches never evict, so a dead Coinbase used to pin the basis leg for the
-    /// life of the process: the tiers beneath it never ran, and the market
-    /// degraded on a stale leg instead of falling through to a live print. The
-    /// cost was a missed recovery rather than a wrong price, which is why it
-    /// survived review — the engine still treats the leg as stale.
-    #[test]
-    fn a_stale_basis_or_peg_tier_falls_through_instead_of_masking_the_next_one() {
-        let (base, now_unix) = (Instant::now(), 1_786_579_250);
-        let m = eurc();
-        let mut hub = full_hub(base, now_unix);
-
-        // Read the same hub 20 minutes on — past the engine's 15-minute bound,
-        // so every reading `full_hub` seeded is now stale. Ageing the *reader*
-        // rather than back-dating the entries keeps this off `Instant`
-        // subtraction, which has no monotonic floor to stand on.
-        let now = base + Duration::from_secs(20 * 60);
-        let tick = tick_at(now, now_unix);
-
-        // With every gated tier stale, each leg lands on its floor tier instead
-        // of holding the stale primary: CMC for the basis, CoinGecko for the
-        // peg. Those two are read without a gate on purpose — nothing sits
-        // below them to reach.
-        let legs = hub.legs(&m, &tick);
-        assert_eq!(legs.usdc_usd.unwrap().value, 1.0000, "CoinGecko peg floor");
-        assert_eq!(legs.crypto_usdc.unwrap().value, 1.1490, "CMC basis floor");
-
-        // Now refresh only Kraken. It outranks both floors again on both legs —
-        // the recovery the presence check could never reach, because the stale
-        // Coinbase and Kraken readings above simply masked them.
-        hub.kraken
-            .insert(m.kraken_pair.unwrap().to_string(), (1.1520, now));
-        hub.kraken
-            .insert(USDC_KRAKEN_PAIR.to_string(), (0.9997, now));
-        let legs = hub.legs(&m, &tick);
-        assert_eq!(legs.usdc_usd.unwrap().value, 0.9997);
-        // Kraken quotes token/USD, so the peg converts it, as on the live path.
-        assert_eq!(legs.crypto_usdc.unwrap().value, 1.1520 / 0.9997);
-    }
-
-    /// The other half of what `live` gates, which is easy to miss because the
-    /// tiering reads as being about staleness alone: `Reading::fresh` also
-    /// requires a finite, positive value, so a *fresh* garbage print steps
-    /// aside for the next tier instead of darkening the leg. Such a reading
-    /// never satisfied the engine either, so this costs nothing and recovers a
-    /// tier — but nothing pinned it, and gating on age alone would pass every
-    /// other test in this module.
-    #[test]
-    fn a_fresh_but_unusable_reading_falls_through_like_a_stale_one() {
-        let (now, now_unix) = (Instant::now(), 1_786_579_250);
-        let m = eurc();
-
-        for bad in [0.0, f64::NAN, -1.0, f64::INFINITY] {
-            let mut hub = full_hub(now, now_unix);
-            // Freshly stamped, so only the value can disqualify it.
-            hub.coinbase
-                .insert(m.coinbase_product.unwrap().to_string(), (bad, now));
-            let legs = hub.legs(&m, &tick_at(now, now_unix));
-            // Kraken's token/USD print carries the basis instead, converted by
-            // the peg — the same result as if Coinbase had gone absent.
-            assert_eq!(
-                legs.crypto_usdc.unwrap().value,
-                1.1520 / 0.9997,
-                "a {bad} Coinbase print should hand over to Kraken"
-            );
-        }
+        assert_eq!(fx.n, 1, "the stale Pyth reading is not a healthy candidate");
     }
 
     /// …but not while the FX session is shut. Frankfurter is aged from receipt,
@@ -1554,10 +1580,10 @@ mod tests {
         hub.pyth.clear();
         let mut tick = tick_at(now, now_unix);
         tick.weekend = true;
-        assert!(hub.legs(&m, &tick).fx.is_none());
+        assert!(hub.legs(&m, &tick).fx.is_empty());
         // The basis leg is untouched by the session — it is what anchors the
         // crypto-only regime.
-        assert!(hub.legs(&m, &tick).crypto_usdc.is_some());
+        assert!(!hub.legs(&m, &tick).crypto_usdc.is_empty());
     }
 
     /// A market with no CEX listing must never pick up another market's pair
@@ -1580,9 +1606,16 @@ mod tests {
                 now,
             ),
         );
-        let legs = hub.legs(&zarp, &tick_at(now, now_unix));
+        let tick = tick_at(now, now_unix);
+        let legs = hub.legs(&zarp, &tick);
         assert!(zarp.coinbase_product.is_none() && zarp.kraken_pair.is_none());
-        assert_eq!(legs.crypto_usdc.unwrap().value, 0.0605);
+        let basis = resolved(&legs, |l| l.crypto_usdc, &tick);
+        assert_eq!(basis.reading.unwrap().value, 0.0605);
+        assert_eq!(
+            basis.state,
+            ConsensusState::SingleUnverified,
+            "an index alone is exactly the uncorroborated case"
+        );
     }
 
     #[test]
@@ -1672,8 +1705,10 @@ mod tests {
                 t,
             ),
         );
+        let tick = tick_at(now, now_unix);
+        let legs = hub.legs(&m, &tick);
         assert_eq!(
-            hub.legs(&m, &tick_at(now, now_unix)).fx.unwrap().value,
+            resolved(&legs, |l| l.fx, &tick).reading.unwrap().value,
             1.1400
         );
     }

@@ -136,7 +136,7 @@ pub fn evaluate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dropset_fair_value::{Anchor, Degrade, Health, Regime};
+    use dropset_fair_value::{Anchor, Degrade, Health, LegReport, Regime};
     use std::time::Duration;
 
     fn ok_fair() -> FairValue {
@@ -150,6 +150,8 @@ mod tests {
             uncertain: false,
             basis_breach: false,
             basis_outlier: false,
+            fx_leg: LegReport::default(),
+            crypto_leg: LegReport::default(),
             usdc_breach: false,
         }
     }
