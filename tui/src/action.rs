@@ -17,6 +17,7 @@ use crate::job::{self, JobEvent, Logger};
 use crate::market::{self, PairConfig};
 use crate::teardown;
 use anyhow::{Context, Result};
+use dropset_sdk::clock::WallSpan;
 use dropset_sdk::matching::SwapSide;
 use dropset_sdk::price::Price;
 use dropset_sdk::quoting::{set_liquidity_profile_ix, set_reference_price_ix};
@@ -81,7 +82,13 @@ const PRICE_SCALE: u64 = 1_000_000_000;
 const THIN_DEPTH_SCALE: f64 = 0.3;
 /// The demo presets quote until the next reshape (the maker bot re-arms
 /// expiry itself).
-const NEVER_EXPIRES: u32 = u32::MAX;
+///
+/// An alias for the wall domain's one named unbounded constant rather
+/// than a second bare `u32::MAX`: the slot domain has always had
+/// [`SlotSpan::UNBOUNDED`], and the two domains disagreeing on how to
+/// spell the same idea is what let a raw `u32::MAX` sit here reading as
+/// a magic number.
+const NEVER_EXPIRES: WallSpan = WallSpan::UNBOUNDED;
 
 /// The numbered setup menu in display order — the bootstrap lifecycle plus the
 /// explorer / teardown / wipe utilities. Indices map to the `1..=8` number

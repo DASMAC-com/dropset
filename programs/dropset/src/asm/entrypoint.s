@@ -1,10 +1,6 @@
 # cspell:word DISCRIM
 # cspell:word lddw
 # cspell:word ldxb
-# cspell:word ldxdw
-# cspell:word ldxw
-# cspell:word stxdw
-# cspell:word stxw
 # Hybrid sBPF entrypoint for the dropset program.
 #
 # Short-circuits the two quote-write discriminators — `set_reference_price`
@@ -21,8 +17,9 @@
 # Both discriminators share one preamble (layout integrity, sector bounds,
 # the `quote_authority` compare, the nonce bump and flush arm) exactly as
 # the Rust kernels share `quote_write.rs`, and diverge only at the payload:
-# `set_reference_price` stores three u32s, `set_liquidity_profile` copies the
-# 224-byte profile blob with `sol_memcpy_`. Neither validates its payload —
+# `set_reference_price` stores three u32s (as a word plus a fused
+# double-word — see the note at that label), `set_liquidity_profile` copies
+# the 224-byte profile blob with `sol_memcpy_`. Neither validates its payload —
 # matching skips an invalid price, and an over-cap ladder side is dropped at
 # flush time.
 #
@@ -53,6 +50,11 @@
 # set_reference_price payload
 .equ IX_PRICE_BITS_OFF, 5         # u32
 .equ IX_QUOTE_SLOT_OFF, 9         # u32
+# No instruction references this any more — the fused ldxdw at
+# IX_QUOTE_SLOT_OFF spans both datums. Kept because it documents the wire
+# layout that fusion depends on, but note nothing mechanically ties it to
+# anything: asm_parity pins the literal 13, and uses this name only as an
+# assertion message. Same for RP_QUOTE_UNIX_OFF below.
 .equ IX_QUOTE_UNIX_OFF, 13        # u32
 # set_liquidity_profile payload
 .equ IX_PROFILE_OFF, 5            # [u8; 224], past disc(1) + vault_idx(4)
@@ -236,12 +238,51 @@ quote_write:
     # expiry_offset is measured from; it is leader-supplied precisely so
     # this path stays syscall-free — reading the Clock sysvar here would
     # cost ~100+ CU on a path that otherwise runs in tens.
+    #
+    # The two clock datums move as ONE double-word. They are adjacent and
+    # in the same order on both sides — ix_data +9/+13 and vault +84/+88 —
+    # so a single ldxdw/stxdw carries the pair, halving this payload's
+    # store count from three word pairs to two. Registers are 64-bit, so a
+    # word-at-a-time copy of adjacent 32-bit fields wastes half of every
+    # load; the general rule (minimize total copies — fuse adjacent u32s
+    # into one u64 move wherever layout allows) is written up in
+    # architecture.md § SetReferencePrice → ASM fast path.
+    #
+    # The adjacency this depends on is not incidental and not left to
+    # convention: `layout.rs` const-asserts quote_unix == quote_slot + 4,
+    # so a field reorder that split the pair breaks the build instead of
+    # silently turning this into a store that writes the wall datum into
+    # the slot field.
+    #
+    # Alignment is a non-issue, and both halves of the pair are settled by
+    # shipping code — they need DIFFERENT precedents, so take them
+    # separately.
+    #
+    # The STORE is the weaker claim: &vault is only 4-aligned (VAULT_SIZE
+    # 692 and SLAB_ITEMS_OFF 268 are both ≡ 4 mod 8, so every even sector
+    # sits at a 4-aligned address), which means the stxdw at RP_STAMP_OFF
+    # above has always been a 4-aligned 8-byte store.
+    #
+    # The LOAD is the novel one and that precedent does NOT cover it.
+    # Instruction data starts 8-aligned, so [r2 + 9] is 1 mod 8 — a fully
+    # byte-aligned 8-byte read, weaker than anything on the store side.
+    # What covers it is the pre-existing word loads on the same register:
+    # ldxw [r2 + IX_VAULT_IDX_OFF] (+1) and ldxw [r2 + IX_PRICE_BITS_OFF]
+    # (+5) are both 1 mod 4 and have always shipped. A VM applying any
+    # size-relative alignment rule to ldx would already reject those, so it
+    # applies none, and the width of the access is irrelevant.
+    #
+    # asm_parity proves both empirically on the real VM every run, with a
+    # fixture that stamps distinguished byte patterns through this path.
+    #
+    # Bounds are unchanged: this still reads at most to ix_data+17, so the
+    # truncated-payload audit under the error codes above still holds
+    # verbatim. The store covers vault+84..92 — exactly quote_slot and
+    # quote_unix, with base_atoms starting at 92 — so nothing bleeds.
     ldxw r3, [r2 + IX_PRICE_BITS_OFF]
     stxw [r9 + RP_PRICE_OFF], r3
-    ldxw r3, [r2 + IX_QUOTE_SLOT_OFF]
-    stxw [r9 + RP_QUOTE_SLOT_OFF], r3
-    ldxw r3, [r2 + IX_QUOTE_UNIX_OFF]
-    stxw [r9 + RP_QUOTE_UNIX_OFF], r3
+    ldxdw r3, [r2 + IX_QUOTE_SLOT_OFF]
+    stxdw [r9 + RP_QUOTE_SLOT_OFF], r3
 
     mov64 r0, 0
     exit

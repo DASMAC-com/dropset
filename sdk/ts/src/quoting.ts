@@ -16,6 +16,7 @@
  * matching the invariant the program enforces at `set_liquidity_profile`.
  */
 
+import type { SlotSpan, WallSpan } from './clock';
 import { isInfinityPrice, isZeroPrice, quoteForBase, type PriceBits } from './price';
 
 /** Bid/ask levels per side (matches the program's `N_LEVELS`). */
@@ -30,11 +31,14 @@ const SCALE = 1_000_000_000n;
  * alignment-1, so the struct is byte-packed.
  */
 export const LEVEL_BYTES = 14;
-/** The `expiryOffsetSlots` value meaning "no slot bound" — see the Rust
- * `NO_SLOT_BOUND`. The max offset, not a reserved sentinel. */
-export const NO_SLOT_BOUND = 0xffff_ffff;
 /** Serialized `LiquidityProfile` length: both sides' level arrays. */
 export const PROFILE_BYTES = 2 * N_LEVELS * LEVEL_BYTES;
+
+// `NO_SLOT_BOUND` (and its wall-domain counterpart `NO_WALL_BOUND`) now
+// live in `./clock` beside the domain types, one named constant per
+// domain. Re-exported here so existing `from './quoting'` imports keep
+// resolving and the two spellings stay one value.
+export { NO_SLOT_BOUND, NO_WALL_BOUND } from './clock';
 
 /** One level of a native (absolute-price) book. */
 export type NativeLevel = {
@@ -42,12 +46,13 @@ export type NativeLevel = {
   price: PriceBits;
   /** Allowance in atoms: base atoms for asks, quote atoms for bids. */
   size: bigint;
-  /** Per-level expiry, in seconds after the reference's `quote_unix`. */
-  expiryOffsetSecs: number;
+  /** Per-level expiry, in seconds after the reference's `quote_unix`.
+   * `NO_WALL_BOUND` leaves a level bounded only in slot time. */
+  expiryOffsetSecs: WallSpan;
   /** Per-level expiry, in slots after the reference's `quote_slot` — the
-   * second, independent bound. {@link NO_SLOT_BOUND} leaves a level
+   * second, independent bound. `NO_SLOT_BOUND` leaves a level
    * bounded only in wall time. */
-  expiryOffsetSlots: number;
+  expiryOffsetSlots: SlotSpan;
 };
 
 /** A native book: absolute-price ladders, top-of-book first, ≤ 8 per side. */
@@ -61,8 +66,8 @@ export class QuotingError extends Error {}
 type RelLevel = {
   priceOffset: number;
   sizeBps: number;
-  expiryOffsetSecs: number;
-  expiryOffsetSlots: number;
+  expiryOffsetSecs: WallSpan;
+  expiryOffsetSlots: SlotSpan;
 };
 
 function levelToRelative(

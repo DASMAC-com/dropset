@@ -399,12 +399,24 @@ the two forks agree; the `share_vectors.json` `merge_entry_basis` set
 likewise pins the `weighted_average` blend for structurally-valid prices
 above the FX band (exact-bigint precision and `u128` saturation).
 
-A fourth fixture, `simulate_swap_vectors.json`, is scoped narrower and is
-**not** a both-forks set: it is replayed only by the interface crate's WASM
-conformance test (`sdk/interface/tests/wasm_conformance.rs`, run under
-`wasm-pack test --node`), pinning the compiled `simulate_swap` binding to the
-native matcher — closing the wasm-binding == native == engine chain — rather
-than exercising the shared math-core kernels the three above do.
+A fourth fixture, `simulate_swap_vectors.json`, is scoped narrower than the
+three above: it pins the book simulator rather than exercising the shared
+math-core kernels. It has three readers, one per matcher:
+
+- `sdk/interface/tests/wasm_conformance.rs`, gated to the `wasm32` target
+  and run under `wasm-pack test --node`, drives the **compiled binding** —
+  proving its decode, `side: u8` dispatch, and `Quote` marshalling.
+- `sdk/interface/tests/native_conformance.rs` replays the same cases
+  through the **native matcher** on the host, so a plain `cargo test`
+  covers them. Six of the cases pin the dual expiry gate, and before this
+  existed the entire Rust workspace was blind to them — dropping a
+  conjunct from the native filter left `cargo test` green and surfaced
+  only in the TS or wasm job.
+- the TS suite drives the **pure-TS mirror**.
+
+Together with `programs/dropset/tests/sdk_conformance.rs` pinning the
+native matcher to the engine in litesvm, that closes the chain
+wasm-binding == native == TS mirror == engine.
 
 On-chain CPI builders (instruction builders + account layouts for a `no_std`,
 entrypoint-free CPI parser, shared with the engine and any router doing an

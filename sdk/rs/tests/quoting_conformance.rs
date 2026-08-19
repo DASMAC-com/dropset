@@ -6,8 +6,9 @@
 //! Together they pin both forks to the one reference encoded in the
 //! generator (`sdk/math-core/examples/gen_quoting.rs`).
 
+use dropset_sdk::clock::{SlotSpan, WallSpan};
 use dropset_sdk::price::Price;
-use dropset_sdk::quoting::{NativeBook, NativeLevel, NO_SLOT_BOUND};
+use dropset_sdk::quoting::{NativeBook, NativeLevel};
 use serde_json::Value;
 
 fn vectors() -> Value {
@@ -31,8 +32,8 @@ fn native_level(v: &Value) -> NativeLevel {
         // and bps sizes), not expiry policy, so the single `expiry_offset`
         // they carry maps to the wall domain and the slot bound is left
         // open. Both are copied through `to_profile` untouched.
-        expiry_offset_secs: u32_of(v, "expiry_offset"),
-        expiry_offset_slots: NO_SLOT_BOUND,
+        expiry_offset_secs: WallSpan::new(u32_of(v, "expiry_offset")),
+        expiry_offset_slots: SlotSpan::UNBOUNDED,
     }
 }
 

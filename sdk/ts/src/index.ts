@@ -11,6 +11,7 @@
  * whichever is better.
  */
 
+export * from './clock';
 export * from './dflow';
 export * from './events';
 export * from './generated';

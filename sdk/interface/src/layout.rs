@@ -18,6 +18,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
+use crate::clock::{SlotSpan, SlotTime, WallSpan, WallTime};
 use crate::price::Price;
 
 pub const N_LEVELS: usize = 8;
@@ -234,11 +235,49 @@ const _: () = assert!(core::mem::size_of::<Vault>().is_multiple_of(VAULT_ALIGN))
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 14);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 20);
 
+// ── Clock-datum adjacency pins (mirror the on-chain ones) ────────────
+//
+// Each domain's pair of same-width fields is kept **adjacent, slot
+// first**, so the pair occupies one aligned 8-byte window and the
+// on-chain ASM fast path can move it with a single fused `ldxdw`/`stxdw`
+// instead of two `ldxw`/`stxw` pairs (architecture.md § *SetReferencePrice
+// → ASM fast path*). Nothing in this off-chain crate depends on the
+// fusion, but the mirror asserts the same shape so a reorder made here
+// cannot silently diverge from the layout the assembly hardcodes.
+const _: () = assert!(
+    core::mem::offset_of!(ReferencePrice, quote_unix)
+        == core::mem::offset_of!(ReferencePrice, quote_slot) + 4
+);
+const _: () = assert!(
+    core::mem::offset_of!(Level, expiry_offset_slots)
+        == core::mem::offset_of!(Level, expiry_offset_secs) + 4
+);
+const _: () = assert!(
+    core::mem::offset_of!(Position, expires_at_slot)
+        == core::mem::offset_of!(Position, expires_at_unix) + 4
+);
+
 impl ReferencePrice {
     /// Decoded reference price (raw bits -> `Price`).
     #[inline]
     pub fn price(&self) -> Price {
         Price::from_bits(self.price.get())
+    }
+    /// The slot-domain datum, typed — the point every
+    /// [`Level::expiry_offset_slots`] is measured from.
+    ///
+    /// Prefer this over reading [`Self::quote_slot`] raw: past it the
+    /// value carries its domain in the type, so it cannot be handed to
+    /// the wall-clock half of the gate. See [`crate::clock`].
+    #[inline]
+    pub fn slot_datum(&self) -> SlotTime {
+        SlotTime::new(self.quote_slot.get())
+    }
+    /// The wall-domain datum, typed — the point every
+    /// [`Level::expiry_offset_secs`] is measured from.
+    #[inline]
+    pub fn wall_datum(&self) -> WallTime {
+        WallTime::new(self.quote_unix.get())
     }
     /// `stamp` with `FLUSH_BIT` masked off — the price-time nonce.
     #[inline]
@@ -250,6 +289,51 @@ impl ReferencePrice {
     #[inline]
     pub fn flush_armed(&self) -> bool {
         self.stamp.get() & FLUSH_BIT != 0
+    }
+}
+
+impl Level {
+    /// This level's wall-domain time-in-force, typed. Zero is dead.
+    #[inline]
+    pub fn wall_span(&self) -> WallSpan {
+        WallSpan::new(self.expiry_offset_secs.get())
+    }
+    /// This level's slot-domain time-in-force, typed. Zero is dead;
+    /// [`SlotSpan::UNBOUNDED`] leaves the level bounded only in wall time.
+    #[inline]
+    pub fn slot_span(&self) -> SlotSpan {
+        SlotSpan::new(self.expiry_offset_slots.get())
+    }
+
+    /// Both absolute deadlines for this level against `reference`'s
+    /// datums, mirroring the on-chain flush.
+    ///
+    /// Takes the whole [`ReferencePrice`] rather than the two datums
+    /// separately **on purpose**: the pair is the one thing a caller
+    /// could previously transpose, and there is no longer a way to
+    /// express the transposition. Each domain's saturating,
+    /// zero-is-dead arithmetic is
+    /// [`SlotTime::deadline_after`] / [`WallTime::deadline_after`] — the
+    /// same code the kernel's flush calls, so the two cannot drift.
+    #[inline]
+    pub fn deadlines(&self, reference: &ReferencePrice) -> (WallTime, SlotTime) {
+        (
+            reference.wall_datum().deadline_after(self.wall_span()),
+            reference.slot_datum().deadline_after(self.slot_span()),
+        )
+    }
+}
+
+impl Position {
+    /// The stored wall-domain deadline, typed.
+    #[inline]
+    pub fn wall_deadline(&self) -> WallTime {
+        WallTime::new(self.expires_at_unix.get())
+    }
+    /// The stored slot-domain deadline, typed.
+    #[inline]
+    pub fn slot_deadline(&self) -> SlotTime {
+        SlotTime::new(self.expires_at_slot.get())
     }
 }
 

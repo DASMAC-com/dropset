@@ -54,7 +54,7 @@ use solana_instruction::{AccountMeta, Instruction};
 // / `set_sysvar` are bounded on — distinct from
 // `anchor_lang_v2::prelude::Clock`, the account-wrapper type the program's
 // own `Sysvar<Clock>` field uses.
-use dropset_sdk::quoting::NO_SLOT_BOUND;
+use dropset_sdk::clock::{SlotSpan, SlotTime, WallTime};
 use solana_clock::Clock;
 use solana_loader_v3_interface::get_program_data_address;
 use solana_pubkey::Pubkey;
@@ -118,7 +118,7 @@ pub fn vault_byte_offset(sector_idx: u32) -> usize {
 /// wall bound — the shape most matcher tests want. Tests exercising the
 /// slot conjunct use [`dual_profile`].
 pub fn simple_profile(offset_ppm: u32, size_bps: u16, expiry_secs: u32) -> [u8; PROFILE_BYTES] {
-    dual_profile(offset_ppm, size_bps, expiry_secs, NO_SLOT_BOUND)
+    dual_profile(offset_ppm, size_bps, expiry_secs, SlotSpan::UNBOUNDED.get())
 }
 
 /// [`simple_profile`] with both expiry domains set explicitly — for the
@@ -152,13 +152,13 @@ pub fn ladder_profile(asks: &[(u32, u16, u32)], bids: &[(u32, u16, u32)]) -> [u8
         profile.asks[i].price_offset = offset_ppm.into();
         profile.asks[i].size_bps = size_bps.into();
         profile.asks[i].expiry_offset_secs = expiry_secs.into();
-        profile.asks[i].expiry_offset_slots = NO_SLOT_BOUND.into();
+        profile.asks[i].expiry_offset_slots = SlotSpan::UNBOUNDED.get().into();
     }
     for (i, &(offset_ppm, size_bps, expiry_secs)) in bids.iter().enumerate() {
         profile.bids[i].price_offset = offset_ppm.into();
         profile.bids[i].size_bps = size_bps.into();
         profile.bids[i].expiry_offset_secs = expiry_secs.into();
-        profile.bids[i].expiry_offset_slots = NO_SLOT_BOUND.into();
+        profile.bids[i].expiry_offset_slots = SlotSpan::UNBOUNDED.get().into();
     }
     let mut bytes = [0u8; PROFILE_BYTES];
     bytes.copy_from_slice(bytemuck::bytes_of(&profile));
@@ -731,17 +731,24 @@ impl Fixture {
 
     /// The bank's current wall-clock time, in the `u32` unix seconds the
     /// `quote_unix` datum and `Position.expires_at_unix` are denominated in.
-    pub fn now_unix(&self) -> u32 {
-        self.svm
-            .get_sysvar::<Clock>()
-            .unix_timestamp
-            .clamp(0, u32::MAX as i64) as u32
+    ///
+    /// Domain-typed, like the sysvar read in `swap.rs` it stands in for:
+    /// a test that hands this to the slot half of the dual gate no longer
+    /// compiles. Call `.get()` for the raw `u32` a wire-level assertion
+    /// needs.
+    pub fn now_unix(&self) -> WallTime {
+        WallTime::new(
+            self.svm
+                .get_sysvar::<Clock>()
+                .unix_timestamp
+                .clamp(0, u32::MAX as i64) as u32,
+        )
     }
 
     /// The bank's current slot, narrowed to the `u32` the expiry fields
     /// are denominated in.
-    pub fn now_slot(&self) -> u32 {
-        self.svm.get_sysvar::<Clock>().slot.min(u32::MAX as u64) as u32
+    pub fn now_slot(&self) -> SlotTime {
+        SlotTime::new(self.svm.get_sysvar::<Clock>().slot.min(u32::MAX as u64) as u32)
     }
 
     /// Advance the bank's slot by `slots` without touching the wall clock.
@@ -780,13 +787,21 @@ impl Fixture {
         price_bits: u32,
         quote_slot: u32,
     ) -> Result<(), String> {
-        let quote_unix = self.now_unix();
+        let quote_unix = self.now_unix().get();
         self.set_reference_price_at(signer, vault_idx, price_bits, quote_slot, quote_unix)
     }
 
     /// [`Self::set_reference_price`] with an explicit wall-clock datum —
     /// for staleness scenarios (a pre-halt quote, a zero datum, a
     /// far-future one).
+    ///
+    /// The two datums stay raw `u32` here, deliberately: this helper is
+    /// the *wire* shape — it serializes straight into the instruction,
+    /// whose arguments the IDL and the generated client both carry as
+    /// `u32`. The clock-domain newtypes guard the matcher surfaces; this
+    /// boundary is covered by the distinguished-fixture convention
+    /// instead (`quote_slot` in the single digits against a `quote_unix`
+    /// near 1.7e9, so a transposition is visible in any assertion).
     pub fn set_reference_price_at(
         &mut self,
         signer: &Keypair,

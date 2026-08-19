@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
+import { wallSpan } from './clock';
 import {
   LEVEL_BYTES,
   N_LEVELS,
@@ -78,7 +79,7 @@ function nativeLevel(c: NativeLevelCase): NativeLevel {
   return {
     price: c.price_bits,
     size: BigInt(c.size),
-    expiryOffsetSecs: c.expiry_offset,
+    expiryOffsetSecs: wallSpan(c.expiry_offset),
     expiryOffsetSlots: NO_SLOT_BOUND,
   };
 }

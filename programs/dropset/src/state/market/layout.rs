@@ -46,7 +46,7 @@ use anchor_lang_v2::{
     prelude::*,
 };
 
-use crate::{FeeConfig, Price};
+use crate::{FeeConfig, Price, SlotSpan, SlotTime, WallSpan, WallTime};
 
 use super::N_LEVELS;
 
@@ -234,6 +234,85 @@ pub struct Vault {
     pub remaining: Remaining,
 }
 
+impl ReferencePrice {
+    /// The slot-domain datum, typed — the point every
+    /// [`Level::expiry_offset_slots`] is measured from.
+    ///
+    /// Prefer this over reading [`Self::quote_slot`] raw. Past it the
+    /// value carries its domain in the type and cannot be handed to the
+    /// wall-clock half of the gate; the raw field stays for the write
+    /// path and the byte-level tests, which are wire code the types
+    /// cannot help. See [`crate::clock`].
+    #[inline(always)]
+    pub fn slot_datum(&self) -> SlotTime {
+        SlotTime::new(self.quote_slot.get())
+    }
+    /// The wall-domain datum, typed — the point every
+    /// [`Level::expiry_offset_secs`] is measured from.
+    #[inline(always)]
+    pub fn wall_datum(&self) -> WallTime {
+        WallTime::new(self.quote_unix.get())
+    }
+}
+
+impl Level {
+    /// This level's wall-domain time-in-force, typed. Zero is dead.
+    #[inline(always)]
+    pub fn wall_span(&self) -> WallSpan {
+        WallSpan::new(self.expiry_offset_secs.get())
+    }
+    /// This level's slot-domain time-in-force, typed. Zero is dead;
+    /// [`SlotSpan::UNBOUNDED`] leaves the level bounded only in wall
+    /// time.
+    #[inline(always)]
+    pub fn slot_span(&self) -> SlotSpan {
+        SlotSpan::new(self.expiry_offset_slots.get())
+    }
+
+    /// Both absolute deadlines for this level against `reference`'s
+    /// datums — the flush-time transform, in one call.
+    ///
+    /// Takes the whole [`ReferencePrice`] rather than the two datums
+    /// separately **on purpose**: the pair is the one thing a caller
+    /// could previously transpose, and there is now no way to express
+    /// the transposition. The per-domain saturating, zero-is-dead
+    /// arithmetic is [`SlotTime::deadline_after`] /
+    /// [`WallTime::deadline_after`] in `dropset-math-core`, which the
+    /// off-chain mirror calls too — so the engine and the simulator
+    /// cannot drift on the sentinel handling.
+    #[inline(always)]
+    pub fn deadlines(&self, reference: &ReferencePrice) -> (WallTime, SlotTime) {
+        (
+            reference.wall_datum().deadline_after(self.wall_span()),
+            reference.slot_datum().deadline_after(self.slot_span()),
+        )
+    }
+}
+
+impl Position {
+    /// The stored wall-domain deadline, typed.
+    #[inline(always)]
+    pub fn wall_deadline(&self) -> WallTime {
+        WallTime::new(self.expires_at_unix.get())
+    }
+    /// The stored slot-domain deadline, typed.
+    #[inline(always)]
+    pub fn slot_deadline(&self) -> SlotTime {
+        SlotTime::new(self.expires_at_slot.get())
+    }
+    /// Write both deadlines back, each into its own domain's field.
+    ///
+    /// A typed setter rather than two field assignments: assigning a
+    /// slot deadline into `expires_at_unix` is exactly the mutation the
+    /// PR #310 review demonstrated the suite could not see, and taking
+    /// the pair as `(WallTime, SlotTime)` makes it a type error.
+    #[inline(always)]
+    pub fn set_deadlines(&mut self, wall: WallTime, slot: SlotTime) {
+        self.expires_at_unix = wall.get().into();
+        self.expires_at_slot = slot.get().into();
+    }
+}
+
 impl LiquidityProfile {
     /// Per-side `Σ size_bps`, returned as `(bid_sum, ask_sum)`. A `u32`
     /// accumulator: at `N_LEVELS = 8` the upper bound is
@@ -418,6 +497,45 @@ const _: () = assert!(core::mem::offset_of!(Vault, profile) == 148);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 8);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, tombstone_head) == 12);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, free_head) == 16);
+
+// ── Clock-datum adjacency pins ───────────────────────────────────────
+//
+// Each domain-pair of same-width `u32`s is kept **adjacent, slot first**
+// so the pair fills one 8-byte window and the hot path can move it as a
+// single fused `ldxdw`/`stxdw` rather than two `ldxw`/`stxw` pairs. This
+// is the general hot-path rule — *registers take a full `u64`, so
+// adjacent 32-bit fields move as one 64-bit copy wherever layout allows*
+// — recorded in architecture.md § **SetReferencePrice → ASM fast path**.
+//
+// The `ReferencePrice` pin is load-bearing in a way the size asserts
+// above are not: a reorder that split that pair would leave every size
+// assert green, leave Rust correct, and silently leave the assembly's
+// fused copy **mis-targeted** — writing the wall datum into the slot
+// field. (Mis-targeted, not misaligned: the store stays 8-byte-shaped
+// and lands where it always did; it is the *fields* underneath that
+// moved.) The `offset_of!` test that pins the assembly's absolute
+// offsets catches a shift of the whole record; this catches a swap
+// *within* it.
+//
+// The `Level` and `Position` pins are a weaker claim, and deliberately
+// so — the assembly reads neither. `Level` crosses in the profile blob
+// via one `sol_memcpy_`, and `Position` is written by Rust at flush
+// time. They are pinned to keep all three domain pairs shaped alike, so
+// a future hot path can fuse those too without a layout change, and so
+// a reorder is a build break rather than a silent divergence between
+// the two mirrors.
+const _: () = assert!(
+    core::mem::offset_of!(ReferencePrice, quote_unix)
+        == core::mem::offset_of!(ReferencePrice, quote_slot) + 4
+);
+const _: () = assert!(
+    core::mem::offset_of!(Level, expiry_offset_slots)
+        == core::mem::offset_of!(Level, expiry_offset_secs) + 4
+);
+const _: () = assert!(
+    core::mem::offset_of!(Position, expires_at_slot)
+        == core::mem::offset_of!(Position, expires_at_unix) + 4
+);
 
 #[cfg(test)]
 mod tests {

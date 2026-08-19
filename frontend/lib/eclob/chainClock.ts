@@ -38,6 +38,8 @@
 // milliseconds would write a nonsense offset), and both are tracked as
 // follow-ups rather than folded into the ratified shape.
 
+import { type WallTime, wallTime } from "@dropset/sdk";
+
 import {
   CLOCK_RESYNC_INTERVAL_SECS,
   CLOCK_SAFETY_MARGIN_SECS,
@@ -169,12 +171,17 @@ export const syncChainClock = async (
  * Reads the offset cached by {@link syncChainClock}; call that first each tick
  * so the reading stays current. Cheap and synchronous, so it can be called at
  * the point of use rather than threaded through.
+ *
+ * Returns a `WallTime`, the SDK's wall clock-domain brand: this is the
+ * frontend's wall-domain source of truth, and the slot half of the dual
+ * expiry gate is a different type, so the two can no longer be passed to
+ * each other's parameter.
  */
-export const gateNowUnix = (): number => {
+export const gateNowUnix = (): WallTime => {
   const device = deviceNowUnix();
   const corrected =
     offsetSecs !== null && Math.abs(offsetSecs) > CLOCK_SKEW_TOLERANCE_SECS
       ? device + offsetSecs
       : device;
-  return corrected + CLOCK_SAFETY_MARGIN_SECS;
+  return wallTime(corrected + CLOCK_SAFETY_MARGIN_SECS);
 };

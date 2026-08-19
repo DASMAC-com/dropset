@@ -22,6 +22,7 @@
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 
+use crate::clock::{SlotSpan, WallSpan};
 use crate::generated::instructions::{
     SetLiquidityProfile, SetLiquidityProfileInstructionArgs, SetReferencePrice,
     SetReferencePriceInstructionArgs,
@@ -38,17 +39,6 @@ const SCALE: u64 = 1_000_000_000;
 /// it in step.
 pub const PROFILE_BYTES: usize = core::mem::size_of::<LiquidityProfile>();
 
-/// The `expiry_offset_slots` value meaning **no slot bound** — a level
-/// bounded only by its wall TIF.
-///
-/// Expressed as the maximum offset rather than a reserved sentinel, so
-/// the match gate stays one unconditional compare per domain. The `u32`
-/// ceiling is ~4.3e9 slots, decades of chain time even at the fastest
-/// proposed slot durations, so it clears the longest wall TIF any tier
-/// policy would set by a wide margin — "unbounded" really is unbounded
-/// in every reachable regime.
-pub const NO_SLOT_BOUND: u32 = u32::MAX;
-
 /// One level of a native (absolute-price) book.
 #[derive(Clone, Copy, Debug)]
 pub struct NativeLevel {
@@ -58,12 +48,15 @@ pub struct NativeLevel {
     /// bids (matching the on-chain materialized `Position.size`).
     pub size: u64,
     /// Per-level expiry, in **seconds** after the reference's
-    /// `quote_unix` wall-clock datum. Zero is dead.
-    pub expiry_offset_secs: u32,
+    /// `quote_unix` wall-clock datum. [`WallSpan::DEAD`] is dead; use
+    /// [`WallSpan::UNBOUNDED`] to leave a level bounded only in slot
+    /// time.
+    pub expiry_offset_secs: WallSpan,
     /// Per-level expiry, in **slots** after the reference's `quote_slot`
-    /// datum — the second, independent bound. Zero is dead; use
-    /// [`NO_SLOT_BOUND`] to leave a level bounded only in wall time.
-    pub expiry_offset_slots: u32,
+    /// datum — the second, independent bound. [`SlotSpan::DEAD`] is
+    /// dead; use [`SlotSpan::UNBOUNDED`] to leave a level bounded only
+    /// in wall time.
+    pub expiry_offset_slots: SlotSpan,
 }
 
 /// A native book: absolute-price bid/ask ladders, top-of-book first. At
@@ -129,8 +122,8 @@ fn level_to_relative(
     Ok(Level {
         price_offset: (offset as u32).into(),
         size_bps: (size_bps as u16).into(),
-        expiry_offset_secs: lvl.expiry_offset_secs.into(),
-        expiry_offset_slots: lvl.expiry_offset_slots.into(),
+        expiry_offset_secs: lvl.expiry_offset_secs.get().into(),
+        expiry_offset_slots: lvl.expiry_offset_slots.get().into(),
     })
 }
 
@@ -204,6 +197,15 @@ pub fn profile_bytes(profile: &LiquidityProfile) -> [u8; PROFILE_BYTES] {
 /// pre-epoch or post-2106 value can never wrap into a live-looking one.
 /// A caller wanting a fresh quote passes [`now_unix`]; a stale or zero
 /// value is stored raw and simply kills the leader's own levels.
+///
+/// The two arrive in **different** native widths (`u64` slot, `i64`
+/// unix), which is the one thing that already made a transposition here
+/// hard to write by accident — the narrowing differs per domain, so this
+/// signature is deliberately left in the wire shapes rather than the
+/// [`crate::clock`] newtypes. The instruction arguments below are the
+/// wire format and stay raw `u32` for the same reason: they are what the
+/// IDL and the generated client speak. This is the boundary the
+/// distinguished-fixture convention still covers.
 pub fn set_reference_price_ix(
     signer: Pubkey,
     market: Pubkey,
@@ -244,21 +246,21 @@ mod tests {
             asks: vec![NativeLevel {
                 price: Price::encode(10_100_000, 0).unwrap(), // 1.01 -> +10000 ppm
                 size: 100_000,                                // of 1_000_000 base -> 1000 bps
-                expiry_offset_secs: 150,
-                expiry_offset_slots: NO_SLOT_BOUND,
+                expiry_offset_secs: WallSpan::new(150),
+                expiry_offset_slots: SlotSpan::UNBOUNDED,
             }],
             bids: vec![NativeLevel {
                 price: Price::encode(99_000_000, -1).unwrap(), // 0.99 -> -10000 ppm
                 size: 200_000,                                 // of 1_000_000 quote -> 2000 bps
-                expiry_offset_secs: 150,
-                expiry_offset_slots: NO_SLOT_BOUND,
+                expiry_offset_secs: WallSpan::new(150),
+                expiry_offset_slots: SlotSpan::UNBOUNDED,
             }],
         };
         let p = book.to_profile(reference, 1_000_000, 1_000_000).unwrap();
         assert_eq!(p.asks[0].price_offset.get(), 10_000);
         assert_eq!(p.asks[0].size_bps.get(), 1_000);
-        assert_eq!(p.asks[0].expiry_offset_secs.get(), 150);
-        assert_eq!(p.asks[0].expiry_offset_slots.get(), NO_SLOT_BOUND);
+        assert_eq!(p.asks[0].wall_span(), WallSpan::new(150));
+        assert_eq!(p.asks[0].slot_span(), SlotSpan::UNBOUNDED);
         assert_eq!(p.bids[0].price_offset.get(), 10_000);
         assert_eq!(p.bids[0].size_bps.get(), 2_000);
         // Unused level slots stay zeroed.
@@ -278,8 +280,8 @@ mod tests {
             asks: vec![NativeLevel {
                 price: Price::encode(99_000_000, -1).unwrap(), // 0.99 < ref
                 size: 1,
-                expiry_offset_secs: 0,
-                expiry_offset_slots: 0,
+                expiry_offset_secs: WallSpan::DEAD,
+                expiry_offset_slots: SlotSpan::DEAD,
             }],
             ..Default::default()
         };
@@ -297,8 +299,8 @@ mod tests {
         let lvl = |price| NativeLevel {
             price,
             size: 600_000,
-            expiry_offset_secs: 0,
-            expiry_offset_slots: 0,
+            expiry_offset_secs: WallSpan::DEAD,
+            expiry_offset_slots: SlotSpan::DEAD,
         };
         let book = NativeBook {
             asks: vec![
@@ -325,14 +327,14 @@ mod tests {
                 NativeLevel {
                     price: Price::encode(10_100_000, 0).unwrap(),
                     size: 600_000,
-                    expiry_offset_secs: 0,
-                    expiry_offset_slots: 0,
+                    expiry_offset_secs: WallSpan::DEAD,
+                    expiry_offset_slots: SlotSpan::DEAD,
                 },
                 NativeLevel {
                     price: Price::encode(10_200_000, 0).unwrap(),
                     size: 400_000,
-                    expiry_offset_secs: 0,
-                    expiry_offset_slots: 0,
+                    expiry_offset_secs: WallSpan::DEAD,
+                    expiry_offset_slots: SlotSpan::DEAD,
                 },
             ],
             ..Default::default()
@@ -352,8 +354,8 @@ mod tests {
             asks: vec![NativeLevel {
                 price: Price::encode(10_100_000, 0).unwrap(),
                 size: 999_999,
-                expiry_offset_secs: 0,
-                expiry_offset_slots: 0,
+                expiry_offset_secs: WallSpan::DEAD,
+                expiry_offset_slots: SlotSpan::DEAD,
             }],
             ..Default::default()
         };
@@ -369,8 +371,8 @@ mod tests {
                 .map(|_| NativeLevel {
                     price: Price::encode(10_100_000, 0).unwrap(),
                     size: 1,
-                    expiry_offset_secs: 0,
-                    expiry_offset_slots: 0,
+                    expiry_offset_secs: WallSpan::DEAD,
+                    expiry_offset_slots: SlotSpan::DEAD,
                 })
                 .collect(),
             ..Default::default()

@@ -125,6 +125,36 @@ fn asm_offsets_match_layout() {
         88,
         "RP_QUOTE_UNIX_OFF"
     );
+    // The field immediately past the fused 8-byte store, pinned so
+    // "nothing bleeds" is self-evident here rather than left to
+    // arithmetic: the store covers vault+84..92 and `base_atoms` begins
+    // at exactly 92.
+    //
+    // Note what the fusion changed about the STAKES of these offset
+    // asserts. It widened the blast radius of a drift rather than
+    // creating one: `RP_QUOTE_UNIX_OFF` at 88 drifting +4 could already
+    // put four leader-supplied bytes into `base_atoms`'s low half, so
+    // this bound was fund-safety-relevant before. What changed is that a
+    // single drifted offset now carries eight bytes across the boundary
+    // instead of four, and the pair moves as one store rather than two
+    // independently-targeted ones.
+    //
+    // (Resist the tempting shorthand that a corrupted datum is simply
+    // fail-safe. It is fail-safe *downward* — a datum pushed back makes
+    // levels read expired and stop matching — but a datum pushed forward
+    // saturates `deadline_after` toward `u32::MAX` and makes them
+    // effectively immortal instead. The slot/unix transposition this
+    // change guards against happens to land on the safe side; arbitrary
+    // corruption does not.)
+    //
+    // Either way these asserts are load-bearing for fund safety, not
+    // merely for correctness: any future proposal to relax, `#[ignore]`,
+    // or `#[cfg]`-gate them is a fund-safety change.
+    assert_eq!(
+        offset_of!(Vault, base_atoms),
+        92,
+        "fused store's upper bound"
+    );
     assert_eq!(offset_of!(Vault, profile), 148, "VAULT_PROFILE_OFF");
     assert_eq!(size_of::<LiquidityProfile>(), 224, "PROFILE_SIZE");
 
@@ -184,6 +214,29 @@ fn asm_offsets_match_layout() {
         &wire[13..17],
         &0x100F_0E0Du32.to_le_bytes(),
         "IX_QUOTE_UNIX_OFF"
+    );
+
+    // ── The fused-copy contract ──────────────────────────────────────
+    //
+    // The disc-5 payload moves the two clock datums as a single
+    // `ldxdw`/`stxdw` pair rather than two word copies. That is legal
+    // only while the pair is adjacent *and in the same order* on both
+    // sides of the copy — the instruction data and the vault record —
+    // so pin both halves here, where a break names the assembly.
+    //
+    // `layout.rs` const-asserts the vault-side adjacency too, and that
+    // fires at compile time; this one covers the wire side, which no
+    // const-assert can see, and states the contract in one place.
+    assert_eq!(
+        rp + offset_of!(ReferencePrice, quote_unix),
+        rp + offset_of!(ReferencePrice, quote_slot) + 4,
+        "vault-side datum pair must stay adjacent for the fused stxdw"
+    );
+    assert_eq!(
+        &wire[9..17],
+        &0x100F_0E0D_0C0B_0A09u64.to_le_bytes(),
+        "ix-side datum pair must read as one little-endian u64 \
+         (quote_slot low, quote_unix high) for the fused ldxdw"
     );
 }
 
@@ -548,7 +601,7 @@ fn stamp_cu(mut f: Fixture) -> u64 {
     f.create_vault(0, auth, false, Pubkey::default())
         .expect("create_vault");
     let signer = f.authority.insecure_clone();
-    let now = f.now_unix();
+    let now = f.now_unix().get();
     f.set_reference_price_meta(&signer, 0, valid_price(), 0, now)
         .expect("set_reference_price")
         .compute_units_consumed

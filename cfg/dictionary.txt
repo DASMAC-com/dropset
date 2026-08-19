@@ -51,6 +51,8 @@ deque
 devnet
 dflow
 discordapp
+doctest
+doctests
 dotless
 drainable
 dropset
@@ -96,6 +98,8 @@ killswitch
 kripto
 laggy
 lamports
+ldxdw
+ldxw
 letterspaced
 libc
 linkified
@@ -117,6 +121,7 @@ mpsc
 multisigs
 mxne
 myrc
+newtypes
 nextest
 nohup
 numstat
@@ -193,6 +198,8 @@ stdlib
 stoikov
 straitsx
 strat
+stxdw
+stxw
 swatinem
 syscall
 sysvar

@@ -18,6 +18,7 @@
 
 use wasm_bindgen::prelude::*;
 
+use crate::clock::{SlotTime, WallTime};
 use crate::layout::MarketView;
 use crate::matching::{
     resting_levels as core_resting_levels, simulate_swap as core_simulate_swap, BookLevel, SwapSide,
@@ -65,7 +66,10 @@ impl Quote {
 /// `now_unix` the current wall-clock time in unix **seconds**, and a
 /// level is shown only while it is inside both of its deadlines. Passing
 /// one where the other belongs silently resurrects expired levels (or
-/// kills live ones). `platform_fee_bps`: the integrator fee
+/// kills live ones) — this signature is the JS boundary, so the two
+/// arrive as bare `u32`s and the domain types are applied on the line
+/// below; the TS caller gets the same distinction from the branded types
+/// in `sdk/ts/src/clock.ts`. `platform_fee_bps`: the integrator fee
 /// the caller will declare on the `swap` instruction — `0` for an
 /// unrouted quote. A rate above the market's ceiling yields an all-zero
 /// `Quote`, matching the engine's refusal.
@@ -91,8 +95,8 @@ pub fn simulate_swap(
         side,
         amount_in,
         Price::from_bits(limit_price_bits),
-        now_slot,
-        now_unix,
+        SlotTime::new(now_slot),
+        WallTime::new(now_unix),
         platform_fee_bps,
     );
     Ok(Quote {
@@ -168,7 +172,9 @@ fn split_side(levels: Vec<BookLevel>) -> (Vec<u32>, Vec<u64>) {
 /// `now_unix` the current wall-clock time in unix **seconds**, and a level
 /// rests only while it is inside both of its deadlines. Passing one where
 /// the other belongs silently resurrects expired levels (or kills live
-/// ones).
+/// ones) — this signature is the JS boundary, so the two arrive as bare
+/// `u32`s and the domain types are applied inside; the TS caller gets the
+/// same distinction from the branded types in `sdk/ts/src/clock.ts`.
 ///
 /// Both sides come from one `MarketView::load`, so a UI polling the book
 /// pays a single decode per account fetch. An empty side means either no
@@ -185,6 +191,10 @@ pub fn resting_book(
 ) -> Result<RestingBook, JsError> {
     let view = MarketView::load(market_data)
         .map_err(|e| JsError::new(&alloc_fmt(format_args!("{e:?}"))))?;
+    // The JS boundary hands both clocks over as bare `u32`s, so this is
+    // where they enter their domains — once, for both sides.
+    let now_slot = SlotTime::new(now_slot);
+    let now_unix = WallTime::new(now_unix);
     let (ask_prices, ask_sizes) = split_side(core_resting_levels(
         &view,
         SwapSide::Buy,

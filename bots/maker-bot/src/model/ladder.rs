@@ -29,8 +29,8 @@ pub fn build_profile(ladder: &[LadderLevel]) -> LiquidityProfile {
         for side in [&mut profile.bids, &mut profile.asks] {
             side[i].price_offset = lvl.offset_ppm.into();
             side[i].size_bps = lvl.size_bps.into();
-            side[i].expiry_offset_secs = lvl.expiry_offset_secs.into();
-            side[i].expiry_offset_slots = lvl.expiry_offset_slots.into();
+            side[i].expiry_offset_secs = lvl.expiry_offset_secs.get().into();
+            side[i].expiry_offset_slots = lvl.expiry_offset_slots.get().into();
         }
     }
     profile
@@ -121,8 +121,8 @@ mod tests {
         for (i, lvl) in DEFAULT_LADDER.iter().enumerate() {
             assert_eq!(p.bids[i].price_offset.get(), lvl.offset_ppm);
             assert_eq!(p.bids[i].size_bps.get(), lvl.size_bps);
-            assert_eq!(p.bids[i].expiry_offset_secs.get(), lvl.expiry_offset_secs);
-            assert_eq!(p.bids[i].expiry_offset_slots.get(), lvl.expiry_offset_slots);
+            assert_eq!(p.bids[i].wall_span(), lvl.expiry_offset_secs);
+            assert_eq!(p.bids[i].slot_span(), lvl.expiry_offset_slots);
             assert_eq!(p.asks[i].price_offset.get(), lvl.offset_ppm);
             assert_eq!(p.asks[i].size_bps.get(), lvl.size_bps);
         }

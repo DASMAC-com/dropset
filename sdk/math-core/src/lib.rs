@@ -3,10 +3,13 @@
 //!
 //! Holds the [`Price`](price::Price) codec, the pure matcher math in
 //! [`matching_math`] (flush-level pricing, the size-bps fill cap, the
-//! price-time sort key), and the share/NAV/PnL accounting kernels in
+//! price-time sort key), the share/NAV/PnL accounting kernels in
 //! [`share`] (the seeding `isqrt`, single-leg deposit sizing, the
 //! pro-rata withdrawal slice, the perf-fee accrual formula, and the
-//! realized-PnL crystallization).
+//! realized-PnL crystallization), and the two expiry clock domains in
+//! [`clock`] — the `repr(transparent)` newtypes that keep a slot count
+//! and a unix second from being confused for one another, plus the one
+//! definition of the zero-is-dead deadline rule both matchers call.
 //!
 //! Everything here **runs on-chain**: the program (`programs/dropset`)
 //! depends on this crate directly and the off-chain SDK / WASM client share
@@ -24,10 +27,12 @@
 //! vectors in `sdk/conformance`, verified in both Rust and TS — the TS
 //! `price.ts` is the one remaining intentional cross-language re-impl.
 
+pub mod clock;
 pub mod matching_math;
 pub mod price;
 pub mod share;
 
+pub use clock::{SlotSpan, SlotTime, WallSpan, WallTime};
 pub use price::Price;
 
 /// Parts-per-million denominator (`1_000_000 = 100%`) — the scale for

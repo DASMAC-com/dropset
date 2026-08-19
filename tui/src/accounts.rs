@@ -17,6 +17,7 @@ use dropset_sdk::accounts::{
     fetch_maybe_registry_header, VaultDepositorHeader, MARKET_HEADER_DISCRIMINATOR,
     VAULT_DEPOSITOR_HEADER_DISCRIMINATOR,
 };
+use dropset_sdk::clock::{SlotTime, WallTime};
 use dropset_sdk::layout::MarketView as SlabView;
 use dropset_sdk::matching::{resting_levels, BookLevel, SwapSide};
 use dropset_sdk::price::Price;
@@ -248,7 +249,7 @@ pub fn poll(
     // clock, matching what the engine gates on.
     state.markets = read_markets(
         client,
-        slot.unwrap_or(0).min(u32::MAX as u64) as u32,
+        SlotTime::new(slot.unwrap_or(0).min(u32::MAX as u64) as u32),
         dropset_sdk::time::now_unix_u32(),
         None,
     );
@@ -379,7 +380,7 @@ pub fn read_market_at(client: &RpcClient, address: Pubkey) -> Option<MarketView>
     let slot = client.get_slot().ok()?;
     read_markets(
         client,
-        slot.min(u32::MAX as u64) as u32,
+        SlotTime::new(slot.min(u32::MAX as u64) as u32),
         dropset_sdk::time::now_unix_u32(),
         Some(address),
     )
@@ -398,10 +399,13 @@ pub fn read_market_at(client: &RpcClient, address: Pubkey) -> Option<MarketView>
 /// open depositors are filtered from it — so N markets cost one `get_program_accounts`
 /// plus a small `get_multiple_accounts` per market for the SPL-owned treasuries
 /// and mints (not in the program scan).
+// The two clocks are domain-typed all the way from the caller (see
+// `dropset_sdk::clock`), so the pair cannot be transposed into
+// `resting_levels` below.
 fn read_markets(
     client: &RpcClient,
-    now_slot: u32,
-    now_unix: u32,
+    now_slot: SlotTime,
+    now_unix: WallTime,
     target: Option<Pubkey>,
 ) -> Vec<MarketView> {
     let Ok(accounts) = client.get_program_accounts(&DROPSET_ID) else {

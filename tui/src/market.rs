@@ -28,8 +28,9 @@ use crate::chain;
 use crate::job::Logger;
 use anyhow::{Context, Result};
 use bytemuck::Zeroable;
+use dropset_sdk::clock::{SlotSpan, WallSpan};
 use dropset_sdk::layout::LiquidityProfile;
-use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix, NO_SLOT_BOUND, PROFILE_BYTES};
+use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix, PROFILE_BYTES};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -73,14 +74,15 @@ pub struct PairConfig {
     /// [`dropset_util::decimals::human_to_atoms_ratio`], which this module's
     /// tests range-check every pair through).
     pub reference_price: f64,
-    /// How many **seconds** after the quote each ladder rung expires. The
-    /// bootstrap stamps this on the seeded profile; `u32::MAX` means never
-    /// (the maker re-arms expiry itself once it takes over). The seeded
-    /// book is left slot-unbounded — the maker's own ladder is what
-    /// introduces per-tier slot bounds. The rung geometry (offsets and
-    /// per-side depth) lives in [`SEED_LADDER`] / [`ladder_at_spread_bps`],
-    /// not here — every market opens with the same shape.
-    pub expiry_offset_secs: u32,
+    /// How long after the quote each ladder rung expires, in the **wall**
+    /// domain. The bootstrap stamps this on the seeded profile;
+    /// [`WallSpan::UNBOUNDED`] means never (the maker re-arms expiry
+    /// itself once it takes over). The seeded book is left
+    /// slot-unbounded too — the maker's own ladder is what introduces
+    /// per-tier slot bounds. The rung geometry (offsets and per-side
+    /// depth) lives in [`SEED_LADDER`] / [`ladder_at_spread_bps`], not
+    /// here — every market opens with the same shape.
+    pub expiry_offset_secs: WallSpan,
 }
 
 /// The seven FX-stablecoin markets the localnet bootstrap brings up, each a
@@ -109,7 +111,8 @@ const fn fx_market(
         },
         leader_keypair_file: "keys/EEEE.json",
         reference_price,
-        expiry_offset_secs: u32::MAX, // never expires (re-armed by the maker bot)
+        // Never expires in wall time; re-armed by the maker bot.
+        expiry_offset_secs: WallSpan::UNBOUNDED,
     }
 }
 
@@ -458,20 +461,20 @@ fn load_key(repo_root: &Path, rel: &str) -> Result<Keypair> {
 pub fn ladder_profile_bytes_asym(
     bids: &[(u32, u16)],
     asks: &[(u32, u16)],
-    expiry_secs: u32,
+    expiry_secs: WallSpan,
 ) -> [u8; PROFILE_BYTES] {
     let mut profile = LiquidityProfile::zeroed();
     for (i, &(offset_ppm, size_bps)) in bids.iter().take(profile.bids.len()).enumerate() {
         profile.bids[i].price_offset = offset_ppm.into();
         profile.bids[i].size_bps = size_bps.into();
-        profile.bids[i].expiry_offset_secs = expiry_secs.into();
-        profile.bids[i].expiry_offset_slots = NO_SLOT_BOUND.into();
+        profile.bids[i].expiry_offset_secs = expiry_secs.get().into();
+        profile.bids[i].expiry_offset_slots = SlotSpan::UNBOUNDED.get().into();
     }
     for (i, &(offset_ppm, size_bps)) in asks.iter().take(profile.asks.len()).enumerate() {
         profile.asks[i].price_offset = offset_ppm.into();
         profile.asks[i].size_bps = size_bps.into();
-        profile.asks[i].expiry_offset_secs = expiry_secs.into();
-        profile.asks[i].expiry_offset_slots = NO_SLOT_BOUND.into();
+        profile.asks[i].expiry_offset_secs = expiry_secs.get().into();
+        profile.asks[i].expiry_offset_slots = SlotSpan::UNBOUNDED.get().into();
     }
     profile_bytes(&profile)
 }
@@ -481,7 +484,7 @@ pub fn ladder_profile_bytes_asym(
 /// bootstrap seeds the opening book with [`SEED_LADDER`] through here (so it
 /// opens with several price levels of depth), and the TUI's widen / tighten /
 /// reset reshapes all encode a full multi-level ladder through here too.
-pub fn ladder_profile_bytes(rungs: &[(u32, u16)], expiry_secs: u32) -> [u8; PROFILE_BYTES] {
+pub fn ladder_profile_bytes(rungs: &[(u32, u16)], expiry_secs: WallSpan) -> [u8; PROFILE_BYTES] {
     ladder_profile_bytes_asym(rungs, rungs, expiry_secs)
 }
 
@@ -569,7 +572,7 @@ mod tests {
         for (_, size_bps) in &mut asks {
             *size_bps = (*size_bps as f64 * 0.3).round() as u16;
         }
-        let bytes = ladder_profile_bytes_asym(&SEED_LADDER, &asks, u32::MAX);
+        let bytes = ladder_profile_bytes_asym(&SEED_LADDER, &asks, WallSpan::UNBOUNDED);
         let profile: &LiquidityProfile = bytemuck::from_bytes(&bytes);
         // Bid stays at the full seed ladder; ask depth is thinned to 30%.
         assert_eq!(profile.bids[0].size_bps.get(), SEED_LADDER[0].1);
@@ -613,7 +616,7 @@ mod tests {
     /// levels past its length zeroed — the multi-level book the bootstrap opens.
     #[test]
     fn seed_ladder_fills_every_rung_symmetrically() {
-        let bytes = ladder_profile_bytes(&SEED_LADDER, u32::MAX);
+        let bytes = ladder_profile_bytes(&SEED_LADDER, WallSpan::UNBOUNDED);
         assert_eq!(bytes.len(), PROFILE_BYTES);
         let profile: &LiquidityProfile = bytemuck::from_bytes(&bytes);
         for (i, &(offset_ppm, size_bps)) in SEED_LADDER.iter().enumerate() {
