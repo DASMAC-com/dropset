@@ -163,7 +163,7 @@ pub fn twelvedata_symbol(product_id: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dropset_feeds::secrets::{env_var, validate_name};
+    use dropset_feeds::secrets::{env_var, validate_name, EnvBackend};
 
     #[test]
     fn each_venue_gets_its_own_spelling_of_one_canonical_pair() {
@@ -214,10 +214,24 @@ mod tests {
         std::env::set_var(env_var(name), "a-real-key");
         assert_eq!(secret(name).unwrap(), "a-real-key");
         std::env::remove_var(env_var(name));
+    }
 
-        // An unresolvable credential names the feed it belongs to, on top of
-        // the per-store spellings the provider lists.
-        let err = secret(name).unwrap_err().to_string();
+    #[test]
+    fn an_unresolvable_credential_names_the_feed_it_belongs_to() {
+        // Deliberately NOT routed through `secret()`, which builds its chain
+        // with `SecretProvider::from_env()`: on a machine that has the enclave
+        // exported — the machine this feature is built for — that would consult
+        // the 1Password backend for a probe name that does not exist, so a
+        // plain `cargo test` would spawn `op` against a live vault and could
+        // block on a biometric prompt. The assertion would still pass, so the
+        // cost would be invisible. An explicit env-only chain reproduces the
+        // same error path with no subprocess.
+        let provider = SecretProvider::new(vec![Box::new(EnvBackend)]);
+        let err = provider
+            .resolve("fx-probe/absent-case")
+            .context("the API credential for this feed")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("the API credential for this feed"), "{err}");
     }
 

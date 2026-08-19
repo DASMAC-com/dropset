@@ -946,9 +946,12 @@ canonical name is already a valid reference tail:
 └── alphavantage   api-key
 ```
 
-Adding a credential is a line in the operator file and a field on that
-provider's item — no code change, and a second credential from a
-provider already present is a field rather than a new entry.
+A second credential from a provider already present is a field on that
+item rather than a new entry. Adding one an app actually resolves is a
+field, a line in the operator file, **and** a small code change — the
+`SECRET_NAME` constant beside its adapter, the call site, and the roster
+in `market-data/tests/secrets_example.rs` that keeps the template and
+the constants from drifting apart.
 
 **Setup is one git-ignored file.** Copy
 `infra/localnet/secrets.local.env.example` to `secrets.local.env` and
@@ -956,24 +959,41 @@ replace `<vault>` with your own vault's name. That file holds
 references, never values, and it is the *only* place a real vault or
 item name appears — the tracked template carries placeholders, which is
 why every example here is written `op://<vault>/…`. The shell profile
-is deliberately not a secrets channel: nothing needs exporting to run
-the stack.
+is deliberately not a secrets channel: no **credential** is ever
+exported to run the stack.
+
+**Do not `source` that file.** It holds `op://` *references*, and a
+reference is not a credential — sourcing it puts the reference string
+itself into `OANDA_API_KEY`, where the environment backend would find a
+perfectly non-empty value and hand it to the venue as an API key. The
+provider refuses an `op://` value outright for exactly this reason, so
+the mistake surfaces as a startup error naming it rather than as a 401
+from a vault that was never consulted.
 
 Three paths resolve from there, in the order the provider consults
 them:
 
 1. **The process environment**, always first — the override path, and
    what CI uses. No `op`, no vault, no 1Password dependency in CI.
+
 1. **The containers**: `make fx-collectors-up` wraps the compose
    invocation in `op run`, which resolves the references and exports
    them under the derived variable names. A container never reaches a
    secret store itself — it has no `op` and no session, and is handed
    resolved values. That is the same shape the hosted deploy has, where
    the instance role fetches from Secrets Manager.
-1. **A collector run straight from the host**
-   (`cargo run --bin market-data-oanda`) reads `DROPSET_OP_VAULT` from
-   the same file and shells out to `op read` per key — no exports at
-   all.
+
+1. **A collector run straight from the host**, which resolves through
+   `op read` per key — no credential exported, and no `op run`:
+
+   ```sh
+   DROPSET_OP_VAULT=<vault> cargo run --bin market-data-oanda
+   ```
+
+   The provider reads that one variable from its **environment**; it
+   does not parse the operator file, which is why the vault is named on
+   the command line here. (`op run --env-file=… -- cargo run …` works
+   too, and is the better habit if the file also pins an account.)
 
 Resolution is **fetch-once-at-startup**: a backend is consulted while a
 binary wires itself up, never per request, so neither the `op`

@@ -1,4 +1,5 @@
-//! Secret resolution — one interface, one backend per store.
+//! Secret resolution — one interface, one backend per store
+//! (docs/data-feeds.md §12).
 //!
 //! Every credential a feed needs is named **canonically**, as
 //! `<provider>/<secret>`: the party that *issued* the credential, then which of
@@ -8,6 +9,10 @@
 //! consumer (`market-data/oanda-key`) would have to be renamed the moment a
 //! second consumer appeared, and a rename that lands in one store but not the
 //! other is a silent outage.
+//!
+//! Note the two senses of "provider" that meet here: in a canonical *name* it
+//! is the credential's issuer, while [`SecretProvider`] is the resolver chain
+//! that goes and fetches it. They are unrelated.
 //!
 //! The canonical name is not translated — each backend only **prefixes** it:
 //!
@@ -55,6 +60,10 @@ pub const ACCOUNT_ENV: &str = "DROPSET_OP_ACCOUNT";
 /// equivalent — there the vault *is* the scope.
 pub const AWS_PREFIX: &str = "dropset";
 
+/// The scheme a 1Password secret *reference* carries. A reference names where a
+/// credential lives; it is never itself one.
+pub const OP_REFERENCE_PREFIX: &str = "op://";
+
 /// One store a secret can be resolved from.
 ///
 /// Object-safe on purpose: [`SecretProvider`] holds a chain of these, so
@@ -94,17 +103,41 @@ impl Backend for EnvBackend {
     }
 
     fn resolve(&self, name: &str) -> Result<Option<String>> {
-        match std::env::var(env_var(name)) {
-            // An **empty** value is treated as absent rather than as a secret,
-            // so the chain falls through to 1Password instead of handing a
-            // venue an empty key. The compose services pass credentials as
-            // `${VAR:-}`, so an unset key arrives as an empty string rather
-            // than as a missing variable — without this the local enclave
-            // would be unreachable from a shell that had ever sourced them.
-            Ok(v) if v.trim().is_empty() => Ok(None),
-            Ok(v) => Ok(Some(v)),
-            Err(_) => Ok(None),
+        let Ok(value) = std::env::var(env_var(name)) else {
+            return Ok(None);
+        };
+        // Trimmed once, here, so every backend in the chain hands back a value
+        // under the same whitespace rule. A credential with significant leading
+        // or trailing space is not a thing any of these venues issues, whereas
+        // a newline picked up from a copy-paste is — and it surfaces as an
+        // opaque `InvalidHeaderValue` at adapter construction rather than as
+        // anything an operator can act on.
+        let value = value.trim();
+        // An **empty** value is treated as absent rather than as a secret, so
+        // the chain falls through to 1Password instead of handing a venue an
+        // empty key. The compose services pass credentials as `${VAR:-}`, so an
+        // unset key arrives as an empty string rather than as a missing
+        // variable.
+        if value.is_empty() {
+            return Ok(None);
         }
+        // A **reference is not a credential**. One arrives here when the
+        // operator file gets sourced into a shell rather than resolved through
+        // it: that file deliberately holds `op://` references, and `op run` is
+        // what turns them into values. Passing one through would hand the venue
+        // the reference string as its API key — a puzzling 401, with the vault
+        // that holds the real key never consulted at all behind this backend,
+        // shadowed by the very file that points at it. Erroring names the
+        // mistake instead.
+        if value.starts_with(OP_REFERENCE_PREFIX) {
+            bail!(
+                "{} holds an unresolved {OP_REFERENCE_PREFIX} reference, not a \
+                 credential — run this under `op run --env-file=…`, or export \
+                 only {VAULT_ENV} and let the provider resolve the reference",
+                env_var(name)
+            );
+        }
+        Ok(Some(value.to_string()))
     }
 }
 
@@ -161,15 +194,18 @@ impl Backend for OnePasswordBackend {
         })?;
 
         if !output.status.success() {
-            // `op` distinguishes "no such item/field" from every other failure
-            // only in its message, so match on it: a missing secret falls
-            // through to the next backend, while a broken session or an absent
-            // vault is a hard error an operator has to fix.
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("isn't an item") || stderr.contains("does not have a field") {
+            if missing_from_stderr(&stderr) {
                 return Ok(None);
             }
-            bail!("`op read {reference}` failed: {}", stderr.trim());
+            let stderr = stderr.trim();
+            // A non-zero exit with nothing on stderr (a signal, or a future
+            // version reporting on stdout) would otherwise read as a message
+            // that just stops.
+            if stderr.is_empty() {
+                bail!("`op read {reference}` failed with {}", output.status);
+            }
+            bail!("`op read {reference}` failed: {stderr}");
         }
 
         // `op read` terminates the value with a newline that is not part of it.
@@ -233,9 +269,7 @@ impl SecretProvider {
             .map(|b| format!("{} ({})", b.key_for(name), b.describe()))
             .collect::<Vec<_>>()
             .join(", ");
-        Err(anyhow!(
-            "the secret {name:?} is not set — looked for {tried}"
-        ))
+        bail!("the secret {name:?} is not set — looked for {tried}")
     }
 }
 
@@ -277,6 +311,26 @@ pub fn validate_name(name: &str) -> Result<(&str, &str)> {
         );
     }
     Ok((provider, secret))
+}
+
+/// Whether an `op` failure means "this store doesn't carry that secret" rather
+/// than "this store is broken".
+///
+/// The distinction only exists in `op`'s human-readable message, so this is
+/// coupled to the CLI's wording — which is exactly why it is a named function
+/// with a test rather than two `contains` calls inline. Both strings are the
+/// observed output of `op` 2.38.1; an upgrade that rewords either one fails
+/// that test instead of silently reclassifying a missing secret as a hard
+/// error.
+///
+/// Getting it wrong is currently loud in both directions, because the
+/// 1Password backend is **last** in the chain: a missing secret misread as a
+/// hard error bails, and a hard error misread as missing falls through to an
+/// exhausted chain. That stops being true the moment a backend is appended
+/// after this one — a misclassification would then resolve from a store the
+/// caller never intended.
+fn missing_from_stderr(stderr: &str) -> bool {
+    stderr.contains("isn't an item") || stderr.contains("does not have a field")
 }
 
 /// Read an environment variable, treating blank as unset.
@@ -352,7 +406,60 @@ mod tests {
             EnvBackend.resolve(name).unwrap().as_deref(),
             Some("a-real-key")
         );
+
+        // Surrounding whitespace is stripped rather than passed through: a
+        // newline picked up from a copy-paste would otherwise reach an HTTP
+        // auth header and fail as an opaque `InvalidHeaderValue`.
+        std::env::set_var(env_var(name), " a-real-key\n");
+        assert_eq!(
+            EnvBackend.resolve(name).unwrap().as_deref(),
+            Some("a-real-key")
+        );
         std::env::remove_var(env_var(name));
+    }
+
+    #[test]
+    fn an_unresolved_reference_is_refused_rather_than_used_as_a_key() {
+        // The motivating mistake: sourcing the operator file into a shell
+        // instead of resolving through it. That file holds `op://` references,
+        // so every credential variable would arrive holding one — non-empty,
+        // and therefore indistinguishable from a real key without this check.
+        // Passing it through would 401 against the venue while the vault that
+        // holds the real key was never consulted at all.
+        let name = "env-probe/reference-case";
+        std::env::set_var(env_var(name), "op://SomeVault/oanda/api-key");
+        let err = EnvBackend.resolve(name).unwrap_err().to_string();
+        assert!(err.contains("unresolved"), "{err}");
+        assert!(err.contains("op run"), "{err}");
+        std::env::remove_var(env_var(name));
+    }
+
+    #[test]
+    fn the_op_missing_messages_are_pinned_to_what_the_cli_actually_prints() {
+        // Both strings are copied from real `op` 2.38.1 output. They are the
+        // only thing separating "this vault doesn't carry it" (fall through)
+        // from "this vault is broken" (hard error), and they live in an
+        // upstream CLI's prose — so an upgrade that rewords one should fail
+        // here rather than silently reclassify.
+        assert!(missing_from_stderr(
+            "[ERROR] 2026/08/17 18:08:16 could not read secret \
+             'op://Vault/Nope/api-key': could not get item Vault/Nope: \
+             \"Nope\" isn't an item in the \"Vault\" vault."
+        ));
+        assert!(missing_from_stderr(
+            "[ERROR] 2026/08/17 18:13:11 item 'Vault/oanda' does not have a \
+             field 'nope'"
+        ));
+
+        // A broken session or an absent vault must NOT read as missing.
+        assert!(!missing_from_stderr(
+            "[ERROR] error initializing client: multiple accounts found. Use \
+             the --account flag or set the OP_ACCOUNT environment variable to \
+             select an account."
+        ));
+        assert!(!missing_from_stderr(
+            "[ERROR] authorization prompt dismissed"
+        ));
     }
 
     /// A backend that reports a real one's naming but never holds anything, so
@@ -422,8 +529,12 @@ mod tests {
     ///
     /// ```sh
     /// DROPSET_OP_VAULT=<vault> cargo test -p dropset-feeds \
-    ///   -- --ignored the_enclave
+    ///   --features http -- --ignored the_enclave
     /// ```
+    ///
+    /// `--features http` is not optional: the crate's `default` feature set is
+    /// empty, so without it this test is compiled away and the command exits 0
+    /// having verified nothing.
     ///
     /// It asserts only that each credential resolves to something non-empty,
     /// and never prints a value.

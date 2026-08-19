@@ -507,7 +507,7 @@ grafana-down: check-docker
 # canonical BASE-QUOTE form; each venue's own spelling is derived from it.
 FX_ENV = infra/localnet/secrets.local.env
 -include $(FX_ENV)
-OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account $(DROPSET_OP_ACCOUNT),)
+OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account '$(DROPSET_OP_ACCOUNT)',)
 FX_UP = docker compose -f infra/localnet/docker-compose.yml \
 	--profile fx up -d --quiet-pull postgres migrate oanda twelvedata \
 	alphavantage

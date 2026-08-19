@@ -9,7 +9,12 @@
 # selects between them with `command:`. Naming a single bin here is what made
 # the three FX services fail at start with `executable file not found in
 # $PATH` — the image built fine, so nothing caught it until a container ran.
-# Building the package builds its bins, so a fifth collector needs no edit.
+#
+# The build step needs no edit for a fifth collector (building the package
+# builds its bins), but the runtime COPY below does: it enumerates the four
+# rather than globbing, because `market-data-*` in `target/release/` would also
+# match cargo's `.d` dependency files. A fifth bin added without a line there
+# reproduces exactly the failure above, so add both together.
 #
 # There is no migrate binary here any more: schema provisioning belongs to
 # `dropset-migrate` (infra/localnet/migrate.Dockerfile), the single schema
@@ -35,9 +40,9 @@ COPY . .
 RUN cargo build --release -p dropset-market-data
 
 FROM debian:bookworm-slim AS runtime
-# ca-certificates only (for the Coinbase HTTPS + Postgres TLS). Intentionally
-# unpinned: a thin runtime base where pinning the Debian package version would
-# only rot.
+# ca-certificates only (every collector's HTTPS venue + Postgres TLS).
+# Intentionally unpinned: a thin runtime base where pinning the Debian package
+# version would only rot.
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
