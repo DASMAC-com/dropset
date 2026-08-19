@@ -778,7 +778,22 @@ fn a_level_capped_fill_then_an_unaffordable_level_leaves_the_change() {
         "the gross fill splits into the taker's payout and the accrued fee"
     );
 
-    // Leg 2 stopped the walk without filling anything.
+    // Leg 2 stopped the walk without filling anything — and pin that it was
+    // a real, live, non-empty level the walk actually reached, rather than
+    // an absent or empty one. `remaining` materializes lazily at match
+    // time and sector 1 has never been swapped against, so a full-size
+    // level here is positive proof the walk visited it and flushed its
+    // ladder. Vault inventory alone cannot carry that: it reads identically
+    // whether the level returned `Exhausted`, returned `Skip` because it
+    // was empty, or was never considered at all — and only the first of
+    // those exercises the arm this test exists to pin. Without this
+    // assertion a change that stopped sector 1 materializing would leave
+    // the test green and silently vacuous.
+    assert_eq!(
+        f.vault(1).remaining.asks[0].size.get(),
+        SEED_BASE,
+        "sector 1's ask materialized at full size and went wholly unfilled"
+    );
     assert_eq!(
         f.vault(1).base_atoms.get(),
         SEED_BASE,
@@ -803,11 +818,13 @@ fn a_level_capped_fill_then_an_unaffordable_level_leaves_the_change() {
          spent {spent} of {budget}"
     );
 
-    // And the custody relation, at zero slack. `treasury_residual` checks
-    // the `>=` itself, and residue is the only thing a take can leave
-    // unattributed, so `(0, 0)` pins both directions: a change that
-    // absorbed on either arm shows up as slack, and one that re-tightened
-    // the invariant to equality still has to hold here.
+    // And the custody relation. `treasury_residual` checks the `>=` itself,
+    // and residue is the only thing a take can leave unattributed, so zero
+    // slack is the direct assertion that neither leg absorbed any: a change
+    // that absorbed on either arm shows up here as slack. Note this pins
+    // only that direction — a change re-tightening custody to equality
+    // would still satisfy `(0, 0)`, and is caught instead by the suite's
+    // non-zero-residual witnesses on taker-bound fills.
     f.assert_treasury_invariant();
 }
 
