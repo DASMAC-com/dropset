@@ -88,12 +88,22 @@ at the same line by construction, and with several worktrees live that
 was a recurring tax paid for a conflict with no semantic content. So
 `.gitattributes` gives `cfg/dictionary.txt` git's built-in
 `merge=union` driver: git keeps both sides' lines instead of raising a
-conflict, in every clone, with no local configuration. Union merge
-neither sorts nor de-duplicates, so the merged file can be out of order
-with a word twice — both are self-healing, because the
+conflict. Being built into git, it needs no `merge.*.driver`
+configuration, so any clone resolves an add/add collision the same way.
+Union merge neither sorts nor de-duplicates, so the merged file can be
+out of order with a word twice — both are self-healing, because the
 `file-contents-sorter` hook runs with `--unique` and the next commit
 touching the file restores them. Nothing breaks in between: cspell
 tolerates both, and every reader of the file loads it into a set.
+
+One divergence is **not** self-healing, and `--unique` cannot help:
+union merge keeps a line the other side **deleted**, and an edit is a
+delete plus an add, so it also keeps both spellings of a reworded word.
+That is a live shape rather than a hypothetical, because `cspell-audit`
+drops a word that has fallen to a single file — so such a removal,
+merged against a nearby addition, can come back. It is accepted rather
+than fixed: a resurrected entry only over-permits one spelling, and the
+next hygiene pass re-detects it. Don't expect the sorter to catch it.
 
 Union merge is sound here **only** because the dictionary is an
 unordered set that happens to be stored sorted. Do not extend the
