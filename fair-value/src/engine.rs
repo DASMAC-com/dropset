@@ -508,7 +508,7 @@ impl FairValueEngine {
 
                 // A refused reading leaves the estimate untouched and its age
                 // running, so a run of them expires the basis exactly as an
-                // absent leg would — which is the intended behaviour: a source
+                // absent leg would — which is the intended behavior: a source
                 // that has gone bad should not hold the basis alive.
                 let Some(basis) = self.usable_basis() else {
                     return self.without_usable_basis(

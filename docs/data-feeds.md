@@ -500,18 +500,33 @@ regimes, and its failure modes belong to
 [`market-making.md`](market-making.md) §1; what follows is which
 sources feed each leg and on what terms.
 
-| Role                             | Source                                                                            |
-| -------------------------------- | --------------------------------------------------------------------------------- |
-| FX anchor (`fiat/USD`)           | Pyth Hermes FX + the FX roster below, all wired; ECB / Frankfurter daily fallback |
-| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC` (wired), Kraken `<token>/USD` (wired)                     |
-| Peg truth                        | Kraken `USDC/USD` (wired); Circle / issuer redemption rate                        |
-| Token/USD, last resort           | CoinGecko / CoinMarketCap — reflexive, never the anchor                           |
-| Macro overlay                    | Econ-calendar loader (ECB / FOMC / CPI / NFP times)                               |
+| Role                             | Source                                                                             |
+| -------------------------------- | ---------------------------------------------------------------------------------- |
+| FX anchor (`fiat/USD`)           | Pyth Hermes FX + the FX roster below, all wired; ECB / Frankfurter daily reference |
+| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC` (wired), Kraken `<token>/USD` (wired)                      |
+| Peg truth                        | Kraken `USDC/USD` (wired); Circle / issuer redemption rate                         |
+| Token/USD, thin coverage         | CoinGecko / CoinMarketCap — reflexive, and the only basis source most markets have |
+| Macro overlay                    | Econ-calendar loader (ECB / FOMC / CPI / NFP times)                                |
+
+**These are candidates, not a priority ladder.** Every source listed for a
+leg is offered to the model together, and the leg is resolved by consensus
+across whichever of them are healthy — see
+[`market-making.md`](market-making.md) §1 "Leg resolution" for the rule.
+Order still decides which sources fill a leg that has more than it can hold,
+and nothing else. The practical consequence is where the wording below used
+to say "fallback": an aggregator index is not a lower tier waiting to be
+reached, it is a second opinion whenever it answers, and for the six markets
+no CEX lists it is the only opinion there is — which the model now reports as
+uncorroborated rather than treating as a price like any other.
+
+Pyth is the one source designated believable **on its own**, because it
+publishes a confidence half-width and is aged from the publisher's clock. A
+lone reading from anything else is reported as uncorroborated.
 
 ### What is wired, and why the rest is not
 
-The primaries above are keyless and live. The gaps are not oversights — each
-was probed and ruled out on evidence:
+The sources above are keyless and live, except where noted. The gaps are not
+oversights — each was probed and ruled out on evidence:
 
 - **Binance is unusable from the deploy region.** `api.binance.com` answers
   `HTTP 451` from both a developer machine and `us-west-2`, so the spec's

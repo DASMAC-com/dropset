@@ -270,10 +270,20 @@ struct TickCtx {
 }
 
 /// Source names carried on every candidate, so a dispersed leg can name which
-/// venue diverged. These are the strings an operator reads, and they match the
-/// per-source feed-health tags the runner emits — one vocabulary for "which
-/// source is misbehaving", whether the answer came from a failed poll or from a
-/// reading that disagreed with its peers.
+/// venue diverged. These are the strings an operator reads, and they follow the
+/// venue vocabulary the feed adapters already use in `Source::name()` — one set
+/// of names for "which source is misbehaving", whether the answer came from a
+/// failed poll or from a reading that disagreed with its peers.
+///
+/// Deliberately the bare venue for Coinbase, whose adapter names itself
+/// per-product (`coinbase:<product>`) because its ticker endpoint is per
+/// product and a whole roster's log lines would otherwise collide. That
+/// disambiguation buys nothing here: these tags are read off **one market's**
+/// leg report, where the product is already the row, so it would only restate
+/// the label — and a per-product name is `format!`-built, which would cost a
+/// heap allocation per candidate per tick to carry through the `Copy` leg
+/// types. Joining the two vocabularies later means splitting the adapter's
+/// name on `:`, not widening these.
 const SOURCE_PYTH: &str = "pyth-hermes";
 const SOURCE_FRANKFURTER: &str = "frankfurter";
 const SOURCE_COINBASE: &str = "coinbase";
@@ -458,15 +468,19 @@ pub fn run_supervisor(
 /// A market with a pinned basis is skipped: it has no observation to check, and
 /// its unverified state is already declared at startup.
 ///
-/// **The latch is per market, not per source tier**, which bounds what it can
-/// catch. A market whose CEX primary answers first spends its shot on that
-/// reading, so the index ids further down its ladder are never validated — and
-/// a mis-wired index id is reachable only *through* that fallback. On this
-/// roster only EURC has a primary at all, so the other five are checked on the
-/// tier that actually prices them; but EURC's fallback ids would go unchecked
-/// until the day it falls back, which is the day the per-tick breach path fires
-/// and reads as a peg event. Latching per tier would close it, and belongs with
-/// the multi-source work rather than here.
+/// **The per-source gap this used to carry is now closed elsewhere.** The latch
+/// is per market, so a market whose strongest source answered first spent its
+/// one shot on that reading and never validated the other ids in its ladder —
+/// and a mis-wired id reachable only *through* a fallback would surface on the
+/// day it was first used, as a per-tick breach reading like a peg event.
+///
+/// The engine's dispersion gate is the general form of that check and does not
+/// latch: it compares a leg's sources against each other every tick and names
+/// the one furthest from consensus, so a mis-wired id is flagged whenever it
+/// answers, whatever position it occupies. What survives here is the part the
+/// gate cannot do — attributing the *very first* observation, where there is no
+/// history to say whether a market has departed from anything, and where a
+/// single source may be all there is to compare against nothing.
 fn check_first_basis(ctx: &mut Context, cfg: &BotConfig, legs: Legs) {
     if ctx.basis_checked || ctx.cfg.pinned_basis.is_some() {
         return;

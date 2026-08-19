@@ -40,10 +40,27 @@ use std::time::Duration;
 
 use crate::reading::Reading;
 
-/// How many sources one leg may carry. Sized to the longest tier ladder on the
-/// roster (primary, secondary, and two aggregator fallbacks); a fixed array
-/// keeps [`crate::Legs`] `Copy` and keeps this crate allocation-free.
-pub const MAX_CANDIDATES: usize = 4;
+/// How many sources one leg may carry. A fixed array keeps [`crate::Legs`]
+/// `Copy` and keeps this crate allocation-free.
+///
+/// Sized with headroom above the longest roster leg (four: two venues and two
+/// aggregators) rather than exactly to it. That margin is load-bearing:
+/// candidates are placed in the order offered, before anything knows which are
+/// healthy, so a leg filled to the cap could seat a **stale** candidate ahead of
+/// a live source and silently drop the live one. Keeping the cap clear of the
+/// real ladders means that cannot arise, and adding a source does not quietly
+/// evict another. A leg that does overflow drops its least-preferred
+/// candidates — the only thing offer order is still entitled to decide.
+pub const MAX_CANDIDATES: usize = 6;
+
+/// The longest ladder any roster leg offers today: two venues and two
+/// aggregators on the basis leg.
+const LONGEST_REAL_LEG: usize = 4;
+
+// Enforced at compile time rather than in a test, because the margin is the
+// whole reason the cap is not simply `LONGEST_REAL_LEG`: without it a stale
+// candidate placed before a live one could evict it.
+const _: () = assert!(MAX_CANDIDATES > LONGEST_REAL_LEG);
 
 /// One source's reading for a leg, tagged so a disagreement can name who
 /// diverged.
@@ -592,16 +609,44 @@ mod tests {
 
     #[test]
     fn overflowing_the_ladder_keeps_the_preferred_sources() {
-        // Order is only entitled to decide who survives a thin set, but it must
-        // decide it predictably.
-        let c = Candidates::none()
-            .push("a", Some(r(1.0)))
-            .push("b", Some(r(1.0)))
-            .push("c", Some(r(1.0)))
-            .push("d", Some(r(1.0)))
-            .push("e", Some(r(9.0)));
+        // Order is only entitled to decide who survives an over-full set, but
+        // it must decide it predictably.
+        let mut c = Candidates::none();
+        for source in ["a", "b", "c", "d", "e", "f"] {
+            c = c.push(source, Some(r(1.0)));
+        }
+        c = c.push("overflow", Some(r(9.0)));
         assert_eq!(c.iter().count(), MAX_CANDIDATES);
-        assert!(c.iter().all(|x| x.source != "e"));
+        assert!(c.iter().all(|x| x.source != "overflow"));
+    }
+
+    #[test]
+    fn a_full_real_leg_still_has_room_to_spare() {
+        // The margin that keeps a stale candidate from ever displacing a live
+        // one is asserted at compile time above; this checks the thing that
+        // margin is *for* — offering the longest real ladder leaves every
+        // source in place, with room for one more.
+        let mut c = Candidates::none();
+        for source in ["coinbase", "kraken", "coingecko", "coinmarketcap"] {
+            c = c.push(source, Some(r(1.0)));
+        }
+        assert_eq!(c.iter().count(), LONGEST_REAL_LEG);
+        assert_eq!(c.push("a-fifth", Some(r(1.0))).iter().count(), 5);
+    }
+
+    #[test]
+    fn a_stale_candidate_never_masks_a_live_source() {
+        // The invariant the old tier walk had to enforce by hand, and which the
+        // caches make load-bearing: they never evict, so a source that dies once
+        // would otherwise sit in front of its fallbacks for the life of the
+        // process. Here a dead source is simply not a candidate, whatever
+        // position it was offered in.
+        let c = Candidates::none()
+            .push("dead-primary", Some(Reading::new(1.14, secs(9_999))))
+            .push("live-fallback", Some(r(0.99)))
+            .resolve(STALE, BAND);
+        assert_eq!(c.n, 1);
+        assert_eq!(c.reading.unwrap().value, 0.99);
     }
 
     #[test]

@@ -1,3 +1,5 @@
+// cspell:word ungated
+
 //! The stateful basis estimator (§1 basis estimation).
 //!
 //! `basis` is a **slow, smoothed multiplicative correction** near 1 — an EMA

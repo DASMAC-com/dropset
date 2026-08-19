@@ -148,27 +148,73 @@ risk (failure mode 1).
 ### Sources, by leg
 
 The two legs draw from **different** feeds — the anchor from real FX, the
-basis from crypto venues. The token's crypto/USD price (CoinGecko / CMC)
-is **demoted to a last-resort fallback** for the reasons above.
+basis from crypto venues.
 
-| Leg                              | Primary                                       | Peg-truth / cross-check   | Fallback                          |
-| -------------------------------- | --------------------------------------------- | ------------------------- | --------------------------------- |
-| FX anchor (`fiat/USD`)           | Pyth Hermes FX                                | OANDA / CME 6E in session | ECB / Frankfurter daily reference |
-| Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC`, Kraken `<token>/USD` | Kraken `USDC/USD`         | CoinGecko / CMC token/USD         |
+| Leg                              | Role                                    |
+| -------------------------------- | --------------------------------------- |
+| FX anchor (`fiat/USD`)           | Fast, deep, exogenous cross             |
+| Basis (`token/fiat`, `USDC/USD`) | Slow multiplicative correction near 1   |
+| Static peg (`token/USD`)         | Last-resort constant, no feed behind it |
 
-The bot surfaces which source is live per leg, per market.
+**Which venues serve each leg is not settled here.**
+[`data-feeds.md`](data-feeds.md) §9 owns venue policy — which sources are
+wired, on what terms, and why a named source was superseded — and this
+section deliberately does not restate its roster, because the copy went
+stale and began contradicting both that document and itself. What belongs
+here is the model: what each leg *means*, and how the legs are resolved and
+composed.
 
-Kraken stands where the spec first named Binance and Circle, because neither
-can serve: Binance answers `HTTP 451` from the deploy region and Binance.US
-lists no EUR pair, while Circle's rate API is credentialed. See
-[`data-feeds.md`](data-feeds.md) §9 for the evidence and the supersession
-path. Only EURC of the seven demo markets reaches any CEX at all, so for the
-other six the CoinGecko / CMC fallback *is* the basis leg — demoted in
-priority (fm5 below), not optional.
+Two source properties the model does depend on, so they are stated rather
+than left to be inferred:
 
-Pyth is what makes fm6 observable: it publishes a **confidence half-width**,
-which the ECB/Frankfurter fallback does not, so on the fallback tier the
-anchor can only ever read as fresh or stale, never fresh-but-uncertain.
+- **A confidence half-width is what makes fm6 observable.** An anchor source
+  that publishes one lets the model see *fresh-but-uncertain*; one that does
+  not can only ever read as fresh or stale. This is why the anchor leg
+  distinguishes sources at all.
+- **Coverage is permanently asymmetric.** Only EURC of the seven demo markets
+  reaches a CEX, so for the other six an aggregator index *is* the basis leg.
+  That is the standing condition the leg resolution below is built around, not
+  a temporary gap.
+
+### Leg resolution
+
+A leg is resolved from **every source that answered**, not from the first one
+that did. The old ladder took the highest-priority live tier outright, which
+made any single bad source the answer with nothing to contradict it — and
+given the asymmetry above, most markets had exactly one source under them.
+
+Per leg, per tick, across the healthy sources:
+
+- **three or more** — the **median**, which one bad source cannot move;
+- **two** — usable if they agree within the dispersion band; a disagreeing
+  pair cannot adjudicate between itself, so the leg degrades instead of
+  guessing;
+- **one** — an explicit single-source state. It still carries the mid, since
+  refusing would dark most of the roster, but the composition reports
+  `Unverified` rather than describing an unchecked feed as a corroborated
+  price.
+
+A **dispersion gate** rides alongside: when a leg's healthy sources span more
+than the band, the leg is flagged and the source furthest from consensus is
+named. Naming it is the point — a dispersion alarm with no suspect attached
+is one nobody can act on. The gate is the general form of the one-shot
+startup wiring check it replaces: that check could latch only once per
+market and spent its shot on whichever source answered first, so an id
+reachable only through a fallback went unvalidated until the day it was used.
+
+A source may be **designated believable on its own**. Such a source anchors
+its leg rather than averaging into it — blending a live first-party oracle
+with a daily reference rate would only degrade the anchor the leg exists to
+supply — and that designation is overridden when the source is itself the
+outlier, so it cannot become a way for one bad feed to beat every check on
+it.
+
+Priority order survives only as the order sources are offered in, which
+decides which ones fill a leg that has more than it can hold. It no longer
+decides what the leg is worth.
+
+The bot surfaces, per leg per market, how many sources answered and which one
+diverged.
 
 ### Basis estimation
 
@@ -178,6 +224,31 @@ warranted only if the bot fuses several basis sources or drives spread
 width from the basis variance — deferred (§5). The smoothing half-life is
 **TBD — set by the basis-process characterization** over collected
 history (`data-feeds.md` §11); it is not guessed here.
+
+Two properties keep that smoothing from being defeated by a single reading,
+both of which matter because the estimate is *multiplied into every quote*:
+
+- **No one observation may replace the estimate.** The blend weight rises
+  with the gap since the last update, so a returning observation re-seeds
+  rather than crawling off a stale estimate — but uncapped, "re-seed" means
+  one print *becomes* the basis at every gap boundary, which is to say every
+  session reopen and every outage recovery. The weight is capped below 1, and
+  an observation too far from the running estimate is refused rather than
+  smoothed: the basis is a slow process by construction, so a large
+  single-tick move is a bad source, not news. A refusal is reported, never
+  silent.
+- **A carried basis expires.** Every input leg is bounded by an age; the
+  estimate itself must be too, or a basis smoothed seconds ago and one
+  smoothed days ago produce identical quotes. Past the bound the model stops
+  quoting on the dead estimate and falls to the static peg. It never
+  substitutes 1.0 for an unobserved basis — a fabricated parity claim is
+  indistinguishable in the output from having measured the basis and found it
+  at par.
+
+The refusal rule and the expiry interact deliberately: a source stuck on a
+bad value has its prints refused, the estimate stops being refreshed, and the
+age bound eventually retires it. A persistent disagreement therefore degrades
+the market rather than walking the basis to a wrong level.
 
 ### Composition
 
@@ -203,14 +274,16 @@ first-class regime, not an exception:
    the per-market FX anchors say nothing about. It needs a **separate
    USDC/USD anchor** and a portfolio-level guard, not seven independent
    per-market checks.
-1. **Weekend / session role-flip.** Interbank FX and CME 6E are closed
-   Fri ~5pm → Sun ~5pm ET — structural, not an outage. On weekends the
-   crypto reference (Coinbase `<token>/USDC`, Binance `EUR/USDT`) is the
-   **only** live EUR/USD price discovery, so the model **switches the
-   anchor to the crypto reference** for that window rather than treating
-   FX-stale as "fall back to a static peg." The CME Sunday reopen is the
-   reversion / gap event — a taker's moment, and a maker's risk to brace
-   into.
+1. **Weekend / session role-flip.** Interbank FX is closed Fri ~5pm →
+   Sun ~5pm ET — structural, not an outage. On weekends the crypto
+   reference is the **only** live price discovery, so the model
+   **switches the anchor to the crypto reference** for that window rather
+   than treating FX-stale as "fall back to a static peg." The Sunday
+   reopen is the reversion / gap event — a taker's moment, and a maker's
+   risk to brace into. Which crypto venues are live in that window is
+   [`data-feeds.md`](data-feeds.md) §9's to say; naming them here is what
+   left this line asserting a venue the same document had ruled out as
+   unreachable.
 1. **Per-market reversion is a gate, not a global truth.** The basis
    mean-reverts only as hard as redemption arbitrage enforces it: strong
    for EURC (Circle Mint), weak or absent for the thin exotics (VCHF,

@@ -54,7 +54,7 @@ impl Reading {
     /// indistinguishable downstream: all three collapsed into one "stale"
     /// label, so a feed misconfiguration and a closed session read the same in
     /// the operator log. `fresh` still means both, so no call site changes
-    /// behaviour by this being separable.
+    /// behavior by this being separable.
     pub fn valid(&self) -> bool {
         self.value.is_finite() && self.value > 0.0
     }
