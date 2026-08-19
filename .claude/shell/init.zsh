@@ -35,7 +35,12 @@
 # shell's directory and environment, which a subshell could not do.
 
 if [[ -n "$BASH_VERSION" ]]; then
-  print -u2 'dropset shell helpers: zsh only'
+  # `echo … >&2`, not `print -u2`: `print` is a zsh builtin, so under bash the
+  # message explaining the problem would itself fail with "print: command not
+  # found". The guard still worked either way — bash parses command by command,
+  # so it returns before reaching the zsh-only expansion below — but it worked
+  # without ever telling the operator why.
+  echo 'dropset shell helpers: zsh only' >&2
   return 1 2>/dev/null || exit 1
 fi
 
@@ -144,12 +149,23 @@ _ds_daily_sid() {
 # on-disk transcript as the existence check.
 #
 #   $1 kind (seeds the id, e.g. `plan`)   $2 display name   $3 initial prompt
-#   $4… extra flags for the CREATE path only (a resume must not re-pass them)
+#   $4 model to pin, or "" for the saved default
+#
+# The model rides BOTH branches; the name and the initial prompt ride only the
+# create path. That split is the point, and getting it wrong is silent: `-n`
+# sets a display name and the prompt bootstraps a skill, so re-passing either
+# on a resume is meaningless — but `--model` is a per-session flag, and a
+# planning session is reopened many times a day. Passing it only on create
+# would honor the pin on the day's FIRST launch and quietly drop to the saved
+# default on every reopen after it, which is exactly the "still works, so
+# nobody notices" slip `paps` exists to remove.
 _ds_daily_session() {
-  local kind="$1" name="$2" prompt="$3"
-  shift 3
+  local kind="$1" name="$2" prompt="$3" model="$4"
 
   local sid slug transcript
+  local -a model_flag
+  [[ -n "$model" ]] && model_flag=(--model "$model")
+
   _ds_base || return 1
   _ds_secrets
 
@@ -161,10 +177,10 @@ _ds_daily_session() {
   transcript="$HOME/.claude/projects/$slug/$sid.jsonl"
 
   if [[ -f "$transcript" ]]; then
-    claude --resume "$sid" --permission-mode acceptEdits
+    claude --resume "$sid" --permission-mode acceptEdits "${model_flag[@]}"
   else
     claude --session-id "$sid" -n "$name" --permission-mode acceptEdits \
-      "$@" "$prompt"
+      "${model_flag[@]}" "$prompt"
   fi
 }
 
@@ -176,9 +192,17 @@ aps() {
     print -u2 'Usage: aps <tag>'
     return 1
   fi
+  # A bare number gets the `eng-` prefix, so `aps 882` and `aps eng-882` agree
+  # and the aps→raps pair composes: `raps` resolves `eng-<n>`, so without this
+  # `aps 882` would create a worktree named `882` that `raps 882` then reports
+  # as missing. Only an all-digit argument is rewritten — a deliberate non-`eng`
+  # worktree name still passes through untouched.
+  local tag="$1"
+  [[ "$tag" == <-> ]] && tag="eng-$tag"
+
   _ds_base || return 1
   _ds_secrets
-  claude -w "$1"
+  claude -w "$tag"
 }
 
 # Resume a worktree session by number: `raps 814` resolves to the `eng-814`
@@ -254,7 +278,7 @@ paps() {
     print -u2 'Usage: paps   (no arguments; the name is derived from the date)'
     return 1
   fi
-  _ds_daily_session plan "plan-$(date +%-d)" /plan --model claude-fable-5
+  _ds_daily_session plan "plan-$(date +%-d)" /plan claude-fable-5
 }
 
 # Start OR resume today's HOUSEKEEPING session — the same contract as `paps`,
@@ -267,5 +291,5 @@ haps() {
     print -u2 'Usage: haps   (no arguments; the name is derived from the date)'
     return 1
   fi
-  _ds_daily_session housekeeping "housekeeping-$(date +%-d)" /housekeeping
+  _ds_daily_session housekeeping "housekeeping-$(date +%-d)" /housekeeping ''
 }

@@ -193,6 +193,15 @@ class CliTests(RepoFixture):
         parsed = json.loads(out)
         self.assertEqual(parsed["unwired"], ["no_compound_bash.py", "no_git_grep.py"])
 
+    def test_finding_no_hooks_at_all_is_not_reported_as_clean(self):
+        """A repo with no .claude/hooks/ has nothing to say — and returning 0
+        for it would be byte-identical, in the one signal a caller branches on,
+        to "every guard is wired". That is the conflation this tool exists to
+        prevent, so it must not reproduce it."""
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(hw.HookWiringError):
+                self._capture(["hook_wiring.py", "--repo", d])
+
     def test_a_bad_repo_errors_rather_than_reporting_clean(self):
         with self.assertRaises(hw.HookWiringError):
             self._capture(["hook_wiring.py", "--repo", str(self.repo / "nope")])

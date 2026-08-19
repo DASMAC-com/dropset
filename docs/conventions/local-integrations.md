@@ -604,6 +604,9 @@ branch arrives as `worktree-eng-###`):
   is what creates the `eng-###` worktree directory whose branch arrives
   named `worktree-eng-###`; there is no CLI flag to drop the prefix, so
   `init-pr` renames it. This is the implementation-session entry point.
+  A **bare number** is given the `eng-` prefix, so `aps 882` and
+  `aps eng-882` agree and the `aps` → `raps` pair composes; a deliberate
+  non-`eng` name passes through untouched.
 
 - **`raps <n>`** — resume a worktree session by number: takes a bare
   `<n>`, resolves it to the `eng-<n>` worktree, and resumes that

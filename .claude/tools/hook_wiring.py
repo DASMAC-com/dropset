@@ -238,6 +238,20 @@ def run(argv: list[str]) -> int:
         raise HookWiringError(f"--repo is not a directory: {repo}")
 
     result = scan(repo)
+
+    # Finding nothing is not a clean bill of health. Point `--repo` at a typo'd
+    # path, a checkout predating `.claude/hooks/`, or a future rename, and the
+    # scan legitimately has nothing to say — but returning 0 for it would be
+    # byte-identical, in the one signal a caller branches on, to "every guard is
+    # wired". This module's whole premise is that those two must never look
+    # alike, so refusing here is not defensive padding; it is the tool declining
+    # to reproduce the exact bug it was written to catch.
+    if not result["wired"] and not result["unwired"]:
+        raise HookWiringError(
+            f"no hook scripts found under {repo}/.claude/hooks/ — nothing was "
+            "checked, which is not the same answer as everything being wired"
+        )
+
     if args.json:
         print(json.dumps(result, indent=2))
     else:
