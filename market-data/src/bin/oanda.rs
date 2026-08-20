@@ -1,13 +1,16 @@
-//! The OANDA FX anchor feed process: resume from the saved cursor, backfill
-//! then poll the v20 candles endpoint, and persist closed buckets into
-//! `cex_prices` (docs/data-feeds.md §9). Long-lived; resumes on restart.
+//! The OANDA FX anchor collector: for every pair on its roster, resume from
+//! that pair's saved cursor, backfill then poll the v20 candles endpoint, and
+//! persist closed buckets into `cex_prices` (docs/data-feeds.md §9).
+//! Long-lived; resumes on restart.
 //!
-//! Thin on purpose — configuration, then source → sink wiring. The polling,
-//! paging, and decoding are the shared `dropset_feeds::venues` adapter's.
+//! Thin on purpose — configuration, then source → sink wiring per pair. The
+//! polling, paging, and decoding are the shared `dropset_feeds::venues`
+//! adapter's.
 //!
 //! Poll budget: v20 documents 100 requests/second on a persistent connection,
-//! so a 60-second tick has room to spare and the cadence is chosen for
-//! freshness rather than to dodge a limit.
+//! so even a large roster on a 60-second tick has room to spare and the cadence
+//! is chosen for freshness rather than to dodge a limit. This is the one FX
+//! venue here whose quota a roster cannot threaten.
 
 use dropset_feeds::{
     connect, run,
@@ -17,6 +20,8 @@ use dropset_feeds::{
 use dropset_market_data::{
     fx::{oanda_instrument, secret, FxConfig, FxDefaults},
     store::CexWriter,
+    supervise::run_all,
+    ticks::by_venue_symbol,
 };
 use std::time::Duration;
 
@@ -38,36 +43,47 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = FxConfig::from_env(&DEFAULTS)?;
     let api_key = secret(oanda::SECRET_NAME)?;
-    let instrument = oanda_instrument(&cfg.product_id)?;
+    // Canonical id → the venue's instrument spelling, resolved for the whole
+    // roster before anything connects: a malformed pair must fail startup, not
+    // be discovered as a silently missing series later.
+    let instruments = by_venue_symbol(&cfg.products, oanda_instrument)?;
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;
-    let feed = cfg.feed_name(SOURCE);
+    let cursors = PgCursorStore::new(pool.clone());
 
-    let resume = PgCursorStore::new(pool.clone()).load(&feed).await?;
-    let source = OandaCandles::resume(
-        &cfg.base_url,
-        &api_key,
-        feed.clone(),
-        &instrument,
-        cfg.granularity_secs,
-        cfg.max_buckets_per_request,
-        resume,
-        cfg.backfill_start_secs,
-    )?;
+    // One transport for the process, cloned per feed, so the roster draws on a
+    // single request budget rather than one per pair. See
+    // `OandaCandles::client`.
+    let http = OandaCandles::client(&cfg.base_url, &api_key)?;
+
     tracing::info!(
-        %feed,
-        product = %cfg.product_id,
-        %instrument,
+        products = %instruments.iter().map(|(_, p)| p.as_str()).collect::<Vec<_>>().join(","),
         granularity = cfg.granularity_secs,
-        "oanda feed starting"
+        poll_secs = cfg.poll_interval_secs,
+        "oanda collector starting"
     );
 
-    let writer = CexWriter::new(SOURCE, &cfg.product_id, cfg.granularity_secs);
-    let sink = StoreSink::new(pool, feed, writer);
-    let sinks: Vec<Box<dyn Sink<Candle>>> = vec![Box::new(sink)];
     let run_cfg = RunConfig {
         poll_interval: Duration::from_secs(cfg.poll_interval_secs),
         ..RunConfig::default()
     };
-    run(source, sinks, run_cfg).await
+    let mut feeds = Vec::with_capacity(instruments.len());
+    for (instrument, product_id) in instruments {
+        let feed = cfg.feed_name(SOURCE, &product_id);
+        let resume = cursors.load(&feed).await?;
+        let source = OandaCandles::resume(
+            http.clone(),
+            feed.clone(),
+            &instrument,
+            cfg.granularity_secs,
+            cfg.max_buckets_per_request,
+            resume,
+            cfg.backfill_start_secs,
+        )?;
+        let writer = CexWriter::new(SOURCE, &product_id, cfg.granularity_secs);
+        let sinks: Vec<Box<dyn Sink<Candle>>> =
+            vec![Box::new(StoreSink::new(pool.clone(), feed.clone(), writer))];
+        feeds.push((feed, run(source, sinks, run_cfg.clone())));
+    }
+    run_all(feeds).await
 }

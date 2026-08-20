@@ -11,6 +11,7 @@
 //! matching the hyphenated style the Coinbase rows already use, and each
 //! adapter is handed the spelling it wants at construction.
 
+use crate::roster::{roster_from_env, RosterEntry};
 use anyhow::{anyhow, Context, Result};
 use dropset_feeds::{now_secs, secrets::SecretProvider};
 
@@ -39,8 +40,9 @@ pub struct FxDefaults {
 pub struct FxConfig {
     pub database_url: String,
     pub base_url: String,
-    /// The canonical stored symbol, e.g. `AUD-USD`.
-    pub product_id: String,
+    /// Every canonical pair this collector polls, e.g. `AUD-USD`. One process
+    /// serves a venue rather than a pair (see [`crate::roster`]).
+    pub products: Vec<RosterEntry>,
     pub granularity_secs: i64,
     /// Epoch second the backfill starts from. Only used the first time a feed
     /// runs; afterwards the saved cursor wins.
@@ -73,7 +75,7 @@ impl FxConfig {
         Ok(Self {
             database_url,
             base_url: env_or("FX_BASE_URL", defaults.base_url),
-            product_id: env_or("PRODUCT_ID", "AUD-USD"),
+            products: roster_from_env("AUD-USD")?,
             granularity_secs,
             backfill_start_secs,
             max_buckets_per_request: env_or(
@@ -95,8 +97,11 @@ impl FxConfig {
     /// restarts, e.g. `fx:oanda:AUD-USD`. The `source` here is the same string
     /// written to `cex_prices.source`, so a cursor and its rows stay legible
     /// together.
-    pub fn feed_name(&self, source: &str) -> String {
-        format!("fx:{source}:{}", self.product_id)
+    ///
+    /// Keyed by product as well as venue, so one roster service resumes every
+    /// cursor the per-pair services it replaces had saved.
+    pub fn feed_name(&self, source: &str, product_id: &str) -> String {
+        format!("fx:{source}:{product_id}")
     }
 }
 
@@ -105,6 +110,33 @@ fn default_start(granularity: i64, backfill_days: u64) -> i64 {
     let start = now_secs() - (backfill_days as i64) * 86_400;
     let granularity = granularity.max(1);
     start - start.rem_euclid(granularity)
+}
+
+/// Widen a poll interval when a roster's request count would exceed a venue's
+/// documented daily quota.
+///
+/// **This is the tax a roster levies on a metered venue, and it is easy to
+/// miss.** A per-pair cadence that fits comfortably for one pair is multiplied
+/// by the roster size: at Alpha Vantage's four polls a day, seven pairs is 28
+/// requests against an account quota of 25, so simply listing more pairs turns
+/// a within-budget feed into a throttled one. The failure is quiet, too — a
+/// venue answers a quota breach with an error payload, not a transport error,
+/// so it surfaces as a feed that mysteriously stops advancing.
+///
+/// `daily_quota` is the **usable** share the caller has decided to spend, not
+/// the venue's headline number: leaving room for restarts and for anything else
+/// sharing the key is the caller's judgement, since only it knows what else the
+/// credential is used for.
+///
+/// Returns the configured interval unchanged when it already fits, so a small
+/// roster is never slowed down.
+pub fn quota_floor_secs(configured: u64, products: usize, daily_quota: u64) -> u64 {
+    let products = products.max(1) as u64;
+    let quota = daily_quota.max(1);
+    // The narrowest interval at which `products` feeds together stay inside
+    // `quota` requests per day.
+    let floor = 86_400_u64.saturating_mul(products) / quota;
+    configured.max(floor)
 }
 
 /// Resolve one credential by its canonical `<provider>/<secret>` name.
@@ -249,16 +281,46 @@ mod tests {
     }
 
     #[test]
+    fn a_roster_widens_a_metered_venues_cadence_to_stay_inside_its_quota() {
+        // The motivating case: Alpha Vantage's 6-hour tick is 4 requests a day
+        // for one pair, but 28 for seven — over an account quota of 25. Twenty
+        // usable requests across seven pairs is one poll per pair per ~8.4h.
+        assert_eq!(quota_floor_secs(21_600, 7, 20), 30_240);
+        // One pair at the same cadence is already inside the quota, so the
+        // configured interval stands rather than being widened for nothing.
+        assert_eq!(quota_floor_secs(21_600, 1, 20), 21_600);
+    }
+
+    #[test]
+    fn a_generous_quota_never_slows_a_feed_down() {
+        // OANDA documents 100 requests/second, so nothing a roster does to the
+        // request count comes near it and the configured cadence must survive.
+        assert_eq!(quota_floor_secs(60, 7, 8_640_000), 60);
+    }
+
+    #[test]
+    fn the_floor_degrades_safely_rather_than_dividing_by_zero() {
+        // A misconfigured quota or an empty roster must not panic or produce a
+        // zero interval, which would poll as fast as the loop allows.
+        assert!(quota_floor_secs(60, 0, 0) >= 60);
+        assert!(quota_floor_secs(0, 1, 1) > 0);
+    }
+
+    #[test]
     fn the_feed_name_pairs_a_cursor_with_the_rows_it_wrote() {
         let cfg = FxConfig {
             database_url: String::new(),
             base_url: String::new(),
-            product_id: "AUD-USD".to_string(),
+            products: crate::roster::parse_roster("AUD-USD,EUR-USD").unwrap(),
             granularity_secs: 60,
             backfill_start_secs: 0,
             max_buckets_per_request: 5_000,
             poll_interval_secs: 60,
         };
-        assert_eq!(cfg.feed_name("oanda"), "fx:oanda:AUD-USD");
+        assert_eq!(cfg.feed_name("oanda", "AUD-USD"), "fx:oanda:AUD-USD");
+        // The cursor key is per pair, not per process: a roster service and the
+        // per-pair service it replaces name the same cursor, which is what
+        // makes the split a no-op for resume.
+        assert_eq!(cfg.feed_name("oanda", "EUR-USD"), "fx:oanda:EUR-USD");
     }
 }

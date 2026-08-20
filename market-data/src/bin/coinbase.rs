@@ -1,18 +1,20 @@
-//! The Coinbase EURC/USDC reference feed process: resume from the saved cursor,
-//! backfill then poll the Coinbase candles endpoint, and persist closed buckets
-//! into `cex_prices` through the framework store sink (docs/data-feeds.md §9).
-//! Long-lived; resumes from its cursor on restart.
+//! The Coinbase candle collector: for every product on its roster, resume from
+//! that product's saved cursor, backfill then poll the Coinbase candles
+//! endpoint, and persist closed buckets into `cex_prices` through the framework
+//! store sink (docs/data-feeds.md §9). Long-lived; resumes from its cursors on
+//! restart.
 //!
-//! It is thin on purpose — configuration, then source → sink wiring. The
-//! polling, paging, and decoding are the shared `dropset_feeds::venues`
-//! adapter's; all this crate adds is the row mapping.
+//! It is thin on purpose — configuration, then source → sink wiring per
+//! product. The polling, paging, and decoding are the shared
+//! `dropset_feeds::venues` adapter's; all this crate adds is the row mapping
+//! and the roster.
 
 use dropset_feeds::{
     connect, run,
     venues::{Candle, CoinbaseCandles},
     CursorStore, HttpClient, PgCursorStore, RunConfig, Sink, StoreSink,
 };
-use dropset_market_data::{config::Config, store::CexWriter};
+use dropset_market_data::{config::Config, store::CexWriter, supervise::run_all};
 use std::time::Duration;
 
 #[tokio::main]
@@ -28,33 +30,53 @@ async fn main() -> anyhow::Result<()> {
     // failing on the first committed batch. `dropset-migrate` owns creating
     // them (docs/data-feeds.md §8).
     dropset_db_schema::require_schema(&pool).await?;
-    let feed = cfg.feed_name();
+    let cursors = PgCursorStore::new(pool.clone());
 
-    // Bridge the store's saved position into the source at startup: the store
-    // sink owns the cursor, the source computes its window from it.
-    let resume = PgCursorStore::new(pool.clone()).load(&feed).await?;
-    let source = CoinbaseCandles::resume(
-        HttpClient::new(&cfg.coinbase_base_url)?,
-        feed.clone(),
-        cfg.product_id.clone(),
-        cfg.granularity_secs,
-        cfg.max_buckets_per_request,
-        resume,
-        cfg.backfill_start_secs,
-    )?;
+    // **One client for the process, cloned per feed.** This is not a saving,
+    // it is the rate-limit invariant: an `HttpClient`'s clones share one
+    // request-pacing budget, while a second `HttpClient::new` opens an
+    // independent one. Since every feed here talks to the same host from the
+    // same egress IP — which is what a keyless tier limits on
+    // (docs/data-feeds.md §10) — building a client per product would multiply
+    // the venue's budget by the roster size and quietly break the discipline
+    // the transport exists to hold.
+    let http = HttpClient::new(&cfg.coinbase_base_url)?;
+
+    let products: Vec<String> = cfg
+        .products
+        .iter()
+        .map(|entry| entry.product_id.clone())
+        .collect();
     tracing::info!(
-        %feed,
-        product = %cfg.product_id,
+        products = %products.join(","),
         granularity = cfg.granularity_secs,
-        "coinbase feed starting"
+        poll_secs = cfg.poll_interval_secs,
+        "coinbase candle collector starting"
     );
 
-    let writer = CexWriter::new("coinbase", &cfg.product_id, cfg.granularity_secs);
-    let sink = StoreSink::new(pool, feed, writer);
-    let sinks: Vec<Box<dyn Sink<Candle>>> = vec![Box::new(sink)];
     let run_cfg = RunConfig {
         poll_interval: Duration::from_secs(cfg.poll_interval_secs),
         ..RunConfig::default()
     };
-    run(source, sinks, run_cfg).await
+    let mut feeds = Vec::with_capacity(products.len());
+    for product_id in products {
+        // Per-product cursor key, so a roster service resumes exactly where
+        // the per-pair services it replaces left off.
+        let feed = cfg.feed_name(&product_id);
+        let resume = cursors.load(&feed).await?;
+        let source = CoinbaseCandles::resume(
+            http.clone(),
+            feed.clone(),
+            product_id.clone(),
+            cfg.granularity_secs,
+            cfg.max_buckets_per_request,
+            resume,
+            cfg.backfill_start_secs,
+        )?;
+        let writer = CexWriter::new("coinbase", &product_id, cfg.granularity_secs);
+        let sinks: Vec<Box<dyn Sink<Candle>>> =
+            vec![Box::new(StoreSink::new(pool.clone(), feed.clone(), writer))];
+        feeds.push((feed, run(source, sinks, run_cfg.clone())));
+    }
+    run_all(feeds).await
 }

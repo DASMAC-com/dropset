@@ -112,17 +112,38 @@ pub struct AlphaVantageDaily {
 }
 
 impl AlphaVantageDaily {
-    /// Build the source, resuming from a saved framework cursor when present
-    /// and otherwise starting at `default_start`.
+    /// The venue's configured transport, carrying its minimum request interval.
     ///
-    /// `api_key` is injected rather than read from the environment here
-    /// (docs/data-feeds.md §4). It is handed straight to the transport as a
-    /// marked credential parameter rather than kept on this struct, so the
-    /// adapter never spells the key into a per-request query itself — that is
+    /// Split out from [`AlphaVantageDaily::resume`] so a collector polling
+    /// several pairs builds **one** client and clones it per feed. An
+    /// [`HttpClient`]'s clones share one request-pacing budget while a second
+    /// `HttpClient::new` opens an independent one, and this is the venue where
+    /// that matters most: the free tier's quota is **25 requests per day for the
+    /// whole account** (docs/data-feeds.md §10), so a per-pair client would
+    /// hand each pair the entire account's budget to spend.
+    ///
+    /// The credential goes on the transport as a marked query parameter, which
+    /// is what lets an error URL be redacted — the adapter never spells the key
+    /// into a per-request query itself. **A venue's key is the same for every
+    /// pair on its roster, so carrying it here rather than per call costs
+    /// nothing and is what lets the redaction and the shared budget hold at the
+    /// same time**: one client, one pacing gate, one place the secret lives.
+    pub fn client(base_url: &str, api_key: &str) -> Result<HttpClient> {
+        Ok(HttpClient::new(base_url)?
+            .with_min_interval(MIN_REQUEST_INTERVAL)
+            .with_secret_query_param("apikey", api_key))
+    }
+
+    /// Build the source over a transport from [`AlphaVantageDaily::client`],
+    /// resuming from a saved framework cursor when present and otherwise
+    /// starting at `default_start`.
+    ///
+    /// The credential is **not** a parameter here: it lives on the transport
+    /// (see [`AlphaVantageDaily::client`], docs/data-feeds.md §4), so the
+    /// adapter never spells the key into a per-request query itself — which is
     /// what lets the transport redact it out of an error URL.
     pub fn resume(
-        base_url: &str,
-        api_key: &str,
+        http: HttpClient,
         name: impl Into<String>,
         from_symbol: impl Into<String>,
         to_symbol: impl Into<String>,
@@ -134,9 +155,7 @@ impl AlphaVantageDaily {
             None => default_start,
         };
         Ok(Self {
-            http: HttpClient::new(base_url)?
-                .with_min_interval(MIN_REQUEST_INTERVAL)
-                .with_secret_query_param("apikey", api_key),
+            http,
             name: name.into(),
             from_symbol: from_symbol.into(),
             to_symbol: to_symbol.into(),

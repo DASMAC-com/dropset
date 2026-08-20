@@ -366,6 +366,37 @@ processes:
 processes the compose file runs — **not by code flags.** The same
 images run locally and in the cloud; the compose file is the difference.
 
+**One service per venue, not per pair.** A store-sink collector takes a
+**roster** of canonical product ids and covers all of them, so widening
+coverage is a configuration change rather than another container. The
+alternative — which this replaced — was one service per pair, so N pairs
+cost N processes, N connection pools, and N schedulable units to do what
+is often a single batched request.
+
+How a roster becomes work depends on the venue's endpoint, and both
+shapes live behind the same configuration:
+
+- **Batched venues** (Kraken's ticker, Pyth's latest-price) price the
+  whole roster in one request, so the process runs a single feed whose
+  records fan out to many products. Adding a pair costs no extra request
+  at all.
+- **Per-product venues** (every candles endpoint, Coinbase's ticker) need
+  one source per product, so the process supervises several feeds
+  concurrently. They **share one HTTP client**, which is a rate-limit
+  requirement rather than a saving: clones of a client share its pacing
+  budget while a second client opens an independent one, and every feed
+  here reaches the same host from the same egress IP — which is what a
+  keyless tier limits on (§10). A client per product would multiply the
+  venue's budget by the roster size.
+
+Two properties keep the split safe. **Cursor keys are per product**
+(`fx:oanda:AUD-USD`), never per process, so consolidating N per-pair
+services into one per-venue service resumes every cursor exactly where it
+was. And **a failed feed fails the process**: a collector still running
+with two of its five pairs dead looks healthy to everything watching it,
+while the store's coverage is what actually gets read — so crashing and
+resuming from committed cursors is the honest behaviour.
+
 ______________________________________________________________________
 
 ## 6. Consumers and boundaries
@@ -503,6 +534,8 @@ without buying isolation.
 | ------------------------------------------------------------------ | ------------------ | --------------------------------------------------- |
 | `feed_cursors`                                                     | `feeds` store sink | Resumable per-feed position (JSONB)                 |
 | `cex_prices`                                                       | market-data        | CEX reference candles, per venue and product        |
+| `spot_ticks`                                                       | market-data        | Point-in-time prints, per venue and product        |
+| `pyth_fx_feeds`                                                    | migration (seed)   | Pyth FX roster — venue reference data, read-only at runtime |
 | `fx_rates` *(planned)*                                             | market-data        | Fiat-cross bars for the FX anchor leg               |
 | `peg_rates` *(planned)*                                            | market-data        | Issuer / redemption reference rates                 |
 | `fx_events` *(planned)*                                            | market-data        | Economic-calendar event times                       |
@@ -522,6 +555,30 @@ level even though several apps touch the table — and the framework, not
 an app, defines its shape. A table wanting that treatment has to earn it
 the same way: a key that makes the partition structural, not a
 convention two writers agree to keep.
+
+**Two row shapes for prices, and the distinction is deliberate.**
+`cex_prices` holds candles — aggregates over a window, keyed by that
+window's start. `spot_ticks` holds ticks — single observations, with no
+window at all. They are separate tables rather than one table at two
+granularities because a tick stored as a one-second "candle" would put a
+fabricated bucket width in the key, make `open`/`high`/`low`/`close` four
+copies of one number, leave no honest place for a confidence half-width,
+and silently corrupt every query that reads `cex_prices` as bars. The
+tick tier exists because the finest bucket any candle endpoint offers is
+60s, so no polling cadence makes a candle series show movement *between*
+closes.
+
+**Reference data is a third kind of table, and `pyth_fx_feeds` is the
+first of it.** It is not a feed's output; it is configuration a collector
+*reads*. Its writer is the migration that seeds it — there is no runtime
+writer at all — so the one-writer rule holds trivially, and a reader that
+found itself wanting to write one would be reaching for the parameter
+channel instead, which is a different design with different semantics
+(desired vs. applied state, a TUI writer, an audit trail). Keeping the two
+apart matters: slowly-changing venue coordinates want a migration and a
+restart, while operator-tunable runtime parameters want neither. See §12
+for why this particular configuration lives in the database rather than in
+the environment or a constant.
 
 ______________________________________________________________________
 
@@ -606,6 +663,51 @@ public REST API is keyless and reachable; its candles endpoint returns
 300 buckets per request, epoch `start` / `end` accepted), which
 backfills and polls cleanly — it validated the whole framework end to
 end before any harder source.
+
+### The tick tier — every wired venue, into the store
+
+The adapters above served only the maker's live path at first: Pyth
+Hermes, Kraken, and Coinbase's ticker fed in-process forward sinks and
+nothing was recorded. Each now also has a **store** collector writing into
+`spot_ticks` (§8), which is what fills the dashboard's multi-source overlay
+and makes a dislocation readable after the fact rather than only watchable
+live.
+
+| Collector                 | Shape                     | What it uniquely carries                                     |
+| ------------------------- | ------------------------- | ------------------------------------------------------------ |
+| `market-data-pyth`        | Batched, roster from store | A published **confidence** half-width and a publisher timestamp |
+| `market-data-kraken`      | Batched, roster from env   | Real market prints of `USDC/USD` (peg truth) and `EURC/EUR`  |
+| `market-data-coinbase-ticker` | One feed per product   | The prints **between** candle closes on the reference venue  |
+
+Three things about this tier are load-bearing.
+
+**`observed_at` is the venue's publish time where the venue publishes
+one**, else the poll second. Pyth does, so a re-polled reading carries the
+same instant and lands on the primary key — the re-fetch a restart causes
+is genuinely idempotent rather than a second row for one observation. The
+others do not, so their attribution is the poll.
+
+**A confidence of `NULL` means "no confidence notion", never zero.** Zero
+would read as *perfect certainty* and silently satisfy a fresh-but-uncertain
+gate that a missing value correctly fails, which is why the column
+constrains itself to `NULL OR > 0` and the writer coerces a malformed
+half-width to `NULL` rather than letting a `CHECK` violation crash-loop the
+collector.
+
+**A batched venue omits what it could not price, so a misconfiguration is
+indistinguishable from an outage** — and that is the failure mode this tier
+is most exposed to. A mistyped Pyth feed id (opaque hex, uncatchable by
+eye), a Kraken pair spelled the way *we* name it rather than the way Kraken
+does, and a currency the venue simply does not publish all produce the same
+thing: silence, with nothing logged. So the batched collectors track which
+configured products have *ever* priced and, after a few polls, report the
+ones that never did as a roster error rather than a venue gap. The
+per-product Coinbase collector needs no such watch — each of its feeds is
+named, so one that never yields is already identifiable in the logs.
+
+The CEX WebSocket adapter remains **deliberately out of scope**: §13 holds
+that question, and its trigger is a *quoting* need, not a visualization
+one. Polled ticks at 15 s serve the dashboard.
 
 ### The free-tier FX roster
 
@@ -719,16 +821,47 @@ be allocated rather than assumed.
   enforced in the shared HTTP client, so no individual source can
   outrun the budget.
 
-| Venue / source         | Cadence                           | Claim                                  |
-| ---------------------- | --------------------------------- | -------------------------------------- |
-| FX anchor (streaming)  | Push; no poll                     | Maker first; collector taps the stream |
-| CEX basis venues       | Slow poll, batched across symbols | Maker first                            |
-| `oanda` candles        | 60 s                              | Collector                              |
-| `twelvedata` bars      | 300 s                             | Collector                              |
-| `alphavantage` daily   | 6 h                               | Collector                              |
-| Issuer / peg rates     | Order of a day                    | Collector                              |
-| Econ calendar          | Order of a day, static download   | Collector                              |
-| On-chain (indexer RPC) | Framework poll interval           | Indexer                                |
+| Venue / source            | Cadence                           | Claim                                  |
+| ------------------------- | --------------------------------- | -------------------------------------- |
+| FX anchor (streaming)     | Push; no poll                     | Maker first; collector taps the stream |
+| CEX basis venues          | Slow poll, batched across symbols | Maker first                            |
+| `coinbase` candles        | 15 s                              | Collector                              |
+| `oanda` candles           | 60 s                              | Collector                              |
+| `twelvedata` bars         | 300 s, widened by roster size     | Collector                              |
+| `alphavantage` daily      | 6 h, widened by roster size       | Collector                              |
+| `coinbase-ticker` ticks   | 15 s per product                  | Collector                              |
+| `kraken` ticks            | 15 s, batched across the roster   | Collector                              |
+| `pyth` ticks              | 15 s, batched across the roster   | Collector                              |
+| Issuer / peg rates        | Order of a day                    | Collector                              |
+| Econ calendar             | Order of a day, static download   | Collector                              |
+| On-chain (indexer RPC)    | Framework poll interval           | Indexer                                |
+
+**Why the Coinbase candles feed polls at a quarter of its bucket width.**
+It used to poll every 60 s on 60-second candles, which meant the newest
+closed bucket was discovered up to a full minute after it closed — the
+series looked like it updated once a minute *and* lagged. Fifteen seconds
+does not change the row rate, since 60 s is the finest bucket the endpoint
+offers, but the newest closed bucket now lands ~45 s sooner. Four requests
+a minute per product is nowhere near the venue's public-tier ceiling.
+
+**A roster multiplies a metered venue's request count, and this is the
+easiest thing here to get wrong.** A cadence sized for one pair is
+multiplied by the number of pairs: Alpha Vantage's six-hour tick is four
+requests a day for one pair and 28 for seven, against an account quota of
+**25**. So the two metered FX collectors compute a floor from their roster
+size and their usable daily share, widen the configured interval to it, and
+log the effective value. Widening is nearly free for these venues because
+their endpoints return a *window* of bars — one poll backfills everything
+missed since the last, so a slower cadence makes a bar land later, never
+absent.
+
+That floor is the steady-state half; the shared client's minimum interval
+(below) is the burst half, and **both** are needed. Alpha Vantage's client
+raises its floor to 1 h — 24 requests/day against a 25/day account — which
+holds only because every feed in the process shares one client. Seven
+independent clients would each allow 24/day, or 168 against a 25/day quota,
+which is precisely why the roster collectors build one client and clone it
+(§5).
 
 Those cadences govern the **caught-up** state only — while a source
 backfills, the runner loops without pausing and only the shared client's
@@ -1074,6 +1207,34 @@ Its placement is staged:
    the archival tier. The store sink targets a `PgPool`, so this is a
    connection-string change and a restore — one engine, one `sqlx` and
    migration toolchain, no dialect port.
+
+**A hosted collector gets environment variables, not files.** ECS supplies
+configuration as environment variables (and secrets as references resolved
+into them); there is no practical way to hand a task a configuration file
+short of baking it into the image — which puts a rebuild back in the way of
+every change — or fetching it from S3 at startup, which is a new dependency
+and a new failure mode for something read once. So **collector
+configuration must be expressible as environment variables, or live in the
+shared database**, and that constraint decides where each kind of
+configuration goes:
+
+- **Scalars and short lists** — a base URL, a cadence, a product roster —
+  are environment variables. `PRODUCT_IDS` is a comma-separated list for
+  exactly this reason.
+- **Anything structured, or anything an operator should change without a
+  deploy**, goes in the database. The Pyth FX roster is the first of these
+  (§8): a cross needs a 32-byte hex id that no rule derives from a product
+  id, so the options were a compiled constant, a base64 blob in a variable,
+  or reference data in the store the collector already must reach. Adding a
+  cross is now an `INSERT` plus a restart.
+
+The database option is only available to a **DB-primary** app — one that
+already cannot work without Postgres (§8). It is not open to the maker's
+quote path, which keeps Postgres a soft dependency by design, and that is
+why the maker's copy of the FX roster stays a compiled constant serving as
+its degraded-mode fallback. Two copies of those coordinates therefore exist
+on purpose, and a test asserts the seed and the constant agree so the
+duplication cannot drift silently.
 
 ### Credentials — the local secrets enclave
 

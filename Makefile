@@ -436,11 +436,18 @@ indexer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf indexer indexer-api
 
-# Market-data collectors: the shared Postgres + the schema migration + the
-# Coinbase reference-price feed (docs/data-feeds.md §5, §8). Independent of
-# the validator — these poll public exchange REST APIs — so they run with or
-# without a localnet up, and they share the one `dropset` database with the
-# indexer. Stopping them leaves the recorded history on the volume.
+# Market-data collectors: the shared Postgres + the schema migration + every
+# **keyless** feed (docs/data-feeds.md §5, §8). Independent of the validator —
+# these poll public REST APIs — so they run with or without a localnet up, and
+# they share the one `dropset` database with the indexer. Stopping them leaves
+# the recorded history on the volume.
+#
+# Four feeds, across both tiers. Candles into `cex_prices`: the Coinbase
+# reference price. Spot ticks into `spot_ticks`: the Coinbase ticker (the prints
+# between candle closes), Kraken (batched peg truth — `USDC/USD` and
+# `EURC/EUR`), and Pyth Hermes (batched FX with a published confidence). All
+# four are keyless, which is what keeps this target working on a machine with no
+# credentials at all; `fx-collectors-up` starts the keyed FX venues.
 #
 # Grafana comes up with them, because a collector you cannot see is a
 # collector you cannot verify: the point of starting a feed is watching what
@@ -450,11 +457,12 @@ indexer-down: check-docker
 .PHONY: collectors-up
 collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --quiet-pull postgres migrate coinbase grafana
+		up -d --quiet-pull postgres migrate coinbase coinbase-ticker kraken \
+		pyth grafana
 .PHONY: collectors-down
 collectors-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		rm -sf coinbase grafana
+		rm -sf coinbase coinbase-ticker kraken pyth grafana
 
 # Grafana alone, on http://localhost:3200, serving the provisioned
 # market-data ingestion dashboard (market-data/grafana/, docs/data-feeds.md
@@ -478,9 +486,15 @@ grafana-down: check-docker
 # The free-tier FX collectors (docs/data-feeds.md §9, "The free-tier FX
 # roster").
 # Separate from `collectors-up` because these three need API credentials while
-# the Coinbase feed is keyless: that target must keep working on a machine with
-# no keys at all. Each service reads its credential from the environment and
-# refuses to start without one, naming the variable it wanted.
+# every feed that target starts is keyless: it must keep working on a machine
+# with no keys at all. Each service reads its credential from the environment
+# and refuses to start without one, naming the variable it wanted.
+#
+# Each takes a **roster** (`FX_PRODUCT_IDS`), so one service per venue covers
+# every pair rather than one service per pair. The two metered venues widen
+# their own poll interval to keep the roster inside their daily quota and log
+# the effective cadence — adding a pair cannot silently push the account over
+# its limit.
 #
 # Credentials come from the local secrets enclave (docs/data-feeds.md §12):
 # `op run` resolves the `op://` references in the git-ignored
@@ -503,8 +517,10 @@ grafana-down: check-docker
 # be. The flag is conditional: a single-account machine deletes the line, and
 # an empty `--account` would swallow the next argument.
 #
-# Set FX_PRODUCT_ID to collect a pair other than the AUD-USD default. It is the
-# canonical BASE-QUOTE form; each venue's own spelling is derived from it.
+# Set FX_PRODUCT_IDS to collect pairs other than the default roster. It is a
+# comma-separated list of canonical BASE-QUOTE ids; each venue's own spelling is
+# derived from them. It replaces the singular FX_PRODUCT_ID, which the compose
+# file no longer reads — a roster of one is just a list with one entry.
 FX_ENV = infra/localnet/secrets.local.env
 -include $(FX_ENV)
 OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account '$(DROPSET_OP_ACCOUNT)',)

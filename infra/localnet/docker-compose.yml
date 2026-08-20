@@ -68,7 +68,7 @@ services:
     # store itself: it has no `op`, and it is handed a resolved value.
     build:
       context: '../..'
-      dockerfile: 'market-data/Dockerfile'
+      dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
     - 'market-data-alphavantage'
     depends_on:
@@ -78,20 +78,26 @@ services:
       ALPHAVANTAGE_API_KEY: '${ALPHAVANTAGE_API_KEY:-}'
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
-      PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
+      PRODUCT_IDS: '${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}'
       RUST_LOG: 'info'
     profiles:
     - 'fx'
     restart: 'unless-stopped'
   coinbase:
-    # The Coinbase reference-price collector: resume from the saved cursor,
-    # backfill then poll the candles endpoint, and persist closed buckets into
-    # `cex_prices`. Keyless — the Coinbase Exchange public REST API needs no
-    # credentials — and unrelated to the validator, so it is the one service
-    # here that runs happily with no localnet up at all.
+    # The Coinbase reference-price collector: for each roster product, resume
+    # from that product's saved cursor, backfill then poll the candles endpoint,
+    # and persist closed buckets into `cex_prices`. Keyless — the Coinbase
+    # Exchange public REST API needs no credentials — and unrelated to the
+    # validator, so it is one of the services here that runs happily with no
+    # localnet up at all.
+    #
+    # Polls every 15s rather than every 60s. That does not change the row rate —
+    # 60s is the finest bucket the endpoint offers — but the newest closed
+    # bucket lands ~45s sooner instead of up to a minute late, which is what
+    # made the series look stale (docs/data-feeds.md §10).
     build:
       context: '../..'
-      dockerfile: 'market-data/Dockerfile'
+      dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
     - 'market-data-coinbase'
     depends_on:
@@ -100,7 +106,29 @@ services:
     environment:
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
-      PRODUCT_ID: '${PRODUCT_ID:-EURC-USDC}'
+      PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC}'
+      RUST_LOG: 'info'
+    restart: 'unless-stopped'
+  coinbase-ticker:
+    # The Coinbase spot-tick collector: poll each roster product's ticker and
+    # write the print to `spot_ticks`.
+    #
+    # This is the service that makes the dashboard's overlay move between candle
+    # closes — the candles feed on the same venue cannot, since 60s is the
+    # finest bucket its endpoint offers (docs/data-feeds.md §9). Keyless, so it
+    # comes up with `make collectors-up`.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/collectors.Dockerfile'
+    command:
+    - 'market-data-coinbase-ticker'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
+      PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC}'
       RUST_LOG: 'info'
     restart: 'unless-stopped'
   explorer:
@@ -258,6 +286,39 @@ services:
     ports:
     - '127.0.0.1:8080:8080'
     restart: 'unless-stopped'
+  kraken:
+    # The Kraken spot-tick collector: one batched public-ticker request prices
+    # the whole roster into `spot_ticks` (docs/data-feeds.md §9).
+    #
+    # It carries the two legs no other keyless source does: a real market print
+    # of the `USDC/USD` peg — Coinbase Exchange lists no such product and
+    # Binance.US quotes an administered flat 1.00 — and `EURC/EUR`, token
+    # against its own fiat. Collecting them is what lets a peg dislocation be
+    # read after the fact rather than only watched live.
+    #
+    # Keyless and batched: one request per poll regardless of roster size, so
+    # adding pairs costs nothing and needs no cadence change.
+    #
+    # `PRODUCT_IDS` holds canonical ids and the collector derives Kraken's
+    # spelling by concatenation. A legacy asset that keeps Kraken's `X`/`Z`
+    # prefix pins its own spelling with `CANONICAL=VENUE` (e.g.
+    # `USDT-USD=USDTZUSD`); a pair Kraken does not recognise is omitted from its
+    # response, and the collector reports it as a roster mistake after a few
+    # polls rather than leaving it to look like an outage.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/collectors.Dockerfile'
+    command:
+    - 'market-data-kraken'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
+      PRODUCT_IDS: '${KRAKEN_PRODUCT_IDS:-USDC-USD,EURC-USD}'
+      RUST_LOG: 'info'
+    restart: 'unless-stopped'
   maker-bot:
     # The leader market-maker: polls feeds, composes a fair mid, and drives
     # the relative-quoting hot + cold paths. Funds its leader (keys/EEEE.json)
@@ -304,7 +365,7 @@ services:
     # Saturday is not a stall.
     build:
       context: '../..'
-      dockerfile: 'market-data/Dockerfile'
+      dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
     - 'market-data-oanda'
     depends_on:
@@ -314,7 +375,7 @@ services:
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       OANDA_API_KEY: '${OANDA_API_KEY:-}'
-      PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
+      PRODUCT_IDS: '${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}'
       RUST_LOG: 'info'
     profiles:
     - 'fx'
@@ -348,6 +409,39 @@ services:
     restart: 'unless-stopped'
     volumes:
     - 'postgres-data:/var/lib/postgresql/data'
+  pyth:
+    # The Pyth Hermes FX tick collector: one batched request prices every cross
+    # on the roster into `spot_ticks`, with the publisher's confidence
+    # half-width (docs/data-feeds.md §9).
+    #
+    # This is the FX tier that publishes a confidence alongside its rate, which
+    # is why it outranks the daily fallbacks — and why storing it matters: a
+    # rate whose uncertainty was not recorded cannot later be told apart from
+    # one that was firm.
+    #
+    # **It takes no `PRODUCT_IDS`.** Its roster is reference data in the shared
+    # database (`pyth_fx_feeds`, seeded by the migration), because a Pyth feed is
+    # addressed by a 32-byte hex id that no rule derives from a product id — and
+    # because post-gate these collectors run on ECS, which offers environment
+    # variables but no way to mount a configuration file. Adding a cross is an
+    # INSERT plus a restart of this service; the roster is read once at startup
+    # and every row is logged, so the effective set is legible without querying
+    # the database it came from.
+    #
+    # Keyless and batched: one request per poll for the whole roster.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/collectors.Dockerfile'
+    command:
+    - 'market-data-pyth'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
+      RUST_LOG: 'info'
+    restart: 'unless-stopped'
   taker-bot:
     # The benign flow taker: stochastic swaps so the book moves and the maker
     # takes fills. Signs swaps with keys/FFFF.json and mints itself back up to
@@ -385,10 +479,12 @@ services:
     # detection reads bar absence from OANDA rather than trusting either alone.
     #
     # Its 300-second tick is sized to 800 credits/day with headroom; that does
-    # not coarsen the bars, since one request returns a window of them.
+    # not coarsen the bars, since one request returns a window of them. With a
+    # roster the collector widens that interval itself so the pairs together
+    # stay inside the same daily budget, and logs the effective value.
     build:
       context: '../..'
-      dockerfile: 'market-data/Dockerfile'
+      dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
     - 'market-data-twelvedata'
     depends_on:
@@ -397,7 +493,7 @@ services:
     environment:
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
-      PRODUCT_ID: '${FX_PRODUCT_ID:-AUD-USD}'
+      PRODUCT_IDS: '${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}'
       RUST_LOG: 'info'
       TWELVEDATA_API_KEY: '${TWELVEDATA_API_KEY:-}'
     profiles:

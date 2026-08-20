@@ -4,21 +4,21 @@
 # features — not the Solana `rpc` tree and not the on-chain program — so
 # this build stays lean and never pulls the anchor-next git source.
 #
-# **Every** binary in the package is built and shipped, not just the Coinbase
-# one, because the compose file runs all four services from this one image and
-# selects between them with `command:`. Naming a single bin here is what made
-# the three FX services fail at start with `executable file not found in
-# $PATH` — the image built fine, so nothing caught it until a container ran.
+# **Every** binary in the package is built and shipped, not just one, because
+# the compose file runs all of them from this one image and selects between them
+# with `command:`. Naming a single bin here is what made three FX services fail
+# at start with `executable file not found in $PATH` — the image built fine, so
+# nothing caught it until a container ran.
 #
-# The build step needs no edit for a fifth collector (building the package
-# builds its bins), but the runtime COPY below does: it enumerates the four
-# rather than globbing, because `market-data-*` in `target/release/` would also
-# match cargo's `.d` dependency files. A fifth bin added without a line there
-# reproduces exactly the failure above, so add both together.
+# The build step needs no edit for a new collector (building the package builds
+# its bins), but the runtime COPY below does: it enumerates them rather than
+# globbing, because `market-data-*` in `target/release/` would also match
+# cargo's `.d` dependency files. A bin added to `market-data/Cargo.toml` without
+# a line there reproduces exactly the failure above, so add both together.
 #
-# There is no migrate binary here any more: schema provisioning belongs to
-# `dropset-migrate` (infra/localnet/migrate.Dockerfile), the single schema
-# owner (docs/data-feeds.md §8). This image only ever asserts the schema.
+# There is no migrate binary here: schema provisioning belongs to
+# `dropset-migrate` (migrate.Dockerfile), the single schema owner
+# (docs/data-feeds.md §8). This image only ever asserts the schema.
 #
 # Context is the repo root (see docker-compose.yml); the rust image honours the
 # workspace `rust-toolchain.toml`. The insert SQL is embedded at compile time
@@ -47,11 +47,17 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# The candle collectors, writing `cex_prices`...
 COPY --from=builder /app/target/release/market-data-alphavantage \
     /app/target/release/market-data-coinbase \
     /app/target/release/market-data-oanda \
     /app/target/release/market-data-twelvedata \
     /usr/local/bin/
-# The keyless reference feed is the default; the FX services each override it
-# with their own `command:`.
+# ...and the tick collectors, writing `spot_ticks`.
+COPY --from=builder /app/target/release/market-data-coinbase-ticker \
+    /app/target/release/market-data-kraken \
+    /app/target/release/market-data-pyth \
+    /usr/local/bin/
+# The keyless reference feed is the default; every other service overrides it
+# with its own `command:`.
 CMD ["market-data-coinbase"]

@@ -3,17 +3,33 @@
 //! default tuned for the gate's Coinbase EURC/USDC feed, so the same binary
 //! runs unchanged against localnet Postgres and, post-gate, Fargate + Aurora.
 
+use crate::roster::{roster_from_env, RosterEntry};
 use dropset_feeds::{now_secs, venues::coinbase::MAX_CANDLES_PER_REQUEST};
 
 /// Default backfill depth — long enough to span the weekend and macro-event
 /// regimes with enough repeats to matter (docs/data-feeds.md §11).
 const DEFAULT_BACKFILL_DAYS: u64 = 60;
 
+/// Seconds between polls once the feed has caught up.
+///
+/// **Deliberately far below the bucket width.** A 60-second poll on 60-second
+/// candles means the newest closed bucket is discovered up to a full minute
+/// after it closes, which is what made the collected series look like it
+/// updated once a minute *and lagged*. Polling at a quarter of the bucket width
+/// does not change the row rate — 60s is the finest bucket the endpoint offers,
+/// so it is still one row per minute per pair — but the newest closed bucket
+/// lands ~45s sooner. Four requests a minute per pair is nowhere near the
+/// venue's budget; the cadence table in docs/data-feeds.md §10 records where
+/// each venue's ceiling actually is.
+const DEFAULT_POLL_INTERVAL_SECS: u64 = 15;
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub database_url: String,
     pub coinbase_base_url: String,
-    pub product_id: String,
+    /// Every product this collector polls. One process serves a venue rather
+    /// than a pair (see [`crate::roster`]).
+    pub products: Vec<RosterEntry>,
     pub granularity_secs: i64,
     /// Epoch second the backfill starts from. Only used the first time a feed
     /// runs; afterwards the saved cursor wins.
@@ -54,18 +70,28 @@ impl Config {
         Ok(Self {
             database_url,
             coinbase_base_url: env_or("COINBASE_BASE_URL", "https://api.exchange.coinbase.com"),
-            product_id: env_or("PRODUCT_ID", "EURC-USDC"),
+            products: roster_from_env("EURC-USDC")?,
             granularity_secs,
             backfill_start_secs,
             max_buckets_per_request,
-            poll_interval_secs: env_or("POLL_INTERVAL_SECS", "60").parse().unwrap_or(60),
+            poll_interval_secs: env_or(
+                "POLL_INTERVAL_SECS",
+                &DEFAULT_POLL_INTERVAL_SECS.to_string(),
+            )
+            .parse()
+            .unwrap_or(DEFAULT_POLL_INTERVAL_SECS),
         })
     }
 
     /// The framework feed identifier (cursor key, log/metric label) — stable
     /// across restarts, e.g. `cex:coinbase:EURC-USDC`.
-    pub fn feed_name(&self) -> String {
-        format!("cex:coinbase:{}", self.product_id)
+    ///
+    /// Keyed by product rather than by process, which is what lets one roster
+    /// service take over from several per-pair ones without resetting a single
+    /// cursor: the name a pair's cursor was saved under does not depend on how
+    /// many pairs share its process.
+    pub fn feed_name(&self, product_id: &str) -> String {
+        format!("cex:coinbase:{product_id}")
     }
 }
 

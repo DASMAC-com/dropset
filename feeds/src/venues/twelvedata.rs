@@ -119,18 +119,38 @@ pub struct TwelveDataCandles {
 }
 
 impl TwelveDataCandles {
-    /// Build the source, resuming from a saved framework cursor when present
-    /// and otherwise starting the backfill at `default_start`.
+    /// The venue's configured transport, carrying its minimum request interval.
     ///
-    /// `api_key` is injected rather than read from the environment here
-    /// (docs/data-feeds.md §4). It is handed straight to the transport as a
-    /// marked credential parameter rather than kept on this struct, so the
-    /// adapter never spells the key into a per-request query itself — that is
+    /// Split out from [`TwelveDataCandles::resume`] so a collector polling
+    /// several symbols builds **one** client and clones it per feed. An
+    /// [`HttpClient`]'s clones share one request-pacing budget while a second
+    /// `HttpClient::new` opens an independent one — so a client per symbol
+    /// would multiply this venue's credit budget by the roster size, which on a
+    /// metered free tier is the difference between within-budget and throttled
+    /// (docs/data-feeds.md §10).
+    /// The credential goes on the transport as a marked query parameter, which
+    /// is what lets an error URL be redacted — the adapter never spells the key
+    /// into a per-request query itself. **A venue's key is the same for every
+    /// symbol on its roster, so carrying it here rather than per call costs
+    /// nothing and is what lets the redaction and the shared budget hold at the
+    /// same time**: one client, one pacing gate, one place the secret lives.
+    pub fn client(base_url: &str, api_key: &str) -> Result<HttpClient> {
+        Ok(HttpClient::new(base_url)?
+            .with_min_interval(MIN_REQUEST_INTERVAL)
+            .with_secret_query_param("apikey", api_key))
+    }
+
+    /// Build the source over a transport from [`TwelveDataCandles::client`],
+    /// resuming from a saved framework cursor when present and otherwise
+    /// starting the backfill at `default_start`.
+    ///
+    /// The credential is **not** a parameter here: it lives on the transport
+    /// (see [`TwelveDataCandles::client`], docs/data-feeds.md §4), so the
+    /// adapter never spells the key into a per-request query itself — which is
     /// what lets the transport redact it out of an error URL.
     #[allow(clippy::too_many_arguments)]
     pub fn resume(
-        base_url: &str,
-        api_key: &str,
+        http: HttpClient,
         name: impl Into<String>,
         symbol: impl Into<String>,
         granularity_secs: i64,
@@ -143,9 +163,7 @@ impl TwelveDataCandles {
             None => default_start,
         };
         Ok(Self {
-            http: HttpClient::new(base_url)?
-                .with_min_interval(MIN_REQUEST_INTERVAL)
-                .with_secret_query_param("apikey", api_key),
+            http,
             name: name.into(),
             symbol: symbol.into(),
             interval: interval_token(granularity_secs)?,
@@ -400,9 +418,9 @@ mod tests {
 
     #[test]
     fn an_unsupported_interval_is_rejected_at_construction() {
+        let http = TwelveDataCandles::client("https://example.test", "key").unwrap();
         assert!(TwelveDataCandles::resume(
-            "https://example.test",
-            "key",
+            http,
             "fx:twelvedata:AUD-USD",
             "AUD/USD",
             180,
@@ -415,9 +433,9 @@ mod tests {
 
     #[test]
     fn resume_clamps_an_oversized_window_to_the_venue_cap() {
+        let http = TwelveDataCandles::client("https://example.test", "key").unwrap();
         let source = TwelveDataCandles::resume(
-            "https://example.test",
-            "key",
+            http,
             "fx:twelvedata:AUD-USD",
             "AUD/USD",
             60,
@@ -427,5 +445,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(source.max_bars, MAX_BARS_PER_REQUEST);
+    }
+
+    #[test]
+    fn one_client_serves_a_whole_roster_on_a_single_credit_budget() {
+        // On a metered free tier this is the difference between within-budget
+        // and throttled: N symbols must not mean N independent budgets.
+        let http = TwelveDataCandles::client("https://example.test", "key").unwrap();
+        for symbol in ["AUD/USD", "EUR/USD", "GBP/USD"] {
+            assert!(TwelveDataCandles::resume(
+                http.clone(),
+                format!("fx:twelvedata:{symbol}"),
+                symbol,
+                60,
+                500,
+                None,
+                1_000,
+            )
+            .is_ok());
+        }
     }
 }

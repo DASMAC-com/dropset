@@ -118,16 +118,30 @@ pub struct OandaCandles {
 }
 
 impl OandaCandles {
-    /// Build the source, resuming from a saved framework cursor when present
-    /// and otherwise starting the backfill at `default_start`.
+    /// The venue's configured transport.
+    ///
+    /// Split out from [`OandaCandles::resume`] so a collector polling several
+    /// instruments builds **one** client and clones it per feed. That is a
+    /// rate-limit requirement rather than a saving: an [`HttpClient`]'s clones
+    /// share one request-pacing budget while a second `HttpClient::new` opens
+    /// an independent one, so constructing a client per instrument would
+    /// multiply the venue's budget by the roster size (docs/data-feeds.md §10).
     ///
     /// `api_key` is the v20 bearer token, taken as an argument rather than read
     /// from the environment here (docs/data-feeds.md §4) — the caller decides
     /// where the secret came from.
+    pub fn client(base_url: &str, api_key: &str) -> Result<HttpClient> {
+        Ok(HttpClient::new(base_url)?
+            .with_secret_header("Authorization", &format!("Bearer {api_key}"))?
+            .with_header(DATETIME_FORMAT_HEADER, "UNIX")?)
+    }
+
+    /// Build the source over a transport from [`OandaCandles::client`],
+    /// resuming from a saved framework cursor when present and otherwise
+    /// starting the backfill at `default_start`.
     #[allow(clippy::too_many_arguments)]
     pub fn resume(
-        base_url: &str,
-        api_key: &str,
+        http: HttpClient,
         name: impl Into<String>,
         instrument: impl Into<String>,
         granularity_secs: i64,
@@ -135,9 +149,6 @@ impl OandaCandles {
         resume: Option<Cursor>,
         default_start: i64,
     ) -> Result<Self> {
-        let http = HttpClient::new(base_url)?
-            .with_secret_header("Authorization", &format!("Bearer {api_key}"))?
-            .with_header(DATETIME_FORMAT_HEADER, "UNIX")?;
         let next_start = match resume {
             Some(cursor) => cursor.get::<FxCursor>()?.next_start,
             None => default_start,
@@ -431,33 +442,36 @@ mod tests {
 
     #[test]
     fn resume_clamps_an_oversized_window_to_the_venue_cap() {
-        let source = OandaCandles::resume(
-            "https://example.test",
-            "token",
-            "fx:oanda:AUD-USD",
-            "AUD_USD",
-            60,
-            10_000,
-            None,
-            1_000,
-        )
-        .unwrap();
+        let http = OandaCandles::client("https://example.test", "token").unwrap();
+        let source = OandaCandles::resume(http, "fx:oanda:AUD-USD", "AUD_USD", 60, 10_000, None, 1_000)
+            .unwrap();
         assert_eq!(source.max_buckets, MAX_CANDLES_PER_REQUEST);
     }
 
     #[test]
     fn an_unsupported_granularity_is_rejected_at_construction() {
         // Not merely mapped wrong later: the source must refuse to exist.
-        assert!(OandaCandles::resume(
-            "https://example.test",
-            "token",
-            "fx:oanda:AUD-USD",
-            "AUD_USD",
-            180,
-            500,
-            None,
-            1_000,
-        )
-        .is_err());
+        let http = OandaCandles::client("https://example.test", "token").unwrap();
+        assert!(OandaCandles::resume(http, "fx:oanda:AUD-USD", "AUD_USD", 180, 500, None, 1_000).is_err());
+    }
+
+    #[test]
+    fn one_client_serves_a_whole_roster_on_a_single_rate_budget() {
+        // The invariant a roster collector depends on: several instruments
+        // share one transport, so the venue's request budget is not multiplied
+        // by the number of pairs polled.
+        let http = OandaCandles::client("https://example.test", "token").unwrap();
+        for instrument in ["AUD_USD", "EUR_USD", "GBP_USD"] {
+            assert!(OandaCandles::resume(
+                http.clone(),
+                format!("fx:oanda:{instrument}"),
+                instrument,
+                60,
+                500,
+                None,
+                1_000,
+            )
+            .is_ok());
+        }
     }
 }

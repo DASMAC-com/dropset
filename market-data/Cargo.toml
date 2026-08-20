@@ -1,16 +1,28 @@
 # cspell:word rustls
 # The market-data collection app (docs/data-feeds.md §7), and the first
 # consumer of the shared `feeds` framework — so it proves the source →
-# store-sink path end to end. Four binaries, one per source:
-# `market-data-coinbase` (the crypto reference feed, §9) and the free-tier FX
-# roster `market-data-oanda` / `-twelvedata` / `-alphavantage` (§9 "The
-# free-tier FX roster"). Schema provisioning belongs to `dropset-migrate`, the
-# single schema owner (§8), so this crate ships no migrate runner. HTTP-only: it
-# enables `feeds`' `http` + `store` features and never compiles the Solana or
-# streaming transports.
+# store-sink path end to end. Seven binaries, one per venue-and-tier, and the
+# tier is what decides the table each writes:
+#
+# * Candles into `cex_prices` — `market-data-coinbase` (the crypto reference
+#   feed, §9) and the free-tier FX roster `market-data-oanda` /
+#   `-twelvedata` / `-alphavantage` (§9 "The free-tier FX roster").
+# * Spot ticks into `spot_ticks` — `market-data-kraken` (batched peg truth),
+#   `market-data-pyth` (batched FX with a published confidence), and
+#   `market-data-coinbase-ticker` (the prints between candle closes).
+#
+# One binary serves a **venue**, not a pair: each takes a product roster, so
+# covering another pair is configuration rather than another service.
+#
+# Schema provisioning belongs to `dropset-migrate`, the single schema owner
+# (§8), so this crate ships no migrate runner. HTTP-only: it enables `feeds`'
+# `http` + `store` features and never compiles the Solana or streaming
+# transports.
 #
 # Each binary is declared rather than left to `src/bin` auto-discovery, so the
 # deployed command name carries the crate prefix the compose services invoke.
+# Adding one here also needs a line in the runtime `COPY` of
+# `infra/localnet/collectors.Dockerfile`, which enumerates them.
 
 [[bin]]
 name = "market-data-alphavantage"
@@ -21,8 +33,20 @@ name = "market-data-coinbase"
 path = "src/bin/coinbase.rs"
 
 [[bin]]
+name = "market-data-coinbase-ticker"
+path = "src/bin/coinbase_ticker.rs"
+
+[[bin]]
+name = "market-data-kraken"
+path = "src/bin/kraken.rs"
+
+[[bin]]
 name = "market-data-oanda"
 path = "src/bin/oanda.rs"
+
+[[bin]]
+name = "market-data-pyth"
+path = "src/bin/pyth.rs"
 
 [[bin]]
 name = "market-data-twelvedata"
