@@ -4,6 +4,8 @@
 
 <!-- cspell:word jiff -->
 
+<!-- cspell:word Juneteenth -->
+
 <!-- cspell:word nager -->
 
 <!-- cspell:word openholidaysapi -->
@@ -57,13 +59,30 @@ over-the-counter and trades continuously through the week; a holiday
 in one currency's home jurisdiction thins liquidity and suspends
 *settlement*, but the market stays open and the feeds keep publishing.
 
-This is measured, not assumed. Friday 2026-07-03 was US Independence
-Day observed (4 July fell on a Saturday), a Federal Reserve and
-Fedwire holiday — the most significant US market holiday inside the
-stored window. The OANDA EUR/USD minute series published **1,018 bars**
-that day, against a mean of ~1,019 across the nine other Fridays in
-the series (1,012 / 1,018 / 1,019 / 1,020). The holiday is invisible
-to feed availability.
+This is measured, not assumed. The stored window contains **two** US
+federal (and Fedwire) holidays, both falling on a Friday: 2026-06-19
+(Juneteenth) and 2026-07-03 (Independence Day observed, since 4 July
+fell on a Saturday). A full trading Friday in this series is 1,020
+minutes, midnight to the 17:00 ET close, and the nine Fridays run
+1,012 to 1,020 bars with a mean of 1,018.4:
+
+| Friday                     | Bars        |
+| -------------------------- | ----------- |
+| 2026-06-19 (Juneteenth)    | 1,012       |
+| 2026-07-03 (4 July obs.)   | 1,018       |
+| the seven ordinary Fridays | 1,018–1,020 |
+
+Independence Day observed is indistinguishable from an ordinary Friday.
+Juneteenth is the lowest count in the series — and still only 8 bars,
+0.8%, below a full day, which is nowhere near a closure and is itself
+confounded: 2026-06-19 is the second day of the series, so collector
+ramp-up is an equally good explanation. Either reading gives the same
+answer. **A US federal holiday does not measurably interrupt the FX
+feed.**
+
+Stating it this way rather than as one holiday against a clean
+baseline matters, because the earlier framing had the second holiday
+sitting *inside* the comparison set.
 
 So holidays are excluded from the calendar's availability path
 entirely. If they return later it will be as a *width* input — thin
@@ -111,11 +130,25 @@ assumptions.
 | `date.nager.at`           | Live, keyless; 249 countries         |
 | `openholidaysapi.org`     | Live, keyless; **36** countries only |
 | ECB TARGET / T2 schedule  | Confirmed: **6** closing days a year |
+| ECB monetary-policy dates | **Not probed** — see below           |
 | BLS release schedule      | **HTTP 403** — blocked, see below    |
 | Federal Reserve FOMC JSON | **No official JSON API exists**      |
 | FRED `releases/dates`     | Live, well-formed; needs a free key  |
 
-Four of these need comment.
+Five of these need comment. Note first what the two ECB rows are: the
+research brief asked for the **ECB calendar** as a macro-release
+source, and what was probed is the **TARGET/T2 settlement** schedule —
+a different dataset, which belongs to the holiday argument below. The
+ECB's monetary-policy meeting calendar was **not** probed, because
+macro releases left scope (§1.2) before it was reached. That is a gap
+in the record, not a finding: it is named here so the row is not read
+as an answer to a question nobody asked.
+
+Two further axes the brief asked for per macro source — **revision
+behavior** and **forward horizon** — were likewise not established for
+any source, for the same reason. Timezone handling is partially
+answered (an authored rule, itself unverified) below. If macro returns,
+those three are the first things to establish, not the last.
 
 **`openholidaysapi.org` cannot cross-verify the roster.** It covers 36
 countries, and is missing **US, GB, AU, SG, and ID** — five of the
@@ -191,10 +224,22 @@ dependency at all.
 ## 2. Where daylight saving is resolved: one authority
 
 The FX week boundary is a **local wall-clock** fact, not a UTC one.
-That is measured: across nine consecutive weekends the boundary sits
-at exactly Friday 16:59 and Sunday 17:04 New York local time with
-zero variance, while its UTC position moves with US daylight saving
-(§6.1).
+Two things support that, and they are worth separating because only
+one of them is measured here.
+
+The stored series pins the boundary at exactly Friday 16:59 and Sunday
+17:04 New York local time across nine consecutive weekends with zero
+variance (§6.1). But every one of those weekends sits inside a single
+daylight-saving regime, so the boundary's **UTC** position was equally
+constant over the window. Within one regime the local-time and
+fixed-UTC models are observationally identical, and this evidence does
+not separate them (§6.6).
+
+What selects the local-time model is convention, not the measurement:
+the interbank week, the session rule table, and CME's published
+schedule are each stated in local time, and the analytics already
+resolve them that way. The measurement is *consistent with* that model
+and excludes nothing; November is when it becomes a test.
 
 The repo was heading for two authorities on this, which would have
 drifted:
@@ -269,10 +314,16 @@ weekday, which the interbank tape does not: the stored weekdays carry
 
 That is the case for empirical derivation in one line: the published
 schedule describes a *different market* that happens to trade the same
-currencies. Worth noting because the maker's own comment currently
-conflates the two, describing interbank FX and CME as shut on the same
-Friday-to-Sunday-17:00-ET bracket; the Friday half is right and the
-Sunday half is CME's 18:00 ET, not 17:00.
+currencies.
+
+Worth noting because the maker's own comment currently conflates the
+two, describing interbank FX and CME as shut on one shared
+Friday-to-Sunday-17:00-ET bracket. Read as a statement about
+**interbank**, that bracket is right — it is CME that does not fit it,
+reopening an hour later. So the correction is to stop describing the
+two as one schedule; it is emphatically **not** to move the Sunday
+open to 18:00 ET, which would introduce precisely the hour-late error
+§5.2 measures.
 
 ### 3.2 The four sessions, and their overlaps
 
@@ -286,9 +337,12 @@ Overlaps are derived, not authored: two sessions overlap when their
 generated instants intersect. The one that matters most is
 **London/New York**, which the rule table places at 08:00 to 12:00 ET
 in summer — and which the stored series independently confirms as the
-highest-volatility band of the day, at up to 4.5× the daily trough
-(§6.3). A session may be counted in more than one overlap; that is
-deliberate, the same convention the analytics use.
+highest-volatility band of the day, though at ~1.7× the median hour
+rather than the larger figure the raw peak suggests (§5.3 derives the
+multiplier and §6.3 the caveat behind it). A bar may be counted under
+more than one session, and overlaps inherit that: the analytics
+already accept multiple counting across sessions, deliberately, and
+note that per-session counts therefore sum to more than the total.
 
 ### 3.3 What "closed" means, precisely
 
@@ -341,8 +395,10 @@ The shared database **already has an `events` table** — the indexer's
 on-chain event log, keyed by slot, transaction index, signature, and
 event ordinal. The original design proposed "an events table" for
 macro releases, which would have collided outright in the one shared
-`dropset` database. `docs/data-feeds.md` §8 gets this right, naming
-the planned table `fx_events`.
+`dropset` database. The data-feeds doc avoided that collision, naming
+its planned table `fx_events` — though note that row is now **moot in
+substance**, since §1.2 removes the dataset it was planned for; it is
+cited here only as the better naming choice, and §4.2 reconciles it.
 
 The macro table is out of scope here, so the collision is moot for
 now, but the name is reserved and the calendar's own table must not
@@ -351,11 +407,56 @@ accordingly.
 
 A smaller adjacent finding, recorded in passing: the running database
 also holds a `feed_health` table that **nothing in the repo
-references** — not the source, not the migrations. It is an orphan
-left in the durable volume by a migration that has since gone. It is
-unrelated to the calendar, but it is the natural place a feed-health
-consumer would reach for, so it should be dropped or reclaimed
+references** — not the source, not the migrations, both searched. How
+it got there is not established (a withdrawn migration and an
+out-of-band tool fit equally); what is established is that it is
+unreferenced and that the volume is durable across schema changes. It
+is unrelated to the calendar, but it is the natural place a
+feed-health consumer would reach for, so it should be dropped or
+reclaimed
 deliberately rather than adopted by accident.
+
+### 4.2 Reconciling the sibling documents
+
+Deferring the macro dataset invalidates several live statements in
+`docs/data-feeds.md`, and those are reconciled **in this change**
+rather than handed onward. That choice is deliberate: the natural
+place to delegate the cleanup would be the ingestion issue, but §1 and
+§4 have just emptied that issue's subject, so it may well close as
+"nothing left to build" and take the delegated cleanup with it. A doc
+fix that depends on an issue this document dissolves is a doc fix that
+does not happen.
+
+What changed there:
+
+- The consumers list no longer promises an econ-calendar feed, and
+  points here instead.
+- `fx_events` is marked *(deferred)* rather than *(planned)*, and a
+  `fx_sessions` row is added for the one table that is actually
+  coming.
+- The venue-policy table marks the macro overlay deferred, and gains a
+  short subsection stating that the **session clock is not a leg
+  source** — deliberately *not* a row in that table. Every row there is
+  a price source offered to a leg's consensus, and a clock carries no
+  value to corroborate, so it belongs to no leg. An earlier draft of
+  this change did add it as a row; that was wrong, and the correction
+  is the shape the quoting-posture issue consumes.
+- The polling-cadence table's econ-calendar row is removed rather than
+  rewritten, with the generated instants' exemption stated in prose
+  beneath it — a non-polled artifact given a cadence and a collector
+  owner would have reproduced, relabelled, the same category error the
+  old row made against §4's "nothing is polled".
+- The §13 open question "Econ-calendar source" is **resolved**, in the
+  same form as the resolved FX-bar-source entry beside it, and keeps
+  the two probe findings (BLS blocked, no Fed API) that cost a probe
+  each.
+
+`docs/market-making.md` was checked and needs **nothing**: it carries
+no econ-calendar pointer, and its two macro references describe
+volatility behavior and the FX oracle's own confidence widening, which
+hold with or without a calendar. Its regime section still wants the
+multi-modal posture written up, and that stays with the
+quoting-posture issue, which is the change that implements it.
 
 ## 5. Consumers
 
@@ -406,23 +507,55 @@ Sunday 22:00 UTC, DST explicitly ignored, thresholds marked as to be
 determined. Against the measured boundary it is wrong by about an hour
 a week, and the error is seasonal:
 
-|              | Approximation | Measured (EDT) | Error        |
-| ------------ | ------------- | -------------- | ------------ |
-| Friday close | 21:00 UTC     | 21:00 UTC      | none         |
-| Sunday open  | 22:00 UTC     | **21:04 UTC**  | ~56 min late |
+|              | Approximation | Convention | First bar seen |
+| ------------ | ------------- | ---------- | -------------- |
+| Friday close | 21:00 UTC     | 21:00 UTC  | 20:59 (last)   |
+| Sunday open  | 22:00 UTC     | 21:00 UTC  | **21:04**      |
 
-In winter the boundary shifts an hour later in UTC and the error
-swaps ends: the Friday close becomes ~60 minutes early and the Sunday
-open lands exactly. So one boundary is right and the other is about an
-hour wrong, in each half of the year.
+Against the convention boundary the Sunday error is a round **60
+minutes**; against the first bar actually observed it is ~56. Both
+numbers are defensible because there are two references, which is a
+distinction §5.2 has to draw rather than blur — see below. In winter
+the boundary shifts an hour later in UTC and the error swaps ends: the
+Friday close becomes ~60 minutes early and the Sunday open lands on
+the convention boundary exactly. So one boundary is right and the
+other is about an hour wrong, in each half of the year.
 
-The direction matters more than the magnitude. Both errors declare the
-market **closed while it is open** — never the reverse. That is the
-safe direction: it cannot spuriously degrade the engine or tighten the
-kill switches on a live market. What it does instead is **mask a real
-outage** for that hour: a genuine FX failure inside the window reads
-as a healthy scheduled closure. That is why the defect has gone
-unnoticed, and also why it is worth fixing rather than tolerating.
+The direction matters more than the magnitude. The approximation's
+window is a strict **superset** of the true window in both seasons and
+on the transition weekends, so both errors declare the market **closed
+while it is open** — never the reverse. That is the safe direction: it
+cannot spuriously degrade the engine or tighten the kill switches on a
+live market. What it does instead is **mask a real outage** for that
+hour: a genuine FX failure inside the window reads as a healthy
+scheduled closure. That is why the defect has gone unnoticed, and also
+why it is worth fixing rather than tolerating.
+
+**Which instant the generator should emit — 17:00 or 17:04.** The four
+minutes are not noise, and the choice has a consequence. Across all
+nine Sundays the first bar lands at 17:04 ET with **zero** bars at
+17:00 through 17:03; minute 04 is present on 9 of 9, while later
+minutes in the same hour are missing on some (17:06 on 7 of 9). A
+liquidity gap would vary — this does not, so 17:04 is a structural
+property of the anchor's reopen rather than a quiet opening few
+minutes.
+
+That settles the choice. The consumer is *do we expect a leading
+feed*, not *is the market notionally open*, and those differ by four
+minutes every Sunday. Emitting the convention 17:00 would have the
+maker expect an anchor that provably is not there yet — and a missing
+FX leg outside the weekend window composes to
+`Degraded(FxStale)`, with the kill-switch tightening of §6.5 behind
+it. That is a false degrade, weekly, introduced by the fix. So the
+generated open is the **feed-availability** instant, and the
+convention boundary is recorded beside it as documentation rather than
+used.
+
+The cost, stated because it is real: this makes the weekly open a fact
+about *our anchor* rather than about the market, so it must be
+re-derived if the anchor vendor changes. That is the one place this
+calendar deliberately describes the feed instead of the market, and it
+is why §6.1's acceptance test is written against observed gaps.
 
 This document specifies the fix but does not implement it; the
 substitution belongs to the quoting-posture issue, where the
@@ -435,12 +568,53 @@ defines, and the mapping follows §3.3 exactly:
 
 - **Market closed** — the multi-modal switch. FX is expected silent,
   the crypto reference leads, and the engine's existing crypto-only
-  regime is the correct healthy state.
-- **Session overlap** — widen. The empirical basis is §6.3, and it is
-  strong: a 4.5× spread between the busiest and quietest hour is not a
-  marginal effect.
+  regime is the correct healthy state. It is **also a widen**, which
+  is the operator's first motivating example and is easy to lose
+  behind the regime switch: see the policy below.
+- **Session overlap** — widen, per the table below.
 - **Calendar unavailable or expired** — fall back to the existing
   approximation, loudly, and never to "open" and never to a halt.
+
+**The widening policy per state.** All three act through one lever —
+inflating the confidence half-width the existing uncertainty
+machinery already consumes — so the policy is a multiplier on that
+half-width per clock state. Derived from §6.3, whose median hourly
+sigma over the stored series is 0.700 bps/min:
+
+| Clock state                       | Measured sigma                 | × median | Policy                       |
+| --------------------------------- | ------------------------------ | -------- | ---------------------------- |
+| London/NY overlap, 09:00–11:00 ET | 1.180 mean                     | 1.69×    | widen ~1.7×                  |
+| The 08:00 ET hour                 | 1.755                          | 2.51×    | widen ~2.5×, see caveat      |
+| Post-close lull, 17:00–19:00 ET   | 0.464 mean                     | 0.66×    | **no change** — floor at 1.0 |
+| Market closed (weekend)           | not derivable from this anchor | —        | widen, constant TBD          |
+
+Four things this table is careful about, because the naive reading of
+§6.3 overstates the case:
+
+- **The 4.5× figure is not the overlap effect.** It is the ratio of
+  the single 08:00 hour to the single 19:00 hour, and 08:00 is
+  confounded — it carries the 08:30 ET US release as well as the
+  overlap open (§1.2 leans on exactly that). The overlap-only
+  elevation, taken from the hours that are *not* confounded, is
+  ~1.7×. Hour 11 (0.978) is statistically indistinguishable from
+  non-overlap hour 04 (0.982), so the band is not uniformly elevated
+  either. The widening rule survives — 08:00–10:00 are the series'
+  top three hours — but at ~1.7×, not 4.5×.
+- **Never tighten on a clock signal alone.** The lull is measurably
+  quieter, and the policy still floors the multiplier at 1.0: a quiet
+  clock is not evidence that *this* market is quiet, and the downside
+  of quoting too tight is unbounded where quoting too wide costs
+  volume.
+- **The closed-market multiplier cannot be derived from this
+  anchor**, by construction — the anchor is silent, which is the whole
+  point. It needs the weekend *deviation* series (the basis widening
+  while interbank is shut) rather than an FX sigma, and that is
+  §6.4's honest-signal argument applied to calibration. The constant
+  is therefore deliberately left open, with its calibration input
+  named, rather than invented here.
+- **These are calibration inputs, not final constants.** The
+  quoting-posture issue owns the constants and their tests; this spec
+  owns the shape, the derivation, and the floor.
 
 The promotion path is a cross-check, not a swap: run the
 calendar-derived state alongside the existing approximation, alarm on
@@ -467,6 +641,29 @@ closed-market anchor: a frozen or indicative series yields a
 plausible-looking ultra-low sigma for a session that never traded.
 Prefer a source whose weekend bar count is zero — absence is the
 honest signal (§6.4).
+
+**What the calendar contributes to the fused fair price's
+confidence**, stated separately because it is the part most easily
+assumed: nothing to the point estimate, and three things to the
+half-width.
+
+1. **Which legs are *expected* present.** This is the load-bearing
+   one. Confidence should reflect that a leg is absent-by-schedule
+   rather than absent-by-fault — the same distinction §5.1's regimes
+   draw — so a closed market yields a wider band around a
+   crypto-anchored mid, not a narrower one around a stale FX print.
+1. **A sigma to scale it by**, per the §5.3 table.
+1. **Nothing when the calendar itself is unavailable.** Past its
+   generated horizon the calendar contributes no confidence term at
+   all and the fallback governs; it must never contribute a
+   *default* term, which would read as knowledge it does not have.
+
+The trap worth naming: a weekend tape is quiet, so a sigma-driven
+half-width computed naively over weekend data gets **tighter** exactly
+when the anchor has gone. That is backwards — with interbank shut
+there is no arbitrage channel, so the basis is free to widen — and it
+is the concrete reason the closed-market state is a widen rather than
+a recomputation.
 
 ## 6. Verification
 
@@ -502,9 +699,9 @@ independently, without reference to any external schedule:
 
 | Day             | Bars        | Of possible | Coverage |
 | --------------- | ----------- | ----------- | -------- |
-| Monday–Thursday | 1,422–1,436 | 1,440       | ~99.3%   |
-| Friday          | 1,018–1,020 | 1,020       | ~99.8%   |
-| Sunday          | 405–414     | 420         | ~97%     |
+| Monday–Thursday | 1,421–1,436 | 1,440       | ~99.3%   |
+| Friday          | 1,012–1,020 | 1,020       | ~99.8%   |
+| Sunday          | 405–414     | 420         | ~97.5%   |
 
 Friday's 1,020 is midnight to 17:00 ET; Sunday's 420 is 17:00 to
 midnight. The profile matches the §6.1 boundary to the minute, from a
@@ -526,15 +723,38 @@ York local hour, in basis points per minute:
 | 04:00   | 0.982     | London opens                                |
 | 19:00   | **0.392** | post-NY-close trough                        |
 
-The elevated band is 08:00 to 11:00 ET and it drops at 12:00 — which
-is exactly the London/New York overlap the rule table predicts
-(London 08:00–17:00 BST is 03:00–12:00 ET; New York is 08:00–17:00
-ET; the intersection is 08:00–12:00 ET). Peak to trough is **4.5×**.
+The elevated band is 08:00 to 11:00 ET and it drops at 12:00. Its
+**edges** line up exactly with the London/New York overlap the rule
+table predicts (London 08:00–17:00 BST is 03:00–12:00 ET; New York is
+08:00–17:00 ET; the intersection is 08:00–12:00 ET, and under
+close-hour-exclusive semantics that is hours 08 through 11).
 
-Two things follow. The overlap-widening rule is confirmed on our own
-data rather than adopted on convention. And the 08:00 spike carrying
-the 08:30 print is the concrete basis for §1.2 — the hour-of-day
-profile already absorbs the routine release.
+Three things follow, and the third limits the first two.
+
+1. The overlap-widening rule is confirmed on our own data rather than
+   adopted on convention — the predicted window and the measured band
+   coincide at the edges.
+1. The 08:00 spike carrying the 08:30 print is the concrete basis for
+   §1.2: the hour-of-day profile already absorbs the routine release.
+1. **Those two claims lean on the same hour, so neither may use the
+   raw peak.** Hour 08 is both the overlap open and the release hour,
+   and it alone produces the 4.48× peak-to-trough ratio. A single
+   datum cannot be evidence that the profile absorbs the release *and*
+   the measure of the overlap effect. The band is also not uniformly
+   elevated: hour 11 (0.978) is indistinguishable from non-overlap
+   hour 04 (0.982). So the overlap multiplier is taken from the hours
+   that are not confounded, at ~1.7× the median (§5.3), and the 4.48×
+   figure is reported here as the profile's full dynamic range and
+   used for nothing else.
+
+**Provisional, and deliberately labelled so.** These figures come from
+a single ~60-day window on one pair. `docs/data-feeds.md` §13 carries
+an open question requiring a stated history depth per estimate, below
+which a number is reported as provisional rather than used to set a
+band; that depth does not exist yet, so this band is provisional by
+that rule. It is strong enough to justify the *shape* of the widening
+policy and to order the hours; it is not yet enough to fix a constant,
+which is why §5.3 hands the constants to the consumer issue.
 
 ### 6.4 Absence versus silence
 
@@ -547,27 +767,64 @@ Over one weekend window, Friday 21:00 to Sunday 21:00 UTC:
 | Coinbase AUDD/USDC  | 19        | 12              | 130.8 bps |
 
 2,880 is exactly 48 × 60: an **unbroken** minute grid across a market
-that was shut. Set against it, a genuinely traded 24/7 crypto tape
-produced 19 bars in the same window — because a real venue emits no
-candle for a minute with no trades — and moved five times as far.
+that was shut. OANDA's zero over the same window is the other extreme.
 
-So weekend coverage is a vendor convention, not a fact about the
-market, and the anchor's silence is the trustworthy signal. Session
-detection must read bar *absence* from a source that honestly reports
-it, never trust a complete grid, and never pool the two into one
-statistic.
+**The first conclusion is the safe one.** Weekend coverage is a vendor
+convention, not a fact about the market, so the anchor's silence is
+the trustworthy signal: session detection reads bar *absence* from a
+source that honestly reports it, never trusts a complete grid, and
+never pools the two into one statistic. That is what §5.1 and the
+generator rely on, and nothing below weakens it.
 
-There is a tempting inference here that this document declines to
-make load-bearing. **Grid completeness looks like a synthetic-series
-detector** — an unbroken weekend is implausible for a traded market —
-and it is a stronger candidate than the `distinct_closes`
-collapse heuristic the analytics already tested and rejected as
-firing on honest data. But the observation is one vendor over one
-weekend. It is recorded as a hypothesis with a stated bar for
-adoption: reproduce it across several vendors and several weekends,
-including at least one genuinely traded thin tape, before anything
-depends on it. Until then, the roster's per-source weekend behavior
-is authored knowledge, not detected.
+**The second conclusion is that telling a synthetic grid from an
+honest one is harder than this table makes it look**, and the
+comparison above is the wrong one to draw it from. AUDD/USDC is the
+roster's thinnest tape — 19 bars is 0.66% coverage — so setting 2,880
+against it implies a discriminator far cleaner than the data supports.
+Measured against a genuinely liquid 24/7 venue over one Saturday
+(00:00–24:00 UTC), and against the suspect series' own Saturday
+interior, the picture narrows sharply:
+
+| Saturday only       | Bars of 1,440 | Distinct closes | Range    |
+| ------------------- | ------------- | --------------- | -------- |
+| Twelve Data AUD/USD | **1,440**     | 53              | 11.6 bps |
+| Coinbase EURC/USDC  | 1,122 (77.9%) | 9               | 6.9 bps  |
+
+Two of the three columns fail as tests, and one fails *backwards*:
+
+- **Magnitude does not separate them, and points the wrong way.** The
+  suspect series moved *further* over the same Saturday than the
+  honest one (11.6 vs 6.9 bps). This matters beyond this document,
+  because magnitude is the test `weekend_vs_weekday.sql` adopted after
+  rejecting `distinct_closes` — it records the same vendor and pair
+  moving "about 0.7 bps across its entire Saturday", and that figure
+  **does not reproduce** on the stored series. The disagreement is not
+  a windowing artifact: the interior figure above deliberately excludes
+  both session boundaries, so it is not inflated by the Friday-evening
+  or Sunday-evening edges. Which measurement is right is unresolved and
+  is flagged in §6.6; until it is, no conclusion should rest on the
+  0.7 bps figure or on magnitude generally.
+- **Distinct closes does not separate them either** — the honest tape
+  shows *fewer* (9 against 53). That is the outcome
+  `weekend_vs_weekday.sql` already predicted when it rejected this
+  heuristic as firing on honest data, and this measurement agrees with
+  the rejection.
+- **Grid completeness is the only column that separates them**:
+  100% against 77.9%. A real venue emits no candle for a minute with
+  no trades, and the same sibling analysis puts that ordinary gap rate
+  near 12% across a 60-day window, so an unbroken weekend is the
+  anomaly.
+
+So the hypothesis this document records — and deliberately does **not**
+make load-bearing — is narrower than the first table suggests:
+completeness is the *only* surviving candidate discriminator, and its
+real separation is 100% vs ~78%, not 100% vs 0.66%. The bar for
+adoption is set accordingly: reproduce it across several vendors and
+several weekends, calibrate the threshold against ~78% rather than
+against a thin tape, and resolve the magnitude disagreement above
+first. Until then the roster's per-source weekend behavior is authored
+knowledge, not detected — and absence, not completeness, is what the
+calendar actually depends on.
 
 ### 6.5 What a wrong calendar costs
 
@@ -593,13 +850,29 @@ swap.
 
 ### 6.6 What is not yet verified
 
-Three gaps, named rather than papered over:
+Five gaps, named rather than papered over:
 
 - **No DST transition is inside the stored window.** The nine
-  weekends are all EDT, so the local-time stability is confirmed but
-  the *transition* is not directly observed. The ET-local model
-  predicts the UTC boundary moves an hour in November; that becomes
-  testable then, and it is the single most valuable outstanding check.
+  weekends are all EDT, so the boundary's stability in *both* ET-local
+  and UTC terms is confirmed and the two models are not
+  distinguished — see §2, which relies on convention rather than this
+  measurement to choose between them. The local-time model predicts
+  the UTC boundary moves an hour in November; that becomes testable
+  then, and it is the single most valuable outstanding check.
+- **A sibling measurement disagrees with §6.4 and is unresolved.**
+  `weekend_vs_weekday.sql` records the Twelve Data AUD/USD weekend
+  series moving ~0.7 bps across a Saturday; the stored series gives
+  11.6 bps over a Saturday interior that excludes both session
+  boundaries. A factor of ~16, same vendor and pair. Both cannot be
+  right about the same behavior, and the sibling doc's magnitude test
+  rests on its figure. Resolving this needs the window and date of the
+  original measurement, which are not recorded there. Until then,
+  neither figure should be used to classify a series, and the
+  completeness hypothesis is held at arm's length for the same reason.
+- **The 08:00 ET hour is confounded** between the overlap open and the
+  08:30 release, and this window cannot separate them (§6.3). Doing so
+  needs either a macro calendar — deferred — or enough history to
+  compare release days against release-free ones at the same hour.
 - **Christmas and New Year are unobserved** (§1.1).
 - **FRED's release-date granularity is unconfirmed**, needing a key
   (§1.3). Immaterial while macro is out of scope.
@@ -611,7 +884,10 @@ Three gaps, named rather than papered over:
   convenience for the analytics rather than an irreplaceable record —
   unlike price history, which cannot be reconstructed. If the
   analytics read instants directly, retention matters; if they join
-  against them, a rolling window suffices.
+  against them, a rolling window suffices. This is a narrow instance
+  of `docs/data-feeds.md` §13's still-open **Retention** question and
+  should be decided with it rather than separately — the calendar is
+  the easy case, since it can be regenerated.
 - **Do holidays come back as a width input?** Deferred, not refused
   (§1.1). The December re-test decides it.
 - **Where does scheduled silence surface to an operator?** §5.1 names

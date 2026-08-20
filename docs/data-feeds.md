@@ -403,8 +403,10 @@ ______________________________________________________________________
 
 - **Market-data collectors (store sink).** The collectors build their
   sources on this crate into a store sink: an HTTP Coinbase reference
-  feed first (the proof feed), then the FX, issuer-rate, and
-  econ-calendar feeds. See §7 onward.
+  feed first (the proof feed), then the FX and issuer-rate feeds. See
+  §7 onward. (An econ-calendar feed was planned here and is no longer:
+  see §13's resolved "Econ-calendar source" entry, and
+  `docs/market-calendar.md`.)
 - **Maker bot (live sink, landed).** The maker-bot's tiered price legs and
   `logsSubscribe` fill walk run on `feeds`: the HTTP price sources — Pyth
   Hermes and ECB/Frankfurter for the FX anchor, Coinbase and Kraken for
@@ -538,7 +540,8 @@ without buying isolation.
 | `pyth_fx_feeds`                                                    | migration (seed)   | Pyth FX roster — venue reference data, read-only at runtime |
 | `fx_rates` *(planned)*                                             | market-data        | Fiat-cross bars for the FX anchor leg                       |
 | `peg_rates` *(planned)*                                            | market-data        | Issuer / redemption reference rates                         |
-| `fx_events` *(planned)*                                            | market-data        | Economic-calendar event times                               |
+| `fx_events` *(deferred)*                                           | market-data        | Economic-calendar event times — see §13                     |
+| `fx_sessions` *(planned)*                                          | market-data        | Generated FX session / week instants (UTC)                  |
 | `basis_series` *(planned)*                                         | market-data        | Derived per-market basis series                             |
 | `vol_estimates` *(planned)*                                        | market-data        | Realized volatility by market and window                    |
 | `regimes` *(planned)*                                              | market-data        | Regime tags every other stat is sliced by                   |
@@ -597,7 +600,7 @@ sources feed each leg and on what terms.
 | Basis (`token/fiat`, `USDC/USD`) | Coinbase `<token>/USDC` (wired), Kraken `<token>/USD` (wired)                      |
 | Peg truth                        | Kraken `USDC/USD` (wired); Circle / issuer redemption rate                         |
 | Token/USD, thin coverage         | CoinGecko / CoinMarketCap — reflexive, and the only basis source most markets have |
-| Macro overlay                    | Econ-calendar loader (ECB / FOMC / CPI / NFP times)                                |
+| Macro overlay                    | *Deferred* — was an econ-calendar loader; see §13                                  |
 
 **These are candidates, not a priority ladder.** Every source listed for a
 leg is offered to the model together, and the leg is resolved by consensus
@@ -613,6 +616,30 @@ uncorroborated rather than treating as a price like any other.
 Pyth is the one source designated believable **on its own**, because it
 publishes a confidence half-width and is aged from the publisher's clock. A
 lone reading from anything else is reported as uncorroborated.
+
+### The session clock is not a leg source
+
+The FX session and week instants (`docs/market-calendar.md`) are
+deliberately **absent from the table above**. Every row there is a
+price source offered to a leg's consensus, and a clock is not one: it
+carries no value to corroborate, so it belongs to no leg and cannot be
+a candidate in the sense the paragraph above means.
+
+What it is instead is a **slow-variable clock context**, consumed
+alongside the composed value rather than inside it. It answers two
+questions: whether a leading FX feed is expected at all right now — so
+a silent anchor reads as scheduled rather than broken — and which
+sessions are overlapping, so the maker widens where volatility is
+known to concentrate. Both act on the quoting posture, never on a leg's
+price.
+
+Two consequences worth stating here rather than leaving to the
+calendar doc. It is **generated** from a committed rule table rather
+than fetched, so it draws no venue budget (§10) and has no provider to
+fall back from. And its failure mode is an **expiring horizon** rather
+than an outage, so a consumer past the generated-through watermark must
+treat the calendar as unavailable and fall back loudly — never infer
+"closed" from a missing row.
 
 ### What is wired, and why the rest is not
 
@@ -833,7 +860,7 @@ be allocated rather than assumed.
 | `kraken` ticks          | 15 s, batched across the roster   | Collector                              |
 | `pyth` ticks            | 15 s, batched across the roster   | Collector                              |
 | Issuer / peg rates      | Order of a day                    | Collector                              |
-| Econ calendar           | Order of a day, static download   | Collector                              |
+| FX session instants     | Generated, not polled; daily      | Collector (no venue budget)            |
 | On-chain (indexer RPC)  | Framework poll interval           | Indexer                                |
 
 **Why the Coinbase candles feed polls at a quarter of its bucket width.**
@@ -875,7 +902,6 @@ that is roughly 8 requests a minute against a 600/minute ceiling, so nothing is
 at risk; but a future roster large enough to matter would need cross-process
 coordination that does not exist, and the honest statement is that this is
 headroom rather than a guarantee.
-
 Those cadences govern the **caught-up** state only — while a source
 backfills, the runner loops without pausing and only the shared client's
 minimum interval (below) paces it. That is the trap worth naming:
@@ -1435,8 +1461,26 @@ ______________________________________________________________________
   question for the quote path, not a history question, and it waits on a
   consumer that needs sub-minute FX.
 
-- **Econ-calendar source.** Which static feed for the ECB / FOMC / CPI /
-  NFP times.
+- **Econ-calendar source.** *Resolved — the dataset is deferred, so
+  there is no feed to choose (`docs/market-calendar.md`).* The question
+  assumed a macro calendar was needed; the market-calendar research
+  established that it answers neither question the calendar exists for
+  (is a leading FX feed expected now, and which sessions overlap), and
+  that the hour-of-day volatility profile already absorbs the habitual
+  08:30 ET release. What the calendar does need — the FX session and
+  week instants — is **generated** from a committed rule table through
+  Postgres, not ingested, so no adapter, sink, key, or venue budget is
+  involved.
+
+  Two findings worth keeping even though the dataset left scope, since
+  both cost a probe: **BLS blocks automated fetches** (HTTP 403 on the
+  iCalendar and HTML schedules alike, browser user-agent included,
+  while egress elsewhere succeeds), and the **Federal Reserve
+  publishes no FOMC calendar JSON API**. If macro ever returns, FRED is
+  the viable route — it republishes the BLS schedules and needs one
+  free key — and its release dates are believed date-only, so times of
+  day would be authored. Revision behavior and forward horizon were
+  never established for any source.
 
 - **History depth before the estimates are significant.** The §11
   characterizations need enough repeats of each regime — weekend gaps,
