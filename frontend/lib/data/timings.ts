@@ -75,8 +75,9 @@ export const ORDER_BOOK_REFRESH_MS = 1_000;
 // stake-weighted mean of vote timestamps — carries noise of its own, while
 // the skew actually worth correcting runs to tens of seconds. Below this the
 // reading is ignored outright, so the band buys immunity to measurement
-// noise, not exactness: a device sitting just inside it still misjudges a
-// level by up to this many seconds.
+// noise, not exactness. Note it exceeds the safety margin below, so a device
+// sitting just inside it still misjudges a level — by the difference between
+// the two, 3 s, rather than the full 5.
 export const CLOCK_SKEW_TOLERANCE_SECS = 5;
 
 // Where the correction reaches 100%. Between the tolerance and here it is

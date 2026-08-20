@@ -121,9 +121,15 @@ let inFlight: Promise<void> | null = null;
 //   __dropsetClockSkewSecs = 60    // …a minute fast
 //   delete __dropsetClockSkewSecs  // back to the real clock
 //
-// Set it from the browser console against a running book: the ladder and the
-// quote should be unmoved either way, because the offset read off the chain
-// cancels whatever is set here. Changing it forces the next call to re-read
+// Set it from the browser console against a running book. At or beyond
+// CLOCK_SKEW_FULL_CORRECTION_SECS the ladder and the quote should be unmoved
+// either way, because the offset read off the chain cancels the whole of
+// what is set here. *Inside* the ramp band the cancellation is deliberately
+// partial — at ±6 only about one second of the six is corrected — so the
+// ladder does move, and that is the ramp working rather than a failure. To
+// exercise the band edges, probe ±5 / ±6 (the old cliff, where the gate
+// should now be identical either side) and ±9 / ±10 (where the ramp's
+// steepest remaining step sits). Changing it forces the next call to re-read
 // rather than wait out the resync interval, so the effect is visible on the
 // following tick. Compiled out of a production build, and inert until
 // something sets it.
@@ -160,8 +166,11 @@ export const isPlausibleChainSecs = (chainSecs: number): boolean =>
  *
  * Zero within CLOCK_SKEW_TOLERANCE_SECS, the whole offset beyond
  * CLOCK_SKEW_FULL_CORRECTION_SECS, and phased in proportionally between —
- * continuous across both edges, so a second of measurement noise can only
- * move the gate by a bounded amount rather than the offset's full magnitude.
+ * continuous across both edges, so a second of measurement noise moves the
+ * gate by at most 3 s rather than the offset's full magnitude (~6 s at the
+ * old cliff). Note the ramp is quadratic in the offset, so that worst case
+ * sits at the *top* of the band rather than at the tolerance edge, where the
+ * step is 1 s: this halves the discontinuity, it does not remove it.
  * Sign-preserving: a device that runs fast gets a negative correction.
  *
  * Rounded to whole seconds to match the integral unix seconds the on-chain
@@ -171,12 +180,16 @@ export const isPlausibleChainSecs = (chainSecs: number): boolean =>
  * Pure, and exported for the same reason as {@link isPlausibleChainSecs}.
  */
 export const skewCorrectionSecs = (offsetSecs: number): number => {
-  const excess = Math.abs(offsetSecs) - CLOCK_SKEW_TOLERANCE_SECS;
-  // Early rather than a clamp at zero: scaling a negative offset by a zero
-  // weight yields -0, which is arithmetically harmless but a wart to hand
-  // back from something documented as returning no correction.
-  if (excess <= 0) return 0;
   const band = CLOCK_SKEW_FULL_CORRECTION_SECS - CLOCK_SKEW_TOLERANCE_SECS;
+  const excess = Math.abs(offsetSecs) - CLOCK_SKEW_TOLERANCE_SECS;
+  // Returning early rather than clamping the weight at zero: scaling a
+  // negative offset by a zero weight yields -0, which is arithmetically
+  // harmless but a wart to hand back from something documented as returning
+  // no correction. The `band` half of the guard covers the two constants
+  // being reordered — a non-positive band would otherwise drive the weight
+  // negative and apply the correction with the wrong *sign*, pushing the
+  // gate away from cluster time instead of toward it.
+  if (excess <= 0 || band <= 0) return 0;
   return Math.round(offsetSecs * Math.min(excess / band, 1));
 };
 

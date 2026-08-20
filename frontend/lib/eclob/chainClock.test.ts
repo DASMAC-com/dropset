@@ -43,8 +43,13 @@ describe("skew correction ramp", () => {
   // old all-or-nothing rule the 5 → 6 crossing moved the gate by the entire
   // offset — 6 s for a 1 s change in the measurement — and levels expiring in
   // the crossed window flickered in and out of the ladder at the poll
-  // cadence. Bounding the step is the property that kills the flicker; the
-  // exact bound matters less than that it is small and finite.
+  // cadence.
+  //
+  // The bound below is 3 rather than 1 because the ramp is quadratic: its
+  // steepest step is the ±9 ↔ ±10 crossing, not the tolerance edge. So this
+  // halves the discontinuity rather than removing it — a device parked near
+  // ±9.5 can still move the gate 3 s across ticks. The bound is tight (3 is
+  // exactly attained), so any regression in the shape fails here.
   it("never moves the gate far for a one-second change in the reading", () => {
     for (let offset = -120; offset < 120; offset += 1) {
       const step = Math.abs(
@@ -69,6 +74,20 @@ describe("skew correction ramp", () => {
     expect(skewCorrectionSecs(CLOCK_SKEW_FULL_CORRECTION_SECS + 1)).toBe(
       CLOCK_SKEW_FULL_CORRECTION_SECS + 1,
     );
+  });
+
+  // Both sweeps above assert magnitudes only, which a non-monotone variant of
+  // the ramp would satisfy. Pin the shape itself: more skew must never earn
+  // less correction.
+  it("is monotone in the offset", () => {
+    for (let offset = 0; offset < 120; offset += 1) {
+      expect(skewCorrectionSecs(offset + 1)).toBeGreaterThanOrEqual(
+        skewCorrectionSecs(offset),
+      );
+      expect(skewCorrectionSecs(-offset - 1)).toBeLessThanOrEqual(
+        skewCorrectionSecs(-offset),
+      );
+    }
   });
 
   // Correcting by less than the offset leaves the gate behind cluster time,
@@ -120,10 +139,17 @@ describe("chain reading plausibility", () => {
 // start from a cold cache. Fake timers pin the device clock: the resync
 // interval gates on it, so a second sync in the same test has to advance it
 // past CLOCK_RESYNC_INTERVAL_SECS or it is skipped as still fresh.
-describe("a rejected reading leaves the previous offset in place", () => {
+describe("the gate against a cached chain offset", () => {
   const DEVICE_SECS = 1_780_000_000;
   const rpcReturning = (secs: bigint | null) => ({
     getBlockTime: () => ({ send: async () => secs }),
+  });
+  const rpcThrowing = () => ({
+    getBlockTime: () => ({
+      send: async (): Promise<bigint | null> => {
+        throw new Error("transport");
+      },
+    }),
   });
 
   beforeEach(() => {
@@ -134,6 +160,27 @@ describe("a rejected reading leaves the previous offset in place", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  // The module header calls this the common path: most of the time the gate
+  // *is* the device clock, vouched for by the chain rather than replaced by
+  // it. Nothing else here pins it — the pure tests never touch the cached
+  // offset, so this is the case a refactor of the gate's ternary would break
+  // silently.
+  it("leaves the gate on the device clock for an in-tolerance offset", async () => {
+    const { gateNowUnix, syncChainClock } = await import("./chainClock");
+
+    await syncChainClock(rpcReturning(BigInt(DEVICE_SECS + 3)), 1n);
+    expect(gateNowUnix()).toBe(DEVICE_SECS + CLOCK_SAFETY_MARGIN_SECS);
+  });
+
+  // And the ramp reaching the gate, rather than only the pure function: a +7
+  // offset earns 3 s of correction, not 0 and not the full 7.
+  it("applies a partial correction for a mid-band offset", async () => {
+    const { gateNowUnix, syncChainClock } = await import("./chainClock");
+
+    await syncChainClock(rpcReturning(BigInt(DEVICE_SECS + 7)), 1n);
+    expect(gateNowUnix()).toBe(DEVICE_SECS + 3 + CLOCK_SAFETY_MARGIN_SECS);
   });
 
   it("keeps a good offset when a millisecond reading follows it", async () => {
@@ -160,6 +207,20 @@ describe("a rejected reading leaves the previous offset in place", () => {
     const later = DEVICE_SECS + 60;
     vi.setSystemTime(later * 1_000);
     await syncChainClock(rpcReturning(null), 2n);
+
+    expect(gateNowUnix()).toBe(later + 60 + CLOCK_SAFETY_MARGIN_SECS);
+  });
+
+  // The third leg of the equivalence the read path's comment claims: a
+  // rejected reading, a slot the node won't time, and a transport error all
+  // leave the previous offset standing.
+  it("keeps a good offset when the transport throws", async () => {
+    const { gateNowUnix, syncChainClock } = await import("./chainClock");
+
+    await syncChainClock(rpcReturning(BigInt(DEVICE_SECS + 60)), 1n);
+    const later = DEVICE_SECS + 60;
+    vi.setSystemTime(later * 1_000);
+    await syncChainClock(rpcThrowing(), 2n);
 
     expect(gateNowUnix()).toBe(later + 60 + CLOCK_SAFETY_MARGIN_SECS);
   });
