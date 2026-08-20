@@ -16,6 +16,7 @@
 use crate::config::MarketConfig;
 use crate::model::ladder::Side;
 use crate::quote_state::QuoteState;
+use crate::telemetry::Telemetry;
 use dropset_fair_value::{FairValueConfig, FairValueEngine};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
@@ -144,11 +145,17 @@ pub struct Context {
     /// routed to this market, reconciled against the per-tick vault read.
     /// `None` until the first fill (or seeded from the first vault read).
     pub position: Option<(u64, u64)>,
+    /// Where this market's per-tick operational sample is published. Cloned
+    /// per market from one channel, and [`Telemetry::disabled`] when no
+    /// telemetry database is configured — so the tick loop emits
+    /// unconditionally and never branches on whether anyone is listening.
+    pub telemetry: Telemetry,
 }
 
 impl Context {
     /// Build a context around a discovered market, starting the cadence clocks
     /// in the past so the first tick can establish the reference immediately.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: RpcClient,
         leader: Keypair,
@@ -157,6 +164,7 @@ impl Context {
         cfg: MarketConfig,
         fair_value: FairValueConfig,
         quote_state: QuoteState,
+        telemetry: Telemetry,
     ) -> Self {
         let now = Instant::now();
         // Start the hot-path clock from the persisted record, not from process
@@ -207,6 +215,7 @@ impl Context {
             profile_kind: ProfileKind::Unknown,
             last_inventory: None,
             position: None,
+            telemetry,
         }
     }
 }

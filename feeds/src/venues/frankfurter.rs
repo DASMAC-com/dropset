@@ -61,11 +61,15 @@ impl FrankfurterSource {
     }
 }
 
+/// This source's [`Source::name`] — see [`crate::venues::pyth::FEED_NAME`] for
+/// why the name is a constant rather than a literal at each use.
+pub const FEED_NAME: &str = "frankfurter";
+
 #[async_trait]
 impl Source for FrankfurterSource {
     type Record = Quotes<String>;
     fn name(&self) -> &str {
-        "frankfurter"
+        FEED_NAME
     }
     async fn next(&mut self) -> Result<Batch<Self::Record>> {
         Ok(Batch::new(vec![self.poll().await?]))
