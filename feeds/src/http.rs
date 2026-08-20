@@ -69,8 +69,8 @@ const REDACTED: &str = "REDACTED";
 /// `HeaderValue::set_sensitive` cannot reach it — and the header path's own
 /// test pins the invariant that a credential stays redacted under *any later*
 /// `#[derive(Debug)]` on the path. A plain `(String, String)` would break that
-/// symmetry: the CoinMarketCap and OANDA header keys would still render as
-/// `Sensitive` while this one rendered in clear. Making the redaction a
+/// symmetry: OANDA's header key would still render as `Sensitive` while this
+/// one rendered in clear. Making the redaction a
 /// property of the **type** is what keeps the guarantee from depending on
 /// which types happen not to derive `Debug` yet — the same reasoning
 /// [`HttpClient::with_secret_header`] is built on.
