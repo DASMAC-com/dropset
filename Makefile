@@ -454,11 +454,22 @@ indexer-down: check-docker
 # it writes. `collectors-down` stops it too — it has nothing to show once the
 # feeds are gone — while `make grafana` runs it against the history already
 # on the volume with no collector at all.
+#
+# `--build` is not optional, and the failure it prevents is genuinely
+# confusing. A bare `up -d` builds only when an image is MISSING, so it
+# silently reuses whatever image already carries the service's name — and
+# since the compose project name is shared across worktrees, that is whichever
+# branch last built it. A code change then appears to do nothing. Worse, it
+# applies to `migrate` too: a stale migrate image embeds another branch's
+# migration set, finds the database already at its own high-water mark, and
+# exits 0 having applied nothing — so a collector starts against a schema
+# nobody in this tree wrote. `cargo chef` caches the dependency graph, so on an
+# unchanged tree this costs a cache check rather than a build.
 .PHONY: collectors-up
 collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --quiet-pull postgres migrate coinbase coinbase-ticker kraken \
-		pyth grafana
+		up -d --build --quiet-pull postgres migrate coinbase coinbase-ticker \
+		kraken pyth grafana
 .PHONY: collectors-down
 collectors-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
@@ -524,9 +535,11 @@ grafana-down: check-docker
 FX_ENV = infra/localnet/secrets.local.env
 -include $(FX_ENV)
 OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account '$(DROPSET_OP_ACCOUNT)',)
+# `--build` for the same reason as `collectors-up` above: without it these
+# services keep whichever image another worktree last built.
 FX_UP = docker compose -f infra/localnet/docker-compose.yml \
-	--profile fx up -d --quiet-pull postgres migrate oanda twelvedata \
-	alphavantage
+	--profile fx up -d --build --quiet-pull postgres migrate oanda \
+	twelvedata alphavantage
 .PHONY: fx-collectors-up
 fx-collectors-up: check-docker
 	@if [ -f $(FX_ENV) ]; then \
