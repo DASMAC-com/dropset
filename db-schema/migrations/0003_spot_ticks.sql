@@ -17,7 +17,7 @@
 -- `observed_at` is the epoch second the reading is attributed to: **the venue's
 -- own publish time where the venue publishes one** (Pyth Hermes does), else the
 -- collector's poll second. That choice is what makes a re-poll idempotent
--- rather than duplicative — a venue-timestamped print re-fetched after a crash
+-- rather than a duplicate — a venue-timestamped print re-fetched after a crash
 -- carries the same `observed_at` and lands on the primary key. Where the venue
 -- publishes no timestamp, a re-poll inside the same second dedups and one in
 -- the next second is a genuinely new observation, which is the honest reading.

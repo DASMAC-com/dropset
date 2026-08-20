@@ -7,8 +7,8 @@
 # **Every** binary in the package is built and shipped, not just one, because
 # the compose file runs all of them from this one image and selects between them
 # with `command:`. Naming a single bin here is what made three FX services fail
-# at start with `executable file not found in $PATH` — the image built fine, so
-# nothing caught it until a container ran.
+# at start with `executable file not found in $PATH` — the image built
+# fine, so nothing caught it until a container ran.
 #
 # The build step needs no edit for a new collector (building the package builds
 # its bins), but the runtime COPY below does: it enumerates them rather than
@@ -20,9 +20,11 @@
 # `dropset-migrate` (migrate.Dockerfile), the single schema owner
 # (docs/data-feeds.md §8). This image only ever asserts the schema.
 #
-# Context is the repo root (see docker-compose.yml); the rust image honours the
-# workspace `rust-toolchain.toml`. The insert SQL is embedded at compile time
-# (`include_str!`), so the runtime image carries only the binary.
+# Context is the repo root (see docker-compose.yml). The `rust:1-bookworm` tag
+# is what pins the compiler: the workspace commits no `rust-toolchain.toml`, so
+# there is nothing in-tree for the image to honour and the tag is the only pin.
+# The insert SQL is embedded at compile time (`include_str!`), so the runtime
+# image carries only the binaries.
 
 FROM rust:1-bookworm AS chef
 RUN cargo install cargo-chef --locked

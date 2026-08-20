@@ -1,4 +1,3 @@
-// cspell:word AUDUSD
 //! FX collector configuration, credential resolution, and the canonical ↔
 //! venue symbol mapping the three FX feeds share.
 //!

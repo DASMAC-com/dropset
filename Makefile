@@ -437,10 +437,10 @@ indexer-down: check-docker
 		rm -sf indexer indexer-api
 
 # Market-data collectors: the shared Postgres + the schema migration + every
-# **keyless** feed (docs/data-feeds.md §5, §8). Independent of the validator —
-# these poll public REST APIs — so they run with or without a localnet up, and
-# they share the one `dropset` database with the indexer. Stopping them leaves
-# the recorded history on the volume.
+# **keyless** feed (docs/data-feeds.md §5, §8). Independent of the
+# validator — these poll public REST APIs — so they run with or without a
+# localnet up, and they share the one `dropset` database with the indexer.
+# Stopping them leaves the recorded history on the volume.
 #
 # Four feeds, across both tiers. Candles into `cex_prices`: the Coinbase
 # reference price. Spot ticks into `spot_ticks`: the Coinbase ticker (the prints

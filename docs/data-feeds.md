@@ -370,7 +370,7 @@ images run locally and in the cloud; the compose file is the difference.
 **roster** of canonical product ids and covers all of them, so widening
 coverage is a configuration change rather than another container. The
 alternative — which this replaced — was one service per pair, so N pairs
-cost N processes, N connection pools, and N schedulable units to do what
+cost N processes, N connection pools, and N units to schedule to do what
 is often a single batched request.
 
 How a roster becomes work depends on the venue's endpoint, and both
@@ -395,7 +395,7 @@ services into one per-venue service resumes every cursor exactly where it
 was. And **a failed feed fails the process**: a collector still running
 with two of its five pairs dead looks healthy to everything watching it,
 while the store's coverage is what actually gets read — so crashing and
-resuming from committed cursors is the honest behaviour.
+resuming from committed cursors is the honest behavior.
 
 ______________________________________________________________________
 
@@ -530,20 +530,20 @@ reader rather than a role per consumer on purpose: every reader needs
 exactly the same grants, so splitting them would multiply bookkeeping
 without buying isolation.
 
-| Table                                                              | Writer             | Contents                                            |
-| ------------------------------------------------------------------ | ------------------ | --------------------------------------------------- |
-| `feed_cursors`                                                     | `feeds` store sink | Resumable per-feed position (JSONB)                 |
-| `cex_prices`                                                       | market-data        | CEX reference candles, per venue and product        |
-| `spot_ticks`                                                       | market-data        | Point-in-time prints, per venue and product        |
+| Table                                                              | Writer             | Contents                                                    |
+| ------------------------------------------------------------------ | ------------------ | ----------------------------------------------------------- |
+| `feed_cursors`                                                     | `feeds` store sink | Resumable per-feed position (JSONB)                         |
+| `cex_prices`                                                       | market-data        | CEX reference candles, per venue and product                |
+| `spot_ticks`                                                       | market-data        | Point-in-time prints, per venue and product                 |
 | `pyth_fx_feeds`                                                    | migration (seed)   | Pyth FX roster — venue reference data, read-only at runtime |
-| `fx_rates` *(planned)*                                             | market-data        | Fiat-cross bars for the FX anchor leg               |
-| `peg_rates` *(planned)*                                            | market-data        | Issuer / redemption reference rates                 |
-| `fx_events` *(planned)*                                            | market-data        | Economic-calendar event times                       |
-| `basis_series` *(planned)*                                         | market-data        | Derived per-market basis series                     |
-| `vol_estimates` *(planned)*                                        | market-data        | Realized volatility by market and window            |
-| `regimes` *(planned)*                                              | market-data        | Regime tags every other stat is sliced by           |
-| `fill_events`, `events`, `takes`, `market_stats`, `indexer_cursor` | indexer            | On-chain event capture and its rollups              |
-| Maker parameter and telemetry tables *(planned)*                   | maker go-between   | Slow parameters published to the bot; run telemetry |
+| `fx_rates` *(planned)*                                             | market-data        | Fiat-cross bars for the FX anchor leg                       |
+| `peg_rates` *(planned)*                                            | market-data        | Issuer / redemption reference rates                         |
+| `fx_events` *(planned)*                                            | market-data        | Economic-calendar event times                               |
+| `basis_series` *(planned)*                                         | market-data        | Derived per-market basis series                             |
+| `vol_estimates` *(planned)*                                        | market-data        | Realized volatility by market and window                    |
+| `regimes` *(planned)*                                              | market-data        | Regime tags every other stat is sliced by                   |
+| `fill_events`, `events`, `takes`, `market_stats`, `indexer_cursor` | indexer            | On-chain event capture and its rollups                      |
+| Maker parameter and telemetry tables *(planned)*                   | maker go-between   | Slow parameters published to the bot; run telemetry         |
 
 Adding a table means naming its writer here. A table with two writers is
 a design error, not a configuration choice.
@@ -673,11 +673,11 @@ nothing was recorded. Each now also has a **store** collector writing into
 and makes a dislocation readable after the fact rather than only watchable
 live.
 
-| Collector                 | Shape                     | What it uniquely carries                                     |
-| ------------------------- | ------------------------- | ------------------------------------------------------------ |
-| `market-data-pyth`        | Batched, roster from store | A published **confidence** half-width and a publisher timestamp |
-| `market-data-kraken`      | Batched, roster from env   | Real market prints of `USDC/USD` (peg truth) and `EURC/EUR`  |
-| `market-data-coinbase-ticker` | One feed per product   | The prints **between** candle closes on the reference venue  |
+| Collector                     | Shape                      | What it uniquely carries                                        |
+| ----------------------------- | -------------------------- | --------------------------------------------------------------- |
+| `market-data-pyth`            | Batched, roster from store | A published **confidence** half-width and a publisher timestamp |
+| `market-data-kraken`          | Batched, roster from env   | Real market prints of `USDC/USD` (peg truth) and `EURC/EUR`     |
+| `market-data-coinbase-ticker` | One feed per product       | The prints **between** candle closes on the reference venue     |
 
 Three things about this tier are load-bearing.
 
@@ -696,8 +696,8 @@ collector.
 
 **A batched venue omits what it could not price, so a misconfiguration is
 indistinguishable from an outage** — and that is the failure mode this tier
-is most exposed to. A mistyped Pyth feed id (opaque hex, uncatchable by
-eye), a Kraken pair spelled the way *we* name it rather than the way Kraken
+is most exposed to. A mistyped Pyth feed id (opaque hex, impossible to
+catch by eye), a Kraken pair spelled the way *we* name it rather than Kraken
 does, and a currency the venue simply does not publish all produce the same
 thing: silence, with nothing logged. So the batched collectors track which
 configured products have *ever* priced and, after a few polls, report the
@@ -821,20 +821,20 @@ be allocated rather than assumed.
   enforced in the shared HTTP client, so no individual source can
   outrun the budget.
 
-| Venue / source            | Cadence                           | Claim                                  |
-| ------------------------- | --------------------------------- | -------------------------------------- |
-| FX anchor (streaming)     | Push; no poll                     | Maker first; collector taps the stream |
-| CEX basis venues          | Slow poll, batched across symbols | Maker first                            |
-| `coinbase` candles        | 15 s                              | Collector                              |
-| `oanda` candles           | 60 s                              | Collector                              |
-| `twelvedata` bars         | 300 s, widened by roster size     | Collector                              |
-| `alphavantage` daily      | 6 h, widened by roster size       | Collector                              |
-| `coinbase-ticker` ticks   | 15 s per product                  | Collector                              |
-| `kraken` ticks            | 15 s, batched across the roster   | Collector                              |
-| `pyth` ticks              | 15 s, batched across the roster   | Collector                              |
-| Issuer / peg rates        | Order of a day                    | Collector                              |
-| Econ calendar             | Order of a day, static download   | Collector                              |
-| On-chain (indexer RPC)    | Framework poll interval           | Indexer                                |
+| Venue / source          | Cadence                           | Claim                                  |
+| ----------------------- | --------------------------------- | -------------------------------------- |
+| FX anchor (streaming)   | Push; no poll                     | Maker first; collector taps the stream |
+| CEX basis venues        | Slow poll, batched across symbols | Maker first                            |
+| `coinbase` candles      | 15 s                              | Collector                              |
+| `oanda` candles         | 60 s                              | Collector                              |
+| `twelvedata` bars       | 300 s, widened by roster size     | Collector                              |
+| `alphavantage` daily    | 6 h, widened by roster size       | Collector                              |
+| `coinbase-ticker` ticks | 15 s per product                  | Collector                              |
+| `kraken` ticks          | 15 s, batched across the roster   | Collector                              |
+| `pyth` ticks            | 15 s, batched across the roster   | Collector                              |
+| Issuer / peg rates      | Order of a day                    | Collector                              |
+| Econ calendar           | Order of a day, static download   | Collector                              |
+| On-chain (indexer RPC)  | Framework poll interval           | Indexer                                |
 
 **Why the Coinbase candles feed polls at a quarter of its bucket width.**
 It used to poll every 60 s on 60-second candles, which meant the newest

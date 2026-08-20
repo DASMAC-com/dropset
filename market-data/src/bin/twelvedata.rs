@@ -56,11 +56,7 @@ async fn main() -> anyhow::Result<()> {
     // `TwelveDataCandles::client`.
     let http = TwelveDataCandles::client(&cfg.base_url, &api_key)?;
 
-    let poll_secs = quota_floor_secs(
-        cfg.poll_interval_secs,
-        symbols.len(),
-        USABLE_DAILY_REQUESTS,
-    );
+    let poll_secs = quota_floor_secs(cfg.poll_interval_secs, symbols.len(), USABLE_DAILY_REQUESTS);
     if poll_secs != cfg.poll_interval_secs {
         tracing::info!(
             configured = cfg.poll_interval_secs,

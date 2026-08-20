@@ -1,3 +1,4 @@
+// cspell:word splitn
 //! The Pyth FX coordinates exist twice in this repo, deliberately, and this
 //! asserts the two copies agree.
 //!
@@ -114,8 +115,9 @@ fn maker_crosses() -> Vec<Cross> {
 }
 
 fn seed_crosses() -> Vec<Cross> {
-    let mut crosses =
-        from_migration_seed(include_str!("../../db-schema/migrations/0004_pyth_fx_feeds.sql"));
+    let mut crosses = from_migration_seed(include_str!(
+        "../../db-schema/migrations/0004_pyth_fx_feeds.sql"
+    ));
     crosses.sort();
     crosses
 }
@@ -164,7 +166,12 @@ fn every_seeded_feed_id_is_32_bytes_of_lowercase_hex_and_unique() {
             cross.currency,
             cross.feed_id
         );
-        assert_eq!(cross.currency.len(), 3, "{} is not ISO 4217", cross.currency);
+        assert_eq!(
+            cross.currency.len(),
+            3,
+            "{} is not ISO 4217",
+            cross.currency
+        );
         assert!(
             ids.insert(cross.feed_id.clone()),
             "{} reuses another cross's feed id",

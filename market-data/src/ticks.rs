@@ -272,10 +272,7 @@ impl SilenceWatch {
 /// collector concern rather than a venue one: the adapters answer under the
 /// keys they were asked with, and only the roster knows which canonical id each
 /// of those keys stands for.
-pub fn by_venue_symbol<F>(
-    products: &[RosterEntry],
-    derive: F,
-) -> Result<Vec<(String, String)>>
+pub fn by_venue_symbol<F>(products: &[RosterEntry], derive: F) -> Result<Vec<(String, String)>>
 where
     F: Fn(&str) -> Result<String>,
 {
@@ -339,10 +336,7 @@ mod tests {
 
     #[test]
     fn a_product_that_never_prices_is_reported_as_configuration_not_uptime() {
-        let mut watch = SilenceWatch::new(
-            vec!["EUR-USD".to_string(), "TYPO-USD".to_string()],
-            3,
-        );
+        let mut watch = SilenceWatch::new(vec!["EUR-USD".to_string(), "TYPO-USD".to_string()], 3);
         watch.observe(&[tick("EUR-USD")]);
         watch.observe(&[tick("EUR-USD")]);
         assert_eq!(watch.silent(), vec!["TYPO-USD"]);

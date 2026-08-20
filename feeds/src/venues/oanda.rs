@@ -131,9 +131,9 @@ impl OandaCandles {
     /// from the environment here (docs/data-feeds.md §4) — the caller decides
     /// where the secret came from.
     pub fn client(base_url: &str, api_key: &str) -> Result<HttpClient> {
-        Ok(HttpClient::new(base_url)?
+        HttpClient::new(base_url)?
             .with_secret_header("Authorization", &format!("Bearer {api_key}"))?
-            .with_header(DATETIME_FORMAT_HEADER, "UNIX")?)
+            .with_header(DATETIME_FORMAT_HEADER, "UNIX")
     }
 
     /// Build the source over a transport from [`OandaCandles::client`],
@@ -443,8 +443,9 @@ mod tests {
     #[test]
     fn resume_clamps_an_oversized_window_to_the_venue_cap() {
         let http = OandaCandles::client("https://example.test", "token").unwrap();
-        let source = OandaCandles::resume(http, "fx:oanda:AUD-USD", "AUD_USD", 60, 10_000, None, 1_000)
-            .unwrap();
+        let source =
+            OandaCandles::resume(http, "fx:oanda:AUD-USD", "AUD_USD", 60, 10_000, None, 1_000)
+                .unwrap();
         assert_eq!(source.max_buckets, MAX_CANDLES_PER_REQUEST);
     }
 
@@ -452,7 +453,10 @@ mod tests {
     fn an_unsupported_granularity_is_rejected_at_construction() {
         // Not merely mapped wrong later: the source must refuse to exist.
         let http = OandaCandles::client("https://example.test", "token").unwrap();
-        assert!(OandaCandles::resume(http, "fx:oanda:AUD-USD", "AUD_USD", 180, 500, None, 1_000).is_err());
+        assert!(
+            OandaCandles::resume(http, "fx:oanda:AUD-USD", "AUD_USD", 180, 500, None, 1_000)
+                .is_err()
+        );
     }
 
     #[test]

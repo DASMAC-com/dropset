@@ -15,7 +15,7 @@
 //! `BASE-QUOTE` ids and derives Kraken's spelling by concatenation, which is
 //! right for most pairs and wrong for the legacy assets that keep an `X`/`Z`
 //! prefix — those pin their spelling in the roster entry. A pair Kraken does not
-//! recognise is omitted from its response rather than erroring, so the silence
+//! recognize is omitted from its response rather than erroring, so the silence
 //! watch is what turns a misspelling into a log line instead of a mystery.
 
 use dropset_feeds::{
@@ -25,7 +25,9 @@ use dropset_feeds::{
 };
 use dropset_market_data::{
     roster::{kraken_pair, roster_from_env},
-    ticks::{by_venue_symbol, SilenceWatch, Tick, TickConfig, TickDefaults, TickSource, TickWriter},
+    ticks::{
+        by_venue_symbol, SilenceWatch, Tick, TickConfig, TickDefaults, TickSource, TickWriter,
+    },
 };
 use std::collections::HashMap;
 use std::time::Duration;

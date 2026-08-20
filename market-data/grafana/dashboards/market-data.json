@@ -523,7 +523,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "The same question as the candle coverage panel above, for the tick tier - which venues are printing which products into spot_ticks. Separate rather than unioned into that panel because the two tiers have genuinely different columns: a candle row has a bucket width and OHLCV, a tick row has neither. Watch the confidence column: a venue that publishes one (Pyth) and suddenly stops is a different event from one that never had a confidence notion at all, which is why it is a count rather than a flag. Deliberately NOT filtered by the source/product variables, for the same reason as the panel above.",
+      "description": "The same question as the candle coverage panel above, for the tick tier - which venues are printing which products into spot_ticks. Separate rather than merged into that panel because the two tiers have genuinely different columns: a candle row has a bucket width and OHLCV, a tick row has neither. Watch the confidence column: a venue that publishes one (Pyth) and suddenly stops is a different event from one that never had a confidence notion at all, which is why it is a count rather than a flag. Deliberately NOT filtered by the source/product variables, for the same reason as the panel above.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -646,7 +646,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT product_id FROM cex_prices UNION SELECT DISTINCT product_id FROM spot_ticks ORDER BY 1",
-        "description": "Products from both tiers. The union is load-bearing: a product that only a tick venue prices - which is most of the roster, since only EURC reaches a CEX candle endpoint - would otherwise be unselectable and its series invisible.",
+        "description": "Products from both tiers. The union is load-bearing: a product that only a tick venue prices - which is most of the roster, since only EURC reaches a CEX candle endpoint - could not otherwise be selected and its series would stay invisible.",
         "includeAll": true,
         "label": "Product",
         "multi": true,

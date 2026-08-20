@@ -99,14 +99,18 @@ mod tests {
         // The contract that matters: a collector must not keep running with a
         // dead pair, because the store's coverage is what gets watched.
         let feeds: Vec<(String, _)> = vec![
-            ("healthy".to_string(), Box::pin(async {
-                // Long enough that the failure below is what ends the run.
-                tokio::time::sleep(Duration::from_secs(30)).await;
-                Ok(())
-            }) as std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>>),
-            ("broken".to_string(), Box::pin(async {
-                Err(anyhow!("the sink rejected a batch"))
-            })),
+            (
+                "healthy".to_string(),
+                Box::pin(async {
+                    // Long enough that the failure below is what ends the run.
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    Ok(())
+                }) as std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>>,
+            ),
+            (
+                "broken".to_string(),
+                Box::pin(async { Err(anyhow!("the sink rejected a batch")) }),
+            ),
         ];
         let err = run_all(feeds).await.unwrap_err();
         let rendered = format!("{err:#}");

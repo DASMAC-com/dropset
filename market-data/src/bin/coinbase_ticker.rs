@@ -19,11 +19,7 @@
 //! Here each product has its own named feed, so one that never yields a record
 //! is already identifiable by that name in the logs.
 
-use dropset_feeds::{
-    connect, run,
-    venues::CoinbaseTicker,
-    HttpClient, RunConfig, Sink, StoreSink,
-};
+use dropset_feeds::{connect, run, venues::CoinbaseTicker, HttpClient, RunConfig, Sink, StoreSink};
 use dropset_market_data::{
     roster::roster_from_env,
     supervise::run_all,

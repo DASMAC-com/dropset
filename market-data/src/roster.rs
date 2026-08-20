@@ -1,3 +1,4 @@
+// cspell:word USDTUSD
 //! The product roster a collector polls: parsing it out of the environment,
 //! and the canonical ↔ venue spelling it hands each adapter.
 //!
@@ -223,9 +224,7 @@ mod tests {
         // the venue adapters omit symbols they got no answer for, so a bad
         // derivation would masquerade as an unquoted pair.
         let roster = parse_roster("not-a-pair").unwrap();
-        assert!(roster[0]
-            .venue_symbol_or(|_| Err(anyhow!("nope")))
-            .is_err());
+        assert!(roster[0].venue_symbol_or(|_| Err(anyhow!("nope"))).is_err());
     }
 
     #[test]
