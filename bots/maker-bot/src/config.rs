@@ -356,16 +356,23 @@ pub const DEFAULT_LADDER: [LadderLevel; 4] = [
 /// The price feeds (§1): poll cadences and base URLs for the sources the
 /// fair-value engine composes its legs from. The per-token identifiers live on
 /// each [`MarketConfig`]; only the transport settings are here. Base URLs are
-/// fields so tests can point them at a local stub. The CoinMarketCap API key
-/// is read from `CMC_API_KEY` at run time, never a field.
+/// fields so tests can point them at a local stub.
+///
+/// **Every venue here is keyless.** No feed in the cascade takes a credential,
+/// so a maker process needs no secret to price a market — which is what lets the
+/// localnet demo run the whole roster with nothing configured.
 #[derive(Clone, Debug)]
 pub struct FeedConfig {
     /// CoinGecko poll interval (primary). One batched `/simple/price` call
     /// covers every market, so 10 s stays well under the free-tier ceiling.
     pub coingecko_poll: Duration,
-    /// CoinMarketCap poll interval (secondary). Polled only when CoinGecko is
-    /// down or throttled — the free tier's ~10k/mo quota rules out a hot poll —
-    /// so this is the *minimum* spacing between fallback calls, not a cadence.
+    /// CoinMarketCap poll interval (secondary), read only when CoinGecko has no
+    /// price for a market.
+    ///
+    /// The adapter is on CoinMarketCap's **keyless public** route, which carries
+    /// no monthly credit quota — so unlike the keyed free plan this cadence has
+    /// only a rate to respect, not a budget to ration, and it can sit alongside
+    /// CoinGecko's rather than being held back for emergencies.
     pub coinmarketcap_poll: Duration,
     /// ECB/Frankfurter FX-anchor poll interval. ECB publishes once a working
     /// day, so a slow poll suffices.
@@ -381,7 +388,8 @@ pub struct FeedConfig {
     pub coinbase_poll: Duration,
     /// CoinGecko REST base URL (`/simple/price` is appended).
     pub coingecko_base_url: String,
-    /// CoinMarketCap REST base URL (`/v2/cryptocurrency/quotes/latest`).
+    /// CoinMarketCap REST base URL (`/public-api/v1/simple/price` is appended —
+    /// the keyless public route).
     pub coinmarketcap_base_url: String,
     /// Frankfurter REST base URL (`/latest`), the keyless ECB FX-rate feed.
     pub frankfurter_base_url: String,
@@ -511,31 +519,21 @@ pub struct BotConfig {
     pub fair_value: FairValueConfig,
 }
 
-/// Environment variable holding the CoinMarketCap API key (never committed).
-pub const CMC_KEY_ENV: &str = "CMC_API_KEY";
-
-/// The CoinMarketCap API key for this run, or `None` when that tier is not
-/// wired up (the localnet demo runs without it).
-///
-/// This lives with the bot's configuration, not with the venue adapter it
-/// feeds: `dropset_feeds::venues::CmcSource` takes its key as an argument, so
-/// *where a secret comes from* stays a deployment decision the app owns. That
-/// is what lets the same adapter later be handed a key from a secrets provider
-/// without touching it.
-pub fn cmc_api_key() -> Option<String> {
-    std::env::var(CMC_KEY_ENV).ok().filter(|k| !k.is_empty())
-}
-
 impl Default for FeedConfig {
     fn default() -> Self {
         Self {
-            // CoinGecko's keyless tier rate-limits by IP, and the localnet demo
-            // runs one maker process per market — so seven processes share that
-            // budget. A 60 s base, plus the on-failure exponential backoff in
-            // `tasks.rs`, keeps the aggregate request rate well under the limit;
-            // the FX-rate / static tiers cover any gaps. (The definitive fix is
-            // one maker process for the whole roster — one batched call — but
-            // that trades away the per-market start/stop the demo uses.)
+            // CoinGecko's keyless tier rate-limits by IP at a *dynamic* 5–15
+            // calls/minute, and the TUI runs one maker process per market — so
+            // seven of these cadences can share one IP budget. That is 7/minute:
+            // inside the top of the band, ~40% over the bottom, and which end
+            // applies is not observable from here.
+            //
+            // Left at 60 s deliberately rather than slowed to fit the worst
+            // case, because being throttled here is cheap and visible: the 429
+            // surfaces, the basis leg falls through to the (keyless, quota-free)
+            // CoinMarketCap tier, and the FX anchor is a different venue. The
+            // definitive fix is a local price fan-out — one poller feeding N
+            // quoting tasks — not a slower poll; see docs/data-feeds.md §10.
             coingecko_poll: Duration::from_secs(60),
             coinmarketcap_poll: Duration::from_secs(60),
             fx_poll: Duration::from_secs(300),

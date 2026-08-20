@@ -47,6 +47,16 @@ pub const SECRET_NAME: &str = "alphavantage/api-key";
 /// It is here to encode the constraint at the transport, where it will bind
 /// if anyone later adds paging or a retry loop — the shared client's 250 ms
 /// default would exhaust a 25/day budget in seven seconds.
+///
+/// **This interval approximates a quota, and cannot enforce one — do not read
+/// the arithmetic above as a budget guarantee.** "24 requests a day" holds only
+/// across a single continuous run: the gate is in-process state that resets when
+/// the process does, so a crash-loop, or a few local stack cycles in one
+/// afternoon, spends the account's 25 while every individual pacing decision
+/// stays correct. The exposure is invisible for exactly that reason — the
+/// steady-state arithmetic checks out. Closing it needs durable per-day state,
+/// which is not built; see [`crate::HttpClient::with_min_interval`] for the
+/// canonical statement of the rate-versus-quota distinction.
 const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(3_600);
 
 /// This source's opaque resume position: the next epoch second still to fetch.
@@ -243,6 +253,22 @@ fn decode(date: &str, raw: &RawBar) -> Result<Candle> {
 mod tests {
     use super::*;
     use crate::time::civil_to_epoch_secs;
+    use crate::venues::requests_per_window;
+
+    #[test]
+    fn the_floor_stays_inside_the_accounts_twenty_five_per_day() {
+        // Note what this does and does not prove. The floor yields ≤ 25 requests
+        // across a day *within one continuous run*; it cannot bound the account's
+        // actual daily spend, because the interval is in-process state that
+        // resets on restart (docs/data-feeds.md §10). A rate can be asserted
+        // here; a quota cannot.
+        let per_day = requests_per_window(MIN_REQUEST_INTERVAL, Duration::from_secs(24 * 3_600));
+        assert!(
+            per_day < 25.0,
+            "{per_day} requests/day does not sit strictly inside Alpha Vantage's \
+             25/day account budget"
+        );
+    }
 
     /// A captured response: the real envelope shape, trimmed to three days.
     fn captured_response() -> FxDailyResponse {

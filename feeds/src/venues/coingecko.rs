@@ -11,6 +11,30 @@ use crate::{Batch, HttpClient, Source};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
+use std::time::Duration;
+
+/// The floor between two requests on this venue — the strictest in the roster.
+///
+/// This adapter sends no key, so it draws on CoinGecko's **keyless public**
+/// tier, documented as a *dynamic* **5–15 calls per minute** by IP rather than
+/// a fixed rate. (The keyed Demo tier is 100/min against 10k calls/month; it is
+/// a different budget and this adapter is not on it.)
+///
+/// The floor is sized to the **low end** of that band, since which end applies
+/// is not ours to know. Against the shared client's 250 ms default — ~240 a
+/// minute — that default would be 16–48× over the tier the first time anything
+/// issued back-to-back requests here.
+///
+/// **15 s (4/min) rather than the 12 s that would yield exactly 5.** Sitting on
+/// the cap is the wrong place for the same reasons as Pyth's floor, and one
+/// more specific to this venue: the band is *dynamic*, so the low end is not a
+/// floor the venue promises to hold — it is the lowest value observed. A margin
+/// below it is the only thing that survives the band moving.
+///
+/// It does not bind today: one request prices the whole roster and the maker
+/// polls every 60 s. It encodes the constraint at the transport, which is where
+/// a future pager would otherwise inherit the wrong number.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(15);
 
 /// A poll [`Source`] over CoinGecko's batched simple-price endpoint, keyed by
 /// CoinGecko's own id slugs (`euro-coin`, `usd-coin`, …).
@@ -23,7 +47,7 @@ impl CoinGeckoSource {
     /// Build the source over `base_url`, batching `ids` in every poll.
     pub fn new(base_url: &str, ids: Vec<String>) -> Result<Self> {
         Ok(Self {
-            http: HttpClient::new(base_url)?,
+            http: HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL),
             ids,
         })
     }
@@ -74,7 +98,21 @@ pub fn parse_coingecko(body: &Value, ids: &[&str]) -> Quotes<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::venues::requests_per_window;
     use serde_json::json;
+
+    #[test]
+    fn the_floor_stays_inside_the_low_end_of_the_keyless_band() {
+        // The keyless tier is a dynamic 5–15 calls/minute, and which end applies
+        // is not observable — so the floor must satisfy the *low* end, and
+        // strictly, since a dynamic band's low end can itself move.
+        let per_minute = requests_per_window(MIN_REQUEST_INTERVAL, Duration::from_secs(60));
+        assert!(
+            per_minute < 5.0,
+            "{per_minute} requests/minute does not sit strictly inside the \
+             5/minute low end of CoinGecko's keyless band"
+        );
+    }
 
     #[test]
     fn parses_coingecko_batch() {

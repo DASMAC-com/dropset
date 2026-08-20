@@ -12,6 +12,24 @@ use crate::{Batch, HttpClient, Source};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
+use std::time::Duration;
+
+/// The floor between two requests on this venue.
+///
+/// Frankfurter **publishes no rate limit** — it is keyless with soft,
+/// unpublished fair-use limits — one of two venues in the roster in that
+/// position (keyless CoinMarketCap is the other). So unlike the floors derived
+/// from a documented number, 1 s is *our* choice rather than the venue's —
+/// picked because an unpublished limit is a reason for more caution, not less,
+/// and because the data cannot justify faster: these are ECB reference rates
+/// that change once a business day, so no consumer has a use for a tighter
+/// floor.
+///
+/// It does not bind today: one request prices every currency and the maker polls
+/// every 300 s. If this venue ever needs to be polled harder, self-hosting the
+/// open-source service is the documented answer rather than leaning on the
+/// public instance's goodwill.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
 
 /// A poll [`Source`] over Frankfurter's batched latest-rates endpoint, keyed by
 /// ISO currency code.
@@ -24,7 +42,7 @@ impl FrankfurterSource {
     /// Build the source over `base_url`, batching `currencies` in every poll.
     pub fn new(base_url: &str, currencies: Vec<String>) -> Result<Self> {
         Ok(Self {
-            http: HttpClient::new(base_url)?,
+            http: HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL),
             currencies,
         })
     }
@@ -76,6 +94,18 @@ pub fn parse_frankfurter(body: &Value, currencies: &[&str]) -> Quotes<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_frankfurter_floor_is_stricter_than_the_shared_default() {
+        // This venue publishes no rate, so there is no documented number to
+        // check against and no venue arithmetic to assert. What can be checked
+        // is the claim the constant actually makes: that the floor was
+        // deliberately raised rather than left to inherit the shared default.
+        // Comparing against the default itself — rather than restating this
+        // constant's own literal — is what makes the test fail if either side
+        // moves.
+        assert!(MIN_REQUEST_INTERVAL > crate::http::DEFAULT_MIN_INTERVAL);
+    }
 
     #[test]
     fn parses_and_inverts_frankfurter() {

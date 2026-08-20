@@ -32,6 +32,28 @@ use crate::{Batch, HttpClient, Source};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
+use std::time::Duration;
+
+/// The floor between two requests on this venue.
+///
+/// Kraken documents its public endpoints as safe at **1 call per second or
+/// less**, backed by a decrementing call counter rather than a fixed window.
+/// That is 4× stricter than the shared client's 250 ms default.
+///
+/// **1.2 s rather than the 1 s the guidance names**, for the same reason as
+/// Pyth's and CoinGecko's floors: a floor equal to the documented rate sits
+/// exactly on the cap, which leaves nothing for a retry or for a second process
+/// on the same IP. Kraken is the mildest of the three — its counter decrements
+/// continuously, and its own wording ("or less") reads as guidance rather than
+/// a hard window — but there is no reason to spend the margin, and keeping all
+/// three floors strictly inside their limits means the rule holds without an
+/// exception to remember.
+///
+/// It does not bind today — this source batches every pair into one request
+/// and never pages, and the maker polls it every 15 s. It is here so the
+/// constraint lives at the transport, where it binds the moment anyone adds
+/// paging or a retry loop.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(1_200);
 
 /// A poll [`Source`] over Kraken's batched public ticker, keyed by the
 /// Kraken pair names the source was built with.
@@ -44,7 +66,7 @@ impl KrakenSource {
     /// Build the source over `base_url`, batching `pairs` in every poll.
     pub fn new(base_url: &str, pairs: Vec<String>) -> Result<Self> {
         Ok(Self {
-            http: HttpClient::new(base_url)?,
+            http: HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL),
             pairs,
         })
     }
@@ -138,7 +160,18 @@ fn mid_or_last(entry: &Value) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::venues::requests_per_window;
     use serde_json::json;
+
+    #[test]
+    fn the_floor_stays_inside_krakens_documented_one_call_per_second() {
+        let per_second = requests_per_window(MIN_REQUEST_INTERVAL, Duration::from_secs(1));
+        assert!(
+            per_second < 1.0,
+            "{per_second} requests/second does not sit strictly inside Kraken's \
+             documented ~1/s for public endpoints"
+        );
+    }
 
     /// A captured Kraken ticker response, trimmed to the fields decoded here.
     fn body() -> Value {

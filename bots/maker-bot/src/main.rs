@@ -4,11 +4,11 @@
 //! discover the markets, fund the leader, and drive the tick loop, one batched
 //! feed poll shared across them. `--dry-run` instead polls the tiered feeds
 //! once and prints the reference each market *would* stamp — the wiring check
-//! for feed credentials, with no validator and no writes. Pass `--drop <tier>`
-//! (repeatable: `pyth`, `coinbase`, `kraken`, `coingecko`, `cmc`, `fx`) in a
-//! dry run to suppress a tier and watch the cascade fall through to the next
-//! one — dropping `pyth` is how you check the Frankfurter FX fallback still
-//! carries the anchor.
+//! that every venue is reachable and decoding, with no validator and no writes.
+//! Pass `--drop <tier>` (repeatable: `pyth`, `coinbase`, `kraken`, `coingecko`,
+//! `cmc`, `fx`) in a dry run to suppress a tier and watch the cascade fall
+//! through to the next one — dropping `pyth` is how you check the Frankfurter
+//! FX fallback still carries the anchor.
 //!
 //! Flags:
 //!   --rpc <url>            RPC endpoint (default http://127.0.0.1:8899)
@@ -25,10 +25,10 @@ use dropset_feeds::venues::{
     CmcSource, CoinGeckoSource, CoinbaseTicker, FrankfurterSource, KrakenSource, PythFeed,
     PythHermesSource,
 };
-use dropset_feeds::{forward_channel, run_until, RunConfig, Sink, Source};
+use dropset_feeds::{forward_channel, run_until, HttpClient, RunConfig, Sink, Source};
 use dropset_maker_bot::config::{
-    cmc_api_key, BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS,
-    QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
+    BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
+    USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
 };
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::build_legs;
@@ -366,9 +366,10 @@ impl FeedRoster {
 /// Spawn every price source on `rt` and bundle their live-sink receivers.
 /// Each source owns its steady-state poll cadence (its `RunConfig::poll_interval`)
 /// but retries on the short [`FEED_ERROR_BACKOFF`] so a transient rate-limit
-/// doesn't dark the anchor for a whole interval. CoinMarketCap is wired only
-/// when a key is set and the roster names any CMC id; the Coinbase tier is
-/// empty unless a quoted market is actually listed there.
+/// doesn't dark the anchor for a whole interval. CoinMarketCap is wired whenever
+/// the roster names any CMC id — it needs no credential, being on the keyless
+/// public route; the Coinbase tier is empty unless a quoted market is actually
+/// listed there.
 fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Result<FeedReceivers> {
     let pyth = spawn_feed(
         rt,
@@ -387,21 +388,25 @@ fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Res
         },
     );
     // Coinbase's ticker endpoint is per product, so a roster of N listed tokens
-    // is N sources rather than one batched poll.
+    // is N sources rather than one batched poll. They share **one cloned
+    // client** so they also share one rate gate: Coinbase throttles by IP, and
+    // N independently-constructed clients would each pace against the venue
+    // alone while all N spent the same bucket.
+    let coinbase_http = HttpClient::new(&cfg.coinbase_base_url)?;
     let coinbase = roster
         .coinbase
         .iter()
         .map(|product| {
-            Ok(spawn_feed(
+            spawn_feed(
                 rt,
-                CoinbaseTicker::new(&cfg.coinbase_base_url, product.clone())?,
+                CoinbaseTicker::from_client(coinbase_http.clone(), product.clone()),
                 RunConfig {
                     poll_interval: cfg.coinbase_poll,
                     error_backoff: FEED_ERROR_BACKOFF,
                 },
-            ))
+            )
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<_>>();
     let coingecko = spawn_feed(
         rt,
         CoinGeckoSource::new(&cfg.coingecko_base_url, roster.coingecko.clone())?,
@@ -410,20 +415,19 @@ fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Res
             error_backoff: FEED_ERROR_BACKOFF,
         },
     );
-    let coinmarketcap = match cmc_api_key() {
-        Some(key) if !roster.coinmarketcap.is_empty() => Some(spawn_feed(
+    // Wired whenever any selected market names a CMC id — no credential to
+    // gate on, since this adapter is on the keyless public route.
+    let coinmarketcap = if roster.coinmarketcap.is_empty() {
+        None
+    } else {
+        Some(spawn_feed(
             rt,
-            CmcSource::new(
-                &cfg.coinmarketcap_base_url,
-                roster.coinmarketcap.clone(),
-                &key,
-            )?,
+            CmcSource::new(&cfg.coinmarketcap_base_url, roster.coinmarketcap.clone())?,
             RunConfig {
                 poll_interval: cfg.coinmarketcap_poll,
                 error_backoff: FEED_ERROR_BACKOFF,
             },
-        )),
-        _ => None,
+        ))
     };
     let frankfurter = spawn_feed(
         rt,
@@ -460,7 +464,6 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         .build()
         .context("build dry-run runtime")?;
     let drop = |tier: &str| args.drop.iter().any(|d| d == tier);
-    let cmc_key = cmc_api_key();
 
     // Named to match `run_live`, where `markets` is the selection and `roster`
     // is the derived per-venue symbol sets — the two paths should read alike.
@@ -484,8 +487,11 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     };
     let mut coinbase: HashMap<String, f64> = HashMap::new();
     if !drop("coinbase") {
+        // One client cloned across the products, as in `spawn_price_feeds`, so
+        // the per-product polls share a single rate gate against the venue.
+        let http = HttpClient::new(&cfg.feeds.coinbase_base_url)?;
         for product in &roster.coinbase {
-            let ticker = CoinbaseTicker::new(&cfg.feeds.coinbase_base_url, product.clone())?;
+            let ticker = CoinbaseTicker::from_client(http.clone(), product.clone());
             if let Ok(Some(price)) = rt.block_on(ticker.poll()) {
                 coinbase.insert(product.clone(), price);
             }
@@ -497,14 +503,11 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         rt.block_on(CoinGeckoSource::new(&cfg.feeds.coingecko_base_url, roster.coingecko)?.poll())
             .unwrap_or_default()
     };
-    let cmc = match &cmc_key {
-        Some(key) if !drop("cmc") && !roster.coinmarketcap.is_empty() => rt
-            .block_on(
-                CmcSource::new(&cfg.feeds.coinmarketcap_base_url, roster.coinmarketcap, key)?
-                    .poll(),
-            )
-            .unwrap_or_default(),
-        _ => Default::default(),
+    let cmc = if drop("cmc") || roster.coinmarketcap.is_empty() {
+        Default::default()
+    } else {
+        rt.block_on(CmcSource::new(&cfg.feeds.coinmarketcap_base_url, roster.coinmarketcap)?.poll())
+            .unwrap_or_default()
     };
     let fx = if drop("fx") {
         Default::default()
@@ -517,17 +520,12 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
 
     println!(
         "Tiers live: pyth {} feeds, coinbase {} products, kraken {} pairs, \
-         coingecko {} ids, coinmarketcap {} ids{}, fx {} currencies",
+         coingecko {} ids, coinmarketcap {} ids, fx {} currencies",
         pyth.len(),
         coinbase.len(),
         kraken.len(),
         cg.len(),
         cmc.len(),
-        if cmc_key.is_some() {
-            ""
-        } else {
-            " (no CMC_API_KEY)"
-        },
         fx.len()
     );
     if !args.drop.is_empty() {

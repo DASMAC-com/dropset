@@ -44,6 +44,17 @@ pub const MAX_CANDLES_PER_REQUEST: usize = 5000;
 /// ([`crate::secrets`]) — the v20 personal access token.
 pub const SECRET_NAME: &str = "oanda/api-key";
 
+// This source declines to raise its request floor, and the number is recorded
+// here so the next pager inherits it rather than rediscovering it. OANDA allows
+// **100 requests per second**; the shared client's 250 ms default is 4 a second,
+// already ~25× stricter than the venue asks, so `with_min_interval` would buy
+// nothing (docs/data-feeds.md §10). This venue and Coinbase are the only two in
+// the crate that keep the default, and both keep it for this same reason: the
+// documented rate is higher than the default permits.
+//
+// A plain comment rather than a doc comment because there is no *floor* constant
+// to attach it to — the absence of one is precisely the point.
+
 /// The header that switches every timestamp in the response — and every
 /// timestamp accepted in a query — from RFC3339 to epoch seconds.
 const DATETIME_FORMAT_HEADER: &str = "Accept-Datetime-Format";

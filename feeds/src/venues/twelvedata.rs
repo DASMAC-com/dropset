@@ -59,6 +59,15 @@ pub const SECRET_NAME: &str = "twelvedata/api-key";
 /// 8 seconds is 7.5 requests a minute — just inside the limit, and cheap: a
 /// 60-day minute-bar backfill is ~18 requests at 5000 bars each, so the floor
 /// costs about two minutes once, not per poll.
+///
+/// **This floor holds the venue's rate; it does not hold the daily budget.**
+/// Twelve Data publishes both — 8 requests a minute *and* 800 credits a day —
+/// and only the first is a rate an interval can bound. The daily budget is held
+/// by the collector's steady-state cadence instead (300 s, ≈288 requests/day),
+/// and that holds only per continuous run. Unlike Alpha Vantage, whose floor is
+/// standing in for a quota outright, this constant is doing the job it can
+/// actually do; the budget is simply someone else's. See
+/// [`crate::HttpClient::with_min_interval`] for why the distinction matters.
 const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(8);
 
 /// This source's opaque resume position: the next epoch second still to fetch.
@@ -292,6 +301,17 @@ fn decode(raw: &RawBar) -> Result<Candle> {
 mod tests {
     use super::*;
     use crate::time::civil_to_epoch_secs;
+    use crate::venues::requests_per_window;
+
+    #[test]
+    fn the_floor_stays_inside_the_free_tiers_eight_per_minute() {
+        let per_minute = requests_per_window(MIN_REQUEST_INTERVAL, Duration::from_secs(60));
+        assert!(
+            per_minute < 8.0,
+            "{per_minute} requests/minute does not sit strictly inside Twelve \
+             Data's documented 8/min free tier"
+        );
+    }
 
     /// A captured response: two AUD/USD 1min bars, newest-first, as returned
     /// with `timezone=UTC`.

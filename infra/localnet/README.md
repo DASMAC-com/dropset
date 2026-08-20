@@ -110,9 +110,8 @@ misconfigured RPC fails fast rather than signing against a public chain.
 Both sign with the repo `keys/` keypairs, bind-mounted read-only:
 
 - the **maker** quotes as the leader (`keys/EEEE.json`) and funds it
-  from the localnet faucet over RPC — no host wallet needed. Set
-  `CMC_API_KEY` in the environment to arm the CoinMarketCap secondary
-  tier; without it the feed cascades CoinGecko → FX-rate → static.
+  from the localnet faucet over RPC — no host wallet needed. Every price
+  feed is keyless, so the whole cascade runs with nothing configured.
 - the **taker** signs swaps with `keys/FFFF.json` and mints itself back
   up to target inventory under the mock-mint authority
   (`keys/BBBB.json`, the committed localnet admin the host TUI created
