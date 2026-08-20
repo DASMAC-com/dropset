@@ -10,48 +10,52 @@
 //! ## Legs, and how the bot's feeds map onto them
 //!
 //! The sources are the shared `dropset_feeds::venues` adapters — the bot
-//! selects and tiers them, it does not implement them. Each leg walks its tiers
-//! in order and takes the first that answers ([`crate::tasks`] does the walk):
+//! selects them, it does not implement them. Each leg offers **every source
+//! that answered** as a candidate set, and the engine resolves them by
+//! consensus ([`crate::tasks`] does the collecting):
 //!
-//! | Engine leg    | Meaning           | Primary            | Then                 | Last resort   |
-//! | ------------- | ----------------- | ------------------ | -------------------- | ------------- |
-//! | `fx`          | USD per fiat unit | Pyth Hermes        | ECB/Frankfurter      | —             |
-//! | `crypto_usdc` | USDC per token    | Coinbase `/USDC`   | Kraken `/USD`        | CoinGecko/CMC |
-//! | `usdc_usd`    | USD per USDC      | Kraken `USDCUSD`   | CoinGecko `usd-coin` | —             |
-//! | `static_usd`  | last-resort peg   | [`crate::config::MarketConfig::static_usd`] | | |
+//! | Engine leg    | Meaning           | Sources offered                                    |
+//! | ------------- | ----------------- | -------------------------------------------------- |
+//! | `fx`          | USD per fiat unit | Pyth Hermes (trusted), ECB/Frankfurter              |
+//! | `crypto_usdc` | USDC per token    | Coinbase `/USDC`, Kraken `/USD`, CoinGecko, CMC     |
+//! | `usdc_usd`    | USD per USDC      | Kraken `USDCUSD`, CoinGecko `usd-coin`             |
+//! | `static_usd`  | last-resort peg   | [`crate::config::MarketConfig::static_usd`]        |
 //!
-//! Four things that table is load-bearing about:
+//! What that table is load-bearing about:
 //!
-//! - **The crypto/USD index tier is demoted, not retired.** CoinGecko / CMC was
-//!   the *old* cascade's primary mid and is a fallback here, for the
+//! - **Listing order is not priority any more.** It used to be: the first tier
+//!   that answered won outright, so a single bad source *was* the leg. Order now
+//!   only decides which sources survive a set larger than the engine will hold,
+//!   and nothing else.
+//! - **The crypto/USD index sources are still the weakest input**, for the
 //!   reflexivity reason in §1 fm5 — but only EURC is listed on Coinbase or
-//!   Kraken, so for the other five index-priced markets that fallback *is* the
-//!   basis leg, unchecked by any second source.
-//! - **One market has no tier at all.** MXNe reaches none of the four sources
-//!   (see [`crate::config::MARKETS`]), so it composes on its FX anchor with a
-//!   pinned basis and reports `Health::Unverified` rather than walking a ladder
-//!   with nothing on it. The walk below therefore never produces a
-//!   `crypto_usdc` reading for it, and the engine's pinned arm runs instead.
-//! - **Pyth earns the anchor by publishing a confidence half-width**, which
-//!   Frankfurter's daily ECB reference does not. Without one the
-//!   fresh-but-uncertain regime (§1 fm6) is unobservable, so on the Frankfurter
-//!   tier the engine can only ever see the anchor as fresh or stale.
-//! - **A tier hands off when it goes stale, not merely when it goes absent.**
-//!   The FX walk drops a Pyth reading the engine would reject as stale, so a
-//!   Hermes outage reaches Frankfurter instead of leaving a dead primary
-//!   sitting in the slot masking a live fallback.
+//!   Kraken, so for the other index-priced markets they are the *only* input.
+//!   Those markets now compose as `Regime::Uncorroborated` and report
+//!   `Health::Unverified`: still quoted, no longer described as corroborated.
+//! - **One market has no source at all.** MXNe reaches none of them (see
+//!   [`crate::config::MARKETS`]), so it composes on its FX anchor with a pinned
+//!   basis. The engine drops its whole crypto candidate set unconditionally, so
+//!   a stray reading for it can never price it.
+//! - **Pyth is the one source designated believable alone**, because it
+//!   publishes a confidence half-width (without one the fresh-but-uncertain
+//!   regime, §1 fm6, is unobservable) and is aged from the publisher's clock.
+//!   That designation is also what lets it stand when it and the daily ECB
+//!   reference drift apart — a disagreement the leg still reports.
+//! - **Staleness is the engine's rule, applied once.** The collection below no
+//!   longer pre-filters on freshness: a stale candidate simply does not count
+//!   toward its leg's consensus, so it cannot mask a live one either.
 //! - **…except while the FX session is shut.** Frankfurter is aged from
-//!   *receipt*, so it reads fresh all weekend off a Friday close. Standing it
-//!   up then would hold the engine in the Normal regime on a closed market,
-//!   which is the "fall back to a stale peg" behavior §1 fm2 rejects — so the
-//!   FX fallback is suppressed on weekends and the crypto reference anchors.
+//!   *receipt*, so it reads fresh all weekend off a Friday close. Offering it
+//!   then would hold the engine in the Normal regime on a closed market, which
+//!   is the "fall back to a stale peg" behavior §1 fm2 rejects — so it is
+//!   withheld on weekends and the crypto reference anchors.
 //!
-//! One unit conversion happens in the walk rather than the engine: Coinbase
-//! quotes `<token>/USDC` directly, but Kraken quotes `<token>/USD`, so a Kraken
-//! basis reading is divided by the live `usdc_usd` leg. The peg guard only
-//! *alarms* at a 3% deviation — it does not correct one — and leaving it
-//! uncorrected would make the observed basis jump whenever the tier flipped
-//! between the two venues.
+//! One unit conversion happens during collection rather than in the engine:
+//! Coinbase quotes `<token>/USDC` directly, but Kraken quotes `<token>/USD`, so
+//! a Kraken candidate is divided by the peg leg's own consensus. The peg guard
+//! only *alarms* at a deviation — it does not correct one — and leaving it
+//! uncorrected would make the Kraken and Coinbase candidates disagree by the
+//! width of the peg, turning a unit mismatch into a false dispersion flag.
 //!
 //! The remaining spec-named sources are not wired, and each for a reason
 //! established by probing it: **Binance** answers `HTTP 451` from the deploy
@@ -61,17 +65,18 @@
 //! too, the closer issuer-rate proxy, but nothing subscribes to it yet.)
 //! OANDA is the same story as Circle.
 
-use dropset_fair_value::{Legs, Reading};
+use dropset_fair_value::{Candidates, Legs};
 
 pub use dropset_fair_value::FairValue;
 
 /// Build the engine's [`Legs`] for one market from the bot's cached readings.
-/// Each `Option` is `None` when that source didn't answer this tick; the engine
-/// drops any that are stale and selects the regime from what's live.
+/// Each leg carries every source that answered this tick; the engine drops the
+/// stale and invalid ones, resolves the rest by consensus, and selects the
+/// regime from what survives.
 pub fn build_legs(
-    fx: Option<Reading>,
-    crypto_usdc: Option<Reading>,
-    usdc_usd: Option<Reading>,
+    fx: Candidates,
+    crypto_usdc: Candidates,
+    usdc_usd: Candidates,
     static_usd: f64,
 ) -> Legs {
     Legs {

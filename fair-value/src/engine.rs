@@ -30,33 +30,79 @@
 
 use std::time::Duration;
 
-use crate::basis::BasisEma;
+use crate::basis::{BasisEma, Fold};
 use crate::config::FairValueConfig;
-use crate::reading::Reading;
+use crate::consensus::{Candidates, Consensus, ConsensusState};
 
-/// The raw feed legs for one market on one tick, each `None` when its source
-/// didn't answer. Units differ per leg and matter — see each field (§1).
+/// The raw feed legs for one market on one tick. Each leg carries **every
+/// source that answered**, not the winner of a priority ladder — the engine
+/// resolves them by consensus (see [`crate::Candidates`]). Units differ per leg
+/// and matter — see each field (§1).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Legs {
     /// FX anchor: the fiat cross as **USD per fiat unit** (EUR/USD ≈ 1.14 for
-    /// EURC). Deep, exogenous, streamed (Pyth Hermes / OANDA). `None` off
+    /// EURC). Deep, exogenous, streamed (Pyth Hermes / OANDA). Empty off
     /// session (the weekend regime) or on an outage. May carry a confidence
     /// half-width (§1 fm6).
-    pub fx: Option<Reading>,
+    pub fx: Candidates,
     /// Crypto reference: the token priced directly in **USDC per token** on a
     /// crypto venue (Coinbase `<token>/USDC`; CoinGecko/CMC token-USD as the
     /// last-resort fallback). Two roles — the numerator of the observed basis
     /// (`crypto_usdc / fx`) in the normal regime, and the anchor itself in the
     /// crypto-only regime.
-    pub crypto_usdc: Option<Reading>,
+    pub crypto_usdc: Candidates,
     /// USDC/USD peg truth as **USD per USDC** — a *separate* USDC anchor
     /// (Coinbase USDC/USD, Circle redemption). Drives the portfolio-wide
-    /// common-mode guard (§1 fm1). `None` simply means the guard can't fire
+    /// common-mode guard (§1 fm1). Empty simply means the guard can't fire
     /// this tick; the basis is still observable from `crypto_usdc / fx`.
-    pub usdc_usd: Option<Reading>,
+    pub usdc_usd: Candidates,
     /// Last-resort static USD-per-token peg (a config constant, not a feed).
     /// Used only when every live leg is down — the deepest degraded case.
     pub static_usd: f64,
+}
+
+/// The wall-clock context for one tick — facts about *when* the tick is, as
+/// opposed to what the feeds said.
+///
+/// A struct rather than a bare `weekend: bool` because session state is not the
+/// only clock fact the composition needs: proximity to a scheduled macro
+/// release is the same kind of input (global, not per-leg, derived from the
+/// clock rather than observed), and belongs beside this one rather than as
+/// another positional bool.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ClockCtx {
+    /// The FX session is closed (§1 fm2), inside which an absent FX anchor is
+    /// the structural crypto-only state rather than a degrade.
+    pub weekend: bool,
+}
+
+impl ClockCtx {
+    /// A context for a tick inside the open FX session.
+    pub fn in_session() -> Self {
+        Self { weekend: false }
+    }
+
+    /// A context for a tick in the FX-closed window.
+    pub fn weekend() -> Self {
+        Self { weekend: true }
+    }
+}
+
+impl Legs {
+    /// The two-peg basis these legs imply, when it is observable at all: both
+    /// legs resolving to a consensus reading, and the FX anchor a usable
+    /// divisor. `None` means there is nothing to observe this tick — a source is
+    /// still warming, one has dropped out, or the leg's sources disagree.
+    ///
+    /// Lives here rather than in the consumer so the gating rule and the
+    /// division are stated once. The consumer's copy had already drifted into
+    /// re-implementing the crate's leg gating alongside the arithmetic, which is
+    /// the shape this crate exists to prevent.
+    pub fn observed_basis(&self, stale: Duration, dispersion_frac: f64) -> Option<f64> {
+        let fx = self.fx.resolve(stale, dispersion_frac).reading?;
+        let crypto = self.crypto_usdc.resolve(stale, dispersion_frac).reading?;
+        observed_basis(crypto.value, fx.value)
+    }
 }
 
 /// Which leg is anchoring the mid this tick — surfaced per market for the
@@ -91,22 +137,122 @@ pub enum Regime {
     /// The distinction is the same one this enum already draws between a
     /// weekend and an outage — a permanent state reported as a fault is a
     /// fault the operator learns to ignore.
+    ///
+    /// **A pinned market still has no leading price-divergence detection, and
+    /// the consensus filter does not give it any.** This is worth stating
+    /// plainly because the opposite was expected: a dispersion gate across
+    /// several sources is what would normally provide a second opinion without
+    /// a dedicated basis venue. It cannot here, because a pinned market is
+    /// *defined* by having no basis source to disperse against — there is
+    /// nothing to corroborate, which is the whole reason the basis is pinned.
+    /// The FX leg does gain the gate, so a bad anchor is caught; the basis is
+    /// still an assertion.
+    ///
+    /// What remains is therefore an **accepted** risk with a known sign: the
+    /// pin asserts a basis of 1.0, and every guard that survives for such a
+    /// market — the USDC common-mode check, the TVL floor, the
+    /// inventory-imbalance check — is a *trailing* detector that trips only
+    /// after the maker has been picked off. Exposure is bounded by the
+    /// top-of-book size. It closes when the market gains a real basis source,
+    /// not when this filter improves.
     FxPinned,
+    /// Composed exactly as [`Regime::Normal`] or [`Regime::CryptoOnly`], but a
+    /// contributing leg rests on a **single uncorroborated source**.
+    ///
+    /// Structural, like the two regimes it shadows: nothing has failed, there
+    /// simply is no second venue pricing this token, which is the standing
+    /// condition for most of the roster rather than an incident. It reports
+    /// [`Health::Unverified`] for the same reason [`Regime::FxPinned`] does —
+    /// the mid rests on one unchecked leg and the operator is entitled to see
+    /// that — and specifically *not* [`Health::Degraded`], because tightening
+    /// the kill switches forever on a permanent condition is the
+    /// desensitization this whole distinction exists to avoid.
+    Uncorroborated,
     /// A degrade — see [`Degrade`] for which.
     Degraded(Degrade),
     /// No usable leg at all.
     Paused,
 }
 
+impl Regime {
+    /// The health gate this regime implies (§4).
+    ///
+    /// Health is a **total function of the regime** — there is no arm in which
+    /// they disagree — so it is derived here rather than restated at each
+    /// composition site. It stays a public field on [`FairValue`] because it is
+    /// the documented kill-switch axis and is constructed independently by
+    /// consumers; what this removes is the possibility of the two drifting,
+    /// where a new degraded arm could set the regime and forget the health,
+    /// silently un-tightening every kill switch while the operator log still
+    /// read "degraded".
+    pub fn health(self) -> Health {
+        match self {
+            Self::Normal | Self::CryptoOnly => Health::Ok,
+            Self::FxPinned | Self::Uncorroborated => Health::Unverified,
+            Self::Degraded(_) => Health::Degraded,
+            Self::Paused => Health::Pause,
+        }
+    }
+
+    /// This regime, weakened to [`Regime::Uncorroborated`] when a contributing
+    /// leg rests on a single unchecked source.
+    ///
+    /// Only the two healthy regimes are weakened. A degrade or a pause already
+    /// says something strictly more serious, and a pinned market is already
+    /// reporting `Unverified` for exactly this reason — so in every other case
+    /// the existing regime is the more informative of the two and stands.
+    fn uncorroborated_if(self, uncorroborated: bool) -> Self {
+        match (self, uncorroborated) {
+            (Self::Normal | Self::CryptoOnly, true) => Self::Uncorroborated,
+            _ => self,
+        }
+    }
+}
+
 /// Why the engine is degraded (§1 "degraded and halt conditions", §4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Degrade {
-    /// FX anchor stale outside the weekend regime — the crypto reference
-    /// carries the mid, but this is an unexpected gap, so run degraded (§4).
+    /// FX anchor stale or absent outside the weekend regime — the crypto
+    /// reference carries the mid, but this is an unexpected gap, so run
+    /// degraded (§4).
     FxStale,
+    /// A contributing leg's sources disagree beyond the dispersion band.
+    ///
+    /// Distinct from the absent / stale / invalid family: the feeds answered
+    /// promptly with usable values and do not agree, which points at one sick
+    /// source rather than a dead one.
+    ///
+    /// Distinct too from [`Regime::Uncorroborated`], and the difference decides
+    /// whether the kill switches tighten. A standing lack of corroboration is
+    /// permanent and deliberately does not tighten — most of the roster has one
+    /// source and always will. A *disagreement* is a fault: transient by
+    /// nature, caused by something that can be fixed, and worth quoting
+    /// cautiously through. So it degrades.
+    LegDispersed,
+    /// FX anchor answering promptly with an unusable value — non-finite, zero,
+    /// or negative.
+    ///
+    /// Distinguished from [`Degrade::FxStale`] because the two call for
+    /// different operator responses and used to be indistinguishable: a dead
+    /// poller and a closed session are staleness, while this is a live feed
+    /// publishing garbage, which is a wiring or upstream-format problem. Both
+    /// degrade identically — every folded case is equally unusable — so this
+    /// changes what the operator is told, not what the bot does.
+    FxInvalid,
     /// FX anchor live but the crypto basis leg is down — anchor on FX with the
-    /// last smoothed basis (or 1.0 if none yet), on thinner information.
+    /// last smoothed basis, on thinner information.
     NoBasisLeg,
+    /// FX anchor live, but the smoothed basis is **unusable**: never seeded, or
+    /// carried past [`crate::FairValueConfig::basis_max_age`].
+    ///
+    /// `fair = fx × basis` cannot be composed without a basis, and the engine
+    /// declines to invent one. It previously substituted `1.0` here, which is a
+    /// fabricated parity claim indistinguishable in the output from an observed
+    /// basis of exactly 1 — so a market whose basis had never been observed at
+    /// all quoted as though it had been measured and found at par. The mid
+    /// falls to the static peg instead (or pauses if there is none), which is
+    /// the same treatment any other unusable leg gets.
+    BasisUnusable,
     /// Every live leg down to the static peg — the deepest degraded case.
     StaticPeg,
 }
@@ -133,6 +279,37 @@ pub enum Health {
     Pause,
 }
 
+/// How one leg's sources resolved — the operator-facing half of the consensus
+/// filter (§1 "the bot surfaces which source is live per leg").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct LegReport {
+    /// How well corroborated the leg was.
+    pub state: ConsensusState,
+    /// How many healthy sources contributed.
+    pub n: usize,
+    /// The source furthest from the consensus, when the set was dispersed.
+    /// This is the name to put in front of an operator: a dispersion flag with
+    /// no suspect attached is an alarm nobody can act on.
+    pub outlier: Option<&'static str>,
+}
+
+impl LegReport {
+    /// Whether this leg's sources disagreed beyond the dispersion band.
+    pub fn dispersed(&self) -> bool {
+        self.state == ConsensusState::Dispersed
+    }
+}
+
+impl From<Consensus> for LegReport {
+    fn from(c: Consensus) -> Self {
+        Self {
+            state: c.state,
+            n: c.n,
+            outlier: c.outlier,
+        }
+    }
+}
+
 /// The composed reference for one market for one tick.
 #[derive(Clone, Copy, Debug)]
 pub struct FairValue {
@@ -146,6 +323,26 @@ pub struct FairValue {
     /// The smoothed basis, set only in an FX-anchored regime (there is no basis
     /// without an FX anchor to divide the crypto reference by).
     pub basis: Option<f64>,
+    /// How long ago the basis in `basis` was last *observed* — zero on a tick
+    /// that folded an observation, growing on every tick that did not.
+    ///
+    /// Without this a basis smoothed six seconds ago and one smoothed five days
+    /// ago produced identical output, so the operator could not tell a live
+    /// correction from a carried one. `None` whenever `basis` is `None`, and
+    /// for a pinned basis, which is a constant and has no observation age.
+    pub basis_age: Option<Duration>,
+    /// The basis leg answered this tick, but its reading was refused as an
+    /// outlier rather than folded by the basis estimator.
+    ///
+    /// Distinct from `basis_breach`: a breach says the *smoothed* basis has left
+    /// its sane band, while this says a *single* reading was too far from the
+    /// running estimate to be credible. A run of these is what a sick source
+    /// looks like before it has moved anything.
+    pub basis_outlier: bool,
+    /// How the FX anchor's sources resolved this tick.
+    pub fx_leg: LegReport,
+    /// How the crypto reference's sources resolved this tick.
+    pub crypto_leg: LegReport,
     /// Health gate for the kill switches.
     pub health: Health,
     /// The FX anchor is fresh but too uncertain (§1 fm6) — quote, but the
@@ -161,6 +358,29 @@ pub struct FairValue {
 }
 
 impl FairValue {
+    /// The skeleton of a composition: the regime, what anchors it, and the mid,
+    /// with every guard signal off and no basis. Each arm fills in what it
+    /// actually observed via struct-update syntax.
+    ///
+    /// `health` is derived here and never passed, which is the whole point —
+    /// see [`Regime::health`].
+    fn of(regime: Regime, anchor: Anchor, fair: Option<f64>) -> Self {
+        Self {
+            fair,
+            anchor,
+            regime,
+            basis: None,
+            basis_age: None,
+            health: regime.health(),
+            uncertain: false,
+            basis_breach: false,
+            basis_outlier: false,
+            fx_leg: LegReport::default(),
+            crypto_leg: LegReport::default(),
+            usdc_breach: false,
+        }
+    }
+
     /// Whether the kill-switch policy should run tightened (§4). True in every
     /// degraded regime; false when healthy, paused, or
     /// [`Health::Unverified`] — see that variant for why a permanently
@@ -191,8 +411,24 @@ pub struct FairValueEngine {
 impl FairValueEngine {
     /// Build an engine for one market from its calibration config.
     pub fn new(cfg: FairValueConfig) -> Self {
+        // The single funnel every construction site already passes through, so
+        // it is where the config invariants can actually be enforced rather than
+        // merely offered. An uncalled validator hardens nothing — the later
+        // runtime-config path would have to *remember* to call it, which is the
+        // shape `with_pinned_basis` exists to eliminate. A debug assertion keeps
+        // it live in every test and dev run at no release cost, and gives that
+        // later path an existing hook to promote to a hard error.
+        debug_assert!(
+            cfg.validate().is_ok(),
+            "invalid FairValueConfig: {:?}",
+            cfg.validate()
+        );
         Self {
-            basis: BasisEma::new(cfg.basis_half_life),
+            basis: BasisEma::new(
+                cfg.basis_half_life,
+                cfg.basis_max_reseed_weight,
+                cfg.basis_max_jump_frac,
+            ),
             since_basis: Duration::ZERO,
             cfg,
         }
@@ -203,20 +439,81 @@ impl FairValueEngine {
     /// the basis EMA sees the time since the last basis update. `weekend` marks
     /// the FX-closed session window (§1 fm2), inside which FX-stale is the
     /// normal crypto-only state rather than a degrade.
-    pub fn compose(&mut self, legs: Legs, dt: Duration, weekend: bool) -> FairValue {
+    pub fn compose(&mut self, legs: Legs, dt: Duration, clock: ClockCtx) -> FairValue {
         let stale = self.cfg.leg_stale;
+        let dispersion = self.cfg.leg_dispersion_frac;
         // Carry the inter-tick time forward; the normal arm consumes it and
         // resets it when it actually folds an observation into the EMA.
         self.since_basis = self.since_basis.saturating_add(dt);
-        let fx = legs.fx.filter(|r| r.fresh(stale));
-        let crypto = legs.crypto_usdc.filter(|r| r.fresh(stale));
-        let usdc = legs.usdc_usd.filter(|r| r.fresh(stale));
+
+        // Resolve every leg's sources by consensus before composing anything.
+        // This is what replaced the tier ladder: the ladder took whichever tier
+        // answered first, so one bad source *was* the answer with nothing to
+        // contradict it. Order now only decides who survives a set too thin to
+        // resolve — it no longer decides the value.
+        let fx = legs.fx.resolve(stale, dispersion);
+        let usdc = legs.usdc_usd.resolve(stale, dispersion);
+
+        // A pinned market has **no independent basis source by definition**, so
+        // any crypto reading present for it is not one — drop the whole set
+        // here, before anything can read it. Previously this was implicit in a
+        // nested `if let` that returned only on the FX-live path, leaving a
+        // pinned market with a live crypto leg and a down FX anchor to fall
+        // through to the shared match and price off the crypto value — the exact
+        // reading the pin exists to declare unusable.
+        let crypto = if self.cfg.pinned_basis.is_some() {
+            Consensus::absent()
+        } else {
+            legs.crypto_usdc.resolve(stale, dispersion)
+        };
+
+        let mut out = self.compose_resolved(&legs, clock, fx, crypto, usdc);
+        // The per-leg view is reported whatever the composition did with it, so
+        // an operator can see a dispersed leg even on a tick that degraded for
+        // some unrelated reason.
+        out.fx_leg = fx.into();
+        out.crypto_leg = crypto.into();
+        out
+    }
+
+    /// Compose from already-resolved legs. Split out so every arm below reasons
+    /// about one reading per leg, exactly as it did before the consensus filter,
+    /// and the resolution is stated once above rather than per arm.
+    fn compose_resolved(
+        &mut self,
+        legs: &Legs,
+        clock: ClockCtx,
+        fx_leg: Consensus,
+        crypto_leg: Consensus,
+        usdc_leg: Consensus,
+    ) -> FairValue {
+        // The peg leg's *reading* is deliberately not bound: the common-mode
+        // guard below reads its candidates and its state instead, because a
+        // consensus that resolves to nothing would silence the guard exactly
+        // when it should fire.
+        let (fx, crypto) = (fx_leg.reading, crypto_leg.reading);
 
         // The USDC/USD common-mode guard is regime-independent: a depeg moves
         // every market's basis at once, so it is evaluated wherever a live
         // USDC/USD reading exists (§1 fm1).
-        let usdc_breach =
-            usdc.is_some_and(|u| u.value < self.cfg.usdc_low || u.value > self.cfg.usdc_high);
+        //
+        // It reads the **candidates**, not the consensus, and that distinction is
+        // the whole point. This leg is structurally the most fragile on the
+        // roster — exactly two sources, neither designated, so unlike the FX leg
+        // it has no designation to break a tie — and disagreement is not an edge
+        // case for it, it is *what a depeg looks like* when one venue prints spot
+        // and the other lags. Reading the consensus would mean a dispersed pair
+        // resolves to nothing, `usdc` is `None`, and the guard reports no breach
+        // at exactly the moment it exists to fire. So: any healthy reading
+        // outside the band raises it, and a leg whose sources cannot agree raises
+        // it too — a guard that cannot establish the peg must not report the peg
+        // as sound.
+        let usdc_out_of_band = |v: f64| v < self.cfg.usdc_low || v > self.cfg.usdc_high;
+        let usdc_breach = legs
+            .usdc_usd
+            .healthy_values(self.cfg.leg_stale)
+            .any(usdc_out_of_band)
+            || usdc_leg.state == ConsensusState::Dispersed;
 
         // `since_basis` accumulates here and is only reset when the EMA folds an
         // observation, which a pinned market never reaches. That is harmless
@@ -227,10 +524,9 @@ impl FairValueEngine {
         //
         // PINNED: the market has no independent basis source, so there is no
         // observation to smooth and no band to test. Handled ahead of the walk
-        // because it is a property of the market, not of which legs answered:
-        // any crypto reading present for such a market is not a basis source
-        // (the config invariant is that it has none), so it must not reach the
-        // EMA. Falls through when FX is down, and that path is *not* the one the
+        // because it is a property of the market, not of which legs answered.
+        //
+        // Falls through when FX is down, and that path is *not* the one the
         // other markets take: having no crypto leg is what makes a market
         // pinned, so a shut FX session leaves it with nothing live at all. The
         // others land on their crypto reference (`CryptoOnly`, healthy, §1 fm2)
@@ -240,116 +536,249 @@ impl FairValueEngine {
         // every weekend, and is accepted rather than overlooked: the alternative
         // it replaces was anchoring the weekend on the very reading this market
         // has no usable source for.
-        if let Some(pinned) = self.cfg.pinned_basis {
-            if let Some(fx) = fx {
-                return FairValue {
-                    fair: Some(fx.value * pinned),
-                    anchor: Anchor::Fx,
-                    regime: Regime::FxPinned,
-                    basis: Some(pinned),
-                    health: Health::Unverified,
-                    uncertain: fx.uncertain(self.cfg.fx_max_confidence_frac),
-                    // A pinned constant cannot breach a band it was never
-                    // measured against; reporting one would be the false alarm
-                    // this whole path exists to remove.
-                    basis_breach: false,
-                    usdc_breach,
-                };
-            }
+        if let (Some(pinned), Some(fx)) = (self.cfg.pinned_basis, fx) {
+            return FairValue {
+                basis: Some(pinned),
+                // A pin is a constant, not an observation, so it has no age —
+                // reporting one would invite the operator to read staleness into
+                // a value that cannot go stale. And a pinned constant cannot
+                // breach a band it was never measured against, so `basis_breach`
+                // stays off: reporting one would be the false alarm this whole
+                // path exists to remove.
+                uncertain: fx.uncertain(self.cfg.fx_max_confidence_frac),
+                usdc_breach,
+                ..FairValue::of(Regime::FxPinned, Anchor::Fx, Some(fx.value * pinned))
+            };
         }
 
         match (fx, crypto) {
             // NORMAL: both legs live — fair = fx × basis, basis = EMA(crypto/fx).
             (Some(fx), Some(crypto)) => {
-                let basis_obs = crypto.value / fx.value;
-                let basis = self.basis.update(basis_obs, self.since_basis);
-                self.since_basis = Duration::ZERO;
-                let fair = fx.value * basis;
+                let observation = observed_basis(crypto.value, fx.value);
+                // Band-test the **raw observation**, not only the smoothed
+                // result. The outlier gate below can refuse a reading, and a
+                // refused reading never moves the estimate — so testing only
+                // the estimate would mean a source printing far outside the
+                // sane band raised no peg event at all, precisely because it
+                // was too wrong to fold. The breach signal must not be
+                // conditional on the estimator having accepted the reading.
+                let observed_breach = observation.is_some_and(|o| self.basis_out_of_band(o));
+                // An out-of-band reading is not a credible **seed**. The seeding
+                // tick is deliberately ungated against jumps — there is no
+                // estimate to judge it against — so without this a cold-start
+                // print outside the sane band would become the basis outright and
+                // be quoted through, with the breach raised but nothing declining
+                // to price off it. A market whose very first observation is out of
+                // band is a wiring error rather than a peg event, which is exactly
+                // what the consumer's first-basis check exists to say. So decline
+                // to seed from it and fall back; the breach still fires.
+                //
+                // Note this only guards the seed. Once an estimate exists the
+                // observation is judged against it by the jump gate, and an
+                // out-of-band reading that survives that gate is a real move of a
+                // basis already near the band edge.
+                let seedable = self.basis.value().is_some() || !observed_breach;
+                let fold = observation
+                    .filter(|_| seedable)
+                    .map(|o| self.basis.update(o, self.since_basis));
+                let outlier = fold.is_none_or(Fold::rejected);
+                if let Some(Fold::Folded(_)) = fold {
+                    self.since_basis = Duration::ZERO;
+                }
+
+                // A refused reading leaves the estimate untouched and its age
+                // running, so a run of them expires the basis exactly as an
+                // absent leg would — which is the intended behavior: a source
+                // that has gone bad should not hold the basis alive.
+                let Some(basis) = self.usable_basis() else {
+                    return self.without_usable_basis(
+                        legs.static_usd,
+                        usdc_breach,
+                        observed_breach,
+                        outlier,
+                    );
+                };
+
+                let regime = if outlier {
+                    Regime::Degraded(Degrade::NoBasisLeg)
+                } else if fx_leg.state.is_dispersed() || crypto_leg.state.is_dispersed() {
+                    // A surviving value does not make a disagreement benign: with
+                    // three or more sources the median still resolves, so without
+                    // this the composition would report `Ok` while one of its
+                    // legs was visibly sick.
+                    Regime::Degraded(Degrade::LegDispersed)
+                } else {
+                    Regime::Normal
+                }
+                // Both legs price this mid, so either resting on a lone
+                // unchecked source makes the whole composition uncorroborated.
+                .uncorroborated_if(
+                    fx_leg.state.is_uncorroborated() || crypto_leg.state.is_uncorroborated(),
+                );
                 FairValue {
-                    fair: Some(fair),
-                    anchor: Anchor::Fx,
-                    regime: Regime::Normal,
                     basis: Some(basis),
-                    health: Health::Ok,
+                    basis_age: Some(self.since_basis),
                     uncertain: fx.uncertain(self.cfg.fx_max_confidence_frac),
-                    basis_breach: self.basis_out_of_band(basis),
+                    basis_breach: observed_breach || self.basis_out_of_band(basis),
+                    basis_outlier: outlier,
                     usdc_breach,
+                    ..FairValue::of(regime, Anchor::Fx, Some(fx.value * basis))
                 }
             }
-            // FX live, basis leg down: anchor on FX with the last smoothed basis
-            // (or 1.0 until one exists), on thinner information — degraded.
+            // FX live, basis leg down: anchor on FX with the last smoothed
+            // basis, on thinner information — degraded. If that basis is
+            // unusable (never seeded, or carried past its age bound) the engine
+            // declines to invent one and falls back instead.
             (Some(fx), None) => {
-                let basis = self.basis.value().unwrap_or(1.0);
-                let fair = fx.value * basis;
+                let Some(basis) = self.usable_basis() else {
+                    return self.without_usable_basis(legs.static_usd, usdc_breach, false, false);
+                };
                 FairValue {
-                    fair: Some(fair),
-                    anchor: Anchor::Fx,
-                    regime: Regime::Degraded(Degrade::NoBasisLeg),
                     basis: Some(basis),
-                    health: Health::Degraded,
+                    basis_age: Some(self.since_basis),
                     uncertain: fx.uncertain(self.cfg.fx_max_confidence_frac),
                     basis_breach: self.basis_out_of_band(basis),
                     usdc_breach,
+                    ..FairValue::of(
+                        Regime::Degraded(Degrade::NoBasisLeg),
+                        Anchor::Fx,
+                        Some(fx.value * basis),
+                    )
                 }
             }
             // No live FX: the crypto reference is the anchor. Structural on a
             // weekend (healthy, §1 fm2); an unexpected degrade otherwise (§4).
             // No FX ⇒ no observable basis.
             (None, Some(crypto)) => {
-                let (regime, health) = if weekend {
-                    (Regime::CryptoOnly, Health::Ok)
+                // A weekend is structural whatever the FX *leg* did, so the
+                // FX-side distinctions below only refine an unexpected gap. A
+                // dispersed **crypto** leg is different: that is the leg
+                // carrying the mid on this arm, so it degrades regardless of the
+                // session.
+                let regime = if crypto_leg.state.is_dispersed() {
+                    Regime::Degraded(Degrade::LegDispersed)
+                } else if clock.weekend {
+                    Regime::CryptoOnly
+                } else if legs.fx.any_invalid(self.cfg.leg_stale) {
+                    Regime::Degraded(Degrade::FxInvalid)
+                } else if fx_leg.state.is_dispersed() {
+                    // Two live feeds that answered promptly and disagreed.
+                    // Reporting that as `FxStale` is the same conflation
+                    // `FxInvalid` exists to remove.
+                    Regime::Degraded(Degrade::LegDispersed)
                 } else {
-                    (Regime::Degraded(Degrade::FxStale), Health::Degraded)
-                };
+                    Regime::Degraded(Degrade::FxStale)
+                }
+                // Only the crypto reference prices this mid; the FX leg is not
+                // contributing, so its corroboration is not this tick's story.
+                .uncorroborated_if(crypto_leg.state.is_uncorroborated());
                 FairValue {
-                    fair: Some(crypto.value),
-                    anchor: Anchor::CryptoReference,
-                    regime,
-                    basis: None,
-                    health,
-                    uncertain: false,
-                    basis_breach: false,
                     usdc_breach,
+                    ..FairValue::of(regime, Anchor::CryptoReference, Some(crypto.value))
                 }
             }
             // Nothing live: the static peg if configured, else pause.
-            (None, None) => {
-                if legs.static_usd.is_finite() && legs.static_usd > 0.0 {
-                    FairValue {
-                        fair: Some(legs.static_usd),
-                        anchor: Anchor::Static,
-                        regime: Regime::Degraded(Degrade::StaticPeg),
-                        basis: None,
-                        health: Health::Degraded,
-                        uncertain: false,
-                        basis_breach: false,
-                        usdc_breach,
-                    }
-                } else {
-                    FairValue {
-                        fair: None,
-                        anchor: Anchor::None,
-                        regime: Regime::Paused,
-                        basis: None,
-                        health: Health::Pause,
-                        uncertain: false,
-                        basis_breach: false,
-                        usdc_breach,
-                    }
-                }
-            }
+            (None, None) => self.fall_back(
+                legs.static_usd,
+                Degrade::StaticPeg,
+                usdc_breach,
+                false,
+                false,
+            ),
         }
     }
 
-    /// Whether a smoothed basis is outside its sane band (§4 basis-band breach).
-    fn basis_out_of_band(&self, basis: f64) -> bool {
+    /// The carried basis, if it is both seeded **and** within its age bound.
+    ///
+    /// The crate bounds the age of every input leg and, until this existed,
+    /// nothing bounded the age of its own state — so `fair = fx × basis` could
+    /// be quoted indefinitely off an estimate no longer connected to anything
+    /// live. `since_basis` is the age directly: it accumulates every tick and
+    /// resets only when an observation is actually folded.
+    fn usable_basis(&self) -> Option<f64> {
+        self.basis
+            .value()
+            .filter(|v| v.is_finite())
+            .filter(|_| self.since_basis <= self.cfg.basis_max_age)
+    }
+
+    /// The composition for an FX-anchored market whose basis is unusable.
+    fn without_usable_basis(
+        &self,
+        static_usd: f64,
+        usdc_breach: bool,
+        basis_breach: bool,
+        basis_outlier: bool,
+    ) -> FairValue {
+        self.fall_back(
+            static_usd,
+            Degrade::BasisUnusable,
+            usdc_breach,
+            basis_breach,
+            basis_outlier,
+        )
+    }
+
+    /// The static peg if one is configured, else paused. The shared tail of
+    /// every path that has no composable mid left.
+    fn fall_back(
+        &self,
+        static_usd: f64,
+        degrade: Degrade,
+        usdc_breach: bool,
+        basis_breach: bool,
+        basis_outlier: bool,
+    ) -> FairValue {
+        let usable_peg = static_usd.is_finite() && static_usd > 0.0;
+        let (regime, anchor) = if usable_peg {
+            (Regime::Degraded(degrade), Anchor::Static)
+        } else {
+            (Regime::Paused, Anchor::None)
+        };
+        FairValue {
+            basis_breach,
+            basis_outlier,
+            usdc_breach,
+            ..FairValue::of(regime, anchor, usable_peg.then_some(static_usd))
+        }
+    }
+
+    /// Whether a basis is outside this market's sane band (§4 basis-band
+    /// breach).
+    ///
+    /// Public so a consumer banding a *raw first observation* — a wiring check,
+    /// asking a different question of a different quantity than the engine's
+    /// own test of the smoothed value — uses this market's configured band
+    /// rather than re-deriving the comparison.
+    pub fn basis_out_of_band(&self, basis: f64) -> bool {
         basis < self.cfg.basis_low || basis > self.cfg.basis_high
     }
+}
+
+/// The two-peg basis implied by one crypto reading and one FX reading:
+/// `(token/USDC) ÷ (fiat/USD)`, in the units §1 defines. `None` when the anchor
+/// is not a usable divisor or the result is not finite.
+///
+/// Exported so the consumer's first-basis wiring check bands the same quantity
+/// the engine does, rather than re-deriving it — the duplicate it replaces had
+/// already drifted into re-implementing the crate's leg gating alongside it.
+pub fn observed_basis(crypto_usdc: f64, fx: f64) -> Option<f64> {
+    if !fx.is_finite() || fx <= 0.0 || !crypto_usdc.is_finite() {
+        return None;
+    }
+    let basis = crypto_usdc / fx;
+    basis.is_finite().then_some(basis)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::reading::Reading;
+
+    /// The default config's dispersion band, for the leg-resolution helpers
+    /// that take it explicitly.
+    const BAND: f64 = 0.02;
 
     fn secs(n: u64) -> Duration {
         Duration::from_secs(n)
@@ -364,6 +793,31 @@ mod tests {
         Reading::new(value, secs(1))
     }
 
+    /// A leg offered by one source designated believable on its own.
+    ///
+    /// Trusted deliberately: the tests below are about the *composition* — which
+    /// regime, which anchor, what the basis does — and a lone untrusted source
+    /// would weaken every one of them to
+    /// [`Regime::Uncorroborated`], testing the corroboration axis over and over
+    /// instead of the arm under test. Corroboration has its own cases, which
+    /// build their sets explicitly.
+    fn src(reading: Reading) -> Candidates {
+        Candidates::none().push_trusted("test", Some(reading))
+    }
+
+    /// A leg resting on one source that nothing corroborates — the standing
+    /// shape for most of the roster.
+    fn lone(source: &'static str, reading: Reading) -> Candidates {
+        Candidates::none().push(source, Some(reading))
+    }
+
+    /// A leg two sources agree on.
+    fn pair(a: f64, b: f64) -> Candidates {
+        Candidates::none()
+            .push("venue-a", Some(fresh(a)))
+            .push("venue-b", Some(fresh(b)))
+    }
+
     /// An engine for a market with no independent basis source, pinned at 1.0.
     fn pinned_engine() -> FairValueEngine {
         FairValueEngine::new(FairValueConfig {
@@ -376,12 +830,12 @@ mod tests {
     fn pinned_market_anchors_on_fx_and_reports_unverified() {
         let mut e = pinned_engine();
         let legs = Legs {
-            fx: Some(fresh(0.0573)),
-            crypto_usdc: None,
-            usdc_usd: Some(fresh(1.0)),
+            fx: src(fresh(0.0573)),
+            crypto_usdc: Candidates::none(),
+            usdc_usd: src(fresh(1.0)),
             static_usd: 0.0573,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert_eq!(r.regime, Regime::FxPinned);
         assert_eq!(r.anchor, Anchor::Fx);
         assert_eq!(r.health, Health::Unverified);
@@ -400,12 +854,12 @@ mod tests {
         // A crypto reading roughly half the anchor — exactly the MXNe case that
         // breached. It must be ignored, not folded into the basis.
         let legs = Legs {
-            fx: Some(fresh(0.0573)),
-            crypto_usdc: Some(fresh(0.03064)),
-            usdc_usd: Some(fresh(1.0)),
+            fx: src(fresh(0.0573)),
+            crypto_usdc: src(fresh(0.03064)),
+            usdc_usd: src(fresh(1.0)),
             static_usd: 0.0573,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert_eq!(r.regime, Regime::FxPinned);
         assert_eq!(r.basis, Some(1.0));
         assert!(!r.basis_breach);
@@ -418,12 +872,12 @@ mod tests {
     fn pinned_market_without_fx_falls_to_the_static_peg() {
         let mut e = pinned_engine();
         let legs = Legs {
-            fx: None,
-            crypto_usdc: None,
-            usdc_usd: None,
+            fx: Candidates::none(),
+            crypto_usdc: Candidates::none(),
+            usdc_usd: Candidates::none(),
             static_usd: 0.0573,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert_eq!(r.regime, Regime::Degraded(Degrade::StaticPeg));
         assert_eq!(r.anchor, Anchor::Static);
         assert_eq!(r.health, Health::Degraded);
@@ -435,12 +889,12 @@ mod tests {
     fn pinned_market_still_reports_a_usdc_breach() {
         let mut e = pinned_engine();
         let legs = Legs {
-            fx: Some(fresh(0.0573)),
-            crypto_usdc: None,
-            usdc_usd: Some(fresh(0.80)),
+            fx: src(fresh(0.0573)),
+            crypto_usdc: Candidates::none(),
+            usdc_usd: src(fresh(0.80)),
             static_usd: 0.0573,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert_eq!(r.regime, Regime::FxPinned);
         assert!(r.usdc_breach);
     }
@@ -450,12 +904,12 @@ mod tests {
         // FX 1.14, crypto 1.14 → observed basis 1.0 → fair = 1.14 × 1.0.
         let mut e = engine();
         let legs = Legs {
-            fx: Some(fresh(1.14)),
-            crypto_usdc: Some(fresh(1.14)),
-            usdc_usd: Some(fresh(1.0)),
+            fx: src(fresh(1.14)),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: src(fresh(1.0)),
             static_usd: 1.14,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert_eq!(r.regime, Regime::Normal);
         assert_eq!(r.anchor, Anchor::Fx);
         assert_eq!(r.health, Health::Ok);
@@ -470,12 +924,12 @@ mod tests {
         // anchor is corrected up to the market, not left at the raw FX.
         let mut e = engine();
         let legs = Legs {
-            fx: Some(fresh(1.10)),
-            crypto_usdc: Some(fresh(1.122)),
-            usdc_usd: Some(fresh(1.0)),
+            fx: src(fresh(1.10)),
+            crypto_usdc: src(fresh(1.122)),
+            usdc_usd: src(fresh(1.0)),
             static_usd: 1.10,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert!((r.basis.unwrap() - 1.02).abs() < 1e-9);
         assert!((r.fair.unwrap() - 1.122).abs() < 1e-9);
     }
@@ -491,12 +945,12 @@ mod tests {
         // FX 1.0; the token trades at 0.98 USDC (USDC itself rich at 1.02 USD).
         // observed basis = 0.98 → fair = 0.98 USDC per token.
         let legs = Legs {
-            fx: Some(fresh(1.0)),
-            crypto_usdc: Some(fresh(0.98)),
-            usdc_usd: Some(fresh(1.02)),
+            fx: src(fresh(1.0)),
+            crypto_usdc: src(fresh(0.98)),
+            usdc_usd: src(fresh(1.02)),
             static_usd: 1.0,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert!((r.fair.unwrap() - 0.98).abs() < 1e-9);
     }
 
@@ -506,12 +960,12 @@ mod tests {
         // anchor, healthy, not degraded (§1 fm2). This is the demo path.
         let mut e = engine();
         let legs = Legs {
-            fx: None,
-            crypto_usdc: Some(fresh(1.14)),
-            usdc_usd: None,
+            fx: Candidates::none(),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: Candidates::none(),
             static_usd: 1.14,
         };
-        let r = e.compose(legs, secs(5), true);
+        let r = e.compose(legs, secs(5), ClockCtx::weekend());
         assert_eq!(r.regime, Regime::CryptoOnly);
         assert_eq!(r.anchor, Anchor::CryptoReference);
         assert_eq!(r.health, Health::Ok);
@@ -524,12 +978,12 @@ mod tests {
         // Same legs, but not a weekend → an unexpected FX outage → degraded.
         let mut e = engine();
         let legs = Legs {
-            fx: None,
-            crypto_usdc: Some(fresh(1.14)),
-            usdc_usd: None,
+            fx: Candidates::none(),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: Candidates::none(),
             static_usd: 1.14,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert_eq!(r.regime, Regime::Degraded(Degrade::FxStale));
         assert_eq!(r.anchor, Anchor::CryptoReference);
         assert!(r.degraded());
@@ -542,19 +996,19 @@ mod tests {
         // holds the last smoothed basis on the live FX, degraded.
         let mut e = engine();
         let seed = Legs {
-            fx: Some(fresh(1.10)),
-            crypto_usdc: Some(fresh(1.122)), // basis 1.02
-            usdc_usd: None,
+            fx: src(fresh(1.10)),
+            crypto_usdc: src(fresh(1.122)), // basis 1.02
+            usdc_usd: Candidates::none(),
             static_usd: 1.10,
         };
-        e.compose(seed, secs(5), false);
+        e.compose(seed, secs(5), ClockCtx::in_session());
         let no_basis = Legs {
-            fx: Some(fresh(1.10)),
-            crypto_usdc: None,
-            usdc_usd: None,
+            fx: src(fresh(1.10)),
+            crypto_usdc: Candidates::none(),
+            usdc_usd: Candidates::none(),
             static_usd: 1.10,
         };
-        let r = e.compose(no_basis, secs(5), false);
+        let r = e.compose(no_basis, secs(5), ClockCtx::in_session());
         assert_eq!(r.regime, Regime::Degraded(Degrade::NoBasisLeg));
         assert!(r.degraded());
         assert!((r.fair.unwrap() - 1.10 * 1.02).abs() < 1e-9);
@@ -564,12 +1018,12 @@ mod tests {
     fn full_degrade_falls_to_static() {
         let mut e = engine();
         let legs = Legs {
-            fx: None,
-            crypto_usdc: None,
-            usdc_usd: None,
+            fx: Candidates::none(),
+            crypto_usdc: Candidates::none(),
+            usdc_usd: Candidates::none(),
             static_usd: 1.14,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert_eq!(r.regime, Regime::Degraded(Degrade::StaticPeg));
         assert_eq!(r.anchor, Anchor::Static);
         assert_eq!(r.fair, Some(1.14));
@@ -579,12 +1033,12 @@ mod tests {
     fn pauses_only_without_a_static_peg() {
         let mut e = engine();
         let legs = Legs {
-            fx: None,
-            crypto_usdc: None,
-            usdc_usd: None,
+            fx: Candidates::none(),
+            crypto_usdc: Candidates::none(),
+            usdc_usd: Candidates::none(),
             static_usd: 0.0,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert_eq!(r.regime, Regime::Paused);
         assert_eq!(r.anchor, Anchor::None);
         assert_eq!(r.health, Health::Pause);
@@ -596,12 +1050,12 @@ mod tests {
         // A stale FX + stale crypto with a live static → static peg.
         let mut e = engine();
         let legs = Legs {
-            fx: Some(Reading::new(1.14, secs(600))),
-            crypto_usdc: Some(Reading::new(1.14, secs(600))),
-            usdc_usd: None,
+            fx: src(Reading::new(1.14, secs(600))),
+            crypto_usdc: src(Reading::new(1.14, secs(600))),
+            usdc_usd: Candidates::none(),
             static_usd: 1.14,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert_eq!(r.anchor, Anchor::Static);
     }
 
@@ -611,45 +1065,55 @@ mod tests {
         // flag even in the normal regime, without blocking the mid.
         let mut e = engine();
         let legs = Legs {
-            fx: Some(fresh(1.14)),
-            crypto_usdc: Some(fresh(1.14)),
-            usdc_usd: Some(fresh(0.90)), // depeg past the 0.97 floor
+            fx: src(fresh(1.14)),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: src(fresh(0.90)), // depeg past the 0.97 floor
             static_usd: 1.14,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert!(r.usdc_breach);
         assert!(r.fair.is_some());
     }
 
     #[test]
     fn basis_band_breach_flags_a_peg_event() {
-        // Drive the smoothed basis past the placeholder 1.10 ceiling and hold
-        // it there until the EMA crosses the band.
+        // Drive the smoothed basis past the placeholder 1.10 ceiling and hold it
+        // there until the EMA crosses the band.
+        //
+        // It is driven there by a *walk* rather than by seeding out of band,
+        // because seeding out of band is now refused outright — and a walk is the
+        // honest shape of a real peg event anyway: a basis that was tracking and
+        // then drifted away, one accepted step at a time. Each target below sits
+        // inside the jump gate relative to the estimate it is offered against
+        // (1.10 is 3.8% above 1.06; 1.14 is 3.6% above 1.10), so every
+        // observation folds.
+        //
+        // This also pins the acknowledged limit of the jump gate: it bounds a
+        // single step, not cumulative drift, so the band is what actually stops a
+        // slow walk. That is why the band is load-bearing and not merely an alarm.
         let mut e = engine();
-        let mut r = e.compose(
-            Legs {
-                fx: Some(fresh(1.0)),
-                crypto_usdc: Some(fresh(1.30)), // observed basis 1.30
-                usdc_usd: None,
-                static_usd: 1.0,
-            },
-            secs(5),
-            false,
+        let walk = |e: &mut FairValueEngine, target: f64, ticks: usize| {
+            let mut last = None;
+            for _ in 0..ticks {
+                last = Some(e.compose(normal(target), secs(60), ClockCtx::in_session()));
+            }
+            last.expect("at least one tick")
+        };
+
+        // Seed in band, then ratchet up in two gate-sized stages.
+        let seeded = e.compose(normal(1.06), secs(5), ClockCtx::in_session());
+        assert_eq!(seeded.basis, Some(1.06), "seeded in band");
+        assert!(!seeded.basis_breach);
+
+        walk(&mut e, 1.10, 200);
+        let r = walk(&mut e, 1.14, 200);
+
+        assert!(
+            r.basis.unwrap() > 1.10,
+            "the estimate walked out of the band: {:?}",
+            r.basis
         );
-        for _ in 0..200 {
-            r = e.compose(
-                Legs {
-                    fx: Some(fresh(1.0)),
-                    crypto_usdc: Some(fresh(1.30)),
-                    usdc_usd: None,
-                    static_usd: 1.0,
-                },
-                secs(60),
-                false,
-            );
-        }
-        assert!(r.basis.unwrap() > 1.10);
-        assert!(r.basis_breach);
+        assert!(r.basis_breach, "which is the peg event");
     }
 
     #[test]
@@ -658,53 +1122,925 @@ mod tests {
         // fresh-but-uncertain flag (§1 fm6) — quote wider, don't halt.
         let mut e = engine();
         let legs = Legs {
-            fx: Some(Reading::with_confidence(1.14, secs(1), 0.05)),
-            crypto_usdc: Some(fresh(1.14)),
-            usdc_usd: None,
+            fx: src(Reading::with_confidence(1.14, secs(1), 0.05)),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: Candidates::none(),
             static_usd: 1.14,
         };
-        let r = e.compose(legs, secs(5), false);
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
         assert!(r.uncertain);
         assert_eq!(r.health, Health::Ok);
         assert!(r.fair.is_some());
     }
 
-    #[test]
-    fn basis_reseeds_after_a_long_fx_gap() {
-        // Seed the basis at 1.0, lose FX for a long stretch of ticks, then let
-        // it return at a materially different basis. The engine accumulates the
-        // gap, so the returning observation is weighted near 1 (a re-seed) —
-        // not blended onto the stale 1.0 with a per-tick alpha. This is the
-        // whole point of decaying on time-since-basis-update, not per compose.
-        let mut e = engine();
-        let normal = |crypto: f64| Legs {
-            fx: Some(fresh(1.0)),
-            crypto_usdc: Some(fresh(crypto)),
-            usdc_usd: None,
+    /// Legs for the normal regime against a 1.0 anchor, so the observed basis
+    /// equals `crypto` directly.
+    fn normal(crypto: f64) -> Legs {
+        Legs {
+            fx: src(fresh(1.0)),
+            crypto_usdc: src(fresh(crypto)),
+            usdc_usd: Candidates::none(),
             static_usd: 1.0,
-        };
-        // Seed basis 1.0.
-        e.compose(normal(1.0), secs(5), false);
-        // ~2.5 days with no FX (crypto-only), each tick accumulating time.
+        }
+    }
+
+    #[test]
+    fn a_gap_still_weights_the_returning_observation_more() {
+        // The legitimate half of the re-seed design, kept: decay is driven by
+        // time since the last *basis update*, not since the last compose, so a
+        // gap weights the returning observation more than a per-tick alpha
+        // would. Held inside the age bound and the jump gate so this measures
+        // the decay and nothing else.
+        let mut gapped = engine();
+        let mut ticking = engine();
+        gapped.compose(normal(1.0), secs(5), ClockCtx::in_session());
+        ticking.compose(normal(1.0), secs(5), ClockCtx::in_session());
+
+        // One long gap with no basis leg, well inside `basis_max_age`.
+        gapped.compose(
+            Legs {
+                crypto_usdc: Candidates::none(),
+                ..normal(1.0)
+            },
+            secs(30 * 60),
+            ClockCtx::in_session(),
+        );
+
+        let g = gapped
+            .compose(normal(1.04), secs(5), ClockCtx::in_session())
+            .basis
+            .unwrap();
+        let t = ticking
+            .compose(normal(1.04), secs(5), ClockCtx::in_session())
+            .basis
+            .unwrap();
+        assert!(g > t, "the gapped engine ({g}) should weight more than {t}");
+    }
+
+    #[test]
+    fn one_print_after_a_gap_no_longer_becomes_the_basis() {
+        // The defect this issue exists to close. Previously the ~60h gap drove
+        // the blend weight to 1, so the single returning observation landed the
+        // estimate on its raw value — one print determining the whole
+        // multiplicative correction, on the schedule of every session reopen.
+        //
+        // The returning observation is now *accepted*: after a gap that long a
+        // moved basis is credible precisely because there was time for it to
+        // move, and refusing it forever is the lockout the age-widened gate
+        // exists to prevent. What must not happen is the print becoming the
+        // basis outright — the weight cap keeps the prior estimate's share, so
+        // the estimate lands short of the raw value rather than on it.
+        let mut e = engine();
+        e.compose(normal(1.0), secs(5), ClockCtx::in_session());
         for _ in 0..10 {
             e.compose(
                 Legs {
-                    fx: None,
-                    crypto_usdc: Some(fresh(1.0)),
-                    usdc_usd: None,
-                    static_usd: 1.0,
+                    fx: Candidates::none(),
+                    ..normal(1.0)
                 },
                 secs(6 * 3_600),
-                false,
+                ClockCtx::in_session(),
             );
         }
-        // FX returns; the token now trades 10% rich in USDC → observed basis
-        // 1.10. The ~60h accumulated gap vs a 10-min half-life gives alpha ≈ 1.
-        let r = e.compose(normal(1.10), secs(5), false);
+        let r = e.compose(normal(1.10), secs(5), ClockCtx::in_session());
+        let basis = r.basis.expect("the returning observation is credible");
         assert!(
-            r.basis.unwrap() > 1.09,
-            "expected re-seed near 1.10, got {}",
-            r.basis.unwrap()
+            basis < 1.10,
+            "a single print must not become the basis outright: {basis}"
         );
+        assert!(basis > 1.0, "but it must move the estimate: {basis}");
+        assert!(!r.basis_outlier, "and it was folded, not refused");
+        assert_eq!(r.regime, Regime::Normal);
+    }
+
+    #[test]
+    fn a_market_locked_out_by_a_moved_basis_recovers_without_a_restart() {
+        // The lockout this PR nearly shipped. The basis leg goes down, the true
+        // basis moves further than the base jump allowance, and the leg returns.
+        // With a fixed allowance every returning observation was refused against
+        // a reference frozen from before the outage — permanently, since nothing
+        // clears the estimate — so the market sat on the static peg with its
+        // kill switches tightened for the life of the process.
+        let mut e = engine();
+        e.compose(normal(1.0), secs(5), ClockCtx::in_session());
+
+        // The basis leg is down for a long stretch, past the age bound.
+        let dark = Legs {
+            crypto_usdc: Candidates::none(),
+            ..normal(1.0)
+        };
+        for _ in 0..4 {
+            e.compose(dark, secs(3_600), ClockCtx::in_session());
+        }
+        let expired = e.compose(dark, secs(3_600), ClockCtx::in_session());
+        assert_eq!(
+            expired.regime,
+            Regime::Degraded(Degrade::BasisUnusable),
+            "the carried estimate is too old to quote off"
+        );
+
+        // The leg returns at a basis well beyond the base 5% allowance. It is
+        // accepted, because the gate widened with the age of the estimate.
+        let back = e.compose(normal(1.08), secs(30), ClockCtx::in_session());
+        assert_eq!(
+            back.regime,
+            Regime::Normal,
+            "the market must come back without a restart"
+        );
+        assert!(back.basis.unwrap() > 1.0);
+    }
+
+    #[test]
+    fn a_carried_basis_expires_rather_than_quoting_forever() {
+        // FX live, basis leg dead. The mid rides the last smoothed basis while
+        // it is young, and stops when it is not — previously it rode it forever,
+        // with a six-second-old basis and a five-day-old one producing
+        // byte-identical output.
+        let mut e = engine();
+        e.compose(normal(1.02), secs(5), ClockCtx::in_session());
+        let no_leg = Legs {
+            crypto_usdc: Candidates::none(),
+            ..normal(1.02)
+        };
+
+        let young = e.compose(no_leg, secs(30 * 60), ClockCtx::in_session());
+        assert_eq!(young.regime, Regime::Degraded(Degrade::NoBasisLeg));
+        assert_eq!(young.basis, Some(1.02));
+        // The seeding tick folded, so the age restarts from zero there.
+        assert_eq!(young.basis_age, Some(secs(30 * 60)));
+
+        let expired = e.compose(no_leg, secs(60 * 60), ClockCtx::in_session());
+        assert_eq!(expired.regime, Regime::Degraded(Degrade::BasisUnusable));
+        assert_eq!(expired.anchor, Anchor::Static);
+        assert_eq!(expired.basis, None);
+        assert_eq!(expired.basis_age, None);
+    }
+
+    #[test]
+    fn an_out_of_band_first_observation_does_not_become_the_basis() {
+        // The seeding tick is ungated against jumps by necessity, so the band is
+        // the only thing standing between a cold-start wiring error and a basis
+        // the market then quotes through. Before this guard the observation was
+        // folded regardless and `fair = fx x 0.80` went out with the breach
+        // raised but nothing declining to price off it.
+        let mut e = engine();
+        let r = e.compose(normal(0.80), secs(5), ClockCtx::in_session());
+        assert_eq!(r.basis, None, "an out-of-band print must not seed");
+        assert!(r.basis_breach, "and it is still reported as a breach");
+        assert!(r.basis_outlier, "and as a refused reading");
+        assert_eq!(r.regime, Regime::Degraded(Degrade::BasisUnusable));
+        assert_eq!(r.fair, Some(1.0), "the static peg carries the mid");
+    }
+
+    #[test]
+    fn an_in_band_first_observation_still_seeds() {
+        // The converse, so the guard above cannot pass vacuously.
+        let mut e = engine();
+        let r = e.compose(normal(1.02), secs(5), ClockCtx::in_session());
+        assert_eq!(r.basis, Some(1.02));
+        assert!(!r.basis_breach);
+        assert_eq!(r.regime, Regime::Normal);
+    }
+
+    #[test]
+    fn a_never_seeded_basis_is_not_reported_as_parity() {
+        // The engine used to substitute 1.0 for an unobserved basis, which is
+        // indistinguishable in the output from having measured the basis and
+        // found it at par. An unseeded engine must report no basis at all.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                crypto_usdc: Candidates::none(),
+                ..normal(1.0)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Degraded(Degrade::BasisUnusable));
+        assert_eq!(r.basis, None);
+        assert_eq!(r.fair, Some(1.0), "the static peg carries the mid");
+    }
+
+    #[test]
+    fn an_unseeded_engine_pauses_without_a_static_peg() {
+        // Same path, but with nothing to fall back to.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                crypto_usdc: Candidates::none(),
+                static_usd: 0.0,
+                ..normal(1.0)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Paused);
+        assert!(r.fair.is_none());
+    }
+
+    #[test]
+    fn an_out_of_band_print_still_raises_a_peg_event_when_refused() {
+        // The interaction that would otherwise be a silent regression: the
+        // outlier gate refuses a wild reading, and a refused reading never moves
+        // the estimate — so banding only the estimate would mean the wildest
+        // prints raised no alarm at all, precisely because they were too wrong
+        // to fold. The raw observation is banded independently.
+        let mut e = engine();
+        e.compose(normal(1.0), secs(5), ClockCtx::in_session());
+        let r = e.compose(normal(0.52), secs(30), ClockCtx::in_session());
+        assert!(r.basis_outlier, "0.52 against 1.0 is far outside the gate");
+        assert!(
+            r.basis_breach,
+            "and it is outside the sane band → peg event"
+        );
+        assert_eq!(r.basis, Some(1.0), "the estimate is untouched");
+        assert!(r.degraded());
+    }
+
+    #[test]
+    fn a_refused_print_does_not_reset_the_basis_age() {
+        // A sick source must not hold the basis alive by answering with
+        // garbage; only a folded observation counts as an observation.
+        let mut e = engine();
+        e.compose(normal(1.0), secs(5), ClockCtx::in_session());
+        let r = e.compose(normal(0.52), secs(30), ClockCtx::in_session());
+        assert_eq!(r.basis_age, Some(secs(30)));
+        let r = e.compose(normal(0.52), secs(30), ClockCtx::in_session());
+        assert_eq!(r.basis_age, Some(secs(60)), "age keeps running");
+    }
+
+    #[test]
+    fn pinned_market_with_a_live_crypto_leg_and_no_fx_never_prices_off_crypto() {
+        // The fallthrough the engine previously argued was unreachable. It was
+        // right that no configuration reaches it today — a pinned market carries
+        // no basis-source ids — but the guarantee lived in the consumer's test
+        // suite rather than in this crate. Now the pin drops the crypto leg
+        // unconditionally, so the case is closed here.
+        let mut e = pinned_engine();
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none(),
+                crypto_usdc: src(fresh(0.03064)),
+                usdc_usd: src(fresh(1.0)),
+                static_usd: 0.0573,
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.anchor, Anchor::Static);
+        assert_eq!(
+            r.fair,
+            Some(0.0573),
+            "must not price off the crypto reading the pin declares unusable"
+        );
+    }
+
+    #[test]
+    fn pinned_market_on_a_weekend_falls_to_the_static_peg() {
+        // The weekend counterpart of the case above: other markets flip to
+        // their crypto reference, but a pinned market has none to flip to.
+        let mut e = pinned_engine();
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none(),
+                crypto_usdc: src(fresh(0.03064)),
+                usdc_usd: Candidates::none(),
+                static_usd: 0.0573,
+            },
+            secs(5),
+            ClockCtx::weekend(),
+        );
+        assert_eq!(r.anchor, Anchor::Static);
+        assert_eq!(r.fair, Some(0.0573));
+    }
+
+    #[test]
+    fn a_pinned_basis_reports_no_age() {
+        let mut e = pinned_engine();
+        let r = e.compose(
+            Legs {
+                fx: src(fresh(0.0573)),
+                crypto_usdc: Candidates::none(),
+                usdc_usd: Candidates::none(),
+                static_usd: 0.0573,
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.basis, Some(1.0));
+        assert_eq!(r.basis_age, None, "a constant has no observation age");
+    }
+
+    /// A consumer's startup wiring check spends one shot on the first basis it
+    /// can observe, so "observable" has to mean both legs actually present and
+    /// fresh — the feed sources warm asynchronously, and an early partial leg
+    /// set must not count as checked.
+    #[test]
+    fn a_basis_is_observable_only_when_both_legs_are_live_and_fresh() {
+        let stale = secs(300);
+        let base = Legs {
+            fx: src(fresh(0.0573)),
+            crypto_usdc: src(fresh(0.0573)),
+            usdc_usd: src(fresh(1.0)),
+            static_usd: 0.0573,
+        };
+        assert_eq!(base.observed_basis(stale, BAND), Some(1.0));
+
+        // Either leg missing — nothing to observe yet.
+        assert_eq!(
+            Legs {
+                fx: Candidates::none(),
+                ..base
+            }
+            .observed_basis(stale, BAND),
+            None
+        );
+        assert_eq!(
+            Legs {
+                crypto_usdc: Candidates::none(),
+                ..base
+            }
+            .observed_basis(stale, BAND),
+            None
+        );
+        // A leg present but stale is not a reading.
+        assert_eq!(
+            Legs {
+                fx: src(Reading::new(0.0573, secs(600))),
+                ..base
+            }
+            .observed_basis(stale, BAND),
+            None
+        );
+        // A non-positive anchor would divide by zero.
+        assert_eq!(
+            Legs {
+                fx: src(fresh(0.0)),
+                ..base
+            }
+            .observed_basis(stale, BAND),
+            None
+        );
+        // The thin-market shape that motivated this work: a basis near 0.53.
+        let observed = Legs {
+            crypto_usdc: src(fresh(0.03064)),
+            ..base
+        }
+        .observed_basis(stale, BAND)
+        .unwrap();
+        assert!((observed - 0.5347).abs() < 1e-3, "observed {observed}");
+    }
+
+    #[test]
+    fn observed_basis_is_the_documented_two_peg_quantity() {
+        // (token/USDC) ÷ (fiat/USD). The division is embedded in the leg units,
+        // which is why the USDC premium is deliberately not collapsed away.
+        assert_eq!(observed_basis(1.141, 1.14), Some(1.141 / 1.14));
+        // A non-positive or non-finite anchor has no usable reciprocal.
+        assert_eq!(observed_basis(1.141, 0.0), None);
+        assert_eq!(observed_basis(1.141, -1.0), None);
+        assert_eq!(observed_basis(1.141, f64::NAN), None);
+        assert_eq!(observed_basis(f64::NAN, 1.14), None);
+    }
+
+    #[test]
+    fn a_garbage_fx_print_is_not_reported_as_a_stale_feed() {
+        // Same composition either way — both are unusable — but the operator is
+        // told which failure it is. A dead poller and a live feed publishing
+        // garbage previously carried the identical label.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: src(fresh(f64::NAN)),
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Degraded(Degrade::FxInvalid));
+
+        let r = e.compose(
+            Legs {
+                fx: src(Reading::new(1.14, secs(600))),
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Degraded(Degrade::FxStale));
+
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none(),
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(
+            r.regime,
+            Regime::Degraded(Degrade::FxStale),
+            "absent is not invalid"
+        );
+    }
+
+    #[test]
+    fn a_weekend_stays_structural_whatever_the_fx_leg_did() {
+        // The refinement above must not turn a closed session into a fault.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: src(fresh(f64::NAN)),
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::weekend(),
+        );
+        assert_eq!(r.regime, Regime::CryptoOnly);
+        assert_eq!(r.health, Health::Ok);
+    }
+
+    #[test]
+    fn a_lone_uncorroborated_basis_source_still_quotes_but_is_not_called_healthy() {
+        // The standing shape for most of the roster: one aggregator under the
+        // basis leg and nothing to check it against. It must keep quoting —
+        // refusing would dark most of the book — but it must not be reported as
+        // a corroborated price, and it must not tighten the kill switches
+        // forever either, which is what `Unverified` exists to express.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: src(fresh(1.0)),
+                crypto_usdc: lone("coingecko", fresh(1.02)),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Uncorroborated);
+        assert_eq!(r.health, Health::Unverified);
+        assert!(!r.degraded(), "a permanent condition must not tighten");
+        assert!(r.fair.is_some());
+        assert_eq!(r.crypto_leg.state, ConsensusState::SingleUnverified);
+        assert_eq!(r.crypto_leg.n, 1);
+    }
+
+    #[test]
+    fn a_weekend_on_a_lone_uncorroborated_source_is_also_unverified() {
+        // The weekend arm's own uncorroborated path. This matters more than it
+        // looks: for the index-priced markets — most of the roster — the basis
+        // leg is one aggregator, so this is what *every* weekend tick composes.
+        // It must report Unverified rather than plain CryptoOnly/Ok, and it must
+        // still not tighten, since having one source is permanent.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none(),
+                crypto_usdc: lone("coingecko", fresh(1.14)),
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::weekend(),
+        );
+        assert_eq!(r.regime, Regime::Uncorroborated);
+        assert_eq!(r.health, Health::Unverified);
+        assert!(!r.degraded(), "a permanent condition must not tighten");
+        assert_eq!(r.anchor, Anchor::CryptoReference);
+        assert_eq!(r.crypto_leg.state, ConsensusState::SingleUnverified);
+    }
+
+    #[test]
+    fn a_corroborated_pair_of_basis_sources_composes_normally() {
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: src(fresh(1.0)),
+                crypto_usdc: pair(1.020, 1.022),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Normal);
+        assert_eq!(r.crypto_leg.state, ConsensusState::Agreed);
+        assert!(
+            (r.basis.unwrap() - 1.021).abs() < 1e-9,
+            "the pair's midpoint"
+        );
+    }
+
+    #[test]
+    fn one_bad_source_among_three_no_longer_becomes_the_answer() {
+        // The defect this issue is named for. Under the old ladder whichever
+        // tier answered first won outright, so a thin aggregate printing half
+        // the peg *was* the basis. The median ignores it, and the leg reports
+        // which source diverged rather than merely that something did.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: src(fresh(1.0)),
+                crypto_usdc: Candidates::none()
+                    .push("coinbase", Some(fresh(1.020)))
+                    .push("kraken", Some(fresh(1.021)))
+                    .push("coingecko", Some(fresh(0.530))),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert!(
+            (r.basis.unwrap() - 1.020).abs() < 1e-9,
+            "the median, not the bad print and not an average: {:?}",
+            r.basis
+        );
+        assert!(r.crypto_leg.dispersed());
+        assert_eq!(r.crypto_leg.outlier, Some("coingecko"));
+        assert_eq!(r.crypto_leg.n, 3);
+    }
+
+    #[test]
+    fn two_disagreeing_basis_sources_degrade_rather_than_pick_one() {
+        // With no majority there is nothing to prefer, so the leg goes dark and
+        // the composition falls to the carried-basis path — but the operator is
+        // still told which source is furthest out.
+        let mut e = engine();
+        e.compose(
+            Legs {
+                fx: src(fresh(1.0)),
+                crypto_usdc: pair(1.020, 1.021),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        let r = e.compose(
+            Legs {
+                fx: src(fresh(1.0)),
+                crypto_usdc: Candidates::none()
+                    .push("coinbase", Some(fresh(1.020)))
+                    .push("coingecko", Some(fresh(0.530))),
+                ..Legs::default()
+            },
+            secs(30),
+            ClockCtx::in_session(),
+        );
+        assert!(r.crypto_leg.dispersed());
+        assert_eq!(r.crypto_leg.n, 2);
+        assert_eq!(
+            r.regime,
+            Regime::Degraded(Degrade::NoBasisLeg),
+            "a leg that cannot adjudicate is a leg that is down"
+        );
+        assert!(
+            (r.basis.unwrap() - 1.0205).abs() < 1e-9,
+            "the carried basis"
+        );
+    }
+
+    #[test]
+    fn a_disagreeing_peg_leg_still_raises_the_common_mode_breach() {
+        // The regression the consensus filter nearly shipped, and the sharpest
+        // one in this PR. The peg leg is two sources with no designation, so a
+        // disagreement resolves to no reading at all — and a guard reading the
+        // consensus would then see nothing and report no breach, at exactly the
+        // moment it exists to fire. Spot at 0.90 against a lagging index at 1.00
+        // IS the depeg (§1 fm1), not an absence of evidence about it.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                usdc_usd: Candidates::none()
+                    .push("kraken", Some(fresh(0.90)))
+                    .push("coingecko", Some(fresh(1.00))),
+                ..normal(1.02)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert!(
+            r.usdc_breach,
+            "a portfolio-wide halt must not be silenced by disagreement"
+        );
+    }
+
+    #[test]
+    fn peg_sources_that_disagree_inside_the_band_still_raise_it() {
+        // The band is [0.97, 1.03] and the dispersion band is 2%, so a pair can
+        // straddle without either reading leaving the band. The leg still cannot
+        // establish the peg, so it still must not report it sound.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                usdc_usd: Candidates::none()
+                    .push("kraken", Some(fresh(0.975)))
+                    .push("coingecko", Some(fresh(1.025))),
+                ..normal(1.02)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert!(
+            r.usdc_breach,
+            "cannot establish the peg is not the same as fine"
+        );
+    }
+
+    #[test]
+    fn agreeing_in_band_peg_sources_raise_nothing() {
+        // The converse, so the two guards above cannot pass vacuously.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                usdc_usd: Candidates::none()
+                    .push("kraken", Some(fresh(0.9997)))
+                    .push("coingecko", Some(fresh(1.0000))),
+                ..normal(1.02)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert!(!r.usdc_breach);
+    }
+
+    #[test]
+    fn one_out_of_band_peg_source_raises_it_even_when_outvoted() {
+        // Three sources, one off its peg: the median stays in band, so banding only
+        // the consensus would outvote the alarm. The guard's question is "did
+        // anything report a problem", not "what is this leg worth".
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                usdc_usd: Candidates::none()
+                    .push("kraken", Some(fresh(0.90)))
+                    .push("coingecko", Some(fresh(1.00)))
+                    .push("third", Some(fresh(1.00))),
+                ..normal(1.02)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert!(r.usdc_breach);
+    }
+
+    #[test]
+    fn a_dispersed_fx_anchor_is_reported_per_leg() {
+        // The dispersion gate applies to every leg, not just the basis.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none()
+                    .push("pyth-hermes", Some(fresh(1.14)))
+                    .push("oanda", Some(fresh(1.141)))
+                    .push("frankfurter", Some(fresh(0.90))),
+                crypto_usdc: pair(1.140, 1.142),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert!(r.fx_leg.dispersed());
+        assert_eq!(r.fx_leg.outlier, Some("frankfurter"));
+        assert!(!r.crypto_leg.dispersed());
+        // And it is not merely reported: a sick leg degrades the composition.
+        assert_eq!(r.regime, Regime::Degraded(Degrade::LegDispersed));
+        assert!(r.degraded(), "a fault tightens the switches");
+    }
+
+    #[test]
+    fn a_surviving_median_does_not_make_a_disagreement_benign() {
+        // With three sources the median resolves, so the composition has a
+        // perfectly good mid — and would have reported `Ok` while one of its
+        // legs was visibly disagreeing. A dispersion is a fault, so it degrades;
+        // that is what separates it from the permanent single-source case, which
+        // deliberately does not tighten.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: src(fresh(1.0)),
+                crypto_usdc: Candidates::none()
+                    .push("coinbase", Some(fresh(1.020)))
+                    .push("kraken", Some(fresh(1.021)))
+                    .push("coingecko", Some(fresh(0.530))),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Degraded(Degrade::LegDispersed));
+        assert!(r.basis.is_some(), "the median still resolved");
+        assert!(r.degraded());
+    }
+
+    #[test]
+    fn a_dispersed_fx_leg_is_not_labelled_a_dead_poller() {
+        // Two live feeds that answered promptly and disagreed is not staleness.
+        // Reporting it as `FxStale` is exactly the conflation `FxInvalid` was
+        // added to remove, one screen away.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none()
+                    .push("pyth-hermes", Some(fresh(1.14)))
+                    .push("frankfurter", Some(fresh(0.60))),
+                crypto_usdc: pair(1.140, 1.142),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Degraded(Degrade::LegDispersed));
+    }
+
+    #[test]
+    fn a_dispersed_crypto_leg_degrades_even_on_a_weekend() {
+        // The weekend is structural for the FX leg, but on that arm the crypto
+        // leg is what carries the mid — so a disagreement in it is a fault
+        // whatever the session.
+        //
+        // Three sources, so the median survives and the leg still has a value:
+        // a dispersed *pair* would resolve to nothing and land on the static peg
+        // instead, which is a different (and already covered) path.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none(),
+                crypto_usdc: Candidates::none()
+                    .push("coinbase", Some(fresh(1.14)))
+                    .push("kraken", Some(fresh(1.141)))
+                    .push("coingecko", Some(fresh(0.60))),
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::weekend(),
+        );
+        assert_eq!(r.regime, Regime::Degraded(Degrade::LegDispersed));
+        assert_eq!(
+            r.anchor,
+            Anchor::CryptoReference,
+            "the median still anchors"
+        );
+    }
+
+    #[test]
+    fn the_dispersion_gate_generalizes_the_one_shot_startup_check() {
+        // The startup wiring check could only ever latch once per market, and
+        // spent its shot on whichever tier answered first — so a mis-wired id
+        // reachable only through a fallback went unvalidated until the day it
+        // was used. The gate below makes the same measurement every tick and per
+        // source, which is what closes that hole: a source that disagrees is
+        // named whenever it answers, first tick or thousandth.
+        let mut e = engine();
+        let dispersed = || Legs {
+            fx: src(fresh(1.0)),
+            crypto_usdc: Candidates::none()
+                .push("coinbase", Some(fresh(1.020)))
+                .push("kraken", Some(fresh(1.021)))
+                .push("bad-index-id", Some(fresh(0.530))),
+            ..Legs::default()
+        };
+        let first = e.compose(dispersed(), secs(5), ClockCtx::in_session());
+        assert_eq!(first.crypto_leg.outlier, Some("bad-index-id"));
+        for _ in 0..50 {
+            let later = e.compose(dispersed(), secs(30), ClockCtx::in_session());
+            assert_eq!(
+                later.crypto_leg.outlier,
+                Some("bad-index-id"),
+                "the gate does not latch"
+            );
+        }
+    }
+
+    #[test]
+    fn a_leg_reports_its_source_count_even_when_the_composition_degraded() {
+        // The per-leg view is about the sources, not about what the composition
+        // managed to do with them, so it survives an unrelated degrade.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none(),
+                crypto_usdc: pair(1.140, 1.142),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::Degraded(Degrade::FxStale));
+        assert_eq!(r.crypto_leg.n, 2, "reported despite the FX degrade");
+        assert_eq!(r.fx_leg.state, ConsensusState::Absent);
+    }
+
+    #[test]
+    fn a_pinned_market_reports_no_crypto_sources_however_many_answered() {
+        // The pin drops the whole set, so the per-leg view must not advertise
+        // sources the engine has declared unusable for this market.
+        let mut e = pinned_engine();
+        let r = e.compose(
+            Legs {
+                fx: src(fresh(0.0573)),
+                crypto_usdc: pair(0.03064, 0.03065),
+                static_usd: 0.0573,
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::FxPinned);
+        assert_eq!(r.crypto_leg.n, 0);
+        assert_eq!(r.crypto_leg.state, ConsensusState::Absent);
+    }
+
+    #[test]
+    fn health_is_a_total_function_of_regime() {
+        // Every variant, so a regime added later cannot quietly inherit a
+        // health that does not follow from it.
+        assert_eq!(Regime::Normal.health(), Health::Ok);
+        assert_eq!(Regime::CryptoOnly.health(), Health::Ok);
+        assert_eq!(Regime::FxPinned.health(), Health::Unverified);
+        assert_eq!(Regime::Uncorroborated.health(), Health::Unverified);
+        assert_eq!(Regime::Paused.health(), Health::Pause);
+        for d in [
+            Degrade::FxStale,
+            Degrade::FxInvalid,
+            Degrade::LegDispersed,
+            Degrade::NoBasisLeg,
+            Degrade::BasisUnusable,
+            Degrade::StaticPeg,
+        ] {
+            assert_eq!(Regime::Degraded(d).health(), Health::Degraded, "{d:?}");
+        }
+    }
+
+    #[test]
+    fn every_composition_reports_the_health_its_regime_implies() {
+        // The invariant the derivation exists to hold, checked through
+        // `compose` rather than on the mapping alone: whatever arm ran, the two
+        // fields agree.
+        let mut e = engine();
+        let cases = [
+            (normal(1.02), ClockCtx::in_session()),
+            (
+                Legs {
+                    crypto_usdc: Candidates::none(),
+                    ..normal(1.02)
+                },
+                ClockCtx::in_session(),
+            ),
+            (
+                Legs {
+                    fx: Candidates::none(),
+                    ..normal(1.02)
+                },
+                ClockCtx::weekend(),
+            ),
+            (
+                Legs {
+                    fx: Candidates::none(),
+                    ..normal(1.02)
+                },
+                ClockCtx::in_session(),
+            ),
+            (
+                Legs {
+                    fx: Candidates::none(),
+                    crypto_usdc: Candidates::none(),
+                    ..normal(1.02)
+                },
+                ClockCtx::in_session(),
+            ),
+            (
+                Legs {
+                    fx: Candidates::none(),
+                    crypto_usdc: Candidates::none(),
+                    static_usd: 0.0,
+                    ..normal(1.02)
+                },
+                ClockCtx::in_session(),
+            ),
+        ];
+        for (legs, clock) in cases {
+            let r = e.compose(legs, secs(5), clock);
+            assert_eq!(r.health, r.regime.health(), "regime {:?}", r.regime);
+        }
+
+        // And the pinned arm, which is the one regime a normal engine cannot
+        // reach.
+        let r = pinned_engine().compose(
+            Legs {
+                crypto_usdc: Candidates::none(),
+                ..normal(1.0)
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.regime, Regime::FxPinned);
+        assert_eq!(r.health, r.regime.health());
+    }
+
+    #[test]
+    fn a_normal_tick_reports_a_zero_basis_age() {
+        let mut e = engine();
+        let r = e.compose(normal(1.02), secs(5), ClockCtx::in_session());
+        assert_eq!(r.regime, Regime::Normal);
+        assert_eq!(r.basis_age, Some(Duration::ZERO));
+        assert!(!r.basis_outlier);
     }
 }

@@ -46,10 +46,29 @@ impl Reading {
         }
     }
 
+    /// Whether the value itself is usable — positive and finite — regardless of
+    /// age.
+    ///
+    /// Split out from [`Reading::fresh`] because folding value validity into
+    /// freshness made an absent leg, a too-old leg, and a garbage print
+    /// indistinguishable downstream: all three collapsed into one "stale"
+    /// label, so a feed misconfiguration and a closed session read the same in
+    /// the operator log. `fresh` still means both, so no call site changes
+    /// behavior by this being separable.
+    pub fn valid(&self) -> bool {
+        self.value.is_finite() && self.value > 0.0
+    }
+
+    /// Whether the reading is younger than the staleness bound, regardless of
+    /// whether its value is usable.
+    pub fn young(&self, stale_after: Duration) -> bool {
+        self.age < stale_after
+    }
+
     /// Usable only while younger than the staleness bound and carrying a
     /// positive, finite value. Everything downstream assumes a fresh reading.
     pub fn fresh(&self, stale_after: Duration) -> bool {
-        self.age < stale_after && self.value.is_finite() && self.value > 0.0
+        self.young(stale_after) && self.valid()
     }
 
     /// Fresh but with a confidence half-width beyond `max_conf_frac` of the
@@ -90,6 +109,34 @@ mod tests {
         assert!(!Reading::new(-1.0, secs(1)).fresh(secs(5)));
         assert!(!Reading::new(f64::NAN, secs(1)).fresh(secs(5)));
         assert!(!Reading::new(f64::INFINITY, secs(1)).fresh(secs(5)));
+    }
+
+    #[test]
+    fn validity_and_youth_are_separable() {
+        // The point of the split: the three ways a leg can be unusable are
+        // distinguishable, even though `fresh` still folds them together.
+        let garbage = Reading::new(f64::NAN, secs(1));
+        assert!(garbage.young(secs(5)) && !garbage.valid());
+
+        let old = Reading::new(1.14, secs(10));
+        assert!(!old.young(secs(5)) && old.valid());
+
+        let good = Reading::new(1.14, secs(1));
+        assert!(good.young(secs(5)) && good.valid());
+    }
+
+    #[test]
+    fn fresh_is_exactly_young_and_valid() {
+        for age in [secs(1), secs(10)] {
+            for value in [1.14, 0.0, -1.0, f64::NAN, f64::INFINITY] {
+                let r = Reading::new(value, age);
+                assert_eq!(
+                    r.fresh(secs(5)),
+                    r.young(secs(5)) && r.valid(),
+                    "value {value}, age {age:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -20,7 +20,9 @@
 //!                          coingecko | cmc | fx
 
 use anyhow::{anyhow, Context, Result};
-use dropset_fair_value::{FairValueConfig, FairValueEngine, Reading, Regime};
+use dropset_fair_value::{
+    Candidates, ClockCtx, ConsensusState, FairValueEngine, LegReport, Reading, Regime,
+};
 use dropset_feeds::venues::{
     CmcSource, CoinGeckoSource, CoinbaseTicker, FrankfurterSource, KrakenSource, PythFeed,
     PythHermesSource,
@@ -535,61 +537,90 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     // health, and a pinned basis rendered as `1.0000 pinned`.
     println!(
         "\n  market      mid (USDC)    anchor         health       \
-         basis           fx source"
+         basis           fx sources            basis sources"
     );
 
     let now = Duration::from_secs(0);
     let q = |v: Option<f64>| v.map(|v| Reading::new(v, now));
+
+    /// One leg's consensus, rendered for the dry-run table. A dry run is the
+    /// wiring check, so how many sources answered and which one disagrees is
+    /// exactly what it exists to show — naming the outlier is the difference
+    /// between "something is wrong" and "this id is wrong".
+    /// Switches on `state`, not on whether an outlier happens to be named: a
+    /// dispersed leg that cannot single out a suspect must not render as
+    /// "agree". The state is the authority on what the leg concluded; the
+    /// outlier is an optional detail hanging off it.
+    fn describe_leg(leg: &LegReport) -> String {
+        let n = leg.n;
+        match leg.state {
+            ConsensusState::Absent => "—".to_string(),
+            ConsensusState::Dispersed => match leg.outlier {
+                Some(who) => format!("{n} src, {who} out"),
+                None => format!("{n} src, DISAGREE"),
+            },
+            ConsensusState::SingleUnverified => "1 src, unchecked".to_string(),
+            ConsensusState::SingleTrusted => "1 src, trusted".to_string(),
+            ConsensusState::Agreed | ConsensusState::Corroborated => {
+                format!("{n} src, agree")
+            }
+        }
+    }
     // USDC/USD common-mode leg, shared by every market: Kraken's market print,
     // falling back to the CoinGecko index.
-    let usdc_q =
-        q(kraken.get(USDC_KRAKEN_PAIR).copied()).or_else(|| q(cg.get(USDC_COINGECKO_ID).copied()));
+    let usdc_q = Candidates::none()
+        .push("kraken", q(kraken.get(USDC_KRAKEN_PAIR).copied()))
+        .push("coingecko", q(cg.get(USDC_COINGECKO_ID).copied()));
     for &m in &markets {
-        // FX anchor: Pyth (with its confidence half-width) over Frankfurter.
+        // FX anchor: Pyth carries its confidence half-width and is the source
+        // designated believable on its own; the ECB reference corroborates it.
         // A dry run has no wall-clock history, so every reading is age zero and
         // `pyth_reading`'s publish-time ageing has nothing to bite on — the
-        // point here is which tier answered, not staleness.
-        let (fx_q, fx_src) = match pyth.get(m.currency) {
-            Some(p) => {
-                let reading = match p.confidence {
-                    Some(conf) => Reading::with_confidence(p.value, now, conf),
-                    None => Reading::new(p.value, now),
-                };
-                (Some(reading), "pyth")
-            }
-            None => match q(fx.get(m.currency).copied()) {
-                Some(r) => (Some(r), "frankfurter"),
-                None => (None, "—"),
-            },
-        };
-        // Basis leg, in preference order: Coinbase token/USDC, Kraken
-        // token/USD, then the reflexive CoinGecko / CMC index. Kraken's USD
-        // quote is converted with the peg leg, exactly as `FeedHub::legs`
-        // does — the two walks must agree or a dry run stops predicting the
-        // live mid.
-        let usdc_per_usd = usdc_q.map(|r| r.value).filter(|v| *v > 0.0);
-        let basis_q = m
-            .coinbase_product
-            .and_then(|p| q(coinbase.get(p).copied()))
-            .or_else(|| {
-                m.kraken_pair.and_then(|p| {
-                    q(kraken.get(p).copied()).map(|r| match usdc_per_usd {
-                        Some(peg) => Reading::new(r.value / peg, now),
-                        None => r,
-                    })
-                })
-            })
-            .or_else(|| q(m.coingecko_id.and_then(|id| cg.get(id)).copied()))
-            .or_else(|| q(m.coinmarketcap_id.and_then(|id| cmc.get(&id)).copied()));
+        // point here is which sources answered, not staleness.
+        let fx_pyth = pyth.get(m.currency).map(|p| match p.confidence {
+            Some(conf) => Reading::with_confidence(p.value, now, conf),
+            None => Reading::new(p.value, now),
+        });
+        let fx_q = Candidates::none()
+            .push_trusted("pyth", fx_pyth)
+            .push("frankfurter", q(fx.get(m.currency).copied()));
+        // Basis leg: Coinbase token/USDC, Kraken token/USD, then the reflexive
+        // CoinGecko / CMC index. Kraken's USD quote is converted with the peg
+        // leg's consensus, exactly as `FeedHub::legs` does — the two collections
+        // must agree or a dry run stops predicting the live mid.
+        let usdc_per_usd = usdc_q
+            .resolve(cfg.fair_value.leg_stale, cfg.fair_value.leg_dispersion_frac)
+            .reading
+            .map(|r| r.value)
+            .filter(|v| *v > 0.0);
+        // Only a candidate when the peg leg resolved — see `FeedHub::legs`, whose
+        // reasoning this mirrors: an unconverted token/USD print beside a
+        // token/USDC one is a unit mismatch masquerading as a disagreement.
+        let kraken_q = m.kraken_pair.zip(usdc_per_usd).and_then(|(p, peg)| {
+            q(kraken.get(p).copied()).map(|r| Reading::new(r.value / peg, now))
+        });
+        let basis_q = Candidates::none()
+            .push(
+                "coinbase",
+                m.coinbase_product.and_then(|p| q(coinbase.get(p).copied())),
+            )
+            .push("kraken", kraken_q)
+            .push(
+                "coingecko",
+                q(m.coingecko_id.and_then(|id| cg.get(id)).copied()),
+            )
+            .push(
+                "coinmarketcap",
+                q(m.coinmarketcap_id.and_then(|id| cmc.get(&id)).copied()),
+            );
         // A fresh engine per row — no history, so no smoothing. The pinned
         // basis is per-market, so it is layered onto the shared calibration
         // here exactly as the live path does in `Context`.
         let legs = build_legs(fx_q, basis_q, usdc_q, m.static_usd);
-        let mut engine = FairValueEngine::new(FairValueConfig {
-            pinned_basis: m.pinned_basis,
-            ..cfg.fair_value
-        });
-        let fair = engine.compose(legs, now, false);
+        let mut engine = FairValueEngine::new(cfg.fair_value.with_pinned_basis(m.pinned_basis));
+        // A dry run reports the in-session composition; it is a wiring check,
+        // not a clock simulation.
+        let fair = engine.compose(legs, now, ClockCtx::in_session());
         let anchor = format!("{:?}", fair.anchor);
         // Rendered to a String first: a derived `Debug` ignores width specifiers,
         // so `{:<11?}` would not pad and the column would drift on the longer
@@ -608,18 +639,19 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
             };
             format!("{b:.4}{note}")
         });
+        let mut fx_col = describe_leg(&fair.fx_leg);
+        if fair.uncertain {
+            fx_col.push_str(" (wide)");
+        }
         println!(
-            "  {:<10}  {:>12}  {:<13}  {:<11}  {:<14}  {}",
+            "  {:<10}  {:>12}  {:<13}  {:<11}  {:<14}  {:<20}  {}",
             m.symbol,
             mid,
             anchor,
             health,
             basis,
-            if fair.uncertain {
-                format!("{fx_src} (wide)")
-            } else {
-                fx_src.to_string()
-            }
+            fx_col,
+            describe_leg(&fair.crypto_leg),
         );
     }
     Ok(())

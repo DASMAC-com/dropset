@@ -226,12 +226,14 @@ uncaptioned
 unfetched
 unfillable
 unfirmable
+ungated
 unitless
 unmirrored
 unpadded
 unpullable
 unrouted
 unstarted
+unvalidated
 unwired
 unwritable
 upserts

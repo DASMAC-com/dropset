@@ -104,12 +104,17 @@ tui <-> sdk-math: the resting-book matcher surface (sdk/interface
 maker-bot <-> program: the bot quotes and submits against the on-chain
   account/instruction contract (docs/interface.md) through the generated
   SDK clients (sdk/rs) — instruction args and accounts must match.
-maker-bot <-> fair-value: the maker maps its feed cache onto the engine's
-  Legs (fx / crypto_usdc / usdc_usd / static_usd) and reads the composed
-  FairValue (fair, anchor, regime, basis, health + basis/usdc breach flags)
-  from dropset-fair-value; the leg mapping and the result fields the
-  killswitch and quoting path read must track the engine's model. (The
-  fair-value taker is a declared follow-up that shares this seam.)
+maker-bot <-> fair-value: the maker collects every source that answered
+  into the engine's per-leg Candidates (fx / crypto_usdc / usdc_usd, plus
+  static_usd) and reads the composed FairValue (fair, anchor, regime,
+  basis, basis_age, health, uncertain, the basis/usdc breach flags, the
+  basis_outlier flag, and the per-leg LegReports) from
+  dropset-fair-value; the candidate collection and the result fields the
+  killswitch and quoting path read must track the engine's model. Leg
+  resolution itself is the engine's (median / agree-or-degrade /
+  single-source, plus the dispersion gate), so the bot must not re-derive
+  it. (The fair-value taker is a declared follow-up that shares this
+  seam.)
 taker-bot <-> program: the bot sizes orders off-chain against the live
   book (sdk/interface matching `simulate_swap`) and submits `swap`s
   through the generated SDK clients (sdk/rs) — the off-chain fill math

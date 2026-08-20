@@ -94,6 +94,16 @@ pub struct Context {
     /// have no basis to check and would spend the one shot on nothing.
     pub basis_checked: bool,
 
+    /// The last leg-health line reported for this market, so the tick loop logs
+    /// a **transition** rather than the same line every five seconds.
+    ///
+    /// The consensus filter produces per-tick signals — a refused observation,
+    /// a leg whose sources disagree, a basis carried past its age — and a signal
+    /// nothing reads is a signal that does not exist. Deduping here is what
+    /// makes logging them affordable on a per-tick loop; the richer operator
+    /// surface is the separate telemetry effort's, not this field's.
+    pub last_leg_health: Option<String>,
+
     /// The vault's TVL (USD) the first time this run valued it — the baseline
     /// the §4 drawdown floor is measured against. Seeded on the first tick that
     /// has a usable mid; `None` until then. A restart re-baselines to the
@@ -170,12 +180,12 @@ impl Context {
             .and_then(|age| now.checked_sub(age))
             .unwrap_or(now);
         // The calibration is shared across markets but the pinned basis is a
-        // property of *this* market's source coverage, so it is layered on here
-        // — the one place the per-market engine is built.
-        let fair_value = FairValueConfig {
-            pinned_basis: cfg.pinned_basis,
-            ..fair_value
-        };
+        // property of *this* market's source coverage, so it is layered on here.
+        // Routed through the crate helper rather than spelled out, because this
+        // is not the only site that builds an engine — the dry-run path does too
+        // — and a site that forgot the pin would quietly quote the market on the
+        // no-basis-leg degrade path with no failing test behind it.
+        let fair_value = fair_value.with_pinned_basis(cfg.pinned_basis);
         Self {
             quote_state,
             reference_invalidated: false,
@@ -187,6 +197,7 @@ impl Context {
             engine: FairValueEngine::new(fair_value),
             last_compose: None,
             basis_checked: false,
+            last_leg_health: None,
             launch_tvl_usd: None,
             fills_active: false,
             last_set_price: None,
