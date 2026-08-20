@@ -499,29 +499,40 @@ reader rather than a role per consumer on purpose: every reader needs
 exactly the same grants, so splitting them would multiply bookkeeping
 without buying isolation.
 
-| Table                                                              | Writer             | Contents                                            |
-| ------------------------------------------------------------------ | ------------------ | --------------------------------------------------- |
-| `feed_cursors`                                                     | `feeds` store sink | Resumable per-feed position (JSONB)                 |
-| `cex_prices`                                                       | market-data        | CEX reference candles, per venue and product        |
-| `fx_rates` *(planned)*                                             | market-data        | Fiat-cross bars for the FX anchor leg               |
-| `peg_rates` *(planned)*                                            | market-data        | Issuer / redemption reference rates                 |
-| `fx_events` *(planned)*                                            | market-data        | Economic-calendar event times                       |
-| `basis_series` *(planned)*                                         | market-data        | Derived per-market basis series                     |
-| `vol_estimates` *(planned)*                                        | market-data        | Realized volatility by market and window            |
-| `regimes` *(planned)*                                              | market-data        | Regime tags every other stat is sliced by           |
-| `fill_events`, `events`, `takes`, `market_stats`, `indexer_cursor` | indexer            | On-chain event capture and its rollups              |
-| Maker parameter and telemetry tables *(planned)*                   | maker go-between   | Slow parameters published to the bot; run telemetry |
+| Table                                                              | Writer              | Contents                                            |
+| ------------------------------------------------------------------ | ------------------- | --------------------------------------------------- |
+| `feed_cursors`                                                     | `feeds` store sink  | Resumable per-feed position (JSONB)                 |
+| `cex_prices`                                                       | market-data         | CEX reference candles, per venue and product        |
+| `fx_rates` *(planned)*                                             | market-data         | Fiat-cross bars for the FX anchor leg               |
+| `peg_rates` *(planned)*                                            | market-data         | Issuer / redemption reference rates                 |
+| `fx_events` *(planned)*                                            | market-data         | Economic-calendar event times                       |
+| `basis_series` *(planned)*                                         | market-data         | Derived per-market basis series                     |
+| `vol_estimates` *(planned)*                                        | market-data         | Realized volatility by market and window            |
+| `regimes` *(planned)*                                              | market-data         | Regime tags every other stat is sliced by           |
+| `fill_events`, `events`, `takes`, `market_stats`, `indexer_cursor` | indexer             | On-chain event capture and its rollups              |
+| `maker_telemetry`, `maker_legs`                                    | maker bot           | Per-tick quoting state, and each feed leg's reading |
+| `feed_health`                                                      | maker bot *(today)* | Per-source feed liveness, upserted in place         |
+| Maker parameter tables *(planned)*                                 | maker go-between    | Slow parameters published to the bot                |
 
 Adding a table means naming its writer here. A table with two writers is
 a design error, not a configuration choice.
 
-The one carve-out is `feed_cursors`, which the **framework** owns rather
-than any single app: every store-sink process writes its own row, keyed
-by the feed name. Writers partition by key, so the rule holds at the row
-level even though several apps touch the table — and the framework, not
-an app, defines its shape. A table wanting that treatment has to earn it
-the same way: a key that makes the partition structural, not a
-convention two writers agree to keep.
+`feed_health` is the table to watch on that rule. It is maker-owned
+today — the maker is the only process wiring a `HealthReporter` — but it
+is keyed by source name and its rows are produced by a *framework*
+recorder, so a second consumer adopting the reporter would make it a
+second writer. At that point it should become a carve-out on the
+`feed_cursors` pattern below (framework-owned shape, partitioned by feed
+name) rather than quietly acquiring two app writers. The upsert SQL
+moving out of `bots/maker-bot/queries/` is the signal that has happened.
+
+The one carve-out today is `feed_cursors`, which the **framework** owns
+rather than any single app: every store-sink process writes its own row,
+keyed by the feed name. Writers partition by key, so the rule holds at
+the row level even though several apps touch the table — and the
+framework, not an app, defines its shape. A table wanting that treatment
+has to earn it the same way: a key that makes the partition structural,
+not a convention two writers agree to keep.
 
 ______________________________________________________________________
 
@@ -1236,6 +1247,36 @@ ______________________________________________________________________
   knows whether its position is a timestamp, a slot, or a signature, so
   the framework exposes `caught_up` and leaves the lag derivation to the
   recorder. The indexer is the first consumer.
+
+  A ready-made recorder now ships beside the trait: `HealthReporter`
+  forwards each turn's liveness onto a channel for a consumer to persist
+  or render, and the maker drives every source through it — so a
+  registered source yields a per-feed health row with **no per-feed
+  wiring**, and a venue adapter added later appears in that table having
+  configured nothing (`docs/market-making.md` §6 is the first consumer).
+
+  Two properties of that recorder are forced by where it is called, and
+  both generalize to any other:
+
+  - It only ever `try_send`s. `FeedMetrics` implementations run **inline
+    on the drive loop**, so a recorder that blocked would put a database
+    write in front of a price poll. A full channel drops the update,
+    which is sound only because the consumer's row is last-state-wins.
+  - It cannot report what a feed *said*. The runner hands a recorder a
+    feed name and batch stats, never the records — and a venue source
+    yields many instruments per batch, so no single value on a
+    per-source row could be more than an arbitrary pick. Values belong
+    to whoever resolved the instrument.
+
+  Two smaller framework pieces landed with it, both for consumers whose
+  database is a **soft** dependency rather than their product:
+  `BestEffortSink` wraps a sink so a failed batch is dropped and logged
+  instead of propagating (trading the runner's crash-and-resume contract
+  for survival — at-most-once, therefore only ever for samples of
+  current state, never for a ledger), and `connect_lazy` defers
+  connecting until the first query, so losing a startup race against
+  Postgres costs a few batches rather than the process's whole lifetime
+  of telemetry.
 
 - **FX bar source.** *Resolved — three free-tier vendors, no paid one
   needed (§9 "The free-tier FX roster").* The question assumed the

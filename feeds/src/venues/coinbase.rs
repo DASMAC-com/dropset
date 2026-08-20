@@ -206,6 +206,16 @@ pub struct CoinbaseTicker {
     product_id: String,
 }
 
+/// The [`Source::name`] a [`CoinbaseTicker`] over `product_id` reports.
+///
+/// Unlike the batched venues, spot is one source *per product*, so the name
+/// carries the product and there is no single constant to expose — hence a
+/// function. See [`crate::venues::pyth::FEED_NAME`] for why a consumer must
+/// build the name through this rather than formatting its own.
+pub fn ticker_feed_name(product_id: &str) -> String {
+    format!("coinbase:{product_id}")
+}
+
 impl CoinbaseTicker {
     /// Build the source over `base_url` for one product (e.g. `EURC-USDC`),
     /// on a client of its own.
@@ -233,7 +243,7 @@ impl CoinbaseTicker {
         let product_id = product_id.into();
         Self {
             http,
-            name: format!("coinbase:{product_id}"),
+            name: ticker_feed_name(&product_id),
             product_id,
         }
     }

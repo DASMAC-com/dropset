@@ -355,14 +355,6 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
         _ => {}
     }
 
-    // The live FX feed, as reported by the maker's streamed log lines.
-    if app.feed_degraded {
-        alerts.push((
-            Color::Yellow,
-            "FX feed unavailable (rate-limited?) — maker quoting on the fallback peg.".to_string(),
-        ));
-    }
-
     // A suspected wiring error is pushed ahead of the standing advisory that
     // follows it. The pane groups by subject rather than sorting by severity,
     // so this orders the pair against each other, not against the bullets above.

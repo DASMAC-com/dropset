@@ -31,6 +31,7 @@ use crate::model::killswitch::{self, Action};
 use crate::model::ladder::{self, Side};
 use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
+use crate::telemetry::{self, MarketId, Outcome, Record, SampleBuilder};
 use anyhow::Result;
 use dropset_fair_value::{Candidates, ClockCtx, Legs, Reading};
 use dropset_feeds::venues::FxQuote;
@@ -496,9 +497,26 @@ pub fn run_supervisor(
             leg_dispersion: cfg.fair_value.leg_dispersion_frac,
             weekend,
         };
+        // The sample and its legs share one timestamp — the tick's, not each
+        // row's write time — so a join between the two tables lines up
+        // exactly. `tick.now_unix` is that second, already computed for the
+        // publish-time arithmetic.
+        let ts = tick.now_unix;
         for ctx in &mut markets {
             let legs = hub.legs(&ctx.cfg, &tick);
             check_first_basis(ctx, &cfg, legs);
+            // Resolved here rather than read off the composed reference,
+            // because `FairValue` reports only the FX and basis legs — the
+            // peg leg has no `LegReport` on it, and the peg is exactly the
+            // leg whose disagreement silently costs the basis a source.
+            // Same bounds the engine will use a line below, so the two agree.
+            ctx.telemetry.emit(Record::Legs(telemetry::leg_samples(
+                ts,
+                ctx.cfg.symbol,
+                &legs,
+                tick.leg_stale,
+                tick.leg_dispersion,
+            )));
             let dt = ctx
                 .last_compose
                 .map_or(Duration::ZERO, |t| now.duration_since(t));
@@ -506,7 +524,7 @@ pub fn run_supervisor(
             let fair = ctx.engine.compose(legs, dt, clock);
             report_leg_health(ctx, &fair);
             let got_fill = routed.get(&ctx.market.market).copied();
-            if let Err(e) = quote_market(ctx, &cfg, now, fair, got_fill) {
+            if let Err(e) = quote_market(ctx, &cfg, now, ts, fair, got_fill) {
                 eprintln!("[{}] tick error: {e}", ctx.cfg.symbol);
             }
         }
@@ -763,14 +781,53 @@ fn drain_fills(
     (routed, disconnected)
 }
 
+/// Quote one market for one tick, and publish what it decided.
+///
+/// A thin wrapper around [`quote_market_inner`] whose only job is that the
+/// telemetry sample is emitted on **every** path out of the tick. That matters
+/// more than it looks: the inner function returns early at six points — a
+/// failed vault read, a frozen vault, a paused composition, a halt, a
+/// freeze-side, a reshape — and those are precisely the states an operator
+/// needs on the timeline. Emitting at the end of the happy path instead would
+/// produce a dashboard that goes *blank* exactly when something is wrong,
+/// which reads identically to the bot having died.
+///
+/// The error is recorded and then returned unchanged: telemetry observes the
+/// tick's outcome, it never alters it.
+fn quote_market(
+    ctx: &mut Context,
+    cfg: &BotConfig,
+    now: Instant,
+    ts: i64,
+    fair: FairValue,
+    got_fill: Option<(u64, u64)>,
+) -> Result<()> {
+    let mut sample = SampleBuilder::new(ts, MarketId::of(ctx), fair, ctx.profile_kind);
+    sample
+        .last_set(ctx.last_set_price)
+        .ladder(&cfg.strategy.ladder);
+
+    let result = quote_market_inner(ctx, cfg, now, fair, got_fill, &mut sample);
+    if let Err(e) = &result {
+        // Recorded *alongside* whatever the tick decided, never over it. A
+        // halt whose kill stamp then failed is the most alarming row the
+        // system can produce, and overwriting `action` with a generic error
+        // would both hide it and stop the kill-switch alert firing on it.
+        sample.error(e);
+    }
+    ctx.telemetry.emit(Record::Sample(Box::new(sample.build())));
+    result
+}
+
 /// Quote one market for this cycle: read its vault, value inventory off the
 /// composed reference, and fire at most one instruction.
-fn quote_market(
+fn quote_market_inner(
     ctx: &mut Context,
     cfg: &BotConfig,
     now: Instant,
     fair: FairValue,
     got_fill: Option<(u64, u64)>,
+    sample: &mut SampleBuilder,
 ) -> Result<()> {
     let vault = chain::read_vault(
         &ctx.client,
@@ -780,6 +837,7 @@ fn quote_market(
         ctx.market.quote_decimals,
     )?;
     ctx.vault_idx = vault.sector_idx;
+    sample.vault(&vault);
 
     // A fill the supervisor routed to this market is fresher than the vault
     // read taken above, so it leads the reconcile.
@@ -793,6 +851,7 @@ fn quote_market(
             "[{}][halt] vault is frozen on-chain — idling",
             ctx.cfg.symbol
         );
+        sample.outcome(Outcome::Frozen);
         return Ok(());
     }
 
@@ -801,6 +860,7 @@ fn quote_market(
             "[{}][pause] {:?}: no usable feed, holding reference",
             ctx.cfg.symbol, fair.regime
         );
+        sample.outcome(Outcome::Pause);
         // Holding the reference is only safe while it is still roughly right.
         // Once the outage outlasts the staleness bound, take the book dark
         // instead of leaving it matchable at a price nothing is refreshing.
@@ -851,6 +911,10 @@ fn quote_market(
     let action = killswitch::evaluate(&fair, &inv, &cfg.kill, launch_tvl);
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);
     let reference = skew::apply_skew(mid, skew_bps);
+    sample
+        .inventory(inv, launch_tvl)
+        .reference(reference, skew_bps)
+        .outcome(Outcome::Decided(action));
 
     // Cold path first — at most one ix per cycle.
     match action {
@@ -1121,6 +1185,7 @@ mod tests {
     use crate::config::MARKETS;
     use crate::context::MarketAddrs;
     use crate::quote_state::QuoteStateStore;
+    use crate::telemetry::Telemetry;
     use dropset_fair_value::{Consensus, ConsensusState, FairValueConfig, Health, Regime};
 
     /// A leg offered by one named source, fresh as of this tick.
@@ -1159,6 +1224,7 @@ mod tests {
             cfg,
             FairValueConfig::default(),
             quote_state,
+            Telemetry::disabled(),
         )
     }
 
@@ -1355,6 +1421,7 @@ mod tests {
             MARKETS[0],
             FairValueConfig::default(),
             store.for_market(market, "EURC"),
+            Telemetry::disabled(),
         );
         let age = Instant::now().duration_since(ctx.last_set_at);
         assert!(
