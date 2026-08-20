@@ -242,25 +242,39 @@ python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
       --evidence-file <scratchpad>/evidence.md
   ```
 
-  A lever has three dispositions and the writer distinguishes
-  them for you, because only the first accepts evidence:
+  A `MATCH` is not one situation. The writer distinguishes
+  three dispositions and each takes a **different** action, so
+  read the state in the probe's output:
 
-  - **parked** (open, milestone set) — accumulates. This is the
-    normal `append-evidence` path.
-  - **folded** (closed, content copied into an aggregated task)
-    — already queued for action, so the recurrence adds
-    nothing; the writer refuses with `already discharged` and
-    names the issue.
-  - **rejected** (closed with a reason) — settled. Read the
+  - **parked** (open, milestone set) — accumulates. Run
+    `append-evidence`; it grows that lever.
+  - **folded** (closed, its content copied into an aggregated
+    task) — the fix is queued but the lever record is
+    discharged. `append-evidence` here prints
+    `NOTED … no longer parked` and **exits 0** — it does not
+    fail, and it records nothing. So if this session saw the
+    lever again, **run `file`**: it proceeds on a folded match
+    and names what it supersedes. Folding is not permanent;
+    only rejection is.
+  - **rejected** (closed as `Canceled` with a reason) — settled.
+    `file` hard-refuses here, which is the intent. Read the
     closing reason and **do not refile**. If this session's
     evidence genuinely defeats it, say so in the report and
     leave it to a human — reopening someone's reasoned
     rejection is not an unattended act.
 
-  Note that after a fold the probe matches **two** issues (the
-  closed original and the open aggregate); the writer selects
-  the open parked one, which is why a fold must close the
-  original.
+  The middle case is the one that is easy to get wrong, and it
+  is routine rather than exotic: `housekeeping` folds every
+  pass, so any lever spends the window between its fold and its
+  PR landing in exactly that state. Treating the `NOTED` line
+  as a refusal would silently drop every recurrence in that
+  window — which is the failure the per-lever design exists to
+  prevent.
+
+  Why a fold produces this at all: it copies each
+  `**Fingerprint**:` line into the aggregated task, so from then
+  on the probe legitimately matches two issues (the closed
+  original and the open aggregate) and neither is parked.
 
 The fingerprint is `<domain-token>:<slug>`, and its first token
 must be **dotless** — Linear linkifies a hostname-valid

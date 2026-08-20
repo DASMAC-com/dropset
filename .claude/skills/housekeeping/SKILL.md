@@ -9,10 +9,10 @@ user-invocable: true
 
 The **one thing to fire up when you arrive**: it
 does the morning upkeep — the chores that pile up while
-you develop but don't belong to any one PR — then runs one
-finite `/audit` rotation inline, **by default**, so the repo
-stays continuously audited. Pass `no-audit` to skip it for a
-deliberately quick pass. It first
+you develop but don't belong to any one PR — then executes
+the Planning document's **audit directive**, which names one
+target to audit or explicitly none. Pass `no-audit` to skip
+that step regardless. It first
 fast-forwards `main` so the pass runs on the latest
 committed skills and upgrades the Claude Code CLI
 (best-effort), then:
@@ -34,11 +34,18 @@ committed skills and upgrades the Claude Code CLI
    near-duplicate `Claude:`-prefixed issues, which are this
    skill's own filing output. Nothing else about the board
    is touched.
-1. **Run one audit rotation** — invoke `/audit` once (a
-   single finite rotation) inline, then **exit**. Its
-   findings land **parked** under the Audit findings
-   milestone, so a rotation costs the pull queue nothing.
-   Pass `no-audit` to skip.
+1. **Execute the Planning document's audit directive** —
+   one scoped `audit-scope` run on the named subsystem or
+   interface, or **no audit at all** when the directive says
+   none (stated in the report, never silently skipped).
+   Findings land **parked** — state `Todo` *plus* the Audit
+   findings milestone — so they cost the pull queue nothing.
+   Pass `no-audit` to skip regardless. The broad random
+   rotation survives only as an explicit ad-hoc `/audit`.
+1. **Capture session metrics** — unconditionally, after the
+   audit step, filing each trim lever as a parked issue.
+1. **Purge-conversations dry run** — in-pass and read-only;
+   only the destructive apply rides the closing gate.
 
 **It does not analyze the board.** No collision sweep, no
 Backlog-wide merge-group scan, no scheduling-smell report:
@@ -47,7 +54,8 @@ actually decides sequencing. See "Why the board belongs to
 `plan`" below.
 
 The morning entry point is a **single one-shot run**:
-upkeep → one `/audit` rotation → closing gate → exit. By default the upkeep
+upkeep → audit directive → session-metrics → purge dry-run →
+closing gate → exit. By default the upkeep
 goes **start-to-finish with no `AskUserQuestion`
 interrupting it** — it files or flags its deferred items and
 reports rather than stopping to ask (see "One-shot vs.
@@ -556,9 +564,13 @@ re-introduce it.
 
 **This step files no collision links.** A housekeeping-driven
 filing pass does **not** run the per-issue collision sweep —
-board bookkeeping belongs to planning sessions, which open with
-the full reconciliation sweep anyway, so the removal costs
-coverage nothing and only defers it to the next planning pass.
+board bookkeeping belongs to planning sessions. Do not claim
+that costs coverage nothing: the planning sweep is an interim
+of **unmeasured** coverage, since the tool behind it is itself
+scheduled for deletion and still carries a one-page read guard.
+It is an accepted trade, not an equivalence (see
+`docs/conventions/linear-automation.md` → "Structured filing
+fields").
 (The automated collision machinery is being retired outright;
 see `docs/conventions/linear-automation.md` → "Structured
 filing fields". Nothing here should depend on it.) This is the

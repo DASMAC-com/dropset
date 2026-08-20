@@ -545,9 +545,10 @@ The description must let a cold agent act on it in its own worktree
 there. The automated file-collision machinery is being **retired** by
 operator direction — the tool, its skill, and every filing-time
 related-link step — so there is no per-issue sweep here and nothing new
-should depend on one. Board bookkeeping belongs to planning sessions,
-which open with a reconciliation pass anyway, so the removal defers
-collision recording rather than losing it.
+should depend on one. Board bookkeeping belongs to planning sessions —
+though be precise about what that buys: the planning sweep is an interim
+of **unmeasured** coverage, not an equivalent substitute (see
+`docs/conventions/linear-automation.md` → "Structured filing fields").
 
 The `**Touches**:` field itself stays **mandatory**: it documents each
 finding's footprint for a human reader and for the fewest-coherent-PRs

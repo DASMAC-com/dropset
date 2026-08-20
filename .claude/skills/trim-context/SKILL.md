@@ -168,9 +168,30 @@ not worth acting on is **not** folded and **not** left parked — it is
 closed as `Canceled` with a one-paragraph reason appended to its body,
 naming the evidence. That is what makes the rejection permanent: the
 fingerprint probe searches resolved and archived issues too, so no later
-pass re-proposes it. This is the mechanism that replaces the old
-"not-a-trim register" idea — the register falls out of the lifecycle
-rather than being a separate artifact anyone has to maintain.
+pass re-proposes it, and `trim_levers.py file` hard-refuses a canceled
+match.
+
+**The reason has to reach the body, and that takes two writes in this
+order.** `board_batch.py fields` is field-only by construction, so it
+cannot carry prose. While the lever is **still parked**, append the
+reason with the zero-echo writer, then close it:
+
+```sh
+python3 .claude/tools/trim_levers.py append-evidence \
+    --fingerprint <domain>:<slug> --evidence-file <scratchpad>/reason.md
+```
+
+```sh
+python3 .claude/tools/board_batch.py fields --updates <scratchpad>/reject.json
+```
+
+Order matters: once the state is `Canceled` the lever is no longer
+parked, and `append-evidence` will report `NOTED … no longer parked`
+rather than writing. The reason is the whole point of the rejection —
+without it a later pass has a closed issue and no argument. This is the
+mechanism that replaces the old "not-a-trim register" idea — the register
+falls out of the lifecycle rather than being a separate artifact anyone
+has to maintain.
 
 Reject on evidence, not on taste. Recorded rejections worth knowing
 about, each measured: narrowing a planning board read (2–3k against 87.6k

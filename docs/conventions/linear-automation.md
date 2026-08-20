@@ -182,13 +182,23 @@ filing skills emit them and `sync-blockers` parses them:
   skill, and every filing-time related-link step) is on its way out; a
   separate chained meta issue owns the deletion and the reference scrub.
   Two consequences apply already: **a housekeeping-driven filing pass no
-  longer runs a per-issue collision sweep** — board bookkeeping belongs
-  to planning sessions, which open with the full reconciliation sweep
-  anyway — and nothing new should depend on the tool existing. Whether
-  the per-issue convention narrows for the other filing skills is a
-  planning-session question, deliberately left open here. The
-  `**Touches**:` field itself stays: it documents scope for a human
-  reader regardless of what consumes it.
+  longer runs a per-issue collision sweep**, and nothing new should
+  depend on the tool existing. Whether the per-issue convention narrows
+  for the other filing skills is a planning-session question,
+  deliberately left open here. The `**Touches**:` field itself stays: it
+  documents scope for a human reader regardless of what consumes it.
+
+  **Be honest about what that costs.** It is tempting to say the removal
+  costs coverage nothing because a planning session opens with the full
+  reconciliation sweep. That over-claims twice: the named catch-all is
+  `sync_blockers.py`'s own sweep, which is (a) scheduled for deletion by
+  the same direction, with no successor named, and (b) still carrying the
+  one-page read guard its sibling board tool has since fixed — so a
+  Backlog past that page reconciles a **subset**. State it as it is:
+  automated collision recording is being **dropped**, with the planning
+  sweep as an interim of unmeasured coverage. That is an accepted trade —
+  a spurious edge costs more than a missing one (see "Blocking
+  relations") — not a guarantee of equivalence.
 
   **Glob-vs-diff drift is mechanically detectable, and deliberately not
   automated yet.** An issue whose merged PR touched paths outside its
@@ -278,6 +288,23 @@ Parked findings are also **exempt from the serial meta chain** until they
 are promoted: the chain governs work that is queued, and parked is not
 queued. Nothing about parking places or implies a blocking edge — see
 "Blocking relations".
+
+**This gives `Todo` two meanings, so every Todo read must say which it
+wants.** Todo is both the board's *umbrella / initiative* tier (what a
+planning bootstrap surfaces unprompted) and now the *parked* tier. The
+discriminator is the **milestone**: an umbrella carries none, a parked
+finding carries one. So a Todo read that means "the umbrellas" must
+exclude milestone-carrying issues — otherwise one audit rotation's
+findings (fifteen, in one measured pass) pollute the bootstrap read that
+is supposed to show the standing tracks.
+
+That already holds by construction, and it is worth knowing *why* rather
+than rediscovering it: `board_batch.py list` drops milestoned issues
+**by default** (`--include-milestoned` opts back in), and the `plan`
+bootstrap says so where it reads the Todo set. Its step 8 then handles
+parked findings deliberately and separately. The rule is written down
+here because the *default* is what makes it true — a hand-rolled Todo
+read that skips the tool would not inherit it.
 
 ## The `Claude:` meta-work prefix
 
