@@ -82,9 +82,9 @@ const DROP_REPORT_EVERY: u64 = 100;
 use dropset_feeds::MAX_ERROR_CHARS;
 
 /// The `maker_legs.leg` values — the leg's **role** in the §1 composition,
-/// not the venue that answered (that is `feed`). Together they are what makes
-/// a tier handoff visible: the same `leg` switching `feed` between ticks *is*
-/// the fallback.
+/// never a venue. Each names a candidate set the engine resolves by consensus,
+/// so there is no answering venue for a leg to be labelled with; how well the
+/// set agreed is [`LegSample::consensus_state`].
 pub const LEG_FX: &str = "fx";
 pub const LEG_CRYPTO_USDC: &str = "crypto_usdc";
 pub const LEG_USDC_USD: &str = "usdc_usd";
@@ -1150,8 +1150,10 @@ mod tests {
     #[test]
     fn a_leg_whose_candidates_are_all_stale_writes_no_row() {
         let legs = Legs {
-            fx: Candidates::none()
-                .push("frankfurter", Some(Reading::new(1.14, Duration::from_secs(3_600)))),
+            fx: Candidates::none().push(
+                "frankfurter",
+                Some(Reading::new(1.14, Duration::from_secs(3_600))),
+            ),
             crypto_usdc: Candidates::none(),
             usdc_usd: Candidates::none(),
             static_usd: 1.14,

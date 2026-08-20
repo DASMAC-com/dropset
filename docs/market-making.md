@@ -692,8 +692,9 @@ silently redirect those references.
   the implied touch, the valued inventory, the composition regime, and
   the kill-switch decision.
 - **`maker_legs`** — one row per market per leg per tick: the leg's
-  value, the age **the engine aged it by**, its confidence half-width
-  where the source publishes one, and which venue answered.
+  resolved value, the age **the engine aged it by**, its confidence
+  half-width where the resolved reading carries one, and the three
+  consensus diagnostics below.
 - **`feed_health`** — current liveness per registered feed source,
   upserted in place.
 
@@ -719,7 +720,7 @@ which is not zero — an unknown skew and a zero skew are different
 facts, as are an unread vault and an empty one. The dashboards leave
 gaps rather than plotting zero.
 
-### Per-feed health is generic, per-leg values are attributed
+### Per-feed health is generic; per-leg rows carry consensus, not attribution
 
 Feed liveness rides the feeds runner's existing `FeedMetrics` seam
 (`docs/data-feeds.md` §13), so a source that is merely *registered*
@@ -731,16 +732,49 @@ schema. The runner hands a recorder a feed *name* and batch stats,
 never the records — and the maker's price sources are **venue**-level
 (`pyth-hermes`, `kraken`), each yielding a map of many instruments per
 batch. So a `last_value` column on a per-source row would have to pick
-one instrument arbitrarily. Liveness therefore lives in `feed_health`
-and values live in `maker_legs`, joined on the feed name. Those names
-are `pub const FEED_NAME` in each `feeds::venues` module precisely
-because that join is a cross-crate contract: a renamed source would
-otherwise break the panels silently, with no build error.
+one instrument arbitrarily. Liveness therefore lives in `feed_health`,
+and readings live in `maker_legs`.
 
-The same pairing makes a **tier handoff** visible, which nothing else
-records: the composed reference reports the regime but not the venue,
-so the same `leg` switching `feed` between ticks is the only trace that
-a primary handed off to a fallback.
+**There is deliberately no "which feed supplied this leg" column**, and
+that follows from the resolver rather than being an omission. A leg is
+a *candidate set* resolved by consensus (§1): several sources
+contribute and the value is a summary of them — a median, or a
+designated source that survived contradiction. There is no single
+answering venue to name, and naming one anyway would mean picking
+arbitrarily while presenting the pick as authoritative.
+
+What the rows carry instead is what is actually knowable:
+
+- **`consensus_state`** — how well corroborated the leg was. Six
+  values, and every reader must enumerate all six: `Absent`,
+  `Corroborated` (3+ inside the band), `Agreed` (exactly two),
+  `SingleTrusted`, `SingleUnverified`, `Dispersed`.
+- **`contributor_count`** — how many healthy sources resolved it.
+- **`dispersion_outlier`** — when dispersed, the source *furthest from*
+  the consensus. This is the **suspect**, the least representative
+  member of the set — emphatically not "the feed that answered", which
+  would be exactly backwards.
+
+`SingleTrusted` and `SingleUnverified` must never be collapsed.
+`SingleUnverified` is the **steady state** for a market with no second
+source — most of this roster — rather than a fault, and it is the only
+signal that a market is being quoted off one unchecked feed. Merging
+the two would erase precisely that, and worst on the thin markets where
+it matters most. (The per-currency source-floor survey predicts which
+markets sit there permanently, so a market appearing there
+*unpredicted* is a real signal.)
+
+Per-source attribution returns later as an **additive** migration, once
+the resolver exposes a contributor set with weights; that shape is
+already decided, and this table does not approximate it early. The
+`pub const FEED_NAME` values in each `feeds::venues` module remain the
+health table's keys, and stay constants because that key is a
+cross-crate contract — a renamed source would otherwise empty a panel
+silently, with no build error. Note one asymmetry when joining
+`dispersion_outlier` to them: the resolver offers the bare venue
+(`coinbase`) while the spot source is named per product
+(`coinbase:EURC-USDC`), so that join is a prefix match on the `:`,
+not equality.
 
 ### Fire-and-forget, and what that costs
 
