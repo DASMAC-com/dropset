@@ -165,6 +165,33 @@ impl FeedHub {
         let aged =
             |o: Option<&(f64, Instant)>| o.map(|(v, t)| Reading::new(*v, now.duration_since(*t)));
 
+        // Any tier with another tier beneath it is read through `live`, which
+        // drops a reading the engine would reject so the walk falls through
+        // instead of pinning the leg on a dead source. Tiering on *presence*
+        // alone is not merely imprecise here: these caches never evict, so one
+        // source dying once masks every tier below it for the life of the
+        // process rather than self-healing on the next tick.
+        //
+        // `Reading::fresh` is a three-part predicate — younger than the bound,
+        // finite, and positive — so `live` also steps over a `0.0` or `NaN`
+        // print. That is deliberate and costs nothing: such a reading never
+        // satisfied the engine either, so seating it only darkened the leg.
+        //
+        // The **last** tier of each leg is deliberately read with bare `aged`.
+        // Nothing sits below it to fall through to, and `compose` re-checks
+        // every leg with `Reading::fresh` regardless, so gating the floor would
+        // only turn "stale" into "missing" — which its `is_some_and` guards
+        // cannot even tell apart. The FX anchor below has the same shape: Pyth
+        // gated, Frankfurter not.
+        //
+        // One asymmetry that argument does not cover: the peg leg has a
+        // *second* consumer, `usdc_per_usd` below, which reads only `.value`
+        // and re-checks nothing. So a stale peg floor can still divide a Kraken
+        // basis print, and the converted reading inherits the token's age
+        // rather than the older of the two. Gating that divisor is the
+        // principled fix and is deliberately left out of this change.
+        let live = |o: Option<&(f64, Instant)>| aged(o).filter(|r| r.fresh(tick.leg_stale));
+
         // FX anchor. Pyth is preferred for two reasons: it publishes a
         // confidence half-width (the fresh-but-uncertain regime, §1 fm6, is
         // unobservable without one), and it is aged from the publisher's own
@@ -194,7 +221,7 @@ impl FeedHub {
         };
 
         // USDC/USD common-mode leg, shared across every market.
-        let usdc_usd = aged(self.kraken.get(USDC_KRAKEN_PAIR))
+        let usdc_usd = live(self.kraken.get(USDC_KRAKEN_PAIR))
             .or_else(|| aged(self.cg.get(USDC_COINGECKO_ID)));
 
         // Crypto basis leg, in **USDC per token**. Coinbase quotes that
@@ -208,10 +235,10 @@ impl FeedHub {
         let usdc_per_usd = usdc_usd.map(|r| r.value).filter(|v| *v > 0.0);
         let crypto_usdc = market
             .coinbase_product
-            .and_then(|p| aged(self.coinbase.get(p)))
+            .and_then(|p| live(self.coinbase.get(p)))
             .or_else(|| {
                 market.kraken_pair.and_then(|p| {
-                    aged(self.kraken.get(p)).map(|r| match usdc_per_usd {
+                    live(self.kraken.get(p)).map(|r| match usdc_per_usd {
                         Some(peg) => Reading {
                             value: r.value / peg,
                             ..r
@@ -220,7 +247,7 @@ impl FeedHub {
                     })
                 })
             })
-            .or_else(|| market.coingecko_id.and_then(|id| aged(self.cg.get(id))))
+            .or_else(|| market.coingecko_id.and_then(|id| live(self.cg.get(id))))
             .or_else(|| {
                 market
                     .coinmarketcap_id
@@ -1512,6 +1539,75 @@ mod tests {
             1.1400,
             "Frankfurter should carry it"
         );
+    }
+
+    /// The same regression on the two legs that were left tiering on
+    /// *presence*. `aged` returns `Some` for a reading of any age and these
+    /// caches never evict, so a dead Coinbase used to pin the basis leg for the
+    /// life of the process: the tiers beneath it never ran, and the market
+    /// degraded on a stale leg instead of falling through to a live print. The
+    /// cost was a missed recovery rather than a wrong price, which is why it
+    /// survived review — the engine still treats the leg as stale.
+    #[test]
+    fn a_stale_basis_or_peg_tier_falls_through_instead_of_masking_the_next_one() {
+        let (base, now_unix) = (Instant::now(), 1_786_579_250);
+        let m = eurc();
+        let mut hub = full_hub(base, now_unix);
+
+        // Read the same hub 20 minutes on — past the engine's 15-minute bound,
+        // so every reading `full_hub` seeded is now stale. Ageing the *reader*
+        // rather than back-dating the entries keeps this off `Instant`
+        // subtraction, which has no monotonic floor to stand on.
+        let now = base + Duration::from_secs(20 * 60);
+        let tick = tick_at(now, now_unix);
+
+        // With every gated tier stale, each leg lands on its floor tier instead
+        // of holding the stale primary: CMC for the basis, CoinGecko for the
+        // peg. Those two are read without a gate on purpose — nothing sits
+        // below them to reach.
+        let legs = hub.legs(&m, &tick);
+        assert_eq!(legs.usdc_usd.unwrap().value, 1.0000, "CoinGecko peg floor");
+        assert_eq!(legs.crypto_usdc.unwrap().value, 1.1490, "CMC basis floor");
+
+        // Now refresh only Kraken. It outranks both floors again on both legs —
+        // the recovery the presence check could never reach, because the stale
+        // Coinbase and Kraken readings above simply masked them.
+        hub.kraken
+            .insert(m.kraken_pair.unwrap().to_string(), (1.1520, now));
+        hub.kraken
+            .insert(USDC_KRAKEN_PAIR.to_string(), (0.9997, now));
+        let legs = hub.legs(&m, &tick);
+        assert_eq!(legs.usdc_usd.unwrap().value, 0.9997);
+        // Kraken quotes token/USD, so the peg converts it, as on the live path.
+        assert_eq!(legs.crypto_usdc.unwrap().value, 1.1520 / 0.9997);
+    }
+
+    /// The other half of what `live` gates, which is easy to miss because the
+    /// tiering reads as being about staleness alone: `Reading::fresh` also
+    /// requires a finite, positive value, so a *fresh* garbage print steps
+    /// aside for the next tier instead of darkening the leg. Such a reading
+    /// never satisfied the engine either, so this costs nothing and recovers a
+    /// tier — but nothing pinned it, and gating on age alone would pass every
+    /// other test in this module.
+    #[test]
+    fn a_fresh_but_unusable_reading_falls_through_like_a_stale_one() {
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let m = eurc();
+
+        for bad in [0.0, f64::NAN, -1.0, f64::INFINITY] {
+            let mut hub = full_hub(now, now_unix);
+            // Freshly stamped, so only the value can disqualify it.
+            hub.coinbase
+                .insert(m.coinbase_product.unwrap().to_string(), (bad, now));
+            let legs = hub.legs(&m, &tick_at(now, now_unix));
+            // Kraken's token/USD print carries the basis instead, converted by
+            // the peg — the same result as if Coinbase had gone absent.
+            assert_eq!(
+                legs.crypto_usdc.unwrap().value,
+                1.1520 / 0.9997,
+                "a {bad} Coinbase print should hand over to Kraken"
+            );
+        }
     }
 
     /// …but not while the FX session is shut. Frankfurter is aged from receipt,
