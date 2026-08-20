@@ -615,7 +615,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Each leg's reading age, as the ENGINE aged it \u2014 which is not `now() - sample time`. The FX anchor is aged from the publisher's own clock (Pyth publishes a `publish_time`), so a reading received this tick can legitimately be minutes old, and over the FX weekend it ages without bound while the crypto-only regime carries the mid. That is the signal, not a bug. A series whose LABEL changes is a tier handoff: the same leg answered by a different venue.",
+      "description": "Each leg's reading age, as the ENGINE aged it \u2014 which is not `now() - sample time`. The FX anchor is aged from the publisher's own clock (Pyth publishes a `publish_time`), so a reading received this tick can legitimately be minutes old, and over the FX weekend it ages without bound while the crypto-only regime carries the mid. That is the signal, not a bug. There is no per-venue series here any more: a leg is a candidate set resolved by consensus, so the age shown is the resolved reading's. Which sources backed it, and which one is the suspect when they disagreed, is the Leg consensus table below.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -692,7 +692,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  leg || ' via ' || feed AS metric,\n  age_secs AS value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\nORDER BY ts",
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  leg AS metric,\n  age_secs AS value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\nORDER BY ts",
           "refId": "A"
         }
       ],
@@ -781,7 +781,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  leg || ' via ' || feed AS metric,\n  confidence / value AS \"confidence (fraction of value)\"\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\n  AND confidence IS NOT NULL\n  AND value > 0\nORDER BY ts",
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  leg AS metric,\n  confidence / value AS \"confidence (fraction of value)\"\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\n  AND confidence IS NOT NULL\n  AND value > 0\nORDER BY ts",
           "refId": "A"
         }
       ],
@@ -921,6 +921,145 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
+      "description": "How each leg's sources resolved, latest per market and leg. This is what replaced per-venue attribution: a leg is a candidate set, so there is no single answering feed to name.\n\nRead `consensus_state` first. `Corroborated` (3+ agreeing) and `Agreed` (2 agreeing) are healthy. `SingleTrusted` is one source designated believable alone. `SingleUnverified` is one source with nothing corroborating it \u2014 for most of this roster that is the STEADY STATE, not a fault, and it is the only signal that a market is quoted off one unchecked feed; a market appearing here that the coverage survey did not predict is a genuine signal. `Dispersed` means the sources disagreed beyond the band, and then `dispersion_outlier` names the source furthest from the consensus \u2014 the SUSPECT to distrust, never 'the feed that answered'.\n\nA leg missing from this table resolved to nothing: either no source offered a reading, or every candidate was too stale. Which source went quiet is the feed-health table, which is per source rather than per leg.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "consensus_state"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "Absent": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "Agreed": {
+                        "color": "green",
+                        "index": 1
+                      },
+                      "Corroborated": {
+                        "color": "green",
+                        "index": 2
+                      },
+                      "Dispersed": {
+                        "color": "orange",
+                        "index": 3
+                      },
+                      "SingleTrusted": {
+                        "color": "blue",
+                        "index": 4
+                      },
+                      "SingleUnverified": {
+                        "color": "yellow",
+                        "index": 5
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dispersion_outlier"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_secs"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 11,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  market,\n  leg,\n  consensus_state,\n  contributor_count,\n  dispersion_outlier,\n  round(age_secs::numeric, 1) AS age_secs,\n  fresh,\n  to_timestamp(ts) AS observed\nFROM (\n  SELECT DISTINCT ON (market, leg) *\n  FROM maker_legs\n  WHERE ts > extract(epoch FROM now()) - 3600\n  ORDER BY market, leg, ts DESC\n) latest\nORDER BY market, leg",
+          "refId": "A"
+        }
+      ],
+      "title": "Leg consensus (all markets)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
       "description": "The most recent ticks that failed outright, newest first, across every market. These are the ticks that reached no decision at all \u2014 typically a vault read timing out \u2014 and they are recorded rather than dropped precisely so that a stalled maker is distinguishable from a quiet one. Empty is the healthy state.",
       "fieldConfig": {
         "defaults": {
@@ -947,7 +1086,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 52
       },
       "id": 10,
       "options": {
