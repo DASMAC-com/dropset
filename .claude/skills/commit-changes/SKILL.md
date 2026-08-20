@@ -87,6 +87,42 @@ changes here belong to this session.
    retry the same commit. One run stalled on two
    consecutive attempts before this was diagnosed.
 
+   **Treat a failed signing attempt as an
+   unpushed-state alarm, and say so loudly.** A
+   blocked commit leaves verified work sitting
+   uncommitted for as long as the signer stays
+   locked — and that is precisely the window in
+   which a worktree has twice been removed from
+   under a session, the second time losing a
+   tested review fix that had to be reauthored
+   from the transcript. The interim mitigation for
+   that hazard is **load-bearing**: the
+   checkpoint-commit convention is the only reason
+   the first instance lost nothing, because every
+   commit had already been pushed. A locked signer
+   is exactly what prevents it working.
+
+   So on a signing failure, do not simply retry
+   quietly. State plainly that there is
+   **uncommitted work at risk**, name what is
+   unsaved, and ask the user to unlock. If the
+   session is about to wait on anything long (a
+   sub-agent fan-out, a CI wait, a backoff), say
+   that the wait is happening with work unsaved —
+   an unattended stretch is how the window gets
+   long enough to matter.
+
+   **And a message file for `git commit -F` is
+   session-scoped.** The scratchpad does not
+   survive a restart, so a message staged behind a
+   *blocked* commit is the thing that gets lost —
+   one run restarted twice and had to re-author the
+   same message verbatim both times. Before
+   retrying a failed `-F` commit, check the file
+   still exists and re-write it if not. A commit
+   that *succeeded* has its message in git and
+   needs nothing.
+
 1. Push to the branch's upstream:
 
    ```sh

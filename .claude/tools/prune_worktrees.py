@@ -93,6 +93,25 @@ def unsafe_reason(path: str, branch: str, git=_real_git) -> str | None:
 
     A branch with no upstream is treated as unsafe: pushed state cannot be
     proven, and guessing in the destructive direction is the whole failure mode.
+
+    **This gate is not the whole fix, and what remains is not in this repo.**
+    Reading the predicate above shows this tool never removed either lost
+    worktree: both had *open* PRs, so they were never in ``merged`` to begin
+    with. Whatever deleted them ran outside it — the harness's own exit-time
+    cleanup is the remaining suspect, and one lead is that an interrupted
+    session releases its worktree lock, after which an unlocked worktree with
+    an open PR may look prunable to something that sweeps them. That is a
+    harness question, not a repo one; this gate closes the hazard for the
+    sweeper that *is* committed here, and does so for the case the sweeper
+    could genuinely have caused (a merged branch carrying unpushed commits,
+    which ``git branch -D`` would have destroyed).
+
+    So the interim mitigation stays **load-bearing** until the harness side is
+    settled: the checkpoint-commit convention, which pushes at every
+    checkpoint, is the only reason the first instance lost nothing. Anything
+    committed but unpushed — or uncommitted because signing failed — is still
+    exposed. ``commit-changes`` states that alarm at the point a signing
+    failure happens.
     """
     rc, out, _ = git(["-C", path, "status", "--porcelain"])
     if rc != 0:
