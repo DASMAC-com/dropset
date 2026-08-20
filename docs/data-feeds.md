@@ -298,13 +298,47 @@ types happen not to derive `Debug` yet. Plain `with_header` remains the
 right call for a benign header, such as OANDA's UNIX datetime-format
 preference, where debug visibility is worth keeping.
 
-**That rule covers header-borne keys only, and two adapters are not.**
-Alpha Vantage and Twelve Data authenticate with an `apikey` **query
-parameter**, so no header marking reaches them. A URL-borne credential is
-a live and separate exposure — the effective URL, query string included,
-rides a `reqwest` error's own `Display` — and closing it needs its own
-mechanism rather than this one. Treat the sensitive-header rule as
-bounding the header path, not as settling credential exposure crate-wide.
+**A URL-borne credential goes through its own constructor.** Alpha
+Vantage and Twelve Data authenticate with an `apikey` **query
+parameter**, so no header marking reaches them, and the sink is a
+different one: a `reqwest` error carries the *effective* URL — query
+string included — and renders it in its own `Display`, so the key
+surfaces in any `{:?}` of the resulting `anyhow` chain, which is exactly
+what a top-level handler logs. It needs no hostile venue, only an
+ordinary request failure. Such an adapter passes its key to
+`HttpClient::with_secret_query_param`, which appends it to every request
+and redacts its value out of every transport error before it is wrapped.
+Carrying the key on the client rather than in the adapter's per-request
+query is the point: the transport then knows which parameter is a
+credential. Passing a key through `get_json`'s `query` instead bypasses
+the mechanism, exactly as plain `with_header` would. Redaction is
+targeted, not blanket — benign parameters stay legible, because a failed
+paged backfill is diagnosed from precisely those.
+
+**Redirects are refused, which is the third credential boundary.**
+`reqwest`'s default policy follows up to 10 redirects and strips
+credentials across a cross-host hop *by header name* only
+(`Authorization`, `Cookie`, `cookie2`, `Proxy-Authorization`,
+`WWW-Authenticate`), never consulting the sensitive marking. A
+custom-named key header is not on that list, so it would be replayed
+verbatim to whatever host a redirect named — wire-to-a-third-party, the
+one sink a sensitive flag cannot cover. So `HttpClient::new` sets
+`Policy::none()`: every venue polled here is a canonical JSON API host
+answering directly (probed — all eight answer without a 3xx), and a 3xx
+is surfaced as an explicit error rather than followed. Refusing outright
+fails loudly if a venue ever starts redirecting, which beats a silent
+key disclosure.
+
+**That boundary is preventive, and it matters that it is.** Every keyed
+adapter today is safe by accident of naming: OANDA's bearer rides
+`Authorization`, which is stripped, and the two query-parameter venues
+touch no header at all. The header that motivated the boundary — a
+custom-named venue key — was retired when CoinMarketCap moved to its
+keyless route, so the exposure is currently unrealized. It re-opens
+silently the first time a venue authenticates by a custom header, which
+is exactly how the retired one worked. Pinning the policy makes the
+guarantee a property of the transport rather than of the current roster,
+which is the only form of it that survives a roster change.
 
 ______________________________________________________________________
 

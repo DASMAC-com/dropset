@@ -113,7 +113,6 @@ pub struct TwelveDataCandles {
     /// The venue's interval token (`1min`), derived once at construction.
     interval: &'static str,
     granularity_secs: i64,
-    api_key: String,
     max_bars: usize,
     /// The oldest epoch second not yet persisted; advances as windows drain.
     next_start: i64,
@@ -124,7 +123,10 @@ impl TwelveDataCandles {
     /// and otherwise starting the backfill at `default_start`.
     ///
     /// `api_key` is injected rather than read from the environment here
-    /// (docs/data-feeds.md §4).
+    /// (docs/data-feeds.md §4). It is handed straight to the transport as a
+    /// marked credential parameter rather than kept on this struct, so the
+    /// adapter never spells the key into a per-request query itself — that is
+    /// what lets the transport redact it out of an error URL.
     #[allow(clippy::too_many_arguments)]
     pub fn resume(
         base_url: &str,
@@ -141,12 +143,13 @@ impl TwelveDataCandles {
             None => default_start,
         };
         Ok(Self {
-            http: HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL),
+            http: HttpClient::new(base_url)?
+                .with_min_interval(MIN_REQUEST_INTERVAL)
+                .with_secret_query_param("apikey", api_key),
             name: name.into(),
             symbol: symbol.into(),
             interval: interval_token(granularity_secs)?,
             granularity_secs,
-            api_key: api_key.to_string(),
             max_bars: max_bars.clamp(1, MAX_BARS_PER_REQUEST),
             next_start,
         })
@@ -197,7 +200,8 @@ impl Source for TwelveDataCandles {
                     ("timezone", "UTC"),
                     ("start_date", start_s.as_str()),
                     ("end_date", end_s.as_str()),
-                    ("apikey", self.api_key.as_str()),
+                    // `apikey` is appended by the transport, which holds it as a
+                    // marked credential.
                 ],
             )
             .await?;
