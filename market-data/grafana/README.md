@@ -218,9 +218,15 @@ Four things that read wrong on first contact:
   `now() - sample time`. The FX anchor ages from the publisher's clock,
   so a reading received this tick can legitimately be minutes old, and
   over the FX weekend it ages without bound while the crypto-only regime
-  carries the mid. That is the signal, not a fault. A series whose
-  *label* changes is a tier handoff — the same leg answered by a
-  different venue.
+  carries the mid. That is the signal, not a fault.
+- **A leg is a candidate set, not one venue**, so there is no per-venue
+  series and no "which feed answered" column. Legs resolve by consensus,
+  and the age shown is the *resolved* reading's. Which sources backed a
+  leg — and, when they disagreed, which one is the suspect — is the
+  **Leg consensus** table. Read `SingleUnverified` there as the *steady
+  state* for a market with no second source rather than as a fault: it
+  is the only signal that a market is quoted off one unchecked feed, and
+  it must never be conflated with `SingleTrusted`.
 - **A dead heartbeat is ambiguous, inherently.** Telemetry is
   fire-and-forget, so it fires identically when the maker has died and
   when the maker is fine but cannot reach Postgres. Feed health

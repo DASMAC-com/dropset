@@ -245,8 +245,8 @@ CREATE TABLE maker_legs (
     -- How well corroborated the leg was, as the Rust variant's `Debug`
     -- name — the same convention every enum-ish column in `maker_telemetry`
     -- uses, because an alert matches these literally and a second
-    -- convention in one row is how an alertable row drifts from what the
-    -- alert keys on.
+    -- convention in one row is how a row that should fire an alert drifts
+    -- from what that alert keys on.
     --
     -- **Six values, and a reader must enumerate all six**: `Absent`,
     -- `Corroborated` (3+ sources inside the band), `Agreed` (exactly two),
