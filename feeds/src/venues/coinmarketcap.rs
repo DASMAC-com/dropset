@@ -128,11 +128,15 @@ impl CmcSource {
     }
 }
 
+/// This source's [`Source::name`] — see [`crate::venues::pyth::FEED_NAME`] for
+/// why the name is a constant rather than a literal at each use.
+pub const FEED_NAME: &str = "coinmarketcap";
+
 #[async_trait]
 impl Source for CmcSource {
     type Record = Quotes<u32>;
     fn name(&self) -> &str {
-        "coinmarketcap"
+        FEED_NAME
     }
     async fn next(&mut self) -> Result<Batch<Self::Record>> {
         Ok(Batch::new(vec![self.poll().await?]))

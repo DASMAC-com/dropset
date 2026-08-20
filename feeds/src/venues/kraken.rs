@@ -88,11 +88,15 @@ impl KrakenSource {
     }
 }
 
+/// This source's [`Source::name`] — see [`crate::venues::pyth::FEED_NAME`] for
+/// why the name is a constant rather than a literal at each use.
+pub const FEED_NAME: &str = "kraken";
+
 #[async_trait]
 impl Source for KrakenSource {
     type Record = Quotes<String>;
     fn name(&self) -> &str {
-        "kraken"
+        FEED_NAME
     }
     async fn next(&mut self) -> Result<Batch<Self::Record>> {
         Ok(Batch::new(vec![self.poll().await?]))

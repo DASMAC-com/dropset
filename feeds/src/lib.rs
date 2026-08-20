@@ -23,15 +23,27 @@
 //! newest-first transport's backlog draining oldest-first so a resume cursor
 //! never skips the middle of it, and [`FeedMetrics`] is the seam the runner
 //! reports batches and errors through, so a deployed feed is observable
-//! without per-feed wiring.
+//! without per-feed wiring. [`HealthReporter`] is that seam's ready-made
+//! implementation: wired at spawn time it forwards every source's liveness
+//! onto a channel, so a consumer gets a per-feed status row for an adapter it
+//! never named.
+//!
+//! One wrapper sits across the sink axis rather than on it:
+//! [`BestEffortSink`] absorbs its inner sink's failures instead of
+//! propagating them, trading the runner's crash-and-resume contract for
+//! survival. That trade is right for a telemetry sink — whose records describe
+//! a process that is still running — and wrong for the warehouse path, so it
+//! is opt-in per sink rather than a mode of the runner.
 //!
 //! A keyed venue's credential is resolved through [`secrets`], never read from
 //! the environment by an adapter: an adapter takes its key as an argument, and
 //! the app decides which store it came from.
 
 mod backfill;
+mod best_effort;
 mod cursor;
 mod forward;
+mod health;
 mod record;
 mod runner;
 pub mod secrets;
@@ -40,8 +52,10 @@ mod source;
 mod time;
 
 pub use backfill::{Backfill, BackfillStep};
+pub use best_effort::BestEffortSink;
 pub use cursor::{Cursor, CursorStore};
 pub use forward::{forward_channel, ForwardSink};
+pub use health::{sanitize_error, HealthOutcome, HealthReporter, HealthUpdate, MAX_ERROR_CHARS};
 pub use record::Batch;
 pub use runner::{
     run, run_until, run_until_with_metrics, run_with_metrics, BatchStats, FeedMetrics, NoopMetrics,
@@ -54,7 +68,7 @@ pub use time::now_secs;
 #[cfg(feature = "store")]
 mod store;
 #[cfg(feature = "store")]
-pub use store::{connect, PgCursorStore, StoreSink, StoreWriter};
+pub use store::{connect, connect_lazy, PgCursorStore, StoreSink, StoreWriter};
 
 #[cfg(feature = "http")]
 mod http;

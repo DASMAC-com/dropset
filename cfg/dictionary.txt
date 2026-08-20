@@ -66,6 +66,7 @@ eurau
 eurc
 eurcv
 eurozone
+exfiltration
 fieldless
 fintech
 firmable
@@ -139,6 +140,7 @@ pathspec
 paytrie
 pdas
 pdftoppm
+percentunit
 permissioned
 permissioning
 permissionless
@@ -194,6 +196,7 @@ solscan
 soulbound
 sparticuz
 sqlfluff
+sqlstring
 sqlx
 sslmode
 stablecoins
@@ -236,6 +239,7 @@ unstarted
 unvalidated
 unwired
 unwritable
+upserted
 upserts
 ureq
 usdcusd

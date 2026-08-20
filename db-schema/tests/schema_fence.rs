@@ -183,13 +183,18 @@ async fn fence_rejects_a_database_with_no_successful_migration() {
     );
 }
 
-/// Every table the opening migration is supposed to create actually exists.
+/// Every table the migrations are supposed to create actually exists.
 ///
 /// The fence tests only read `_sqlx_migrations`, and no consumer crate has a
 /// Postgres integration test over its own tables, so nothing else would notice
 /// a table lost from the squashed history — or from a future edit to it. This
 /// asserts the shape mechanically so that fidelity stops depending on review
 /// by eye.
+///
+/// The list spans the whole history rather than just the opening migration:
+/// a later migration's table is exactly as easy to lose to a bad edit, and
+/// keeping the assertion in one place is what makes "add your table here"
+/// the obvious step when adding one.
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn migrate_creates_every_expected_table() {
@@ -197,6 +202,7 @@ async fn migrate_creates_every_expected_table() {
     migrate(&pool).await.expect("apply migrations");
 
     for table in [
+        // 0001_init
         "feed_cursors",
         "fill_events",
         "events",
@@ -204,6 +210,10 @@ async fn migrate_creates_every_expected_table() {
         "market_stats",
         "indexer_cursor",
         "cex_prices",
+        // 0003_maker_telemetry
+        "maker_telemetry",
+        "maker_legs",
+        "feed_health",
     ] {
         let present: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
             .bind(table)
