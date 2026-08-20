@@ -213,11 +213,14 @@ impl FeedHub {
         // Coinbase one purely by the width of the peg. CoinGecko and CMC are the
         // reflexive last resort (§1 fm5) and carry the same USD-for-USDC
         // approximation as before.
-        let usdc_per_usd = usdc_usd
+        // The whole peg reading, not just its value: the conversion below needs
+        // its age too. Resolving also means only *fresh* peg candidates can
+        // divide a basis print — a stale divisor was previously possible here,
+        // because this consumer read `.value` and re-checked nothing.
+        let peg = usdc_usd
             .resolve(tick.leg_stale, tick.leg_dispersion)
             .reading
-            .map(|r| r.value)
-            .filter(|v| *v > 0.0);
+            .filter(|r| r.value > 0.0);
         // Kraken is a candidate for this leg **only when the peg leg resolved**
         // and can convert it. Offering it unconverted would put a token/USD
         // print beside Coinbase's token/USDC and manufacture a dispersion flag
@@ -227,9 +230,16 @@ impl FeedHub {
         // it. (Before the consensus filter this read the raw value instead,
         // which was survivable only because it was one tier's selected value
         // rather than a co-candidate others get compared against.)
-        let kraken_usdc = market.kraken_pair.zip(usdc_per_usd).and_then(|(p, peg)| {
+        let kraken_usdc = market.kraken_pair.zip(peg).and_then(|(p, peg)| {
             aged(self.kraken.get(p)).map(|r| Reading {
-                value: r.value / peg,
+                value: r.value / peg.value,
+                // A converted reading is only as fresh as the **older** of its
+                // two inputs: the quotient is a claim about both, so reporting
+                // the token's age alone would overstate its freshness and could
+                // let a nearly-stale peg ride through the engine's own leg
+                // bound. This is the same rule the crate applies when it
+                // summarizes a candidate set.
+                age: r.age.max(peg.age),
                 ..r
             })
         });
@@ -1587,6 +1597,37 @@ mod tests {
         let basis = resolved(&legs, |l| l.crypto_usdc, &tick);
         assert_eq!(basis.n, 1);
         assert_eq!(basis.reading.unwrap().value, 1.1520 / 1.0000);
+    }
+
+    #[test]
+    fn a_converted_kraken_reading_carries_the_older_of_its_two_ages() {
+        // The quotient is a claim about both the token print and the peg print,
+        // so it cannot be fresher than the staler of them. Reporting the token's
+        // age alone would let a nearly-stale peg ride through the engine's own
+        // leg bound on the strength of a young token print.
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let tick = tick_at(now, now_unix);
+        let m = eurc();
+        let mut hub = full_hub(now, now_unix);
+
+        // Age the peg source well past the token's, but keep it inside the
+        // staleness bound so it still resolves.
+        let old = now - Duration::from_secs(200);
+        hub.kraken
+            .insert(USDC_KRAKEN_PAIR.to_string(), (0.9997, old));
+        hub.cg.insert(USDC_COINGECKO_ID.to_string(), (1.0000, old));
+
+        let legs = hub.legs(&m, &tick);
+        let kraken = legs
+            .crypto_usdc
+            .iter()
+            .find(|c| c.source == SOURCE_KRAKEN)
+            .expect("Kraken is still a candidate");
+        assert!(
+            kraken.reading.age >= Duration::from_secs(200),
+            "expected the peg's age to dominate, got {:?}",
+            kraken.reading.age
+        );
     }
 
     #[test]
