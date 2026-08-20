@@ -166,18 +166,26 @@ class HardeningCandidate:
 
         * ``context`` — the result is large, so it is a genuine token sink,
           replayed as input on every later turn.
-        * ``wall-clock`` — routed through the quiet runner, so its output never
-          entered context; what it costs is *time*, and hardening it further buys
-          latency, not tokens.
+        * ``context (failures)`` — large *and* quiet-runner wrapped, so the bytes
+          are failure tails rather than un-wrapped output. Reported apart from
+          plain ``context`` because the lever is different: the wrapping is
+          already in place and what costs tokens is how often the command
+          failed, so the fix is fewer round trips, not more redirection. A
+          session that read this as plain ``context`` concluded the wrapper
+          wasn't working and filed a defect against it — the classification was
+          right and only the label was ambiguous.
+        * ``wall-clock`` — routed through the quiet runner and quiet in practice,
+          so its output never entered context; what it costs is *time*, and
+          hardening it further buys latency, not tokens.
         * ``prompt-churn`` — cheap and fast, but repeated in slightly different
           shapes, so each variant is a fresh permission prompt. A `printenv` is
           the type case: worth a tool, but not because of tokens.
 
-        Checked in that order, so a quiet-runner command that *did* return a big
-        failure tail is still reported as a context cost.
+        Size is checked before wrapping, so a quiet-runner command that *did*
+        return big failure tails is never reported as merely a latency cost.
         """
         if self.avg_bytes() >= CONTEXT_MIN_AVG_BYTES:
-            return "context"
+            return "context (failures)" if self.via_run_quiet else "context"
         if self.via_run_quiet:
             return "wall-clock"
         return "prompt-churn"
@@ -769,8 +777,10 @@ def to_markdown(report: dict, session_label: str) -> str:
         if report["candidates_omitted"] > 0:
             out.append(f"\n_+{report['candidates_omitted']} more shape(s) omitted._\n")
         out.append(
-            "\n_`cost`: **context** = a real token sink; **wall-clock** = routed "
-            "through `run_quiet.py`, so hardening it buys latency, not tokens; "
+            "\n_`cost`: **context** = a real token sink; **context (failures)** = "
+            "already `run_quiet.py`-wrapped, so the bytes are failure tails — the "
+            "lever is fewer failed runs, not more redirection; **wall-clock** = "
+            "wrapped and quiet, so hardening it buys latency, not tokens; "
             "**prompt-churn** = cheap and fast, but each variant re-prompts._\n"
         )
 

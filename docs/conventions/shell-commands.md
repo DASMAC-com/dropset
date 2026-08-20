@@ -136,6 +136,22 @@ Concrete rules:
     unrelated patterns into one regex multiplies the result by the
     number of things asked at once.
 
+    **`--context` scales with match *density*, and narrowing the scope
+    is a separate axis from narrowing the output.** Both are stated in
+    full in [context economy](context-economy.md) → "The levers"; the
+    short forms are that clustered matches make context windows overlap
+    toward buying the file (so take `--files-only` then slice-read), and
+    that `--dir` / `--glob` bound *how much tree is searched*, which no
+    amount of output narrowing does.
+
+    **When the fallback bare `grep` is what you have, shrink its
+    context flag to fit the question.** The prescribed form says nothing
+    about width, so it gets used at whatever came to hand: one session
+    without the Grep tool read a captured lint log with `grep -A4` and
+    paid ~1.6k, because four trailing lines per match across many
+    matches is far more than "which hook failed" needs. Pick the width
+    from the question — usually none.
+
     When a bare `grep` really is unavoidable, take the flags from
     `python3 .claude/tools/review_diff.py --print-grep-excludes` rather
     than re-deriving them — that is the same list, with one owner.
@@ -177,6 +193,17 @@ Concrete rules:
   the GitHub MCP as structured tool arguments — see
   [GitHub via MCP](github-mcp.md) — so there is no `--body-file`
   workaround to manage.)
+
+  **That message file is session-scoped — re-verify it before retrying
+  a blocked commit.** The scratchpad does not survive a session
+  restart, and a `-F` message staged behind a commit that *failed* is
+  exactly what gets lost. One session restarted twice (a usage
+  interruption, then a resume); both times the casualty was a commit
+  message file sitting behind a blocked signature, and both times it
+  had to be re-authored verbatim before the commit could be retried. So
+  on a **failed** commit — a signing error, a hook rejection — check
+  the file still exists before re-running, and re-write it if not.
+  A commit that *succeeded* has the message in git and needs nothing.
 
 - Keep a stable command + subcommand prefix (`pnpm lint …`,
   `cargo test …`, `git log …`) and put only the variable parts in the

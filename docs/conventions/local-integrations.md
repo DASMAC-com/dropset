@@ -533,6 +533,35 @@ With no coordinates file present the helper resolves nothing and warns;
 an already-exported `LINEAR_API_KEY` / `GITHUB_MCP_PAT` still wins, so
 pinning a key by hand remains the escape hatch.
 
+**The coordinates may live in either personal file.** The committed
+helper sources `$_DS_SECRETS_FILE` *if present* and then reads whatever
+`DS_OP_*` variables are shell-visible, so plain assignments in the
+runtime config (`~/.zshrc`) work exactly as well as a separate
+coordinates file — and one personal config file is the operator's
+preferred shape over two. Either way the boundary holds: the committed
+file names no vault, because the coordinates are supplied from outside
+the checkout.
+
+**Migrating off an in-profile copy — a one-time operator step.** Before
+the helper family was committed, `~/.zshrc` defined its **own**
+`_ds_secrets` function. Sourcing `.claude/shell/init.zsh` does **not**
+remove that older definition, and whichever is defined last wins — so a
+profile still carrying its own copy silently overrides the committed
+version, which is the real hazard here. Two checks say whether the
+migration is done, and note that **neither is a count of `op://`
+references**: under the shape above the profile legitimately carries the
+two coordinate refs.
+
+- **No personal `_ds_secrets` function definition remains** in the
+  profile — only the single guarded line that sources `init.zsh`.
+- **No direct exports of `LINEAR_API_KEY` or `GITHUB_MCP_PAT`.** A
+  *secret* assigned in a config file is the thing this boundary exists
+  to prevent; a `DS_OP_*` *pointer* is not.
+
+Nothing in the repo can do this step — `~/.zshrc` is untracked and
+machine-local by design — which is exactly why it is written down here
+rather than automated.
+
 Four things about that shape are load-bearing:
 
 - **Resolution is lazy — at session launch, not at shell init.**

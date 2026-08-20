@@ -34,7 +34,7 @@ recommended default **first**. Full detail:
 
 Filing skills (`linear-task`, `audit`, `audit-scope`,
 `trim-context`, `housekeeping`, `plan`) resolve team / project /
-assignee and the inbox-doc ids from **environment variables**
+assignee and the Planning document id from **environment variables**
 (`LINEAR_*`), never hard-coded UUIDs — each via its **own** bare
 `printenv` (a combined `printenv A B C` returns only the first on macOS
 / BSD). A worktree branch and its Linear issue share one `ENG-###`.
@@ -57,7 +57,7 @@ only here: `docs/conventions/linear-automation.md`.
 
 Every filed issue carries stable machine-readable fields the automation
 parses: `**Fingerprint**: <domain-token>:<slug>` (the dedup key) and
-`**Touches**: <glob>[, …]` (the path globs, for collision detection).
+`**Touches**: <glob>[, …]` (the path globs the fix will edit).
 The fingerprint's first token is a **dotless domain token, never a bare
 `name.ext`** — Linear linkifies a hostname-valid basename and corrupts
 the key (`feeds-http:…`, not `http.rs:…`). Two further Linear
@@ -107,6 +107,50 @@ Anchors must match the **stored** text exactly once, and Linear rewrites
 an `ENG-###` into a mention node, so never anchor on one. Detail:
 `docs/conventions/linear-automation.md`.
 
+### Parked findings sit in Todo, never Backlog
+
+An issue carrying a **parking milestone** — `Audit findings`, or
+`Trim levers` for session trim levers — is *parked*: filed so it
+is not lost, deliberately **not** in the pull queue. Backlog
+means pullable and the operator's "Next" view is the unblocked
+Backlog, so a filing skill sets state **`Todo` plus the
+milestone, in the creating call**. Promotion is a
+planning-session act with **two** halves — clear the milestone
+**and** move Todo → Backlog. Parked issues are exempt from the
+serial meta chain until promoted. Detail:
+`docs/conventions/linear-automation.md`.
+
+### The audit is planning-directed
+
+`housekeeping` does not run a random rotation. Each planning
+close-out writes an **audit directive** into the Planning
+document naming **one** subsystem or interface from the audit
+registry — or explicitly **none** — and `housekeeping` executes
+exactly that, as one scoped `audit-scope` run, stating in its
+report when it ran none. The broad random rotation survives only
+as an explicit ad-hoc `/audit`. And the **adversarial sub-agent
+fan-out is authorized by the invocation itself**: never
+substitute an inline pass, never silently skip it — if the
+tooling is absent, stop and ask. Detail: the `audit`,
+`audit-scope`, `housekeeping` and `plan` skills.
+
+### Trim levers are parked issues, not a document
+
+`session-metrics` files each trim lever as its own parked issue
+under the `Trim levers` milestone, keyed by a
+`**Fingerprint**:`, through the committed zero-echo writer
+`.claude/tools/trim_levers.py` (`probe` / `file` /
+`append-evidence`) — a deliberate, documented carve-out from the
+MCP `patch` path, because that path echoes the whole stored body
+on every write and the cost compounds on an accumulator.
+`trim-context` is the periodic **fold**: sweep the milestone,
+fold into the fewest coherent `Claude:` tasks, close the
+originals. A rejected lever is **closed with its reason**, and
+dedup-against-resolved makes that permanent. The old inbox
+document is retired — it outgrew the tool-result cap between
+mining passes. Detail: `docs/conventions/linear-automation.md`
+and the two skills.
+
 ### Blocking relations
 
 **No automated writer files a blocking edge — ever**, semantic ones
@@ -122,7 +166,9 @@ and never rewritten. **One standing exception, operator-ratified:** a
 planning session chains `Claude:`-prefixed meta-work into a single
 serial blocking chain as routine bookkeeping, with no per-edge
 proposal — automated filers still place none. File overlap is **not** a
-dependency: it is `related`-linked and reported as a collision cluster.
+dependency, and the automated machinery that used to `related`-link it
+is being **retired** — no filing skill records collision links any
+more; reconciling overlap is planning-session work.
 Detail: `docs/conventions/linear-automation.md`.
 
 ## GitHub via MCP
@@ -167,9 +213,14 @@ later turn**, so a fat early payload is paid many times over (and it's
 transport-agnostic — a big `git diff`, whole-file `Read`, or verbose
 log behaves like a fat MCP result). Request the narrowest thing that
 answers the question, read large files by slice (Grep then `Read` with
-`offset`/`limit`), route verbose logs away from context, and never
-re-fetch what's already in context. Track wasteful payloads as you go
-for `/session-metrics`. Full detail:
+`offset`/`limit`), route verbose logs away from context — through
+`run_quiet.py`, for **any** repeated verbose-on-success runner, `pnpm`
+included — and never re-fetch what's already in context. Reading a file
+whole is licensed by any **one** of three conditions (edit-plus-brief,
+a planned multi-region read, or an exemplar you will imitate N times),
+not by all of them together. A harness-persisted tool result is sliced
+with `.claude/tools/read_result.py`, never `Read` whole. Track wasteful
+payloads as you go for `/session-metrics`. Full detail:
 `docs/conventions/context-economy.md`.
 
 ## Shell commands
@@ -186,7 +237,10 @@ that a bare, single `grep`, on the **main-loop** path too, not only in
 the sub-agent brief, and a recursive one is **scoped to source
 directories** (it doesn't honor gitignore). Ask for a search's
 narrowest form — `-l` / `-c` when the question is existence — since
-hoisting a verbose sweep only relocates the sink. Keep a
+hoisting a verbose sweep only relocates the sink; narrow the **scope**
+too (`--dir` / `--glob`), which is an independent axis, and remember
+`--context` scales with match *density*, so clustered matches want
+`--files-only` plus a slice-read instead. Keep a
 stable command + subcommand prefix and let only the args vary.
 This holds for shell you **author** in skills, scripts, and Makefile
 targets too, and for work you hand a sub-agent. Two opt-in `PreToolUse`

@@ -212,7 +212,6 @@ def build_patch_ops(
         )
 
     ops: list[dict] = []
-    remaining = survivor_body
     if raw:
         line = raw[0]
         if _ENG_TAG_RE.search(line):
@@ -234,21 +233,26 @@ def build_patch_ops(
                 "stored body, so the replace anchor is not unique"
             )
         ops.append({"op": "replace", "old_string": anchor, "new_string": ""})
-        remaining = survivor_body.replace(anchor, "", 1)
 
-    # An `append` can't strip what's already there, so the first one has to
-    # supply exactly the newlines missing from the body's own tail — otherwise a
-    # stored body ending in "\n" grows a stray blank line the wholesale path
-    # (which `rstrip()`s before joining) never produces. Beyond two the tail is
-    # already over-separated and appending nothing is the closest we can get.
-    trailing = len(remaining) - len(remaining.rstrip("\n"))
-    lead = "\n" * max(0, 2 - trailing)
+    # Every append leads with a full blank line — the first one included.
+    #
+    # This used to subtract the body's own trailing newlines from the separator,
+    # to avoid a stray blank line the wholesale path never produces. The trouble
+    # is that the count was taken from *our* copy of the body, while the one that
+    # matters is in Linear's **stored** text — and the two need not agree. When the
+    # stored tail carried one newline fewer, the first append emitted "\n---" onto
+    # a body ending mid-paragraph, storing that paragraph directly above a dash
+    # rule. That is setext heading syntax, so Linear's round trip re-parsed the
+    # paragraph as an H2: observed twice in one session, each costing a follow-up
+    # patch write to repair.
+    #
+    # The asymmetry decides it. One newline too many is an invisible blank line;
+    # one too few silently rewrites the survivor's prose into a heading. So always
+    # send two, and never depend on trailing whitespace we cannot see.
+    lead = "\n\n"
 
     for section in part_sections:
         ops.append({"op": "append", "text": f"{lead}{section}"})
-        # Every section ends with body text, so subsequent appends always need
-        # the full separator.
-        lead = "\n\n"
 
     if union_globs:
         ops.append(

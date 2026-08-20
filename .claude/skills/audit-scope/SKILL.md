@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear issues, each parked under the `Audit findings` project milestone rather than dropped into the pull queue. The shared audit engine that `audit` drives one file at a time.
+description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear issues, each parked in state Todo under the `Audit findings` project milestone rather than dropped into the pull queue, and with no relations or collision links filed at all. The sub-agent fan-out is authorized by the invocation itself — never substitute an inline pass, never silently skip it. The shared audit engine that `audit` drives one file at a time, and that `housekeeping` runs scoped to the Planning document's audit directive.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -21,10 +21,35 @@ per-file passes.
 
 This replaces the old `audit-codebase`, which wrote a
 gitignored checklist. Findings now live as real Linear
-issues — so they dedup, collide-match, and search like any
-other — but **parked**, so filing them does not put work in
-the pull queue. A planning session decides which get slated
-in (`plan` step 8).
+issues — so they dedup and search like any other — but
+**parked**, so filing them does not put work in the pull
+queue. A planning session decides which get slated in
+(`plan` step 8).
+
+**Parked means state `Todo` plus the milestone**, both set in
+the creating call. The milestone alone is not enough: the
+operator's "Next" view is the *unblocked Backlog*, so a
+finding filed as Backlog shows up there as available work
+whatever milestone it carries — one rotation filed fifteen
+that way and they had to be moved by hand. Promotion is then
+two halves, clear the milestone **and** move Todo → Backlog.
+See `docs/conventions/linear-automation.md` → "Parked
+findings sit in **Todo**, never Backlog".
+
+**The adversarial sub-agent cross-check is authorized by the
+invocation.** Invoking this skill (or `audit`, or
+`housekeeping`) **is** the request for the fan-out — it is
+the engine's mechanism, not an optional extra, so a
+session-level "don't spawn agents unless asked" default is
+*satisfied* by that authorization rather than in tension
+with it. If sub-agent tooling is genuinely unavailable,
+**stop and ask**: never substitute an inline pass, which is
+the trade `review-pr` deleted its inline path to prevent,
+and never silently skip the cross-check.
+
+**This skill is what `housekeeping` runs**, scoped to the
+one target named by the Planning document's audit directive.
+The broad random rotation is `/audit`, an ad-hoc invocation.
 
 ## Two ways it runs
 
@@ -263,7 +288,7 @@ Optional (ask on a direct run if not provided):
        team: "<$LINEAR_TEAM_ID>",
        project: "<$LINEAR_PROJECT_ID>",
        assignee: "<$LINEAR_ASSIGNEE_ID>",
-       state: "Backlog",
+       state: "Todo",                 // parked, NOT pullable
        milestone: "Audit findings",   // parked — see above
        title: "<file>: <imperative fix, no trailing period>",
        description: "<markdown body, literal newlines>",
@@ -343,37 +368,22 @@ Optional (ask on a direct run if not provided):
      - `**Touches**: <glob>[, <glob>…]` — the
        machine-readable list of path globs this fix will
        edit (e.g. `programs/dropset/src/swap.rs` or
-       `tui/`), comma-separated. `sync-blockers`
-       reads this to detect file collisions deterministically
-       (a directory glob like `tui/` collides with any path
-       under it). Declare the **directory** when the fix
-       spans a dir, the **file** when it's one file; for a
-       multi-file finding list every glob. Mandatory — see
-       `CLAUDE.md` → "Structured filing fields".
+       `tui/`), comma-separated. It documents the finding's
+       footprint for a human reader and for the
+       fewest-coherent-PRs fold (a directory glob like `tui/`
+       covers any path under it). Declare the **directory**
+       when the fix spans a dir, the **file** when it's one
+       file; for a multi-file finding list every glob.
+       Mandatory — see `CLAUDE.md` → "Structured filing
+       fields".
 
-   **Record file collisions (direct run only).** Right after
-   each `save_issue` returns a new identifier, run the
-   incremental sweep to `related`-link that issue's
-   `**Touches**:` collisions against the open Backlog — one
-   bare command reducing to the
-   `Bash(python3 .claude/tools/sync_blockers.py:*)`
-   allow-rule (the scan runs in the tool's own process, so
-   nothing enters context):
-
-   ```sh
-   python3 .claude/tools/sync_blockers.py --for <ENG-###>
-   ```
-
-   Best-effort: it needs `LINEAR_API_KEY` / `LINEAR_PROJECT_ID`;
-   if either is unset, note it and continue. On a **delegated**
-   run the findings are handed back to the caller (not filed
-   here), so `audit` files them and runs the `--for` call —
-   skip it here.
-
-   This files **no blocking edge**; each collision prints the
-   paths the pair collides on. **Relay those lines in the
-   report** — a collision is a candidate for landing the two
-   issues as one PR, which is a call the human makes.
+   **Record no collision links, and no relations of any
+   kind.** The automated file-collision machinery is being
+   retired by operator direction, so there is no per-issue
+   sweep here and nothing should be built around one; collision
+   reconciliation belongs to a planning session, which opens
+   with that pass anyway. Blocking edges remain human-curated
+   (`CLAUDE.md` → "Blocking relations").
 
 1. **Report.** Print a short tally — findings by
    dimension and severity, deduped count, and (direct run)

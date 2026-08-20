@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word foobarbaz
 """Run a command quietly: capture its output to a log, surface only a summary.
 
 Per the project's context-economy rule (docs/conventions/context-economy.md),
@@ -15,9 +16,16 @@ model's command line stays free of shell redirects and passes the
 * on failure — first an index of every *failed-hook* result line found anywhere
   in the log (a ``make lint`` / pre-commit run prints one
   ``<hook name>………Failed`` line per hook, and the one that actually failed
-  often scrolls off the top past the ``--tail`` window), then the last
-  ``--tail`` lines of the log, the exit code, and the log path, so the model
-  can ``Read`` more of the log by slice if it needs to.
+  often scrolls off the top past the ``--tail`` window), then an index of the
+  distinct spelling offenders (``Unknown word (…)``) with the file each was
+  found in, then the last ``--tail`` lines of the log, the exit code, and the
+  log path, so the model can ``Read`` more of the log by slice if it needs to.
+
+Note that nothing is printed until the command **exits**: output is captured, so
+polling this tool's log while a backgrounded run is still in flight returns
+nothing. One session made seven such ``tail`` calls, all empty. Wait for the
+completion notification instead — a skill that starts work in the background
+should say so rather than prescribe a poll.
 
 One class of line is echoed *while the run is still in flight*: cargo's
 ``Blocking waiting for file lock on <target>`` status. Buffering it into the log
@@ -56,6 +64,7 @@ from __future__ import annotations
 
 import collections
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -66,6 +75,21 @@ DEFAULT_TAIL = 50
 # Cap on how many failed-hook index lines to surface, so a pathological log that
 # prints "…Failed" thousands of times can't balloon the summary.
 MAX_FAILED_LINES = 40
+
+# cspell reports one line per offending token, e.g.
+#   docs/foo.md:12:5 - Unknown word (foobarbaz)
+# "Forbidden word" is the same shape for a word banned rather than merely absent.
+# Indexing these is the fix for the wrapper's worst-behaved case: cspell runs the
+# tree in CHUNKS, so the tail window routinely showed a *later, passing* chunk's
+# file listing — "Issues found: 0 in 0 files" printed directly beside a Failed
+# hook — while the real failure sat in an earlier chunk. Sessions then paid a
+# follow-up grep over the log to find the word, one of them four separate times.
+UNKNOWN_WORD_RE = re.compile(r"\b(?:Unknown|Forbidden) word \(([^)]+)\)")
+
+# Cap on distinct spelling offenders surfaced. The first run over a new doc can
+# legitimately produce dozens; the index is meant to name the fix, not to
+# reproduce the log.
+MAX_UNKNOWN_WORDS = 40
 
 # Where captured logs land: a stable subdir of the system temp dir (usually
 # /tmp/claude-run-quiet). One file per run, named for the command and pid so
@@ -171,6 +195,25 @@ def is_lock_wait_line(line):
     return LOCK_WAIT_MARKER in line
 
 
+def parse_unknown_word(line):
+    """``(word, location)`` for a cspell offender line, or ``None``.
+
+    The location is whatever cspell printed before the ``-`` separator — the
+    ``path:line:col`` prefix — trimmed. It is kept because the word alone does
+    not say which file to escape, and the escape decision is per-file (an inline
+    ``cspell:word`` for a single-file term, the shared dictionary for a term in
+    two or more; see ``CLAUDE.md`` → "Docs and skills prose").
+    """
+    match = UNKNOWN_WORD_RE.search(line)
+    if not match:
+        return None
+    word = match.group(1).strip()
+    if not word:
+        return None
+    location = line.split(" - ", 1)[0].strip() if " - " in line else ""
+    return word, location
+
+
 def sanitize_for_echo(line):
     """Make one line of child output safe to print, and bound its length.
 
@@ -231,22 +274,39 @@ def stream_to_log(cmd, log_file):
     return proc.returncode, lock_wait
 
 
-def read_tail_and_count(path, tail):
-    """Return (line_count, last-`tail`-lines-as-text, failed_hook_lines, truncated).
+#: What one pass over a captured log yields. A named result rather than a tuple
+#: because it has grown twice — the failed-hook index, then the spelling index —
+#: and each growth would otherwise have to renumber every unpacking call site.
+LogSummary = collections.namedtuple(
+    "LogSummary",
+    "lines tail_text failed truncated unknown_words unknown_truncated",
+)
 
-    ``failed_hook_lines`` is the list of ``…Failed`` result lines found anywhere
-    in the log (newline-stripped, order preserved, capped at MAX_FAILED_LINES) —
-    surfaced on failure so a failing hook that scrolled off the tail window is
-    still reported. ``truncated`` is True only when *more* than
-    MAX_FAILED_LINES such lines were found (so the list holds just the first
-    MAX_FAILED_LINES) — this is what distinguishes a genuine cap from a log with
-    exactly MAX_FAILED_LINES failures and no more. Uses a bounded deque so a
-    huge log never sits in memory in full.
+
+def read_tail_and_count(path, tail):
+    """Summarize a captured log in one pass. Returns a :class:`LogSummary`.
+
+    ``failed`` is the list of ``…Failed`` result lines found anywhere in the log
+    (newline-stripped, order preserved, capped at MAX_FAILED_LINES) — surfaced on
+    failure so a failing hook that scrolled off the tail window is still
+    reported. ``truncated`` is True only when *more* than MAX_FAILED_LINES such
+    lines were found (so the list holds just the first MAX_FAILED_LINES) — this
+    is what distinguishes a genuine cap from a log with exactly
+    MAX_FAILED_LINES failures and no more.
+
+    ``unknown_words`` is the same idea one level down, for the hook whose failure
+    detail the tail is least likely to hold: ``[(word, location)]`` for each
+    *distinct* cspell offender, first occurrence winning, in encounter order.
+
+    Uses a bounded deque so a huge log never sits in memory in full, and scans
+    for both indexes in the single pass rather than re-reading the file.
     """
     count = 0
     dq = collections.deque(maxlen=tail if tail > 0 else 0)
     failed = []
     truncated = False
+    unknown = {}
+    unknown_truncated = False
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             count += 1
@@ -257,7 +317,26 @@ def read_tail_and_count(path, tail):
                     failed.append(line.rstrip("\n"))
                 else:
                     truncated = True
-    return count, "".join(dq), failed, truncated
+            # Deliberately NOT `continue`. The two matchers are disjoint today
+            # only by accident — a failed-hook line ends in "Failed" and an
+            # offender line in ")" — so skipping the word scan for a hook line
+            # would silently drop a real offender the day cspell appends
+            # anything after the parenthesis. The two indexes are independent by
+            # intent; one extra regex search per hook line is the whole cost.
+            found = parse_unknown_word(line)
+            if found is not None and found[0] not in unknown:
+                if len(unknown) < MAX_UNKNOWN_WORDS:
+                    unknown[found[0]] = found[1]
+                else:
+                    unknown_truncated = True
+    return LogSummary(
+        count,
+        "".join(dq),
+        failed,
+        truncated,
+        list(unknown.items()),
+        unknown_truncated,
+    )
 
 
 def run(tail, label, cmd):
@@ -283,31 +362,42 @@ def run(tail, label, cmd):
         sys.stderr.write("✗ %s — could not launch: %s\n" % (display, exc))
         return LAUNCH_FAILURE_CODE
 
-    lines, tail_text, failed, truncated = read_tail_and_count(log_path, tail)
+    summary = read_tail_and_count(log_path, tail)
     # A run that spent minutes queued behind another cargo process should say so
     # in its one-line result, not just look slow.
     waited = " — waited on a cargo file lock" if lock_wait else ""
 
     if code == 0:
         sys.stdout.write(
-            "✓ %s (exit 0, %d lines; log: %s)%s\n" % (display, lines, log_path, waited)
+            "✓ %s (exit 0, %d lines; log: %s)%s\n"
+            % (display, summary.lines, log_path, waited)
         )
         return 0
 
     sys.stdout.write(
         "✗ %s (exit %d, %d lines; log: %s)%s\n"
-        % (display, code, lines, log_path, waited)
+        % (display, code, summary.lines, log_path, waited)
     )
-    if failed:
-        more = " (truncated, more omitted)" if truncated else ""
-        sys.stdout.write("--- failed hooks (%d)%s ---\n" % (len(failed), more))
-        for fl in failed:
+    if summary.failed:
+        more = " (truncated, more omitted)" if summary.truncated else ""
+        sys.stdout.write("--- failed hooks (%d)%s ---\n" % (len(summary.failed), more))
+        for fl in summary.failed:
             sys.stdout.write(fl + "\n")
-    if tail > 0 and tail_text:
-        shown = min(tail, lines)
+    # Before the tail, not after: the spelling index is the actionable payload,
+    # and the tail it would otherwise sit below is precisely the window that
+    # tends to show an unrelated passing chunk.
+    if summary.unknown_words:
+        more = " (truncated, more omitted)" if summary.unknown_truncated else ""
+        sys.stdout.write(
+            "--- unknown words (%d)%s ---\n" % (len(summary.unknown_words), more)
+        )
+        for word, location in summary.unknown_words:
+            sys.stdout.write("%s%s\n" % (word, " — %s" % location if location else ""))
+    if tail > 0 and summary.tail_text:
+        shown = min(tail, summary.lines)
         sys.stdout.write("--- last %d line(s) ---\n" % shown)
-        sys.stdout.write(tail_text)
-        if not tail_text.endswith("\n"):
+        sys.stdout.write(summary.tail_text)
+        if not summary.tail_text.endswith("\n"):
             sys.stdout.write("\n")
     return code
 

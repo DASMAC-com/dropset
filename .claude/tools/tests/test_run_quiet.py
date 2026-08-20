@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# cspell:word kwyjibo
+# cspell:word loneword
 """Unit tests for ``run_quiet.py`` (stdlib ``unittest``; no pytest)."""
 
 from __future__ import annotations
@@ -93,21 +95,21 @@ class ReadTailAndCount(unittest.TestCase):
 
     def test_counts_all_and_tails_last(self):
         path = self._write_lines(100)
-        total, tail_text, failed, truncated = rq.read_tail_and_count(path, 10)
-        self.assertEqual(total, 100)
-        self.assertEqual(tail_text.count("\n"), 10)
-        self.assertIn("line 99", tail_text)
-        self.assertNotIn("line 89", tail_text)
-        self.assertEqual(failed, [])
-        self.assertFalse(truncated)
+        got = rq.read_tail_and_count(path, 10)
+        self.assertEqual(got.lines, 100)
+        self.assertEqual(got.tail_text.count("\n"), 10)
+        self.assertIn("line 99", got.tail_text)
+        self.assertNotIn("line 89", got.tail_text)
+        self.assertEqual(got.failed, [])
+        self.assertFalse(got.truncated)
 
     def test_zero_tail_keeps_no_text(self):
         path = self._write_lines(5)
-        total, tail_text, failed, truncated = rq.read_tail_and_count(path, 0)
-        self.assertEqual(total, 5)
-        self.assertEqual(tail_text, "")
-        self.assertEqual(failed, [])
-        self.assertFalse(truncated)
+        got = rq.read_tail_and_count(path, 0)
+        self.assertEqual(got.lines, 5)
+        self.assertEqual(got.tail_text, "")
+        self.assertEqual(got.failed, [])
+        self.assertFalse(got.truncated)
 
     def _write_raw(self, lines):
         path = rq.os.path.join(rq.LOG_DIR, "test-raw-%d.log" % rq.os.getpid())
@@ -121,32 +123,103 @@ class ReadTailAndCount(unittest.TestCase):
         lines = ["yamllint" + "." * 30 + "Failed"]
         lines += ["detail %d" % k for k in range(60)]
         path = self._write_raw(lines)
-        _, _, failed, truncated = rq.read_tail_and_count(path, 5)
-        self.assertEqual(len(failed), 1)
-        self.assertTrue(failed[0].endswith("Failed"))
-        self.assertFalse(truncated)
+        got = rq.read_tail_and_count(path, 5)
+        self.assertEqual(len(got.failed), 1)
+        self.assertTrue(got.failed[0].endswith("Failed"))
+        self.assertFalse(got.truncated)
 
     def test_passed_lines_are_not_collected(self):
         path = self._write_raw(["cspell" + "." * 10 + "Passed", "all good"])
-        _, _, failed, truncated = rq.read_tail_and_count(path, 5)
-        self.assertEqual(failed, [])
-        self.assertFalse(truncated)
+        got = rq.read_tail_and_count(path, 5)
+        self.assertEqual(got.failed, [])
+        self.assertFalse(got.truncated)
 
     def test_failed_lines_capped_and_flagged_truncated(self):
         # More than MAX failed lines: list is capped AND truncated is set.
         path = self._write_raw(["h%d.....Failed" % k for k in range(100)])
-        _, _, failed, truncated = rq.read_tail_and_count(path, 5)
-        self.assertEqual(len(failed), rq.MAX_FAILED_LINES)
-        self.assertTrue(truncated)
+        got = rq.read_tail_and_count(path, 5)
+        self.assertEqual(len(got.failed), rq.MAX_FAILED_LINES)
+        self.assertTrue(got.truncated)
 
     def test_exactly_max_failed_lines_is_not_truncated(self):
         # Exactly MAX failures fill the list but nothing was omitted.
         path = self._write_raw(
             ["h%d.....Failed" % k for k in range(rq.MAX_FAILED_LINES)]
         )
-        _, _, failed, truncated = rq.read_tail_and_count(path, 5)
-        self.assertEqual(len(failed), rq.MAX_FAILED_LINES)
-        self.assertFalse(truncated)
+        got = rq.read_tail_and_count(path, 5)
+        self.assertEqual(len(got.failed), rq.MAX_FAILED_LINES)
+        self.assertFalse(got.truncated)
+
+
+class UnknownWords(unittest.TestCase):
+    """The cspell index.
+
+    cspell chunks the tree, so the failure detail is routinely *outside* the tail
+    window while a later passing chunk sits inside it. These pin that the offender
+    is recovered from anywhere in the log.
+    """
+
+    def _write_raw(self, lines):
+        path = rq.os.path.join(rq.LOG_DIR, "test-words-%d.log" % rq.os.getpid())
+        rq.os.makedirs(rq.LOG_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("".join(ln + "\n" for ln in lines))
+        return path
+
+    def test_parses_word_and_location(self):
+        got = rq.parse_unknown_word("docs/foo.md:12:5 - Unknown word (kwyjibo)")
+        self.assertEqual(got, ("kwyjibo", "docs/foo.md:12:5"))
+
+    def test_parses_a_forbidden_word_the_same_way(self):
+        got = rq.parse_unknown_word("a.md:1:1 - Forbidden word (teh)")
+        self.assertEqual(got[0], "teh")
+
+    def test_a_line_without_an_offender_is_none(self):
+        self.assertIsNone(rq.parse_unknown_word("Issues found: 0 in 0 files"))
+
+    def test_a_location_less_line_still_yields_the_word(self):
+        got = rq.parse_unknown_word("Unknown word (loneword)")
+        self.assertEqual(got, ("loneword", ""))
+
+    def test_the_offender_is_found_far_above_the_tail_window(self):
+        # The exact shape that cost one session four follow-up greps: the real
+        # failure in an early chunk, a passing chunk's summary in the tail.
+        lines = ["docs/a.md:3:1 - Unknown word (kwyjibo)"]
+        lines += ["chunk %d ok" % k for k in range(80)]
+        lines += ["Issues found: 0 in 0 files"]
+        got = rq.read_tail_and_count(self._write_raw(lines), 5)
+        self.assertEqual(got.unknown_words, [("kwyjibo", "docs/a.md:3:1")])
+        self.assertNotIn("kwyjibo", got.tail_text)
+
+    def test_repeats_of_one_word_collapse_to_the_first_location(self):
+        lines = [
+            "a.md:1:1 - Unknown word (dupe)",
+            "b.md:9:9 - Unknown word (dupe)",
+        ]
+        got = rq.read_tail_and_count(self._write_raw(lines), 5)
+        self.assertEqual(got.unknown_words, [("dupe", "a.md:1:1")])
+
+    def test_distinct_words_keep_encounter_order(self):
+        lines = [
+            "a.md:1:1 - Unknown word (zeta)",
+            "a.md:2:1 - Unknown word (alpha)",
+        ]
+        got = rq.read_tail_and_count(self._write_raw(lines), 5)
+        self.assertEqual([w for w, _ in got.unknown_words], ["zeta", "alpha"])
+
+    def test_words_are_capped_and_flagged_truncated(self):
+        lines = [
+            "a.md:%d:1 - Unknown word (w%d)" % (k, k)
+            for k in range(rq.MAX_UNKNOWN_WORDS + 5)
+        ]
+        got = rq.read_tail_and_count(self._write_raw(lines), 5)
+        self.assertEqual(len(got.unknown_words), rq.MAX_UNKNOWN_WORDS)
+        self.assertTrue(got.unknown_truncated)
+
+    def test_a_clean_log_reports_no_words(self):
+        got = rq.read_tail_and_count(self._write_raw(["all good"]), 5)
+        self.assertEqual(got.unknown_words, [])
+        self.assertFalse(got.unknown_truncated)
 
 
 class Run(unittest.TestCase):
@@ -187,8 +260,47 @@ class Run(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("--- failed hooks (1) ---", out)
         self.assertIn("yamllint....Failed", out)
-        # A small, uncapped index carries no truncation marker.
+        # A small, uncapped index carries no truncation marker. This assertion
+        # belongs HERE, where an index actually exists — inserting a new test
+        # above it silently adopted it into a case that prints no index at all,
+        # where it is trivially true.
         self.assertNotIn("truncated", out)
+
+    def test_failure_surfaces_the_spelling_index_above_the_tail(self):
+        script = (
+            "print('cspell....Failed');"
+            "print('docs/a.md:3:1 - Unknown word (kwyjibo)');"
+            "print('Issues found: 0 in 0 files');"
+            "import sys; sys.exit(1)"
+        )
+        code, out, _ = self._run(rq.DEFAULT_TAIL, "lint", [PY, "-c", script])
+        self.assertEqual(code, 1)
+        self.assertIn("--- unknown words (1) ---", out)
+        self.assertIn("kwyjibo — docs/a.md:3:1", out)
+        # The index has to precede the tail: the tail is the window that shows a
+        # later passing chunk and reads as "nothing wrong here".
+        self.assertLess(out.index("unknown words"), out.index("--- last"))
+
+    def test_a_clean_failure_prints_no_spelling_block(self):
+        code, out, _ = self._run(
+            rq.DEFAULT_TAIL, "t", [PY, "-c", "print('boom'); import sys; sys.exit(1)"]
+        )
+        self.assertEqual(code, 1)
+        self.assertNotIn("unknown words", out)
+        # The tail is still shown — this asserts the spelling block is absent,
+        # not that the failure output is.
+        self.assertIn("boom", out)
+
+    def test_an_offender_on_a_failed_hook_line_is_still_indexed(self):
+        # The failed-hook and offender matchers are disjoint only by accident, so
+        # the scan must not skip the word check for a hook line.
+        script = (
+            "print('a.md:1:1 - Unknown word (kwyjibo) ... Failed');"
+            "import sys; sys.exit(1)"
+        )
+        code, out, _ = self._run(rq.DEFAULT_TAIL, "lint", [PY, "-c", script])
+        self.assertEqual(code, 1)
+        self.assertIn("kwyjibo", out)
 
     def test_failure_index_marks_truncation_when_capped(self):
         # More than MAX failed-hook lines → the index is capped and labeled.

@@ -66,6 +66,34 @@ argument was *not* the reason — see that step for why.)
   Take context lines only when the question is genuinely *what does
   this code do*, never when it is *where is it* or *does it exist*.
 
+  **Narrow by SCOPE as well as by output form — they are separate
+  axes.** The rule above narrows *what each match prints*; it says
+  nothing about *how much tree gets searched*, and three sessions paid
+  for the gap. One session's single largest result (~3.6k) was a
+  repo-wide sweep for identifiers that were entirely frontend-local: it
+  returned generated conformance vectors, committed wasm glue and a Rust
+  example generator, and the very next call with `--dir frontend`
+  answered the real question for a fraction. Another paid ~4.0k
+  sweeping 11 frontend files for one function in one known area. When
+  the claim is confined to one tree, pass `--dir <tree>` or
+  `--glob <file>`; reserve the unscoped sweep for a claim that really is
+  repo-wide.
+
+  **`--context N` scales with match DENSITY, not match count.** Context
+  windows around clustered matches overlap, so they approach buying the
+  file outright. A 3-term alternation at `--context 3` over one
+  ~100-line workflow returned 24 matches whose windows largely
+  duplicated each other (~3.3k); a `--context 3` sweep hitting 21
+  matches inside a single file bought that file roughly twice (~3.1k)
+  *after* `--files-only` had already identified it. So `--context` is
+  for **sparse** matches spread across files. When matches cluster in
+  one file, take `--files-only` and then slice-read the region; when the
+  target is a single named file, drop `--context` altogether and slice.
+  `search_source.py` now says this in its own summary line when a
+  context sweep spans more than a handful of files, or piles up in one —
+  the discipline fails at the moment of typing, not the moment of
+  reading this doc, so the reminder is attached to the result.
+
   **Verify a list-producing flag with a count, not the list.** One
   session's largest single result (~5.8k, ~35% of its Bash cost) was a
   new tool's `--print` dumping ~600 repo paths to answer the yes/no
@@ -105,30 +133,58 @@ argument was *not* the reason — see that step for why.)
     the title/description format section. Grep the doc's headings
     (`^#`), then slice-read the step you want.
 
-  Three refinements, because the flat rule "never read whole" mis-scores
-  two real situations and misses a third:
+  **Three sufficient conditions for reading a file whole.** Any one of
+  them is enough on its own — they are alternatives, not a single
+  conjunction. This used to read as one condition ("only when you will
+  BOTH edit the file and brief agents on it") sitting beside a sibling
+  rule that favoured exactly what it forbade, and neither cited the
+  other. Four sessions landed in that gap and each resolved it by
+  guessing: one whole-read of a workflow touched six separate regions
+  with no fan-out at all, another read two substantially-rewritten files
+  whole where slicing would have cost four separate reads, a third read
+  one exemplar whole in order to write three new files in its shape.
+  All three were right, and the doc said all three were violations.
 
-  - **Read whole only when you will BOTH edit the file and brief agents
-    on it.** That is the one case where the whole file is cheaper
-    *overall*, and the flat rule calls it a violation. One session's top
-    five main-loop results were whole-file `Read`s (≈23k) of the crate it
-    was about to modify — and those same excerpts then went inline into
-    all five review-lens briefs, which is what held every lens under its
-    turn cap. Paid once, amortized five times. Absent that second use,
-    slice.
-  - **A planned multi-region read is ONE bounded read, not several.**
-    Slicing is only cheaper when you are reading *less*. One run read
-    `swap.rs` across four separate slices totalling **more** than a
-    single whole-file read; another spent a whole-file `Read` (≈4.4k) on
-    a dispatcher to find one append point. Decide the regions first: if
-    they add up to most of the file, read it once.
-  - **"Reading 3+ files to orient" is the trigger, not an exception.**
-    Survey-time whole-file reads were the single largest sink of one
-    session (top five, ≈15k). The crate was small, so no per-file budget
-    felt warranted — yet `model.rs` is ~40% `#[cfg(test)]` and only two
-    signatures were needed. Before any `Read` over ~300 lines, Grep for
-    the structure (`^fn |^impl |^pub`, or the language's equivalent);
-    the map tells you which slice you actually want.
+  1. **You will BOTH edit the file and brief agents on it.** The whole
+     file is cheaper *overall* here. One session's top five main-loop
+     results were whole-file `Read`s (~23k) of the crate it was about to
+     modify — and those same excerpts then went inline into all five
+     review-lens briefs, which is what held every lens under its turn
+     cap. Paid once, amortized five times. Absent that second use,
+     slice.
+  1. **You have planned a multi-region read, and the regions add up to
+     most of the file.** Slicing is only cheaper when you are reading
+     *less*. One run read `swap.rs` across four separate slices
+     totalling **more** than a single whole-file read; another spent a
+     whole-file `Read` (~4.4k) on a dispatcher to find one append point.
+     Decide the regions first, then pick — but a planned multi-region
+     read is ONE bounded read, never several.
+  1. **The file is an exemplar you are about to imitate N times.**
+     Reading one file whole to write three new files in its shape
+     amortizes across the N outputs rather than across a fan-out, which
+     is a different denominator the first condition does not cover. Two
+     or more imitations is enough; for exactly one, slice.
+
+  And one clarification that does *not* authorize reading whole:
+
+  - **"Reading 3+ files to orient" is the trigger for slicing, not an
+    exception to it.** Survey-time whole-file reads were the single
+    largest sink of one session (top five, ~15k). The crate was small,
+    so no per-file budget felt warranted — yet `model.rs` is ~40%
+    `#[cfg(test)]` and only two signatures were needed. Before any
+    `Read` over ~300 lines, Grep for the structure
+    (`^fn |^impl |^pub`, or the language's equivalent); the map tells
+    you which slice you actually want.
+
+    **Scope that structure-map grep to the file(s) you are about to
+    read.** The instruction names a pattern but no scope, and aimed at
+    the whole source set it *becomes* the sink: an
+    `^export|^function|^const` probe returned 747 matches across 75
+    files, and that sweep was one session's single largest result
+    (~4.5k) — fired to map the structure of two files it had already
+    identified, and answering nothing the run went on to use. Pass
+    `--glob <the file>`; the map you want is of the file you are opening,
+    not of the repo.
 
 - **Don't read a file you are about to delete, or one you just
   authored.** Two cases adjacent to "never re-fetch what's already in
@@ -144,6 +200,42 @@ argument was *not* the reason — see that step for why.)
     re-buys content already in context (one run spent two calls and ~110
     lines doing exactly that). Anchor from what you wrote; if the stored
     text is genuinely uncertain, slice the one region.
+
+- **The narrowest-form rule covers listing and blob commands too, not
+  just greps.** Four instances across three sessions, all the same
+  shape: an existence, location, or single-field question answered with
+  a full listing or a whole blob. The rule reads as being about search,
+  so these slipped past it.
+
+  - **`git show <ref>:<path>` prints the whole blob** (~3.8k) for what
+    was meant as a metadata peek. `--no-patch` does not help — it
+    suppresses a *diff*, not a blob dump. Grep at the ref, or use
+    `--stat`.
+  - **`git ls-files '*.json' -- sdk idl target`** returned ~2.2k to
+    locate one known file. `git ls-files sdk/idl` was the question.
+  - **`gh cache list --limit 30`** cost ~1.1k and answered nothing;
+    querying by exact key cost ~200 tokens **and** returned a field the
+    listing does not carry. When the question names a key, query by key
+    — a listing is for when you do not know the key.
+  - **`mcp__github__get_latest_release`** returned 60,413 characters,
+    overflowed the tool-result cap and had to be redone: release
+    payloads embed every asset object. For a version or tag lookup use
+    the field-selected `gh api` form — see
+    `docs/conventions/github-mcp.md`, which now names single-scalar
+    lookups as a documented exception to the all-through-MCP rule.
+
+- **When a change renumbers or renames a referenced identifier, write
+  the annotate script first — don't open with a pattern sweep.** One
+  session put 38 greps (~8.2k) into sweeping page cross-references
+  during a slide renumber, and the sweep was structurally wrong-shaped
+  twice over: a line-oriented grep cannot see a reference that wraps a
+  line break, and it silently misses a stale number that is the *second*
+  entry in a list. Both classes escaped the manual sweep and were caught
+  only by a scratchpad script that joined the file and annotated each
+  reference with its target's title. The lever is **ordering**, not
+  volume: the failure mode is a reference that still matches the pattern
+  while pointing at the wrong thing, which no pattern sweep can detect,
+  so the exploratory grep round buys nothing you can trust.
 
 - **When the question is "what top-level things exist", list one level.**
   `ls -1R sdk/` returned every generated client file (≈1.4k) to settle
@@ -236,16 +328,46 @@ argument was *not* the reason — see that step for why.)
   python3 .claude/tools/board_batch.py list
   ```
 
+  **For the dedup question specifically, probe the fingerprint — don't
+  read bodies.** A fingerprint search answers "does an issue already
+  cover this?" at roughly **2% of the cost** of reading the body (~200
+  tokens against 8.4k) and answers it *more* reliably than skimming a
+  long issue. Two sessions instead paid ~5.6k and ~3.0k for dedup
+  searches that returned full issue objects — truncated descriptions,
+  project / team / assignee ids, timestamps — to settle a yes/no. Cap
+  `limit` at what a human would actually scan (~5), request the
+  narrowest field set, and reserve the body read for a decision that
+  genuinely turns on surrounding text.
+
 - **Never `Read` a harness-persisted tool result whole — extract the one
   field.** When a result exceeds the inline cap the harness writes it to
   disk and shows a preview, which is a *saving*; reading that file back
   whole re-buys everything the spill saved, envelope and metadata
   included. One session's single largest result (≈13.7k) was exactly
   this: a `Read` of the JSON the Linear MCP had spilled, when only the
-  `description` field was wanted out of a 53KB envelope. Grep the file
-  for the field, or slice-`Read` to it. This is the same "never re-fetch
-  what's already in context" rule as above, applied to a payload the
-  *session itself* produced — which is why it gets missed.
+  `description` field was wanted out of a 53KB envelope. This is the same
+  "never re-fetch what's already in context" rule as above, applied to a
+  payload the *session itself* produced — which is why it gets missed.
+
+  **Use the committed slice-reader rather than re-authoring one.** Two
+  sessions mined an oversized spill with hand-written grep-and-slice
+  scratchpad scripts before the shape was extracted; the second wrote
+  essentially the same script from scratch. It now exists:
+
+  ```sh
+  # Navigate first — a 40-part body becomes a few hundred bytes of map.
+  python3 .claude/tools/read_result.py <file> --field description --headings
+  # Then take only the part you want.
+  python3 .claude/tools/read_result.py <file> --field description \
+      --section 'Part 24'
+  ```
+
+  `--field` walks the MCP envelope for you, and `--grep` / `--slice` /
+  `--count` cover the rest. `--diff <older-file>` answers "what changed
+  since I last read this" against a previous spill of the same object —
+  worth knowing because re-reading an amended body otherwise costs as
+  much as the first read did. One live use of it reported an amendment in
+  **11 diff lines** instead of a second 52KB read.
 
 - **Take a file's structure map once, then keep it.** A section map
   (`grep -n '^fn \|^impl '`, or `^#` for a doc) is cheap, but re-deriving
@@ -262,12 +384,40 @@ argument was *not* the reason — see that step for why.)
   failure — an index of every `…Failed` hook-result line found anywhere
   in the log, then the failing tail plus the exit code and log path (so
   you can `Read` more by slice). A green build is then paid once, not
-  replayed every later turn. This works for ad-hoc `cargo` /
-  `pnpm` / any command, not just `make` — route a bare
-  `cargo check` / `cargo test` / `cargo clippy` verification through
-  it too, since those emit the same "Compiling …" cascade. (Do this
-  within the shell rules — the runner captures inside Python, so the
-  command line carries no redirect.)
+  replayed every later turn. (Do this within the shell rules — the
+  runner captures inside Python, so the command line carries no
+  redirect.)
+
+  **The rule is about any repeated command that is verbose on success —
+  not about build cascades, and not only about `cargo` and `make`.**
+  Framing it around "Compiling …" is what let a whole runner slip
+  through: one session ran the frontend test script **12 times** and a
+  frontend `exec` **9 times**, all unwrapped, for ~5.2k combined on
+  output that is one summary line when it passes. Every entry in that
+  session's hardening table was a `pnpm` shape. So `pnpm test` /
+  `pnpm exec` / `pnpm install` / `pnpm build` route through the runner
+  exactly as `cargo` and `make` do, as does any other tool you are about
+  to invoke repeatedly.
+
+  The runner also **surfaces the failing hook's spelling offenders**
+  (`Unknown word (…)`, with the file each was found in) above the tail.
+  That is worth knowing because cspell runs the tree in *chunks*, so the
+  tail window routinely showed a later, *passing* chunk — reporting
+  `Issues found: 0 in 0 files` directly beside a `Failed` hook — while
+  the real failure sat in an earlier one. Three sessions paid a
+  follow-up grep over the captured log to find the word, one of them
+  four separate times.
+
+  **Nothing is printed until the command exits.** Output is captured, so
+  polling the log while a *backgrounded* run is still in flight returns
+  nothing — one session made seven such `tail` calls, all empty. Wait
+  for the completion notification instead.
+
+- **Verify at checkpoints, not after every edit — whatever the runner
+  is.** The 12 test runs above were a fix-verify loop after single-file
+  edits, which `review-pr` already forbids; it slipped because that rule
+  is written in terms of the Rust suites, so a frontend test script read
+  as out of scope. It is not. Batch a logical change, then verify once.
 
 - **Match the build to the iteration, not to CI.** A production-build
   target exists to *mirror CI* — a full dependency install, a wiped

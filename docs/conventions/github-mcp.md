@@ -131,6 +131,28 @@ read used by `housekeeping`:
   style lookup at all — its title and body formats are standardized in
   the skill, so it makes no `gh pr list` read.)
 
+- **A single-scalar commit or metadata lookup, field-selected through
+  `gh api --jq`.** When the answer is one field, an MCP getter that
+  returns the whole object is the wrong transport by two orders of
+  magnitude. Measured twice, on different calls: `get_commit` cost ~1.3k
+  to answer one boolean about signature verification, and the same
+  question through `gh api --jq` cost roughly five tokens;
+  `get_latest_release` returned **60,413 characters** — release payloads
+  embed every asset object — overflowed the tool-result cap, and had to
+  be redone. So for a version, a tag, a SHA, a timestamp or a single
+  boolean, use the field-selected form:
+
+  ```sh
+  gh api repos/DASMAC-com/dropset/commits/<sha> \
+    --jq '.commit.verification.verified'
+  ```
+
+  This is a **narrowness** exception, not a capability one: the MCP call
+  would work, it just costs the whole object. Reach for the MCP getter
+  when you genuinely want several fields. `--jq` is a flag rather than a
+  pipe, so this stays inside the shell rules and reduces to a
+  `Bash(gh api:*)` allow-rule.
+
 Everything else stays MCP-first; `gh` is not a general-purpose escape
 hatch.
 

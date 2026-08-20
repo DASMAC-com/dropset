@@ -184,12 +184,23 @@ not only to the sub-agents you brief:
   (a 600–1000-line module whose `#[cfg(test)]` block is half
   the file), **Grep to the region** then `Read` with
   `offset`/`limit` — don't pull the whole file.
-- **Map the structure before any Read over ~300 lines.** One
-  Grep for `^fn |^impl |^pub` (or the language's equivalent)
-  gives you the section map, and the map tells you which
-  slice you actually want. A dispatcher whole-file Read
-  (≈4.4k) to find **one** append point is the recurring shape
-  this prevents.
+
+- **Map the structure before any Read over ~300 lines —
+  scoped to the file(s) you are about to read.** One Grep for
+  `^fn |^impl |^pub` (or the language's equivalent) gives you
+  the section map, and the map tells you which slice you
+  actually want. A dispatcher whole-file Read (≈4.4k) to find
+  **one** append point is the recurring shape this prevents.
+
+  **Pass `--glob <the file>`.** This instruction used to name
+  a pattern and no scope, and aimed at the whole source set it
+  *becomes* the sink: an `^export|^function|^const` probe
+  returned 747 matches across 75 files and was one session's
+  single largest result (≈4.5k) — fired to map the structure of
+  two files it had already identified, and answering nothing
+  the run used. The map you want is of the file you are
+  opening, not of the repo.
+
 - **This covers a sibling `SKILL.md` or convention doc too —
   those are what a mid-session handoff actually reaches
   for.** The rule reads as being about large *source* files,
@@ -201,39 +212,72 @@ not only to the sub-agents you brief:
   was needed from the latter was the title/description format
   in its steps 3–4. Grep the doc's headings (`^#`), then
   slice.
+
 - **A planned multi-region read is ONE bounded read, not
   several.** When you already know you need three parts of a
   file, don't slice-read it three times — one run read
   `swap.rs` across four separate slices, together **more** than
   a single whole-file read would have cost. Slicing is only
   cheaper when you are reading less.
+
 - **Reading 3+ files just to orient is the trigger, not an
   exception.** Whole-file Reads at *survey* time were the
   single largest sink of one session (top five, ≈15k) — the
   crate was small, so no per-file budget felt warranted, yet
   `model.rs` is ~40% `#[cfg(test)]` and only two signatures
   were needed. Grep to the symbol, then `Read` the slice.
-- **Read whole only when you will BOTH edit the file and
-  brief agents on it.** This is the one case where the whole
-  file is the cheaper choice overall, and the plain "never
-  read whole" reading gets it wrong. One session's top five
-  main-loop results were whole-file Reads (≈23k) of the crate
-  it was about to modify — and those same excerpts were then
-  pasted into all five lens briefs, which is what kept every
-  lens under its turn cap. Paid once, amortized five times.
-  Absent that second use, slice.
-- **Route `cargo` / `make` through the quiet runner.** Run
-  `cargo test` / `cargo check` / `make …` through
+
+- **Reading whole is licensed by any ONE of three
+  conditions** — they are alternatives, not a conjunction, and
+  the full statement with its evidence is in
+  `docs/conventions/context-economy.md` → "The levers":
+
+  1. you will **both** edit the file and brief agents on it
+     (one session's five whole reads, ≈23k, went inline into
+     all five lens briefs — paid once, amortized five times);
+  1. you have planned a **multi-region** read whose regions add
+     up to most of the file;
+  1. the file is an **exemplar you are about to imitate N
+     times**, so the read amortizes across the N outputs.
+
+  Absent all three, slice.
+
+- **Route any repeated verbose-on-success command through the
+  quiet runner** — `cargo`, `make`, **and `pnpm`**. Run it as
   `python3 .claude/tools/run_quiet.py -- <cmd>` **during
-  implementation**, not only during `review-pr` — an
-  unwrapped `cargo test` lands its whole `Compiling …`
-  cascade in context for a result that is one line.
+  implementation**, not only during `review-pr`. Naming only
+  cargo and make is what let a whole runner slip: one session
+  ran the frontend test script 12 times and a frontend `exec`
+  9 times, all unwrapped, ≈5.2k combined for output that is one
+  line when it passes — and every entry in that session's
+  hardening table was a `pnpm` shape.
+
+  **Nothing prints until the command exits**, so do not poll
+  the log of a *backgrounded* run — one session made seven such
+  `tail` calls, all empty. Wait for the completion
+  notification.
+
+- **Verify at checkpoints, not after every edit.** Those 12
+  test runs were a fix-verify loop after single-file edits,
+  which `review-pr` already forbids; it slipped because that
+  rule is written in terms of the Rust suites, so a frontend
+  test script read as out of scope. It is not — batch a logical
+  change, then verify once, whatever the runner is.
+
+- **Poll CI with the committed tool, not by hand.** One session
+  ran `gh pr checks` four times manually (922 tokens) before
+  using `python3 .claude/tools/wait_for_checks.py` once (≈200).
+  The tool existed and `review-pr` prescribes it; the manual
+  polls happened here, in the implement phase, where no skill
+  was driving.
+
 - **Search source with the tool, not a bare recursive grep.**
   `python3 .claude/tools/search_source.py '<pattern>'` already
   prunes the generated families and the never-search trees
   (`target/` alone is multi-GB and `grep -r` does not honor
   gitignore), and it reduces to one stable allow-rule however
   the pattern and filters vary.
+
 - **Match the search shape to the question type.** This is the
   single most recurring trim lever across mined sessions, and
   it is missed *here*, in the implement phase, because the rule
@@ -246,10 +290,39 @@ not only to the sub-agents you brief:
   separate sessions answered a location question with a full
   context sweep, one paying ≈3.6k to find a three-line
   function.
+
+  **Narrowing the SCOPE is a separate axis from narrowing the
+  output.** The rule above bounds what each match prints; it
+  says nothing about how much tree gets searched, and three
+  sessions paid for that gap. One's largest result (≈3.6k) was
+  a repo-wide sweep for identifiers that were entirely
+  frontend-local, and the very next call with `--dir frontend`
+  answered the real question for a fraction. Pass `--dir` or
+  `--glob` whenever the claim is confined to one tree.
+
+  **And `--context N` scales with match DENSITY, not count.**
+  Clustered matches make context windows overlap toward buying
+  the file outright: a `--context 3` sweep hitting 21 matches
+  in a single file bought that file roughly twice (≈3.1k)
+  *after* `--files-only` had already identified it. When matches
+  cluster in one file, take `--files-only` then slice-read the
+  region. `search_source.py` now says so on its own summary
+  line when a context sweep spans many files or piles up in one.
+
 - **Verify a list-producing flag with a count, not the list.**
   One session's largest single result (≈5.8k) was a new tool's
   `--print` dumping ~600 paths to answer the yes/no question
   "did the flag work".
+
+- **Narrowest-form applies to listing and blob commands too.**
+  `git show <ref>:<path>` prints the **whole blob** (≈3.8k) —
+  `--no-patch` suppresses a *diff*, not a blob dump; a
+  `git ls-files` sweep cost ≈2.2k to locate one known file; and
+  for a single scalar from GitHub, a field-selected
+  `gh api --jq` beats the MCP getter by orders of magnitude
+  (`get_latest_release` returned 60,413 characters and
+  overflowed the result cap). See
+  `docs/conventions/github-mcp.md` for that carve-out.
 
 ## The branch/worktree helper tool
 
