@@ -642,9 +642,29 @@ class LeverLifecycleTests(unittest.TestCase):
                     "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
                 )
         message = str(caught.exception)
-        self.assertIn("already discharged", message)
+        self.assertIn("no longer parked", message)
         self.assertIn("ENG-5", message)
         self.assertIn("Canceled", message)
+
+    def test_a_promoted_lever_is_also_not_a_parked_candidate(self):
+        # Milestone cleared, still open: promoted to the Backlog and being worked.
+        promoted = _node("ENG-7", state="Backlog", state_type="backlog", milestone=None)
+        with mock.patch.object(tl, "_post", side_effect=self._fake([promoted])):
+            with self.assertRaises(TrimLeversError) as caught:
+                tl.append_evidence(
+                    "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
+                )
+        self.assertIn("no longer parked", str(caught.exception))
+
+    def test_an_in_progress_parked_lever_still_accepts_evidence(self):
+        # Open by exclusion, not by an allow-list of types: a lever someone has
+        # started is still parked and must not become a hard refusal.
+        started = _node("ENG-8", state="In Progress", state_type="started")
+        with mock.patch.object(tl, "_post", side_effect=self._fake([started])):
+            line = tl.append_evidence(
+                "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
+            )
+        self.assertIn("ENG-8", line)
 
     def test_two_parked_levers_are_still_ambiguous(self):
         both = [_node("ENG-5"), _node("ENG-6")]

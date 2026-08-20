@@ -407,14 +407,23 @@ def probe(api_key: str, project_id: str, fingerprint: str) -> list[dict]:
 def open_parked(matches: list[dict]) -> list[dict]:
     """The subset of ``matches`` that are still parked and open.
 
-    A lever's life has three stages and only the first accepts new evidence:
-    **parked** (open, milestone set) accumulates; **folded** (closed, its content
-    copied into an aggregated task) is already queued for action; **rejected**
-    (closed with a reason) is settled. Selecting the parked one is what keeps
-    accumulation working after the first fold — the fold copies each
-    ``**Fingerprint**:`` line into the aggregated task, so from then on a raw
-    probe legitimately matches two issues, and treating that as ambiguous would
-    stop the recurrence-accumulation this pipeline exists for.
+    Only a **parked** lever — open *and* still carrying the milestone — accepts
+    new evidence. Everything else has moved on: **folded** (closed, its content
+    copied into an aggregated task) is already queued for action, **rejected**
+    (closed with a reason) is settled, and **promoted** (milestone cleared, moved
+    to Backlog) is being worked.
+
+    Selecting the parked one is what keeps accumulation working after the first
+    fold: the fold copies each ``**Fingerprint**:`` line into the aggregated task,
+    so from then on a raw probe legitimately matches two issues, and treating that
+    as ambiguous would stop the recurrence-accumulation this pipeline exists for.
+
+    The open test is by **exclusion** (`completed` / `canceled`) rather than by
+    listing the open types. Linear's type set is `triage` / `backlog` /
+    `unstarted` / `started` / `completed` / `canceled`, and an allow-list would
+    turn any type it failed to anticipate into a hard refusal on a lever that is
+    genuinely parked — so the fail-direction here is toward *accepting* the
+    append, which is the recoverable one.
     """
     return [
         m
@@ -547,9 +556,9 @@ def append_evidence(
             for m in matches
         )
         raise TrimLeversError(
-            f"fingerprint {fingerprint} is already discharged ({seen}) — it was "
-            "folded or rejected, so there is no parked lever to grow. Read the "
-            "closing reason before refiling"
+            f"fingerprint {fingerprint} is no longer parked ({seen}) — it has "
+            "been folded, rejected, or promoted, so there is no parked lever to "
+            "grow. Read its state and any closing reason before refiling"
         )
     if len(live) > 1:
         names = ", ".join(str(m.get("identifier")) for m in live)
