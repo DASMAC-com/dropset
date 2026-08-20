@@ -249,6 +249,31 @@ Expressed in UTC it moves with US daylight saving: Friday close at
 both an hour later on EST. This is precisely why it is generated from
 local wall clock rather than written down in UTC.
 
+**Why this is derived from the tape and not cited from a venue.** No
+institution publishes the interbank week — there is no exchange to
+publish it. The closest authoritative schedule that does exist is
+CME's for FX futures: Euro FX trades Sunday 17:00 to Friday 16:00
+Central, with a daily 16:00–17:00 Central halt. Checked against the
+measured boundary, it is half right:
+
+|              | CME published       | Measured interbank | Agreement |
+| ------------ | ------------------- | ------------------ | --------- |
+| Friday close | 16:00 CT = 17:00 ET | 17:00 ET           | exact     |
+| Sunday open  | 17:00 CT = 18:00 ET | 17:04 ET           | ~1 h late |
+
+So adopting the one published schedule available would reproduce
+almost exactly the defect §5.2 documents — an hour of live market
+classified as closed, on a Sunday. CME also halts for an hour every
+weekday, which the interbank tape does not: the stored weekdays carry
+~1,430 of 1,440 minutes with no hour-long gap anywhere in them.
+
+That is the case for empirical derivation in one line: the published
+schedule describes a *different market* that happens to trade the same
+currencies. Worth noting because the maker's own comment currently
+conflates the two, describing interbank FX and CME as shut on the same
+Friday-to-Sunday-17:00-ET bracket; the Friday half is right and the
+Sunday half is CME's 18:00 ET, not 17:00.
+
 ### 3.2 The four sessions, and their overlaps
 
 The rule table already exists, in `session_windows.sql`, as local
