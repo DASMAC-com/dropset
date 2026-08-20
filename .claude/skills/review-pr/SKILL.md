@@ -3037,14 +3037,16 @@ PR-authoring **writes** (`create_pull_request`,
      this session's id from the scratchpad path, runs the
      `session_metrics.py` tool to rank the run's token sinks
      and hardening candidates (the transcript is read in the
-     tool's own process, so it never enters context), and
-     appends a dated entry — measured sinks plus tailored
-     trim recommendations — to the Linear "Session Metrics" inbox
-     document that `housekeeping` later drains. It authors no
-     source edit, so it's safe to run regardless of the gate
-     or CI outcome. If `LINEAR_SESSION_METRICS_DOC_ID` is
-     unset, the skill no-ops with a clear message — note that
-     in the report.
+     tool's own process, so it never enters context), then
+     files each trim lever it identifies as its own **parked
+     issue** under the `Trim levers` milestone, through the
+     zero-echo `trim_levers.py` writer — appending this
+     session's evidence to a lever that already exists rather
+     than duplicating it. `trim-context` folds those later. It
+     authors no source edit, so it's safe to run regardless of
+     the gate or CI outcome. If the `Trim levers` milestone
+     does not exist, the writer says so by name — note that in
+     the report.
 
    **Ground the recommendations in this run.** As the review
    progressed you may have noticed wasteful payloads (a

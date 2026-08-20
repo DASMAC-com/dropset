@@ -20,11 +20,12 @@ committed skills and upgrades the Claude Code CLI
 1. **Prune merged worktrees** — remove the local
    worktree (and branch) of every PR that has
    already merged.
-1. **Mine the Session Metrics inbox** — delegate to
-   `trim-context`, which files a **single aggregated
-   propose-only** skill-improvement task (one bullet per
-   recurring trim lever) for the trim patterns that
-   recur across sessions, never editing a skill itself.
+1. **Fold the parked trim levers** — delegate to
+   `trim-context`, which sweeps the `Trim levers`
+   milestone and files a **single aggregated
+   propose-only** skill-improvement task (one section per
+   lever), then closes the parked originals, never
+   editing a skill itself.
 1. **Check convention references** — flag any skill that
    points at a `CLAUDE.md` section or `docs/conventions/`
    doc that no longer exists, filing the drift
@@ -282,13 +283,13 @@ which on macOS / BSD prints only the first value:
 printenv LINEAR_TEAM_ID
 printenv LINEAR_PROJECT_ID
 printenv LINEAR_ASSIGNEE_ID
-printenv LINEAR_SESSION_METRICS_DOC_ID
 ```
 
 If any is empty, skip the step that needs it and say
-so; don't guess an id. (`trim-context` resolves
-`LINEAR_SESSION_METRICS_DOC_ID` itself in step 4; it's
-listed here only so the whole set lives in one place.)
+so; don't guess an id. There is no longer a Session
+Metrics document id in this set — that inbox is retired,
+and both halves of the trim-lever pipeline work from the
+`Trim levers` milestone instead.
 
 ## Steps
 
@@ -919,13 +920,11 @@ more useful than skipping the step and calling it deferred.
   (dictionary words to move and files whose escapes need
   regrouping), and any skipped as already-open duplicates;
   or that no drift was found.
-- Session Metrics inbox: the aggregated skill-improvement
-  task — whether new levers were filed into a fresh one or
-  appended to the open one (with its ENG-###), and how many
-  levers — for the recurring trim patterns, how many session
-  entries were consumed **and drained**, any levers skipped
-  as already-handled, and the inbox's remaining size — or
-  why the step was skipped (e.g. a missing env var).
+- Trim levers: the aggregated skill-improvement task(s) filed
+  (with their ENG-###s) and how many levers each folded, how
+  many parked levers were closed, how many were rejected and
+  why, and how many remain parked for a later fold — or why
+  the step was skipped (e.g. a missing env var).
 - Convention references: in sync, or the dangling
   `CLAUDE.md` / `docs/conventions/` references filed
   (with the ENG-### of the aggregated task).

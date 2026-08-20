@@ -16,19 +16,19 @@ shell profile (`~/.zshrc`):
 export LINEAR_TEAM_ID=…
 export LINEAR_PROJECT_ID=…
 export LINEAR_ASSIGNEE_ID=…
-# Used by session-metrics (producer) and housekeeping (consumer) —
-# the "Session Metrics" inbox document one appends to and the other
-# mines into propose-only skill-improvement tasks:
-export LINEAR_SESSION_METRICS_DOC_ID=…
 # Used by the plan skill — the "Planning" document a planning
 # session bootstraps from and writes its decisions back into:
 export LINEAR_PLANNING_DOC_ID=…
-# NOTE: LINEAR_API_KEY belongs here by rights — the sync-blockers
-# Python tool needs it, because a script can't use the OAuth-based
+# NOTE: LINEAR_API_KEY belongs here by rights — the Python board
+# tools need it, because a script can't use the OAuth-based
 # claude.ai Linear MCP and must authenticate with a personal key
 # sent as the Authorization header. It is NOT set here, though: it
 # is a secret, so it is resolved from 1Password at session launch.
 # See local-integrations.md, "Session secrets".
+#
+# RETIRED: LINEAR_SESSION_METRICS_DOC_ID. The "Session Metrics"
+# inbox document is gone — trim levers are parked issues under the
+# `Trim levers` milestone now. See the trim-lever pipeline below.
 ```
 
 Skills read these at run time with a bare `printenv`, **one variable
@@ -44,27 +44,39 @@ them re-prompt. A new Linear-filing skill must follow the same
 pattern: reference the variable **names**, and keep the resolved
 UUIDs out of every committed file.
 
-`session-metrics`, `trim-context`, and `housekeeping` share
-`LINEAR_SESSION_METRICS_DOC_ID` — the id of the "Session Metrics"
-inbox document — each resolving it with its own bare `printenv`, on
-the same rule. `session-metrics` is the **producer**: it appends one
-dated entry per session (the measured token sinks plus tailored trim
-recommendations). `trim-context` is the **consumer**: it mines the
-unprocessed entries for the trim levers that recur across sessions and
-files them as a **single aggregated** propose-only skill-improvement
-Backlog task — one bullet per lever, each carrying its own
-`**Fingerprint**:` line under a combined `**Touches**:` — so a mining
-pass yields one issue (one PR) rather than a batch to consolidate
-later, never editing a skill itself, then writes each consumed entry's
-disposition back. `housekeeping` drives `trim-context` as its Session
-Metrics step,
-and the skill also runs standalone. Each no-ops with a clear message
-when the variable is unset. The `session-metrics` skill
-drives its tool via `make session-metrics`, which reduces to a
-`Bash(make session-metrics:*)` allow-rule. This tool needs **no**
+**The trim-lever pipeline runs on a milestone, not a document.**
+`session-metrics` is the **producer**: at session end it files each
+trim lever as its own small **parked issue** — state `Todo` plus the
+`Trim levers` project milestone, keyed by a `**Fingerprint**:` — and on
+a fingerprint hit it **appends that session's evidence** to the lever
+that already exists rather than filing a duplicate, so recurrence
+becomes an accumulating fact on one issue. `trim-context` is the
+**consumer**: it sweeps the milestone, folds the parked levers into the
+fewest coherent propose-only `Claude:` Backlog tasks — one section per
+lever, each keeping its own `**Fingerprint**:` line under a combined
+`**Touches**:` — and closes the parked originals. A lever judged not
+worth acting on is **closed with its reason**, which suppresses
+refiling permanently. `housekeeping` drives `trim-context` as its
+Session Metrics step; both skills also run standalone.
+
+Every write in that pipeline goes through
+`.claude/tools/trim_levers.py` rather than the MCP — see the carve-out
+under "Partial edits" for why, and note the `Trim levers` milestone
+must exist before the first `file` call (the tool refuses by name
+rather than filing into the wrong place).
+
+The `session-metrics` skill drives its measurement tool via
+`make session-metrics`, which reduces to a
+`Bash(make session-metrics:*)` allow-rule. That tool needs **no**
 `LINEAR_API_KEY` — it only parses the local transcript and makes no
-network call; the skill does the one Linear write (the doc append)
-over the MCP.
+network call.
+
+*Retired:* a single "Session Metrics" inbox **document** that the
+producer appended to and the consumer mined. It outgrew the harness's
+tool-result cap between mining passes (67.0k characters at the last
+one), so each pass spilled it to disk and mined it with a throwaway
+script — structural at roughly ten parallel sessions a day, not a
+tidiness problem.
 
 The **sync-blockers Python tool** (the deterministic core of the
 `sync-blockers` skill — see "Structured filing fields" below) is a
