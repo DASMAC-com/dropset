@@ -72,7 +72,17 @@ sqlx = { version = "0.8", default-features = false, features = [
   "json",
 ] }
 testcontainers-modules = { version = "0.11", features = ["postgres"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+# `net` + `io-util` are test-only: the redirect-refusal test serves a
+# hand-written 302 from a one-shot loopback listener, which is the only way to
+# observe that the client declines to follow it. Nothing in the crate's own
+# build needs either.
+tokio = { version = "1", features = [
+  "io-util",
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "test-util",
+] }
 
 [features]
 default = []

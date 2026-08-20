@@ -107,7 +107,6 @@ pub struct AlphaVantageDaily {
     /// the stored `product_id` is canonical rather than venue-native.
     from_symbol: String,
     to_symbol: String,
-    api_key: String,
     /// The oldest epoch second not yet persisted; advances as the series drains.
     next_start: i64,
 }
@@ -117,7 +116,10 @@ impl AlphaVantageDaily {
     /// and otherwise starting at `default_start`.
     ///
     /// `api_key` is injected rather than read from the environment here
-    /// (docs/data-feeds.md §4).
+    /// (docs/data-feeds.md §4). It is handed straight to the transport as a
+    /// marked credential parameter rather than kept on this struct, so the
+    /// adapter never spells the key into a per-request query itself — that is
+    /// what lets the transport redact it out of an error URL.
     pub fn resume(
         base_url: &str,
         api_key: &str,
@@ -132,11 +134,12 @@ impl AlphaVantageDaily {
             None => default_start,
         };
         Ok(Self {
-            http: HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL),
+            http: HttpClient::new(base_url)?
+                .with_min_interval(MIN_REQUEST_INTERVAL)
+                .with_secret_query_param("apikey", api_key),
             name: name.into(),
             from_symbol: from_symbol.into(),
             to_symbol: to_symbol.into(),
-            api_key: api_key.to_string(),
             next_start,
         })
     }
@@ -174,7 +177,8 @@ impl Source for AlphaVantageDaily {
                     ("to_symbol", self.to_symbol.as_str()),
                     // Always full: see the module note on cursor safety.
                     ("outputsize", "full"),
-                    ("apikey", self.api_key.as_str()),
+                    // `apikey` is appended by the transport, which holds it as a
+                    // marked credential.
                 ],
             )
             .await?;

@@ -45,6 +45,12 @@ const DEFAULT_RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(60);
 /// own cadence and the operator sees it.
 const MAX_RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(300);
 
+/// What a credential query parameter's value is rewritten to in an error URL.
+/// A placeholder rather than a removal, so the error still shows that the
+/// request *was* authenticated — a missing key and a rejected one are different
+/// diagnoses.
+const REDACTED: &str = "REDACTED";
+
 /// A small JSON-over-HTTPS client REST poll sources compose: a base URL, a
 /// shared `reqwest` client, and [`HttpClient::get_json`]. The Coinbase
 /// reference feed uses it first; the FX / Circle-rate feeds follow
@@ -64,6 +70,12 @@ pub struct HttpClient {
     /// set with [`HttpClient::with_secret_header`], anything benign with
     /// [`HttpClient::with_header`].
     headers: HeaderMap,
+    /// Credential query parameters appended to every request — the seam for a
+    /// venue that authenticates by URL rather than by header (Alpha Vantage's
+    /// and Twelve Data's `apikey`). Set with
+    /// [`HttpClient::with_secret_query_param`], which is also what teaches
+    /// [`HttpClient::redact_query`] which values to keep out of an error.
+    secret_query: Vec<(String, String)>,
     min_interval: Duration,
     max_response_bytes: usize,
     /// The earliest instant the next request may go out, shared across clones
@@ -76,16 +88,48 @@ impl HttpClient {
     /// A client rooted at `base_url` (e.g. `https://api.exchange.coinbase.com`),
     /// with a request timeout, a stable user agent, and the default pacing and
     /// body-size bounds.
+    ///
+    /// **Redirects are refused, which is a credential boundary, not a
+    /// preference.** `reqwest`'s default policy follows up to 10 redirects and
+    /// strips credentials across a cross-host hop *by header name* only —
+    /// `Authorization`, `Cookie`, `cookie2`, `Proxy-Authorization`,
+    /// `WWW-Authenticate` — and never consults the sensitive marking
+    /// [`HttpClient::with_secret_header`] applies. A custom-named key header is
+    /// not on that list, so it would be replayed verbatim to whatever
+    /// third-party host a redirect named: wire-to-a-third-party, the one sink a
+    /// sensitive flag cannot cover.
+    ///
+    /// **This is preventive, not the closing of a live hole**, and the
+    /// distinction is worth stating precisely because the roster is what
+    /// changed. Every keyed adapter today is safe *by accident of naming*:
+    /// OANDA's bearer rides `Authorization`, which is on the strip list, and
+    /// the two query-parameter venues touch no header at all. The header that
+    /// motivated this boundary — a custom-named venue key — was retired when
+    /// CoinMarketCap moved to its keyless route. So the exposure is currently
+    /// unrealized, and it re-opens silently the first time a venue
+    /// authenticates by a custom header, which is exactly how the retired one
+    /// worked. Pinning the policy is what makes the guarantee a property of the
+    /// transport rather than of the current roster.
+    ///
+    /// A feed poller has no legitimate cross-host redirect: every venue this
+    /// crate polls is a canonical JSON API host answering directly (verified by
+    /// probe — all eight answer without a 3xx). Refusing outright also fails
+    /// *loudly* if a venue ever starts redirecting, which is the better of the
+    /// two failure modes — the alternative is a silent key disclosure. Widen
+    /// this to a host-scoped policy only with a venue that demonstrably needs
+    /// one.
     pub fn new(base_url: impl Into<String>) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .user_agent(concat!("dropset-feeds/", env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .context("build HTTP client")?;
         Ok(Self {
             base_url: base_url.into(),
             client,
             headers: HeaderMap::new(),
+            secret_query: Vec::new(),
             min_interval: DEFAULT_MIN_INTERVAL,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             next_allowed: Arc::new(Mutex::new(None)),
@@ -119,24 +163,24 @@ impl HttpClient {
     /// by which types happen not to derive `Debug` yet.
     ///
     /// Every adapter that authenticates **by header** goes through here
-    /// (`OandaCandles` is the only one today), as must any added later. Note the
-    /// bound: Alpha Vantage and Twelve Data are keyed too, but pass their key as
-    /// an `apikey` query parameter and so touch no header at all. A URL-borne
-    /// credential is a separate exposure this constructor does not address —
-    /// the effective URL rides a `reqwest` error's own `Display`.
+    /// (`OandaCandles` is the only one today), as must any added later. A venue
+    /// that authenticates by **query parameter** instead — Alpha Vantage and
+    /// Twelve Data both do, and so touch no header at all — goes through
+    /// [`HttpClient::with_secret_query_param`], which closes the different sink
+    /// a URL-borne credential has.
     ///
-    /// **A cross-origin redirect is the other exposure it does not address, and
-    /// it discriminates by header *name*.** The client keeps `reqwest`'s default
-    /// policy of up to 10 hops, and on a cross-host hop `reqwest` strips only
-    /// the well-known credential headers — `Authorization`, `Cookie`,
-    /// `cookie2`, `Proxy-Authorization`, `WWW-Authenticate` (0.12.28,
-    /// `redirect::remove_sensitive_headers`). A **custom-named** key header is
-    /// not on that list and would be forwarded to whatever host the redirect
-    /// names; `set_sensitive` does not change this, since it governs `Debug`
-    /// rendering and HPACK indexing only. OANDA's `Authorization` is stripped,
-    /// so nothing in the crate is exposed today — but a venue keyed by an
-    /// `X-…-Api-Key` style header would be, and should pin a redirect policy
-    /// rather than rely on this constructor.
+    /// **A cross-origin redirect is the other sink this constructor cannot
+    /// reach, and it discriminates by header *name*.** On a cross-host hop
+    /// `reqwest` strips only the well-known credential headers —
+    /// `Authorization`, `Cookie`, `cookie2`, `Proxy-Authorization`,
+    /// `WWW-Authenticate` (0.12.28, `redirect::remove_sensitive_headers`) — and
+    /// never consults `set_sensitive`, which governs `Debug` rendering and
+    /// HPACK indexing only. A **custom-named** key header is not on that list.
+    /// No adapter has one today (OANDA's `Authorization` is stripped), so
+    /// nothing is exposed by name — but that is a property of the current
+    /// roster, not of this constructor. [`HttpClient::new`] therefore pins
+    /// `redirect::Policy::none()`, which is what makes the guarantee hold for a
+    /// venue not yet written.
     pub fn with_secret_header(mut self, name: &str, value: &str) -> Result<Self> {
         let (name, mut value) = Self::header_pair(name, value)?;
         value.set_sensitive(true);
@@ -155,6 +199,82 @@ impl HttpClient {
         let value = HeaderValue::from_str(value)
             .with_context(|| format!("invalid header value for {name:?}"))?;
         Ok((header, value))
+    }
+
+    /// Add a **credential** query parameter appended to every request — the
+    /// counterpart to [`HttpClient::with_secret_header`] for a venue that
+    /// authenticates by URL (Alpha Vantage's and Twelve Data's `apikey`).
+    ///
+    /// A URL-borne key cannot be protected the way a header-borne one is: no
+    /// header marking reaches it, and the sink is different. A
+    /// `reqwest::Error` carries the **effective** URL — query string included —
+    /// and renders it in its own `Display`, so the key surfaces in any `{:?}`
+    /// of the resulting `anyhow` chain, which is exactly what a top-level error
+    /// handler logs. It needs no hostile venue, only an ordinary request
+    /// failure.
+    ///
+    /// Carrying the key *here* rather than in the caller's per-request query is
+    /// what closes it: the client then knows which parameter is a credential,
+    /// and `redact_query` strips its value out of every transport error before
+    /// it is wrapped. An adapter that hand-passes a key through
+    /// `get_json`'s `query` instead bypasses the mechanism — the same
+    /// discipline `with_secret_header` asks for, and the reason both live on the
+    /// constructor rather than at the call site.
+    ///
+    /// Unlike a header, a query parameter needs no validation: `reqwest`
+    /// percent-encodes name and value when it builds the URL, so there is no
+    /// malformed-input case to reject and no `Result` to return.
+    pub fn with_secret_query_param(mut self, name: &str, value: &str) -> Self {
+        self.secret_query
+            .push((name.to_string(), value.to_string()));
+        self
+    }
+
+    /// Replace every credential query-parameter value in a transport error's
+    /// URL with [`REDACTED`], leaving the rest of the error intact.
+    ///
+    /// `reqwest::Error::url_mut` reaches the very field the error's `Display`
+    /// renders, so rewriting the query here is what keeps the key out of the
+    /// log. A `.with_context` cannot do this job: this crate's own contexts are
+    /// already clean — [`HttpClient::get_json`] builds them from base plus path
+    /// and applies the query separately on the `RequestBuilder` — so the
+    /// exposure lives entirely in the *source* error's own render, which no
+    /// context of ours wraps away.
+    ///
+    /// Only marked values are replaced. Every benign parameter stays legible,
+    /// because they are what a failed paged backfill is diagnosed from: which
+    /// symbol, which interval, which window.
+    fn redact_query(&self, mut err: reqwest::Error) -> reqwest::Error {
+        if self.secret_query.is_empty() {
+            return err;
+        }
+        if let Some(url) = err.url_mut() {
+            // Unreachable as called: past the early return there is at least
+            // one credential parameter, and `get_json` appends it to every
+            // request, so any URL reaching here carries a query. Kept because
+            // the alternative on an unexpected input is a rendered URL with a
+            // bare trailing `?`, and clearing an absent query is what produces
+            // it.
+            if url.query().is_some() {
+                let redacted: Vec<(String, String)> = url
+                    .query_pairs()
+                    .map(|(name, value)| {
+                        let secret = self
+                            .secret_query
+                            .iter()
+                            .any(|(marked, _)| marked.as_str() == name.as_ref());
+                        let value = if secret {
+                            REDACTED.to_string()
+                        } else {
+                            value.into_owned()
+                        };
+                        (name.into_owned(), value)
+                    })
+                    .collect();
+                url.query_pairs_mut().clear().extend_pairs(&redacted);
+            }
+        }
+        err
     }
 
     /// Raise this source's minimum interval above [`DEFAULT_MIN_INTERVAL`] —
@@ -236,6 +356,12 @@ impl HttpClient {
     /// through, and is surfaced as an error rather than retried here: the
     /// runner already logs it, reports it to metrics, and backs off, and a
     /// cooldown well past the request timeout does not belong inside one call.
+    ///
+    /// Any credential parameters set by
+    /// [`HttpClient::with_secret_query_param`] are appended to `query`, and
+    /// every `reqwest` error on the way out has those values redacted before it
+    /// is wrapped. `url` below is deliberately base-plus-path with no query,
+    /// which is what keeps this crate's own error contexts clean.
     pub async fn get_json<T: DeserializeOwned>(
         &self,
         path: &str,
@@ -248,8 +374,12 @@ impl HttpClient {
             .get(&url)
             .headers(self.headers.clone())
             .query(query)
+            // Appended after the caller's params. An empty set is a no-op:
+            // `reqwest` normalizes a resulting empty query back to none.
+            .query(&self.secret_query)
             .send()
             .await
+            .map_err(|err| self.redact_query(err))
             .with_context(|| format!("GET {url}"))?;
         if response.status() == StatusCode::TOO_MANY_REQUESTS {
             let wait = retry_after(response.headers()).unwrap_or(DEFAULT_RATE_LIMIT_COOLDOWN);
@@ -259,8 +389,23 @@ impl HttpClient {
                 wait.as_secs()
             );
         }
+        // `error_for_status` below covers 4xx and 5xx only, so without this a
+        // refused redirect would arrive as a 3xx with an empty body and surface
+        // as a JSON decode error — loud, but pointing at the wrong thing. Say
+        // what actually happened instead: `HttpClient::new` declines to follow
+        // redirects on purpose, and an operator seeing this needs to know it is
+        // a policy refusal, not a malformed venue response.
+        if response.status().is_redirection() {
+            bail!(
+                "GET {url} answered {} — a redirect, which this transport \
+                 refuses to follow so a credential cannot be replayed to \
+                 another host",
+                response.status()
+            );
+        }
         let response = response
             .error_for_status()
+            .map_err(|err| self.redact_query(err))
             .with_context(|| format!("GET {url} returned an error status"))?;
         let body = self.read_capped(response, &url).await?;
         serde_json::from_slice(&body).with_context(|| format!("decode JSON from {url}"))
@@ -286,6 +431,10 @@ impl HttpClient {
         while let Some(chunk) = response
             .chunk()
             .await
+            // A body error carries no URL today, so this is belt-and-braces —
+            // but the guarantee should not rest on which errors `reqwest`
+            // happens to attach a URL to.
+            .map_err(|err| self.redact_query(err))
             .with_context(|| format!("read body from {url}"))?
         {
             if body.len() + chunk.len() > cap {
@@ -386,6 +535,105 @@ mod tests {
         // three-character needle would risk a false failure the day the error
         // chain happens to render an unrelated string containing it.
         assert!(!rendered.contains("super-secret-token"), "{rendered}");
+    }
+
+    /// A client aimed at a loopback port nothing listens on. The connection is
+    /// refused immediately, which is enough to reach the error path the
+    /// credential exposure rides — no network and no mock server. Should a
+    /// platform ever hang instead of refusing, the request timeout produces a
+    /// `TimedOut` request error, and `reqwest` attaches the effective URL to
+    /// that one too, so either outcome exercises the same assertion.
+    fn refusing_client() -> HttpClient {
+        HttpClient::new("http://127.0.0.1:1").unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_credential_query_param_is_redacted_out_of_a_request_error() {
+        let client = refusing_client().with_secret_query_param("apikey", "super-secret-key");
+        let err = client
+            .get_json::<serde_json::Value>("/query", &[("from_symbol", "AUD")])
+            .await
+            .expect_err("a refused connection is an error");
+        // The invariant: the key is absent from the `anyhow` chain a top-level
+        // handler logs. `{err:?}` is what such a handler renders, and it is the
+        // render that reaches the source error's own `Display` — where the
+        // effective URL, query included, actually lives.
+        let rendered = format!("{err:?}");
+        assert!(!rendered.contains("super-secret-key"), "{rendered}");
+        // Assert the marker too, so the negative above cannot quietly go vacuous
+        // the day the URL stops being rendered at all.
+        assert!(rendered.contains("apikey=REDACTED"), "{rendered}");
+        // And the benign parameter survives, which is the whole reason the
+        // transport marks one parameter instead of stripping every query: a
+        // failed paged backfill is diagnosed from exactly these.
+        assert!(rendered.contains("from_symbol=AUD"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn a_client_with_no_credential_param_keeps_its_whole_query() {
+        // The counterpart to the test above: a venue with no credential
+        // parameter loses nothing from its diagnostics. This pins the early
+        // return in `redact_query`, and with it the deliberate choice not to
+        // blanket-redact.
+        let err = refusing_client()
+            .get_json::<serde_json::Value>("/products/EURC-USDC/candles", &[("granularity", "60")])
+            .await
+            .expect_err("a refused connection is an error");
+        let rendered = format!("{err:?}");
+        assert!(rendered.contains("granularity=60"), "{rendered}");
+        assert!(!rendered.contains("REDACTED"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn a_redirect_is_refused_rather_than_followed() {
+        // A one-shot listener that answers whatever it is asked with a
+        // cross-host 302. If the client followed it, the hop would carry every
+        // configured header — including a credential `reqwest` does not strip,
+        // since its cross-host strip list is by header name and never consults
+        // the sensitive marking. So this pins the policy, not just the message.
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            // Answer without draining the request: the response is complete on
+            // its own and the client is not streaming a body up.
+            socket
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\n\
+                      Location: http://credential-thief.invalid/\r\n\
+                      Content-Length: 0\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+
+        // A custom-named key header — deliberately not `Authorization`, which
+        // `reqwest` would strip on its own. This is the shape the policy exists
+        // for: no adapter carries one today, and the guarantee has to hold for
+        // the one that eventually does.
+        let client = HttpClient::new(format!("http://127.0.0.1:{port}"))
+            .unwrap()
+            .with_secret_header("X-Venue-Api-Key", "super-secret-key")
+            .unwrap();
+        let err = client
+            .get_json::<serde_json::Value>("/v1/quotes", &[])
+            .await
+            .expect_err("a refused redirect is an error");
+        server.await.unwrap();
+
+        // The 302 is surfaced as itself. Without the explicit redirection check
+        // this would instead be a JSON decode error over the empty body — still
+        // an error, but one that misdiagnoses a policy refusal as a malformed
+        // venue response.
+        let rendered = format!("{err:?}");
+        assert!(rendered.contains("302"), "{rendered}");
+        assert!(rendered.contains("refuses to follow"), "{rendered}");
+        // The redirect target is never contacted, so it cannot appear as the
+        // failing URL — the way it would if the hop had been followed and then
+        // failed to resolve.
+        assert!(!rendered.contains("credential-thief.invalid"), "{rendered}");
     }
 
     #[test]
