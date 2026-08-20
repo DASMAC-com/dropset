@@ -124,13 +124,31 @@ filing skills emit them and `sync-blockers` parses them:
   rewrite (see "Anchors must match the *stored* text"). One prescribed
   form keeps the dedup search single-shaped; two would not.
 
-  **What actually breaks is search, not a parser.** No tool parses this
-  field — `sync_blockers.py` and `merge_tasks.py` read `**Touches**:`
-  only, and `merge_tasks.py` merely carries fingerprint lines through
-  verbatim. Dedup is done by a filing skill **searching open issues**
-  for the key, so a mangled fingerprint degrades that search rather
-  than crashing anything. The rule stands regardless: a key that cannot
-  be found is a key that does not dedup.
+  **What actually breaks is search, not a parser.** Dedup is done by a
+  filing skill **searching issues** for the key, so a mangled
+  fingerprint degrades that search rather than crashing anything. The
+  rule stands regardless: a key that cannot be found is a key that does
+  not dedup. (`trim_levers.py` now refuses a dotted domain token
+  outright, so at least that pipeline cannot store a corrupted key.)
+
+  **The fingerprint search *is* the dedup probe — don't read bodies.**
+  Measured: a fingerprint search answers "does an issue already cover
+  this?" for ~200 tokens against **8.4k** to read the body, and answers
+  it more reliably, since skimming a long issue for a half-remembered
+  claim is exactly where a duplicate slips through. Two sessions instead
+  paid ≈5.6k and ≈3.0k for dedup searches returning full issue objects
+  — truncated descriptions, project / team / assignee ids, timestamps —
+  to settle a yes/no. So: search the key, cap `limit` at what a human
+  would actually scan (~5), request the narrowest field set, and read a
+  body only when the decision genuinely turns on surrounding text.
+
+  **Search resolved and archived issues too, not just open ones.** A
+  lever or finding that was **rejected** is closed *with its reason*,
+  and dedup-against-resolved is what makes that rejection stick. Nine of
+  thirteen mined session entries carried an explicit "do not mine this
+  as waste" note, several written only because an earlier pass had
+  re-proposed the very thing on intuition. An open-only dedup search
+  re-opens every one of those arguments.
 
 - `**Touches**: <glob>[, <glob>…]` — the path globs the fix will
   edit, comma-separated. Declare the **directory** when the work
@@ -140,12 +158,22 @@ filing skills emit them and `sync-blockers` parses them:
   collisions **deterministically** — a directory glob collides with
   any path under it, and two issues that collide are coupled. Such a
   pair is **related-linked**, and the tool reports the paths they
-  collide on. This runs at **filing time**: each filing skill calls
-  `sync_blockers.py --for <new-id>` right after `save_issue`, so a new
-  issue's collisions are recorded the moment it lands. A collision is
-  explicitly **not** a blocking edge — see "Blocking relations". An
-  issue that predates the `**Touches**:` convention has no globs to
-  check; backfill one and re-run the sweep.
+  collide on. A collision is explicitly **not** a blocking edge — see
+  "Blocking relations". An issue that predates the `**Touches**:`
+  convention has no globs to check; backfill one and re-run the sweep.
+
+  **Being retired — do not build on it.** By operator direction the
+  automated file-collision machinery (the `sync-blockers` tool, its
+  skill, and every filing-time related-link step) is on its way out; a
+  separate chained meta issue owns the deletion and the reference scrub.
+  Two consequences apply already: **a housekeeping-driven filing pass no
+  longer runs a per-issue collision sweep** — board bookkeeping belongs
+  to planning sessions, which open with the full reconciliation sweep
+  anyway — and nothing new should depend on the tool existing. Whether
+  the per-issue convention narrows for the other filing skills is a
+  planning-session question, deliberately left open here. The
+  `**Touches**:` field itself stays: it documents scope for a human
+  reader regardless of what consumes it.
 
   **Glob-vs-diff drift is mechanically detectable, and deliberately not
   automated yet.** An issue whose merged PR touched paths outside its
@@ -214,6 +242,27 @@ issue from the branch (or the PR title scope) on that basis —
 delivered checklist items and moves it to In Review at the merge-queue
 handoff — once the PR is ready, CI is green, and the review summary has
 been printed for the human.
+
+## Parked findings sit in **Todo**, never Backlog
+
+An issue stamped with a parking milestone — `Audit findings` for audit
+output, `Trim levers` for session trim levers — is **parked**: filed so
+it is not lost, deliberately *not* in the pull queue. Backlog means
+pullable, and the operator's "Next" view is the unblocked Backlog, so a
+parked finding filed as Backlog surfaces as available work and has to be
+moved by hand. One audit rotation filed fifteen findings that way in a
+single pass.
+
+So a filing skill sets **state `Todo` plus the milestone, in the creating
+call** (per "Relations and state belong in the CREATING call"). Promotion
+is then a planning-session act with two halves: **clear the milestone and
+move Todo → Backlog**. Doing only one leaves the board lying about
+whether the work is available.
+
+Parked findings are also **exempt from the serial meta chain** until they
+are promoted: the chain governs work that is queued, and parked is not
+queued. Nothing about parking places or implies a blocking edge — see
+"Blocking relations".
 
 ## The `Claude:` meta-work prefix
 
@@ -316,6 +365,24 @@ needs. An anchor that sits mid-line — the tail of a list item, say —
 will otherwise leave the inserted text glued onto that line instead of
 starting its own.
 
+**With `replace_range`, the `to` anchor stays in place — never repeat it
+in `new_string`.** The range is exclusive of `to`: only the text between
+the anchors is replaced, and `to` itself survives. Restating it in the
+replacement therefore stores it twice. One planning session did exactly
+that and had to spend a full extra echo (≈8k) to remove the doubled
+field token it stored.
+
+**Two newlines, never one, before an appended heading or rule.** The
+separator has to clear the previous paragraph, and the count that matters
+is the one in the **stored** body — which may carry one fewer trailing
+newline than your local copy, because Linear strips trailing whitespace
+when it stores. Getting this one short puts a `---` directly under a
+paragraph, which is setext heading syntax, so the round trip re-parses
+that paragraph as an `##` heading. Observed twice in one session on real
+issues, each costing a follow-up patch write to repair. The asymmetry is
+what decides it: one newline too many is an invisible blank line, one too
+few silently rewrites prose into a heading.
+
 What `patch` buys:
 
 - **The write payload scales with the edit, not the body.** A wholesale
@@ -337,6 +404,31 @@ wholesale, sent as a `patch`, or not sent at all — a state-only
 transition echoes the whole body too — and `save_document` returns a
 **truncated** `content` in every one of those cases. The echo is a fixed
 cost per call, so the lever on it is **fewer calls**, not `patch`.
+
+#### Carve-out: a high-volume automated pipeline may bypass the MCP
+
+The rule above — body edits go through the MCP `patch` path — governs
+**interactive filing and planning flows**, where a human is reading along
+and the echo is the confirmation that the write landed as intended. It is
+deliberately not a claim that the echo is unavoidable, and stating only
+the rule left the trim-lever pipeline in contradiction with it.
+
+For a pipeline that writes many small bodies unattended, the echo is pure
+waste, and the lever is a raw-GraphQL tool that prints one line per
+write. `.claude/tools/trim_levers.py` is that path for the session
+trim-lever pipeline: `probe` / `file` / `append-evidence`, authenticating
+with `LINEAR_API_KEY` exactly as the other Python board tools do, and
+selecting only identity fields so no body is ever returned.
+`append-evidence` does its read-modify-write **inside the tool process**,
+so a growing accumulator body never enters a transcript at all — which is
+the compounding cost the section above measures at ≈53k over five
+touches.
+
+Two conditions on using this carve-out: the write must be **automated and
+repeated** (a one-off interactive edit stays on the MCP path, where the
+echo is worth its cost), and the tool must **print enough to confirm the
+write** — identifier and url — so the saving is in the body, not in the
+audit trail.
 
 ### Field-only writes go through `board_batch.py`, not the MCP
 
@@ -440,6 +532,56 @@ Two generalizations of the checklist rule, both measured:
 aggregated survivor body. A burst of peer folds is the shape to watch —
 several handoffs for one issue arriving within minutes, each taking its
 own echo. Buffer them and write once.
+
+**Relations and state belong in the CREATING call.** `blockedBy`,
+`blocks`, `relatedTo`, `parentId` and `state` are all accepted at
+creation, so a filing that sets any of them and then issues a second
+`save_issue` to add them has bought a second full body echo for nothing.
+One measured session filed a single issue in two writes for exactly this
+— a create, then a follow-up purely to attach `blockedBy` (≈2k). There
+is no ordering constraint to respect: file it complete.
+
+#### The floor is structural — the only real lever is upstream
+
+This is the single most recurrent observation across mined sessions
+(six entries), and most of it is **not** a trim target, which is why it
+is recorded here rather than treated as a bug to fix:
+
+- Two *mandated* state transitions on a large consolidated body cost two
+  full echoes (≈1.8k–2.4k each) with **zero body sent**. Three sessions
+  independently confirmed their writers were individually compliant with
+  no within-skill lever left.
+- Some pairs genuinely **cannot** be collapsed. One session's two tick
+  writes were forced apart because a planning session appended mandate
+  checkboxes *after* `init-pr` had read the body, so the second batch was
+  invisible until the first write's echo returned it. Structural, not
+  indiscipline.
+- The accumulator cost **compounds rather than being flat per write**.
+  Five touches on one issue measured ≈53k, and per-touch cost rose
+  monotonically — 8.4k read, then 9.7k, 11.0k, 11.5k, 12.4k appends —
+  because each append enlarged what the next would echo.
+- **Durability can outrank the echo, and does.** One planning session
+  measured ~25k on a single growing survivor and *rejected* the
+  buffer-and-write-once fix for the operator-directed case, with reason:
+  the parts arrived hours apart in separate turns, and incremental
+  write-back is what makes an abrupt close lose nothing. Do not "fix"
+  that one.
+
+So: assume a floor of **two full echoes per issue per session** on a long
+consolidated body, and know that the only lever which actually removes
+the cost is **upstream** — a write path that does not echo the body at
+all. For high-volume automated pipelines that lever now exists; see the
+carve-out at the end of "Partial edits".
+
+Two techniques worth keeping, both measured working:
+
+- **Bulk checkbox ticking is three `patch` ops, not one per box.** A
+  `replace_all` on the bare open-box prefix, plus one flip-back per box
+  that must stay open, ticked **56 of 58** boxes in a single atomic
+  anchor-based call.
+- **Anchor on the prose *preceding* an `ENG-###` mention.** That
+  successfully ticked a tag-bearing checkbox, avoiding the full-body
+  rewrite the anchor rule below would otherwise force.
 
 ### Anchors must match the *stored* text
 

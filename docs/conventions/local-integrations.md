@@ -533,6 +533,20 @@ With no coordinates file present the helper resolves nothing and warns;
 an already-exported `LINEAR_API_KEY` / `GITHUB_MCP_PAT` still wins, so
 pinning a key by hand remains the escape hatch.
 
+**Migrating off an in-profile copy — a one-time operator step.** Before
+the helper family was committed, `_ds_secrets` was defined directly in
+`~/.zshrc` with the real `op://` references inline. Sourcing
+`.claude/shell/init.zsh` does **not** remove that older definition, and
+whichever is defined last wins — so a profile still carrying its own copy
+is both the thing this boundary exists to prevent and a silent override
+of the committed version. Check with `grep -c 'op://' ~/.zshrc`: a
+non-zero count means the migration has not happened. To finish it, move
+the two references into the coordinates file above and delete the
+in-profile function, leaving only the single guarded line that sources
+`init.zsh`. Nothing in the repo can do this step — `~/.zshrc` is
+untracked and machine-local by design — which is exactly why it is
+written down here rather than automated.
+
 Four things about that shape are load-bearing:
 
 - **Resolution is lazy — at session launch, not at shell init.**
