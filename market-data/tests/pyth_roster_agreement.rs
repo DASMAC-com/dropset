@@ -3,7 +3,7 @@
 //! asserts the two copies agree.
 //!
 //! **Why there are two.** The collector reads its roster from `pyth_fx_feeds`,
-//! seeded by `db-schema/migrations/0004_pyth_fx_feeds.sql`, because ECS offers
+//! seeded by `db-schema/migrations/0005_pyth_fx_feeds.sql`, because ECS offers
 //! no way to mount a configuration file and adding a cross should not need a
 //! rebuild. The maker bot cannot read that table: Postgres is a *soft*
 //! dependency in its quote path by design — an unreachable database means
@@ -116,7 +116,7 @@ fn maker_crosses() -> Vec<Cross> {
 
 fn seed_crosses() -> Vec<Cross> {
     let mut crosses = from_migration_seed(include_str!(
-        "../../db-schema/migrations/0004_pyth_fx_feeds.sql"
+        "../../db-schema/migrations/0005_pyth_fx_feeds.sql"
     ));
     crosses.sort();
     crosses

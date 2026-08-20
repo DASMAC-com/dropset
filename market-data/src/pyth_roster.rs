@@ -15,7 +15,7 @@
 //! changes a few times a year, and a process whose effective roster is fixed at
 //! start can state it in one log line — which is worth more than avoiding a
 //! restart. `dropset-migrate` owns the table and seeds it
-//! (`0004_pyth_fx_feeds.sql`); nothing here writes to it.
+//! (`0005_pyth_fx_feeds.sql`); nothing here writes to it.
 
 use anyhow::{anyhow, Result};
 use dropset_feeds::venues::pyth::PythFeed;
