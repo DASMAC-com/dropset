@@ -444,8 +444,8 @@ indexer-down: check-docker
 #
 # Four feeds, across both tiers. Candles into `cex_prices`: the Coinbase
 # reference price. Spot ticks into `spot_ticks`: the Coinbase ticker (the prints
-# between candle closes), Kraken (batched peg truth — `USDC/USD` and
-# `EURC/EUR`), and Pyth Hermes (batched FX with a published confidence). All
+# between candle closes), Kraken (batched peg truth — a real market print of
+# `USDC/USD`), and Pyth Hermes (batched FX with a published confidence). All
 # four are keyless, which is what keeps this target working on a machine with no
 # credentials at all; `fx-collectors-up` starts the keyed FX venues.
 #

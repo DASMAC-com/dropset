@@ -676,7 +676,7 @@ live.
 | Collector                     | Shape                      | What it uniquely carries                                        |
 | ----------------------------- | -------------------------- | --------------------------------------------------------------- |
 | `market-data-pyth`            | Batched, roster from store | A published **confidence** half-width and a publisher timestamp |
-| `market-data-kraken`          | Batched, roster from env   | Real market prints of `USDC/USD` (peg truth) and `EURC/EUR`     |
+| `market-data-kraken`          | Batched, roster from env   | A real market print of `USDC/USD` — peg truth, wired            |
 | `market-data-coinbase-ticker` | One feed per product       | The prints **between** candle closes on the reference venue     |
 
 Three things about this tier are load-bearing.

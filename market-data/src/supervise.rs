@@ -29,11 +29,18 @@ use tokio::task::JoinSet;
 /// for the log line that says which one brought the process down — without it
 /// a panic in one of five tasks is anonymous.
 ///
-/// Returns `Ok(())` once **every** feed has returned `Ok`, which happens on
-/// shutdown: each `run` future resolves on `SIGTERM` / `ctrl-c` independently,
-/// so a stop signal drains them all. Returns the **first** error otherwise,
-/// cancelling the rest — there is nothing to salvage from a partially-live
-/// collector.
+/// **The first feed to finish, either way, ends the process.** An `Err`
+/// obviously; but an `Ok` too, and that is the part worth stating. The
+/// framework runner returns `Ok` only when a shutdown signal fires, and that
+/// signal reaches every feed — so the first `Ok` means "we are stopping", and
+/// waiting for the remaining N-1 to notice buys nothing. Two things fall out.
+/// The invariant this module claims is enforced *here* rather than resting on
+/// the runner's internals: there is no path on which this function keeps
+/// running with fewer feeds than it started with. And shutdown is prompt: a
+/// feed blocked in its venue's request pacer (Alpha Vantage's floor is an hour)
+/// cannot hold the process open past its orchestrator's stop grace period,
+/// which under at-least-once delivery would only have earned a `SIGKILL`
+/// anyway.
 pub async fn run_all<F>(feeds: Vec<(String, F)>) -> Result<()>
 where
     F: Future<Output = Result<()>> + Send + 'static,
@@ -48,38 +55,46 @@ where
     }
     tracing::info!(feeds = count, "collector running");
 
-    while let Some(joined) = set.join_next().await {
-        match joined {
-            // A feed returned an error: the process is going down, so say
-            // which one before the rest are cancelled.
-            Ok((name, Err(err))) => {
-                tracing::error!(feed = %name, error = %err, "feed failed; stopping collector");
-                set.abort_all();
-                return Err(err.context(format!("feed {name}")));
-            }
-            Ok((name, Ok(()))) => {
-                tracing::info!(feed = %name, "feed stopped");
-            }
-            // A panic (or a cancellation we did not ask for) is not
-            // recoverable and must not read as a clean stop.
-            Err(err) => {
-                set.abort_all();
-                return Err(anyhow!("a feed task ended abnormally: {err}"));
-            }
+    // The first completion of any kind is terminal — see the doc above for why
+    // that is the correct reading of an `Ok` and not merely a shortcut.
+    match set.join_next().await {
+        // A feed returned an error: the process is going down, so say which one
+        // before the rest are cancelled.
+        Some(Ok((name, Err(err)))) => {
+            tracing::error!(feed = %name, error = %err, "feed failed; stopping collector");
+            set.abort_all();
+            Err(err.context(format!("feed {name}")))
         }
+        Some(Ok((name, Ok(())))) => {
+            tracing::info!(feed = %name, "feed stopped; shutting down the collector");
+            set.abort_all();
+            Ok(())
+        }
+        // A panic (or a cancellation we did not ask for) is not recoverable and
+        // must not read as a clean stop.
+        Some(Err(err)) => {
+            set.abort_all();
+            Err(anyhow!("a feed task ended abnormally: {err}"))
+        }
+        // Unreachable: the set was non-empty and this is the first join.
+        None => Err(anyhow!("no feed produced a result")),
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
+    /// A heterogeneously-shaped feed future, so one test can mix a fast and a
+    /// slow feed in a single `Vec`.
+    type BoxedFeed = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+
     #[tokio::test]
-    async fn runs_every_feed_to_completion() {
+    async fn every_feed_is_started() {
         let ran = Arc::new(AtomicUsize::new(0));
         let feeds: Vec<(String, _)> = (0..4)
             .map(|i| {
@@ -91,7 +106,38 @@ mod tests {
             })
             .collect();
         run_all(feeds).await.unwrap();
-        assert_eq!(ran.load(Ordering::SeqCst), 4);
+        assert!(
+            ran.load(Ordering::SeqCst) >= 1,
+            "at least the feed that completed must have run"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_first_clean_stop_ends_the_run_without_waiting_for_the_rest() {
+        // The runner returns Ok only on a shutdown signal, and that signal
+        // reaches every feed — so the first Ok means "we are stopping", and
+        // waiting for a feed parked in its venue's request pacer (an hour, on
+        // one venue) would just invite a SIGKILL. The slow feed here stands in
+        // for that parked one: the run must not wait on it.
+        let finished_slow = Arc::new(AtomicUsize::new(0));
+        let slow_marker = finished_slow.clone();
+        let feeds: Vec<(String, BoxedFeed)> = vec![
+            (
+                "parked".to_string(),
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_secs(3600)).await;
+                    slow_marker.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }),
+            ),
+            ("stopped".to_string(), Box::pin(async { Ok(()) })),
+        ];
+        run_all(feeds).await.unwrap();
+        assert_eq!(
+            finished_slow.load(Ordering::SeqCst),
+            0,
+            "the parked feed must be cancelled, not awaited"
+        );
     }
 
     #[tokio::test]
@@ -105,7 +151,7 @@ mod tests {
                     // Long enough that the failure below is what ends the run.
                     tokio::time::sleep(Duration::from_secs(30)).await;
                     Ok(())
-                }) as std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>>,
+                }) as BoxedFeed,
             ),
             (
                 "broken".to_string(),

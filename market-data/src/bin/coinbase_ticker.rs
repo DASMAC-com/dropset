@@ -21,7 +21,7 @@
 
 use dropset_feeds::{connect, run, venues::CoinbaseTicker, HttpClient, RunConfig, Sink, StoreSink};
 use dropset_market_data::{
-    roster::roster_from_env,
+    roster::{canonical_only, roster_from_env},
     supervise::run_all,
     ticks::{Tick, TickConfig, TickDefaults, TickSource, TickWriter},
 };
@@ -58,10 +58,9 @@ async fn main() -> anyhow::Result<()> {
     // client each would multiply the venue's budget by the roster size.
     let http = HttpClient::new(&cfg.base_url)?;
 
-    let ids: Vec<String> = products
-        .iter()
-        .map(|entry| entry.product_id.clone())
-        .collect();
+    // Canonical ids reach this venue unchanged, so a pin has nowhere to go and
+    // is rejected rather than silently dropped.
+    let ids = canonical_only(&products)?;
     tracing::info!(
         products = %ids.join(","),
         poll_secs = cfg.poll_interval_secs,

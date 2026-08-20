@@ -16,9 +16,9 @@ use dropset_feeds::{
 };
 use dropset_market_data::{
     fx::{quota_floor_secs, secret, twelvedata_symbol, FxConfig, FxDefaults},
+    roster::resolve_venue,
     store::CexWriter,
     supervise::run_all,
-    ticks::by_venue_symbol,
 };
 use std::time::Duration;
 
@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = FxConfig::from_env(&DEFAULTS)?;
     let api_key = secret(twelvedata::SECRET_NAME)?;
-    let symbols = by_venue_symbol(&cfg.products, twelvedata_symbol)?;
+    let symbols = resolve_venue(&cfg.products, twelvedata_symbol)?;
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;
     let cursors = PgCursorStore::new(pool.clone());
@@ -65,8 +65,10 @@ async fn main() -> anyhow::Result<()> {
             "widened the poll interval so the roster fits the venue's daily quota"
         );
     }
+    // Both lists, so a pinned `CANONICAL=VENUE` override is visible at startup.
     tracing::info!(
-        products = %symbols.iter().map(|(_, p)| p.as_str()).collect::<Vec<_>>().join(","),
+        products = %symbols.iter().map(|p| p.product_id.as_str()).collect::<Vec<_>>().join(","),
+        symbols = %symbols.iter().map(|p| p.venue_symbol.as_str()).collect::<Vec<_>>().join(","),
         granularity = cfg.granularity_secs,
         poll_secs,
         "twelvedata collector starting"
@@ -77,7 +79,8 @@ async fn main() -> anyhow::Result<()> {
         ..RunConfig::default()
     };
     let mut feeds = Vec::with_capacity(symbols.len());
-    for (symbol, product_id) in symbols {
+    for resolved in symbols {
+        let (symbol, product_id) = (resolved.venue_symbol, resolved.product_id);
         let feed = cfg.feed_name(SOURCE, &product_id);
         let resume = cursors.load(&feed).await?;
         let source = TwelveDataCandles::resume(

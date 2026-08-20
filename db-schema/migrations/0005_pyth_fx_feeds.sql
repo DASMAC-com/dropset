@@ -49,6 +49,14 @@ CREATE TABLE pyth_fx_feeds (
     invert       BOOLEAN NOT NULL,
     -- Lets a cross be parked without deleting its coordinates, so turning one
     -- off is not a lossy edit.
+    --
+    -- **Parking a cross needs a matching maker-bot change.** This is the one
+    -- edit that breaks the seed-versus-constant agreement without touching
+    -- either file, so the test that pins them cannot see it: setting this FALSE
+    -- stops the collector recording the cross while the maker keeps quoting
+    -- from its compiled roster, leaving it quoting a cross with no stored
+    -- history to compare against. Nothing enforces that pairing — it is a
+    -- deliberately manual affordance, so it is written down here.
     enabled      BOOLEAN NOT NULL DEFAULT true,
     CONSTRAINT currency_is_iso_4217
         CHECK (currency ~ '^[A-Z]{3}$'),

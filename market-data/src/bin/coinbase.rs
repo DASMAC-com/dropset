@@ -14,7 +14,9 @@ use dropset_feeds::{
     venues::{Candle, CoinbaseCandles},
     CursorStore, HttpClient, PgCursorStore, RunConfig, Sink, StoreSink,
 };
-use dropset_market_data::{config::Config, store::CexWriter, supervise::run_all};
+use dropset_market_data::{
+    config::Config, roster::canonical_only, store::CexWriter, supervise::run_all,
+};
 use std::time::Duration;
 
 #[tokio::main]
@@ -42,11 +44,10 @@ async fn main() -> anyhow::Result<()> {
     // the transport exists to hold.
     let http = HttpClient::new(&cfg.coinbase_base_url)?;
 
-    let products: Vec<String> = cfg
-        .products
-        .iter()
-        .map(|entry| entry.product_id.clone())
-        .collect();
+    // Coinbase names its products the canonical way already, so nothing is
+    // derived here — which is exactly why a pinned venue spelling has to be
+    // rejected rather than quietly ignored.
+    let products = canonical_only(&cfg.products)?;
     tracing::info!(
         products = %products.join(","),
         granularity = cfg.granularity_secs,

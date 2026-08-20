@@ -28,6 +28,7 @@ use dropset_feeds::{
 };
 use dropset_market_data::{
     fx::{quota_floor_secs, secret, split_canonical, FxConfig, FxDefaults},
+    roster::canonical_only,
     store::CexWriter,
     supervise::run_all,
 };
@@ -60,12 +61,17 @@ async fn main() -> anyhow::Result<()> {
     let api_key = secret(alphavantage::SECRET_NAME)?;
     // Validate every pair up front: this venue splits a canonical id into two
     // parameters, and a malformed one must fail startup rather than become a
-    // series that never appears.
+    // series that never appears. It derives no single venue symbol, so a pinned
+    // one has nowhere to go and `canonical_only` rejects it rather than letting
+    // an operator's override do nothing.
+    //
+    // The canonical id leads the tuple and its two derived legs follow, so the
+    // stored key is never positionally confusable with a venue-native one.
     let mut pairs = Vec::with_capacity(cfg.products.len());
-    for entry in &cfg.products {
-        let (from_symbol, to_symbol) = split_canonical(&entry.product_id)?;
+    for product_id in canonical_only(&cfg.products)? {
+        let (from_symbol, to_symbol) = split_canonical(&product_id)?;
         pairs.push((
-            entry.product_id.clone(),
+            product_id.clone(),
             from_symbol.to_string(),
             to_symbol.to_string(),
         ));

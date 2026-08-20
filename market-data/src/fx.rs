@@ -134,7 +134,14 @@ pub fn quota_floor_secs(configured: u64, products: usize, daily_quota: u64) -> u
     let quota = daily_quota.max(1);
     // The narrowest interval at which `products` feeds together stay inside
     // `quota` requests per day.
-    let floor = 86_400_u64.saturating_mul(products) / quota;
+    //
+    // `div_ceil`, not `/`. Truncating division rounds the *interval* down,
+    // which rounds the request *count* up — over the quota, the one direction a
+    // quota floor must never round. At 7 products against 20 usable requests a
+    // truncating divide gives 30_240s (exactly 20/day, fine), but the general
+    // case does not divide evenly and the remainder always lands on the wrong
+    // side.
+    let floor = 86_400_u64.saturating_mul(products).div_ceil(quota);
     configured.max(floor)
 }
 

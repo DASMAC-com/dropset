@@ -2,10 +2,19 @@
 //! prices the whole roster, and each reading lands in `spot_ticks`
 //! (docs/data-feeds.md §9).
 //!
-//! This is the venue that carries the two legs no other keyless source does —
-//! a real market print of the `USDC/USD` peg, and `EURC/EUR`, token against its
-//! own fiat. Collecting them into the store is what lets a peg dislocation be
-//! read after the fact rather than only watched live.
+//! This is the venue carrying the leg no other keyless source does: a real
+//! market print of the `USDC/USD` peg. Coinbase Exchange lists no `USDC-USD`
+//! product and Binance.US quotes an administered flat `1.00`, so collecting it
+//! here is what lets a peg dislocation be read after the fact rather than only
+//! watched live.
+//!
+//! The default roster collects the two legs the maker already subscribes to —
+//! `USDC-USD` and `EURC-USD`. Kraken *also* lists `EURC/EUR`, token against its
+//! own fiat, which is the closest live stand-in for an issuer redemption rate
+//! and which nothing consumes yet; adding `EURC-EUR` here would cost no extra
+//! request, since the poll is batched. Left out deliberately rather than by
+//! oversight: what to record is a decision about the store's contents, not a
+//! detail of this collector, and this PR collects what is wired.
 //!
 //! Keyless, batched, and cheap: one request per poll regardless of roster size,
 //! so unlike the metered FX venues nothing here has to widen its cadence as
@@ -24,10 +33,8 @@ use dropset_feeds::{
     RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
-    roster::{kraken_pair, roster_from_env},
-    ticks::{
-        by_venue_symbol, SilenceWatch, Tick, TickConfig, TickDefaults, TickSource, TickWriter,
-    },
+    roster::{kraken_pair, resolve_venue, roster_from_env},
+    ticks::{SilenceWatch, Tick, TickConfig, TickDefaults, TickSource, TickWriter},
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -62,16 +69,22 @@ async fn main() -> anyhow::Result<()> {
     let cfg = TickConfig::from_env(&DEFAULTS)?;
     let products = roster_from_env(DEFAULT_PRODUCTS)?;
     // Resolve every venue spelling before connecting: a malformed canonical id
-    // must fail startup, not become a series that never appears.
-    let pairs = by_venue_symbol(&products, kraken_pair)?;
+    // must fail startup, not become a series that never appears — and two
+    // entries resolving to one Kraken pair must fail here rather than have the
+    // venue's single answer filed under whichever one won.
+    let pairs = resolve_venue(&products, kraken_pair)?;
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;
 
-    let venue_pairs: Vec<String> = pairs.iter().map(|(venue, _)| venue.clone()).collect();
-    let canonical: Vec<String> = pairs.iter().map(|(_, id)| id.clone()).collect();
+    let venue_pairs: Vec<String> = pairs.iter().map(|p| p.venue_symbol.clone()).collect();
+    let canonical: Vec<String> = pairs.iter().map(|p| p.product_id.clone()).collect();
     // Kraken answers under the name it was asked with, so this maps its keys
-    // back onto the canonical ids the rows are stored under.
-    let index: HashMap<String, String> = pairs.into_iter().collect();
+    // back onto the canonical ids the rows are stored under. `resolve_venue`
+    // has already rejected a duplicate venue symbol, so no entry is lost here.
+    let index: HashMap<String, String> = pairs
+        .into_iter()
+        .map(|p| (p.venue_symbol, p.product_id))
+        .collect();
 
     tracing::info!(
         products = %canonical.join(","),

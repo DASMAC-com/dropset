@@ -14,7 +14,6 @@
 //! confidence Pyth carries stay with the collector that understands them,
 //! which is the same division [`crate::store`] already keeps for candles.
 
-use crate::roster::RosterEntry;
 use anyhow::Result;
 use async_trait::async_trait;
 use dropset_feeds::{now_secs, Batch, Source, StoreWriter};
@@ -22,6 +21,7 @@ use dropset_feeds::{now_secs, Batch, Source, StoreWriter};
 /// The per-venue starting points a tick collector's binary supplies, since a
 /// venue's API root and poll budget are properties of the venue rather than of
 /// the deployment.
+#[derive(Clone, Debug)]
 pub struct TickDefaults {
     pub base_url: &'static str,
     /// Seconds between polls. Unlike a candle feed there is no bucket width to
@@ -37,6 +37,7 @@ pub struct TickDefaults {
 /// roster** — the two keyless venues read theirs from the environment while the
 /// Pyth collector reads its own from the store, and folding both into one type
 /// would leave a field that is meaningless for one of them.
+#[derive(Clone, Debug)]
 pub struct TickConfig {
     pub database_url: String,
     pub base_url: String,
@@ -183,13 +184,18 @@ where
             .iter()
             .flat_map(|record| map(record, observed_at))
             .collect();
-        let mut out = Batch::new(records).with_caught_up(batch.caught_up);
-        // A snapshot venue carries no cursor, but preserve one if the inner
-        // source had it rather than silently dropping a resume position.
-        if let Some(cursor) = batch.cursor {
-            out = out.with_cursor(cursor);
-        }
-        Ok(out)
+        // **The inner cursor is deliberately NOT forwarded.** Every tick source
+        // today is a snapshot endpoint with no resume position, so there is
+        // none to forward — but the reason this is a drop rather than a
+        // pass-through matters if that ever changes: the mapping closure is
+        // allowed to drop records (the Kraken mapping omits a response key the
+        // roster does not cover), so forwarding a resume position would commit
+        // a cursor *past* data that was never written, turning the store
+        // sink's at-least-once contract into at-most-once. Dropping the cursor
+        // degrades to re-fetching, which the idempotent insert absorbs;
+        // forwarding it would lose rows silently. A paged tick source would
+        // need the mapping to be provably total before this could change.
+        Ok(Batch::new(records).with_caught_up(batch.caught_up))
     }
 }
 
@@ -234,6 +240,17 @@ impl SilenceWatch {
     }
 
     /// Record one poll's ticks, and report once the threshold is reached.
+    ///
+    /// **The roster-error claim is only made once the venue has demonstrably
+    /// answered for something**, and that condition is the whole design. The
+    /// message tells an operator to check their configuration *rather than* the
+    /// venue's uptime, which is a confident claim — and it is only warranted
+    /// when some other product on the same roster priced, proving the venue is
+    /// reachable and answering. If **nothing** has ever priced, a roster full
+    /// of typos and a venue that is simply down look identical, so this says
+    /// the weaker true thing instead and does **not** latch: the next poll can
+    /// still resolve it. Latching a wrong diagnosis would leave a startup-window
+    /// outage permanently misreported as a config error.
     pub fn observe(&mut self, ticks: &[Tick]) {
         for tick in ticks {
             self.seen.insert(tick.product_id.clone());
@@ -242,11 +259,24 @@ impl SilenceWatch {
         if self.warned || self.polls < self.warn_after {
             return;
         }
-        self.warned = true;
-        let silent = self.silent();
+        // Owned, so the borrow of `self` ends before `warned` is assigned.
+        let silent: Vec<String> = self.silent().into_iter().map(str::to_string).collect();
         if silent.is_empty() {
+            // Everything configured has priced at least once; there is nothing
+            // left for this watch to say, ever.
+            self.warned = true;
             return;
         }
+        if self.seen.is_empty() {
+            tracing::warn!(
+                products = %silent.join(","),
+                polls = self.polls,
+                "no configured product has priced yet — the venue may be \
+                 unreachable, so this is not yet attributable to the roster"
+            );
+            return;
+        }
+        self.warned = true;
         tracing::warn!(
             products = %silent.join(","),
             polls = self.polls,
@@ -265,30 +295,9 @@ impl SilenceWatch {
     }
 }
 
-/// Index a roster by the venue's spelling, so a batched response keyed by the
-/// venue's own pair names can be written under canonical product ids.
-///
-/// This is the inverse of the derivation in [`crate::roster`], and it is a
-/// collector concern rather than a venue one: the adapters answer under the
-/// keys they were asked with, and only the roster knows which canonical id each
-/// of those keys stands for.
-pub fn by_venue_symbol<F>(products: &[RosterEntry], derive: F) -> Result<Vec<(String, String)>>
-where
-    F: Fn(&str) -> Result<String>,
-{
-    products
-        .iter()
-        .map(|entry| {
-            let venue = entry.venue_symbol_or(&derive)?;
-            Ok((venue, entry.product_id.clone()))
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::roster::parse_roster;
 
     #[test]
     fn a_malformed_confidence_becomes_unknown_rather_than_failing_the_batch() {
@@ -301,28 +310,6 @@ mod tests {
         assert_eq!(normalize_confidence(None), None);
         // A real half-width is untouched.
         assert_eq!(normalize_confidence(Some(1e-5)), Some(1e-5));
-    }
-
-    #[test]
-    fn a_roster_indexes_by_the_spelling_the_venue_answers_under() {
-        let products = parse_roster("EURC-USD,USDT-USD=USDTZUSD").unwrap();
-        let index = by_venue_symbol(&products, |p| Ok(p.replace('-', ""))).unwrap();
-        assert_eq!(
-            index,
-            vec![
-                ("EURCUSD".to_string(), "EURC-USD".to_string()),
-                // The pinned spelling is what the venue answers under, but the
-                // canonical id is still what gets stored — the whole point of
-                // keeping the two separate.
-                ("USDTZUSD".to_string(), "USDT-USD".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_failed_derivation_fails_startup() {
-        let products = parse_roster("EURC-USD").unwrap();
-        assert!(by_venue_symbol(&products, |_| Err(anyhow::anyhow!("nope"))).is_err());
     }
 
     fn tick(product_id: &str) -> Tick {
@@ -361,6 +348,35 @@ mod tests {
     fn a_full_roster_reports_nothing() {
         let mut watch = SilenceWatch::new(vec!["EUR-USD".to_string()], 1);
         watch.observe(&[tick("EUR-USD")]);
+        assert!(watch.silent().is_empty());
+    }
+
+    #[test]
+    fn a_venue_that_never_answers_is_not_blamed_on_the_roster() {
+        // The misdiagnosis this prevents: if NOTHING has ever priced, a roster
+        // full of typos and a venue that is simply down are indistinguishable,
+        // so the confident "check your config, not the venue's uptime" claim is
+        // unwarranted. Crucially the watch must NOT latch here, or a
+        // startup-window outage stays misreported for the life of the process.
+        let mut watch = SilenceWatch::new(vec!["EUR-USD".to_string(), "GBP-USD".to_string()], 3);
+        for _ in 0..5 {
+            watch.observe(&[]);
+        }
+        assert!(!watch.warned, "must stay open while the venue is silent");
+
+        // Once the venue proves it is answering, the remaining silent product
+        // IS attributable to the roster — and now it latches.
+        watch.observe(&[tick("EUR-USD")]);
+        assert!(watch.warned, "one print makes the rest attributable");
+        assert_eq!(watch.silent(), vec!["GBP-USD"]);
+    }
+
+    #[test]
+    fn a_roster_that_fully_prices_never_warns_again() {
+        let mut watch = SilenceWatch::new(vec!["EUR-USD".to_string()], 2);
+        watch.observe(&[tick("EUR-USD")]);
+        watch.observe(&[tick("EUR-USD")]);
+        assert!(watch.warned, "nothing left to say, so it latches closed");
         assert!(watch.silent().is_empty());
     }
 }

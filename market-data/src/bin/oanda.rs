@@ -19,9 +19,9 @@ use dropset_feeds::{
 };
 use dropset_market_data::{
     fx::{oanda_instrument, secret, FxConfig, FxDefaults},
+    roster::resolve_venue,
     store::CexWriter,
     supervise::run_all,
-    ticks::by_venue_symbol,
 };
 use std::time::Duration;
 
@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
     // Canonical id → the venue's instrument spelling, resolved for the whole
     // roster before anything connects: a malformed pair must fail startup, not
     // be discovered as a silently missing series later.
-    let instruments = by_venue_symbol(&cfg.products, oanda_instrument)?;
+    let instruments = resolve_venue(&cfg.products, oanda_instrument)?;
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;
     let cursors = PgCursorStore::new(pool.clone());
@@ -56,8 +56,12 @@ async fn main() -> anyhow::Result<()> {
     // `OandaCandles::client`.
     let http = OandaCandles::client(&cfg.base_url, &api_key)?;
 
+    // Both lists, because a pinned `CANONICAL=VENUE` override is honoured here:
+    // without the resolved instruments in the log, a mis-pinned one is visible
+    // nowhere at startup.
     tracing::info!(
-        products = %instruments.iter().map(|(_, p)| p.as_str()).collect::<Vec<_>>().join(","),
+        products = %instruments.iter().map(|p| p.product_id.as_str()).collect::<Vec<_>>().join(","),
+        instruments = %instruments.iter().map(|p| p.venue_symbol.as_str()).collect::<Vec<_>>().join(","),
         granularity = cfg.granularity_secs,
         poll_secs = cfg.poll_interval_secs,
         "oanda collector starting"
@@ -68,7 +72,8 @@ async fn main() -> anyhow::Result<()> {
         ..RunConfig::default()
     };
     let mut feeds = Vec::with_capacity(instruments.len());
-    for (instrument, product_id) in instruments {
+    for resolved in instruments {
+        let (instrument, product_id) = (resolved.venue_symbol, resolved.product_id);
         let feed = cfg.feed_name(SOURCE, &product_id);
         let resume = cursors.load(&feed).await?;
         let source = OandaCandles::resume(

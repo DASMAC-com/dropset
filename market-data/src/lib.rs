@@ -19,10 +19,15 @@
 //! is what the tick tier exists for.
 //!
 //! **One collector process serves a venue, not a pair.** [`roster`] parses the
-//! product list and owns the canonical ↔ venue spelling rule; [`supervise`]
-//! runs the resulting feeds concurrently and fails the process if any of them
-//! does. Each feed keeps its own per-product cursor key, so consolidating N
-//! per-pair services into one per-venue service resets nothing.
+//! product list and owns the canonical ↔ venue *resolution* — including the
+//! rule that two entries may never resolve to one venue symbol, and that a
+//! venue deriving no spelling rejects a pinned one rather than ignoring it.
+//! (The individual FX vendors' spelling rules live in [`fx`], beside the
+//! credential handling those collectors share.) [`supervise`] runs the
+//! resulting feeds concurrently and ends the process when the first of them
+//! finishes, either way. Each feed keeps its own per-product cursor key, so
+//! consolidating N per-pair services into one per-venue service resets
+//! nothing.
 //!
 //! The FX collectors share the [`fx`] module: their configuration, the single
 //! place a credential is resolved, and the canonical ↔ venue symbol mapping.

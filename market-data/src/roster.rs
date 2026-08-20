@@ -49,7 +49,7 @@ impl RosterEntry {
     /// Taking a closure rather than a rule keeps this type ignorant of any
     /// particular venue: each collector passes its own mapping and the
     /// override precedence lives in one place instead of once per venue.
-    pub fn venue_symbol_or<F>(&self, derive: F) -> Result<String>
+    pub fn venue_symbol_or_else<F>(&self, derive: F) -> Result<String>
     where
         F: FnOnce(&str) -> Result<String>,
     {
@@ -58,6 +58,92 @@ impl RosterEntry {
             None => derive(&self.product_id),
         }
     }
+}
+
+/// One roster entry resolved against a venue: what to ask the venue for, and
+/// what to store the answer under.
+///
+/// **A named pair rather than a tuple, deliberately.** Both fields are
+/// `String`, so a positional `(venue, canonical)` swaps silently at any call
+/// site that takes it apart — and the consequence of a swap is storing a
+/// reading under a venue-native symbol, which is the exact outcome the
+/// canonical-id convention exists to prevent (see [`crate::fx`]). Names make
+/// that mistake fail to compile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VenueProduct {
+    /// The symbol to send to the venue, and the key its response comes back
+    /// under.
+    pub venue_symbol: String,
+    /// The canonical id the reading is stored under.
+    pub product_id: String,
+}
+
+/// Resolve a whole roster against one venue's spelling rule.
+///
+/// This is the inverse of the derivation above, and it is a collector concern
+/// rather than a venue one: the adapters answer under the keys they were asked
+/// with, and only the roster knows which canonical id each of those keys
+/// stands for.
+///
+/// **Rejects two entries that resolve to the same venue symbol.**
+/// [`parse_roster`] already rejects a duplicate *canonical* id, but that is not
+/// the same check: a pinned spelling can collide with another entry's derived
+/// one (`USDC-USD,USDT-USD=USDCUSD`), and a batched venue answers once per
+/// symbol. Indexing that by venue symbol would keep one entry and silently
+/// file the venue's reading under the surviving pair's canonical id — one
+/// pair's price stored as another's, with the loser reported as a roster typo
+/// by the silence watch. That is corrupt data rather than missing data, so it
+/// fails startup.
+pub fn resolve_venue<F>(products: &[RosterEntry], derive: F) -> Result<Vec<VenueProduct>>
+where
+    F: Fn(&str) -> Result<String>,
+{
+    let mut out: Vec<VenueProduct> = Vec::with_capacity(products.len());
+    for entry in products {
+        let venue_symbol = entry.venue_symbol_or_else(&derive)?;
+        if let Some(clash) = out.iter().find(|p| p.venue_symbol == venue_symbol) {
+            return Err(anyhow!(
+                "{:?} and {:?} both resolve to the venue symbol {venue_symbol:?}; \
+                 the venue answers once per symbol, so one pair's price would be \
+                 stored under the other's id",
+                clash.product_id,
+                entry.product_id
+            ));
+        }
+        out.push(VenueProduct {
+            venue_symbol,
+            product_id: entry.product_id.clone(),
+        });
+    }
+    Ok(out)
+}
+
+/// The canonical ids of a roster whose venue spelling is not derived at all —
+/// a venue that names its products the canonical way already (Coinbase), or one
+/// that takes the two legs separately (Alpha Vantage).
+///
+/// **Rejects a pinned spelling instead of ignoring it.** [`parse_roster`]
+/// accepts `CANONICAL=VENUE` from any collector's roster, because the parser
+/// does not know which venue will consume it. A collector that derives nothing
+/// has nowhere to put that override, and silently dropping it would make the
+/// documented pinning feature a promise this collector does not keep — an
+/// operator's deliberate edit having no effect and no error, which is the
+/// quiet-config failure the whole roster module is written to avoid. So say so.
+pub fn canonical_only(products: &[RosterEntry]) -> Result<Vec<String>> {
+    let mut out = Vec::with_capacity(products.len());
+    for entry in products {
+        if let Some(pinned) = &entry.venue_symbol {
+            return Err(anyhow!(
+                "roster entry {:?} pins the venue symbol {pinned:?}, but this \
+                 venue is addressed by its canonical id and derives no \
+                 spelling — drop the `={pinned}` rather than leaving an \
+                 override that cannot take effect",
+                entry.product_id
+            ));
+        }
+        out.push(entry.product_id.clone());
+    }
+    Ok(out)
 }
 
 /// Parse a comma-separated roster: `AUD-USD,EUR-USD` or, where a venue's
@@ -115,10 +201,17 @@ pub fn parse_roster(spec: &str) -> Result<Vec<RosterEntry>> {
 /// Read a collector's roster from the environment.
 ///
 /// Precedence is `PRODUCT_IDS` (the roster), then `PRODUCT_ID` (the single
-/// product this predates), then `default`. The singular spelling is kept
-/// working on purpose: it is what every deployed compose service and every
-/// operator note still says, and a roster of one is exactly what it means. It
-/// is **not** consulted as a supplement — a file that sets both gets the
+/// product this predates), then `default`.
+///
+/// The singular spelling is kept working for a **hand-run or externally
+/// configured** process — a binary started directly, or a hosted task whose
+/// environment was written against the old name — not for this repo's compose
+/// file, which this change updates to `PRODUCT_IDS` everywhere. (An earlier
+/// version of this comment claimed the opposite; the compose file no longer
+/// sets the singular at all, so nothing here relies on it.) A roster of one is
+/// exactly what the singular means, so honoring it costs nothing.
+///
+/// It is **not** consulted as a supplement — a file that sets both gets the
 /// roster, because merging them would make the effective set depend on parse
 /// order rather than on what the operator wrote.
 pub fn roster_from_env(default: &str) -> Result<Vec<RosterEntry>> {
@@ -207,14 +300,14 @@ mod tests {
     #[test]
     fn a_pinned_symbol_wins_over_the_derived_one() {
         let roster = parse_roster("USDT-USD=USDTZUSD").unwrap();
-        let derived = roster[0].venue_symbol_or(|_| Ok("USDTUSD".to_string()));
+        let derived = roster[0].venue_symbol_or_else(|_| Ok("USDTUSD".to_string()));
         assert_eq!(derived.unwrap(), "USDTZUSD");
     }
 
     #[test]
     fn an_unpinned_entry_derives_its_symbol() {
         let roster = parse_roster("EURC-USD").unwrap();
-        let derived = roster[0].venue_symbol_or(|p| Ok(p.replace('-', "")));
+        let derived = roster[0].venue_symbol_or_else(|p| Ok(p.replace('-', "")));
         assert_eq!(derived.unwrap(), "EURCUSD");
     }
 
@@ -224,7 +317,70 @@ mod tests {
         // the venue adapters omit symbols they got no answer for, so a bad
         // derivation would masquerade as an unquoted pair.
         let roster = parse_roster("not-a-pair").unwrap();
-        assert!(roster[0].venue_symbol_or(|_| Err(anyhow!("nope"))).is_err());
+        assert!(roster[0]
+            .venue_symbol_or_else(|_| Err(anyhow!("nope")))
+            .is_err());
+    }
+
+    #[test]
+    fn a_roster_resolves_to_named_venue_product_pairs() {
+        let roster = parse_roster("EURC-USD,USDT-USD=USDTZUSD").unwrap();
+        let resolved = resolve_venue(&roster, kraken_pair).unwrap();
+        assert_eq!(
+            resolved,
+            vec![
+                VenueProduct {
+                    venue_symbol: "EURCUSD".to_string(),
+                    product_id: "EURC-USD".to_string(),
+                },
+                // The pinned spelling is what the venue answers under, but the
+                // canonical id is still what gets stored — the whole point of
+                // keeping the two separate.
+                VenueProduct {
+                    venue_symbol: "USDTZUSD".to_string(),
+                    product_id: "USDT-USD".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn two_entries_resolving_to_one_venue_symbol_fail_startup() {
+        // The corruption this prevents: the venue answers once for USDCUSD, and
+        // indexing by venue symbol would file that single reading under
+        // whichever canonical id survived — one pair's price stored as
+        // another's, with the loser blamed on a roster typo by the silence
+        // watch.
+        let roster = parse_roster("USDC-USD,USDT-USD=USDCUSD").unwrap();
+        let err = resolve_venue(&roster, kraken_pair).unwrap_err().to_string();
+        assert!(err.contains("both resolve to the venue symbol"), "{err}");
+        assert!(err.contains("USDCUSD"), "{err}");
+    }
+
+    #[test]
+    fn a_derive_failure_fails_the_whole_resolve() {
+        let roster = parse_roster("EURCUSD").unwrap();
+        assert!(resolve_venue(&roster, kraken_pair).is_err());
+    }
+
+    #[test]
+    fn a_canonical_only_venue_takes_the_ids_unchanged() {
+        let roster = parse_roster("EURC-USDC,USDC-USD").unwrap();
+        assert_eq!(
+            canonical_only(&roster).unwrap(),
+            vec!["EURC-USDC".to_string(), "USDC-USD".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_canonical_only_venue_rejects_a_pin_rather_than_ignoring_it() {
+        // The quiet-config failure this closes: the parser accepts a pin from
+        // any roster, so a collector that derives nothing would otherwise drop
+        // an operator's deliberate override with no error.
+        let roster = parse_roster("EURC-USDC=EURCUSD").unwrap();
+        let err = canonical_only(&roster).unwrap_err().to_string();
+        assert!(err.contains("derives no"), "{err}");
+        assert!(err.contains("EURCUSD"), "{err}");
     }
 
     #[test]

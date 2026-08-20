@@ -290,11 +290,13 @@ services:
     # The Kraken spot-tick collector: one batched public-ticker request prices
     # the whole roster into `spot_ticks` (docs/data-feeds.md §9).
     #
-    # It carries the two legs no other keyless source does: a real market print
-    # of the `USDC/USD` peg — Coinbase Exchange lists no such product and
-    # Binance.US quotes an administered flat 1.00 — and `EURC/EUR`, token
-    # against its own fiat. Collecting them is what lets a peg dislocation be
-    # read after the fact rather than only watched live.
+    # It carries the leg no other keyless source does: a real market print of
+    # the `USDC/USD` peg — Coinbase Exchange lists no such product and
+    # Binance.US quotes an administered flat 1.00. Collecting it is what lets a
+    # peg dislocation be read after the fact rather than only watched live. The
+    # default roster is the two legs the maker already subscribes to; Kraken
+    # also lists `EURC/EUR`, deliberately not collected yet (see the binary's
+    # module header).
     #
     # Keyless and batched: one request per poll regardless of roster size, so
     # adding pairs costs nothing and needs no cadence change.
