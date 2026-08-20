@@ -60,8 +60,8 @@ export const BALANCE_REFETCH_DELAY_MS = 1_500;
 // Live-poll cadence for the on-chain order-book viz. One getAccountInfo +
 // getSlot per tick against the local (or mainnet) RPC, plus an occasional
 // getBlockTime (expiry is dual-domain: the slot comes from the chain, the
-// wall clock from the device, chain-checked and corrected only when it drifts
-// out of tolerance — see lib/eclob/chainClock.ts). 1 s reads as live —
+// wall clock from the device, chain-checked and corrected on a ramp as it
+// drifts out of tolerance — see lib/eclob/chainClock.ts). 1 s reads as live —
 // the maker bot's flashed depth appears within a tick — without hammering
 // the node the way the alpha viz's 500 ms poll did.
 export const ORDER_BOOK_REFRESH_MS = 1_000;
@@ -69,15 +69,25 @@ export const ORDER_BOOK_REFRESH_MS = 1_000;
 // ───────────── Expiry gate clock ─────────────
 
 // How far the visitor's device clock may sit from cluster time before the
-// book is gated on the chain-derived estimate instead (lib/eclob/chainClock).
-// Sized between the two error scales it separates: an NTP-synced device is
-// within a second or so, and `getBlockTime` — a stake-weighted mean of vote
-// timestamps — carries noise of its own, while the skew actually worth
-// correcting runs to tens of seconds. Note this exceeds the safety margin
-// below, so a device sitting near the edge of the band can still misjudge a
-// level by a few seconds in either direction; the band buys immunity to
-// measurement noise, not exactness.
+// book starts being gated on the chain-derived estimate instead
+// (lib/eclob/chainClock). Sized between the two error scales it separates:
+// an NTP-synced device is within a second or so, and `getBlockTime` — a
+// stake-weighted mean of vote timestamps — carries noise of its own, while
+// the skew actually worth correcting runs to tens of seconds. Below this the
+// reading is ignored outright, so the band buys immunity to measurement
+// noise, not exactness. Note it exceeds the safety margin below, so a device
+// sitting just inside it still misjudges a level — by the difference between
+// the two, 3 s, rather than the full 5.
 export const CLOCK_SKEW_TOLERANCE_SECS = 5;
+
+// Where the correction reaches 100%. Between the tolerance and here it is
+// phased in proportionally, which is what keeps the gate a continuous
+// function of a noisy reading rather than a cliff at the tolerance edge —
+// see the ramp discussion in lib/eclob/chainClock.ts. Sized to clear
+// `getBlockTime`'s own ~1 s quantization by a wide margin while staying well
+// below the tens of seconds of real skew the correction exists for, so a
+// genuinely broken clock is still corrected in full.
+export const CLOCK_SKEW_FULL_CORRECTION_SECS = 10;
 
 // Forward nudge applied to the gate whichever clock it ends up using, so a
 // level inside its last moments is dropped here rather than quoted and then
@@ -95,6 +105,19 @@ export const CLOCK_SAFETY_MARGIN_SECS = 2;
 // calls a second of a method several providers rate-limit or disable. One
 // reading serves every consumer until it ages out.
 export const CLOCK_RESYNC_INTERVAL_SECS = 30;
+
+// Plausibility window a `getBlockTime` reading must land inside before it is
+// allowed to become an offset. What this catches is a unit error — a node
+// answering in milliseconds reads ~1.7e12 where a unix second is ~1.7e9 —
+// along with structural garbage (zero, negative, NaN). Deliberately wide
+// rather than tight: a range check cannot separate a plausible-but-wrong
+// second-scale timestamp from a correct one, so narrowing the window catches
+// no additional realistic failure and only risks a long-lived build
+// rejecting good readings once it ages past the ceiling. The floor is
+// 2025-01-01 — this code did not exist before it, so no block it can be
+// shown was produced earlier — and the ceiling 2100-01-01.
+export const CLOCK_PLAUSIBLE_MIN_UNIX = 1_735_689_600;
+export const CLOCK_PLAUSIBLE_MAX_UNIX = 4_102_444_800;
 
 // ───────────── Recent fills ─────────────
 
