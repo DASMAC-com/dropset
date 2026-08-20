@@ -1,3 +1,4 @@
+// cspell:word unmigrated
 //! `dropset-maker-bot` — the localnet FX-stablecoin market-maker.
 //!
 //! A supervisor over many `<token>/USDC` markets ([`config::MARKETS`]) quoting
@@ -21,6 +22,12 @@
 //! [`quote_state`] persists the one fact that has to outlive the process — when
 //! each market's book was last correctly priced, which is what makes stale-quote
 //! invalidation ([`model::invalidate`]) possible across a restart.
+//!
+//! [`telemetry`] is the read side: a tap that publishes what each tick decided
+//! to the shared Postgres for the provisioned Grafana dashboards. It is a
+//! one-way tap on purpose — nothing in the quoting path reads it back, and a
+//! database that is down or unmigrated degrades to "no telemetry", never to a
+//! bot that will not quote.
 
 pub mod chain;
 pub mod config;
@@ -29,3 +36,4 @@ pub mod fills;
 pub mod model;
 pub mod quote_state;
 pub mod tasks;
+pub mod telemetry;

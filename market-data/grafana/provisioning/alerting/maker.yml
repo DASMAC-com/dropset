@@ -1,0 +1,306 @@
+---
+# Provisioned alert rules for the maker's operational telemetry
+# (docs/market-making.md §6). Committed here so the localnet stack and the
+# hosted stack alert on identical conditions, the same way the dashboards
+# beside them are committed rather than click-configured.
+#
+# Three rules, one per failure this issue names: the bot stopped, a feed
+# stopped, a market stopped quoting normally.
+#
+# WHAT PROVISIONING BUYS AND WHAT IT DOES NOT. These rules evaluate and
+# reach Firing in Grafana's Alerting UI with no further setup, which is what
+# makes them verifiable. They do NOT deliver anywhere: the local stack
+# configures no SMTP and no webhook, so they route to Grafana OSS's default
+# contact point and stop there. Wiring a real destination is a deploy-time
+# concern (a hosted secret, not a committed one) and deliberately absent from
+# the repo.
+#
+# EVERY QUERY COMPUTES ITS OWN WINDOW with `now()` arithmetic rather than
+# Grafana's `$__unixEpochFilter` macro. The macro captures its argument with a
+# regex that stops at the first closing paren, so it is fragile around the
+# `extract(epoch FROM now())` these conditions are built from — and an alert
+# that silently fails to interpolate is a monitor that is not watching. The
+# `relativeTimeRange` below is therefore a formality the schema requires, not
+# the window that decides anything.
+#
+# Each rule is a three-node chain: the SQL query, a `reduce` to one value per
+# series, then a `threshold`. The reduce is not redundant even for a
+# single-row query — a threshold applied straight to a table frame is not
+# evaluated per series, and it is the per-series behavior the two
+# multi-dimensional rules depend on.
+apiVersion: 1
+groups:
+- folder: 'Dropset'
+  # A minute, against a 5 s tick: fast enough that the operator learns of a
+  # dead maker within a minute of its `for` elapsing, slow enough that the
+  # three queries here are nothing beside the ingestion load on the same box.
+  interval: '1m'
+  name: 'maker-operations'
+  orgId: 1
+  rules:
+  # The heartbeat. Deliberately not per market: a sample for ANY market
+  # proves the process is alive, so grouping by market would report a single
+  # market's halt as a dead bot.
+  #
+  # `coalesce` to a large age is what makes the never-written case fire as a
+  # number rather than arrive as NoData. That matters because NoData is
+  # ambiguous here — it is equally "the bot has never run" and "the query is
+  # broken" — whereas an explicit huge age states the condition the operator
+  # cares about and keeps `noDataState` free to mean only "something is wrong
+  # with this rule".
+  #
+  # KNOWN AMBIGUITY, and it is inherent rather than an oversight: telemetry
+  # writes are fire-and-forget, so this fires identically when the maker has
+  # died and when the maker is healthy but cannot reach Postgres. Separating
+  # them needs a signal that does not travel over the database — the
+  # container's own liveness. `Feed health` narrows it in practice: a live
+  # bot with a dead database shows every feed stale at the same instant.
+  - annotations:
+      description: >-
+        No maker telemetry sample has been written for over a minute. Either
+        the maker process is down, or it is running and its telemetry writes
+        are failing — check the maker container's logs to tell which, and the
+        feed-health table (every feed going stale at once points at the
+        database rather than the bot).
+      summary: 'The maker bot has stopped reporting'
+    condition: 'C'
+    data:
+    - datasourceUid: 'dropset-postgres'
+      model:
+        editorMode: 'code'
+        format: 'table'
+        intervalMs: 60000
+        maxDataPoints: 1
+        rawQuery: true
+        rawSql: |-
+          SELECT
+          coalesce(extract(epoch FROM now()) - max(ts), 9999999)
+          ::double precision AS age_secs
+          FROM maker_telemetry
+        refId: 'A'
+      refId: 'A'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        expression: 'A'
+        reducer: 'last'
+        refId: 'B'
+        type: 'reduce'
+      refId: 'B'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        conditions:
+        - evaluator:
+            # 60 s is twelve missed ticks. One missed tick is ordinary
+            # scheduling noise; twelve is not, and pairing this with the 1 m
+            # `for` below means a transient blip cannot page anyone.
+            params:
+            - 60
+            type: 'gt'
+          operator:
+            type: 'and'
+          query:
+            params:
+            - 'B'
+          reducer:
+            type: 'last'
+          type: 'query'
+        expression: 'B'
+        refId: 'C'
+        type: 'threshold'
+      refId: 'C'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    execErrState: 'Error'
+    for: '1m'
+    noDataState: 'NoData'
+    title: 'Maker heartbeat dead'
+    uid: 'maker-heartbeat-dead'
+  # Per-feed staleness, one series per source. The string `feed` column
+  # becomes the series label, so this rule covers whatever sources exist —
+  # including a venue adapter added long after this file was written, which is
+  # the point of the framework recording health generically.
+  #
+  # Measured off `last_ok_at` ONLY. A feed failing on every retry keeps
+  # advancing `updated_at` and `last_error_at`, so either of those would read
+  # as fresh while the feed was dead — which is exactly the failure this rule
+  # exists to catch.
+  #
+  # A source that has never once succeeded coalesces to a huge age and fires,
+  # which is intended: "never answered" is a worse state than "stopped
+  # answering", not an exempt one.
+  - annotations:
+      description: >-
+        A feed source has not completed a successful poll in over 30 minutes
+        (or has never completed one). The fair-value engine drops stale legs,
+        so the affected markets are quoting off a fallback tier or have
+        paused — check the composition-regime panel and this feed's
+        last_error.
+      summary: 'A price feed has gone stale'
+    condition: 'C'
+    data:
+    - datasourceUid: 'dropset-postgres'
+      model:
+        editorMode: 'code'
+        format: 'table'
+        intervalMs: 60000
+        maxDataPoints: 1
+        rawQuery: true
+        rawSql: |-
+          SELECT
+          feed,
+          coalesce(extract(epoch FROM now()) - last_ok_at, 9999999)
+          ::double precision AS ok_age_secs
+          FROM feed_health
+        refId: 'A'
+      refId: 'A'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        expression: 'A'
+        reducer: 'last'
+        refId: 'B'
+        type: 'reduce'
+      refId: 'B'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        conditions:
+        - evaluator:
+            # 1800 s, set against the SLOWEST steady-state tier rather than
+            # the fastest: the FX poll is 300 s, so anything under about
+            # 600 s would alarm on ordinary cadence. Six missed FX polls is
+            # unambiguous. The cost of this generosity is that a fast feed
+            # (Hermes at 5 s) can be dead for half an hour before paging —
+            # accepted, because the staleness panel and the engine's own
+            # degrade already surface that sooner, and a per-feed threshold
+            # would mean a rule per venue and lose the generic coverage.
+            params:
+            - 1800
+            type: 'gt'
+          operator:
+            type: 'and'
+          query:
+            params:
+            - 'B'
+          reducer:
+            type: 'last'
+          type: 'query'
+        expression: 'B'
+        refId: 'C'
+        type: 'threshold'
+      refId: 'C'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    execErrState: 'Error'
+    for: '5m'
+    # `OK`, not `NoData`, and the reason is specific rather than a
+    # preference: this query returns one row per *registered* source, so
+    # zero rows means nothing has registered yet — an empty table on a
+    # fresh database, which is not a stale feed. Observed raising a
+    # spurious NoData alert against exactly that state before this was
+    # set. "Nothing is running at all" is the heartbeat rule's job, and
+    # having both report it would double-page one condition.
+    noDataState: 'OK'
+    title: 'Feed stale'
+    uid: 'maker-feed-stale'
+  # Degraded or halted, per market. Counts the samples in the last five
+  # minutes that were either running degraded or halted by a kill switch;
+  # any at all is the condition.
+  #
+  # A COUNT over a window rather than a check of the latest sample, because
+  # these states flap: a market can enter and leave `Degraded` between two
+  # evaluations of this rule and a latest-sample check would never see it.
+  # The operator needs to know it happened, not only that it is still
+  # happening.
+  #
+  # Scoped to `degraded` and `Halt` to match the deliverable. The other
+  # not-quoting outcomes — `Pause`, `Frozen`, `TickError` — deliberately do
+  # not page: `Pause` is already implied by the feed-stale rule that causes
+  # it, and all three are on the tick-outcome timeline. Adding them here
+  # would mean one incident paging twice.
+  - annotations:
+      description: >-
+        A market ran degraded or hit a kill-switch halt in the last five
+        minutes. Degraded tightens every kill-switch threshold; a halt has
+        already taken the book dark and needs human review before quoting
+        resumes. The tick-outcome and composition-regime panels show which
+        state and when.
+      summary: 'A market entered a degraded or halted state'
+    condition: 'C'
+    data:
+    - datasourceUid: 'dropset-postgres'
+      model:
+        editorMode: 'code'
+        format: 'table'
+        intervalMs: 60000
+        maxDataPoints: 1
+        rawQuery: true
+        rawSql: |-
+          SELECT
+          market,
+          count(*)::double precision AS breaches
+          FROM maker_telemetry
+          WHERE ts > extract(epoch FROM now()) - 300
+          AND (degraded OR action = 'Halt')
+          GROUP BY market
+        refId: 'A'
+      refId: 'A'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        expression: 'A'
+        reducer: 'last'
+        refId: 'B'
+        type: 'reduce'
+      refId: 'B'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        conditions:
+        - evaluator:
+            params:
+            - 0
+            type: 'gt'
+          operator:
+            type: 'and'
+          query:
+            params:
+            - 'B'
+          reducer:
+            type: 'last'
+          type: 'query'
+        expression: 'B'
+        refId: 'C'
+        type: 'threshold'
+      refId: 'C'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    execErrState: 'Error'
+    # No `for`: a halt is not a condition to wait out. The window in the
+    # query already establishes that it really happened, so holding the alert
+    # Pending would only delay the page.
+    for: '0s'
+    # A market that is quoting normally returns no row at all, which arrives
+    # as NoData — the HEALTHY state for this rule, and the reason it is the
+    # one rule here whose NoData must stay silent rather than alerting.
+    noDataState: 'OK'
+    title: 'Market degraded or halted'
+    uid: 'maker-degraded-or-halt'
+...

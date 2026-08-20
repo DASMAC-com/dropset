@@ -155,11 +155,19 @@ impl PythHermesSource {
     }
 }
 
+/// This source's [`Source::name`] — the key its liveness is recorded under by
+/// [`crate::HealthReporter`], and therefore the value a consumer must join on
+/// to attribute a reading to this venue. Exposed as a constant so that join
+/// has one definition: a consumer writing the name as a literal of its own
+/// would keep matching a renamed source only by luck, and the failure would
+/// be a silently empty dashboard panel rather than a build error.
+pub const FEED_NAME: &str = "pyth-hermes";
+
 #[async_trait]
 impl Source for PythHermesSource {
     type Record = HashMap<String, FxQuote>;
     fn name(&self) -> &str {
-        "pyth-hermes"
+        FEED_NAME
     }
     async fn next(&mut self) -> Result<Batch<Self::Record>> {
         Ok(Batch::new(vec![self.poll().await?]))

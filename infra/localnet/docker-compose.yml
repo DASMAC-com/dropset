@@ -224,6 +224,21 @@ services:
       source: '../../market-data/grafana/provisioning/datasources'
       target: '/etc/grafana/provisioning/datasources'
       type: 'bind'
+    # The maker's alert rules. This is the third provisioning mount, and it
+    # is the reason the comment above insists on naming subdirectories: the
+    # image ships its own `alerting/` provisioning directory, so mounting the
+    # `provisioning/` parent to add this would shadow it — and shadowing the
+    # very directory being provisioned is the one mistake that would look
+    # like it worked.
+    #
+    # Rules provisioned this way evaluate and reach Firing in the Alerting
+    # UI, which is what makes them checkable from the stack. They deliver
+    # nowhere: no contact point is configured here, on purpose — a real
+    # destination needs a secret, and secrets are not committed.
+    - read_only: true
+      source: '../../market-data/grafana/provisioning/alerting'
+      target: '/etc/grafana/provisioning/alerting'
+      type: 'bind'
   indexer:
     # Decode + persist + aggregate. Polls the host-run validator's events.
     build:
@@ -263,6 +278,20 @@ services:
     # the relative-quoting hot + cold paths. Funds its leader (keys/EEEE.json)
     # from the localnet faucet over RPC, so it needs no host wallet — only the
     # repo keys/ mount. Every price feed is keyless, so no secret is passed in.
+    #
+    # NOTE THE ABSENT `depends_on`, which is a design decision rather than an
+    # omission. Every other database-writing service here gates on `migrate`
+    # via `service_completed_successfully`; this one must not. The maker's
+    # relationship to Postgres is a soft one — it writes operational telemetry
+    # and reads nothing back — so gating it would convert a database problem
+    # into a *quoting* problem, which is the one outcome the design refuses
+    # (db-schema's `require_schema` carries the same rule, and the maker
+    # deliberately never calls it).
+    #
+    # The cost is that a cold `up` can start the bot before the schema
+    # exists. That is handled rather than avoided: the telemetry pool is lazy
+    # and its sink is best-effort, so the early batches are dropped with a log
+    # line and reporting begins on its own once `migrate` has run.
     build:
       context: '../..'
       dockerfile: 'infra/localnet/bots.Dockerfile'
@@ -271,6 +300,16 @@ services:
     - '--rpc'
     - 'http://host.docker.internal:8899'
     environment:
+      # Connects as the `dropset` owner, not `dropset_ro`: this is the one
+      # maker path that WRITES. Grafana reads the same tables through the
+      # read-only role instead (§8's one-writer-per-table rule — the maker
+      # owns these three tables and nothing else writes them).
+      #
+      # Unset this to run the bot with no telemetry at all; it quotes
+      # identically either way, which is what makes the dependency soft in
+      # practice and not just in principle.
+      DROPSET_DATABASE_URL: >-
+        ${DROPSET_DATABASE_URL:-postgres://dropset:dropset@postgres:5432/dropset}
       RUST_LOG: 'info'
     extra_hosts:
     - 'host.docker.internal:host-gateway'

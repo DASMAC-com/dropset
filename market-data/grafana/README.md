@@ -1,11 +1,16 @@
-# Grafana: the market-data dashboard
+# Grafana: the Dropset dashboards
 
-Data observability over the shared `dropset` database
-(`docs/data-feeds.md` §8). This directory is **configuration only** —
-there is no producer code here. The collectors already write their
-tables; this is the operator's view of what they are producing, so a
-feeds change can be verified by looking at it the way the TUI verifies
-the maker.
+Observability over the shared `dropset` database (`docs/data-feeds.md`
+§8). This directory is **configuration only** — there is no producer
+code here. The collectors and the maker bot already write their tables;
+this is the operator's view of what they are producing, so a feeds
+change can be verified by looking at it.
+
+It is also the **read surface** in the ratified split: Grafana owns time
+series, statuses, and alerting, and the TUI owns write commands plus only
+the state displays needed to command safely. So there is no feed-health
+pane in the TUI, deliberately — history and alerting live here, where
+they still work when nobody is watching a terminal.
 
 ```sh
 make grafana        # Grafana alone, against whatever history is on the volume
@@ -18,8 +23,8 @@ dashboard. Append `?kiosk` to the URL for a chrome-free view — no nav,
 no side menu — which is what you want on a screenshare or a screenshot.
 
 The dashboard is deliberately named just `market-data`, not something
-narrower: its panels are ingestion-focused, and maker telemetry lands in
-this same tree later.
+narrower: its panels are ingestion-focused, and maker telemetry now
+lands in this same tree — see **Maker operations** below.
 
 A second dashboard, **FX analytics** (`fx-analytics`), now sits beside
 it. The split is by question rather than by subject: `market-data`
@@ -58,10 +63,19 @@ worse than showing nothing.
 | --------------------------- | ----------------------------------------- |
 | `provisioning/datasources/` | The shared Postgres, as a read-only login |
 | `provisioning/dashboards/`  | The loader that points at `dashboards/`   |
+| `provisioning/alerting/`    | Alert rules, as YAML                      |
 | `dashboards/`               | The dashboards themselves, as JSON        |
 
-All three are bind-mounted **read-only** into the container, so the repo
+All four are bind-mounted **read-only** into the container, so the repo
 is the source of truth and the container cannot edit its way out of it.
+
+Each of the three `provisioning/` subdirectories is mounted by name,
+never the `provisioning/` parent — and that is load-bearing rather than
+tidy. The image ships its own `plugins/` and `alerting/` provisioning
+directories, so mounting the parent shadows them; before `alerting/`
+existed here that cost two `level=error` lines on every boot, and now it
+would shadow the very directory being provisioned, which is the one
+mistake that would still look like it worked.
 
 Nothing here is Grafana-instance state: the `grafana` service has **no
 volume**. That is what keeps the arrangement honest — an uncommitted UI
@@ -172,6 +186,87 @@ The multi-source panels are written source-generic — grouped by
 `source`, driven by template variables — so a second collector appears
 in them with no dashboard edit. With one feed running they are a single
 series, which is correct, not a bug.
+
+## Maker operations
+
+The third dashboard, **Maker operations** (`maker-operations`), reads the
+maker bot's own telemetry rather than the collectors' — the tables
+`db-schema/migrations/0003_maker_telemetry.sql` creates. The spec is
+`docs/market-making.md` §6; what follows is only what you need to read
+the panels without being misled.
+
+Rows answer, top to bottom: *is it quoting near fair value and is it
+alive*, *what did each tick decide and under which regime*, *how is
+inventory tracking*, *are the feeds healthy*. A `Market` selector drives
+the per-market panels; the heartbeat, feed-health, and tick-error panels
+are process-wide by design.
+
+Four things that read wrong on first contact:
+
+- **A NULL is a fact, not a zero.** A tick can end at six points and
+  each knows less than the next, so a column is only populated on the
+  paths that could honestly fill it. An unknown skew and a zero skew are
+  different, as are an unread vault and an empty one — so nulls are never
+  spanned and gaps are left as gaps.
+- **A `best bid`/`best ask` series that stops has gone dark**, not to
+  zero: a freeze-side reshape, a halt, or a book killed for staleness.
+  The touch is derived from the reference resting **on-chain**, not from
+  the candidate the tick computed, because that is what a taker can
+  actually hit — the gap between the two is the drift the trigger policy
+  is tolerating.
+- **Feed staleness is the age the engine aged by**, not
+  `now() - sample time`. The FX anchor ages from the publisher's clock,
+  so a reading received this tick can legitimately be minutes old, and
+  over the FX weekend it ages without bound while the crypto-only regime
+  carries the mid. That is the signal, not a fault.
+- **A leg is a candidate set, not one venue**, so there is no per-venue
+  series and no "which feed answered" column. Legs resolve by consensus,
+  and the age shown is the *resolved* reading's. Which sources backed a
+  leg — and, when they disagreed, which one is the suspect — is the
+  **Leg consensus** table. Read `SingleUnverified` there as the *steady
+  state* for a market with no second source rather than as a fault: it
+  is the only signal that a market is quoted off one unchecked feed, and
+  it must never be conflated with `SingleTrusted`.
+- **A dead heartbeat is ambiguous, inherently.** Telemetry is
+  fire-and-forget, so it fires identically when the maker has died and
+  when the maker is fine but cannot reach Postgres. Feed health
+  discriminates in practice: a live bot with a dead database shows every
+  feed stale at the same instant.
+
+The feed-health panel is written source-generic, keyed on each source's
+own name, so a venue adapter added later appears with no dashboard edit.
+Those names are `pub const FEED_NAME` in the `feeds::venues` modules
+because the panel joins on them — a renamed source would otherwise empty
+a panel with no build error anywhere.
+
+## Alert rules
+
+`provisioning/alerting/maker.yml` carries three rules — dead heartbeat,
+stale feed, degraded-or-halted — committed for the same reason the
+dashboards are: the localnet stack and a hosted stack then alert on
+identical conditions.
+
+**What provisioning buys and what it does not.** The rules evaluate and
+reach Firing in the Alerting UI, which is what makes them checkable from
+the stack. They deliver **nowhere**: no contact point is configured, so
+they route to Grafana OSS's default and stop. A real destination needs a
+secret, and secrets are not committed — wiring one is a deploy-time
+concern.
+
+Two authoring notes, both the kind that fail silently:
+
+- **Every rule computes its own window** with `now()` arithmetic rather
+  than `$__unixEpochFilter`. The macro's argument capture stops at the
+  first closing paren, which is fragile around the
+  `extract(epoch FROM now())` these conditions are built from — and an
+  alert that fails to interpolate is a monitor that is not watching.
+- **Each rule is query → `reduce` → `threshold`.** The reduce is not
+  redundant even for a single-row query: a threshold applied straight to
+  a table frame is not evaluated per series, and per-series is exactly
+  what the two multi-dimensional rules (per feed, per market) need.
+
+Note the alerting mount is why `provisioning/` subdirectories are
+mounted by name — see **The tree** above.
 
 ## Deploying it elsewhere
 

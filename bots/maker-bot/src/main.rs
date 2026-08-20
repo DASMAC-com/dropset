@@ -27,7 +27,9 @@ use dropset_feeds::venues::{
     CmcSource, CoinGeckoSource, CoinbaseTicker, FrankfurterSource, KrakenSource, PythFeed,
     PythHermesSource,
 };
-use dropset_feeds::{forward_channel, run_until, HttpClient, RunConfig, Sink, Source};
+use dropset_feeds::{
+    forward_channel, run_until, run_until_with_metrics, HttpClient, RunConfig, Sink, Source,
+};
 use dropset_maker_bot::config::{
     BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
     USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
@@ -36,6 +38,7 @@ use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::build_legs;
 use dropset_maker_bot::quote_state::QuoteStateStore;
 use dropset_maker_bot::tasks::FeedReceivers;
+use dropset_maker_bot::telemetry::{self, Telemetry};
 use dropset_maker_bot::{chain, fills, tasks};
 use dropset_util::rpc::ws_url_from_rpc;
 use solana_pubkey::Pubkey;
@@ -192,6 +195,26 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     // The persisted last-live-stamp records, one file per market — the evidence
     // the supervisor's startup pass ages a resting book against.
     let quote_state = QuoteStateStore::new(&cfg.invalidate.state_dir);
+
+    // A small background runtime drives the async feed sources and the
+    // telemetry drain; the tick loop below stays synchronous and reads the
+    // broadcast tails. `enable_all` backs the reqwest reactor the HTTP price
+    // sources need, and the Postgres pool the telemetry sink writes through.
+    //
+    // Built here — before the per-market contexts rather than beside the feed
+    // spawns further down — because each context carries a telemetry handle,
+    // and that handle can only exist once there is a runtime to drain it.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .context("build feeds runtime")?;
+
+    // The operational read path. A disabled handle when no telemetry database
+    // is configured or reachable, which is the normal localnet default — the
+    // bot quotes either way.
+    let telemetry = telemetry::spawn(&rt);
+
     let mut contexts = Vec::new();
     for &market in &roster {
         let base_mint = match mint_pubkey(market.base_keypair_file) {
@@ -223,6 +246,7 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
             *market,
             cfg.fair_value,
             quote_state.for_market(addrs.market, market.symbol),
+            telemetry.clone(),
         ));
     }
     if contexts.is_empty() {
@@ -231,19 +255,15 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         ));
     }
 
-    // A small background runtime drives the async feed sources; the tick loop
-    // below stays synchronous and reads the broadcast tails. `enable_all` backs
-    // the reqwest reactor the HTTP price sources need.
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .context("build feeds runtime")?;
-
     // The price tiers, batched across the quoted roster: each venue is polled
     // once for every market it can price.
     let markets: Vec<&MarketConfig> = contexts.iter().map(|c| &c.cfg).collect();
-    let feeds = spawn_price_feeds(&rt, &cfg.feeds, &FeedRoster::for_markets(&markets))?;
+    let feeds = spawn_price_feeds(
+        &rt,
+        &cfg.feeds,
+        &FeedRoster::for_markets(&markets),
+        &telemetry,
+    )?;
 
     // One fill subscription covers every market the leader quotes; its
     // `logsSubscribe` socket bridges through the feeds stream seam onto a live
@@ -253,7 +273,7 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         .clone()
         .unwrap_or_else(|| ws_url_from_rpc(&cfg.rpc_url));
     let fills = fills::spawn(ws_url, cfg.rpc_url.clone(), leader.pubkey())
-        .map(|source| spawn_feed(&rt, source, RunConfig::default()));
+        .map(|source| spawn_feed(&rt, source, RunConfig::default(), &telemetry));
 
     // The runtime must outlive the supervisor loop that reads its channels; it
     // does — `run_supervisor` runs until the process is killed, and `rt` is held
@@ -267,18 +287,50 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
 /// demo feed has no cursor to flush on exit, and installing a ctrl-c handler
 /// here (as `feeds::run` does) would swallow the signal that stops the
 /// synchronous tick loop.
-fn spawn_feed<S>(rt: &Runtime, source: S, cfg: RunConfig) -> broadcast::Receiver<S::Record>
+///
+/// Every source spawned here is driven through `run_until_with_metrics` with a
+/// health recorder attached, which is what makes the `feed_health` table
+/// complete by construction: the recorder keys on the source's own name, so a
+/// venue adapter added later reports without this function learning anything
+/// about it. When telemetry is disabled the plain `run_until` is used, so a
+/// run with no database costs nothing rather than reporting into a dead
+/// channel.
+fn spawn_feed<S>(
+    rt: &Runtime,
+    source: S,
+    cfg: RunConfig,
+    telemetry: &Telemetry,
+) -> broadcast::Receiver<S::Record>
 where
     S: Source + Send + 'static,
     S::Record: Clone + Send + Sync + 'static,
 {
     let (sink, rx) = forward_channel(FEED_CHANNEL_CAP);
     let sinks: Vec<Box<dyn Sink<S::Record>>> = vec![Box::new(sink)];
-    rt.spawn(async move {
-        if let Err(e) = run_until(source, sinks, cfg, std::future::pending::<()>()).await {
-            eprintln!("[feed] runner exited: {e}");
+    match telemetry.health_reporter() {
+        Some(metrics) => {
+            rt.spawn(async move {
+                if let Err(e) = run_until_with_metrics(
+                    source,
+                    sinks,
+                    cfg,
+                    std::future::pending::<()>(),
+                    metrics,
+                )
+                .await
+                {
+                    eprintln!("[feed] runner exited: {e}");
+                }
+            });
         }
-    });
+        None => {
+            rt.spawn(async move {
+                if let Err(e) = run_until(source, sinks, cfg, std::future::pending::<()>()).await {
+                    eprintln!("[feed] runner exited: {e}");
+                }
+            });
+        }
+    }
     rx
 }
 
@@ -372,7 +424,12 @@ impl FeedRoster {
 /// the roster names any CMC id — it needs no credential, being on the keyless
 /// public route; the Coinbase tier is empty unless a quoted market is actually
 /// listed there.
-fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Result<FeedReceivers> {
+fn spawn_price_feeds(
+    rt: &Runtime,
+    cfg: &FeedConfig,
+    roster: &FeedRoster,
+    telemetry: &Telemetry,
+) -> Result<FeedReceivers> {
     let pyth = spawn_feed(
         rt,
         PythHermesSource::new(&cfg.pyth_base_url, roster.pyth.clone())?,
@@ -380,6 +437,7 @@ fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Res
             poll_interval: cfg.pyth_poll,
             error_backoff: FEED_ERROR_BACKOFF,
         },
+        telemetry,
     );
     let kraken = spawn_feed(
         rt,
@@ -388,6 +446,7 @@ fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Res
             poll_interval: cfg.kraken_poll,
             error_backoff: FEED_ERROR_BACKOFF,
         },
+        telemetry,
     );
     // Coinbase's ticker endpoint is per product, so a roster of N listed tokens
     // is N sources rather than one batched poll. They share **one cloned
@@ -406,6 +465,7 @@ fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Res
                     poll_interval: cfg.coinbase_poll,
                     error_backoff: FEED_ERROR_BACKOFF,
                 },
+                telemetry,
             )
         })
         .collect::<Vec<_>>();
@@ -416,6 +476,7 @@ fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Res
             poll_interval: cfg.coingecko_poll,
             error_backoff: FEED_ERROR_BACKOFF,
         },
+        telemetry,
     );
     // Wired whenever any selected market names a CMC id — no credential to
     // gate on, since this adapter is on the keyless public route.
@@ -429,6 +490,7 @@ fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Res
                 poll_interval: cfg.coinmarketcap_poll,
                 error_backoff: FEED_ERROR_BACKOFF,
             },
+            telemetry,
         ))
     };
     let frankfurter = spawn_feed(
@@ -438,6 +500,7 @@ fn spawn_price_feeds(rt: &Runtime, cfg: &FeedConfig, roster: &FeedRoster) -> Res
             poll_interval: cfg.fx_poll,
             error_backoff: FEED_ERROR_BACKOFF,
         },
+        telemetry,
     );
     Ok(FeedReceivers {
         pyth,
