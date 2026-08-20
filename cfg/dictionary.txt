@@ -188,8 +188,11 @@ rollups
 rpaps
 rsplit
 rustc
+rustflags
+rustup
 samp
 sbpf
+sccache
 seedable
 serde
 setext

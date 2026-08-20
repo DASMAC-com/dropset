@@ -7,9 +7,16 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
-    - uses: 'dtolnay/rust-toolchain@stable'
+    # Compiler version comes from the workspace `rust-toolchain.toml`; see the
+    # note in lint.yml for why this action and why `cache` / `rustflags` are
+    # neutralized. The wasm target stays declared here rather than in the
+    # toolchain file: this is the only job that needs it, and putting it in the
+    # file would download the wasm std in all six jobs.
+    - uses: 'actions-rust-lang/setup-rust-toolchain@v1'
       with:
-        targets: 'wasm32-unknown-unknown'
+        cache: false
+        rustflags: ''
+        target: 'wasm32-unknown-unknown'
     - uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true

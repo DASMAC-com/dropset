@@ -3,7 +3,6 @@ env:
   NODE_VERSION: '25'
   PRE_COMMIT_VERSION: '4.5.1'
   PYTHON_VERSION: '3.14.4'
-  RUST_VERSION: 'stable'
 jobs:
   lint:
     env:
@@ -12,9 +11,21 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
-    - uses: 'dtolnay/rust-toolchain@stable'
+    # Resolves the compiler from the workspace `rust-toolchain.toml` by giving
+    # no `toolchain` input, which is why this is actions-rust-lang rather than
+    # dtolnay/rust-toolchain: the latter's `toolchain` input defaults to
+    # matching its own `@rev`, so it cannot read a toolchain file at all and
+    # would need the version duplicated at every call site. Two of this
+    # action's defaults are deliberately neutralized in all six call sites —
+    # `cache`, because it bundles Swatinem/rust-cache and the explicit step
+    # below owns the key, and `rustflags`, which otherwise injects
+    # `-D warnings` into every cargo invocation in the job (the clippy hook
+    # passes its own, and a stray RUSTFLAGS also perturbs the rust-cache key).
+    - uses: 'actions-rust-lang/setup-rust-toolchain@v1'
       with:
+        cache: false
         components: 'clippy, rustfmt'
+        rustflags: ''
     - uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true

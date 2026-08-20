@@ -1,7 +1,6 @@
 ---
 # cspell:word doctests
 # cspell:word dorny
-# cspell:word sccache
 env:
   ANCHOR_REV: '2a191379'
   # Incremental compilation output isn't sccache-cacheable; disable it on CI so
@@ -102,9 +101,14 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
+    # Compiler version from the workspace `rust-toolchain.toml`; see the note
+    # in lint.yml for the action choice and the neutralized defaults.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'dtolnay/rust-toolchain@stable'
+      uses: 'actions-rust-lang/setup-rust-toolchain@v1'
+      with:
+        cache: false
+        rustflags: ''
     - if: |
         needs.changes.outputs.code == 'true'
       uses: './.github/actions/install-toolchain'
@@ -210,6 +214,19 @@ jobs:
       run: |
         make idl
         git diff --exit-code -- sdk/idl/dropset.json
+    # Visibility guard: a silent regression to cold compiles should be obvious
+    # in the run that suffers it rather than inferred weeks later from a
+    # timing complaint. sccache reports its own hit rate, and the SBF cache
+    # exposes a hit flag. Runs on failure too — a slow failing run is exactly
+    # when the numbers are wanted.
+    - if: |
+        always() && needs.changes.outputs.code == 'true'
+      name: 'Cache effectiveness summary'
+      run: |
+        S="$GITHUB_STEP_SUMMARY"
+        echo '### Cache effectiveness' >>"$S"
+        echo 'SBF cache hit: ${{ steps.sbf-cache.outputs.cache-hit }}' >>"$S"
+        sccache --show-stats >>"$S"
   test-no-teardown:
     name: 'Tests (no teardown)'
     needs: 'changes'
@@ -220,9 +237,14 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
+    # Compiler version from the workspace `rust-toolchain.toml`; see the note
+    # in lint.yml for the action choice and the neutralized defaults.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'dtolnay/rust-toolchain@stable'
+      uses: 'actions-rust-lang/setup-rust-toolchain@v1'
+      with:
+        cache: false
+        rustflags: ''
     - if: |
         needs.changes.outputs.code == 'true'
       uses: './.github/actions/install-toolchain'
@@ -293,6 +315,15 @@ jobs:
         needs.changes.outputs.code == 'true'
       name: 'Run feature-off teardown-disabled tests'
       run: 'cargo nextest run --no-default-features --test teardown_disabled'
+    # See the `test` job's summary step.
+    - if: |
+        always() && needs.changes.outputs.code == 'true'
+      name: 'Cache effectiveness summary'
+      run: |
+        S="$GITHUB_STEP_SUMMARY"
+        echo '### Cache effectiveness' >>"$S"
+        echo 'SBF cache hit: ${{ steps.sbf-cache.outputs.cache-hit }}' >>"$S"
+        sccache --show-stats >>"$S"
   # Rust↔ASM parity guard. A standalone job (no `needs` beyond `changes`)
   # so it runs in parallel with `test` / `test-no-teardown` rather than
   # extending the critical path. It is the only job that builds BOTH
@@ -311,9 +342,14 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
+    # Compiler version from the workspace `rust-toolchain.toml`; see the note
+    # in lint.yml for the action choice and the neutralized defaults.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'dtolnay/rust-toolchain@stable'
+      uses: 'actions-rust-lang/setup-rust-toolchain@v1'
+      with:
+        cache: false
+        rustflags: ''
     - if: |
         needs.changes.outputs.code == 'true'
       uses: './.github/actions/install-toolchain'
@@ -368,6 +404,15 @@ jobs:
         needs.changes.outputs.code == 'true'
       name: 'Run Rust<->ASM parity tests'
       run: 'cargo nextest run --test asm_parity'
+    # See the `test` job's summary step.
+    - if: |
+        always() && needs.changes.outputs.code == 'true'
+      name: 'Cache effectiveness summary'
+      run: |
+        S="$GITHUB_STEP_SUMMARY"
+        echo '### Cache effectiveness' >>"$S"
+        echo 'SBF cache hit: ${{ steps.sbf-cache.outputs.cache-hit }}' >>"$S"
+        sccache --show-stats >>"$S"
   # The SQL-backed crates (`dropset-feeds` and `dropset-indexer`) reach a real
   # Postgres through testcontainers, so their store suites are `#[ignore]`d
   # and the default `cargo nextest run` above skips them entirely — as it does
@@ -387,9 +432,14 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
+    # Compiler version from the workspace `rust-toolchain.toml`; see the note
+    # in lint.yml for the action choice and the neutralized defaults.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'dtolnay/rust-toolchain@stable'
+      uses: 'actions-rust-lang/setup-rust-toolchain@v1'
+      with:
+        cache: false
+        rustflags: ''
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'mozilla-actions/sccache-action@v0.0.10'
@@ -421,6 +471,15 @@ jobs:
         cargo nextest run --run-ignored all -p dropset-feeds \
         -p dropset-indexer --features dropset-feeds/store,dropset-feeds/http \
         --features dropset-feeds/rpc,dropset-feeds/stream
+    # See the `test` job's summary step. No SBF line here: this job builds no
+    # program and so has no `sbf-cache` step to report on.
+    - if: |
+        always() && needs.changes.outputs.code == 'true'
+      name: 'Cache effectiveness summary'
+      run: |
+        S="$GITHUB_STEP_SUMMARY"
+        echo '### Cache effectiveness' >>"$S"
+        sccache --show-stats >>"$S"
 name: 'Tests'
 'on':
   merge_group: null

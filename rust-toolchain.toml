@@ -1,0 +1,24 @@
+# The single authoritative Rust version for this workspace: CI, local
+# development, and the Docker images all resolve the compiler from here.
+#
+# Why this file exists. CI used to resolve `dtolnay/rust-toolchain@stable`,
+# which floats. On 2026-08-20 clippy 1.98 shipped a new lint
+# (`chunks_exact_to_as_chunks`), the lint workflow runs clippy with
+# `-D warnings`, and main went red with no code change — blocking the merge
+# queue for every open PR. A floating channel means any compiler release can
+# do that again, so the channel is pinned and moves only in a deliberate
+# bump PR.
+#
+# Only `channel` is set, on purpose. rustup installs a pinned channel with its
+# default profile, which already carries clippy and rustfmt, so listing them
+# under `components` would add a redundant install step to every CI job —
+# including the four test jobs that need neither. Per-job extras (clippy and
+# rustfmt for the lint gate, the wasm32 target for the SDK gate) stay declared
+# in the workflow that needs them.
+#
+# Bumping this is a reviewed diff, never a surprise: run the full-workspace
+# `cargo clippy --all-targets -- -D warnings` locally first, so new-lint churn
+# arrives as a PR rather than as a red main. See docs/ci.md.
+
+[toolchain]
+channel = "1.98.0"
