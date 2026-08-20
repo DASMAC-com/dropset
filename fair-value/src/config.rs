@@ -197,7 +197,12 @@ impl FairValueConfig {
         if !is_fraction(self.fx_max_confidence_frac) {
             return Err(ConfigError::NotAFraction("fx_max_confidence_frac"));
         }
-        if !is_fraction(self.basis_max_reseed_weight) {
+        // Strictly below 1, not merely a fraction: at exactly 1.0 the cap is a
+        // no-op and a single post-gap print becomes the basis outright, which is
+        // the defect this field exists to prevent. A validator that accepts the
+        // one value the field forbids is worse than none, because it reads as
+        // having checked.
+        if !is_fraction(self.basis_max_reseed_weight) || self.basis_max_reseed_weight >= 1.0 {
             return Err(ConfigError::NotAFraction("basis_max_reseed_weight"));
         }
         if !is_fraction(self.basis_max_jump_frac) {

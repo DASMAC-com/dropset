@@ -218,13 +218,19 @@ impl FeedHub {
             .reading
             .map(|r| r.value)
             .filter(|v| *v > 0.0);
-        let kraken_usdc = market.kraken_pair.and_then(|p| {
-            aged(self.kraken.get(p)).map(|r| match usdc_per_usd {
-                Some(peg) => Reading {
-                    value: r.value / peg,
-                    ..r
-                },
-                None => r,
+        // Kraken is a candidate for this leg **only when the peg leg resolved**
+        // and can convert it. Offering it unconverted would put a token/USD
+        // print beside Coinbase's token/USDC and manufacture a dispersion flag
+        // out of a unit mismatch — and substituting a 1.0 peg is the parity
+        // claim this crate refuses to make elsewhere. So a peg leg that cannot
+        // agree with itself costs the basis leg a source rather than corrupting
+        // it. (Before the consensus filter this read the raw value instead,
+        // which was survivable only because it was one tier's selected value
+        // rather than a co-candidate others get compared against.)
+        let kraken_usdc = market.kraken_pair.zip(usdc_per_usd).and_then(|(p, peg)| {
+            aged(self.kraken.get(p)).map(|r| Reading {
+                value: r.value / peg,
+                ..r
             })
         });
         let crypto_usdc = Candidates::none()
@@ -249,6 +255,56 @@ impl FeedHub {
         build_legs(fx, crypto_usdc, usdc_usd, market.static_usd)
     }
 }
+
+/// Log this market's leg health when it **changes**, so the consensus filter's
+/// per-tick signals reach an operator instead of being computed and discarded.
+///
+/// The filter's whole claim is that a sick source is visible rather than
+/// silently absorbed — a refused observation, a leg whose sources disagree, a
+/// basis carried past its age. None of that is worth anything if nothing reads
+/// it, and `basis_outlier` in particular is the observable that makes a source
+/// gone bad recognizable *before* it has moved the mid.
+///
+/// Deliberately transition-only: this runs every five seconds per market, so
+/// logging unconditionally would bury the transition it exists to surface. The
+/// richer per-feed operator view is the separate telemetry effort; this is the
+/// floor that keeps the signals from being write-only in the meantime.
+fn report_leg_health(ctx: &mut Context, fair: &FairValue) {
+    let mut notes: Vec<String> = Vec::new();
+    if fair.basis_outlier {
+        notes.push("basis reading refused as an outlier".to_string());
+    }
+    for (leg, report) in [("fx", &fair.fx_leg), ("basis", &fair.crypto_leg)] {
+        if report.dispersed() {
+            let who = report.outlier.unwrap_or("unattributed");
+            notes.push(format!(
+                "{leg} leg dispersed across {} sources ({who} furthest out)",
+                report.n
+            ));
+        }
+    }
+    if let Some(age) = fair.basis_age {
+        // Only worth saying once the basis is being *carried* rather than
+        // observed; a freshly folded basis is age zero every tick.
+        if age >= BASIS_AGE_REPORT_AFTER {
+            notes.push(format!("basis carried for {}s", age.as_secs()));
+        }
+    }
+
+    let line = (!notes.is_empty()).then(|| notes.join("; "));
+    if line != ctx.last_leg_health {
+        match &line {
+            Some(text) => eprintln!("[legs] {}: {text}", ctx.cfg.symbol),
+            None => eprintln!("[legs] {}: recovered", ctx.cfg.symbol),
+        }
+        ctx.last_leg_health = line;
+    }
+}
+
+/// How old a carried basis must be before it is worth an operator line. Past a
+/// few minutes it is no longer "the last tick's basis" but a value the market is
+/// riding, which is the thing worth noticing.
+const BASIS_AGE_REPORT_AFTER: Duration = Duration::from_secs(5 * 60);
 
 /// The per-tick inputs [`FeedHub::legs`] needs beyond the cache itself,
 /// bundled so the tiering reads the same clock and the same bounds the engine
@@ -438,6 +494,7 @@ pub fn run_supervisor(
                 .map_or(Duration::ZERO, |t| now.duration_since(t));
             ctx.last_compose = Some(now);
             let fair = ctx.engine.compose(legs, dt, clock);
+            report_leg_health(ctx, &fair);
             let got_fill = routed.get(&ctx.market.market).copied();
             if let Err(e) = quote_market(ctx, &cfg, now, fair, got_fill) {
                 eprintln!("[{}] tick error: {e}", ctx.cfg.symbol);
@@ -1530,6 +1587,38 @@ mod tests {
         let basis = resolved(&legs, |l| l.crypto_usdc, &tick);
         assert_eq!(basis.n, 1);
         assert_eq!(basis.reading.unwrap().value, 1.1520 / 1.0000);
+    }
+
+    #[test]
+    fn a_peg_leg_that_cannot_agree_drops_the_kraken_candidate_rather_than_un_converting_it() {
+        // Kraken quotes token/USD. If the peg leg cannot resolve, converting is
+        // impossible — and offering the raw print would drop a token/USD value
+        // into a leg of token/USDC values, so the dispersion gate would report a
+        // unit mismatch as a venue disagreement. The leg loses a source instead.
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let tick = tick_at(now, now_unix);
+        let m = eurc();
+        let mut hub = full_hub(now, now_unix);
+
+        // Baseline: the two peg sources agree, so Kraken converts and counts.
+        let basis = resolved(&hub.legs(&m, &tick), |l| l.crypto_usdc, &tick);
+        assert_eq!(basis.n, 4);
+
+        // Now drive the two peg sources far apart. The peg leg cannot adjudicate
+        // (n == 2, dispersed, neither designated), so it resolves to nothing.
+        hub.cg.insert(USDC_COINGECKO_ID.to_string(), (0.5000, now));
+        let legs = hub.legs(&m, &tick);
+        assert!(
+            resolved(&legs, |l| l.usdc_usd, &tick).reading.is_none(),
+            "a disagreeing peg pair has nothing to offer"
+        );
+        let basis = resolved(&legs, |l| l.crypto_usdc, &tick);
+        assert_eq!(basis.n, 3, "Kraken is withheld, not offered unconverted");
+        assert!(
+            basis.reading.unwrap().value > 1.14,
+            "and the remaining token/USDC sources still agree: {:?}",
+            basis.reading
+        );
     }
 
     #[test]

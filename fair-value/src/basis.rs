@@ -1,5 +1,3 @@
-// cspell:word ungated
-
 //! The stateful basis estimator (§1 basis estimation).
 //!
 //! `basis` is a **slow, smoothed multiplicative correction** near 1 — an EMA
@@ -23,12 +21,38 @@
 //! reasoning that the basis is a slow process by construction: a large
 //! single-tick move is a bad source, not news.
 //!
+//! Two things about that rejection rule are load-bearing and easy to get
+//! wrong:
+//!
+//! - **It bounds a single step, not cumulative drift.** The gate measures
+//!   against the running estimate — the very thing a sequence of accepted
+//!   observations is moving — so a patient source can walk the estimate a long
+//!   way in steps that are each individually credible. What stops a slow walk
+//!   is the *sane band* on the result, which makes that band load-bearing
+//!   rather than merely a peg-event alarm.
+//! - **The allowance widens with age, or the estimator never recovers.** A
+//!   fixed allowance judges a returning observation against a reference frozen
+//!   from before the leg went down; once the true basis has moved further than
+//!   that allowance, every returning observation is refused against a stale
+//!   reference and the market never comes back. So the gate loosens in step
+//!   with how long it has been since anything corroborated the estimate — see
+//!   [`BasisEma::jump_allowance`], which also explains why widening is right
+//!   and *clearing* the estimate on expiry is not.
+//!
 //! Rejection is reported, never silent — see [`Fold::Rejected`]. An estimator
 //! that quietly dropped readings would turn a sick feed into a frozen basis
 //! with nothing to show for it, which is the failure this crate exists to make
 //! visible.
 
 use std::time::Duration;
+
+/// Ceiling on how far age may *widen* the jump allowance, as a multiple of the
+/// configured base (see [`BasisEma::jump_allowance`]).
+///
+/// A multiplier rather than an absolute allowance, so that a caller which
+/// configures an explicitly unbounded gate still gets one — capping the product
+/// would silently re-gate it.
+const MAX_JUMP_WIDENING: f64 = 10.0;
 
 /// What happened to an observation offered to the EMA.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -47,16 +71,6 @@ pub enum Fold {
 }
 
 impl Fold {
-    /// The smoothed estimate after this fold — the new one if the observation
-    /// was folded, the standing one if it was rejected. Either way it is the
-    /// value the caller should quote off.
-    pub fn estimate(self) -> f64 {
-        match self {
-            Self::Folded(v) => v,
-            Self::Rejected { estimate, .. } => estimate,
-        }
-    }
-
     /// Whether the observation was refused as an outlier.
     pub fn rejected(self) -> bool {
         matches!(self, Self::Rejected { .. })
@@ -128,7 +142,7 @@ impl BasisEma {
             return Fold::Folded(observation);
         };
 
-        if !observation.is_finite() || self.is_a_jump(prev, observation) {
+        if !observation.is_finite() || self.is_a_jump(prev, observation, dt) {
             return Fold::Rejected {
                 estimate: prev,
                 observation,
@@ -141,15 +155,48 @@ impl BasisEma {
         Fold::Folded(next)
     }
 
-    /// Whether `observation` sits further than `max_jump_frac` from `prev`,
-    /// measured as a fraction of `prev`. A non-positive or non-finite estimate
-    /// has no meaningful scale to measure against, so nothing counts as a jump
-    /// from it.
-    fn is_a_jump(&self, prev: f64, observation: f64) -> bool {
+    /// Whether `observation` sits further from `prev` than an observation
+    /// offered `dt` after the last fold is allowed to. A non-positive or
+    /// non-finite estimate has no meaningful scale to measure against, so
+    /// nothing counts as a jump from it.
+    fn is_a_jump(&self, prev: f64, observation: f64, dt: Duration) -> bool {
         if !prev.is_finite() || prev <= 0.0 {
             return false;
         }
-        ((observation - prev) / prev).abs() > self.max_jump_frac
+        ((observation - prev) / prev).abs() > self.jump_allowance(dt)
+    }
+
+    /// How far an observation offered `dt` after the last fold may sit from the
+    /// running estimate.
+    ///
+    /// The allowance **widens with age**, and that is what makes the estimator
+    /// recoverable. A fixed allowance measures a returning observation against
+    /// a reference frozen at whatever the basis was before the leg went down —
+    /// so once the true basis had moved further than the allowance, every
+    /// returning observation was refused against a stale reference, forever,
+    /// and the market never came back. The gate has to loosen at the same time
+    /// the estimate loses authority.
+    ///
+    /// Widening is deliberately preferred over *clearing* the estimate on
+    /// expiry. Clearing looks simpler but is strictly worse: the seeding tick is
+    /// ungated by construction, so a source that went quiet for the expiry
+    /// window could then seed any value it liked in a single print. Widening
+    /// never produces an ungated seed — every observation is still judged, just
+    /// against a bound proportionate to how long it has been since anything
+    /// was.
+    ///
+    /// It grows linearly in half-lives elapsed, never tighter than the base
+    /// allowance and never wider than [`MAX_JUMP_WIDENING`] times it. Past that
+    /// ceiling the gate would stop discriminating; what bounds an estimate
+    /// nothing has corroborated for that long is the caller's age bound.
+    fn jump_allowance(&self, dt: Duration) -> f64 {
+        let hl = self.half_life.as_secs_f64();
+        let dt = dt.as_secs_f64();
+        if hl <= 0.0 || !dt.is_finite() || dt <= 0.0 {
+            return self.max_jump_frac;
+        }
+        let widening = (dt / hl).clamp(1.0, MAX_JUMP_WIDENING);
+        self.max_jump_frac * widening
     }
 }
 
@@ -187,6 +234,18 @@ mod tests {
         BasisEma::new(half_life, 0.9, 0.05)
     }
 
+    /// Offer `observation` and return the estimate that stands afterwards — the
+    /// folded value, or the untouched one if it was refused.
+    ///
+    /// The estimator deliberately exposes no "the value to quote off" accessor:
+    /// whether an estimate is fit to price with depends on its age, which it
+    /// does not know. Tests that only care about the arithmetic read the state
+    /// back instead.
+    fn folded(ema: &mut BasisEma, observation: f64, dt: Duration) -> f64 {
+        ema.update(observation, dt);
+        ema.value().expect("seeded before this call")
+    }
+
     #[test]
     fn first_observation_seeds_directly() {
         let mut ema = ungated(secs(600));
@@ -201,7 +260,7 @@ mod tests {
         // estimate should land halfway, at 1.5.
         let mut ema = ungated(secs(600));
         ema.update(1.0, secs(5));
-        let v = ema.update(2.0, secs(600)).estimate();
+        let v = folded(&mut ema, 2.0, secs(600));
         assert!((v - 1.5).abs() < 1e-9, "expected 1.5, got {v}");
     }
 
@@ -213,7 +272,7 @@ mod tests {
         ema.update(1.0, secs(5));
         let mut last = 1.0;
         for _ in 0..200 {
-            last = ema.update(1.01, secs(30)).estimate();
+            last = folded(&mut ema, 1.01, secs(30));
         }
         assert!(last > 1.0 && last <= 1.01);
         assert!((last - 1.01).abs() < 1e-3, "should converge near 1.01");
@@ -227,8 +286,8 @@ mod tests {
         let mut long = ungated(secs(600));
         short.update(1.0, secs(5));
         long.update(1.0, secs(5));
-        let vs = short.update(2.0, secs(30)).estimate();
-        let vl = long.update(2.0, secs(300)).estimate();
+        let vs = folded(&mut short, 2.0, secs(30));
+        let vl = folded(&mut long, 2.0, secs(300));
         assert!(
             vl > vs,
             "longer gap ({vl}) should move more than short ({vs})"
@@ -250,7 +309,7 @@ mod tests {
         // `1 - max_weight` of the weight, whatever the gap.
         let mut ema = BasisEma::new(secs(600), 0.9, f64::INFINITY);
         ema.update(1.0, secs(5));
-        let v = ema.update(1.5, secs(60 * 60 * 60)).estimate();
+        let v = folded(&mut ema, 1.5, secs(60 * 60 * 60));
         assert!(v < 1.5, "a single post-gap print must not become the basis");
         assert!((v - 1.45).abs() < 1e-9, "expected 1.0 + 0.9*0.5, got {v}");
     }
@@ -263,8 +322,8 @@ mod tests {
         let mut uncapped = ungated(secs(600));
         capped.update(1.0, secs(5));
         uncapped.update(1.0, secs(5));
-        let c = capped.update(1.01, secs(30)).estimate();
-        let u = uncapped.update(1.01, secs(30)).estimate();
+        let c = folded(&mut capped, 1.01, secs(30));
+        let u = folded(&mut uncapped, 1.01, secs(30));
         assert!((c - u).abs() < 1e-12, "cap should not bind at a 30s gap");
     }
 
@@ -285,7 +344,6 @@ mod tests {
         assert!(fold.rejected());
         // The estimate is untouched — a refused observation leaves no trace.
         assert_eq!(ema.value(), Some(1.0));
-        assert_eq!(fold.estimate(), 1.0);
     }
 
     #[test]
@@ -294,7 +352,7 @@ mod tests {
         ema.update(1.0, secs(5));
         let fold = ema.update(1.02, secs(30));
         assert!(!fold.rejected(), "2% is inside a 5% gate");
-        assert!(fold.estimate() > 1.0);
+        assert!(ema.value().unwrap() > 1.0);
     }
 
     #[test]
@@ -308,17 +366,55 @@ mod tests {
     }
 
     #[test]
-    fn a_persistent_shift_is_refused_rather_than_slowly_adopted() {
+    fn a_persistent_shift_is_refused_at_the_prevailing_cadence() {
         // A real regime change and a stuck bad source look identical to the
-        // gate, so it refuses both. That is the intended tradeoff: the caller
-        // sees a run of rejections and degrades on the carried-basis age bound,
-        // rather than the estimator quietly walking to a wrong level.
+        // gate at a given cadence, so it refuses both. That is the intended
+        // tradeoff at this timescale: the caller sees a run of rejections rather
+        // than the estimator quietly walking to a wrong level.
         let mut ema = gated(secs(600));
         ema.update(1.0, secs(5));
         for _ in 0..50 {
             assert!(ema.update(0.52, secs(30)).rejected());
         }
         assert_eq!(ema.value(), Some(1.0));
+    }
+
+    #[test]
+    fn a_refused_shift_is_eventually_accepted_as_the_estimate_ages() {
+        // The other half of the rule above, and the one the estimator used to
+        // lack: refusal must not be permanent. Offered far enough after the last
+        // fold, a moved basis is credible precisely because there has been time
+        // for it to move — so the gate widens and the estimate recovers without
+        // a restart.
+        let mut ema = gated(secs(600));
+        ema.update(1.0, secs(5));
+        // Immediately, a 20% move is not credible.
+        assert!(ema.update(1.20, secs(30)).rejected());
+        // Four half-lives later, it is: the allowance has widened to 20%.
+        assert!(!ema.update(1.20, secs(4 * 600)).rejected());
+        assert!(ema.value().unwrap() > 1.0);
+    }
+
+    #[test]
+    fn the_widened_allowance_never_becomes_a_free_pass() {
+        // Widening must not degenerate into the ungated seed that clearing the
+        // estimate would have produced: however long the gap, an observation
+        // still has to be judged against something.
+        let mut ema = gated(secs(600));
+        ema.update(1.0, secs(5));
+        // A century of silence does not license an arbitrary value.
+        assert!(ema.update(1_000.0, secs(100 * 365 * 24 * 3_600)).rejected());
+        assert_eq!(ema.value(), Some(1.0));
+    }
+
+    #[test]
+    fn the_allowance_is_never_tighter_than_the_base_gate() {
+        // A sub-half-life cadence — the normal case — must not be gated tighter
+        // than the configured fraction just because little time has passed.
+        let mut ema = gated(secs(600));
+        ema.update(1.0, secs(5));
+        // 4% at a 1-second cadence is inside the 5% base allowance.
+        assert!(!ema.update(1.04, secs(1)).rejected());
     }
 
     #[test]

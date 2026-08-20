@@ -171,10 +171,11 @@ than left to be inferred:
   that publishes one lets the model see *fresh-but-uncertain*; one that does
   not can only ever read as fresh or stale. This is why the anchor leg
   distinguishes sources at all.
-- **Coverage is permanently asymmetric.** Only EURC of the seven demo markets
-  reaches a CEX, so for the other six an aggregator index *is* the basis leg.
-  That is the standing condition the leg resolution below is built around, not
-  a temporary gap.
+- **Coverage is permanently asymmetric.** Only one of the seven demo markets
+  reaches a CEX. For five of the rest an aggregator index *is* the basis leg,
+  and the last has **no basis source at all** — its basis is pinned, so there
+  is nothing for the resolution below to compare against. That is the standing
+  condition the leg resolution is built around, not a temporary gap.
 
 ### Leg resolution
 
@@ -186,21 +187,31 @@ given the asymmetry above, most markets had exactly one source under them.
 Per leg, per tick, across the healthy sources:
 
 - **three or more** — the **median**, which one bad source cannot move;
-- **two** — usable if they agree within the dispersion band; a disagreeing
+- **two** — usable if they agree within the dispersion band. A disagreeing
   pair cannot adjudicate between itself, so the leg degrades instead of
-  guessing;
+  guessing — **unless exactly one of the two is a designated source**, which
+  is the case the designation below exists to settle;
 - **one** — an explicit single-source state. It still carries the mid, since
-  refusing would dark most of the roster, but the composition reports
-  `Unverified` rather than describing an unchecked feed as a corroborated
-  price.
+  refusing would dark most of the roster, but a lone source with **no
+  designation** composes as `Unverified` rather than being described as a
+  corroborated price. A lone *designated* source composes normally.
 
 A **dispersion gate** rides alongside: when a leg's healthy sources span more
-than the band, the leg is flagged and the source furthest from consensus is
-named. Naming it is the point — a dispersion alarm with no suspect attached
-is one nobody can act on. The gate is the general form of the one-shot
-startup wiring check it replaces: that check could latch only once per
-market and spent its shot on whichever source answered first, so an id
-reachable only through a fallback went unvalidated until the day it was used.
+than the band, the leg is flagged, the source furthest from consensus is
+named, and the composition **degrades**. Naming it is the point — a dispersion
+alarm with no suspect attached is one nobody can act on. Degrading is the
+other half: with three or more sources the median still resolves, so a
+disagreement would otherwise be reported alongside a perfectly healthy mid.
+Note the asymmetry with a lone uncorroborated source, which does *not*
+degrade: that is a permanent condition, while a disagreement is a fault, and
+only faults should tighten the kill switches.
+
+The gate **generalizes** the one-shot startup wiring check, which survives
+alongside it: that check could latch only once per market and spent its shot
+on whichever source answered first, so an id reachable only through a
+fallback went unvalidated until the day it was used.
+What the one-shot still does that the gate cannot is attribute the very
+*first* observation, where there is no history to have departed from.
 
 A source may be **designated believable on its own**. Such a source anchors
 its leg rather than averaging into it — blending a live first-party oracle
@@ -236,14 +247,18 @@ both of which matter because the estimate is *multiplied into every quote*:
   an observation too far from the running estimate is refused rather than
   smoothed: the basis is a slow process by construction, so a large
   single-tick move is a bad source, not news. A refusal is reported, never
-  silent.
+  silent. Note the scope of that guard precisely — it bounds the size of any
+  **single** step, and it measures against the running estimate, so it does
+  not bound cumulative drift across many accepted steps. The sane band is
+  what stops a slow walk, which makes that band load-bearing rather than
+  merely a peg-event alarm.
 - **A carried basis expires.** Every input leg is bounded by an age; the
   estimate itself must be too, or a basis smoothed seconds ago and one
   smoothed days ago produce identical quotes. Past the bound the model stops
-  quoting on the dead estimate and falls to the static peg. It never
-  substitutes 1.0 for an unobserved basis — a fabricated parity claim is
-  indistinguishable in the output from having measured the basis and found it
-  at par.
+  quoting on the dead estimate and falls to the static peg — or pauses, when
+  the market has no static peg to fall to. It never substitutes 1.0 for an
+  unobserved basis — a fabricated parity claim is indistinguishable in the
+  output from having measured the basis and found it at par.
 
 The refusal rule and the expiry interact deliberately: a source stuck on a
 bad value has its prints refused, the estimate stops being refreshed, and the

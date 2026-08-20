@@ -77,7 +77,6 @@ mod consensus;
 mod engine;
 mod reading;
 
-pub use basis::Fold;
 pub use config::{ConfigError, FairValueConfig};
 pub use consensus::{Candidate, Candidates, Consensus, ConsensusState, MAX_CANDIDATES};
 pub use engine::{

@@ -94,6 +94,16 @@ pub struct Context {
     /// have no basis to check and would spend the one shot on nothing.
     pub basis_checked: bool,
 
+    /// The last leg-health line reported for this market, so the tick loop logs
+    /// a **transition** rather than the same line every five seconds.
+    ///
+    /// The consensus filter produces per-tick signals — a refused observation,
+    /// a leg whose sources disagree, a basis carried past its age — and a signal
+    /// nothing reads is a signal that does not exist. Deduping here is what
+    /// makes logging them affordable on a per-tick loop; the richer operator
+    /// surface is the separate telemetry effort's, not this field's.
+    pub last_leg_health: Option<String>,
+
     /// The vault's TVL (USD) the first time this run valued it — the baseline
     /// the §4 drawdown floor is measured against. Seeded on the first tick that
     /// has a usable mid; `None` until then. A restart re-baselines to the
@@ -187,6 +197,7 @@ impl Context {
             engine: FairValueEngine::new(fair_value),
             last_compose: None,
             basis_checked: false,
+            last_leg_health: None,
             launch_tvl_usd: None,
             fills_active: false,
             last_set_price: None,

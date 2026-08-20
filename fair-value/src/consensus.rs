@@ -6,12 +6,14 @@
 //! being asked to serve as a truth mechanism.
 //!
 //! The failure is not hypothetical and not confined to one market. Only one
-//! roster market reaches a CEX primary at all; for the rest the aggregator
-//! fallback *is* the basis leg, which means an unverified single source sits
-//! under most of the book. A thin market is simply where it shows first — an
-//! aggregate built from a few hundred dollars of daily volume printed roughly
-//! half its peg, and because there was no second source, that number sailed
-//! into the engine and lit the peg alarm permanently.
+//! roster market reaches a CEX primary at all; for five of the rest an
+//! aggregator index *is* the basis leg, so an unverified single source sits
+//! under most of the book. (The remaining market has no basis source whatever —
+//! its basis is pinned, so there is nothing here to resolve for it.) A thin
+//! market is simply where it shows first — an aggregate built from a few hundred
+//! dollars of daily volume printed roughly half its peg, and because there was
+//! no second source, that number sailed into the engine and lit the peg alarm
+//! permanently.
 //!
 //! So a leg now collects **every healthy source** rather than the best one, and
 //! resolves them together:
@@ -116,16 +118,15 @@ impl Candidates {
         Self::default()
     }
 
-    /// A set holding one candidate.
-    pub fn one(candidate: Candidate) -> Self {
-        Self::none().with(Some(candidate))
-    }
-
     /// Add a candidate, if the source answered. Silently ignores a `None` (a
     /// source that did not answer is not a candidate) and any push beyond
     /// [`MAX_CANDIDATES`], so a caller can offer its whole ladder unconditionally.
+    ///
+    /// Private: [`Candidates::push`] and [`Candidates::push_trusted`] are the
+    /// surface callers want, and they carry the source name a bare `Candidate`
+    /// would let a caller forget.
     #[must_use]
-    pub fn with(mut self, candidate: Option<Candidate>) -> Self {
+    fn with(mut self, candidate: Option<Candidate>) -> Self {
         if let Some(c) = candidate {
             if let Some(slot) = self.slots.iter_mut().find(|s| s.is_none()) {
                 *slot = Some(c);
@@ -161,6 +162,19 @@ impl Candidates {
     pub fn any_invalid(&self, stale: Duration) -> bool {
         self.iter()
             .any(|c| c.reading.young(stale) && !c.reading.valid())
+    }
+
+    /// Every healthy candidate's value, in offer order.
+    ///
+    /// For a caller that must reason about the individual readings rather than
+    /// the consensus — a guard whose job is "did **anything** report a problem?"
+    /// rather than "what is this leg worth?". Those are different questions, and
+    /// answering the first from the consensus is how a guard gets silenced by
+    /// the very disagreement it exists to catch.
+    pub fn healthy_values(&self, stale: Duration) -> impl Iterator<Item = f64> + '_ {
+        self.iter()
+            .filter(move |c| c.reading.fresh(stale))
+            .map(|c| c.reading.value)
     }
 
     /// Resolve the healthy candidates into one reading for the leg.
@@ -216,8 +230,40 @@ impl Candidates {
         // A non-positive consensus cannot happen — every healthy reading is
         // positive — but dividing by it would be the kind of thing that only
         // shows up in production, so the guard stays.
+        // A non-finite consensus cannot be summarized at all: with an even count
+        // the median averages the two middle values, so a pair near `f64::MAX`
+        // overflows to infinity. Testing dispersion first would then divide the
+        // spread by infinity, get zero, and report the widest possible set as
+        // perfect agreement — so this is handled before the band, not folded
+        // into it. Such a set is maximally dispersed and has nothing to offer;
+        // the outlier is measured from the smallest value rather than the
+        // consensus, since distances to infinity are meaningless.
+        if !consensus.is_finite() {
+            return Consensus {
+                reading: None,
+                state: ConsensusState::Dispersed,
+                outlier: Some(furthest_from(&healthy[..n], values[0])),
+                n,
+            };
+        }
+
         let dispersed = consensus > 0.0 && spread / consensus > dispersion_frac;
-        let outlier = dispersed.then(|| furthest_from(&healthy[..n], consensus));
+
+        let trusted = lone_trusted(&healthy[..n]);
+
+        // Naming the outlier: normally the source furthest from the median. But
+        // with exactly two sources the median IS their midpoint, so both sit the
+        // same distance from it and the comparison decides nothing — it is
+        // settled by whether `a + b` happened to be exactly representable.
+        // Measured, that names the designated source about a quarter of the
+        // time, which would drop the anchor and dark the leg in precisely the
+        // case the designation exists to rescue. So for a pair, the designation
+        // names the outlier directly rather than being inferred from arithmetic
+        // that carries no signal.
+        let outlier = dispersed.then(|| match (n, trusted) {
+            (2, Some(t)) => partner_of(&healthy[..n], t.source),
+            _ => furthest_from(&healthy[..n], consensus),
+        });
 
         // A source designated believable on its own **anchors** its leg: the
         // others corroborate it and can flag a disagreement, but they do not
@@ -229,8 +275,9 @@ impl Candidates {
         // The one thing that overrides it is being contradicted: if the trusted
         // source is itself the outlier, the majority stands and the median wins.
         // Otherwise a designation would become a way for one bad feed to beat
-        // every check on it.
-        let anchor = lone_trusted(&healthy[..n]).filter(|c| outlier != Some(c.source));
+        // every check on it. With only two sources there is no majority to do
+        // the contradicting, which is why the pair case is decided above.
+        let anchor = trusted.filter(|c| outlier != Some(c.source));
 
         let reading = match anchor {
             Some(c) => Some(representative(&[Some(c)], c.reading.value)),
@@ -281,8 +328,20 @@ pub enum ConsensusState {
 
 impl ConsensusState {
     /// Whether the leg rests on a single uncorroborated source.
+    ///
+    /// Deliberately **not** true of [`ConsensusState::Dispersed`], even though a
+    /// disagreeing set is also uncorroborated in the plain sense. The two want
+    /// opposite treatment: a lone source is a permanent condition and must not
+    /// tighten the kill switches forever, while a disagreement is a fault and
+    /// should — so dispersion travels on its own path (see
+    /// `Degrade::LegDispersed`) rather than through this one.
     pub fn is_uncorroborated(self) -> bool {
         matches!(self, Self::SingleUnverified)
+    }
+
+    /// Whether the leg's healthy sources disagree beyond the dispersion band.
+    pub fn is_dispersed(self) -> bool {
+        matches!(self, Self::Dispersed)
     }
 }
 
@@ -337,6 +396,19 @@ fn lone_trusted(healthy: &[Option<Candidate>]) -> Option<Candidate> {
         found = Some(*c);
     }
     found
+}
+
+/// The other source in a pair — the one that is not `source`.
+///
+/// Only meaningful for a two-source set, where it answers "which of these two
+/// is the suspect?" from the designation rather than from a distance comparison
+/// that cannot separate them.
+fn partner_of(healthy: &[Option<Candidate>], source: &'static str) -> &'static str {
+    healthy
+        .iter()
+        .flatten()
+        .find(|c| c.source != source)
+        .map_or(source, |c| c.source)
 }
 
 /// The source whose reading sits furthest from `consensus`.
@@ -497,6 +569,57 @@ mod tests {
         assert_eq!(c.state, ConsensusState::Dispersed);
         assert_eq!(c.reading.unwrap().value, 1.14, "the trusted source stands");
         assert_eq!(c.outlier, Some("frankfurter"));
+    }
+
+    #[test]
+    fn the_pair_tie_break_does_not_depend_on_exact_float_representation() {
+        // The case above passes for the wrong reason if the outlier is inferred
+        // from a distance comparison: with two sources the median is their
+        // midpoint, so the two distances are equal ONLY when `a + b` is exactly
+        // representable. `1.14 / 1.05` happens to tie, which hid this. These
+        // pairs do not tie — for the first, the *trusted* reading is
+        // arithmetically the further one from the midpoint — so a
+        // distance-inferred outlier names the designated source, drops the
+        // anchor, and darks the leg.
+        for (trusted, other) in [
+            (1.675_697_883_552_159, 0.954_969_089_118_391_2),
+            (1.14, 0.60),
+            (0.60, 1.14),
+        ] {
+            let c = Candidates::none()
+                .push_trusted("pyth-hermes", Some(r(trusted)))
+                .push("frankfurter", Some(r(other)))
+                .resolve(STALE, BAND);
+            assert_eq!(c.state, ConsensusState::Dispersed);
+            assert_eq!(
+                c.outlier,
+                Some("frankfurter"),
+                "the source with no designation is the suspect ({trusted} vs {other})"
+            );
+            assert_eq!(
+                c.reading.map(|x| x.value),
+                Some(trusted),
+                "the designated source must survive ({trusted} vs {other})"
+            );
+        }
+    }
+
+    #[test]
+    fn an_overflowing_median_is_not_reported_as_agreement() {
+        // With an even count the median averages the two middle values, so a
+        // pair near the top of the range overflows to infinity — and dividing
+        // the spread by infinity yields zero, which would report the widest
+        // possible disagreement as perfect agreement.
+        let c = Candidates::none()
+            .push("a", Some(r(f64::MAX)))
+            .push("b", Some(r(f64::MAX / 3.0)))
+            .resolve(STALE, BAND);
+        assert_eq!(c.state, ConsensusState::Dispersed);
+        assert!(
+            c.reading.is_none(),
+            "a set that cannot be summarized has nothing to offer"
+        );
+        assert!(c.outlier.is_some(), "and the operator is told which source");
     }
 
     #[test]

@@ -20,7 +20,9 @@
 //!                          coingecko | cmc | fx
 
 use anyhow::{anyhow, Context, Result};
-use dropset_fair_value::{Candidates, ClockCtx, FairValueEngine, LegReport, Reading, Regime};
+use dropset_fair_value::{
+    Candidates, ClockCtx, ConsensusState, FairValueEngine, LegReport, Reading, Regime,
+};
 use dropset_feeds::venues::{
     CmcSource, CoinGeckoSource, CoinbaseTicker, FrankfurterSource, KrakenSource, PythFeed,
     PythHermesSource,
@@ -545,12 +547,23 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     /// wiring check, so how many sources answered and which one disagrees is
     /// exactly what it exists to show — naming the outlier is the difference
     /// between "something is wrong" and "this id is wrong".
+    /// Switches on `state`, not on whether an outlier happens to be named: a
+    /// dispersed leg that cannot single out a suspect must not render as
+    /// "agree". The state is the authority on what the leg concluded; the
+    /// outlier is an optional detail hanging off it.
     fn describe_leg(leg: &LegReport) -> String {
-        match (leg.n, leg.outlier) {
-            (0, _) => "—".to_string(),
-            (n, Some(who)) => format!("{n} src, {who} out"),
-            (1, None) => "1 src, unchecked".to_string(),
-            (n, None) => format!("{n} src, agree"),
+        let n = leg.n;
+        match leg.state {
+            ConsensusState::Absent => "—".to_string(),
+            ConsensusState::Dispersed => match leg.outlier {
+                Some(who) => format!("{n} src, {who} out"),
+                None => format!("{n} src, DISAGREE"),
+            },
+            ConsensusState::SingleUnverified => "1 src, unchecked".to_string(),
+            ConsensusState::SingleTrusted => "1 src, trusted".to_string(),
+            ConsensusState::Agreed | ConsensusState::Corroborated => {
+                format!("{n} src, agree")
+            }
         }
     }
     // USDC/USD common-mode leg, shared by every market: Kraken's market print,
@@ -580,11 +593,11 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
             .reading
             .map(|r| r.value)
             .filter(|v| *v > 0.0);
-        let kraken_q = m.kraken_pair.and_then(|p| {
-            q(kraken.get(p).copied()).map(|r| match usdc_per_usd {
-                Some(peg) => Reading::new(r.value / peg, now),
-                None => r,
-            })
+        // Only a candidate when the peg leg resolved — see `FeedHub::legs`, whose
+        // reasoning this mirrors: an unconverted token/USD print beside a
+        // token/USDC one is a unit mismatch masquerading as a disagreement.
+        let kraken_q = m.kraken_pair.zip(usdc_per_usd).and_then(|(p, peg)| {
+            q(kraken.get(p).copied()).map(|r| Reading::new(r.value / peg, now))
         });
         let basis_q = Candidates::none()
             .push(
