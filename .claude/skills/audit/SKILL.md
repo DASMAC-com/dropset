@@ -1,6 +1,6 @@
 ---
 name: audit
-description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent issues (folding coupled findings that share a PR) stamped with the `Audit findings` project milestone so they land PARKED rather than in the pull queue, records each new issue's file collisions via sync-blockers `--for` (never a blocking edge — blocking is human-curated), announces counts and titles only, and stops. Sequencing a parked finding into the Backlog is the `plan` skill's job, never this one's. No loop, no finding cap, no re-invocation — run it again for another rotation.
+description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. This RANDOM rotation is now an explicitly ad-hoc invocation only — it is no longer any skill's default, because housekeeping instead executes the Planning document's audit directive against one named target. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent issues (folding coupled findings that share a PR) in state Todo plus the `Audit findings` project milestone so they land PARKED rather than in the pull queue, files no relations or collision links at all (never a blocking edge — blocking is human-curated), announces counts and titles only, and stops. The adversarial sub-agent cross-check is authorized by this invocation; never substitute an inline pass and never silently skip it. Sequencing a parked finding into the Backlog is the `plan` skill's job, never this one's. No loop, no finding cap, no re-invocation — run it again for another rotation.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -13,17 +13,36 @@ Run **one bounded audit rotation** and exit. A rotation is a fixed
 sequence of **seven units** — four random files plus three structural
 passes — each audited across the dimensions its subject calls for, with
 adversarial cross-checking, folding coupled findings and filing the
-fewest self-contained issues (no parent), each stamped with the
-**`Audit findings` project milestone** so it lands **parked** — a
-first-class open issue for dedup, collision detection and search, but
-*not* in the pull queue. Slating a finding into the Backlog is a
+fewest self-contained issues (no parent), each in state **`Todo`** and
+stamped with the **`Audit findings` project milestone** so it lands
+**parked** — a first-class open issue for dedup and search, but *not* in
+the pull queue.
+
+**This random rotation is an ad-hoc invocation, not a default.**
+`housekeeping` no longer runs it: it executes the Planning document's
+**audit directive** instead, one scoped `audit-scope` run against a
+named subsystem or interface (or none). The reason is targeting, not
+cost — a random rotation in a heavy-feature phase audits code that is
+about to be rewritten, and one pass filed fifteen parked findings,
+several against files that open Backlog issues already covered. Reach
+for `/audit` deliberately, when a broad sweep is what you want.
+
+**The sub-agent fan-out is authorized by this invocation.** Invoking
+`/audit` **is** the request for the adversarial cross-check — it is the
+skill's mechanism, not an optional extra, so a session-level "don't
+spawn agents unless asked" default is *satisfied* by that authorization
+rather than in tension with it. If sub-agent tooling is genuinely
+unavailable, **stop and ask**; never substitute an inline pass (the
+trade `review-pr` deleted its inline path to prevent), and never
+silently skip the rotation — a pass that did so was reasoning from a
+conflict that does not exist. Slating a finding into the Backlog is a
 sequencing decision, and it belongs to a planning session (`plan`
 step 8), never to a rotation. What gates what is recorded
 as native Linear blocking edges, which a **human curates** — an
 autonomous rotation files none (per `CLAUDE.md` → "Blocking
-relations"). Recording file overlap is a separate job, owned by
-`sync-blockers`, which `related`-links it (this skill calls it per
-filed issue — see the File and Done steps).
+relations"). It files **no relations at all**: the automated
+file-collision machinery is being retired by operator direction, so a
+rotation records no collision links and nothing here depends on them.
 
 Invoke it directly — `/audit` — when you want a fresh batch of findings.
 It is **finite**: it runs the seven units once, files what they surface
@@ -52,7 +71,7 @@ passes:
 5. FILE       — another random non-generated file  → audit-scope
 6. LAYOUT     — repo-layout + spec-health pass      → one agent
 7. FILE       — another random non-generated file  → audit-scope
-→ per unit: cross-check, dedup, file/fold findings, sync-blockers --for each
+→ per unit: cross-check, dedup, file/fold findings (parked: Todo + milestone)
 → at the end: DONE
 ```
 
@@ -78,9 +97,8 @@ going through `audit-scope`.
 ## Read-only guarantee
 
 This skill **never authors source edits and never writes to the
-worktree**. Its only writes are the Linear issues it files and the
-file-collision `related` relations `sync-blockers` materializes for each
-(via its `--for` incremental mode). It produces no source diff of its
+worktree**. Its only writes are the Linear issues it files — no
+relations, no collision links. It produces no source diff of its
 own, so it must never commit or push. The one repo operation it does
 perform is fast-forwarding the throwaway worktree to upstream `main` at
 the **start of the rotation** (step 1) — that pulls in others' merged
@@ -328,7 +346,7 @@ File exactly as the
 assigned to the configured assignee, into the shared destination —
 **and stamped with the `Audit findings` project milestone**.
 There is **no umbrella issue**, and
-`sync-blockers` records file collisions between its issues.
+and no collision links between its issues.
 
 **Why the milestone, and why it is not the Backlog.** The Backlog is
 the **pullable set** — the queue an implementation session pulls from
@@ -342,9 +360,19 @@ finding costs a planning bootstrap nothing while remaining a
 first-class open issue for **dedup, collision detection, and search**.
 
 Everything else about filing is **unchanged** — the `**Fingerprint**:`
-dedup, the `**Touches**:` globs, the fewest-coherent-PRs fold, the
-`Claude:` prefix, and the per-issue collision sweep all behave exactly
-as before. The milestone is the only addition.
+dedup, the `**Touches**:` globs, the fewest-coherent-PRs fold and the
+`Claude:` prefix all behave exactly as before.
+
+**And the state is `Todo`, not `Backlog`.** The milestone alone is not
+enough: the operator's "Next" view is the *unblocked Backlog*, so a
+finding filed as Backlog surfaces there as available work no matter what
+milestone it carries — one rotation filed fifteen that way in a single
+pass and they had to be moved by hand. Set `state: "Todo"` **plus** the
+milestone, both in the creating call. Promotion in a planning session is
+then two halves — clear the milestone **and** move Todo → Backlog — and
+doing only one leaves the board lying about what is available. See
+`docs/conventions/linear-automation.md` → "Parked findings sit in
+**Todo**, never Backlog".
 
 *Rejected alternative, recorded so it is not re-derived:* a doc-based
 inbox (by analogy to the session-metrics / `trim-context` pair) was
@@ -380,7 +408,7 @@ mcp__claude_ai_Linear__save_issue(
   team: "<$LINEAR_TEAM_ID>",
   project: "<$LINEAR_PROJECT_ID>",
   assignee: "<$LINEAR_ASSIGNEE_ID>",
-  state: "Backlog",
+  state: "Todo",                 // parked, NOT pullable — see above
   milestone: "Audit findings",   // parked — see above
   title: "<file>: <imperative fix, no trailing period>",
   description: "<markdown body, literal newlines>",
@@ -458,8 +486,8 @@ finding's own prose, which may cite one.
 deploy units — a TUI Rust rendering fix, a frontend TS hook fix, and an
 on-chain program refactor are **three** issues even in one rotation.
 Findings that don't share a coherent PR boundary stay separate;
-`sync-blockers` then `related`-links any file-overlap between them and
-reports it as a collision cluster. Full rule:
+any file overlap between them is left for a planning session to
+reconcile, not linked here. Full rule:
 `docs/conventions/linear-automation.md` → "Fold coupled findings into
 one issue".
 
@@ -495,8 +523,8 @@ The description must let a cold agent act on it in its own worktree
 
 - `**Touches**: <glob>[, <glob>…]` — the machine-readable list of path
   globs the fix will edit, comma-separated (for a single-file nit, just
-  that file). `sync-blockers` reads this to detect file collisions
-  deterministically. **Mandatory** — see
+  that file). It documents the finding's footprint for a human reader
+  and for the fewest-coherent-PRs fold. **Mandatory** — see
   `docs/conventions/linear-automation.md` → "Structured filing fields".
 
 - `**Discovered by**: audit <unit> @ <commit SHA>`
@@ -513,31 +541,19 @@ The description must let a cold agent act on it in its own worktree
   implementer re-derives the location; the fingerprint is what
   survives.
 
-**Record file collisions for each issue as you file or grow it.** Right
-after `save_issue` returns a new identifier — **and also after an
-append-fold** that grows an existing issue's `**Touches**:` union (per
-the folding rule above) — `related`-link that issue's file collisions
-against the open Backlog with the incremental sweep, keyed by that
-issue's `ENG-###`. It reduces to one bare command matching the
-`Bash(python3 .claude/tools/sync_blockers.py:*)` allow-rule (the
-scan runs in the tool's own process, so nothing enters context):
+**Record no collision links.** A rotation files its issues and stops
+there. The automated file-collision machinery is being **retired** by
+operator direction — the tool, its skill, and every filing-time
+related-link step — so there is no per-issue sweep here and nothing new
+should depend on one. Board bookkeeping belongs to planning sessions,
+which open with a reconciliation pass anyway, so the removal defers
+collision recording rather than losing it.
 
-```sh
-python3 .claude/tools/sync_blockers.py --for <ENG-###>
-```
-
-Re-run it on an append because the grown union can imply new collisions
-the original `--for` didn't cover. Filing in `ENG-###` order means the
-later filer always sees the earlier sibling, so an intra-rotation
-collision pair is linked by the second of the two — no end-of-rotation
-full sweep is needed. Best-effort: it needs `LINEAR_API_KEY`; if unset
-the tool says so — note it and continue.
-
-This files **no blocking edge** — the rotation is autonomous, and
-blocking is human-curated. Each collision prints the paths the pair
-collides on. **Relay those lines in the rotation announcement**: a
-collision between two issues the coherence floor kept separate is a
-candidate for landing them as one PR, which is the human's call.
+The `**Touches**:` field itself stays **mandatory**: it documents each
+finding's footprint for a human reader and for the fewest-coherent-PRs
+fold, independent of what consumes it. And a rotation still files **no
+blocking edge** of any kind — blocking is human-curated (`CLAUDE.md` →
+"Blocking relations").
 
 **Structural findings** (SUBSYSTEM / INTERFACE / LAYOUT) are filed the
 same way (plain parked issue, same IDs, same milestone, no parent) but
@@ -558,7 +574,7 @@ line; use this body instead:
   dedup key (mandatory, same role as for FILE findings).
 - `**Touches**: <glob>[, <glob>…]` — the path globs the proposal's work
   would span (often several dirs for an `arch:` finding),
-  comma-separated. `sync-blockers` reads it for collision detection.
+  comma-separated. It documents the proposal's footprint for a reader.
   **Mandatory** — see `docs/conventions/linear-automation.md` →
   "Structured filing fields".
 - `**Discovered by**: audit <unit> @ <commit SHA>`
@@ -585,14 +601,13 @@ inline run interrupts you only when it matters. If nothing was filed,
 send no notification.
 
 **Done.** After all seven units have been processed (each cross-checked
-where applicable, deduped, filed, and its file collisions recorded via
-`sync-blockers --for`), the rotation is complete. The collision links are
-already current — the per-issue `--for` calls filed them at file time,
-so there is no end-of-rotation sweep. Print a single final line and
-**stop** — there is no re-invocation:
+where applicable, deduped and filed), the rotation is complete. There is
+no end-of-rotation collision sweep — that machinery is retired, and
+collision reconciliation belongs to a planning session. Print a single
+final line and **stop** — there is no re-invocation:
 
 ```txt
-DONE audit | filed <t> parked (h/m/l) | deduped <d> | collisions linked
+DONE audit | filed <t> parked Todo (h/m/l) | deduped <d>
 ```
 
 To run another rotation later, just invoke `/audit` again — it samples

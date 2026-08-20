@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted, then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled, parked audit findings offered for sequencing, and issues filed and amended to house convention. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out, and captures the session's own token profile. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
+description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas and the standing audit directive plus its outcome unprompted, then keeps the board coherent: the Queue honest, blocking edges curated, parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog), and issues filed and amended to house convention. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — which also writes the next audit directive, one named subsystem or interface for housekeeping to audit, or explicitly none — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -175,6 +175,15 @@ this same bootstrap. It is written up as step 8 because
 `audit` and `housekeeping` both cite it by that name, but it
 **runs now** — a count and a prompt, alongside the umbrellas.
 Do not defer it to the end of the session.
+
+**Read the standing audit directive and its outcome too.**
+The document carries one — a named subsystem or interface for
+`housekeeping` to audit, or explicitly none — plus what the
+previous one found. Surface both alongside the umbrellas: the
+outcome is the audit log the operator reads, and the standing
+directive is what the close-out (step 6) will either keep or
+replace. A directive whose target has since been rewritten is
+stale and should be replaced rather than left to fire.
 
 **Reconcile file collisions once, here.** The full sweep is
 mechanical bookkeeping — it files `related` links only, never
@@ -483,15 +492,44 @@ main deliverable.** The board shows *what* was decided; the
 doc is the only place that carries *why*, and why is what the
 next session needs.
 
+**The close-out also writes the audit directive.** The
+rewritten document carries an **audit directive** naming
+**one** subsystem or interface from
+`docs/conventions/audit-registry.md` — or explicitly **none**
+— for `housekeeping` to audit until the next planning session
+replaces it. Choose the target because it *just settled*, is
+*about to be built on*, or is *suspect*; "none" is a
+legitimate and often correct answer in a heavy-feature phase.
+
+This is what replaced the daily random rotation. A random
+seven-unit pass in a heavy-feature phase audits code that is
+about to be rewritten: one pass filed **fifteen** parked
+findings, several against maker-model and fair-value files
+that open Backlog issues were already slated to rewrite. The
+engine was working; the targeting was not — and because the
+parked pool drains only through the promotion step above,
+over-filing costs this session directly.
+
+Also **record the previous directive's outcome** — its target
+and finding count, from the housekeeping report — so the
+document accumulates the ongoing audit log the operator asked
+for: what has been audited, when, and what it found.
+
 **7. Capture the session's token profile at close-out.** Run
-the committed metrics tool over the planning transcript and
-file the entry into the Session Metrics inbox, the same as an
-implementation session — so `trim-context` mines
+the committed metrics tool over the planning transcript, then
+file each lever it yields as a **parked lever issue**, the
+same as an implementation session — so the fold mines
 planning-session shapes too, rather than only review shapes:
 
 ```sh
 make session-metrics SESSION=<uuid>
 ```
+
+Levers file through `.claude/tools/trim_levers.py` (probe,
+then `file` or `append-evidence`), **not** into a document —
+that inbox is retired. Invoking `/session-metrics` does this
+for you; the point of naming it here is that a planning
+session is a producer too.
 
 **One hard constraint on what may be proposed from it.**
 Planning sessions deliberately run the most capable models
@@ -503,10 +541,12 @@ redundant re-read removed. Never a model downgrade, never a
 skipped bootstrap read, never anything that thins the
 decision context.
 
-A lever that would trade planning fidelity for tokens is
-recorded as **rejected, with the reason** — not proposed.
-Writing it down as rejected is what stops the next mining
-pass from re-deriving it.
+A lever that would trade planning fidelity for tokens is not
+proposed — it is **filed and immediately closed with its
+reason**, or, if an equivalent lever is already parked, left
+closed. Recording the rejection on the board is what stops the
+next fold from re-deriving it, since the fingerprint probe
+searches resolved issues too.
 
 **8. Offer the parked audit findings — don't wait to be
 asked.** `audit` files its confirmed findings as real issues
@@ -543,10 +583,17 @@ On a yes:
   decide *where it belongs*.
 - Fetch a body **only** for a finding actually being
   promoted.
-- **Un-park it by clearing the milestone.** That is the whole
-  promotion mechanism — no state change, no re-filing, no new
-  issue. The obvious wrong implementation is to close the
-  parked finding and file a fresh copy; don't.
+- **Un-park it by clearing the milestone AND moving it Todo →
+  Backlog.** Promotion has **two** halves now, because parked
+  findings file in state `Todo` rather than `Backlog`:
+  clearing the milestone alone leaves the issue out of the
+  pullable set, and moving the state alone leaves it looking
+  parked. Do both, in one field-only write per issue through
+  `board_batch.py fields` (an MCP `save_issue` would echo the
+  whole body back for a two-field change). There is still no
+  re-filing and no new issue — the obvious wrong
+  implementation is to close the parked finding and file a
+  fresh copy; don't.
 
 **A planning session does not re-adjudicate a finding.**
 `audit` already cross-checks adversarially before filing, so
