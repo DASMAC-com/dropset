@@ -143,6 +143,7 @@ fn normalize_confidence(confidence: Option<f64>) -> Option<f64> {
 pub struct TickSource<S, F> {
     inner: S,
     map: F,
+    watch: Option<SilenceWatch>,
 }
 
 impl<S, F> TickSource<S, F> {
@@ -152,7 +153,27 @@ impl<S, F> TickSource<S, F> {
     /// timestamp of its own has one to attribute the reading to; a venue that
     /// does publish one should prefer it and ignore this.
     pub fn new(inner: S, map: F) -> Self {
-        Self { inner, map }
+        Self {
+            inner,
+            map,
+            watch: None,
+        }
+    }
+
+    /// Attach a [`SilenceWatch`], driven **once per poll**.
+    ///
+    /// **The cadence is why this lives here rather than in the collector's
+    /// mapping closure**, which is where it started. A closure is invoked once
+    /// per venue *record*, so a watch driven from inside it counts records and
+    /// not polls — the two coincide only because today's batched adapters
+    /// return exactly one record per response, a coupling invisible from either
+    /// file. Worse, a poll that yields no record at all never invokes the
+    /// closure, so the counter would stall in precisely the total-silence case
+    /// the watch exists to report. Driving it from `next` makes the count mean
+    /// its name.
+    pub fn watching(mut self, watch: SilenceWatch) -> Self {
+        self.watch = Some(watch);
+        self
     }
 }
 
@@ -161,9 +182,10 @@ impl<S, F> Source for TickSource<S, F>
 where
     S: Source + Send,
     S::Record: Send + Sync,
-    // `FnMut`, not `Fn`: a mapping over a venue that omits what it could not
-    // price has to remember what it has seen to tell a typo from an outage
-    // (see [`SilenceWatch`]), which means owning state across polls.
+    // `FnMut` rather than `Fn` so a mapping may hold state across polls if it
+    // needs to. The silence watch used to be that state; it is now driven by
+    // this adapter instead (see [`TickSource::watching`]), so no mapping needs
+    // it today — the bound stays because narrowing it buys nothing.
     F: FnMut(&S::Record, i64) -> Vec<Tick> + Send,
 {
     type Record = Tick;
@@ -184,6 +206,11 @@ where
             .iter()
             .flat_map(|record| map(record, observed_at))
             .collect();
+        // Once per poll, including a poll that produced nothing — which is the
+        // case the watch most needs to see.
+        if let Some(watch) = &mut self.watch {
+            watch.observe(&records);
+        }
         // **The inner cursor is deliberately NOT forwarded.** Every tick source
         // today is a snapshot endpoint with no resume position, so there is
         // none to forward — but the reason this is a drop rather than a
@@ -268,12 +295,19 @@ impl SilenceWatch {
             return;
         }
         if self.seen.is_empty() {
-            tracing::warn!(
-                products = %silent.join(","),
-                polls = self.polls,
-                "no configured product has priced yet — the venue may be \
-                 unreachable, so this is not yet attributable to the roster"
-            );
+            // Not latched, so this branch can be reached on every subsequent
+            // poll — hence the interval. Repeating it each poll would be ~4
+            // identical lines a minute for the length of an outage, which
+            // buries the signal it is trying to raise; once per threshold's
+            // worth of polls keeps it visible without that.
+            if self.polls.is_multiple_of(self.warn_after) {
+                tracing::warn!(
+                    products = %silent.join(","),
+                    polls = self.polls,
+                    "no configured product has priced yet — the venue may be \
+                     unreachable, so this is not yet attributable to the roster"
+                );
+            }
             return;
         }
         self.warned = true;
@@ -298,6 +332,105 @@ impl SilenceWatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dropset_feeds::Cursor;
+
+    /// A source that replays scripted batches, so `TickSource`'s own behavior
+    /// can be asserted without a venue or a database.
+    struct StubSource {
+        batches: std::collections::VecDeque<Batch<u32>>,
+    }
+
+    #[async_trait]
+    impl Source for StubSource {
+        type Record = u32;
+        fn name(&self) -> &str {
+            "stub"
+        }
+        async fn next(&mut self) -> Result<Batch<u32>> {
+            Ok(self
+                .batches
+                .pop_front()
+                .unwrap_or_else(|| Batch::new(vec![])))
+        }
+    }
+
+    fn stub(batches: Vec<Batch<u32>>) -> StubSource {
+        StubSource {
+            batches: batches.into(),
+        }
+    }
+
+    /// Map each `u32` to one tick, naming the product after it.
+    fn one_tick_each(record: &u32, observed_at: i64) -> Vec<Tick> {
+        vec![Tick {
+            product_id: format!("P{record}"),
+            observed_at,
+            price: 1.0,
+            confidence: None,
+        }]
+    }
+
+    #[tokio::test]
+    async fn an_inner_cursor_is_dropped_rather_than_forwarded() {
+        // The at-least-once contract depends on this. The mapping may drop
+        // records, so forwarding a resume position would commit a cursor past
+        // data that was never written — at-least-once silently becoming
+        // at-most-once. Dropping it degrades to a re-fetch, which the
+        // idempotent insert absorbs.
+        let inner = stub(vec![
+            Batch::new(vec![1, 2]).with_cursor(Cursor::from_json(serde_json::json!({"n": 7})))
+        ]);
+        let mut source = TickSource::new(inner, one_tick_each);
+        let batch = source.next().await.unwrap();
+        assert_eq!(batch.len(), 2);
+        assert!(
+            batch.cursor.is_none(),
+            "a forwarded cursor could outrun records the mapping dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_tick_in_one_poll_shares_one_clock_reading() {
+        // One request, one observation: stamping per record would spread a
+        // single poll across several seconds and defeat the primary key's
+        // in-second dedup.
+        let inner = stub(vec![Batch::new(vec![1, 2, 3])]);
+        let mut source = TickSource::new(inner, one_tick_each);
+        let batch = source.next().await.unwrap();
+        let stamps: std::collections::HashSet<i64> =
+            batch.records.iter().map(|t| t.observed_at).collect();
+        assert_eq!(stamps.len(), 1, "one poll must yield one observed_at");
+    }
+
+    #[tokio::test]
+    async fn caught_up_is_forwarded_so_the_runner_paces_itself() {
+        // If this were dropped, a source reporting a backlog would make the
+        // runner loop at full speed instead of honouring the poll interval.
+        let inner = stub(vec![Batch::new(vec![1]).with_caught_up(false)]);
+        let mut source = TickSource::new(inner, one_tick_each);
+        assert!(!source.next().await.unwrap().caught_up);
+    }
+
+    #[tokio::test]
+    async fn the_watch_advances_once_per_poll_even_when_a_poll_yields_nothing() {
+        // The regression this pins: the watch used to be driven from the
+        // mapping closure, which `flat_map` calls once per RECORD — so a poll
+        // that produced no record never advanced the counter, and the
+        // total-silence warning the watch exists for could never fire.
+        let inner = stub(vec![
+            Batch::new(vec![]),
+            Batch::new(vec![]),
+            Batch::new(vec![]),
+        ]);
+        let watch = SilenceWatch::new(vec!["P1".to_string()], 3);
+        let mut source = TickSource::new(inner, one_tick_each).watching(watch);
+        for _ in 0..3 {
+            source.next().await.unwrap();
+        }
+        let watch = source.watch.as_ref().unwrap();
+        assert_eq!(watch.polls, 3, "empty polls must still count");
+        assert_eq!(watch.silent(), vec!["P1"]);
+    }
 
     #[test]
     fn a_malformed_confidence_becomes_unknown_rather_than_failing_the_batch() {

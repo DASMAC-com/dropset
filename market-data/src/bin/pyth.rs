@@ -81,11 +81,10 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let source = PythHermesSource::new(&cfg.base_url, feeds)?;
-    let mut watch = SilenceWatch::new(products, SILENCE_THRESHOLD);
     let source = TickSource::new(
         source,
         move |quotes: &HashMap<String, FxQuote>, poll_secs| {
-            let ticks: Vec<Tick> = quotes
+            quotes
                 .iter()
                 .map(|(product_id, quote)| Tick {
                     product_id: product_id.clone(),
@@ -100,11 +99,12 @@ async fn main() -> anyhow::Result<()> {
                     price: quote.value,
                     confidence: quote.confidence,
                 })
-                .collect();
-            watch.observe(&ticks);
-            ticks
+                .collect()
         },
-    );
+    )
+    // Driven once per poll by the adapter, not from the closure above — see
+    // `TickSource::watching`.
+    .watching(SilenceWatch::new(products, SILENCE_THRESHOLD));
 
     let sinks: Vec<Box<dyn Sink<Tick>>> = vec![Box::new(StoreSink::new(
         pool,

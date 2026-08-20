@@ -532,6 +532,16 @@ grafana-down: check-docker
 # comma-separated list of canonical BASE-QUOTE ids; each venue's own spelling is
 # derived from them. It replaces the singular FX_PRODUCT_ID, which the compose
 # file no longer reads — a roster of one is just a list with one entry.
+#
+# **A pinned spelling (`CANONICAL=VENUE`) must go in a per-venue variable**, not
+# in the shared one: OANDA_PRODUCT_IDS, TWELVEDATA_PRODUCT_IDS, or
+# ALPHAVANTAGE_PRODUCT_IDS, each falling back to FX_PRODUCT_IDS when unset. A
+# pin is inherently venue-specific — the three vendors spell one pair three
+# ways — so putting one in the shared variable would hand a spelling meant for
+# one venue to all three. Alpha Vantage derives no single symbol at all (it
+# takes the two legs separately) and refuses a pin outright rather than ignoring
+# it, so a pin in the shared variable would stop that service at startup over a
+# setting aimed at a different venue.
 FX_ENV = infra/localnet/secrets.local.env
 -include $(FX_ENV)
 OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account '$(DROPSET_OP_ACCOUNT)',)

@@ -94,21 +94,37 @@ mod tests {
     type BoxedFeed = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
 
     #[tokio::test]
-    async fn every_feed_is_started() {
+    async fn every_feed_is_spawned_before_any_completion_ends_the_run() {
+        // Deliberately not `>= 1`, which `run_all` returning `Ok` already
+        // implies and which therefore asserts nothing. The barrier is what makes
+        // this provable under a single join: no feed can pass it until all four
+        // have arrived, so reaching the assertion at all proves every feed was
+        // spawned and polled — and only then does one of them return, ending
+        // the run.
         let ran = Arc::new(AtomicUsize::new(0));
-        let feeds: Vec<(String, _)> = (0..4)
+        let gate = Arc::new(tokio::sync::Barrier::new(4));
+        let feeds: Vec<(String, BoxedFeed)> = (0..4)
             .map(|i| {
                 let ran = ran.clone();
-                (format!("feed-{i}"), async move {
+                let gate = gate.clone();
+                let fut: BoxedFeed = Box::pin(async move {
                     ran.fetch_add(1, Ordering::SeqCst);
+                    gate.wait().await;
+                    // Three of the four then park; the fourth returns and takes
+                    // the run down with it.
+                    if i != 0 {
+                        tokio::time::sleep(Duration::from_secs(3600)).await;
+                    }
                     Ok(())
-                })
+                });
+                (format!("feed-{i}"), fut)
             })
             .collect();
         run_all(feeds).await.unwrap();
-        assert!(
-            ran.load(Ordering::SeqCst) >= 1,
-            "at least the feed that completed must have run"
+        assert_eq!(
+            ran.load(Ordering::SeqCst),
+            4,
+            "every feed must be spawned, not just the one that finishes"
         );
     }
 

@@ -102,10 +102,18 @@ where
     for entry in products {
         let venue_symbol = entry.venue_symbol_or_else(&derive)?;
         if let Some(clash) = out.iter().find(|p| p.venue_symbol == venue_symbol) {
+            // Worded for both caller shapes. A collector that indexes a batched
+            // response by venue symbol would file the venue's single answer
+            // under whichever pair survived the collision — corrupt data. One
+            // that builds a feed per pair instead would merely poll the same
+            // symbol twice, which is not corruption but still wrong: it double-
+            // counts against the request budget the quota floor computes from
+            // roster size. Both deserve a refusal, so the message claims only
+            // what holds for either.
             return Err(anyhow!(
                 "{:?} and {:?} both resolve to the venue symbol {venue_symbol:?}; \
-                 the venue answers once per symbol, so one pair's price would be \
-                 stored under the other's id",
+                 the venue answers once per symbol, so one reading would have to \
+                 stand for two pairs",
                 clash.product_id,
                 entry.product_id
             ));
@@ -178,6 +186,29 @@ pub fn parse_roster(spec: &str) -> Result<Vec<RosterEntry>> {
         if product_id.is_empty() {
             return Err(anyhow!("roster entry {raw:?} has no canonical product id"));
         }
+        // **Normalized and shape-checked, because the stored key is the join
+        // key.** A canonical id goes straight into `cex_prices.product_id` /
+        // `spot_ticks.product_id`, and every consumer joins on it. Accepting it
+        // verbatim meant `eurc-usd` priced perfectly well — the venue side is
+        // derived and upper-cased, so Kraken answered, and the silence watch
+        // was satisfied because it compares against this same string — while
+        // writing a *second* series under a key nothing joins, showing up as a
+        // stray entry in the dashboard's product picker. The table-backed roster
+        // guards exactly this with a `CHECK (product_id ~ '^[A-Z]{3}-[A-Z]{3}$')`;
+        // this is the environment-backed equivalent.
+        let product_id = product_id.to_ascii_uppercase();
+        let (base, quote) = product_id.split_once('-').ok_or_else(|| {
+            anyhow!(
+                "roster entry {product_id:?} is not a canonical BASE-QUOTE id \
+                 (it has no `-`)"
+            )
+        })?;
+        if base.is_empty() || quote.is_empty() || quote.contains('-') {
+            return Err(anyhow!(
+                "roster entry {product_id:?} is not a canonical BASE-QUOTE id: \
+                 it needs exactly one `-` with a non-empty leg either side"
+            ));
+        }
         if out.iter().any(|e| e.product_id == product_id) {
             return Err(anyhow!(
                 "roster names {product_id:?} more than once; one collector \
@@ -185,7 +216,7 @@ pub fn parse_roster(spec: &str) -> Result<Vec<RosterEntry>> {
             ));
         }
         out.push(RosterEntry {
-            product_id: product_id.to_string(),
+            product_id,
             venue_symbol,
         });
     }
@@ -313,13 +344,42 @@ mod tests {
 
     #[test]
     fn a_derive_failure_propagates_rather_than_being_swallowed() {
-        // A malformed canonical id must fail startup, not be quietly omitted:
-        // the venue adapters omit symbols they got no answer for, so a bad
+        // A failed derivation must fail startup, not be quietly omitted: the
+        // venue adapters omit symbols they got no answer for, so a bad
         // derivation would masquerade as an unquoted pair.
-        let roster = parse_roster("not-a-pair").unwrap();
+        let roster = parse_roster("AUD-USD").unwrap();
         assert!(roster[0]
             .venue_symbol_or_else(|_| Err(anyhow!("nope")))
             .is_err());
+    }
+
+    #[test]
+    fn a_canonical_id_is_upper_cased_so_it_cannot_fork_the_stored_series() {
+        // The bug this closes: the venue side is derived and upper-cased, so a
+        // lower-case entry priced perfectly well at the venue and satisfied the
+        // silence watch — while writing a SECOND series under a key no consumer
+        // joins on, visible only as a stray entry in the dashboard's product
+        // picker.
+        let roster = parse_roster("eurc-usd,AuD-uSd").unwrap();
+        assert_eq!(roster[0].product_id, "EURC-USD");
+        assert_eq!(roster[1].product_id, "AUD-USD");
+    }
+
+    #[test]
+    fn a_lower_and_upper_spelling_of_one_pair_is_a_duplicate() {
+        // Falls out of normalizing before the duplicate check, and is worth
+        // pinning: pre-normalization these read as two different products.
+        assert!(parse_roster("EURC-USD,eurc-usd").is_err());
+    }
+
+    #[test]
+    fn an_id_that_is_not_base_quote_shaped_is_rejected() {
+        // No separator at all, and more than one — both would otherwise reach a
+        // venue as a plausible-looking symbol.
+        assert!(parse_roster("EURCUSD").is_err());
+        assert!(parse_roster("EUR-C-USD").is_err());
+        assert!(parse_roster("-USD").is_err());
+        assert!(parse_roster("EURC-").is_err());
     }
 
     #[test]
@@ -355,12 +415,15 @@ mod tests {
         let err = resolve_venue(&roster, kraken_pair).unwrap_err().to_string();
         assert!(err.contains("both resolve to the venue symbol"), "{err}");
         assert!(err.contains("USDCUSD"), "{err}");
+        assert!(err.contains("stand for two pairs"), "{err}");
     }
 
     #[test]
     fn a_derive_failure_fails_the_whole_resolve() {
-        let roster = parse_roster("EURCUSD").unwrap();
-        assert!(resolve_venue(&roster, kraken_pair).is_err());
+        // One entry's derivation failing takes the whole resolve down, rather
+        // than yielding a roster quietly short of a pair.
+        let roster = parse_roster("AUD-USD,EUR-USD").unwrap();
+        assert!(resolve_venue(&roster, |_| Err(anyhow!("no spelling"))).is_err());
     }
 
     #[test]

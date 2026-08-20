@@ -94,9 +94,8 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let source = KrakenSource::new(&cfg.base_url, venue_pairs)?;
-    let mut watch = SilenceWatch::new(canonical, SILENCE_THRESHOLD);
     let source = TickSource::new(source, move |quotes: &Quotes<String>, poll_secs| {
-        let ticks: Vec<Tick> = quotes
+        quotes
             .iter()
             .filter_map(|(pair, price)| {
                 index.get(pair).map(|product_id| Tick {
@@ -109,10 +108,11 @@ async fn main() -> anyhow::Result<()> {
                     confidence: None,
                 })
             })
-            .collect();
-        watch.observe(&ticks);
-        ticks
-    });
+            .collect()
+    })
+    // Driven once per poll by the adapter, not from the closure above — see
+    // `TickSource::watching`.
+    .watching(SilenceWatch::new(canonical, SILENCE_THRESHOLD));
 
     let sinks: Vec<Box<dyn Sink<Tick>>> = vec![Box::new(StoreSink::new(
         pool,

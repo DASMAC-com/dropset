@@ -78,7 +78,8 @@ services:
       ALPHAVANTAGE_API_KEY: '${ALPHAVANTAGE_API_KEY:-}'
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
-      PRODUCT_IDS: '${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}'
+      PRODUCT_IDS: >-
+        ${ALPHAVANTAGE_PRODUCT_IDS:-${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}}
       RUST_LOG: 'info'
     profiles:
     - 'fx'
@@ -377,7 +378,8 @@ services:
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       OANDA_API_KEY: '${OANDA_API_KEY:-}'
-      PRODUCT_IDS: '${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}'
+      PRODUCT_IDS: >-
+        ${OANDA_PRODUCT_IDS:-${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}}
       RUST_LOG: 'info'
     profiles:
     - 'fx'
@@ -495,7 +497,8 @@ services:
     environment:
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
-      PRODUCT_IDS: '${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}'
+      PRODUCT_IDS: >-
+        ${TWELVEDATA_PRODUCT_IDS:-${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}}
       RUST_LOG: 'info'
       TWELVEDATA_API_KEY: '${TWELVEDATA_API_KEY:-}'
     profiles:

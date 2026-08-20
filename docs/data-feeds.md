@@ -856,12 +856,25 @@ missed since the last, so a slower cadence makes a bar land later, never
 absent.
 
 That floor is the steady-state half; the shared client's minimum interval
-(below) is the burst half, and **both** are needed. Alpha Vantage's client
-raises its floor to 1 h — 24 requests/day against a 25/day account — which
-holds only because every feed in the process shares one client. Seven
-independent clients would each allow 24/day, or 168 against a 25/day quota,
-which is precisely why the roster collectors build one client and clone it
-(§5).
+(below) is the burst half. **On a metered venue both are needed** — Alpha
+Vantage's client raises its floor to 1 h, 24 requests/day against a 25/day
+account, which holds only because every feed in the process shares one client.
+Seven independent clients would each allow 24/day, or 168 against a 25/day
+quota, which is precisely why the roster collectors build one client and clone
+it (§5).
+
+Two venues need only the poll interval, and it is worth being exact about why
+rather than reading the rule as universal: Coinbase and OANDA keep the shared
+250 ms default *because* the default is already stricter than the venue's
+documented rate, so a raised floor would buy nothing. Note what that does leave
+open. Coinbase's public tier is rate-limited **per IP**, and this PR gives it
+two collector processes — the candle feed and the ticker feed — which are
+separate containers with independent pacers. The one-client-per-venue invariant
+therefore holds *within* a process, not across the host. At the default rosters
+that is roughly 8 requests a minute against a 600/minute ceiling, so nothing is
+at risk; but a future roster large enough to matter would need cross-process
+coordination that does not exist, and the honest statement is that this is
+headroom rather than a guarantee.
 
 Those cadences govern the **caught-up** state only — while a source
 backfills, the runner loops without pausing and only the shared client's
