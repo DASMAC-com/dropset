@@ -12,6 +12,10 @@ import { tokenIconFallbackUrl, tokenIconUrl } from "@/lib/data/currencies";
 // when the symbol changes: the new symbol's `primary` differs, so a stale
 // failure cannot latch onto it. That matters in reused list rows and in the
 // picker trigger, which swap symbols in place.
+//
+// WalletIcon has a sibling resolver with deliberately different semantics —
+// it exhausts to a letter avatar where this one sticks on the primary. Change
+// one and check the other still reads correctly.
 export function resolveIconSrc(
   primary: string,
   fallback: string,

@@ -14,6 +14,7 @@ import {
   Loader2,
   X,
 } from "@/components/icons";
+import { WalletIcon } from "@/components/ui/WalletIcon";
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/data/timings";
 import { buildPickerWallets, type PickerWallet } from "@/lib/data/wallets";
 import { emit, useAppEvent } from "@/lib/events";
@@ -93,21 +94,15 @@ export function WalletButton() {
     metamaskInstalled,
   );
 
-  const renderIcon = (w: PickerWallet) =>
-    w.icon ? (
-      <Image
-        src={w.icon}
-        alt=""
-        width={32}
-        height={32}
-        className="h-8 w-8 rounded-lg"
-        unoptimized
-      />
-    ) : (
-      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted font-bold text-muted-fg text-xs">
-        {w.name.charAt(0)}
-      </div>
-    );
+  const renderIcon = (w: PickerWallet) => (
+    <WalletIcon
+      name={w.name}
+      src={w.icon}
+      fallbackSrc={w.iconFallback}
+      size={32}
+      className="h-8 w-8 rounded-lg"
+    />
+  );
 
   const renderRow = (w: PickerWallet) => {
     // MetaMask's relay connector lives in the Wallet Standard registry only
