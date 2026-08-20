@@ -194,6 +194,17 @@ Concrete rules:
   [GitHub via MCP](github-mcp.md) — so there is no `--body-file`
   workaround to manage.)
 
+  **That message file is session-scoped — re-verify it before retrying
+  a blocked commit.** The scratchpad does not survive a session
+  restart, and a `-F` message staged behind a commit that *failed* is
+  exactly what gets lost. One session restarted twice (a usage
+  interruption, then a resume); both times the casualty was a commit
+  message file sitting behind a blocked signature, and both times it
+  had to be re-authored verbatim before the commit could be retried. So
+  on a **failed** commit — a signing error, a hook rejection — check
+  the file still exists before re-running, and re-write it if not.
+  A commit that *succeeded* has the message in git and needs nothing.
+
 - Keep a stable command + subcommand prefix (`pnpm lint …`,
   `cargo test …`, `git log …`) and put only the variable parts in the
   arguments, so the call matches a `:*` allow-glob.

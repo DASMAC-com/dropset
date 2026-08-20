@@ -405,7 +405,7 @@ transition echoes the whole body too — and `save_document` returns a
 **truncated** `content` in every one of those cases. The echo is a fixed
 cost per call, so the lever on it is **fewer calls**, not `patch`.
 
-#### Carve-out: a high-volume automated pipeline may bypass the MCP
+### Carve-out: a high-volume automated pipeline may bypass the MCP
 
 The rule above — body edits go through the MCP `patch` path — governs
 **interactive filing and planning flows**, where a human is reading along

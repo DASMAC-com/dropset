@@ -963,7 +963,10 @@ PR-authoring **writes** (`create_pull_request`,
    ```sh
    python3 .claude/tools/lens_preamble.py \
      --out <scratchpad>/lens-preamble.md \
-     --append .claude/skills/review-pr/lens-standing.md
+     --append .claude/skills/review-pr/lens-standing.md \
+     --fact 'No frontend test harness exists — do not look for one.' \
+     --fact 'make lint covers biome + tsc + cspell over the whole tree.' \
+     --fact 'The dead export has zero call sites (swept before this run).'
    ```
 
    It composes two committed halves, each with a single
@@ -974,6 +977,32 @@ PR-authoring **writes** (`create_pull_request`,
    **That template is the agent-facing wording**; the prose in
    this step is the rationale for it. When you change one,
    check the other still describes it.
+
+   **`--fact` is required, and it is the highest-leverage
+   thing in this step.** Every brief must carry the facts
+   already verified before the run — including the
+   **negatives**: "there is no test harness here", "this
+   export has zero call sites", "there is no central clock
+   provider". The tool **refuses** a run with no facts and no
+   explicit `--no-facts`, because omitting the section silently
+   is what used to happen.
+
+   This is measured twice, not a hunch. One run brought all
+   five lenses in at or under their turn caps — 2, 2, 3, 4, 4
+   against 5/5/4/5/8, zero overruns — and credited not the
+   hard-stop wording (already standard) but an ad-hoc block of
+   exactly this shape carrying three pre-run grep results, the
+   lint gate's coverage, and explicit negatives; **two lenses
+   said outright they needed no further reads**. Another
+   reproduced it: a security lens at 90.4k over 2 turns with
+   **zero cold reads**, cheaper than every exemplar named
+   below, producing that review's sharpest findings.
+
+   The excerpt rule covers what you have already read; this
+   covers **what you already know isn't there** — and a lens
+   cannot distinguish "nobody told me" from "I had better go
+   check". Gather the facts as you prepare the review (the
+   pre-run greps you were going to run anyway) and pass them.
 
    Then give each Agent the path plus its own scope:
 
@@ -1212,16 +1241,24 @@ PR-authoring **writes** (`create_pull_request`,
      conversion contracts, and pre-change function bodies
      rather than naming files:
 
-     - **~145k / 3 turns** — two lenses on one review, the
-       cheapest clean verdicts recorded.
-     - **180.5k / 4 turns** — a correctness lens, *below* the
-       202.3k exemplar this skill used to name.
+     - **90.4k / 2 turns, zero cold reads** — a security lens,
+       the cheapest clean verdict recorded, and the one that
+       produced its review's sharpest findings. It credits the
+       established-facts block (step 5): with the negatives
+       stated, it needed no reads of its own.
+     - **102.9k / 2 turns** — a correctness lens, with all six
+       lenses on that review under cap.
+     - **~145k / 3 turns** — two lenses on one review.
+     - **180.5k / 4 turns** — a correctness lens.
      - **202.3k** — correctness / move-fidelity, roughly a
        quarter of what the completeness lens spent on the same
        PR.
 
      Tell each lens that is the shape to match: read once,
-     adjudicate, report.
+     adjudicate, report. The top two figures are the current
+     targets, and **both credit the same cause** — facts and
+     excerpts inlined into the brief, so the lens adjudicates
+     instead of exploring.
 
      **These figures are summed per-turn input, not the
      `subagent_tokens` the Agent tool reports.** The two
@@ -1283,13 +1320,14 @@ PR-authoring **writes** (`create_pull_request`,
    half**, and it is the half that gets dropped, because a
    named path reads like enough. It is not: a path is an
    instruction to go read, and the lens will. The exemplar to
-   beat is a style lens run at **85.8k input / 2 turns / 1
+   beat is a style lens run at **81.7k input / 2 turns / 1
    tool call** — cheaper than every other figure on this page,
-   including the reduced-tier ones below — and the one thing
-   that distinguished it from its four siblings on the same
-   review was that it received its comparison files *and their
-   excerpts* inline. One tool call, because there was nothing
-   left to go and fetch.
+   including the reduced-tier ones below, and below the 85.8k
+   this skill used to name as its best — and the one thing that
+   distinguished it from its siblings on the same review was
+   that it received its comparison files *and their excerpts*
+   inline. One tool call, because there was nothing left to go
+   and fetch.
 
    **Scale the fan-out to the diff.** The full lens set
    below plus the step-6 cross-check is the right spend for
@@ -1980,6 +2018,22 @@ PR-authoring **writes** (`create_pull_request`,
    that rests on such a claim rather than going to read for
    it. Hand it the same hoisted grep result set the lenses
    got.
+
+   **Adjudicate a stale-prose finding against the file as the
+   LENS saw it.** A fix may have landed *between* the lens's
+   read and the cross-check's — this skill fixes mechanical
+   findings as it goes — so the current text is not evidence
+   about what the lens saw. One cross-check refuted a finding
+   as a false positive on the grounds that two lenses "converged
+   on a quote that does not exist", and quoted the corrected
+   line back as proof. The line had in fact been fixed after the
+   lenses read it and before the cross-check did: the
+   refutation was wrong, **and so was the process caution it
+   derived from it** — distrust convergent findings. Put this in
+   the cross-check brief: when a finding quotes prose that no
+   longer matches, either adjudicate against the version the
+   lens read, or re-read and **say that the text changed** —
+   never score it as a fabricated quote.
 
    If the cross-check produces material
    disagreements, iterate: re-spawn the relevant

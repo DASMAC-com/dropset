@@ -143,7 +143,8 @@ read used by `housekeeping`:
   boolean, use the field-selected form:
 
   ```sh
-  gh api repos/DASMAC-com/dropset/commits/<sha> --jq '.commit.verification.verified'
+  gh api repos/DASMAC-com/dropset/commits/<sha> \
+    --jq '.commit.verification.verified'
   ```
 
   This is a **narrowness** exception, not a capability one: the MCP call

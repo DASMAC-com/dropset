@@ -733,6 +733,24 @@ settings diff, for the same reason.
 auto-memory (`~/.claude/projects/<slug>/memory/*.md` plus the
 `MEMORY.md` index) accretes; curate it for freshness.
 
+**Cap an index line when the entry is first written, not at
+compaction time.** The index grows because per-entry hook lines
+accrete detail over many sessions — several have run 200–400
+characters — and the cost lands all at once: one session's
+single largest result (≈5.2k) was a whole-file Read of the
+index, forced by a size hook demanding compaction, plus a full
+rewrite of 71 entries. A one-line-per-entry cap applied at
+*write* time means the index never approaches the limit and no
+session pays a bulk rewrite; the detail belongs in the topic
+file, which is what the index points at.
+
+**This is a recommendation to the operator, not something this
+repo can enforce.** The memory-writing instruction lives
+harness-side, outside the checkout, so there is no hook or tool
+here to change — flag an over-long index line in the report and
+trim it while curating, but the durable fix is upstream in that
+instruction.
+
 **Gate the scan on a cadence first.** Reading the whole
 store and repo-verifying every reference is the pass's
 **dominant compute**, and the store changes slowly, so
