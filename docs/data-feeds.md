@@ -404,7 +404,7 @@ ______________________________________________________________________
 - **Market-data collectors (store sink).** The collectors build their
   sources on this crate into a store sink: an HTTP Coinbase reference
   feed first (the proof feed), then the FX and issuer-rate feeds. See
-  §7 onward. (An econ-calendar feed was planned here and is no longer:
+  §7 onward. (An econ-calendar feed was planned here and is deferred:
   see §13's resolved "Econ-calendar source" entry, and
   `docs/market-calendar.md`.)
 - **Maker bot (live sink, landed).** The maker-bot's tiered price legs and
@@ -860,8 +860,14 @@ be allocated rather than assumed.
 | `kraken` ticks          | 15 s, batched across the roster   | Collector                              |
 | `pyth` ticks            | 15 s, batched across the roster   | Collector                              |
 | Issuer / peg rates      | Order of a day                    | Collector                              |
-| FX session instants     | Generated, not polled; daily      | Collector (no venue budget)            |
 | On-chain (indexer RPC)  | Framework poll interval           | Indexer                                |
+
+The FX session / week instants deliberately have **no row here**: they
+are generated from a committed rule table rather than fetched from a
+venue (`docs/market-calendar.md` §4), so they touch no external quota
+and this section does not govern them. What they need instead is a
+generated-through watermark, since their failure mode is a silently
+expiring horizon rather than a rate limit.
 
 **Why the Coinbase candles feed polls at a quarter of its bucket width.**
 It used to poll every 60 s on 60-second candles, which meant the newest
@@ -1467,10 +1473,15 @@ ______________________________________________________________________
   established that it answers neither question the calendar exists for
   (is a leading FX feed expected now, and which sessions overlap), and
   that the hour-of-day volatility profile already absorbs the habitual
-  08:30 ET release. What the calendar does need — the FX session and
-  week instants — is **generated** from a committed rule table through
-  Postgres, not ingested, so no adapter, sink, key, or venue budget is
-  involved.
+  08:30 ET release — the 08:00 ET hour is the stored series' most
+  volatile. That last point is *qualitative*: the release hour and the
+  London/New York overlap open are the same hour, and the collected
+  window cannot separate them, so it supports deferring a macro
+  calendar without quantifying what one would add.
+
+  What the calendar does need — the FX session and week instants — is
+  **generated** from a committed rule table through Postgres, not
+  ingested, so no adapter, sink, key, or venue budget is involved.
 
   Two findings worth keeping even though the dataset left scope, since
   both cost a probe: **BLS blocks automated fetches** (HTTP 403 on the
