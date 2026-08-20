@@ -260,6 +260,11 @@ class Run(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("--- failed hooks (1) ---", out)
         self.assertIn("yamllint....Failed", out)
+        # A small, uncapped index carries no truncation marker. This assertion
+        # belongs HERE, where an index actually exists — inserting a new test
+        # above it silently adopted it into a case that prints no index at all,
+        # where it is trivially true.
+        self.assertNotIn("truncated", out)
 
     def test_failure_surfaces_the_spelling_index_above_the_tail(self):
         script = (
@@ -282,8 +287,20 @@ class Run(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertNotIn("unknown words", out)
-        # A small, uncapped index carries no truncation marker.
-        self.assertNotIn("truncated", out)
+        # The tail is still shown — this asserts the spelling block is absent,
+        # not that the failure output is.
+        self.assertIn("boom", out)
+
+    def test_an_offender_on_a_failed_hook_line_is_still_indexed(self):
+        # The failed-hook and offender matchers are disjoint only by accident, so
+        # the scan must not skip the word check for a hook line.
+        script = (
+            "print('a.md:1:1 - Unknown word (kwyjibo) ... Failed');"
+            "import sys; sys.exit(1)"
+        )
+        code, out, _ = self._run(rq.DEFAULT_TAIL, "lint", [PY, "-c", script])
+        self.assertEqual(code, 1)
+        self.assertIn("kwyjibo", out)
 
     def test_failure_index_marks_truncation_when_capped(self):
         # More than MAX failed-hook lines → the index is capped and labeled.

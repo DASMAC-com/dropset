@@ -34,7 +34,7 @@ recommended default **first**. Full detail:
 
 Filing skills (`linear-task`, `audit`, `audit-scope`,
 `trim-context`, `housekeeping`, `plan`) resolve team / project /
-assignee and the inbox-doc ids from **environment variables**
+assignee and the Planning document id from **environment variables**
 (`LINEAR_*`), never hard-coded UUIDs — each via its **own** bare
 `printenv` (a combined `printenv A B C` returns only the first on macOS
 / BSD). A worktree branch and its Linear issue share one `ENG-###`.

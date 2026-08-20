@@ -143,12 +143,22 @@ class HeadingsTests(unittest.TestCase):
 
 class SectionTests(unittest.TestCase):
     def test_a_section_runs_to_the_next_heading_of_the_same_depth(self):
-        block, start = section(BODY.splitlines(), "Part 1")
+        block, start = section(BODY.splitlines(), "Part 1 —")
         self.assertEqual(start, 3)
         # Its own nested subsection comes with it; the next part does not.
         self.assertIn("## Part 1 detail", block)
         self.assertIn("nested under one", block)
         self.assertNotIn("# Part 2 — second", block)
+
+    def test_an_ambiguous_pattern_is_refused_rather_than_guessed(self):
+        # "Part 1" matches both the part and its subsection. Silently taking the
+        # first would return the wrong block for `--section 'Part 2'` on a body
+        # that also has a `Part 24`.
+        with self.assertRaises(ReadResultError) as caught:
+            section(BODY.splitlines(), "Part 1")
+        message = str(caught.exception)
+        self.assertIn("2 headings match", message)
+        self.assertIn("narrow the pattern", message)
 
     def test_the_last_section_runs_to_the_end(self):
         block, _ = section(BODY.splitlines(), "Part 2")
@@ -166,6 +176,56 @@ class SectionTests(unittest.TestCase):
     def test_a_bad_regex_is_a_clean_error(self):
         with self.assertRaises(ReadResultError):
             section(BODY.splitlines(), "Part (")
+
+
+FENCED_BODY = "\n".join(
+    [
+        "# Part 1 — first",
+        "",
+        "```sh",
+        "# this is a shell comment, not a heading",
+        "make lint",
+        "```",
+        "",
+        "still inside part 1",
+        "",
+        "# Part 2 — second",
+        "",
+        "body of two",
+    ]
+)
+
+
+class FencedCodeTests(unittest.TestCase):
+    """A `#` inside a code fence is not a heading.
+
+    These payloads are Linear issue bodies full of ```sh / ```json blocks whose
+    lines routinely begin with `#`. Read as depth-1 headings, they ended a section
+    early — so `--section` returned a silently truncated block and `--headings`
+    listed phantom entries. Caught in review.
+    """
+
+    def test_a_hash_inside_a_fence_is_not_listed_as_a_heading(self):
+        got = headings(FENCED_BODY.splitlines())
+        self.assertEqual(got, ["1:Part 1 — first", "10:Part 2 — second"])
+
+    def test_a_section_is_not_truncated_by_a_fenced_comment(self):
+        block, _ = section(FENCED_BODY.splitlines(), "Part 1")
+        self.assertIn("make lint", block)
+        # The line AFTER the fence is the proof: a phantom heading would have
+        # ended the section inside the code block and dropped this.
+        self.assertIn("still inside part 1", block)
+        self.assertNotIn("body of two", block)
+
+    def test_a_tilde_fence_is_tracked_too(self):
+        body = ["# H", "~~~", "# not a heading", "~~~", "after"]
+        self.assertEqual(headings(body), ["1:H"])
+
+    def test_grep_still_sees_inside_a_fence(self):
+        # Fence tracking scopes HEADING detection only — grep is a text search
+        # and must not start hiding lines.
+        got = rr.grep(FENCED_BODY.splitlines(), "shell comment", 0)
+        self.assertEqual(len(got), 1)
 
 
 class GrepTests(unittest.TestCase):
@@ -200,6 +260,21 @@ class SliceTests(unittest.TestCase):
         for spec in ("5", "a:b", "19:2"):
             with self.assertRaises(ReadResultError):
                 rr.parse_slice(spec, 20)
+
+    def test_a_negative_bound_says_what_is_wrong(self):
+        # `1:-1` is a Python habit meaning "all but the last"; clamping it
+        # reported "start is past end", which misstates the mistake.
+        with self.assertRaises(ReadResultError) as caught:
+            rr.parse_slice("1:-1", 20)
+        self.assertIn("negative bound", str(caught.exception))
+
+    def test_a_dropped_envelope_block_is_announced(self):
+        raw = json.dumps([{"type": "text", "text": "kept"}, {"type": "image"}])
+        err = io.StringIO()
+        with redirect_stderr(err):
+            got = unwrap(raw)
+        self.assertEqual(got, "kept")
+        self.assertIn("non-text block(s)", err.getvalue())
 
 
 class CliTests(unittest.TestCase):

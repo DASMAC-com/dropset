@@ -44,12 +44,30 @@ ENV = {
 }
 
 
-def _node(identifier="ENG-1", title="A lever", state="Todo", milestone="Trim levers"):
+def _node(
+    identifier="ENG-1",
+    title="A lever",
+    state="Todo",
+    milestone="Trim levers",
+    fingerprint="a:b",
+    state_type="unstarted",
+    description=None,
+):
+    """A probe/listing result node.
+
+    Carries a `description` with an anchored `**Fingerprint**:` field by default,
+    because the probe verifies the key line-anchored in-process — the server-side
+    `contains` filter is only a pre-filter. A node without that field is correctly
+    treated as a non-match.
+    """
+    if description is None:
+        description = f"Prose.\n\n**Fingerprint**: {fingerprint}\n"
     return {
         "identifier": identifier,
         "url": f"https://linear.app/dasmac/issue/{identifier}",
         "title": title,
-        "state": {"name": state, "type": "unstarted"},
+        "description": description,
+        "state": {"name": state, "type": state_type},
         "projectMilestone": {"name": milestone} if milestone else None,
     }
 
@@ -170,7 +188,7 @@ class ProbeTests(unittest.TestCase):
 class FileLeverTests(unittest.TestCase):
     def _fake(self, existing=(), created="ENG-7"):
         def fake(api_key, query, variables):
-            if "query Levers" in query:
+            if "issues(" in query:
                 return _page(list(existing))
             if "Milestones" in query:
                 return {
@@ -270,7 +288,7 @@ class FileLeverTests(unittest.TestCase):
 
     def test_a_missing_milestone_names_the_available_ones(self):
         def fake(api_key, query, variables):
-            if "query Levers" in query:
+            if "issues(" in query:
                 return _page([])
             if "Milestones" in query:
                 return {
@@ -305,7 +323,7 @@ class AppendEvidenceTests(unittest.TestCase):
         self.sent = {}
 
         def fake(api_key, query, variables):
-            if "query Levers" in query:
+            if "issues(" in query:
                 return _page(matches if matches is not None else [_node("ENG-5")])
             if "LeverBody" in query:
                 return {
@@ -497,7 +515,7 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(TrimLeversError) as caught:
                 self._invoke("probe", "--fingerprint", "a:b")
         message = str(caught.exception)
-        self.assertIn("non-printable", message)
+        self.assertIn("not printable ASCII", message)
         self.assertNotIn("secret", message)
 
     def test_main_maps_an_error_to_exit_two(self):
@@ -507,6 +525,212 @@ class CliTests(unittest.TestCase):
                 code = tl.main()
         self.assertEqual(code, 2)
         self.assertIn("error:", err.getvalue())
+
+
+class DryRunPositionTests(unittest.TestCase):
+    """`--dry-run` must bind in BOTH positions.
+
+    It shipped bound in only one: declared on the parent parser AND on each
+    subparser with a plain `False` default, so the subparser's default
+    overwrote the parent's `True` and `--dry-run file …` performed a REAL Linear
+    write while the operator believed they had asked for a rehearsal. Two review
+    lenses found it independently. `board_batch.py` carries the same helper for
+    the same reason; these tests are the guard that keeps them in step.
+    """
+
+    def _dry_run(self, *argv):
+        return tl._parse_args(["trim_levers.py", *argv]).dry_run
+
+    def test_before_the_subcommand(self):
+        self.assertTrue(self._dry_run("--dry-run", "probe", "--fingerprint", "a:b"))
+
+    def test_after_the_subcommand(self):
+        self.assertTrue(self._dry_run("probe", "--fingerprint", "a:b", "--dry-run"))
+
+    def test_absent_means_live(self):
+        self.assertFalse(self._dry_run("probe", "--fingerprint", "a:b"))
+
+    def test_it_binds_in_both_positions_for_every_subcommand(self):
+        cases = {
+            "probe": ["--fingerprint", "a:b"],
+            "list": [],
+            "append-evidence": ["--fingerprint", "a:b", "--evidence-file", "e"],
+            "file": [
+                "--title",
+                "t",
+                "--fingerprint",
+                "a:b",
+                "--body-file",
+                "b",
+            ],
+        }
+        for cmd, rest in cases.items():
+            with self.subTest(cmd=cmd, position="before"):
+                self.assertTrue(self._dry_run("--dry-run", cmd, *rest))
+            with self.subTest(cmd=cmd, position="after"):
+                self.assertTrue(self._dry_run(cmd, *rest, "--dry-run"))
+
+
+class ExactFingerprintMatchTests(unittest.TestCase):
+    """The server `contains` filter is a pre-filter; the probe matches exactly.
+
+    Slugs nest — `a:search-scope` is a substring of `a:search-scope-axis` — so a
+    substring-only probe returns one confident WRONG match, which would grow the
+    wrong lever and refuse a genuinely new one. This is the single guard the
+    whole dedup pipeline rests on.
+    """
+
+    def test_a_nested_slug_is_not_a_match(self):
+        longer = _node("ENG-9", fingerprint="a:search-scope-axis")
+        with mock.patch.object(tl, "_post", return_value=_page([longer])):
+            got = tl.probe("k", "proj", "a:search-scope")
+        self.assertEqual(got, [])
+
+    def test_the_exact_slug_still_matches(self):
+        node = _node("ENG-9", fingerprint="a:search-scope-axis")
+        with mock.patch.object(tl, "_post", return_value=_page([node])):
+            got = tl.probe("k", "proj", "a:search-scope-axis")
+        self.assertEqual([n["identifier"] for n in got], ["ENG-9"])
+
+    def test_a_fingerprint_only_mentioned_in_prose_is_not_a_match(self):
+        # Not line-anchored, so not a field — it must not satisfy dedup.
+        prose = _node("ENG-9", description="See **Fingerprint**: a:b inline.\n")
+        with mock.patch.object(tl, "_post", return_value=_page([prose])):
+            self.assertEqual(tl.probe("k", "proj", "a:b"), [])
+
+    def test_the_probe_query_selects_description_but_the_listing_does_not(self):
+        # The zero-echo property is about what PRINTS, not what is fetched — but
+        # the listing has no reason to carry bodies, so it still must not.
+        self.assertIn("description", tl._PROBE_QUERY)
+        self.assertNotIn("description", tl._SEARCH_QUERY)
+
+
+class LeverLifecycleTests(unittest.TestCase):
+    """Only a still-parked lever accumulates evidence.
+
+    The fold copies each `**Fingerprint**:` line into the aggregated task, so
+    after the first fold a raw probe legitimately matches TWO issues — the closed
+    original and the open aggregate. Treating that as ambiguous would break the
+    recurrence-accumulation this pipeline exists for, which is exactly what the
+    completeness lens caught.
+    """
+
+    def _fake(self, matches):
+        def fake(api_key, query, variables):
+            if "issues(" in query:
+                return _page(matches)
+            raise AssertionError("should not have reached a write")
+
+        return fake
+
+    def test_the_parked_lever_is_selected_over_a_folded_one(self):
+        folded = _node("ENG-5", state="Done", state_type="completed", milestone=None)
+        parked = _node("ENG-8", state="Todo")
+        with mock.patch.object(tl, "_post", side_effect=self._fake([folded, parked])):
+            line = tl.append_evidence(
+                "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
+            )
+        self.assertIn("ENG-8", line)
+        self.assertNotIn("ENG-5", line)
+
+    def test_only_discharged_matches_is_refused_with_the_disposition(self):
+        folded = _node("ENG-5", state="Done", state_type="completed", milestone=None)
+        rejected = _node("ENG-6", state="Canceled", state_type="canceled")
+        with mock.patch.object(tl, "_post", side_effect=self._fake([folded, rejected])):
+            with self.assertRaises(TrimLeversError) as caught:
+                tl.append_evidence(
+                    "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
+                )
+        message = str(caught.exception)
+        self.assertIn("already discharged", message)
+        self.assertIn("ENG-5", message)
+        self.assertIn("Canceled", message)
+
+    def test_two_parked_levers_are_still_ambiguous(self):
+        both = [_node("ENG-5"), _node("ENG-6")]
+        with mock.patch.object(tl, "_post", side_effect=self._fake(both)):
+            with self.assertRaises(TrimLeversError) as caught:
+                tl.append_evidence(
+                    "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
+                )
+        self.assertIn("2 parked levers", str(caught.exception))
+
+    def test_open_parked_ignores_an_open_issue_without_the_milestone(self):
+        # An aggregated task is open but carries no parking milestone.
+        aggregate = _node("ENG-9", milestone=None)
+        self.assertEqual(tl.open_parked([aggregate]), [])
+
+
+class AppendEvidenceGuardTests(unittest.TestCase):
+    """The read half of the read-modify-write must not fail open.
+
+    Unguarded, a null `issue` raised a bare KeyError (the traceback this module
+    exists to avoid), and an empty `description` REPLACED the accumulated lever
+    with the evidence alone — silent data loss on the accumulator.
+    """
+
+    def _fake(self, body_result):
+        def fake(api_key, query, variables):
+            if "issues(" in query:
+                return _page([_node("ENG-5")])
+            if "LeverBody" in query:
+                return body_result
+            raise AssertionError("should not have reached the update mutation")
+
+        return fake
+
+    def test_an_unresolvable_issue_is_a_clean_error_not_a_keyerror(self):
+        with mock.patch.object(tl, "_post", side_effect=self._fake({"issue": None})):
+            with self.assertRaises(TrimLeversError) as caught:
+                tl.append_evidence(
+                    "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=False
+                )
+        self.assertIn("did not resolve", str(caught.exception))
+
+    def test_an_empty_stored_body_refuses_rather_than_overwriting(self):
+        body = {
+            "issue": {"id": "u", "identifier": "ENG-5", "url": "u", "description": ""}
+        }
+        with mock.patch.object(tl, "_post", side_effect=self._fake(body)):
+            with self.assertRaises(TrimLeversError) as caught:
+                tl.append_evidence(
+                    "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=False
+                )
+        self.assertIn("refusing to overwrite", str(caught.exception))
+
+
+class ForeignFingerprintTests(unittest.TestCase):
+    def test_a_body_carrying_another_key_is_refused(self):
+        with self.assertRaises(TrimLeversError) as caught:
+            compose_body("P\n\n**Fingerprint**: a:foo\n", "a:foo-bar", [])
+        message = str(caught.exception)
+        self.assertIn("already carries a different", message)
+        self.assertIn("a:foo", message)
+
+    def test_the_same_key_is_not_duplicated(self):
+        got = compose_body("P\n\n**Fingerprint**: a:b\n", "a:b", [])
+        self.assertEqual(len(tl.field_values(got, "Fingerprint")), 1)
+
+    def test_an_existing_touches_line_is_not_duplicated(self):
+        got = compose_body("P\n\n**Touches**: docs/**\n", "a:b", ["docs/**"])
+        self.assertEqual(len(tl.field_values(got, "Touches")), 1)
+
+
+class TruncationGuardTests(unittest.TestCase):
+    def test_a_full_page_with_no_pageinfo_is_refused(self):
+        # Trusting `hasNextPage` alone means a full-but-unmarked page reads as a
+        # complete result. Refuse rather than report a truncated set as whole.
+        nodes = [_node(f"ENG-{k}") for k in range(tl.PAGE_SIZE)]
+        with mock.patch.object(tl, "_post", return_value={"issues": {"nodes": nodes}}):
+            with self.assertRaises(TrimLeversError) as caught:
+                tl.parked("k", "proj")
+        self.assertIn("no pageInfo", str(caught.exception))
+
+    def test_a_short_page_with_no_pageinfo_is_still_fine(self):
+        with mock.patch.object(
+            tl, "_post", return_value={"issues": {"nodes": [_node("ENG-1")]}}
+        ):
+            self.assertEqual(len(tl.parked("k", "proj")), 1)
 
 
 class NoRelationsTests(unittest.TestCase):

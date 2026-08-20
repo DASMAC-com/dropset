@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# cspell:word pageinfo
 # cspell:word proirity
 """Unit tests for board_batch.py.
 
@@ -420,11 +419,31 @@ class PaginationTests(unittest.TestCase):
                 bb.fetch_issues("k", "p")
         self.assertIn("did not terminate", str(caught.exception))
 
-    def test_a_missing_pageinfo_is_treated_as_a_final_page(self):
+    def test_a_short_page_with_no_pageinfo_is_treated_as_a_final_page(self):
         with mock.patch.object(
             bb, "_post", return_value={"issues": {"nodes": [_issue(1)]}}
         ):
             self.assertEqual(len(bb.fetch_issues("k", "p")), 1)
+
+    def test_a_full_page_with_no_pageinfo_is_refused(self):
+        """Trusting `hasNextPage` alone leaves a full-but-unmarked page reading as
+        a complete read. `list` has no other net, so it would print a truncated
+        board as the whole board — refuse instead."""
+        nodes = [_issue(n) for n in range(bb.PAGE_SIZE)]
+        with mock.patch.object(bb, "_post", return_value={"issues": {"nodes": nodes}}):
+            with self.assertRaises(BoardBatchError) as caught:
+                bb.fetch_issues("k", "p")
+        self.assertIn("no pageInfo", str(caught.exception))
+
+    def test_the_edge_reference_keys_have_one_owner(self):
+        # `pair_refs` and `place_edges` must not be able to disagree about which
+        # keys a pair carries; a third key in one and not the other would be
+        # silently under-fetched.
+        self.assertEqual(bb.EDGE_REF_KEYS, ("blocker", "blocked"))
+        self.assertEqual(
+            bb.pair_refs([{k: 1 for k in bb.EDGE_REF_KEYS}]),
+            [1] * len(bb.EDGE_REF_KEYS),
+        )
 
     def test_the_resolver_read_filters_on_the_numbers_it_was_given(self):
         seen = []
@@ -472,9 +491,15 @@ class PaginationTests(unittest.TestCase):
 class BoardSizeIndependenceTests(unittest.TestCase):
     """A write must not care how large the board has grown.
 
-    This is the regression test the outage asked for: a project far past the page
-    size, an updates file naming a handful, and no error. Before the fix the
-    resolver read the whole project and raised before writing anything.
+    Precisely what these pin, since the distinction matters: the resolver read is
+    **scoped to the payload's numbers**. They do NOT model a 575-issue board —
+    no fixture here serves one — so board-size independence is an *inference*
+    from the scoping, not something measured. Pagination is measured separately
+    in :class:`PaginationTests`.
+
+    They are still non-vacuous against the defect: the old resolver sent no
+    `number` key at all, so `variables["filter"]["number"]` raises `KeyError`
+    under the pre-fix implementation before any assertion runs.
     """
 
     def setUp(self):

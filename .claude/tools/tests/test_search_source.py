@@ -434,7 +434,13 @@ class ContextNudgeTests(unittest.TestCase):
 
     def test_a_few_matches_in_one_file_say_nothing(self):
         got = self._summary(self._result(2, 1))
-        self.assertNotIn("cluster in one file", got)
+        self.assertNotIn("cluster in", got)
+
+    def test_dense_matches_across_a_handful_of_files_also_nudge(self):
+        # The gap the single-file test left: 2-3 files fired neither branch,
+        # however dense, yet that is the same overlap shape.
+        got = self._summary(self._result(40, 3))
+        self.assertIn("cluster in 3 files", got)
 
     def test_no_nudge_without_context(self):
         got = self._summary(self._result(50, 20), context=0)

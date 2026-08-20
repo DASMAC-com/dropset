@@ -140,6 +140,32 @@ class SafetyGateTests(unittest.TestCase):
         self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-701"])
         self.assertIn("unprovable", out["skipped"][0]["reason"])
 
+    def test_an_unreadable_commit_count_is_skipped_not_removed(self):
+        """The one branch that used to guess toward REMOVING.
+
+        An rc-0 `rev-list` with empty stdout fell through to "safe to delete".
+        Every other branch refuses when it cannot prove safety; this one now does
+        too, because the guess must never run in the destructive direction.
+        """
+
+        class EmptyCount(FakeGit):
+            def __call__(self, args):
+                if args[0] == "-C" and args[2] == "rev-list":
+                    self.calls.append(args)
+                    return 0, "   \n", ""
+                return super().__call__(args)
+
+        git = EmptyCount(PORCELAIN)
+        out = prune({"eng-701"}, dry_run=False, git=git)
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-701"])
+        self.assertIn("unprovable", out["skipped"][0]["reason"])
+        self.assertNotIn(["branch", "-D", "eng-701"], git.calls)
+
+    def test_a_non_numeric_commit_count_is_skipped(self):
+        git = FakeGit(PORCELAIN, unpushed=[("eng-701", "not-a-number")])
+        out = prune({"eng-701"}, dry_run=False, git=git)
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-701"])
+
     def test_a_clean_pushed_tree_is_still_removed(self):
         # The gate must not be so cautious that it never removes anything.
         git = FakeGit(PORCELAIN)

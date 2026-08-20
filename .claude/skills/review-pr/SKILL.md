@@ -964,10 +964,17 @@ PR-authoring **writes** (`create_pull_request`,
    python3 .claude/tools/lens_preamble.py \
      --out <scratchpad>/lens-preamble.md \
      --append .claude/skills/review-pr/lens-standing.md \
-     --fact 'No frontend test harness exists — do not look for one.' \
-     --fact 'make lint covers biome + tsc + cspell over the whole tree.' \
-     --fact 'The dead export has zero call sites (swept before this run).'
+     --facts-file <scratchpad>/facts.md
    ```
+
+   **Write the facts to a file; do not copy an example.** The `--fact` flags are
+   equivalent, but a worked example in a copy-paste command is a trap here: the
+   composed section instructs every lens to treat its contents as **binding and
+   not to re-derive them**, so a run that pastes someone else's example injects
+   *false* established facts into the entire fan-out. Compose
+   `<scratchpad>/facts.md` from what **this** run actually verified — one claim
+   per line, negatives included — and pass the path. Pass `--no-facts` only to
+   state on the record that nothing was verified.
 
    It composes two committed halves, each with a single
    owner: the canonical shell rules from the convention doc,

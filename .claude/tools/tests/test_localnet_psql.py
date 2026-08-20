@@ -93,6 +93,24 @@ class BuildArgvTests(unittest.TestCase):
         self.assertIn("postgres://x/y", got)
         self.assertNotIn("docker", got)
 
+    def test_the_connection_string_goes_last_after_every_flag(self):
+        # As a LEADING positional this relied on getopt argument permutation,
+        # which POSIXLY_CORRECT disables — psql would then read the flags as
+        # connection parameters. Trailing is unconditionally correct.
+        got = _argv(direct=True, db_url="postgres://x/y", sql="select 1")
+        self.assertEqual(got[-1], "postgres://x/y")
+
+    def test_the_fixed_error_stop_guard_cannot_be_overridden_by_a_var(self):
+        # psql honors the LAST -v for a name, so the tool's own guard must come
+        # after the caller's pairs or `--var ON_ERROR_STOP=0` silently wins.
+        got = _argv(variables=["ON_ERROR_STOP=0"])
+        self.assertLess(got.index("ON_ERROR_STOP=0"), got.index("ON_ERROR_STOP=1"))
+
+    def test_an_empty_sql_value_is_diagnosed_as_empty_not_as_missing(self):
+        with self.assertRaises(LocalnetPsqlError) as caught:
+            _argv(sql="", file=None)
+        self.assertIn("empty value", str(caught.exception))
+
     def test_direct_mode_without_a_url_is_refused(self):
         with self.assertRaises(LocalnetPsqlError) as caught:
             _argv(direct=True, db_url=None)
@@ -154,13 +172,14 @@ class RunTests(unittest.TestCase):
         self.assertNotIn("99", out)
 
     def test_count_reports_the_row_count_and_not_the_rows(self):
-        with mock.patch.object(
-            subprocess, "run", return_value=self._completed("a\nb\nc\n")
-        ):
+        # A distinctive marker, not the letter "a": asserting on a single letter
+        # passed for the wrong reason the moment the summary wording changed.
+        rows = "ROW-MARKER-1\nROW-MARKER-2\nROW-MARKER-3\n"
+        with mock.patch.object(subprocess, "run", return_value=self._completed(rows)):
             code, out, _ = self._invoke("--sql", "select x", "--count")
         self.assertEqual(code, 0)
         self.assertIn("3 row line(s)", out)
-        self.assertNotIn("a", out.replace("row line(s)", ""))
+        self.assertNotIn("ROW-MARKER", out)
 
     def test_a_failed_query_surfaces_the_stderr_tail(self):
         with mock.patch.object(

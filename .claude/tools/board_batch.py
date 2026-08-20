@@ -93,8 +93,10 @@ PAGE_SIZE = 250
 
 # How many issue numbers one resolver query names. A write path resolves only the
 # issues its own payload references, so this bounds a chunk of that lookup rather
-# than the board. Kept well under `PAGE_SIZE` so that even if several chunked
-# numbers collide across teams, a single page cannot fill and truncate.
+# than the board. The reason to keep it modest is **query size**, not truncation:
+# `_fetch_filtered` pages, so a chunk cannot truncate however many cross-team
+# number collisions it contains. (An earlier comment here claimed the opposite
+# and was wrong in both directions.)
 RESOLVE_CHUNK = 100
 
 # Runaway backstop on a cursor-following read: 40 pages is ~10k issues, far above
@@ -220,9 +222,21 @@ def _fetch_filtered(api_key: str, issue_filter: dict) -> list[dict]:
             {"filter": issue_filter, "first": PAGE_SIZE, "after": after},
         )
         conn = data.get("issues") or {}
-        nodes.extend(conn.get("nodes") or [])
+        page = conn.get("nodes") or []
+        nodes.extend(page)
         info = conn.get("pageInfo") or {}
         if not info.get("hasNextPage"):
+            # The old code carried a truncation backstop independent of the
+            # server's own claim; paging replaced it with trust in `hasNextPage`.
+            # Keep a floor for the one case where that trust has nothing behind
+            # it: a FULL page with no `pageInfo` at all. On the resolver path a
+            # short read degrades to a loud `resolve_issue` refusal, but `list`
+            # has no such net and would print a truncated board as the whole one.
+            if not info and len(page) >= PAGE_SIZE:
+                raise BoardBatchError(
+                    f"read returned a full page of {PAGE_SIZE} with no pageInfo "
+                    "— refusing to report a possibly-truncated board as complete"
+                )
             return nodes
         after = info.get("endCursor")
         if not after:
@@ -515,6 +529,13 @@ def referenced_numbers(refs) -> list[int]:
     return numbers
 
 
+#: The reference keys an ``edges`` pair carries. Named once so `pair_refs` and
+#: `place_edges` cannot disagree: a third key added to one and not the other
+#: would be silently under-fetched, surfacing as a spurious "not in this project"
+#: error on a payload that is actually valid.
+EDGE_REF_KEYS = ("blocker", "blocked")
+
+
 def pair_refs(pairs: list) -> list:
     """Every issue reference in an ``edges`` payload, in order.
 
@@ -525,7 +546,7 @@ def pair_refs(pairs: list) -> list:
         pair[key]
         for pair in pairs
         if isinstance(pair, dict)
-        for key in ("blocker", "blocked")
+        for key in EDGE_REF_KEYS
         if key in pair
     ]
 
@@ -596,7 +617,7 @@ def place_edges(
     # it silently drops issues out of the available set.
     planned = []
     for pair in pairs:
-        if not isinstance(pair, dict) or "blocker" not in pair or "blocked" not in pair:
+        if not isinstance(pair, dict) or any(k not in pair for k in EDGE_REF_KEYS):
             raise BoardBatchError(
                 f"each pair needs 'blocker' and 'blocked' keys, got {pair!r}"
             )

@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` Backlog task under the fewest-coherent-PRs rule — one bullet per lever, each keeping its own `**Fingerprint**:` line under a combined `**Touches**:` — then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
+description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` Backlog task under the fewest-coherent-PRs rule — one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line under a combined `**Touches**:` — then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -130,10 +130,18 @@ mcp__claude_ai_Linear__save_issue(
 edits a skill, a convention doc, or `CLAUDE.md`; that lands later through
 a normal PR.
 
-**5. Close the parked originals.** A folded lever's content now lives in
-the aggregated task, so the parked issue is discharged. Close it and
-clear its milestone in **one** field-only write per issue, through the
-board tool rather than the MCP (per
+**5. Close the parked originals — this is load-bearing, not tidiness.**
+A folded lever's content now lives in the aggregated task, so the parked
+issue is discharged. Closing it is what keeps the **producer** working:
+the fold copies each `**Fingerprint**:` line into the aggregated task, so
+from this moment a fingerprint probe legitimately matches **two** issues.
+`session-metrics` resolves that by appending only to a lever that is
+still *open and milestoned*, so leaving the original parked would give it
+two live candidates and it would refuse rather than accumulate — breaking
+the recurrence-accumulation this pipeline exists for.
+
+Close it and clear its milestone in **one** field-only write per issue,
+through the board tool rather than the MCP (per
 `docs/conventions/linear-automation.md` → "Field-only writes go through
 `board_batch.py`, not the MCP") — an MCP `save_issue` would echo each
 body back for a one-field change:

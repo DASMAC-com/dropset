@@ -1,6 +1,6 @@
 ---
 name: session-metrics
-description: Capture where a session spent its tokens and recommend concrete trims. The deterministic core — resolve the session's on-disk transcript, read it (and its sub-agent transcripts) in its own process so the huge file never enters context, and rank the costliest tools / largest single results / per-sub-agent rollup plus the repeated command shapes worth hardening into a tool (ranked by result size, not call count, each labeled context / wall-clock / prompt-churn) — runs as the committed `session_metrics.py` tool under `.claude/tools/` (`make session-metrics SESSION=<uuid>`). The skill drives that tool, then files each trim lever it identifies as its own parked Linear issue under the `Trim levers` milestone, fingerprinted and written through the zero-echo `trim_levers.py` writer (appending this session's evidence to a lever that already exists rather than duplicating it), which `trim-context` later folds into propose-only skill-improvement tasks. Runs at the end of a `review-pr` session (its handoff offers it) or standalone for any session id.
+description: Capture where a session spent its tokens and recommend concrete trims. The deterministic core — resolve the session's on-disk transcript, read it (and its sub-agent transcripts) in its own process so the huge file never enters context, and rank the costliest tools / largest single results / per-sub-agent rollup plus the repeated command shapes worth hardening into a tool (ranked by result size, not call count, each labeled context / context (failures) / wall-clock / prompt-churn) — runs as the committed `session_metrics.py` tool under `.claude/tools/` (`make session-metrics SESSION=<uuid>`). The skill drives that tool, then files each trim lever it identifies as its own parked Linear issue under the `Trim levers` milestone, fingerprinted and written through the zero-echo `trim_levers.py` writer (appending this session's evidence to a lever that already exists rather than duplicating it), which `trim-context` later folds into propose-only skill-improvement tasks. Runs at the end of a `review-pr` session (its handoff offers it) or standalone for any session id.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -108,16 +108,25 @@ and prints, as compact Markdown (or `--json`):
   for extraction.
 
   Each candidate carries a **`cost`** label, because "worth
-  hardening" has three different reasons and conflating them
+  hardening" has **four** different reasons and conflating them
   produced wrong recommendations:
 
-  - **`context`** — the results are large, so it is a real
-    token sink. Hardening it saves tokens.
-  - **`wall-clock`** — it routed through `run_quiet.py`, so
-    its output never entered context. Hardening it buys
-    *latency*, not tokens. Three sessions had to add this
-    disclaimer by hand for `make lint` ×10, which cost ~20
+  - **`context`** — the results are large and the shape is
+    unwrapped, so it is a real token sink. Hardening it saves
     tokens.
+  - **`context (failures)`** — large *and* already
+    `run_quiet.py`-wrapped, so the bytes are **failure tails**.
+    The lever is different: the wrapping is in place, and what
+    costs tokens is how often the command failed — so the fix
+    is fewer round trips, not more redirection. Reported apart
+    from plain `context` because a session read the combined
+    label as "the wrapper isn't working" and filed a defect
+    against it; the classification was right and only the name
+    was ambiguous.
+  - **`wall-clock`** — wrapped and quiet in practice, so its
+    output never entered context. Hardening it buys *latency*,
+    not tokens. Three sessions had to add this disclaimer by
+    hand for `make lint` ×10, which cost ~20 tokens.
   - **`prompt-churn`** — cheap and fast, but each slightly
     different variant is a fresh permission prompt. A
     `printenv` is the type case.
@@ -183,8 +192,12 @@ recommendation in **three** sources:
   step that emits it. **State the candidate's `cost` label**
   in the recommendation — a `wall-clock` or `prompt-churn`
   candidate is still worth porting, but recommending it as a
-  *context* saving is simply false, and `trim-context` will
-  mine it as one if you don't say otherwise.
+  *context* saving is simply false, and the fold will treat it
+  as one if you don't say otherwise. A
+  **`context (failures)`** candidate needs the sharpest
+  restatement of all: it is already wrapped, so proposing that
+  it be routed through the quiet runner is a no-op — the lever
+  is whatever made it fail repeatedly.
 - **The observations you kept during the session** — per
   `CLAUDE.md`'s "track consumption ideas as you go" habit,
   the running notes on what felt wasteful. The sinks say
@@ -229,11 +242,25 @@ python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
       --evidence-file <scratchpad>/evidence.md
   ```
 
-  A `MATCH` on a **closed** lever is a recorded **rejection**,
-  not an invitation: read its closing reason and do not refile.
-  If this session's evidence genuinely defeats that reason, say
-  so in the report and leave it to a human — reopening someone's
-  reasoned rejection is not an unattended act.
+  A lever has three dispositions and the writer distinguishes
+  them for you, because only the first accepts evidence:
+
+  - **parked** (open, milestone set) — accumulates. This is the
+    normal `append-evidence` path.
+  - **folded** (closed, content copied into an aggregated task)
+    — already queued for action, so the recurrence adds
+    nothing; the writer refuses with `already discharged` and
+    names the issue.
+  - **rejected** (closed with a reason) — settled. Read the
+    closing reason and **do not refile**. If this session's
+    evidence genuinely defeats it, say so in the report and
+    leave it to a human — reopening someone's reasoned
+    rejection is not an unattended act.
+
+  Note that after a fold the probe matches **two** issues (the
+  closed original and the open aggregate); the writer selects
+  the open parked one, which is why a fold must close the
+  original.
 
 The fingerprint is `<domain-token>:<slug>`, and its first token
 must be **dotless** — Linear linkifies a hostname-valid

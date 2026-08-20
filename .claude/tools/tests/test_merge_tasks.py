@@ -377,6 +377,14 @@ class PatchOpNewlineTests(unittest.TestCase):
     So `_merged` now models the store, and the invariant is a flat one: whatever
     the input tail, exactly one blank line separates the survivor's last
     paragraph from the rule.
+
+    **The rstrip is an assumption, not a measurement.** That Linear strips
+    trailing whitespace when it stores a body is inferred from the observed
+    corruption (a "\\n---" append landing against a paragraph), not from a
+    documented contract. It is the safe assumption either way: if Linear does
+    *not* strip, the ops path diverges from the wholesale path by one blank
+    line, which the production comment explicitly accepts as the cheap side of
+    the asymmetry.
     """
 
     def _merged(self, stored, sections, globs):

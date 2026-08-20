@@ -125,7 +125,15 @@ def unsafe_reason(path: str, branch: str, git=_real_git) -> str | None:
     if rc != 0:
         return "no upstream branch, so unpushed commits cannot be ruled out"
     count = out.strip()
-    if count and count != "0":
+    # Fail closed on an unreadable count. Every other branch here refuses when it
+    # cannot prove safety, and this was the one place that guessed toward
+    # REMOVING: an rc-0 with empty stdout fell through to "safe to delete".
+    # `git rev-list --count` always prints a number on success, so this is a
+    # belt-and-braces guard — but the whole point of the function is that the
+    # guess must never run in the destructive direction.
+    if not count.isdigit():
+        return f"unreadable unpushed-commit count ({count!r}), so safety is unprovable"
+    if count != "0":
         return f"{count} unpushed commit(s)"
     return None
 

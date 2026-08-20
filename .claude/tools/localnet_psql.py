@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# cspell:word pgpass
+# cspell:word PGSERVICE
 # cspell:word screenful
 """Query the localnet Postgres in one allow-rule, without psql's box drawing.
 
@@ -27,6 +29,20 @@ Connection: by default it execs into the localnet container
 ``DROPSET_LOCALNET_PG_CONTAINER``). With ``--direct`` it runs a local ``psql``
 against ``DROPSET_DB_URL`` instead, which is what the analytics README documents
 for a non-container Postgres.
+
+**A caveat on ``--direct``.** The connection string is passed as an argv element,
+where it is readable in the process table for the life of the query. That is
+acceptable for a developer-invoked localnet tool against a local Postgres — which
+is what ``DROPSET_DB_URL`` documents — but if that variable is ever pointed at a
+shared or remote instance carrying a real password, move to ``PGPASSWORD`` /
+``~/.pgpass`` / ``PGSERVICE`` rather than reaching for ``--direct``.
+
+Note also that ``--sql`` and ``--file`` reach ``psql``, which accepts backslash
+meta-commands (``\\!`` shells out, ``\\o`` and ``\\copy`` touch files), and that
+``-v`` substitution into a ``.sql`` file is textual. The values come from the
+developer running the tool, who already has a shell, so this is not an escalation
+— but the argv surface is strictly more powerful than "run a query", which is
+worth knowing given the whole point is to collapse into one stable allow-rule.
 
 Row output is capped and the cap is **announced** — a silent truncation reads as
 a complete answer, which is the one thing worse than a verbose one. Stdlib only;
@@ -79,18 +95,29 @@ def build_argv(
 
     Pure, so the flag assembly is testable without a database or a container.
     """
-    if bool(sql) == bool(file):
+    # `is None`, not truthiness: `--sql ''` passes exactly one source, and the
+    # old `bool(sql) == bool(file)` reported "pass exactly one" for it — a
+    # misdiagnosis of an empty value as a missing one.
+    if (sql is None) == (file is None):
         raise LocalnetPsqlError("pass exactly one of --sql or --file")
+    if not (sql or file or "").strip():
+        raise LocalnetPsqlError("--sql/--file was given an empty value")
 
     psql: list[str] = ["psql"]
-    if direct:
-        if not db_url:
-            raise LocalnetPsqlError(
-                "--direct needs DROPSET_DB_URL set to a connection string"
-            )
-        psql.append(db_url)
-    else:
+    if not direct:
         psql += ["-U", DEFAULT_USER, "-d", DEFAULT_DB]
+    elif not db_url:
+        raise LocalnetPsqlError(
+            "--direct needs DROPSET_DB_URL set to a connection string"
+        )
+
+    # The caller's own `--var` pairs go FIRST, so the fixed flags below win.
+    # psql honors the LAST `-v` for a given name, so with this order reversed a
+    # `--var ON_ERROR_STOP=0` silently disabled the tool's own error-stop guard.
+    for pair in variables:
+        if "=" not in pair:
+            raise LocalnetPsqlError(f"--var needs name=value, got {pair!r}")
+        psql += ["-v", pair]
 
     # `-P pager=off` matters even non-interactively: a configured pager in the
     # image would otherwise wait for input and the call would hang rather than
@@ -101,17 +128,17 @@ def build_argv(
     if tuples_only:
         psql.append("-t")
 
-    for pair in variables:
-        if "=" not in pair:
-            raise LocalnetPsqlError(f"--var needs name=value, got {pair!r}")
-        psql += ["-v", pair]
-
     if sql:
         psql += ["-c", sql]
     else:
         psql += ["-f", file]
 
+    # The connection string goes LAST, after every flag. As a leading positional
+    # it relied on getopt argument permutation, which `POSIXLY_CORRECT` in the
+    # environment disables — psql would then read the flags as connection
+    # parameters. Trailing is unconditionally correct.
     if direct:
+        psql.append(db_url)
         return psql
     return ["docker", "exec", "-i", container, *psql]
 
@@ -212,9 +239,14 @@ def run(argv: list[str]) -> int:
     if dropped:
         # Announced, never silent: a trimmed result that looks complete is how a
         # wrong conclusion gets drawn from a right query.
+        # "line(s)", not "row(s)": the cap counts OUTPUT LINES, so the header and
+        # the `(N rows)` footer are included and a value containing a newline
+        # splits across several. `--count` uses the same wording for the same
+        # reason. Note the footer is among what gets cut, so the authoritative
+        # row count is exactly what a truncated read loses.
         print(
-            f"-- {dropped} more row(s) NOT shown (raise --max-rows, or narrow "
-            "the query)",
+            f"-- {dropped} more output line(s) NOT shown, including psql's own "
+            "row-count footer (raise --max-rows, or narrow the query)",
             file=sys.stderr,
         )
     return 0

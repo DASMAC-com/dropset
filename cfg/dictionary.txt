@@ -1,3 +1,4 @@
+POSIXLY
 addrs
 affordance
 affordances
@@ -135,6 +136,7 @@ ohlcv
 oneline
 onramps
 openxmlformats
+pageinfo
 parallelizable
 pathspec
 paytrie

@@ -91,8 +91,9 @@ files **no blocking edge** — see "Blocking relations" below. That
 relation write is its **only** Linear write — it renders no document,
 ranks nothing, and never folds or closes an issue (consolidation is
 `merge-tasks`' job). It runs in **four modes**: `--for ENG-###`
-compares just the named, just-filed issue against the backlog (the
-bounded file-time path the filing skills call after `save_issue`); a
+compares just the named issue against the backlog (**no filing skill
+calls this any more** — the filing-time sweep is retired, so this mode
+is hand-run only); a
 bare invocation is the full pairwise sweep for occasional
 reconciliation, reporting **collision clusters** (the input to the
 `plan` skill's merge-group proposal), the surviving human-declared
@@ -169,8 +170,10 @@ filing skills emit them and `sync-blockers` parses them:
   finding. The `sync-blockers` tool reads this to detect file
   collisions **deterministically** — a directory glob collides with
   any path under it, and two issues that collide are coupled. Such a
-  pair is **related-linked**, and the tool reports the paths they
-  collide on. A collision is explicitly **not** a blocking edge — see
+  pair *was* related-linked automatically; that is retired (see below),
+  so a collision is now reconciled in a planning session and the field
+  stands on its own as documentation of scope. A collision is
+  explicitly **not** a blocking edge — see
   "Blocking relations". An issue that predates the `**Touches**:`
   convention has no globs to check; backfill one and re-run the sweep.
 
@@ -771,8 +774,9 @@ reference it.
 
 Two things that are **not** blocking edges:
 
-- **File overlap.** A `**Touches**:` collision is related-linked and
-  reported as a cluster (see "Collision clusters, not serial chains").
+- **File overlap.** A `**Touches**:` collision is reconciled in a
+  planning session and reported as a cluster (see "Collision clusters,
+  not serial chains"); the automated related-linking is retired.
 - **Coupling that belongs in one PR.** That is handled by combining
   into a single issue (see "Fold coupled findings into one issue"),
   not a relation.

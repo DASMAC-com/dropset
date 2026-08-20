@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas and the standing audit directive plus its outcome unprompted, then keeps the board coherent: the Queue honest, blocking edges curated, parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog), and issues filed and amended to house convention. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — which also writes the next audit directive, one named subsystem or interface for housekeeping to audit, or explicitly none — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
+description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas and the standing audit directive plus its outcome unprompted, then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled (this session is now the only place that happens — the filing-time sweep is retired), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog), and issues filed and amended to house convention. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — which also writes the next audit directive, one named subsystem or interface for housekeeping to audit, or explicitly none — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -507,8 +507,9 @@ about to be rewritten: one pass filed **fifteen** parked
 findings, several against maker-model and fair-value files
 that open Backlog issues were already slated to rewrite. The
 engine was working; the targeting was not — and because the
-parked pool drains only through the promotion step above,
-over-filing costs this session directly.
+parked pool drains only through the promotion step (step 8,
+which runs at bootstrap), over-filing costs this session
+directly.
 
 Also **record the previous directive's outcome** — its target
 and finding count, from the housekeeping report — so the

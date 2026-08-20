@@ -112,11 +112,14 @@ def env_var(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
         raise TrimLeversError(f"{name} is unset — export it before running")
-    if not value.isprintable():
+    if not (value.isascii() and value.isprintable()):
         # A pasted key with an embedded newline otherwise reaches http.client's
         # header validation, which raises a ValueError quoting the offending
-        # value — i.e. leaking the credential into a traceback.
-        raise TrimLeversError(f"{name} contains a non-printable character")
+        # value — i.e. leaking the credential into a traceback. `isascii` is
+        # checked too: a non-Latin-1 printable (a smart quote from a paste)
+        # passes `isprintable` and then fails inside the header encode as an
+        # uncaught UnicodeEncodeError, which names the offending character.
+        raise TrimLeversError(f"{name} is not printable ASCII")
     return value
 
 
@@ -185,6 +188,26 @@ def validate_fingerprint(key: str) -> str:
     return key
 
 
+def field_line_re(field: str, value: str | None = None) -> re.Pattern:
+    """A line-anchored matcher for a ``**Field**: value`` line.
+
+    Anchored, and not a substring test. A substring test gets this wrong in both
+    directions, which review caught by running it: a fingerprint merely *mentioned
+    in prose* suppressed the real field entirely (leaving the lever with no
+    machine-parsed key at all), while filing ``a:foo-bar`` onto a body already
+    carrying ``a:foo`` appended a **second** field line — one issue owning two
+    keys. Both break the dedup this pipeline rests on.
+    """
+    tail = re.escape(value) + r"\s*$" if value is not None else r".*$"
+    return re.compile(rf"^\*\*{re.escape(field)}\*\*:\s*{tail}", re.MULTILINE)
+
+
+def field_values(body: str, field: str) -> list[str]:
+    """Every value carried by a ``**Field**: value`` line, in order."""
+    pattern = re.compile(rf"^\*\*{re.escape(field)}\*\*:\s*(.*)$", re.MULTILINE)
+    return pattern.findall(body)
+
+
 def compose_body(body: str, fingerprint: str, touches: list[str]) -> str:
     """The stored body: the lever's prose plus its two machine-parsed fields.
 
@@ -192,10 +215,31 @@ def compose_body(body: str, fingerprint: str, touches: list[str]) -> str:
     lever carries them in the same place and spelling — the probe below is only as
     reliable as that consistency.
     """
+    # A single parked lever owns exactly ONE key. If the supplied body already
+    # carries a *different* `**Fingerprint**:` field, appending ours would store
+    # two — and a probe for either would then match this issue, which is the
+    # dedup guard failing in the direction hardest to notice. (An aggregated task
+    # legitimately carries many; the fold composes those, not this function.)
+    foreign = sorted(
+        {
+            found.strip()
+            for found in field_values(body, "Fingerprint")
+            if found.strip() != fingerprint
+        }
+    )
+    if foreign:
+        raise TrimLeversError(
+            f"the supplied body already carries a different **Fingerprint**: "
+            f"field ({', '.join(foreign)}) — a lever owns one key, so refusing "
+            f"to file it under {fingerprint} as well"
+        )
+
     parts = [body.rstrip()]
-    if f"**Fingerprint**: {fingerprint}" not in body:
+    # Anchored presence test, so the field is added exactly once whether or not
+    # the prose happens to mention it.
+    if not field_line_re("Fingerprint", fingerprint).search(body):
         parts.append(f"**Fingerprint**: {fingerprint}")
-    if touches:
+    if touches and not field_line_re("Touches").search(body):
         parts.append(f"**Touches**: {', '.join(touches)}")
     # Joined with a blank line, and never leaving a field directly under a
     # paragraph: a bare "---" or a field abutting prose is how Linear's round trip
@@ -261,8 +305,26 @@ mutation FileLever($input: IssueCreateInput!) {
 }
 """
 
-# The read half of append-evidence. This is the ONE place a body is fetched, and
-# it is fetched into this process, never into a transcript.
+# The probe's own query. Identical to the listing query plus `description`, which
+# the exact line-anchored match in `probe` needs — the server-side `contains`
+# filter is only a pre-filter. The body is read in this process and never printed.
+_PROBE_QUERY = """
+query LeverProbe($filter: IssueFilter, $first: Int!, $after: String) {
+  issues(filter: $filter, first: $first, after: $after, includeArchived: true) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      identifier
+      url
+      title
+      description
+      state { name type }
+      projectMilestone { name }
+    }
+  }
+}
+"""
+
+# The read half of append-evidence. Fetched into this process, never a transcript.
 _BODY_QUERY = """
 query LeverBody($id: String!) {
   issue(id: $id) { id identifier url description }
@@ -279,20 +341,28 @@ mutation AppendEvidence($id: String!, $description: String!) {
 """
 
 
-def _paged(api_key: str, issue_filter: dict) -> list[dict]:
+def _paged(api_key: str, issue_filter: dict, query: str = _SEARCH_QUERY) -> list[dict]:
     """Every issue matching ``issue_filter``, following the cursor."""
     nodes: list[dict] = []
     after: str | None = None
     for _ in range(MAX_PAGES):
         data = _post(
             api_key,
-            _SEARCH_QUERY,
+            query,
             {"filter": issue_filter, "first": PAGE_SIZE, "after": after},
         )
         conn = data.get("issues") or {}
-        nodes.extend(conn.get("nodes") or [])
+        page = conn.get("nodes") or []
+        nodes.extend(page)
         info = conn.get("pageInfo") or {}
         if not info.get("hasNextPage"):
+            # A full page with no pageInfo at all is not evidence of a complete
+            # read — refuse rather than report a possibly-truncated set as whole.
+            if not info and len(page) >= PAGE_SIZE:
+                raise TrimLeversError(
+                    f"read returned a full page of {PAGE_SIZE} with no pageInfo — "
+                    "refusing to treat a possibly-truncated result as complete"
+                )
             return nodes
         after = info.get("endCursor")
         if not after:
@@ -301,7 +371,7 @@ def _paged(api_key: str, issue_filter: dict) -> list[dict]:
 
 
 def probe(api_key: str, project_id: str, fingerprint: str) -> list[dict]:
-    """Issues whose body carries ``fingerprint``, in **any** state.
+    """Issues whose body carries ``fingerprint`` as a field, in **any** state.
 
     Archived and completed issues are included deliberately: a lever that was
     rejected is closed *with its reason*, and dedup-against-resolved is what makes
@@ -309,14 +379,49 @@ def probe(api_key: str, project_id: str, fingerprint: str) -> list[dict]:
     re-proposes on intuition. Nine of thirteen inbox entries carried a
     "do not mine this as waste" note, several written because an earlier pass had
     re-proposed exactly that.
+
+    **The server filter is a substring pre-filter; the exact match happens here.**
+    ``description: {contains: …}`` is a substring test, and slugs nest: a probe
+    for ``a:search-scope`` matches the issue carrying ``a:search-scope-axis``.
+    Left unfiltered that returns one confident wrong match, so
+    :func:`append_evidence` would grow the wrong lever and :func:`file_lever`
+    would refuse a genuinely new one — on the single guard the whole pipeline
+    rests on. So the body is fetched for the (few) candidates and matched
+    line-anchored in this process.
+
+    Fetching a description does **not** break the zero-echo property: that
+    property is about what reaches a transcript, and no caller prints these.
     """
-    return _paged(
+    matcher = field_line_re("Fingerprint", fingerprint)
+    candidates = _paged(
         api_key,
         {
             "project": {"id": {"eq": project_id}},
             "description": {"contains": fingerprint},
         },
+        _PROBE_QUERY,
     )
+    return [c for c in candidates if matcher.search(c.get("description") or "")]
+
+
+def open_parked(matches: list[dict]) -> list[dict]:
+    """The subset of ``matches`` that are still parked and open.
+
+    A lever's life has three stages and only the first accepts new evidence:
+    **parked** (open, milestone set) accumulates; **folded** (closed, its content
+    copied into an aggregated task) is already queued for action; **rejected**
+    (closed with a reason) is settled. Selecting the parked one is what keeps
+    accumulation working after the first fold — the fold copies each
+    ``**Fingerprint**:`` line into the aggregated task, so from then on a raw
+    probe legitimately matches two issues, and treating that as ambiguous would
+    stop the recurrence-accumulation this pipeline exists for.
+    """
+    return [
+        m
+        for m in matches
+        if (m.get("state") or {}).get("type") not in ("completed", "canceled")
+        and ((m.get("projectMilestone") or {}).get("name") == MILESTONE_NAME)
+    ]
 
 
 def parked(api_key: str, project_id: str) -> list[dict]:
@@ -432,13 +537,27 @@ def append_evidence(
         raise TrimLeversError(
             f"no issue carries fingerprint {fingerprint} — file it first"
         )
-    if len(matches) > 1:
-        names = ", ".join(str(m.get("identifier")) for m in matches)
-        raise TrimLeversError(
-            f"fingerprint {fingerprint} is on {len(matches)} issues ({names}) — "
-            "refusing to guess which one accumulates the evidence"
+
+    # Only a still-parked lever accumulates. A folded or rejected one is a
+    # recorded disposition, and its identifier is the useful thing to report.
+    live = open_parked(matches)
+    if not live:
+        seen = ", ".join(
+            f"{m.get('identifier')} [{(m.get('state') or {}).get('name')}]"
+            for m in matches
         )
-    identifier = matches[0].get("identifier")
+        raise TrimLeversError(
+            f"fingerprint {fingerprint} is already discharged ({seen}) — it was "
+            "folded or rejected, so there is no parked lever to grow. Read the "
+            "closing reason before refiling"
+        )
+    if len(live) > 1:
+        names = ", ".join(str(m.get("identifier")) for m in live)
+        raise TrimLeversError(
+            f"fingerprint {fingerprint} is on {len(live)} parked levers "
+            f"({names}) — refusing to guess which one accumulates the evidence"
+        )
+    identifier = live[0].get("identifier")
 
     if dry_run:
         return (
@@ -448,7 +567,23 @@ def append_evidence(
 
     data = _post(api_key, _BODY_QUERY, {"id": identifier})
     issue = data.get("issue") or {}
+    # Guard the read half. Without this, an issue that resolved to null (archived
+    # or deleted between the probe and the read) raises a bare KeyError — a
+    # traceback this module exists to avoid — and an empty description silently
+    # REPLACES the accumulated lever with the evidence alone. The probe matched
+    # *on* the description, so an empty read here is a contradiction, not a
+    # legitimately blank body.
+    if not issue.get("id"):
+        raise TrimLeversError(
+            f"{identifier} did not resolve on the body read — it may have been "
+            "archived or deleted since the probe; re-run rather than writing"
+        )
     stored = issue.get("description") or ""
+    if not stored.strip():
+        raise TrimLeversError(
+            f"{identifier} came back with an empty body, but the probe matched "
+            "on its description — refusing to overwrite it with the evidence"
+        )
     # Two newlines, never one. A single newline before appended text can leave a
     # heading or rule abutting the previous paragraph, which Linear's round trip
     # re-parses — the setext-heading corruption the merge tool hit twice.
@@ -482,34 +617,53 @@ def _read_file(path: str, label: str) -> str:
     return text
 
 
+def _add_dry_run(parser: argparse.ArgumentParser, *, top_level: bool) -> None:
+    """``--dry-run``, registered on the top level *and* on each subcommand so it
+    is accepted in either position.
+
+    The subcommand copy defaults to ``SUPPRESS``, never ``False``. A subparser
+    writes its defaults into the SAME namespace after the top-level parse, so a
+    plain ``False`` there silently overwrites ``--dry-run file …`` back to a
+    **live run** — turning the rehearsal flag into a no-op exactly when it was
+    passed correctly, on a tool whose writes are real Linear issues. This was
+    shipped wrong once and caught in review; ``board_batch.py`` carries the
+    identical helper for the identical reason, and the two should stay the same
+    shape.
+    """
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False if top_level else argparse.SUPPRESS,
+        help="report what would happen without writing it",
+    )
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="trim_levers.py",
         description="File and fold trim levers as parked Linear issues.",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="report what would happen only"
-    )
+    _add_dry_run(parser, top_level=True)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("probe", help="find the issue carrying a fingerprint")
     p.add_argument("--fingerprint", required=True)
-    p.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
+    _add_dry_run(p, top_level=False)
 
     f = sub.add_parser("file", help="file a new parked lever")
     f.add_argument("--title", required=True)
     f.add_argument("--fingerprint", required=True)
     f.add_argument("--body-file", required=True)
     f.add_argument("--touches", default=None, help="comma-separated path globs")
-    f.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
+    _add_dry_run(f, top_level=False)
 
     a = sub.add_parser("append-evidence", help="grow an existing lever")
     a.add_argument("--fingerprint", required=True)
     a.add_argument("--evidence-file", required=True)
-    a.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
+    _add_dry_run(a, top_level=False)
 
     lst = sub.add_parser("list", help="the parked pool, for the fold")
-    lst.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
+    _add_dry_run(lst, top_level=False)
 
     return parser.parse_args(argv[1:])
 

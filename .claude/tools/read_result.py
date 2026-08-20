@@ -59,6 +59,13 @@ from pathlib import Path
 # navigate by, so treating it as prose here is deliberate.
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 
+# A fenced code block, opening or closing. Tracking fences is not optional here:
+# these payloads are Linear issue bodies full of ```sh / ```json blocks whose
+# lines routinely start with `#` (a shell comment). Read as depth-1 headings,
+# those end a section early — so `--section` returned a SILENTLY TRUNCATED block
+# and `--headings` listed phantom entries. Caught in review.
+FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
+
 
 class ReadResultError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
@@ -86,6 +93,17 @@ def unwrap(raw: str) -> str:
             if isinstance(block, dict) and isinstance(block.get("text"), str)
         ]
         if texts:
+            # Announce a dropped block rather than silently returning a subset:
+            # an image block or a null `text` beside real text would otherwise
+            # make a partial payload read as the whole one, which is the same
+            # silent-truncation failure this tool exists to avoid.
+            dropped = len(doc) - len(texts)
+            if dropped:
+                print(
+                    f"read-result | NOTE: {dropped} non-text block(s) in the "
+                    "envelope were not part of this payload",
+                    file=sys.stderr,
+                )
             return "\n".join(texts)
     return raw
 
@@ -128,6 +146,24 @@ def extract_field(text: str, path: str) -> str:
     return node if isinstance(node, str) else json.dumps(node, indent=2)
 
 
+def iter_headings(lines: list[str]):
+    """Yield ``(index, depth, text)`` for each ATX heading outside a code fence.
+
+    One scanner, used by both :func:`headings` and :func:`section`, so the two
+    cannot disagree about what counts as a heading.
+    """
+    in_fence = False
+    for i, line in enumerate(lines):
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = HEADING_RE.match(line)
+        if m:
+            yield i, len(m.group(1)), m.group(2).strip()
+
+
 def headings(lines: list[str]) -> list[str]:
     """Every ATX heading as ``<line>:<indent><text>``, indented by depth.
 
@@ -135,13 +171,9 @@ def headings(lines: list[str]) -> list[str]:
     contents a few hundred bytes wide, which is what makes the follow-up
     ``--section`` read narrow instead of speculative.
     """
-    out: list[str] = []
-    for i, line in enumerate(lines, start=1):
-        m = HEADING_RE.match(line)
-        if m:
-            depth = len(m.group(1))
-            out.append(f"{i}:{'  ' * (depth - 1)}{m.group(2).strip()}")
-    return out
+    return [
+        f"{i + 1}:{'  ' * (depth - 1)}{text}" for i, depth, text in iter_headings(lines)
+    ]
 
 
 def section(lines: list[str], pattern: str) -> tuple[list[str], int]:
@@ -156,21 +188,24 @@ def section(lines: list[str], pattern: str) -> tuple[list[str], int]:
     except re.error as e:
         raise ReadResultError(f"--section {pattern!r} is not a valid regex: {e}") from e
 
-    start = depth = None
-    for i, line in enumerate(lines):
-        m = HEADING_RE.match(line)
-        if m and rx.search(m.group(2)):
-            start, depth = i, len(m.group(1))
-            break
-    if start is None:
+    found = [(i, d, text) for i, d, text in iter_headings(lines) if rx.search(text)]
+    if not found:
         raise ReadResultError(
             f"no heading matches {pattern!r} — run --headings to see what is there"
         )
+    if len(found) > 1:
+        # Report rather than guess. `--section 'Part 2'` would otherwise return
+        # `Part 24` if it came first, silently.
+        where = ", ".join(f"line {i + 1} ({text})" for i, _, text in found)
+        raise ReadResultError(
+            f"{len(found)} headings match {pattern!r} ({where}) — narrow the "
+            "pattern (anchor it, e.g. 'Part 2 —') so the section is unambiguous"
+        )
 
+    start, depth, _ = found[0]
     end = len(lines)
-    for i in range(start + 1, len(lines)):
-        m = HEADING_RE.match(lines[i])
-        if m and len(m.group(1)) <= depth:
+    for i, d, _ in iter_headings(lines):
+        if i > start and d <= depth:
             end = i
             break
     return lines[start:end], start + 1
@@ -224,6 +259,14 @@ def parse_slice(spec: str, total: int) -> tuple[int, int]:
         hi = int(hi_s) if hi_s.strip() else total
     except ValueError as e:
         raise ReadResultError(f"--slice {spec!r} needs integer bounds: {e}") from e
+    # Negative bounds are refused rather than clamped: `1:-1` most likely means
+    # "all but the last line" (a Python habit) and clamping it to an empty range
+    # reported "start is past end", which is not what went wrong.
+    if lo < 0 or hi < 0:
+        raise ReadResultError(
+            f"--slice {spec!r} has a negative bound; use 1-indexed line numbers "
+            "(an open side is allowed: ':40', '400:')"
+        )
     lo = max(1, lo)
     hi = min(total, hi)
     if lo > hi:

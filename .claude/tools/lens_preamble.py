@@ -42,11 +42,17 @@ the section silently.
 Usage::
 
     python3 .claude/tools/lens_preamble.py --out <scratchpad>/lens-preamble.md \\
-        --fact 'No frontend test harness exists; do not look for one.' \\
-        --fact 'make lint covers biome + tsc + cspell over the whole tree.'
+        --fact '<something you verified, stated as fact>' \\
+        --fact '<a NEGATIVE you verified — "there is no X here">'
     python3 .claude/tools/lens_preamble.py --out <path> \\
         --facts-file <scratchpad>/facts.md \\
         --append .claude/skills/review-pr/lens-standing.md
+
+The facts above are **placeholders on purpose**. An earlier version of this
+docstring used concrete, plausible-looking examples, which is a hazard in a
+command meant to be copy-pasted: the composed section tells every lens to treat
+its contents as binding and not to re-derive them, so a run that copies the
+example verbatim injects *false* established facts into the whole fan-out.
 
 Prints the written path on stdout and a one-line summary on stderr. Standard
 library only. A Python skill-tool under ``.claude/tools/`` — deliberately

@@ -711,10 +711,14 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
                 "the question was WHERE something is, --files-only answers it "
                 "for a fraction; take context only to read what code does"
             )
-        elif file_count == 1 and result["total"] >= CONTEXT_DENSITY_NUDGE:
+        elif result["total"] >= CONTEXT_DENSITY_NUDGE:
+            # `<=` the file threshold, not `== 1`. Keying on a single file left a
+            # gap at 2-3 files: a 3-file sweep with 40 matches each is exactly
+            # the overlap shape this note describes, and got silence.
+            where = "one file" if file_count == 1 else f"{file_count} files"
             summary += (
-                f" | NOTE: {result['total']} matches cluster in one file, so "
-                "these windows overlap toward buying it whole — --files-only "
+                f" | NOTE: {result['total']} matches cluster in {where}, so "
+                "these windows overlap toward buying them whole — --files-only "
                 "then a slice Read of the region is cheaper"
             )
     print(summary, file=sys.stderr)

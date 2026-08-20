@@ -70,8 +70,16 @@ class CodeFilterParityTests(unittest.TestCase):
 
     def setUp(self):
         path = _repo_root() / rd.TESTS_WORKFLOW
-        if not path.is_file():
-            self.skipTest(f"{rd.TESTS_WORKFLOW} not found from {_repo_root()}")
+        # FAIL, never skip. `TESTS_WORKFLOW` is the constant under test here: if
+        # the workflow is renamed or moved, the pointer is stale AND the whole
+        # parity class would silently skip — which is precisely the drift the
+        # mirror exists to catch. (Contrast the optional-template skips
+        # elsewhere, where the absent file is not itself the thing asserted.)
+        self.assertTrue(
+            path.is_file(),
+            f"{rd.TESTS_WORKFLOW} not found from {_repo_root()} — the mirror's "
+            "pointer is stale, so parity cannot be checked",
+        )
         self.excludes = workflow_code_excludes(path.read_text(encoding="utf-8"))
 
     def test_the_parser_found_the_filter_at_all(self):

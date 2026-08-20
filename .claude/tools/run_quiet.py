@@ -317,7 +317,12 @@ def read_tail_and_count(path, tail):
                     failed.append(line.rstrip("\n"))
                 else:
                     truncated = True
-                continue
+            # Deliberately NOT `continue`. The two matchers are disjoint today
+            # only by accident — a failed-hook line ends in "Failed" and an
+            # offender line in ")" — so skipping the word scan for a hook line
+            # would silently drop a real offender the day cspell appends
+            # anything after the parenthesis. The two indexes are independent by
+            # intent; one extra regex search per hook line is the whole cost.
             found = parse_unknown_word(line)
             if found is not None and found[0] not in unknown:
                 if len(unknown) < MAX_UNKNOWN_WORDS:
