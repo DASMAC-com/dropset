@@ -162,6 +162,18 @@ def iter_headings(lines: list[str]):
         m = HEADING_RE.match(line)
         if m:
             yield i, len(m.group(1)), m.group(2).strip()
+    if in_fence:
+        # An unclosed fence swallows every heading after it, so `--headings`
+        # would return a short list that reads as complete and `--section` would
+        # report "no heading matches" for a heading that is really there. Say so:
+        # a truncated spill is a documented input to this tool (see `unwrap`), so
+        # this is reachable, and silent truncation is the failure it exists to
+        # prevent.
+        print(
+            "read-result | WARNING: unclosed code fence — headings after it were "
+            "not scanned; the payload may be truncated",
+            file=sys.stderr,
+        )
 
 
 def headings(lines: list[str]) -> list[str]:

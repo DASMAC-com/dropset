@@ -198,7 +198,11 @@ def run(argv: list[str]) -> int:
         variables=args.var,
         direct=args.direct,
         aligned=args.aligned,
-        tuples_only=args.tuples_only,
+        # `--count` implies `-t`. Without it psql emits a column header and a
+        # `(N rows)` footer, so counting non-blank output lines answered "how
+        # many rows" with N+2 — wrong by two on the one mode whose entire job is
+        # that number.
+        tuples_only=args.tuples_only or args.count,
         container=os.environ.get(
             "DROPSET_LOCALNET_PG_CONTAINER", DEFAULT_CONTAINER
         ).strip()
@@ -229,8 +233,9 @@ def run(argv: list[str]) -> int:
         raise LocalnetPsqlError(f"psql exited {proc.returncode}: {detail}")
 
     if args.count:
+        # `-t` is implied above, so these are data rows: no header, no footer.
         rows = len([ln for ln in proc.stdout.splitlines() if ln.strip()])
-        print(f"{rows} row line(s)")
+        print(f"{rows} row(s)")
         return 0
 
     text, dropped = _cap(proc.stdout, args.max_rows)

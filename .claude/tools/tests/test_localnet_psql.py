@@ -178,8 +178,21 @@ class RunTests(unittest.TestCase):
         with mock.patch.object(subprocess, "run", return_value=self._completed(rows)):
             code, out, _ = self._invoke("--sql", "select x", "--count")
         self.assertEqual(code, 0)
-        self.assertIn("3 row line(s)", out)
+        self.assertIn("3 row(s)", out)
         self.assertNotIn("ROW-MARKER", out)
+
+    def test_count_implies_tuples_only_so_the_number_means_rows(self):
+        # Without -t, psql emits a header and a `(N rows)` footer, so counting
+        # non-blank lines answered "how many rows" with N+2.
+        seen = {}
+
+        def fake(command, **kwargs):
+            seen["command"] = command
+            return self._completed("1\n2\n3\n")
+
+        with mock.patch.object(subprocess, "run", side_effect=fake):
+            self._invoke("--sql", "select x", "--count")
+        self.assertIn("-t", seen["command"])
 
     def test_a_failed_query_surfaces_the_stderr_tail(self):
         with mock.patch.object(

@@ -103,6 +103,11 @@ MAX_PAGES = 40
 # written down, so it is enforced here rather than trusted to the caller.
 FINGERPRINT_RE = re.compile(r"^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9._/-]*$")
 
+# A fenced code block, opening or closing. Lever bodies quote filing examples, so
+# a `**Field**:` line inside a fence is an illustration, not a field — see
+# `field_values`. Kept identical in shape to `read_result.py`'s guard.
+FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
+
 
 class TrimLeversError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
@@ -203,9 +208,29 @@ def field_line_re(field: str, value: str | None = None) -> re.Pattern:
 
 
 def field_values(body: str, field: str) -> list[str]:
-    """Every value carried by a ``**Field**: value`` line, in order."""
-    pattern = re.compile(rf"^\*\*{re.escape(field)}\*\*:\s*(.*)$", re.MULTILINE)
-    return pattern.findall(body)
+    """Every value carried by a ``**Field**: value`` line, **outside a fence**.
+
+    Fence-awareness is not decoration. A lever body that *quotes* a filing
+    example — a fenced block showing ``**Fingerprint**: <domain>:<slug>`` — would
+    otherwise read as carrying a second, foreign key, and `compose_body`'s
+    refusal would then reject a perfectly valid body outright. Levers *about
+    filing conventions* are exactly what this pipeline produces, so that is a
+    likely body rather than a contrived one. (Its sibling parser in
+    ``read_result.py`` grew the same guard in the same commit; the two must not
+    disagree about what a fence is.)
+    """
+    pattern = re.compile(rf"^\*\*{re.escape(field)}\*\*:\s*(.*)$")
+    out: list[str] = []
+    in_fence = False
+    for line in body.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            m = pattern.match(line)
+            if m:
+                out.append(m.group(1))
+    return out
 
 
 def compose_body(body: str, fingerprint: str, touches: list[str]) -> str:
@@ -268,6 +293,25 @@ def split_touches(raw: str | None) -> list[str]:
 _SEARCH_QUERY = """
 query Levers($filter: IssueFilter, $first: Int!, $after: String) {
   issues(filter: $filter, first: $first, after: $after, includeArchived: true) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      identifier
+      url
+      title
+      state { name type }
+      projectMilestone { name }
+    }
+  }
+}
+"""
+
+# The fold's listing query. Deliberately WITHOUT `includeArchived`: the probe
+# needs archived rows so a rejection stays permanent, but the fold must not offer
+# an archived lever as parked work — and since the selection carries no
+# `archivedAt`, nothing downstream could tell the difference.
+_PARKED_QUERY = """
+query ParkedLevers($filter: IssueFilter, $first: Int!, $after: String) {
+  issues(filter: $filter, first: $first, after: $after) {
     pageInfo { hasNextPage endCursor }
     nodes {
       identifier
@@ -433,14 +477,37 @@ def open_parked(matches: list[dict]) -> list[dict]:
     ]
 
 
+def rejected(matches: list[dict]) -> list[dict]:
+    """The subset of ``matches`` closed as **canceled** — a recorded rejection.
+
+    This is the one disposition that is *permanent*. A lever closed with a reason
+    must never be refiled, which is what stops a later pass re-proposing it on
+    intuition. Folding is **not** permanent: it means the fix is queued, and a
+    lever whose fold has already shipped can legitimately recur.
+    """
+    return [m for m in matches if (m.get("state") or {}).get("type") == "canceled"]
+
+
+def describe(matches: list[dict]) -> str:
+    """``ENG-1 [State], ENG-2 [State]`` — for a message naming what was found."""
+    return ", ".join(
+        f"{m.get('identifier')} [{(m.get('state') or {}).get('name')}]" for m in matches
+    )
+
+
 def parked(api_key: str, project_id: str) -> list[dict]:
-    """Every lever currently parked under the milestone."""
+    """Every lever currently parked under the milestone.
+
+    Uses :data:`_PARKED_QUERY`, which omits ``includeArchived`` — an archived
+    lever is not parked work, and the fold would otherwise list it as such.
+    """
     return _paged(
         api_key,
         {
             "project": {"id": {"eq": project_id}},
             "projectMilestone": {"name": {"eq": MILESTONE_NAME}},
         },
+        _PARKED_QUERY,
     )
 
 
@@ -489,20 +556,39 @@ def file_lever(
     amending costs a second full body echo and buys nothing — one measured session
     filed an issue in two writes purely to add a relation afterwards.
     """
+    # Three dispositions, three different answers. Getting this wrong in the
+    # cautious direction is what created a dead end: refusing on ANY match meant
+    # that once a lever was folded (original closed, aggregate carrying its
+    # fingerprint) neither `file` nor `append-evidence` could proceed, so a
+    # recurrence after the fold had no available operation at all.
     existing = probe(api_key, project_id, fingerprint)
-    if existing:
-        first = existing[0]
+    parked = open_parked(existing)
+    if parked:
+        first = parked[0]
         raise TrimLeversError(
-            f"fingerprint {fingerprint} already on {first.get('identifier')} "
-            f"({first.get('url')}) — append-evidence instead of filing a duplicate"
+            f"fingerprint {fingerprint} is already parked on "
+            f"{first.get('identifier')} ({first.get('url')}) — append-evidence "
+            "instead of filing a duplicate"
         )
+    turned_down = rejected(existing)
+    if turned_down:
+        raise TrimLeversError(
+            f"fingerprint {fingerprint} was REJECTED ({describe(turned_down)}) — "
+            "read the closing reason. A rejection is permanent; refiling it is a "
+            "human's call, not an unattended one"
+        )
+    # Anything else (folded, or promoted and shipped) is superseded rather than
+    # settled, so filing a fresh lever is correct — the recurrence is real
+    # information. Named in the confirmation so the fold can see the lineage.
+    superseded = describe(existing) if existing else ""
 
     description = compose_body(body, fingerprint, touches)
+    lineage = f" (supersedes {superseded})" if superseded else ""
     if dry_run:
         return (
             f"WOULD FILE {fingerprint} | {title} | "
             f"{len(description)} char(s), state {PARKED_STATE}, "
-            f"milestone {MILESTONE_NAME}"
+            f"milestone {MILESTONE_NAME}{lineage}"
         )
 
     milestone_id = resolve_milestone_id(api_key, project_id)
@@ -523,7 +609,7 @@ def file_lever(
     if not result.get("success"):
         raise TrimLeversError(f"issueCreate failed for {fingerprint}")
     issue = result.get("issue") or {}
-    return f"FILED {issue.get('identifier')} {issue.get('url')}"
+    return f"FILED {issue.get('identifier')} {issue.get('url')}{lineage}"
 
 
 def append_evidence(
@@ -547,18 +633,16 @@ def append_evidence(
             f"no issue carries fingerprint {fingerprint} — file it first"
         )
 
-    # Only a still-parked lever accumulates. A folded or rejected one is a
-    # recorded disposition, and its identifier is the useful thing to report.
+    # Only a still-parked lever accumulates. Everything else is a recorded
+    # disposition — and that is NOT an error: raising here crashed an unattended
+    # `session-metrics` run (rc 2) for the entirely routine case of a lever
+    # recurring after its fold. Report it and succeed; the caller decides whether
+    # to file a fresh lever.
     live = open_parked(matches)
     if not live:
-        seen = ", ".join(
-            f"{m.get('identifier')} [{(m.get('state') or {}).get('name')}]"
-            for m in matches
-        )
-        raise TrimLeversError(
-            f"fingerprint {fingerprint} is no longer parked ({seen}) — it has "
-            "been folded, rejected, or promoted, so there is no parked lever to "
-            "grow. Read its state and any closing reason before refiling"
+        return (
+            f"NOTED {fingerprint} is no longer parked ({describe(matches)}) — "
+            "folded, rejected, or promoted, so there is no parked lever to grow"
         )
     if len(live) > 1:
         names = ", ".join(str(m.get("identifier")) for m in live)

@@ -161,9 +161,19 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(seen[0]["filter"]["description"], {"contains": "a:b"})
         self.assertEqual(seen[0]["filter"]["project"], {"id": {"eq": "proj"}})
 
-    def test_the_probe_selects_no_description_field(self):
-        # The zero-echo property, asserted on the query text itself.
+    def test_the_listing_query_selects_no_description_field(self):
+        # The zero-echo property, asserted on the query text. The PROBE does
+        # select `description` (it must, to match line-anchored) — but it reads it
+        # in-process and never prints it; see ExactFingerprintMatchTests.
         self.assertNotIn("description", tl._SEARCH_QUERY)
+        self.assertNotIn("description", tl._PARKED_QUERY)
+
+    def test_the_fold_listing_does_not_include_archived_levers(self):
+        # The probe needs archived rows so a rejection stays permanent; the fold
+        # must not offer an archived lever as parked work, and the selection
+        # carries no `archivedAt` for anything downstream to filter on.
+        self.assertIn("includeArchived: true", tl._PROBE_QUERY)
+        self.assertNotIn("includeArchived", tl._PARKED_QUERY)
 
     def test_the_probe_follows_the_cursor(self):
         pages = [_page([_node("ENG-1")], True, "c1"), _page([_node("ENG-2")])]
@@ -633,28 +643,29 @@ class LeverLifecycleTests(unittest.TestCase):
         self.assertIn("ENG-8", line)
         self.assertNotIn("ENG-5", line)
 
-    def test_only_discharged_matches_is_refused_with_the_disposition(self):
+    def test_only_discharged_matches_reports_the_disposition(self):
+        # Reported, not raised — see `PostFoldCycleTests` for why raising here
+        # crashed an unattended run on a routine case.
         folded = _node("ENG-5", state="Done", state_type="completed", milestone=None)
-        rejected = _node("ENG-6", state="Canceled", state_type="canceled")
-        with mock.patch.object(tl, "_post", side_effect=self._fake([folded, rejected])):
-            with self.assertRaises(TrimLeversError) as caught:
-                tl.append_evidence(
-                    "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
-                )
-        message = str(caught.exception)
-        self.assertIn("no longer parked", message)
-        self.assertIn("ENG-5", message)
-        self.assertIn("Canceled", message)
+        turned_down = _node("ENG-6", state="Canceled", state_type="canceled")
+        with mock.patch.object(
+            tl, "_post", side_effect=self._fake([folded, turned_down])
+        ):
+            line = tl.append_evidence(
+                "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
+            )
+        self.assertTrue(line.startswith("NOTED"))
+        self.assertIn("ENG-5", line)
+        self.assertIn("Canceled", line)
 
     def test_a_promoted_lever_is_also_not_a_parked_candidate(self):
         # Milestone cleared, still open: promoted to the Backlog and being worked.
         promoted = _node("ENG-7", state="Backlog", state_type="backlog", milestone=None)
         with mock.patch.object(tl, "_post", side_effect=self._fake([promoted])):
-            with self.assertRaises(TrimLeversError) as caught:
-                tl.append_evidence(
-                    "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
-                )
-        self.assertIn("no longer parked", str(caught.exception))
+            line = tl.append_evidence(
+                "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
+            )
+        self.assertIn("no longer parked", line)
 
     def test_an_in_progress_parked_lever_still_accepts_evidence(self):
         # Open by exclusion, not by an allow-list of types: a lever someone has
@@ -717,6 +728,133 @@ class AppendEvidenceGuardTests(unittest.TestCase):
                     "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=False
                 )
         self.assertIn("refusing to overwrite", str(caught.exception))
+
+
+class PostFoldCycleTests(unittest.TestCase):
+    """A lever that recurs AFTER its fold must have an available operation.
+
+    The dead end this pins: a fold closes the original and clears its milestone,
+    while the aggregated task keeps the fingerprint line. So `open_parked` is
+    empty and the probe is non-empty — and with `file` refusing on any match and
+    `append-evidence` raising, neither subcommand could proceed and an unattended
+    run exited 2. Folding means the fix is *queued*, not that the lever is
+    settled; only a rejection is permanent.
+    """
+
+    FOLDED = [
+        _node("ENG-5", state="Done", state_type="completed", milestone=None),
+        _node("ENG-9", state="Backlog", state_type="backlog", milestone=None),
+    ]
+
+    def _fake(self, matches, created="ENG-20"):
+        def fake(api_key, query, variables):
+            if "issues(" in query:
+                return _page(list(matches))
+            if "Milestones" in query:
+                return {
+                    "project": {
+                        "projectMilestones": {
+                            "nodes": [{"id": "ms-1", "name": tl.MILESTONE_NAME}]
+                        }
+                    }
+                }
+            if "States" in query:
+                return {
+                    "team": {
+                        "states": {"nodes": [{"id": "st-1", "name": tl.PARKED_STATE}]}
+                    }
+                }
+            return {"issueCreate": {"success": True, "issue": _node(created)}}
+
+        return fake
+
+    def _file(self, matches):
+        return tl.file_lever(
+            "k",
+            project_id="p",
+            team_id="t",
+            assignee_id=None,
+            title="A lever",
+            body="Prose.",
+            fingerprint="a:b",
+            touches=[],
+            dry_run=False,
+        )
+
+    def test_a_folded_lever_can_be_refiled_and_names_its_lineage(self):
+        with mock.patch.object(tl, "_post", side_effect=self._fake(self.FOLDED)):
+            line = self._file(self.FOLDED)
+        self.assertTrue(line.startswith("FILED ENG-20"))
+        self.assertIn("supersedes", line)
+        self.assertIn("ENG-5", line)
+
+    def test_append_evidence_on_a_folded_lever_reports_and_succeeds(self):
+        with mock.patch.object(tl, "_post", side_effect=self._fake(self.FOLDED)):
+            line = tl.append_evidence(
+                "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=False
+            )
+        # Reported, NOT raised: raising crashed an unattended session-metrics run
+        # for an entirely routine case.
+        self.assertTrue(line.startswith("NOTED"))
+        self.assertIn("no longer parked", line)
+
+    def test_a_rejected_lever_still_cannot_be_refiled(self):
+        turned_down = [_node("ENG-6", state="Canceled", state_type="canceled")]
+        with mock.patch.object(tl, "_post", side_effect=self._fake(turned_down)):
+            with self.assertRaises(TrimLeversError) as caught:
+                self._file(turned_down)
+        message = str(caught.exception)
+        self.assertIn("REJECTED", message)
+        self.assertIn("permanent", message)
+
+    def test_a_still_parked_lever_refuses_a_duplicate_filing(self):
+        parked = [_node("ENG-8")]
+        with mock.patch.object(tl, "_post", side_effect=self._fake(parked)):
+            with self.assertRaises(TrimLeversError) as caught:
+                self._file(parked)
+        self.assertIn("already parked", str(caught.exception))
+
+    def test_a_rejection_wins_over_a_fold_when_both_exist(self):
+        both = self.FOLDED + [_node("ENG-6", state="Canceled", state_type="canceled")]
+        with mock.patch.object(tl, "_post", side_effect=self._fake(both)):
+            with self.assertRaises(TrimLeversError):
+                self._file(both)
+
+
+class FencedFieldTests(unittest.TestCase):
+    """A `**Field**:` line inside a code fence is an illustration, not a field.
+
+    Levers *about filing conventions* quote example filing blocks, so this is a
+    likely body — and without the guard `compose_body`'s foreign-key refusal
+    rejects it outright. The sibling parser in `read_result.py` grew the same
+    guard in the same commit; these must not disagree.
+    """
+
+    QUOTED = "\n".join(
+        [
+            "The filing block looks like this:",
+            "",
+            "```md",
+            "**Fingerprint**: other-domain:other-slug",
+            "**Touches**: docs/**",
+            "```",
+            "",
+            "That is the shape.",
+        ]
+    )
+
+    def test_a_quoted_field_is_not_read_as_a_foreign_key(self):
+        self.assertEqual(tl.field_values(self.QUOTED, "Fingerprint"), [])
+
+    def test_a_body_quoting_an_example_can_still_be_filed(self):
+        got = compose_body(self.QUOTED, "a:b", ["cfg/**"])
+        self.assertIn("**Fingerprint**: a:b", got)
+        # The quoted example survives untouched in the prose.
+        self.assertIn("other-domain:other-slug", got)
+
+    def test_a_real_field_outside_the_fence_is_still_seen(self):
+        body = self.QUOTED + "\n\n**Fingerprint**: real:key\n"
+        self.assertEqual(tl.field_values(body, "Fingerprint"), ["real:key"])
 
 
 class ForeignFingerprintTests(unittest.TestCase):

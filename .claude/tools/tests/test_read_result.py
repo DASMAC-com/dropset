@@ -221,6 +221,23 @@ class FencedCodeTests(unittest.TestCase):
         body = ["# H", "~~~", "# not a heading", "~~~", "after"]
         self.assertEqual(headings(body), ["1:H"])
 
+    def test_an_unclosed_fence_warns_rather_than_going_silent(self):
+        # An unclosed fence swallows every later heading, so `--headings` returns
+        # a short list that reads as complete. A truncated spill is a documented
+        # input to this tool, so this is reachable — say so.
+        body = ["# H1", "```sh", "# not a heading", "make lint"]
+        err = io.StringIO()
+        with redirect_stderr(err):
+            got = headings(body)
+        self.assertEqual(got, ["1:H1"])
+        self.assertIn("unclosed code fence", err.getvalue())
+
+    def test_a_balanced_fence_warns_about_nothing(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            headings(FENCED_BODY.splitlines())
+        self.assertNotIn("unclosed", err.getvalue())
+
     def test_grep_still_sees_inside_a_fence(self):
         # Fence tracking scopes HEADING detection only — grep is a text search
         # and must not start hiding lines.
