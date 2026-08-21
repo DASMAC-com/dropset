@@ -35,7 +35,19 @@ rather than in tension with it. If sub-agent tooling is genuinely
 unavailable, **stop and ask**; never substitute an inline pass (the
 trade `review-pr` deleted its inline path to prevent), and never
 silently skip the rotation — a pass that did so was reasoning from a
-conflict that does not exist. Slating a finding into the Backlog is a
+conflict that does not exist.
+
+**Why `review-pr` differs, so the asymmetry reads as deliberate.**
+That skill asks one question at its entry which approves both running
+it and at which tier, and the tier choice is its spawn authorization.
+It asks because it does many things and the fan-out is one step of
+them, so an operator can reasonably want its lint-and-CI half without
+authorizing eight agents. Here the fan-out **is** the deliverable and
+there is no earlier gate for it to ride, so a question would be pure
+ceremony — invoking the skill already said yes. Same for
+`audit-scope` and `housekeeping`.
+
+Slating a finding into the Backlog is a
 sequencing decision, and it belongs to a planning session (`plan`
 step 8), never to a rotation. What gates what is recorded
 as native Linear blocking edges, which a **human curates** — an

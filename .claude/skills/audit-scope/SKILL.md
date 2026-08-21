@@ -47,6 +47,16 @@ with it. If sub-agent tooling is genuinely unavailable,
 the trade `review-pr` deleted its inline path to prevent,
 and never silently skip the cross-check.
 
+**`review-pr` asks and this skill does not, deliberately.**
+It puts one question at its entry approving both "run now"
+and at which tier, and the tier choice is its spawn
+authorization — it asks because it does many things and the
+fan-out is one step, so an operator can reasonably want its
+lint-and-CI half alone. Here the fan-out **is** the
+deliverable and there is no earlier gate to ride, so a
+question would be ceremony. Recorded so the difference does
+not read as an oversight.
+
 **This skill is what `housekeeping` runs**, scoped to the
 one target named by the Planning document's audit directive.
 The broad random rotation is `/audit`, an ad-hoc invocation.

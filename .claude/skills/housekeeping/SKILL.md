@@ -852,7 +852,20 @@ session-level "don't spawn agents unless asked" default is
 pass skipped its rotation entirely on the reasoning that a
 don't-spawn-agents-unless-asked default forbade the fan-out;
 that reasoning was wrong, and with this text landed the conflict
-should not recur. Two corollaries:
+should not recur.
+
+**`review-pr` is the one skill that asks, and that is
+deliberate.** It puts a single question at its entry approving
+both "run now" and at which tier, and the tier choice is its
+spawn authorization. It asks because it does many things and
+the fan-out is one step of them, so an operator can reasonably
+want its lint-and-CI half without authorizing eight agents.
+Here — and in `audit` / `audit-scope` — the fan-out **is** the
+deliverable and there is no earlier gate for a question to ride,
+so asking would be ceremony. Do not read the difference as an
+oversight in either direction.
+
+Two corollaries:
 
 - **Never substitute an inline pass.** If sub-agent tooling is
   genuinely unavailable, **stop and ask** — mirroring
