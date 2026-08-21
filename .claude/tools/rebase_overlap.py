@@ -52,6 +52,16 @@ is the pre-rebase *branch* head, not the old base) would silently compare the
 wrong range. ``--to`` defaults to ``origin/main``; ``--branch`` defaults to
 ``HEAD``.
 
+**And ``--from`` must be an ancestor of ``--to``, which is checked.** The
+warning above covers passing a base tip that *moved*; the opposite slip is
+passing the **branch tip**, which makes the range a symmetric tree diff instead
+of the base's movement. The branch's own new files then land in ``base_files``
+and therefore in ``overlap`` — 42 "overlapping" files in one real session,
+including ones only that branch had ever created, which momentarily read as the
+branch having already merged. Both slips produce a *plausible* report, which is
+why neither can be left to the reader to notice: this one is refused outright,
+with the correct merge-base named in the error.
+
 Prints JSON on stdout and a one-line human summary on stderr. Read-only: it runs
 only ``git merge-base``, ``git log`` and ``git diff --name-only``, and writes
 nothing.
@@ -101,6 +111,55 @@ def commit_subjects(rev_range: str) -> list[str]:
 def merge_base(a: str, b: str) -> str:
     """The merge base of two revisions."""
     return _git(["merge-base", a, b]).strip()
+
+
+def resolve(rev: str) -> str:
+    """``rev`` as a full commit sha, or raise if it names no commit."""
+    return _git(["rev-parse", "--verify", f"{rev}^{{commit}}"]).strip()
+
+
+def is_ancestor(maybe_ancestor: str, descendant: str) -> bool:
+    """Whether ``maybe_ancestor`` is reachable from ``descendant``.
+
+    Decided by **merge-base identity** rather than
+    ``git merge-base --is-ancestor``, which answers through its *exit status*
+    (0 yes, 1 no). ``_git`` raises on any non-zero exit, so that form cannot
+    distinguish "no" from a bad revision without inspecting the status it has
+    already discarded. The identity `merge-base(a, b) == a` holds exactly when
+    ``a`` is an ancestor of ``b``, needs only the helper above, and lets a
+    genuinely bad revision surface as the error it is.
+    """
+    return merge_base(maybe_ancestor, descendant) == resolve(maybe_ancestor)
+
+
+def check_from_is_ancestor(previous_base: str, new_base: str) -> None:
+    """Refuse a ``--from`` that is not an ancestor of ``--to``.
+
+    The documented misuse is passing ``git rev-parse origin/main`` — a tip that
+    moved. This guards the **opposite** slip, which the docstring above warns
+    about in neither direction: passing the *branch tip* instead of the
+    merge-base. That yields a symmetric tree diff rather than a
+    base-movement diff, so the branch's own new files land in ``base_files``
+    **and** therefore in ``overlap``. In one real session that read as 42
+    overlapping files including ones only that branch had ever created, which
+    momentarily looked like the branch had already merged.
+
+    The failure mode is what makes the guard worth the call: the wrong answer is
+    *plausible*. It is a well-formed report with a believable file count, and
+    nothing in it says the range was backwards — so it is acted on. Refusing
+    outright, and naming the merge-base the caller should have passed, is the
+    only outcome that cannot be mistaken for a result.
+    """
+    if is_ancestor(previous_base, new_base):
+        return
+    correct = merge_base(previous_base, new_base)
+    raise ReviewDiffError(
+        f"--from {previous_base} is not an ancestor of --to {new_base}, so the "
+        f"range would be a symmetric tree diff rather than the base's movement "
+        f"— the branch's own files would appear in `base_files` and `overlap`. "
+        f"Their merge-base is {correct}; pass that (capture it with "
+        f"`git merge-base HEAD <base>` BEFORE the fetch/rebase)."
+    )
 
 
 def analyze(previous_base: str, new_base: str, branch: str = "HEAD") -> dict:
@@ -178,6 +237,7 @@ def run(argv: list[str]) -> int:
     parser.add_argument("--branch", default="HEAD", help="the branch under review")
     args = parser.parse_args(argv[1:])
 
+    check_from_is_ancestor(args.previous_base, args.new_base)
     result = analyze(args.previous_base, args.new_base, args.branch)
     json.dump(result, sys.stdout, indent=2)
     print()

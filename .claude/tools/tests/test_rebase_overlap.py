@@ -10,11 +10,15 @@ everywhere). Run via the repo's ``make tools-tests``.
 from __future__ import annotations
 
 import io
+import os
+import subprocess
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 import rebase_overlap as ro
+from review_diff import ReviewDiffError
 
 
 class AnalyzeTests(unittest.TestCase):
@@ -139,6 +143,14 @@ class SummaryTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    def setUp(self):
+        # The CLI validates `--from` against real git before analyzing. These
+        # cases use placeholder revisions, so the check is stubbed out; it has
+        # its own real-git coverage in AncestorGuardTests below.
+        patch = mock.patch.object(ro, "check_from_is_ancestor")
+        self.addCleanup(patch.stop)
+        patch.start()
+
     def test_emits_json_on_stdout_and_a_summary_on_stderr(self):
         payload = {
             "previous_base": "old",
@@ -174,6 +186,80 @@ class CliTests(unittest.TestCase):
         would silently compare the wrong range."""
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             ro.run(["rebase_overlap.py"])
+
+
+class AncestorGuardTests(unittest.TestCase):
+    """The guard against a non-ancestor ``--from``.
+
+    Built on a throwaway repo with a real branch, because the property under
+    test is a genuine ancestry relation — stubbing `merge_base` would only
+    assert that the comparison compares.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = os.path.realpath(self._tmp.name)
+        self._cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self._cwd)
+        self._git("init", "-q", "-b", "main")
+        self._git("config", "user.email", "t@example.com")
+        self._git("config", "user.name", "Test")
+        self.fork_point = self._commit("base.md", "base\n")
+        # main advances past the fork point.
+        self._git("checkout", "-q", "-b", "feature")
+        self.branch_tip = self._commit("only-on-branch.md", "branch\n")
+        self._git("checkout", "-q", "main")
+        self.main_tip = self._commit("landed.md", "theirs\n")
+
+    def _git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+
+    def _commit(self, rel: str, body: str) -> str:
+        with open(os.path.join(self.root, rel), "w", encoding="utf-8") as fh:
+            fh.write(body)
+        self._git("add", rel)
+        self._git("commit", "-q", "-m", f"add {rel}", "--no-gpg-sign")
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def test_the_merge_base_is_accepted(self):
+        # The documented correct usage: `git merge-base HEAD <base>`.
+        self.assertIsNone(ro.check_from_is_ancestor(self.fork_point, "main"))
+
+    def test_a_ref_equal_to_the_target_is_accepted(self):
+        # A base that has not moved at all: merge-base(a, a) == a, so the
+        # identity comparison must treat a commit as its own ancestor.
+        self.assertIsNone(ro.check_from_is_ancestor("main", "main"))
+
+    def test_the_branch_tip_is_refused(self):
+        """The slip this guard exists for: passing the branch tip yields a
+        symmetric tree diff, so the branch's own files land in `base_files`."""
+        with self.assertRaises(ReviewDiffError) as caught:
+            ro.check_from_is_ancestor(self.branch_tip, "main")
+        message = str(caught.exception)
+        self.assertIn("not an ancestor", message)
+        # The error must name the merge-base the caller should have passed —
+        # a refusal that doesn't say what to do instead just gets retried.
+        self.assertIn(self.fork_point, message)
+
+    def test_a_bad_revision_surfaces_as_an_error_not_as_a_false_no(self):
+        # `merge-base --is-ancestor` answers through its exit status, which
+        # `_git` discards; the identity comparison keeps a bad revision an
+        # error rather than folding it into "not an ancestor".
+        with self.assertRaises(ReviewDiffError) as caught:
+            ro.check_from_is_ancestor("no-such-rev", "main")
+        self.assertNotIn("not an ancestor", str(caught.exception))
+
+    def test_is_ancestor_agrees_with_git_in_both_directions(self):
+        self.assertTrue(ro.is_ancestor(self.fork_point, self.main_tip))
+        self.assertFalse(ro.is_ancestor(self.main_tip, self.fork_point))
 
 
 if __name__ == "__main__":

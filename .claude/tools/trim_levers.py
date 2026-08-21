@@ -500,18 +500,40 @@ def describe(matches: list[dict]) -> str:
 
 
 def parked(api_key: str, project_id: str) -> list[dict]:
-    """Every lever currently parked under the milestone.
+    """Every lever currently parked under the milestone — **open** and carrying
+    it, matching :func:`open_parked`'s definition exactly.
+
+    The state filter is not optional. Filtering on the milestone alone listed
+    every lever that had ever carried it, including ones closed as ``Canceled``
+    — a recorded *rejection*, which is settled work. On the first real run that
+    was **12 rows of which 9 were canceled rejections**, and only 3 were
+    foldable. Two things broke in `trim-context`: its "if nothing is parked,
+    report that and stop" could never fire once any rejection existed, because
+    the pool always looked non-empty; and it chose the bodies to fold from this
+    listing, so a fold pass was invited to fold issues that were closed and
+    settled.
+
+    Belt and braces, deliberately. The server-side ``nin`` filter keeps the
+    pages small as rejections accumulate, and the caller still runs the rows
+    through :func:`open_parked` so the definition of "parked" lives in exactly
+    one place. If the comparator ever changes name the query fails loudly rather
+    than quietly widening. (``nin`` verified against the live schema by
+    introspection: ``WorkflowStateFilter.type`` is a ``StringComparator``, which
+    accepts it.)
 
     Uses :data:`_PARKED_QUERY`, which omits ``includeArchived`` — an archived
     lever is not parked work, and the fold would otherwise list it as such.
     """
-    return _paged(
-        api_key,
-        {
-            "project": {"id": {"eq": project_id}},
-            "projectMilestone": {"name": {"eq": MILESTONE_NAME}},
-        },
-        _PARKED_QUERY,
+    return open_parked(
+        _paged(
+            api_key,
+            {
+                "project": {"id": {"eq": project_id}},
+                "projectMilestone": {"name": {"eq": MILESTONE_NAME}},
+                "state": {"type": {"nin": ["completed", "canceled"]}},
+            },
+            _PARKED_QUERY,
+        )
     )
 
 

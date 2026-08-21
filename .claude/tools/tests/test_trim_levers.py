@@ -482,6 +482,46 @@ class CliTests(unittest.TestCase):
             seen[0]["projectMilestone"], {"name": {"eq": tl.MILESTONE_NAME}}
         )
 
+    def test_list_filters_out_closed_states_server_side(self):
+        # The milestone alone is not enough: a rejection keeps it, so the pool
+        # would never look empty. `nin` is verified against the live schema —
+        # WorkflowStateFilter.type is a StringComparator, which accepts it.
+        seen = []
+
+        def fake(api_key, query, variables):
+            seen.append(variables["filter"])
+            return _page([])
+
+        with mock.patch.object(tl, "_post", side_effect=fake):
+            self._invoke("list")
+        self.assertEqual(seen[0]["state"], {"type": {"nin": ["completed", "canceled"]}})
+
+    def test_list_omits_a_canceled_lever_that_still_carries_the_milestone(self):
+        # The client-side half of the same guarantee: `list` must match
+        # `open_parked`'s definition even if a row slips past the query. The
+        # first real run returned 12 rows of which 9 were canceled rejections.
+        rejected = _node("ENG-8", state="Canceled", state_type="canceled")
+        todo = _node("ENG-9", state="Todo", state_type="unstarted")
+        with mock.patch.object(tl, "_post", return_value=_page([rejected, todo])):
+            code, out, err = self._invoke("list")
+        self.assertEqual(code, 0)
+        self.assertIn("ENG-9", out)
+        self.assertNotIn("ENG-8", out)
+        self.assertIn("1 parked lever(s)", err)
+
+    def test_list_can_reach_the_nothing_parked_stop_condition(self):
+        # `trim-context` step 1 stops when the pool is empty. Before the state
+        # filter that was unreachable once any rejection existed.
+        only_rejections = [
+            _node("ENG-7", state="Canceled", state_type="canceled"),
+            _node("ENG-8", state="Done", state_type="completed"),
+        ]
+        with mock.patch.object(tl, "_post", return_value=_page(only_rejections)):
+            code, out, err = self._invoke("list")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+        self.assertIn("0 parked lever(s)", err)
+
     def test_an_empty_body_file_is_refused(self):
         with self.assertRaises(TrimLeversError) as caught:
             self._invoke(
