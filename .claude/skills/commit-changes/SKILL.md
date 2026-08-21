@@ -55,6 +55,21 @@ changes here belong to this session.
    what's already in context" rule applied to a
    payload the session itself produced.
 
+   **The same waste arrives without any slices,
+   from a file you wrote yourself.** Content that
+   reached the tree through `Edit` or `Write` is
+   already in context by definition, so a `git diff`
+   over it buys it a second time — one session paid
+   **≈4.3k** re-deriving the diff of a file it had
+   just authored. So the rule is not "read the
+   slices if they exist": it is that a diff you
+   could reconstruct from this session's own edits
+   needs no command at all. Reach for `git diff`
+   when the change came from somewhere you have not
+   read — a rebase, a hook's autofix, a sibling
+   session — and `--stat` first when the question is
+   only *what moved*.
+
 1. Draft a concise commit message:
 
    - Summary line in imperative voice, capital

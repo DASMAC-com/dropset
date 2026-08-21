@@ -201,6 +201,35 @@ not only to the sub-agents you brief:
   the run used. The map you want is of the file you are
   opening, not of the repo.
 
+  **Don't put a comment-line alternation in a section map.**
+  Adding `^#` / `^##` to the pattern defeats the map's own
+  purpose in a comment-heavy file: a section-map grep over the
+  563-line `Makefile` used
+  `^[a-zA-Z0-9_-]*:|^# |^##` and so returned every comment
+  line in a file that is mostly prose comments — **≈5.4k** to
+  answer "where are the rules", and that session's single
+  largest result. The `Makefile` is the case in point; any
+  file whose comments outweigh its declarations behaves the
+  same. Match the **declaration** shape only (for a Makefile,
+  `^[a-zA-Z0-9_-]+:`), and if you genuinely want the prose
+  headings, ask for them as a separate narrow query.
+
+- **If you already ran the map, slice from it.** A map
+  followed by a whole-file Read means the map was wasted —
+  you paid for the section list and then bought the file
+  anyway. One session ran the structure grep over both router
+  modules and then read both whole (**≈8.6k, 62% of all its
+  Read cost**); one of those reads was sanctioned (that file
+  was both edited and excerpted into two lens briefs), but the
+  router *test* module's ≈4.2k was not — never edited, never
+  briefed, nothing amortized it. Four regions were needed and
+  the map had already named all four.
+
+  This is the **operational trigger** the whole-read rule
+  below lacks. "Whole only when you will both edit and brief"
+  is necessary and did not fire here; "you have a map, so
+  slice" would have.
+
 - **This covers a sibling `SKILL.md` or convention doc too —
   those are what a mid-session handoff actually reaches
   for.** The rule reads as being about large *source* files,
@@ -243,14 +272,28 @@ not only to the sub-agents you brief:
   Absent all three, slice.
 
 - **Route any repeated verbose-on-success command through the
-  quiet runner** — `cargo`, `make`, **and `pnpm`**. Run it as
-  `python3 .claude/tools/run_quiet.py -- <cmd>` **during
-  implementation**, not only during `review-pr`. Naming only
-  cargo and make is what let a whole runner slip: one session
-  ran the frontend test script 12 times and a frontend `exec`
-  9 times, all unwrapped, ≈5.2k combined for output that is one
-  line when it passes — and every entry in that session's
-  hardening table was a `pnpm` shape.
+  quiet runner** — and read that **by shape, not by name.**
+  *Any* long-running build, lint, deploy, or acceptance target
+  goes through `python3 .claude/tools/run_quiet.py -- <cmd>`
+  (or runs backgrounded), **during implementation**, not only
+  during `review-pr`.
+
+  Naming runners individually is what keeps letting one slip.
+  The list once said cargo and make: one session then ran the
+  cspell hook unwrapped and landed its truncated per-file
+  cascade in context (**≈2.5k**) because `pre-commit` was not
+  on the list, and another paid **3.5k across 7 bare
+  invocations** of a Docker collector-stack target because it
+  was an *acceptance check* rather than a named command. A
+  third ran the frontend test script 12 times and a frontend
+  `exec` 9 times unwrapped, ≈5.2k for output that is one line
+  when it passes.
+
+  So the shapes that qualify include, and are not limited to,
+  `cargo`, `make`, `pnpm`, `docker`, `pre-commit run`, and
+  `python3 .claude/tools/lint_paths.py`. If you are about to
+  run something whose success output is longer than its
+  verdict, wrap it.
 
   **Nothing prints until the command exits**, so do not poll
   the log of a *backgrounded* run — one session made seven such
@@ -346,6 +389,30 @@ not only to the sub-agents you brief:
   cluster in one file, take `--files-only` then slice-read the
   region. `search_source.py` now says so on its own summary
   line when a context sweep spans many files or piles up in one.
+
+- **Don't re-derive a diff — of your own edits, or one
+  already written to disk.** This section covers slice-reading
+  files and says nothing about diffs, and that is where the
+  calls land: in one session a bare `git diff` of two source
+  files was the **largest single result (≈2.9k)** and the
+  `git diff` shape totalled **4.3k over 6 calls** — all during
+  the *implement* phase, before `review-pr` ran. Another paid
+  **≈4.3k** diffing a file it had itself just authored via
+  `Edit`.
+
+  Two cases, one rule:
+
+  - **You wrote it.** Content that reached the tree through
+    `Edit` / `Write` is already in context, so diffing it buys
+    it twice. No command needed.
+  - **A tool already wrote the diff.** Read
+    `review_diff.py --split`'s slices rather than re-running
+    `git diff` over the same range.
+
+  Reach for `git diff` when the change came from somewhere you
+  have **not** read — a rebase, a hook autofix, a sibling
+  session — and take `--stat` first when the question is only
+  *which files moved*.
 
 - **Verify a list-producing flag with a count, not the list.**
   One session's largest single result (≈5.8k) was a new tool's

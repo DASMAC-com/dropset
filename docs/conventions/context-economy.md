@@ -487,6 +487,27 @@ argument was *not* the reason — see that step for why.)
   later turn — that's why `review-pr`'s waits use the compact `gh`
   reads above rather than the full-object MCP calls.
 
+- **When the question is "does property P hold across N sites",
+  write the checker — do not dump the sites.** This is the one lever
+  here that improves **correctness**, not merely cost, which is why
+  it is worth stating separately from the narrowness rules above.
+
+  Measured: verifying that no TSDoc link target was unresolvable was
+  first attempted by listing all **74** link sites (≈1.8k) and
+  adjudicating a bounded subset by eye. That **missed a real site**,
+  which a review lens then caught. A 15-line stdlib script comparing
+  each link target against its file's scope answered the question
+  definitively for ~0 context and found the miss.
+
+  The failure is structural, not a lapse of attention: an eyeball
+  sweep over a long list **silently self-limits** — it degrades into
+  spot-checking exactly when the list is long enough to matter, and
+  reports the same confident verdict either way. A checker does not.
+  So report the checker's verdict, not the list it read; and if the
+  property is worth verifying more than once, the script belongs
+  under `.claude/tools/` with a test (see
+  [skill tooling](skill-tooling.md)).
+
 - **Never read a verbose-by-refresh log whole — tail it.** This is a
   distinct class from a build cascade, and it bites hardest because the
   output *looks* like a normal log. A `--watch`-style command re-prints
