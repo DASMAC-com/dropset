@@ -190,11 +190,12 @@ running a tool.** This is the only session that reconciles
 overlap at all: the automated file-collision machinery is
 retired, and nothing records a collision link any more.
 Judge it from the board read you already have. You are
-holding each issue's `**Touches**:` globs *and* enough of its
-prose to know what the work actually is, which is the whole
-argument for doing it here — content beats exact glob
-matching, and it is why the mechanical sweep was dropped
-rather than moved.
+holding enough of each issue's prose to know what the work
+actually is, which is the whole argument for doing it here —
+content beats the exact glob matching the retired tool did,
+and it is why that sweep was dropped rather than moved. (The
+declared-scope `**Touches**:` field went with it, so there is
+no shortcut: read what the issue is about.)
 
 Record the conclusions as **collision clusters** (see
 `docs/conventions/linear-automation.md` → "Overlap is a
@@ -354,19 +355,19 @@ skill binds it too:
   the operator pulls from. See step 1 for the full three-tier
   schema, milestones included.
 
-- **`Claude:` prefix** on meta-work titles (anything whose
-  `**Touches**:` sit entirely under `.claude/**`,
+- **`Claude:` prefix** on meta-work titles (anything every
+  one of whose edited paths sits under `.claude/**`,
   `CLAUDE.md`, or `docs/conventions/**`). A planning session
   is where most meta-work gets filed, so this is the skill
   that emits the prefix most often.
 
-- **The structured filing fields are mandatory**, exactly as
-  for every other filing skill — a `**Fingerprint**:` line
-  (the dedup key) and a `**Touches**:` line (the path globs)
-  on every issue. The fingerprint's first token is a
-  **dotless domain token**, never a bare `name.ext` — Linear
-  linkifies a hostname-valid basename and corrupts the key.
-  See `CLAUDE.md` → "Structured filing fields".
+- **The `**Fingerprint**:` line is mandatory**, exactly as
+  for every other filing skill — it is the dedup key, and its
+  first token is a **dotless domain token**, never a bare
+  `name.ext`, since Linear linkifies a hostname-valid
+  basename and corrupts the key. It is now the **only**
+  structured field: `**Touches**:` is retired and nothing
+  emits it. See `CLAUDE.md` → "Structured filing fields".
 
 - **Field-only writes go through the tool, not the MCP.**
   Priority, state, parent, milestone, labels and assignee
@@ -401,21 +402,21 @@ skill binds it too:
   retired. Overlap is your step-1 judgement, recorded as prose
   clusters; blocking edges are step 3's job and yours alone.
 
-- **Amending scope in prose is not amending scope.** A reader
-  scanning the board for overlap reads the `**Touches**:`
-  field, not the prose around it — so widening an issue's
-  scope in a paragraph while leaving the field alone produces
-  an issue whose declared scope is a lie in every area the
-  prose added. This has happened: one issue's prose said
-  "Touches widens beyond one file" while the field still
-  named a single file, and the shipped diff spanned four
-  areas.
+- **A re-scope has to reach the whole body, not one
+  paragraph.** Appending "this also needs X" while the rest
+  of the issue still describes the narrower job leaves a spec
+  that contradicts itself, and the implementing session reads
+  it cold. This has happened in the sharper form the retired
+  `**Touches**:` field used to make visible: one issue's prose
+  said its scope was widening while the declared-scope line
+  still named a single file, and the shipped diff spanned four
+  areas. Losing the field lost the tell, not the failure — so
+  re-read the sections a re-scope contradicts and amend them
+  in the **same write**.
 
-  So when a re-scope changes what an issue touches, edit the
-  `**Touches**:` line **in the same write**. Same for
-  `**Fingerprint**:` when the re-scope changes what the issue
-  is fundamentally *about* — that is the dedup key, and a
-  stale one silently re-files.
+  Same for `**Fingerprint**:` when the re-scope changes what
+  the issue is fundamentally *about* — that is the dedup key,
+  and a stale one silently re-files.
 
 - **Tell an in-flight session when you amend its issue.**
   An implementation session reads the body once at the
@@ -570,9 +571,9 @@ On a yes:
   clusters.** The operator runs several worktree sessions at
   once, so a promoted batch is only useful if its members can
   be worked **simultaneously** — which means they must not
-  collide on files. The per-issue `**Touches**:` data already
-  answers this: promote a set whose members appear in **no
-  common collision cluster** from step 1. Where two findings
+  collide on files. Your step-1 clusters already answer this:
+  promote a set whose members appear in **no common
+  cluster**. Where two findings
   do collide, either promote one and leave the other parked
   for the next round, or fold them into a single issue under
   the fewest-coherent-PRs rule. This is the selection

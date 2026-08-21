@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` Backlog task under the fewest-coherent-PRs rule — one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line under a combined `**Touches**:` — then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
+description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` Backlog task under the fewest-coherent-PRs rule — one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line — then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -102,10 +102,13 @@ carries:
 
 - one **`**Fingerprint**: <domain>:<lever-slug>`** line **per lever**,
   copied from the parked original so later dedup still matches
-  individually, and
-- a single **`**Touches**:`** line that **unions** every folded lever's
-  globs (per `docs/conventions/linear-automation.md` → "Structured filing
-  fields").
+  individually.
+
+That is the whole field set. There is **no `**Touches**:` line** — the
+declared-scope glob field is retired (per
+`docs/conventions/linear-automation.md` → "Retired: `**Touches**:`"), so
+there is no union to compose. Each part's prose names the skill or
+convention doc it edits, which is what an implementer reads anyway.
 
 Set `state`, `priority` and any relations in the **creating** call — a
 follow-up write buys a second full body echo for nothing (same convention
@@ -120,8 +123,7 @@ mcp__claude_ai_Linear__save_issue(
   title: "Claude: <umbrella summary of this fold's trim levers>",
   description: "<one `# Part N — <title>` section per lever — each the
     lever, the sessions that motivate it, the concrete skill /
-    convention-doc edit it implies, and its own **Fingerprint**: line>
-    \n\n**Touches**: <combined globs>",
+    convention-doc edit it implies, and its own **Fingerprint**: line>",
   priority: 3,
 )
 ```

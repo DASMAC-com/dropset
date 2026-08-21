@@ -72,8 +72,8 @@ what to file.
    - **Title** — concise, imperative, no trailing
      period (e.g. "Harden vault swap against
      partial fills"). If the to-do is **meta-work** —
-     its `**Touches**:` sit entirely under `.claude/**`,
-     `CLAUDE.md`, or `docs/conventions/**` —
+     every path the fix will edit sits under
+     `.claude/**`, `CLAUDE.md`, or `docs/conventions/**` —
      prepend the **`Claude:`** prefix (e.g. "Claude:
      Harden the audit dedup key"), per `CLAUDE.md` →
      "Claude: meta-work prefix". Anything also touching
@@ -83,15 +83,15 @@ what to file.
    - **Description** — Markdown. Capture *why* this
      is deferred and enough context to act on it
      cold: what was uncovered, where in the code,
-     and what the fix likely involves. Pass literal
-     newlines, not `\n` escapes. Include a
-     `**Touches**: <glob>[, <glob>…]` line — the
-     machine-readable path globs the fix will edit
-     (a directory like `tui/` when it spans a dir, a
-     file when it's one file), comma-separated, so a
-     planning session can see which issues will edit
-     the same code. Nothing consumes it mechanically;
-     it is still mandatory. See `CLAUDE.md` →
+     and what the fix likely involves. Name the
+     files in that prose — an implementer needs to
+     know where to look. Pass literal newlines, not
+     `\n` escapes.
+
+     **No `**Touches**:` line.** The declared-scope
+     glob field is retired: nothing consumed it once
+     the collision machinery went, so composing one
+     is filing overhead. See `CLAUDE.md` →
      "Structured filing fields".
 
      **Two shapes Linear's writer mangles**, so keep them

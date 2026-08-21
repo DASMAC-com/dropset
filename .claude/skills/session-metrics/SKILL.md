@@ -228,9 +228,13 @@ python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
   python3 .claude/tools/trim_levers.py file \
       --title '<the lever, as an imperative>' \
       --fingerprint <domain>:<slug> \
-      --touches '<glob>,<glob>' \
       --body-file <scratchpad>/lever.md
   ```
+
+  **No `--touches`.** The declared-scope glob field is
+  retired (`CLAUDE.md` → "Structured filing fields") — name
+  the skill or tool the lever would edit in the body prose,
+  which is what `trim-context` reads when it folds.
 
 - **`MATCH ENG-###`** — this lever has been seen before.
   **Append this session's evidence** to the issue that already

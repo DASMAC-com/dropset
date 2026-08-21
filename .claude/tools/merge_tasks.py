@@ -4,6 +4,15 @@ several Linear issues into one: number parsing/dedup, survivor resolution, body
 assembly, and the ``**Touches**:`` union. The skill drives the Linear MCP reads
 and writes; this tool never touches the network.
 
+**On ``**Touches**:``, which is retired.** No filing emits that field any more
+(``CLAUDE.md`` → "Structured filing fields"). The union logic stays because
+issues filed before the retirement still carry a line, and a fold must not
+silently drop what one declared. It is **tolerate-and-carry, never invent**: the
+union is computed from globs found in the folded bodies, and a fold of issues
+that have none emits no line at all — which every branch below already handles,
+since the field was optional from the start. Do not add a path that manufactures
+globs.
+
 Two subcommands, each reading stdin/argv and printing JSON to stdout:
 
 * ``plan [--survivor N] TOKEN...`` — parse the issue numbers the user passed

@@ -296,8 +296,8 @@ Optional (ask on a direct run if not provided):
      )
      ```
 
-     **Meta-work prefix.** If the finding's `**Touches**:`
-     sit entirely under the meta surface (`.claude/**`,
+     **Meta-work prefix.** If every path the finding's fix
+     will edit sits under the meta surface (`.claude/**`,
      `CLAUDE.md`, `docs/conventions/**`),
      prepend the **`Claude:`** token to the title —
      `Claude: <file>: <imperative fix>` — per `CLAUDE.md` →
@@ -365,17 +365,11 @@ Optional (ask on a direct run if not provided):
        are as-of-discovery. The implementer re-derives the
        location; the fingerprint is what survives.
 
-     - `**Touches**: <glob>[, <glob>…]` — the
-       machine-readable list of path globs this fix will
-       edit (e.g. `programs/dropset/src/swap.rs` or
-       `tui/`), comma-separated. It documents the finding's
-       footprint for a human reader and for the
-       fewest-coherent-PRs fold (a directory glob like `tui/`
-       covers any path under it). Declare the **directory**
-       when the fix spans a dir, the **file** when it's one
-       file; for a multi-file finding list every glob.
-       Mandatory — see `CLAUDE.md` → "Structured filing
-       fields".
+     **No `**Touches**:` line.** The declared-scope glob
+     field is retired (see `CLAUDE.md` → "Structured filing
+     fields"): nothing consumed it once the collision
+     machinery went. Name the affected files in the finding's
+     prose instead, where an implementer will read them.
 
    **Record no collision links, and no relations of any
    kind.** The automated file-collision machinery is
@@ -400,9 +394,9 @@ Optional (ask on a direct run if not provided):
   When findings share a PR — same subsystem, crate, or
   language-domain, and they would land as one change (e.g.
   all doc-/comment-freshness fixes, or all low-risk refactors
-  in one crate) — file them as **one** combined issue: a
-  `**Fingerprint**:` line per finding (the union) and a union
-  `**Touches**:`, the way `audit` does. The bar is **same-PR
+  in one crate) — file them as **one** combined issue, with a
+  `**Fingerprint**:` line per finding (the union), the way
+  `audit` does. The bar is **same-PR
   coherence**, not same-file; but never fold across separate
   apps, languages, or deploy units (the **coherence floor**).
   Nothing merges issues for you, so coupled findings become
