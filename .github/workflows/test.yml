@@ -143,10 +143,13 @@ jobs:
     # rust-cache caches ~/.cargo/{registry,git} plus only the *dependency*
     # build artifacts in target/ (workspace crates are pruned), and re-saves
     # whenever the lockfile/toolchain change — so the cache never freezes at a
-    # first-run snapshot and the restored target/ stays small. The shared-key
-    # is intentionally the same as the no-teardown job's: their dependency
-    # builds are identical across the two feature sets, so they share one
-    # dep-artifact cache instead of each saving a full multi-GB target/.
+    # first-run snapshot and the restored target/ stays small. This key is
+    # shared by five jobs — the three here plus lint and sdk — because their
+    # dependency builds are near-identical, so they hold one dep-artifact
+    # entry between them instead of each saving a full multi-GB target/. Only
+    # the first job to finish saves it; the rest restore and rebuild whatever
+    # their own feature set adds. `test-postgres` is the deliberate holdout:
+    # it builds no program and would restore a gigabyte it never reads.
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'Swatinem/rust-cache@v2'

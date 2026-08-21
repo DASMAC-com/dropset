@@ -9,12 +9,20 @@
 # do that again, so the channel is pinned and moves only in a deliberate
 # bump PR.
 #
-# Only `channel` is set, on purpose. rustup installs a pinned channel with its
-# default profile, which already carries clippy and rustfmt, so listing them
-# under `components` would add a redundant install step to every CI job —
-# including the four test jobs that need neither. Per-job extras (clippy and
-# rustfmt for the lint gate, the wasm32 target for the SDK gate) stay declared
-# in the workflow that needs them.
+# `components` is listed even though rustup's default profile already carries
+# clippy and rustfmt, and even though only the lint gate actually runs them.
+# The reason is cache identity, not installation. Swatinem/rust-cache hashes
+# the installed toolchain into its cache key, so while the lint job was the
+# only one adding these two components it computed a different hash from every
+# other Rust job and could never share their cache entry — it maintained a
+# duplicate ~0.6 GB copy per ref instead. Declaring the components here makes
+# every job's toolchain identical, which is what lets the lint and SDK jobs
+# point at the test jobs' `shared-key`. See docs/ci.md.
+#
+# Targets are deliberately NOT listed here. Installed targets do not enter the
+# rust-cache key — measured: the SDK job installs the wasm32 target and still
+# hashed identically to the jobs that do not — so the wasm32 target stays
+# declared in the SDK workflow rather than being downloaded by all six jobs.
 #
 # Bumping this is a reviewed diff, never a surprise: run the full-workspace
 # `cargo clippy --all-targets -- -D warnings` locally first, so new-lint churn
@@ -22,3 +30,4 @@
 
 [toolchain]
 channel = "1.98.0"
+components = ["clippy", "rustfmt"]

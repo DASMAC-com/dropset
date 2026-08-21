@@ -25,14 +25,17 @@ matter:
   the whole job. The clippy hook passes its own flags, and a stray
   `RUSTFLAGS` also perturbs the rust-cache key.
 
-Per-job extras stay in the workflow that needs them, not in the toolchain
-file: clippy and rustfmt for the lint gate, the `wasm32` target for the SDK
-gate. Putting them in the file would install them in all six jobs, including
-the four that need neither.
+The file sets `channel` and `components`. Listing clippy and rustfmt there
+looks redundant — rustup's default profile already installs both, and only
+the lint gate runs them — but it is what makes the shared cache key below
+work. `Swatinem/rust-cache` hashes the installed toolchain into its key, so
+while lint was the one job adding those two components it always computed a
+different hash and could never share another job's cache entry.
 
-Only `channel` is set. rustup installs a pinned channel with its default
-profile, which already includes clippy and rustfmt, so a fresh clone gets a
-working lint toolchain with no extra step.
+Targets are **not** listed. Installed targets do not enter the rust-cache key
+— measured: the SDK job installs the `wasm32` target and still hashed
+identically to the jobs that do not — so the target stays declared in the SDK
+workflow instead of being downloaded by all six jobs.
 
 ### Why it is pinned
 
@@ -77,9 +80,33 @@ Rust work is cached in four layers, and all four are expected to hit:
 Cache entries are readable from the ref that saved them and from the default
 branch. `test.yml` and `sdk.yml` both run on `push: main`, so their entries
 exist on the default branch and merge-queue runs restore them. `lint.yml`
-does **not** run on `push: main`, so no `rust-lint` or `pre-commit-lint`
-entry is ever saved on the default branch — a queue run, and the first run
-of any new PR, starts cold there.
+does **not** run on `push: main` and so never saves a default-branch entry
+of its own — which is the second reason it shares the test jobs' key rather
+than keeping one.
+
+The `pre-commit` hook cache is still lint-only and still has no
+default-branch copy, so it remains cold on merge-queue runs and on the first
+run of a new PR. That costs the `install-hooks` step, measured at ~100s.
+
+### One shared key for the Rust caches
+
+The `lint` and `sdk` jobs and the three test jobs all name one cache key,
+the test jobs' `rust-test` one. That input **replaces** rust-cache's
+automatic job-id component, so jobs naming the same key resolve to the same
+entry instead of each storing a near-identical copy. Only the first job to
+finish saves it; the others restore and then rebuild whatever their own
+feature set adds.
+
+This was worth doing because the duplication was measured, not suspected: on
+a single PR ref there were four entries with identical dependency hashes —
+`rust-test` 1.19 GB, `rust-postgres` 0.81 GB, `rust-lint` 0.60 GB, `rust-sdk`
+0.44 GB. Repo-wide the cache stood at ~10.8 GB against GitHub's 10 GB
+per-repo limit, so entries were being evicted continuously, which is the real
+explanation for the `pre-commit` cache's roughly even hit/miss split.
+
+`test-postgres` deliberately keeps its own key. It builds no program and
+needs none of the SBF-era `target/`, so pointing it at the shared key would
+make it restore well over a gigabyte it never reads.
 
 ### The visibility guard
 

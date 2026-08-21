@@ -17,10 +17,14 @@ jobs:
         cache: false
         rustflags: ''
         target: 'wasm32-unknown-unknown'
+    # Shares the test jobs' dep-artifact cache. This job's environment already
+    # hashed identically to theirs even though it installs the wasm32 target —
+    # installed targets do not enter the rust-cache key — so the only thing
+    # keeping a separate ~0.44 GB copy per ref was the key name.
     - uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
-        shared-key: 'rust-sdk-${{ runner.os }}'
+        shared-key: 'rust-test-${{ runner.os }}'
     - uses: 'pnpm/action-setup@v6'
       with:
         package_json_file: 'frontend/package.json'
