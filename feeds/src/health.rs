@@ -168,10 +168,19 @@ impl<R: From<HealthUpdate> + Send> FeedMetrics for HealthReporter<R> {
         // `{:#}` renders the cause chain, not just the outermost message —
         // "error decoding response body" alone would name the layer that
         // noticed rather than the venue that failed.
+        //
+        // Truncated but **not** query-stripped, deliberately. This crate's own
+        // transport already redacts URL-borne credentials, by registered
+        // parameter *name*, in `HttpClient::redact_query` — before the error is
+        // wrapped. Running [`sanitize_error`] on top would strip the whole
+        // query string and take every benign parameter with it, and those are
+        // exactly what a failed paged backfill is diagnosed from: which symbol,
+        // which interval, which window. The narrower name-aware redaction is
+        // strictly better here, so this stays out of its way.
         self.offer(HealthUpdate {
             feed: feed.to_string(),
             at: now_secs(),
-            outcome: HealthOutcome::Error(sanitize_error(&format!("{error:#}"), MAX_ERROR_CHARS)),
+            outcome: HealthOutcome::Error(truncate(&format!("{error:#}"), MAX_ERROR_CHARS)),
         });
     }
 }
@@ -179,16 +188,22 @@ impl<R: From<HealthUpdate> + Send> FeedMetrics for HealthReporter<R> {
 /// Make an error string safe to persist: strip credentials out of any URL it
 /// embeds, then bound its length.
 ///
-/// **The redaction is the load-bearing half.** A transport error's `Display`
-/// routinely includes the request URL, and a keyed endpoint carries its
-/// credential in the query string (`?api-key=…` is the normal shape for a
-/// hosted Solana RPC, and for several price venues). That text is then written
-/// to a row which — in this repo — the read-only dashboard role can `SELECT`.
-/// So an error message is an exfiltration path for exactly the secrets the
-/// schema's own comments promise are not in the database, and the promise is
-/// unenforceable at the schema: it depends on every present and future venue
-/// adapter never surfacing a keyed URL in an error. Cutting the query string
-/// here enforces it in one place instead.
+/// **For a `feeds` transport error, prefer the transport's own redaction and
+/// do not use this.** [`crate::HttpClient`] redacts URL-borne credentials by
+/// registered parameter *name* before an error is wrapped, which keeps every
+/// benign parameter legible — and those are what a failed paged backfill is
+/// diagnosed from. This is the blunt instrument: it removes the whole query
+/// string, diagnostics included.
+///
+/// It exists for the error text a consumer persists from a client that has
+/// **no** such hook. The maker's tick error is the case: it comes from the
+/// Solana RPC client, and a hosted keyed endpoint carries its credential as
+/// `?api-key=…` there exactly as a price venue does. That text lands in a
+/// column the read-only dashboard role can `SELECT`, so without something
+/// here an error message is an exfiltration path for precisely the secret the
+/// schema's comments promise is not in the database — and at the schema that
+/// promise is unenforceable, since it would depend on every present and future
+/// caller never surfacing a keyed URL.
 ///
 /// Only the query string goes: the scheme, host and path are what make an
 /// error diagnosable, and none of them is a secret. A token carried in a path
@@ -316,6 +331,33 @@ mod tests {
         // A consumer that has gone away must not be able to fail a feed.
         reporter.on_batch("frankfurter", &stats(1, true));
         assert_eq!(reporter.dropped, 1);
+    }
+
+    /// The health path must NOT blanket-strip query strings, because the
+    /// transport has already redacted the credential by name and the remaining
+    /// parameters are the diagnosis. Pinned as its own test because the
+    /// tempting "belt-and-braces" change here silently destroys them.
+    #[tokio::test]
+    async fn a_reported_error_keeps_its_benign_query_parameters() {
+        let (tx, mut rx) = mpsc::channel::<Record>(4);
+        let mut reporter = HealthReporter::new(tx);
+
+        // What the transport hands over: the credential already replaced by
+        // name, the window parameters intact.
+        reporter.on_error(
+            "oanda",
+            &anyhow::anyhow!("GET https://api.test/candles?granularity=60&apikey=REDACTED failed"),
+        );
+
+        let Record::Health(update) = rx.try_recv().unwrap();
+        let HealthOutcome::Error(text) = update.outcome else {
+            panic!("expected an error outcome");
+        };
+        assert!(
+            text.contains("granularity=60"),
+            "the diagnosis must survive: {text}"
+        );
+        assert!(text.contains("REDACTED"), "and the redaction is upstream's");
     }
 
     /// The redaction is the half that matters: a keyed endpoint's credential
