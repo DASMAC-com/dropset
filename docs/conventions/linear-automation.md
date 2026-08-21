@@ -239,6 +239,41 @@ delivered checklist items and moves it to In Review at the merge-queue
 handoff — once the PR is ready, CI is green, and the review summary has
 been printed for the human.
 
+### The Linear state tracks the SESSION, not the PR
+
+This is the framing that makes the transitions above cohere, and it is
+easy to get backwards. **The Linear state is the state machine of the
+agentic programming session**; the PR's own merged/open state tracks the
+*code*. They are different clocks.
+
+So:
+
+- **In Review** covers *both* PR-under-review **and**
+  merged-with-follow-up-outstanding. A session still owes work after its
+  merge — session metrics, perms firming, post-merge tidy, feedback to
+  hand to a planning session — and that work is invisible if the issue
+  reads Done.
+- **Done means operator-ratified complete.** Never merely merged.
+
+Linear's GitHub integration auto-transitions an issue to Done on merge,
+which is exactly wrong under this reading: it hides the sessions that
+still owe something. So `review-pr`'s outcome-watch step **writes the
+issue back to In Review** once it observes that auto-Done, runs its
+follow-up tail, and moves to Done only on an explicit `AskUserQuestion`
+approval. Two consequences elsewhere:
+
+- **`housekeeping` prunes on the issue's status TYPE, not on
+  PR-merged** — only `completed` or `canceled`. A merged PR whose issue
+  reads In Review is a live session, and pruning its worktree is how
+  work has been lost before.
+- **The fleet-resume launcher resumes In Progress *or* In Review**, so a
+  merged-but-unfinished session reopens on machine start.
+
+Accepted gap: a session that dies before its outcome watch runs leaves
+the issue auto-Done with nobody to re-mark it. The common case — the
+operator closing sessions at day end after merge confirmation — is
+covered, and no detection machinery is built for the crash case.
+
 ## Parked findings sit in **Todo**, never Backlog
 
 An issue stamped with a parking milestone — `Audit findings` for audit

@@ -385,8 +385,34 @@ already-pre-approved `Bash(gh pr list:*)` read-rule (see
 gh pr list --state merged --json number,headRefName,mergedAt --limit 100
 ```
 
-The returned `headRefName`s are the branches whose PR
-**merged**. Hand that set to the prune helper, which does the
+**But PR-merged is not the prune criterion — the ISSUE'S
+STATUS TYPE is.** A merged PR whose Linear issue reads
+**In Review** is a session with outstanding follow-up (see
+`review-pr`'s outcome-watch step, which writes the issue back
+to In Review on merge precisely so this is visible), and
+pruning its worktree would recreate the worktree-loss incident
+in a third variant. So intersect the merged set with the board:
+
+- resolve each merged branch's `ENG-###` from its branch name,
+  read that issue's **status type**, and prune only when the
+  type is **`completed`** or **`canceled`**. Marked-duplicate
+  is a canceled-type state carrying `duplicateOf`, so it is
+  covered by construction.
+- **Match on status TYPES, never state names.** A workflow
+  rename would otherwise silently widen the prune, and this
+  step deletes things.
+- **One guard:** a `canceled` issue whose PR is still **open**
+  is *skipped and flagged in the report*, never pruned
+  silently. Both worktree-loss incidents began as a
+  prune-while-PR-open.
+- A merged branch with **no resolvable issue** falls through
+  to `left` — report it rather than guessing.
+
+This also makes the fleet-resume launcher compose exactly: In
+Progress **or** In Review means resume it, so a
+merged-but-unfinished session reopens on machine start.
+
+Hand the surviving set to the prune helper, which does the
 deterministic git work — for every worktree **other than**
 the `refs/heads/main` base, remove the ones whose branch
 merged (bare `git worktree remove`, no `--force`, so a dirty

@@ -3030,6 +3030,38 @@ already being asked to start the review.
    while it was a draft (that's how `init-pr` warms the
    caches), so the checks are already in flight.
 
+   **Before any long unattended wait, make the working state
+   survivable.** This step and the step-5 fan-out are the two
+   places this session sits idle for many minutes, and a
+   worktree has been deleted underneath a review **twice** —
+   the second time losing a verified-but-uncommitted fix.
+   Reconstructing it cost a fresh whole-file `Read` (≈1.3k), a
+   re-`Edit`, a re-verify, and a full cold-worktree rebuild.
+
+   The checkpoint-commit rule already existed and did not fire,
+   because **signing was down** (a locked 1Password agent) and
+   the failure was treated as a retryable nuisance. So:
+
+   - **Treat a signing failure as an unpushed-state alarm**,
+     not a nuisance. It means the checkpoint did **not**
+     happen, so the work exists in exactly one deletable
+     place. Stop and get signing working before starting a
+     wait.
+
+   - **Write the working diff to the scratchpad** before the
+     wait, so recovery is one `git apply` even if the commit
+     could not be made:
+
+     ```sh
+     python3 .claude/tools/review_diff.py --base <base> \
+       --out <scratchpad>/pre-wait.diff
+     ```
+
+   (Distinct from hunting whatever sweeper deletes the
+   worktree — that is its own open question. This is the
+   survivable-state discipline, which holds regardless of the
+   cause.)
+
    **Wait with the tool — don't poll.** One call blocks until
    the checks settle and prints one compact verdict:
 
@@ -3318,6 +3350,44 @@ already being asked to start the review.
    - `mergeable` not conflicting (`MERGEABLE`) → proceed to
      the In Review move and the enqueue prompt below.
 
+   **A rebase-forced re-run may enqueue BEFORE re-verifying.**
+   The normal gate is "everything green locally, then
+   enqueue". That gate cannot win a race it is structurally
+   losing: `main` lands roughly **every 20 minutes** and a full
+   local re-verify costs about the same, so a base that moves
+   during the review invalidates the pass you just finished,
+   and the re-run invites the next move. One review lost **two
+   full cycles** to exactly this — `main` landed 4 commits
+   during the lens fan-out and 3 more during a 1289-second CI
+   wait, and the second batch invalidated a completely green
+   local suite *plus* that CI run.
+
+   So when the **only** reason for a re-run is a rebase, and
+   the base delta is already covered by the queue's own suite:
+   **push, enqueue, and let the queue verify.** The merge queue
+   re-runs the whole Rust suite on its own queue branch against
+   the merged result — that is the actual gate, and it is
+   fail-closed. Re-running it locally first proves nothing the
+   queue will not prove, on a tree that is already stale.
+
+   Three conditions, all required, so this cannot become a
+   general license to skip verification:
+
+   - the branch's own diff is **unchanged** since the last
+     green local pass (no new fix commits — only the rebase);
+   - `rebase_overlap.py` reports **no overlap** between the
+     base delta and this branch's files; and
+   - the queue's suite covers the base delta —
+     `runs_rust_suites` on that same report.
+
+   If any of those fails, verify locally first as usual. And
+   say in the summary that the local re-verify was skipped and
+   why, so the queue result is read as the gate it is.
+
+   (This is the standing "enqueue early, verify in parallel"
+   principle, which was recorded as a lesson but never wired
+   into this gate.)
+
    This prompt is the handoff: per `CLAUDE.md`, **In
    Review** means "okay for the human to look at the PR
    and approve enqueueing it." So move the Linear issue
@@ -3538,13 +3608,49 @@ already being asked to start the review.
    polled mid-queue it reads a
    stale **In Review** and invites a premature hand-move. Only
    after the probe returns `merged: true` / `state: "MERGED"`
-   should you (re-)report the Linear status, and then **expect
-   the integration to have already set it to Done** — confirm
-   and report that, rather than offering to move it or
-   flagging it as "stuck In Review". The **In Review**
+   should you (re-)report the Linear status. The **In Review**
    transition made at the enqueue handoff stays as-is; this
    governs only what's reported/acted on *after* enqueue,
    while the merge resolves.
+
+   **On a confirmed merge, write the issue BACK to In Review.**
+   Merge and completion are different events. The integration
+   sets the issue **Done** on merge, which hides exactly the
+   sessions that still owe follow-up — session metrics, perms
+   firming, post-merge tidy, and feedback that has to reach a
+   planning session or be filed. The operator closes sessions
+   at end of day and reopens the machine later with **no Linear
+   signal** that a merged issue's session still needs
+   attention. So the issue stays effectively in review while
+   the operator is still following up with its session.
+
+   Order matters, because the auto-transition and this write
+   can race: **wait until Done is actually observed**, then
+   write In Review, then **re-check** the state:
+
+   ```txt
+   mcp__claude_ai_Linear__save_issue(
+     id: "<ENG-###>",
+     state: "In Review"
+   )
+   ```
+
+   Then run the existing tail — post-merge tidy, session
+   metrics, `firm-perms` — and close with an explicit
+   **follow-up ledger**: every operator-facing item either
+   addressed, handed to a planning session, or filed as a task.
+   Name them.
+
+   **Only an explicit approval moves it to Done.** The terminal
+   step is an `AskUserQuestion` — *"all follow-up complete:
+   metrics filed, perms firmed, feedback forwarded — mark
+   Done?"* — and nothing else sets that state.
+
+   **One residual gap, accepted:** a session that dies *before*
+   this step runs leaves the issue auto-Done with nobody to
+   re-mark it. The common case — the operator closing sessions
+   at day end after merge confirmation — is fully covered. Do
+   **not** build detection machinery for the crash case.
 
    Watch whether the PR lands or gets kicked back out with a
    **single** probe per check: the `gh api graphql` dequeue
