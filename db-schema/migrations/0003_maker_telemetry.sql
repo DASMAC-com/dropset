@@ -72,11 +72,31 @@
 -- message routinely embeds the request URL, and a keyed endpoint carries its
 -- credential in the query string — so an error message is an exfiltration
 -- path for exactly the secret this comment disclaims, via a table the
--- dashboard role can read. Both are written through the framework's
--- `sanitize_error`, which strips URL query strings before persisting. A new
--- writer of either column must go through it too; a schema comment cannot
--- enforce that, which is why the redaction lives in one shared function
--- rather than in a rule.
+-- dashboard role can read. The two are guarded by *different* mechanisms,
+-- and the split is what a new writer of either column has to know:
+--
+--   * `tick_error` goes through the framework's `sanitize_error`, which
+--     strips a URL query string wholesale. Its text comes from the Solana
+--     RPC client, which has no redaction of its own, so the blunt strip is
+--     the only guard available on that path.
+--   * `feed_health.last_error` relies on the `feeds` transport instead.
+--     `HttpClient::redact_query` replaces a credential's value by
+--     registered parameter *name*, before the error is ever wrapped. That
+--     is better than the blunt strip, not weaker: the benign parameters a
+--     failed paged backfill is diagnosed from (which symbol, which
+--     interval, which window) survive. It is why the health path
+--     deliberately does not blanket-strip on top.
+--
+-- Be exact about the residual risk, because that mechanism is a deny-list.
+-- It covers the parameter names an adapter registered on its client, via
+-- `with_secret_query_param` or `with_secret_header`. A keyed adapter that
+-- instead hand-passes its credential through a per-request query, under a
+-- name registered nowhere, is covered by nothing and its error text would
+-- land in this column in clear. Two things hold that shut today, neither of
+-- them this comment: every source that currently writes here is keyless,
+-- and `HttpClient`'s own docs make the registration discipline explicit at
+-- the constructor. A schema comment cannot enforce it — which is the
+-- reason the redaction lives on the client rather than at a call site.
 
 -- One sample per market per tick.
 --
@@ -105,11 +125,26 @@
 --
 -- `action` holds one of: `Quote`, `Reshape`, `FreezeSide`, `Halt` (the
 -- kill-switch decision), plus `Pause` (no usable reference), `Frozen` (the
--- vault is frozen on-chain, so the bot idles), and `TickError` (the tick
--- itself failed — `tick_error` carries what with). The last three are not
--- `Action` variants in the model; they are the states a tick can be in
--- that the policy never got to decide, and a state timeline that omitted
--- them would show gaps where the interesting failures are.
+-- vault is frozen on-chain, so the bot idles), `TickError` (the tick failed
+-- before deciding anything — `tick_error` carries what with), and
+-- `Unknown`. The last four are not `Action` variants in the model; they are
+-- the states a tick can be in that the policy never got to decide, and a
+-- state timeline that omitted them would show gaps where the interesting
+-- failures are.
+--
+-- `Unknown` is the one value no path currently writes, and it is enumerated
+-- deliberately rather than by accident: it means a tick reached no decision
+-- and did not fail either, which is a shape that should not exist. It is
+-- kept mapped so that a future path added without an outcome shows up as
+-- itself instead of borrowing the rendering of a real trading state. A
+-- reader must treat `Unknown` as a defect signal, not as a quiet tick.
+--
+-- Note that `TickError` and `Halt` are not exclusive in the way a single
+-- column suggests: a tick that decided `Halt` and then failed to send the
+-- instruction records `action = 'Halt'` with a non-NULL `tick_error`. The
+-- decision wins the column on purpose — it is the more alarming fact, and
+-- the kill-switch alert keys on it — so any query counting tick failures
+-- must test `tick_error IS NOT NULL`, never `action = 'TickError'`.
 --
 -- The enum-ish columns (`anchor`, `regime`, `health`, `action`,
 -- `halt_reason`, `profile_kind`) are TEXT holding the Rust variant's
@@ -186,8 +221,12 @@ CREATE TABLE maker_telemetry (
     launch_tvl_usd   DOUBLE PRECISION,
     frozen           BOOLEAN,
     reference_valid  BOOLEAN,
-    -- What the tick failed with, when `action` is `TickError`. Rendered with
-    -- its cause chain and truncated by the writer.
+    -- What the tick failed with, whatever `action` says. Rendered with its
+    -- cause chain and truncated by the writer. This — not
+    -- `action = 'TickError'` — is the test for "did this tick fail": a tick
+    -- that decided and *then* failed keeps its decision in `action`, so the
+    -- two do not partition. Covers propagated errors only; a failure the
+    -- tick deliberately swallows (the quote-state write) does not appear.
     tick_error       TEXT,
     PRIMARY KEY (market, ts)
 );

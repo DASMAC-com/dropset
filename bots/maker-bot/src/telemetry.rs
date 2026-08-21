@@ -509,10 +509,15 @@ pub fn leg_samples(
 /// `action = 'Halt'` on. It would not have fired.
 #[derive(Clone, Debug)]
 pub enum Outcome {
-    /// Nothing decided yet. Only observable if a tick returns without
-    /// reaching any of the states below, which no current path does —
-    /// it renders as `Unknown` so a future path added without an outcome
-    /// fails loudly rather than impersonating a real trading state.
+    /// Nothing decided yet.
+    ///
+    /// Reached whenever a tick returns before any of the states below, which
+    /// the vault-read failure does on every tick it happens — so this is not
+    /// a merely-theoretical variant. Paired with a tick error it renders as
+    /// `TickError`; on its own it renders as `Unknown`, which no path
+    /// currently produces and which therefore stays available as the loud
+    /// signal for a future path added without an outcome, rather than
+    /// impersonating a real trading state.
     Undecided,
     /// The vault is frozen on-chain; the bot idles.
     Frozen,
@@ -527,8 +532,23 @@ impl Outcome {
     /// form: the provisioned alert matches `action = 'Halt'` and the state
     /// timeline maps these exact strings, so `Halt(BasisBreach)` would break
     /// both silently. The payload is carried by `halt_reason` instead.
-    fn action(&self) -> &'static str {
+    ///
+    /// Takes `failed` because a tick that reached no decision *and* failed is
+    /// the ordinary vault-read timeout, not a mystery: `read_vault` is the
+    /// first thing a tick does, so it returns before any outcome is set. That
+    /// pairing is what `TickError` names, and every reader — the state
+    /// timeline's value mappings, the kill-switch rule's carve-out comment,
+    /// and this table's own column comment — was written against it. Emitting
+    /// the bare `Unknown` there instead left `TickError` matching nothing and
+    /// `Unknown` mapped by nothing, so a market failing every tick rendered
+    /// as an unbroken band on the timeline's base style, with no rule firing.
+    ///
+    /// A *decided* tick that then failed keeps its decision — that is the
+    /// invariant this enum exists to defend, and the reason `failed` cannot
+    /// simply override.
+    fn action(&self, failed: bool) -> &'static str {
         match self {
+            Outcome::Undecided if failed => "TickError",
             Outcome::Undecided => "Unknown",
             Outcome::Frozen => "Frozen",
             Outcome::Pause => "Pause",
@@ -726,7 +746,7 @@ impl SampleBuilder {
             basis: self.fair.basis,
             basis_breach: self.fair.basis_breach,
             usdc_breach: self.fair.usdc_breach,
-            action: self.outcome.action().to_string(),
+            action: self.outcome.action(self.error.is_some()).to_string(),
             halt_reason: self.outcome.halt_reason(),
             profile_kind: format!("{:?}", self.profile_kind),
             base_value_usd: self.inventory.map(|i| i.base_value_usd),
@@ -995,9 +1015,10 @@ mod tests {
         let mut b = SampleBuilder::new(1, eurc(), fair(Some(1.14)), ProfileKind::Standard);
         b.error(&anyhow::anyhow!("reading the vault: timed out"));
         let s = b.build();
-        // Nothing decided, so the action is the loud placeholder rather than a
-        // real trading state.
-        assert_eq!(s.action, "Unknown");
+        // Nothing decided *and* a failure, which is what the timeline, the
+        // alert carve-out and the column comment all call `TickError`. The
+        // bare `Unknown` here left that value matching nothing.
+        assert_eq!(s.action, "TickError");
         assert_eq!(
             s.tick_error.as_deref(),
             Some("reading the vault: timed out")
@@ -1008,6 +1029,34 @@ mod tests {
         // reported — which is what makes a failing tick diagnosable at all.
         assert_eq!(s.fair, Some(1.14));
         assert_eq!(s.regime, "Normal");
+    }
+
+    /// `Unknown` is reserved for the shape that should not exist — no
+    /// decision and no failure — so it stays a defect signal rather than the
+    /// label of the ordinary vault-read timeout. Pinned alongside the test
+    /// above because the two values are one boolean apart, and swapping them
+    /// is invisible: both are strings a panel renders without complaint.
+    #[test]
+    fn a_tick_that_neither_decided_nor_failed_is_the_loud_placeholder() {
+        let b = SampleBuilder::new(1, eurc(), fair(Some(1.14)), ProfileKind::Standard);
+        let s = b.build();
+        assert_eq!(s.action, "Unknown");
+        assert_eq!(s.tick_error, None);
+    }
+
+    /// The column and the label do not partition, and a query that assumed
+    /// they did would miss the most alarming row the bot can write.
+    #[test]
+    fn a_decided_tick_that_failed_keeps_its_decision_and_its_error() {
+        let mut b = SampleBuilder::new(1, eurc(), fair(Some(1.14)), ProfileKind::Standard);
+        b.outcome(Outcome::Decided(Action::Halt(HaltReason::BasisBreach)))
+            .error(&anyhow::anyhow!(
+                "sending the kill stamp: blockhash expired"
+            ));
+        let s = b.build();
+        assert_eq!(s.action, "Halt", "the decision wins the column");
+        assert_eq!(s.halt_reason.as_deref(), Some("BasisBreach"));
+        assert!(s.tick_error.is_some(), "and the failure is still recorded");
     }
 
     /// The regression this pairs with a real bug: a tick whose policy halted
