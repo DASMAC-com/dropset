@@ -344,3 +344,29 @@ haps() {
   fi
   _ds_daily_session housekeeping "housekeeping-$(date +%-d)" /housekeeping ''
 }
+
+# Resume the whole FLEET: one iTerm tab per in-flight Linear issue, each with
+# its session resumed and flagged green for attention. The batch counterpart to
+# `raps`, for after a machine restart.
+#
+# `faps` prints the plan and opens nothing; `faps go` applies it. The default is
+# read-only deliberately — this one verb can open many tabs and resume many
+# sessions, so seeing the list first is worth one extra word.
+#
+# It resolves the fleet itself (state type `started`, so In Progress *and* In
+# Review) and skips any issue whose tab is already open, so it is safe to run
+# twice. The deterministic work — the Linear query, the tag derivation, the
+# already-live check, the AppleScript — lives in the committed tool; this is the
+# thin verb over it, per the skill-tooling convention.
+faps() {
+  _ds_base || return 1
+  _ds_secrets
+  if [[ "$1" == "go" ]]; then
+    python3 "$_DS_REPO/.claude/tools/fleet_resume.py" --apply
+  elif [[ -z "$1" ]]; then
+    python3 "$_DS_REPO/.claude/tools/fleet_resume.py"
+  else
+    print -u2 'Usage: faps [go]   (no argument = show the plan; `go` = open the tabs)'
+    return 1
+  fi
+}

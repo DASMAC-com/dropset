@@ -283,10 +283,12 @@ worktree. Each guard's **script** is committed; its
 wired**, which `make hook-wiring` reports on (it names every hook
 nothing points at, and writes nothing; `housekeeping` runs the same
 check each pass). The **session helpers** (`cdds`, `aps`, `raps`,
-`naps`, `rnaps`, `paps`, `haps`) are the exception that *is* committed, at
+`naps`, `rnaps`, `paps`, `haps`, `faps`) are the exception that *is*
+committed, at
 `.claude/shell/init.zsh`, sourced from the base checkout by one guarded
 line in the shell profile; only their 1Password coordinates stay
-untracked, in a file outside the repo. Full detail — every hook's
+untracked — defined as env vars in the runtime config, or in an optional
+file outside the repo. Full detail — every hook's
 wiring, the helper family, and the iTerm setup:
 `docs/conventions/local-integrations.md`.
 

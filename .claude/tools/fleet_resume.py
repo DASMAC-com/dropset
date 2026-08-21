@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""Reload the whole in-flight fleet into iTerm2 — one resumed session per tab.
+
+After a machine restart or an idle stretch, bringing the fleet back is manual:
+open the Dropset project view in Linear, find every In Progress / In Review
+issue, open a tab for each, and type the resume verb with its number.
+Repetitive, error-prone, and dependent on a Linear round trip the operator has
+to make by hand.
+
+This does all of it. For each in-flight issue with no live session it opens a
+tab, types ``raps <n>``, **presses Enter**, and applies the green attend mark —
+so the loaded window is a to-attend list and every session is genuinely
+resumed, not merely queued for a keystroke. Nothing is left for the operator to
+type.
+
+**What counts as in-flight: state TYPE** ``started``, not the state *names*.
+That covers **In Progress and In Review**, which is the set that means "a
+session owns this" — and In Review is load-bearing since a merged PR whose
+follow-up is outstanding stays there deliberately (see
+``docs/conventions/linear-automation.md`` → "The Linear state tracks the
+SESSION, not the PR"). Matching the type rather than the names means a workflow
+rename cannot silently drop a session from the fleet. The failure direction is
+safe either way: this only ever *opens* a tab, so an over-wide match costs a tab
+and an under-wide one costs a resumed session.
+
+**Skipping a live session** keys on the iTerm tab's **name**, which carries the
+tag because ``aps`` passes ``-n <tag>`` at launch. That is not a coincidence to
+rely on loosely — it is the same parity fix that made the committed ``aps``
+match the operative one, so the two are coupled: if ``aps`` ever stops setting
+a display name, this stops recognizing live sessions and starts double-resuming.
+
+**Read-only by default.** A bare run prints the plan and touches nothing;
+``--apply`` opens the tabs. Every AppleScript is emitted as **one** script per
+run rather than one per tab, so the whole reload is a single ``osascript``.
+
+Stdlib only. A Python skill-tool under ``.claude/tools/`` — deliberately **not**
+a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ENDPOINT = "https://api.linear.app/graphql"
+
+# The state type that means "a session owns this issue". Linear's set is
+# triage / backlog / unstarted / started / completed / canceled.
+IN_FLIGHT_TYPE = "started"
+
+# The shell verb each tab is told to run. `raps <n>` resolves the number to the
+# `eng-<n>` worktree and continues that session there.
+RESUME_VERB = "raps"
+
+# An `ENG-###` identifier, or the tag inside an iTerm tab name. The tab name
+# carries a status glyph prefix ("◐ eng-914"), so this is a search, not a match.
+_TAG_RE = re.compile(r"\beng-(\d+)\b", re.IGNORECASE)
+
+_IDENT_RE = re.compile(r"^ENG-(\d+)$", re.IGNORECASE)
+
+# Where the attend-mark script lives, relative to this file.
+_ATTEND = Path(__file__).resolve().parent.parent / "scripts" / "iterm-attend.sh"
+
+_IN_FLIGHT_QUERY = """
+query InFlight($filter: IssueFilter, $first: Int!, $after: String) {
+  issues(filter: $filter, first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      identifier
+      title
+      state { name type }
+    }
+  }
+}
+"""
+
+# Enumerate every session's name across every window and tab. Newline-joined so
+# the caller parses lines rather than an AppleScript list literal.
+_LIST_SESSIONS = """
+set out to ""
+tell application "iTerm2"
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        set out to out & (name of s) & linefeed
+      end repeat
+    end repeat
+  end repeat
+end tell
+return out
+"""
+
+
+class FleetResumeError(Exception):
+    """A user-facing failure: surfaced to stderr, exits non-zero."""
+
+
+def _env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise FleetResumeError(
+            f"{name} is unset — export it in your shell profile "
+            f"(see docs/conventions/linear-automation.md)"
+        )
+    return value
+
+
+def _post(api_key: str, query: str, variables: dict) -> dict:
+    """POST a GraphQL operation and return its ``data``.
+
+    Deliberately the same shape as ``trim_levers.py``'s helper rather than a
+    third HTTP idiom in this directory.
+    """
+    body = json.dumps({"query": query, "variables": variables}).encode("utf-8")
+    request = urllib.request.Request(
+        ENDPOINT,
+        data=body,
+        headers={"Authorization": api_key, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        raise FleetResumeError(f"Linear returned HTTP {exc.code}") from exc
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise FleetResumeError(f"cannot reach Linear: {exc}") from exc
+    if payload.get("errors"):
+        messages = "; ".join(
+            e.get("message", "?") for e in payload["errors"] if isinstance(e, dict)
+        )
+        raise FleetResumeError(f"Linear rejected the query: {messages}")
+    return payload.get("data") or {}
+
+
+def in_flight(api_key: str, project_id: str) -> list[dict]:
+    """Every issue in the project whose state type is ``started``."""
+    nodes: list[dict] = []
+    after = None
+    while True:
+        data = _post(
+            api_key,
+            _IN_FLIGHT_QUERY,
+            {
+                "filter": {
+                    "project": {"id": {"eq": project_id}},
+                    "state": {"type": {"eq": IN_FLIGHT_TYPE}},
+                },
+                "first": 50,
+                "after": after,
+            },
+        )
+        page = data.get("issues") or {}
+        nodes.extend(page.get("nodes") or [])
+        info = page.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            return nodes
+        after = info.get("endCursor")
+
+
+def tag_of(identifier: str) -> str | None:
+    """``ENG-889`` → ``889``, the argument ``raps`` takes.
+
+    Returns ``None`` for anything that is not an ``ENG-###`` identifier, so a
+    differently-shaped one is skipped rather than turned into a bad command.
+    """
+    match = _IDENT_RE.match(identifier.strip())
+    return match.group(1) if match else None
+
+
+def _osascript(script: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["osascript", "-"],
+            input=script,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise FleetResumeError(f"cannot run osascript: {exc}") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or "").strip() or f"exit {completed.returncode}"
+        raise FleetResumeError(f"osascript failed: {detail}")
+    return completed.stdout
+
+
+def live_tags() -> set[str]:
+    """The tags of sessions already open in iTerm, from the tab names.
+
+    The name carries a status glyph, so this searches rather than matches.
+    A tab whose name has no tag (a plain shell) contributes nothing.
+    """
+    out = _osascript(_LIST_SESSIONS)
+    return {m.group(1) for m in _TAG_RE.finditer(out)}
+
+
+def _applescript_literal(value: str) -> str:
+    """Quote a string for AppleScript source.
+
+    Only backslash and double-quote need escaping, and the values here are
+    already constrained (a digit run from :func:`tag_of`) — but the command is
+    assembled into a script that gets *executed*, so it is quoted properly
+    rather than trusted to stay constrained.
+    """
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def open_script(tags: list[str]) -> str:
+    """One AppleScript that opens a tab per tag and reports each tab's tty.
+
+    Emitted as a single script rather than one per tag: a per-tag `osascript`
+    would pay process startup per session and interleave badly with the tabs
+    it is creating. The tty comes back so the caller can apply the attend mark
+    to each new tab — a coprocess bound to a key can only reach its own
+    session, so the mark has to be driven from here.
+    """
+    lines = ['set out to ""', 'tell application "iTerm2"', "  set w to current window"]
+    for tag in tags:
+        command = _applescript_literal(f"{RESUME_VERB} {tag}")
+        lines += [
+            "  tell w",
+            "    set t to (create tab with default profile)",
+            "  end tell",
+            "  set s to current session of t",
+            f"  write s text {command} newline yes",
+            f'  set out to out & {_applescript_literal(tag)} & " " & (tty of s)'
+            " & linefeed",
+        ]
+    lines += ["end tell", "return out"]
+    return "\n".join(lines)
+
+
+def parse_open_result(out: str) -> list[tuple[str, str]]:
+    """``"889 /dev/ttys004"`` lines → ``[(tag, tty)]``."""
+    pairs = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].startswith("/dev/"):
+            pairs.append((parts[0], parts[1]))
+    return pairs
+
+
+def mark_attention(tty: str) -> bool:
+    """Apply the green attend mark to ``tty``. True on success.
+
+    Shells out to the committed `iterm-attend.sh` rather than re-emitting the
+    escape here, so the palette has one owner. `--mark` sets green outright
+    instead of toggling: a toggle's outcome depends on the tab's history, and a
+    launcher wants green, not "the other one".
+    """
+    if not _ATTEND.exists():
+        return False
+    completed = subprocess.run(
+        [str(_ATTEND), "--tty", tty, "--mark"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def plan(api_key: str, project_id: str) -> dict:
+    """What a run would do, without doing any of it."""
+    issues = in_flight(api_key, project_id)
+    live = live_tags()
+    resume, skipped, unrecognized = [], [], []
+    for issue in issues:
+        identifier = issue.get("identifier") or ""
+        tag = tag_of(identifier)
+        entry = {
+            "identifier": identifier,
+            "tag": tag,
+            "title": issue.get("title"),
+            "state": (issue.get("state") or {}).get("name"),
+        }
+        if tag is None:
+            unrecognized.append(entry)
+        elif tag in live:
+            skipped.append(entry)
+        else:
+            resume.append(entry)
+    return {
+        "in_flight": len(issues),
+        "live_tags": sorted(live),
+        "resume": resume,
+        "skipped_already_live": skipped,
+        "unrecognized_identifier": unrecognized,
+    }
+
+
+def summarize(result: dict) -> str:
+    """One human line."""
+    parts = [
+        f"fleet-resume | {result['in_flight']} in flight",
+        f"{len(result['resume'])} to resume",
+        f"{len(result['skipped_already_live'])} already live",
+    ]
+    if result["unrecognized_identifier"]:
+        parts.append(f"{len(result['unrecognized_identifier'])} unrecognized")
+    if result.get("opened") is not None:
+        parts.append(f"{result['opened']} opened")
+        if result.get("unmarked"):
+            parts.append(f"{result['unmarked']} could not be marked")
+    return " | ".join(parts)
+
+
+def run(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="fleet_resume.py",
+        description=(
+            "Open an iTerm tab per in-flight Linear issue and resume its "
+            "session there. Read-only unless --apply is passed."
+        ),
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually open the tabs (without this, prints the plan and exits)",
+    )
+    args = parser.parse_args(argv[1:])
+
+    api_key = _env("LINEAR_API_KEY")
+    project_id = _env("LINEAR_PROJECT_ID")
+
+    result = plan(api_key, project_id)
+    if args.apply and result["resume"]:
+        tags = [entry["tag"] for entry in result["resume"]]
+        pairs = parse_open_result(_osascript(open_script(tags)))
+        unmarked = [tag for tag, tty in pairs if not mark_attention(tty)]
+        result["opened"] = len(pairs)
+        result["unmarked"] = unmarked
+    elif args.apply:
+        result["opened"] = 0
+        result["unmarked"] = []
+
+    json.dump(result, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    if not args.apply:
+        print("(read-only: pass --apply to open the tabs)", file=sys.stderr)
+    print(summarize(result), file=sys.stderr)
+    return 0
+
+
+def main() -> int:
+    try:
+        return run(sys.argv)
+    except FleetResumeError as exc:
+        print(f"fleet-resume: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
