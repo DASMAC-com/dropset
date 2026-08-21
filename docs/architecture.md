@@ -1602,10 +1602,13 @@ bound the ladder's *shape*, not its distance from the market, because the
 offsets hang off a reference price the same leader chooses — so it is
 circumvented by construction, and a band that bit would need an external
 price truth this design refuses on purpose (the leader's stamp *is* the
-price datum). Only the arithmetic clamps apply: a bid offset at or above
-`1e6` ppm floors to `Price::ZERO` and drops out of the book, as does any
-ask whose materialized price is unrepresentable, so the far-out surface is
-ask-only.
+price datum). Nor does anything off-chain substitute for one: the maker
+bot's peg band and degraded-regime behavior are the bot policing *itself*,
+so they discipline an honest leader's own quoting and place no limit
+whatever on a buggy or malicious one. Only the arithmetic clamps apply: a
+bid offset at or above `1e6` ppm floors to `Price::ZERO` and drops out of
+the book, as does any ask whose materialized price is unrepresentable, so
+the far-out surface is ask-only.
 
 What bounds the loss is **taker consent**, applied downstream in three
 independent layers — the per-level limit-price filter, the price-time walk
