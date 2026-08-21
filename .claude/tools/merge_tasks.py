@@ -13,13 +13,35 @@ that have none emits no line at all — which every branch below already handles
 since the field was optional from the start. Do not add a path that manufactures
 globs.
 
-Two subcommands, each reading stdin/argv and printing JSON to stdout:
+Three subcommands, each printing JSON to stdout:
 
 * ``plan [--survivor N] TOKEN...`` — parse the issue numbers the user passed
   (bare ``615`` or ``ENG-615``, any case, any order), **dedup** them, and
   resolve the survivor (the lowest-numbered by default, or ``--survivor N``).
   Prints ``{"survivor": "ENG-###", "ids": [...]}`` (ids sorted by number) so the
-  skill knows what to ``get_issue`` before assembling.
+  skill knows what to fetch before assembling.
+* ``fetch --survivor N --out PATH TOKEN...`` — read those issues' bodies over
+  GraphQL **in this process** and write the ``assemble`` input file, printing
+  only identifiers and a byte count. This is the zero-echo half, and it is where
+  the cost was: folded bodies used to transit context roughly **three** times
+  per fold — each ``get_issue`` echo, the hand-composed ``Write`` of this very
+  file, and the ``Read`` of the generated ops — and about **50k of one planning
+  session's ~135k output** was body re-emission. This removes the first two.
+
+  The third is **structural and stays**: the ops are applied through the MCP
+  ``patch`` path, whose anchor matching with atomic abort is load-bearing safety
+  (see ``board_batch.py`` → "Body edits stay on the MCP ``patch`` path"), and
+  handing those ops to an MCP call means reading them. Moving the write to raw
+  GraphQL would drop that safety to save the smallest of the three — a bad
+  trade. Note it shrank anyway: with ``**Touches**:`` retired a fold of
+  post-retirement issues is **appends only**, so the ops carry no ``replace``
+  and no anchor.
+
+  Interim technique worth keeping for a fold of very large *legacy* survivors:
+  a survivor-body **skeleton** — its headings plus the exact stored
+  ``**Touches**:`` line — satisfies ``assemble`` without re-emitting a 30KB
+  survivor, and is safe because the patch path never re-sends the survivor body.
+  It saved ~10k on the largest measured fold. ``fetch`` makes it unnecessary.
 * ``assemble ISSUES_JSON [--out PATH] [--ops-out PATH]`` — given a JSON file
   ``{"survivor": "ENG-###", "issues": [{id, number, title, description}, ...]}``,
   build the merged issue: the survivor body followed by each non-survivor body
@@ -32,7 +54,8 @@ Two subcommands, each reading stdin/argv and printing JSON to stdout:
   It emits the fold **two ways**, and the skill prefers the first:
 
   1. ``patch_ops`` — the fold as Linear ``patch`` operations: one ``append``
-     per ``# Part`` section plus one ``replace`` swapping the survivor's
+     per ``# Part`` section plus — only when a folded body carries legacy globs
+     — one ``replace`` swapping the survivor's
      ``**Touches**:`` line for the union. These carry only the *folded* bodies,
      so the survivor's existing text — 28KB is unremarkable — never has to be
      re-sent to ``save_issue`` at all. ``None`` when no safe anchor exists, with
@@ -57,6 +80,24 @@ import json
 import os
 import re
 import sys
+import urllib.error
+import urllib.request
+
+ENDPOINT = "https://api.linear.app/graphql"
+
+_FETCH_QUERY = """
+query MergeFetch($filter: IssueFilter, $first: Int!) {
+  issues(filter: $filter, first: $first) {
+    nodes {
+      id
+      identifier
+      number
+      title
+      description
+    }
+  }
+}
+"""
 
 # Path bases (besides the file CLAUDE.md) that count as agent-infra "meta-work"
 # — the surface the ``Claude:`` issue-title prefix batches. The canonical
@@ -389,6 +430,96 @@ def _write_private(path: str, text: str) -> None:
         fh.write(text)
 
 
+def _post(api_key: str, query: str, variables: dict) -> dict:
+    """POST a GraphQL operation and return its ``data``.
+
+    Deliberately the same shape as ``trim_levers.py``'s helper rather than a
+    fourth HTTP idiom in this directory.
+    """
+    body = json.dumps({"query": query, "variables": variables}).encode("utf-8")
+    request = urllib.request.Request(
+        ENDPOINT,
+        data=body,
+        headers={"Authorization": api_key, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        raise MergeTasksError(f"Linear returned HTTP {exc.code}") from exc
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise MergeTasksError(f"cannot reach Linear: {exc}") from exc
+    if payload.get("errors"):
+        messages = "; ".join(
+            e.get("message", "?") for e in payload["errors"] if isinstance(e, dict)
+        )
+        raise MergeTasksError(f"Linear rejected the query: {messages}")
+    return payload.get("data") or {}
+
+
+def fetch(api_key: str, survivor: int, numbers: list[int]) -> dict:
+    """Fetch the bodies for ``numbers`` and return the ``assemble`` input shape.
+
+    **This is the zero-echo half of the fold, and it is the bulk of the cost.**
+    Measured: folded bodies used to transit context roughly *three* times per
+    fold — once as each ``get_issue`` echo, once as the ``Write`` composing this
+    same JSON by hand, and once as the ``Read`` of the generated ops. Roughly
+    **50k of one planning session's ~135k output** was body re-emission. The
+    first two of those are pure waste: the tool can read the bodies in its own
+    process and write the file itself, which is what this does.
+
+    One GraphQL call for the whole set, not one per issue — the filter takes a
+    number list, so a five-issue fold is one round trip.
+
+    Every issue asked for must come back. A silently-short result would produce
+    a fold that *looks* complete while dropping an issue's content, and the
+    non-survivor would then be canceled as a duplicate of a survivor that never
+    absorbed it — losing the content outright.
+    """
+    data = _post(
+        api_key,
+        _FETCH_QUERY,
+        {
+            "filter": {"number": {"in": numbers}},
+            "first": max(len(numbers), 1),
+        },
+    )
+    nodes = (data.get("issues") or {}).get("nodes") or []
+    got = {node.get("number") for node in nodes}
+    missing = sorted(set(numbers) - got)
+    if missing:
+        raise MergeTasksError(
+            "Linear returned no issue for: "
+            + ", ".join(f"ENG-{n}" for n in missing)
+            + " — refusing to assemble a partial fold"
+        )
+    survivor_id = next(
+        (n.get("identifier") for n in nodes if n.get("number") == survivor), None
+    )
+    if survivor_id is None:
+        raise MergeTasksError(f"the survivor ENG-{survivor} is not in the fetched set")
+
+    # **Normalize `id` to the IDENTIFIER, not the UUID.** `assemble` keys on
+    # `id` and was written against the MCP's shape, where `id` *is* `ENG-###`.
+    # Raw GraphQL calls that field `identifier` and uses `id` for the UUID, so
+    # passing nodes through untouched hands `assemble` a survivor key it can
+    # never match. Caught by a test that composes the two — which is the point
+    # of having one: the two halves are only useful together.
+    return {
+        "survivor": survivor_id,
+        "issues": [
+            {
+                "id": node.get("identifier"),
+                "uuid": node.get("id"),
+                "number": node.get("number"),
+                "title": node.get("title"),
+                "description": node.get("description") or "",
+            }
+            for node in sorted(nodes, key=lambda n: n.get("number") or 0)
+        ],
+    }
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="merge_tasks.py")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -396,6 +527,17 @@ def run(argv: list[str]) -> int:
     p_plan = sub.add_parser("plan", help="resolve the deduped numbers + survivor")
     p_plan.add_argument("--survivor", type=int, default=None)
     p_plan.add_argument("tokens", nargs="+")
+
+    p_fetch = sub.add_parser(
+        "fetch",
+        help="read the issue bodies over GraphQL and write the assemble input "
+        "— so no body transits context",
+    )
+    p_fetch.add_argument("--survivor", type=int, required=True)
+    p_fetch.add_argument(
+        "--out", required=True, help="where to write the fetched-issues JSON"
+    )
+    p_fetch.add_argument("tokens", nargs="+")
 
     p_asm = sub.add_parser("assemble", help="build the merged issue body")
     p_asm.add_argument("issues_json", help="path to the fetched-issues JSON file")
@@ -414,6 +556,26 @@ def run(argv: list[str]) -> int:
 
     if args.cmd == "plan":
         result = plan(args.tokens, args.survivor)
+    elif args.cmd == "fetch":
+        api_key = os.environ.get("LINEAR_API_KEY", "").strip()
+        if not api_key:
+            raise MergeTasksError(
+                "LINEAR_API_KEY is unset — the fetch mode reads the bodies "
+                "itself, so it needs the key (see "
+                "docs/conventions/linear-automation.md)"
+            )
+        numbers = [parse_token(t) for t in args.tokens]
+        fetched = fetch(api_key, args.survivor, sorted(set(numbers)))
+        _write_private(args.out, json.dumps(fetched, indent=2))
+        # Report counts and identifiers only. Echoing a body here would undo
+        # the entire point of the mode.
+        result = {
+            "issues_json_path": args.out,
+            "survivor": fetched["survivor"],
+            # `id` carries the identifier post-normalization — see `fetch`.
+            "fetched": [n.get("id") for n in fetched["issues"]],
+            "bytes": sum(len(n.get("description") or "") for n in fetched["issues"]),
+        }
     else:
         with open(args.issues_json, encoding="utf-8") as fh:
             data = json.load(fh)
