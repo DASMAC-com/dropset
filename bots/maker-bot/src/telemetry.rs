@@ -49,9 +49,12 @@ use crate::model::ladder::Side;
 use anyhow::Result;
 use async_trait::async_trait;
 use dropset_fair_value::{Candidates, FairValue, Legs};
+// `MAX_ERROR_CHARS` bounds the tick-error text a sample carries. Taken from
+// the framework rather than restated, so the two error columns cannot drift
+// apart — see its own doc there for why the bound is a character count.
 use dropset_feeds::{
     connect_lazy, run_until, sanitize_error, BestEffortSink, ChannelSource, HealthOutcome,
-    HealthReporter, HealthUpdate, RunConfig, Sink, StoreSink, StoreWriter,
+    HealthReporter, HealthUpdate, RunConfig, Sink, StoreSink, StoreWriter, MAX_ERROR_CHARS,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -76,17 +79,16 @@ const CHANNEL_CAP: usize = 512;
 /// reasoning as the framework's health reporter.
 const DROP_REPORT_EVERY: u64 = 100;
 
-/// The longest tick-error text a sample carries. Taken from the framework
-/// rather than restated, so the two error columns cannot drift apart — and so
-/// the redaction that travels with it applies to both.
-use dropset_feeds::MAX_ERROR_CHARS;
+// The `maker_legs.leg` values — the leg's **role** in the §1 composition,
+// never a venue. Each names a candidate set the engine resolves by consensus,
+// so there is no answering venue for a leg to be labelled with; how well the
+// set agreed is `LegSample::consensus_state`.
 
-/// The `maker_legs.leg` values — the leg's **role** in the §1 composition,
-/// never a venue. Each names a candidate set the engine resolves by consensus,
-/// so there is no answering venue for a leg to be labelled with; how well the
-/// set agreed is [`LegSample::consensus_state`].
+/// The FX leg: the currency pair's own rate.
 pub const LEG_FX: &str = "fx";
+/// The crypto leg: the token priced in USDC.
 pub const LEG_CRYPTO_USDC: &str = "crypto_usdc";
+/// The peg leg: USDC's own USD value, whose drift the basis absorbs.
 pub const LEG_USDC_USD: &str = "usdc_usd";
 
 /// One market's state as of one tick — the `maker_telemetry` row.
@@ -690,6 +692,22 @@ impl SampleBuilder {
     /// frozen, the on-chain reference is not valid (never stamped, or killed
     /// for staleness), the bot had already armed a halt, or it had already
     /// frozen that one side.
+    ///
+    /// The frozen case rests on a program guarantee worth citing rather than
+    /// re-deriving: `freeze_vault` leaves the vault on the active list, so a
+    /// frozen vault's levels are still *materialized*, but `swap`'s matching
+    /// walk skips frozen vaults entirely — the match-time skip is where the
+    /// freeze is enforced. So frozen really does mean unmatchable, not merely
+    /// deposit-blocked, and the gate is not over-reporting darkness.
+    ///
+    /// **`None` here is two-valued and a reader must not conflate them.** It
+    /// means "provably dark" only when the tick got far enough to observe the
+    /// vault; on the failed-vault-read path it means "unknown", because
+    /// `on_chain_reference` was never populated and the first gate returns.
+    /// A full ladder can be resting and matchable on such a tick. The
+    /// discriminator on the row is `reference_valid IS NOT NULL` — so a
+    /// consumer asking "was this book live" must filter on that first, and
+    /// the same tick's `tick_error` says why it could not be answered.
     fn touch(&self) -> (Option<f64>, Option<f64>) {
         let (Some(reference), Some(true), Some(offset_ppm)) = (
             self.on_chain_reference,
@@ -1029,6 +1047,150 @@ mod tests {
         // reported — which is what makes a failing tick diagnosable at all.
         assert_eq!(s.fair, Some(1.14));
         assert_eq!(s.regime, "Normal");
+    }
+
+    /// The column list an `INSERT` names, in order, and the highest `$N` it
+    /// binds. Enough to catch the two ways these queries drift from the
+    /// `.bind()` chains beside them.
+    fn insert_shape(sql: &str) -> (Vec<String>, usize) {
+        // Anchored on the statement, not on the first paren in the file:
+        // these queries carry a leading comment that mentions the conflict
+        // key as `(market, ts)`, which is otherwise what gets parsed.
+        let stmt = sql.find("INSERT INTO").expect("an INSERT statement");
+        let open = sql[stmt..].find('(').expect("an INSERT names its columns") + stmt;
+        let close = sql[open..].find(')').expect("unterminated column list") + open;
+        let columns = sql[open + 1..close]
+            .split(',')
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .collect();
+        // `$10` must not read as `$1`, so take the digits, not one char.
+        let highest = sql
+            .match_indices('$')
+            .filter_map(|(i, _)| {
+                let digits: String = sql[i + 1..]
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect();
+                digits.parse::<usize>().ok()
+            })
+            .max()
+            .unwrap_or(0);
+        (columns, highest)
+    }
+
+    /// The four telemetry writes bind positionally into SQL held in separate
+    /// files, so nothing in the compiler relates a column to the value that
+    /// lands in it — there is no compile-time database here (deliberately;
+    /// see the module doc), and no test touches a live one.
+    ///
+    /// The failure that motivates this is not a count mismatch, which at
+    /// least errors at runtime. It is two *same-typed* adjacent columns
+    /// transposed — `reference`/`last_set_price`, `best_bid`/`best_ask`,
+    /// `degraded`/`uncertain`, `base_value_usd`/`quote_value_usd`. That
+    /// inserts cleanly, forever, and every panel keeps rendering plausible
+    /// numbers off the wrong column.
+    ///
+    /// Be honest about the guarantee: this pins each query's column list and
+    /// arity against an expectation stated here, so SQL edited without its
+    /// binder (or vice versa) fails. It cannot see a transposition made
+    /// consistently in *both* the SQL and this array — closing that would
+    /// mean driving the binds from one ordered source, which is the real fix
+    /// if these grow again.
+    #[test]
+    fn every_insert_matches_the_bind_order_beside_it() {
+        let cases: [(&str, &str, &[&str], usize); 4] = [
+            (
+                "maker_telemetry_insert",
+                include_str!("../queries/maker_telemetry_insert.sql"),
+                &[
+                    "ts",
+                    "market",
+                    "market_pubkey",
+                    "base_decimals",
+                    "quote_decimals",
+                    "fair",
+                    "reference",
+                    "last_set_price",
+                    "on_chain_reference",
+                    "best_bid",
+                    "best_ask",
+                    "skew_bps",
+                    "anchor",
+                    "regime",
+                    "health",
+                    "degraded",
+                    "uncertain",
+                    "basis",
+                    "basis_breach",
+                    "usdc_breach",
+                    "action",
+                    "halt_reason",
+                    "profile_kind",
+                    "base_value_usd",
+                    "quote_value_usd",
+                    "tvl_usd",
+                    "launch_tvl_usd",
+                    "frozen",
+                    "reference_valid",
+                    "tick_error",
+                ],
+                30,
+            ),
+            (
+                "maker_legs_insert",
+                include_str!("../queries/maker_legs_insert.sql"),
+                &[
+                    "ts",
+                    "market",
+                    "leg",
+                    "value",
+                    "age_secs",
+                    "confidence",
+                    "fresh",
+                    "consensus_state",
+                    "contributor_count",
+                    "dispersion_outlier",
+                ],
+                10,
+            ),
+            (
+                "feed_health_ok",
+                include_str!("../queries/feed_health_ok.sql"),
+                &[
+                    "feed",
+                    "status",
+                    "last_ok_at",
+                    "last_records",
+                    "caught_up",
+                    "ok_count",
+                    "updated_at",
+                ],
+                // Four distinct binds; `$2` is reused for `updated_at`, which
+                // is what keeps it equal to the outcome's stamp by
+                // construction rather than by a second `now()`.
+                4,
+            ),
+            (
+                "feed_health_error",
+                include_str!("../queries/feed_health_error.sql"),
+                &[
+                    "feed",
+                    "status",
+                    "last_error_at",
+                    "last_error",
+                    "error_count",
+                    "updated_at",
+                ],
+                3,
+            ),
+        ];
+
+        for (name, sql, expected, binds) in cases {
+            let (columns, highest) = insert_shape(sql);
+            assert_eq!(columns, expected, "{name}: column list drifted");
+            assert_eq!(highest, binds, "{name}: placeholder count drifted");
+        }
     }
 
     /// `Unknown` is reserved for the shape that should not exist — no

@@ -192,6 +192,13 @@ CREATE TABLE maker_telemetry (
     -- halt, or a book killed for staleness) — that is the whole point of
     -- recording them rather than deriving them in the dashboard, which
     -- could not tell a dark side from a missing sample.
+    --
+    -- NULL is two-valued here and the two must not be conflated: "dark"
+    -- only when the tick observed the vault, and "unknown" on a tick whose
+    -- vault read failed — where a full ladder may well be resting and
+    -- matchable. `reference_valid IS NOT NULL` is the discriminator, so a
+    -- query asking "was this book live" filters on that first; the same
+    -- row's `tick_error` says why it could not be answered.
     best_bid         DOUBLE PRECISION,
     best_ask         DOUBLE PRECISION,
     skew_bps         DOUBLE PRECISION,

@@ -434,6 +434,22 @@ impl FairValueEngine {
         }
     }
 
+    /// The leg-resolution bounds this engine composes with: the staleness
+    /// cutoff and the dispersion fraction.
+    ///
+    /// Exists so a caller that resolves the same candidate sets for its own
+    /// purposes — recording per-leg consensus alongside the composed value —
+    /// resolves them at *these* bounds rather than at a second copy of the
+    /// config it happens to hold. Every engine owns its own
+    /// [`FairValueConfig`], so the day a per-market override lands, two
+    /// separately-read copies would silently disagree: the recorded per-leg
+    /// state, freshness and outlier would describe a resolution the composed
+    /// reading never used, with nothing failing. A diagnostic that
+    /// disagrees with the thing it is diagnosing is worse than none.
+    pub fn leg_bounds(&self) -> (Duration, f64) {
+        (self.cfg.leg_stale, self.cfg.leg_dispersion_frac)
+    }
+
     /// Compose the fair value for this market from its live `legs`. `dt` is the
     /// elapsed time since the previous `compose`; the engine accumulates it so
     /// the basis EMA sees the time since the last basis update. `weekend` marks

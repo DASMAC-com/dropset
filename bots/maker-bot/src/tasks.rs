@@ -509,13 +509,19 @@ pub fn run_supervisor(
             // because `FairValue` reports only the FX and basis legs — the
             // peg leg has no `LegReport` on it, and the peg is exactly the
             // leg whose disagreement silently costs the basis a source.
-            // Same bounds the engine will use a line below, so the two agree.
+            //
+            // Bounds come from the engine, not from `tick`: it is the engine
+            // that composes a line below, and each one owns its own config,
+            // so reading a second copy here would let the recorded per-leg
+            // consensus describe a resolution the composed value never used
+            // the moment a per-market override lands.
+            let (leg_stale, leg_dispersion) = ctx.engine.leg_bounds();
             ctx.telemetry.emit(Record::Legs(telemetry::leg_samples(
                 ts,
                 ctx.cfg.symbol,
                 &legs,
-                tick.leg_stale,
-                tick.leg_dispersion,
+                leg_stale,
+                leg_dispersion,
             )));
             let dt = ctx
                 .last_compose

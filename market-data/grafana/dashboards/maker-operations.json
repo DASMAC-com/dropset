@@ -12,7 +12,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "The composed fair value against the book actually resting on-chain, with takes overlaid. Read the gap, not the levels: `fair value` vs `reference (on-chain)` is the drift the trigger policy is tolerating, and `reference (candidate)` is where this tick would move it. A `best bid`/`best ask` that stops while fair value continues means that side went dark (a freeze-side, a halt, or a book killed for staleness) \u2014 the series ends rather than dropping to zero, which is why nulls are never spanned here. Fills are scaled out of the indexer's raw atoms ratio; see the panel query.",
+      "description": "The composed fair value against the book actually resting on-chain, with takes overlaid. Read the gap, not the levels: `fair value` vs `reference (on-chain)` is the drift the trigger policy is tolerating, and `reference (candidate)` is where this tick would move it. A `best bid`/`best ask` that stops while fair value continues usually means that side went dark (a freeze-side, a halt, or a book killed for staleness) \u2014 the series ends rather than dropping to zero, which is why nulls are never spanned here. But check the tick-outcome band before concluding it: a tick whose vault read failed also breaks these series, and there a full ladder may still be resting and matchable. Dark and unknown look identical on this panel; `TickError` below is what separates them. Fills are scaled out of the indexer's raw atoms ratio; see the panel query.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -347,7 +347,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Which regime priced this market and the health gate the kill switches ran under. `Normal / Ok` is FX x basis with both legs live. `CryptoOnly` is structural over the FX weekend, not a fault. Anything `Degraded` tightens every kill-switch threshold. `Unverified` is the standing state of a market with no independent basis source \u2014 permanent, and deliberately not treated as degraded.",
+      "description": "Which regime priced this market and the health gate the kill switches ran under. Health is a total function of the regime, so exactly six pairs are reachable and all six are mapped here \u2014 an unmapped pair would fall through to the base style and read as healthy. `Normal / Ok` is FX x basis with both legs live. `CryptoOnly` is structural over the FX weekend, not a fault. Anything `Degraded` tightens every kill-switch threshold. `Paused / Pause` means no usable leg at all. The two `Unverified` states are permanent and deliberately not treated as degraded: `FxPinned` has no basis source to observe, and `Uncorroborated` prices off a single unchecked source \u2014 the standing condition for most of the roster, which is why it is distinguished from `Normal / Ok` rather than sharing it.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -371,6 +371,14 @@
                 "Normal / Ok": {
                   "color": "green",
                   "index": 0
+                },
+                "Paused / Pause": {
+                  "color": "red",
+                  "index": 4
+                },
+                "Uncorroborated / Unverified": {
+                  "color": "yellow",
+                  "index": 3
                 }
               },
               "type": "value"
