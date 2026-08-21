@@ -176,6 +176,16 @@ repos:
     id: 'shellcheck'
   repo: 'https://github.com/shellcheck-py/shellcheck-py'
   rev: 'v0.10.0.1'
+# NO Rust intra-doc-link check runs anywhere — not here, not in the Makefile,
+# not in CI. Recorded so the absence is not re-derived: it has been established
+# by hand twice, and this codebase's docs lean heavily on intra-doc links.
+# `cargo doc` surfaces broken ones, and also surfaces five pre-existing
+# public-links-to-private-item warnings in `feeds` that would have to be fixed
+# or waived before any gate could go green. Adding the gate is filed as its own
+# product-side task ("Add a Rust intra-doc-link gate"): a CI workflow plus Rust
+# doc fixes sits outside the agent-config boundary, so it does not belong in a
+# meta-work batch. Until it lands, broken intra-doc links are DELIBERATELY
+# unchecked.
 - hooks:
   - entry: 'cargo fmt --'
     id: 'rustfmt'
