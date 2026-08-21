@@ -460,13 +460,23 @@ argument was *not* the reason — see that step for why.)
   target; run the production build **once**, before committing.
 
 - **Inspect a run_quiet log by its printed path, not a glob.** When you
-  need more than the summary, grep the **specific log path the runner
+  need more than the summary, filter the **specific log path the runner
   printed** for that run — never a `*.log` / `make-*.log` wildcard,
   which matches every historical run in the temp dir and balloons the
-  result with cross-run noise. And when the run is a **background**
-  quiet-runner task, wait for its completion notification, then tail
-  **once** for the summary — don't poll the interim log (it suppresses
-  output mid-run, so repeated tails just return "(no output)").
+  result with cross-run noise. (The runner's `inspect` subcommand
+  refuses a second positional for exactly this reason, and offers no
+  `--latest`.) And when the run is a **background** quiet-runner task,
+  wait for its completion notification, then read the summary **once**
+  — don't poll the interim log (it suppresses output mid-run, so
+  repeated reads just return "(no output)").
+
+  **Filter in a process, not into the result.** Either
+  `run_quiet.py inspect <log> --grep <re>` or the Grep tool; both return
+  the answer rather than the matched region. Never a shell `grep` /
+  `tail` / `head` on a log — those print into the tool result, and each
+  also generalizes only to a bare-verb wildcard that the permission
+  floor refuses, so nothing can be firmed for them. To read a *region*
+  rather than search for one, use the Read tool's `offset` / `limit`.
 
 - **Scope a sub-agent fan-out.** Inlining the same large diff into N
   reviewers pays for N resident copies; scope each agent to its files,

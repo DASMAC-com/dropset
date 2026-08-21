@@ -470,23 +470,53 @@ PR-authoring **writes** (`create_pull_request`,
    python3 .claude/tools/run_quiet.py -- make lint
    ```
 
-   **When you go into the captured log, use the Grep *tool*
-   on it — never `Read` it whole.** A whole-file read of a
-   captured lint log is how a 500-line per-file cspell dump
-   became the single largest result of a run (PR #207). Grep
-   the log for the failure markers (`Failed`, `error[`,
-   `Error`) to find the offending hook, or read only its
-   tail; slice from there.
+   **When you go into the captured log, filter it — never
+   `Read` it whole.** A whole-file read of a captured lint log
+   is how a 500-line per-file cspell dump became the single
+   largest result of a run (PR #207). Two ways to filter, and
+   both keep the log out of the result:
 
-   **The Grep tool specifically, not a shell `grep`.** The
-   runner's logs live under `/var/folders/…`, outside the
-   workspace — and a shell `grep` at an absolute temp path
-   generalizes only to the bare-verb wildcard `Bash(grep:*)`,
-   which `firm_core.is_bareverb_wildcard` refuses, so it
-   re-prompts on **every** review, forever. The Grep tool
-   reads an out-of-workspace absolute path and prompts zero
-   times. (Where the Grep tool is genuinely absent, a bare
-   `grep` still works — you just pay the prompt.)
+   ```sh
+   python3 .claude/tools/run_quiet.py inspect <log> --grep 'Failed|error\['
+   ```
+
+   The runner's own `inspect` subcommand does the filtering in
+   its own process and reduces to the same
+   `Bash(python3 .claude/tools/:*)` allow-rule every other tool
+   here uses. With no flags it reprints the failure summary —
+   the failed-hook index, the spelling index and the tail —
+   which is what you want when the original summary has
+   scrolled away. The **Grep tool** is equally good and is the
+   right reach when it is offered; `inspect` is what makes this
+   step work in a session where it is not, which is the case
+   that once cost 58 shell `grep` calls (≈8.7k) reading these
+   very logs.
+
+   **Never a shell `grep`, `tail`, or `head` on the log.** All
+   three take no subcommand, so each generalizes only to a
+   bare-verb wildcard (`Bash(grep:*)`, `Bash(tail:*)`,
+   `Bash(head:*)`) — the shape `firm_core.is_bareverb_wildcard`
+   exists to refuse, so nothing can be firmed for them. To read
+   a region rather than search for one, use the **Read tool's
+   `offset` / `limit`** on the log path: it reads an
+   out-of-workspace absolute path directly, and a line range is
+   exactly what `offset`/`limit` express.
+
+   (This paragraph used to make that argument for `grep` and
+   then, two sentences later, say "or read only its tail" —
+   inviting the identical unfirmable shape it had just ruled
+   out. A perms sweep harvested exactly that and could firm
+   nothing for it. `head` has the same shape and the same
+   answer.)
+
+   **One correction to the rationale, since it recurs.** On
+   this machine `Bash(grep:*)` *is* already in the shared
+   allowlist and the `cruft` classifier does not flag it, so a
+   bare `grep` prompts for nothing — the re-prompting argument
+   is false here. The rule stands on **context cost** alone: a
+   shell filter prints its matched region into the tool result,
+   where `inspect` and the Grep tool return only the answer.
+   Do not restate the churn framing.
 
    **Run the formatting-class hooks scoped in ONE invocation
    after edits — don't discover them serially.** Each
