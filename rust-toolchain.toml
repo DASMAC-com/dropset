@@ -9,20 +9,25 @@
 # do that again, so the channel is pinned and moves only in a deliberate
 # bump PR.
 #
-# `components` is listed even though rustup's default profile already carries
-# clippy and rustfmt, and even though only the lint gate actually runs them.
-# The reason is cache identity, not installation. Swatinem/rust-cache hashes
-# the installed toolchain into its cache key, so while the lint job was the
-# only one adding these two components it computed a different hash from every
-# other Rust job and could never share their cache entry — it maintained a
-# duplicate ~0.6 GB copy per ref instead. Declaring the components here makes
-# every job's toolchain identical, which is what lets the lint and SDK jobs
-# point at the test jobs' `shared-key`. See docs/ci.md.
+# `components` is listed so the lint gate's tools come from this file rather
+# than from whichever action installs the toolchain and whatever profile that
+# action happens to pick. rustup's default profile carries clippy and rustfmt
+# anyway, so this is belt-and-braces — but it is free, and it keeps the one
+# job running `-D warnings` off an installer default.
 #
-# Targets are deliberately NOT listed here. Installed targets do not enter the
-# rust-cache key — measured: the SDK job installs the wasm32 target and still
-# hashed identically to the jobs that do not — so the wasm32 target stays
-# declared in the SDK workflow rather than being downloaded by all six jobs.
+# It is NOT what makes the shared cache key work. An earlier revision of this
+# comment claimed it was; that was wrong. rust-cache's documented key inputs
+# are the rustc version, this file's hash, Cargo.lock / Cargo.toml, and
+# environment variables matching CARGO / CC / CFLAGS / CXX / CMAKE / RUST —
+# not the installed component set. The lint job's key diverged because
+# lint.yml alone defined `RUST_VERSION`, which matched that `RUST` prefix;
+# deleting that dead variable is what let lint share. Measured afterwards:
+# lint, sdk and the three test jobs all restore
+# `v0-rust-rust-test-Linux-Linux-x64-cee1353d-…` with `full match: true`.
+#
+# Targets are deliberately NOT listed. Measured: the SDK job installs the
+# wasm32 target and still hashes identically to the jobs that do not, so the
+# target stays declared in the SDK workflow instead of downloading in all six.
 #
 # Bumping this is a reviewed diff, never a surprise: run the full-workspace
 # `cargo clippy --all-targets -- -D warnings` locally first, so new-lint churn

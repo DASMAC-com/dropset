@@ -27,12 +27,18 @@ matter:
   the whole job. The clippy hook passes its own flags, and a stray
   `RUSTFLAGS` also perturbs the rust-cache key.
 
-The file sets `channel` and `components`. Listing clippy and rustfmt there
-looks redundant — rustup's default profile already installs both, and only
-the lint gate runs them — but it is what makes the shared cache key below
-work. `Swatinem/rust-cache` hashes the installed toolchain into its key, so
-while lint was the one job adding those two components it always computed a
-different hash and could never share another job's cache entry.
+The file sets `channel` and `components`. Listing clippy and rustfmt is
+belt-and-braces — rustup's default profile installs both anyway — but it
+keeps the one job that runs `-D warnings` from depending on an installer
+default.
+
+It is **not** what makes the shared cache key below work. rust-cache's
+documented key inputs are the rustc version, this file's hash,
+`Cargo.lock` / `Cargo.toml`, and environment variables matching `CARGO`,
+`CC`, `CFLAGS`, `CXX`, `CMAKE` or `RUST` — not the installed component set.
+The lint job's key diverged because `lint.yml` alone defined `RUST_VERSION`,
+which matched that `RUST` prefix; deleting that dead variable is what let it
+share.
 
 Targets are **not** listed. Installed targets do not enter the rust-cache key
 — measured: the SDK job installs the `wasm32` target and still hashed
@@ -82,11 +88,10 @@ nor the Solana-toolchain layer:
   anchor versions.
 
 Cache entries are readable from the ref that saved them and from the default
-branch. `test.yml` and `sdk.yml` both run on `push: main`, so their entries
-exist on the default branch and merge-queue runs restore them. `lint.yml`
-does **not** run on `push: main` and so never saves a default-branch entry
-of its own — which is the second reason it shares the test jobs' key rather
-than keeping one.
+branch. `test.yml` runs on `push: main`, so the shared entry exists on the
+default branch and merge-queue runs restore it. `lint.yml` does **not** run
+on `push: main`, and `sdk.yml` no longer saves at all (see below) — which is
+the second reason both read the test jobs' key instead of keeping their own.
 
 The `pre-commit` hook cache is still lint-only and still has no
 default-branch copy, so it remains cold on merge-queue runs and on the first
@@ -107,6 +112,11 @@ the whole lockfile-plus-toolchain generation. `sdk` is both the fastest job
 and the one with the thinnest dependency set, so letting it win that race
 would freeze a thin entry the program-building jobs then restore on every
 later run — slowing the critical path, which is the opposite of the point.
+
+The race is narrowed rather than removed: the three writers still contend,
+but their dependency builds are near-identical, so whichever wins, the
+stored entry is representative. Measured after the change: all five jobs
+restore one `v0-rust-rust-test-…` entry with `full match: true`.
 
 This was worth doing because the duplication was measured, not suspected: on
 a single PR ref there were four entries with identical dependency hashes —
