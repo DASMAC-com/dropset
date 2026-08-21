@@ -710,9 +710,18 @@ a paused composition, a halt, a freeze-side, an ordinary quote — and the
 sample is emitted on all of them, including the error path. This is the
 non-obvious requirement: emitting only from the happy path yields a
 dashboard that goes *blank* precisely when something is wrong, which is
-indistinguishable from the bot having died. So `action` carries three
-values that are not `Action` variants (`Pause`, `Frozen`, `TickError`)
-for the states the policy never got to decide.
+indistinguishable from the bot having died. So `action` carries four
+values that are not `Action` variants — `Pause`, `Frozen`, `TickError`,
+and `Unknown` — for the states the policy never got to decide.
+
+`TickError` and a decision are not exclusive, which matters to anyone
+writing a query over this column: a tick that decided `Halt` and then
+failed to send the instruction records `action = 'Halt'` with a non-NULL
+`tick_error`, because the decision is the more alarming fact and the
+kill-switch alert keys on it. So count tick failures by
+`tick_error IS NOT NULL`, never by `action = 'TickError'`. `Unknown` is
+the residue — no decision *and* no failure — which no path currently
+produces; read it as a defect signal rather than a quiet tick.
 
 Correspondingly, a column is `NOT NULL` only if *every* one of those
 paths can fill it honestly. A NULL means "this tick could not know",
@@ -748,7 +757,10 @@ What the rows carry instead is what is actually knowable:
 - **`consensus_state`** — how well corroborated the leg was. Six
   values, and every reader must enumerate all six: `Absent`,
   `Corroborated` (3+ inside the band), `Agreed` (exactly two),
-  `SingleTrusted`, `SingleUnverified`, `Dispersed`.
+  `SingleTrusted`, `SingleUnverified`, `Dispersed`. `Absent` is
+  enumerated for completeness but is not written here: a leg that
+  resolved to nothing contributes **no row**, so its absence shows up as
+  a gap in the series. Look for the missing row, not for the value.
 - **`contributor_count`** — how many healthy sources resolved it.
 - **`dispersion_outlier`** — when dispersed, the source *furthest from*
   the consensus. This is the **suspect**, the least representative

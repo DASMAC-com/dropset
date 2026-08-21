@@ -90,11 +90,15 @@ where
                 // The first failure and every REPORT_EVERY-th after it. An
                 // outage is one event, not one per batch.
                 if self.consecutive == 1 || self.consecutive.is_multiple_of(REPORT_EVERY) {
+                    // Error as a field, not interpolated into the message:
+                    // this crate's other failure logs do the same, and a log
+                    // backend can then group these lines by message.
                     tracing::warn!(
                         sink = %self.label,
                         consecutive = self.consecutive,
                         records = batch.len(),
-                        "dropping a batch — {e:#}"
+                        error = %format_args!("{e:#}"),
+                        "dropping a batch"
                     );
                 }
             }

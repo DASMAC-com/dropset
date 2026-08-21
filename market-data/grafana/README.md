@@ -241,10 +241,20 @@ a panel with no build error anywhere.
 
 ## Alert rules
 
-`provisioning/alerting/maker.yml` carries three rules — dead heartbeat,
-stale feed, degraded-or-halted — committed for the same reason the
-dashboards are: the localnet stack and a hosted stack then alert on
-identical conditions.
+`provisioning/alerting/maker.yml` carries four rules — dead heartbeat,
+stale feed, degraded-or-halted, and ticks-failing — committed for the
+same reason the dashboards are: the localnet stack and a hosted stack
+then alert on identical conditions.
+
+The fourth exists because the first three leave a gap that reads as
+health: a market whose vault read times out every tick still writes a row
+every tick, so the heartbeat is alive; its feeds are fine, so the stale
+rule is quiet; and it never reaches the kill-switch policy, so `degraded`
+is false and `action` is never `Halt`. It quotes nothing and pages
+nobody. The rule keys on `tick_error IS NOT NULL` — not on
+`action = 'TickError'`, since a tick that decided and then failed keeps
+its decision in `action` — and needs more than half a five-minute window
+failing, so one ordinary RPC timeout does not page.
 
 **What provisioning buys and what it does not.** The rules evaluate and
 reach Firing in the Alerting UI, which is what makes them checkable from
@@ -263,7 +273,17 @@ Two authoring notes, both the kind that fail silently:
 - **Each rule is query → `reduce` → `threshold`.** The reduce is not
   redundant even for a single-row query: a threshold applied straight to
   a table frame is not evaluated per series, and per-series is exactly
-  what the two multi-dimensional rules (per feed, per market) need.
+  what the three multi-dimensional rules (per feed, per market) need.
+
+**None of this watches a default localnet run.** Maker telemetry is off
+unless `DROPSET_DATABASE_URL` is set, which the plain localnet path does
+not set — so on a bare `make demo` the bot writes no rows, every panel
+here is empty, and every rule sits at `NoData`, which these rules treat
+as healthy on purpose. That is the right default (a dashboard outage must
+never become a trading outage) but it means "the alerts are quiet" proves
+nothing until the bot is actually pointed at a database. Check the
+heartbeat panel first; if it reads `No data`, nothing below it is
+evidence of anything.
 
 Note the alerting mount is why `provisioning/` subdirectories are
 mounted by name — see **The tree** above.

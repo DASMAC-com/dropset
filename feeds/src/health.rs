@@ -151,6 +151,12 @@ impl<R: From<HealthUpdate>> HealthReporter<R> {
     /// would put the telemetry path in a position to take down the feed it is
     /// reporting on.
     fn offer(&mut self, update: HealthUpdate) {
+        // Captured before `R::from` consumes the update. Every line below
+        // belongs to exactly one feed — a reporter is built per source at
+        // spawn time — and this crate's other logs all carry `feed`, so
+        // without it an operator filtering by feed sees the price polls but
+        // never the reporter that went quiet.
+        let feed = update.feed.clone();
         match self.tx.try_send(R::from(update)) {
             Ok(()) => {
                 if self.dropped > 0 {
@@ -159,6 +165,7 @@ impl<R: From<HealthUpdate>> HealthReporter<R> {
                     // operator was never told had started.
                     if self.warned {
                         tracing::info!(
+                            feed = %feed,
                             recovered_after = self.dropped,
                             "feed health updates flowing again"
                         );
@@ -179,6 +186,7 @@ impl<R: From<HealthUpdate>> HealthReporter<R> {
                 if !self.closed_reported {
                     self.closed_reported = true;
                     tracing::warn!(
+                        feed = %feed,
                         dropped = self.dropped,
                         "the feed health drain is gone — health updates will \
                          be dropped for the life of this process"
@@ -201,6 +209,7 @@ impl<R: From<HealthUpdate>> HealthReporter<R> {
                     self.last_warn_at = now;
                     self.warned = true;
                     tracing::warn!(
+                        feed = %feed,
                         dropped = self.dropped,
                         "feed health updates dropped — the telemetry drain is \
                          behind"
