@@ -359,7 +359,11 @@ All live in `.claude/scripts/` and are dependency-free bash:
   start/stop the monitor and set the initial / cleared state.
 - `iterm-attend.sh` — the "attend" toggle (bound to a keyboard
   shortcut): flips the tab between the green mark and neutral, like
-  mark-as-unread.
+  mark-as-unread. Two optional flags let a caller mark a tab it does
+  **not** live in: `--tty <path>` targets another session, and `--mark`
+  sets green outright instead of toggling. The fleet-resume launcher
+  uses both — a coprocess bound to a key can only reach its own session,
+  and a launcher wants green rather than "the other one".
 - `iterm-restart-monitors.sh` / `iterm-reset-windows.sh` — recovery
   sweeps (see "Recovery" below).
 - `iterm-reorder.py` — the FIFO tab-reorderer (see "FIFO attention
@@ -747,6 +751,46 @@ branch arrives as `worktree-eng-###`):
   housekeeping sessions cannot collide. **No model pin**, deliberately —
   housekeeping is upkeep, not board decisions, so it does not inherit
   the planning tier and runs on the saved default.
+
+- **`faps [go]`** — resume the whole **fleet**: one iTerm tab per
+  in-flight Linear issue, each with `raps <n>` typed **and Enter
+  pressed**, and each flagged green for attention. The batch counterpart
+  to `raps`, for after a machine restart — the loaded window becomes a
+  to-attend list with nothing left to type.
+
+  A bare `faps` prints the plan and opens nothing; `faps go` applies it.
+  Read-only by default deliberately: one verb can open many tabs and
+  resume many sessions, so seeing the list first is worth a word.
+
+  Three things it gets right, and each is a reason it is a tool rather
+  than a shell one-liner:
+
+  - **In-flight means state *type* `started`**, not the state names —
+    which covers **In Progress and In Review**, and In Review is
+    load-bearing since a merged PR with outstanding follow-up stays
+    there (see `linear-automation.md` → "The Linear state tracks the
+    SESSION, not the PR"). Matching the type means a workflow rename
+    cannot silently drop a session from the fleet.
+  - **It skips an issue whose tab is already open**, so it is safe to
+    run twice. The signal is the iTerm tab *name*, which carries the tag
+    because `aps` passes `-n <tag>` — so the two are coupled: if `aps`
+    ever stops setting a display name, this stops recognizing live
+    sessions and starts double-resuming.
+  - **The attention mark is driven from outside the tab.** A coprocess
+    bound to a key can only ever reach its own session, so the launcher
+    reads each new tab's `tty` out of AppleScript and calls
+    `iterm-attend.sh --tty <path> --mark`. `--mark` *sets* green rather
+    than toggling: a toggle's outcome depends on the tab's history, and
+    a launcher wants green, not "the other one".
+
+  The deterministic half — the Linear query, the tag derivation, the
+  already-live check, the emitted AppleScript — is the committed tool
+  `.claude/tools/fleet_resume.py`; `faps` is the thin verb over it, per
+  the skill-tooling convention. **The apply path's effect is not
+  unit-testable** (asserting it would mean opening tabs in a live window
+  and resuming real work sessions), so the emitted script is verified by
+  compiling it against iTerm's scripting dictionary with `osacompile`,
+  which resolves every term and executes nothing.
 
 #### Why `paps` and `haps` compute a session id
 

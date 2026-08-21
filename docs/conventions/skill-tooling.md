@@ -69,7 +69,11 @@ batched board writes and its compact board read — `list`, `fields`,
 issue's whole body back, and `issueUpdate` selecting `success` alone
 does not), `search_source.py` (the one scoped-search
 shape, which takes its exclude lists from `review_diff.py`),
-`migration_collisions.py` (compares this branch's new migration numbers
+`fleet_resume.py` (the fleet-resume launcher behind the `faps` verb —
+resolves the in-flight issues from Linear, skips the ones already open,
+and emits one AppleScript that opens and resumes the rest; read-only
+unless `--apply`), `migration_collisions.py` (compares this branch's new
+migration numbers
 against other open PRs' before an enqueue — it takes the other PRs'
 files from a **file** rather than calling GitHub, so the network read
 stays on the MCP/`gh` path and the compare stays deterministic),
