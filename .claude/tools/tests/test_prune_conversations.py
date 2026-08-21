@@ -30,9 +30,7 @@ FRESH = CUTOFF + 10_000  # comfortably within the threshold
 
 class SlugifyTests(unittest.TestCase):
     def test_replaces_slashes_and_dots(self):
-        self.assertEqual(
-            slugify(Path("/Users/alex/repos/dropset")), "-Users-alex-repos-dropset"
-        )
+        self.assertEqual(slugify(Path("/repos/dropset")), "-repos-dropset")
         self.assertEqual(
             slugify(Path("/a/.claude/worktrees/eng-663")),
             "-a--claude-worktrees-eng-663",
@@ -42,19 +40,19 @@ class SlugifyTests(unittest.TestCase):
 class ParseWorktreesTests(unittest.TestCase):
     def test_parses_paths_and_short_branches(self):
         porcelain = (
-            "worktree /Users/alex/repos/dropset\n"
+            "worktree /repos/dropset\n"
             "HEAD abc\n"
             "branch refs/heads/main\n"
             "\n"
-            "worktree /Users/alex/repos/dropset/.claude/worktrees/eng-663\n"
+            "worktree /repos/dropset/.claude/worktrees/eng-663\n"
             "HEAD def\n"
             "branch refs/heads/eng-663\n"
         )
         self.assertEqual(
             parse_worktrees(porcelain),
             [
-                ("/Users/alex/repos/dropset", "main"),
-                ("/Users/alex/repos/dropset/.claude/worktrees/eng-663", "eng-663"),
+                ("/repos/dropset", "main"),
+                ("/repos/dropset/.claude/worktrees/eng-663", "eng-663"),
             ],
         )
 
@@ -66,28 +64,28 @@ class ParseWorktreesTests(unittest.TestCase):
 class DropsetSlugSetsTests(unittest.TestCase):
     def test_forward_derivation_and_protection(self):
         worktrees = [
-            ("/Users/alex/repos/dropset", "main"),
-            ("/Users/alex/repos/dropset/.claude/worktrees/eng-663", "eng-663"),
+            ("/repos/dropset", "main"),
+            ("/repos/dropset/.claude/worktrees/eng-663", "eng-663"),
         ]
         dropset, protected = dropset_slug_sets(worktrees, {"eng-663"})
-        self.assertIn(slugify(Path("/Users/alex/repos/dropset")), dropset)
+        self.assertIn(slugify(Path("/repos/dropset")), dropset)
         self.assertIn(
-            slugify(Path("/Users/alex/repos/dropset/.claude/worktrees/eng-663")),
+            slugify(Path("/repos/dropset/.claude/worktrees/eng-663")),
             dropset,
         )
         # only the open-PR branch's slug is protected
         self.assertEqual(
             protected,
-            {slugify(Path("/Users/alex/repos/dropset/.claude/worktrees/eng-663"))},
+            {slugify(Path("/repos/dropset/.claude/worktrees/eng-663"))},
         )
 
     def test_sibling_repo_not_swept_in(self):
         # dropset-beta is a *different* repo; its slug starts with the base
         # repo's slug but must NOT be in the dropset set (forward derivation,
         # not prefix matching). It simply never appears in dropset's worktrees.
-        worktrees = [("/Users/alex/repos/dropset", "main")]
+        worktrees = [("/repos/dropset", "main")]
         dropset, _ = dropset_slug_sets(worktrees, set())
-        self.assertNotIn(slugify(Path("/Users/alex/repos/dropset-beta")), dropset)
+        self.assertNotIn(slugify(Path("/repos/dropset-beta")), dropset)
 
 
 class DecideSlugTests(unittest.TestCase):

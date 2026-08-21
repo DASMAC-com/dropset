@@ -60,13 +60,28 @@ if [[ "$_DS_REPO" == */.claude/worktrees/* ]]; then
     "($_DS_REPO) — source the base checkout's copy instead"
 fi
 
-# Where the untracked secret coordinates live. Deliberately OUTSIDE the repo:
-# a path under the checkout could be committed by an errant `git add -A`, and
-# this boundary should not depend on .gitignore staying correct.
+# An OPTIONAL extra file the secret coordinates may live in. The primary shape
+# is plain assignments in the untracked runtime config (see `_ds_secrets`), so
+# most machines will not have this file at all — the `-r` guard below simply
+# skips it.
+#
+# It is deliberately OUTSIDE the repo where it does exist: a path under the
+# checkout could be committed by an errant `git add -A`, and this boundary
+# should not depend on .gitignore staying correct.
 _DS_SECRETS_FILE="${DROPSET_SECRETS_FILE:-$HOME/.config/dropset/secrets.zsh}"
 
 # `cd` to the base repo checkout. The starting point for anything that must not
 # run inside a worktree (`housekeeping`, a planning session).
+#
+# **It does not `git pull`, deliberately.** The operator's own copy did, and the
+# committed one is not adopting it: a navigation command should not make a
+# network call. A pull can be slow, can fail, and can print — so a bare `cd`
+# would sometimes leave the shell somewhere unexpected, or leave a `cd` looking
+# like it errored. And it is not needed: `housekeeping` step 1 fast-forwards
+# `main` as its **first** step, where the operation is visible, its failure is
+# reportable, and the pass that depends on fresh skills is the thing asking for
+# it. Fast-forwarding on every `cdds` would move `main` under a session that
+# never wanted it.
 cdds() {
   cd "$_DS_REPO" || return 1
 }
@@ -86,12 +101,22 @@ _ds_base() {
 
 # Resolve LINEAR_API_KEY and GITHUB_MCP_PAT from 1Password.
 #
-# The untracked file at $_DS_SECRETS_FILE supplies the coordinates, and only
-# the coordinates:
+# The coordinates — and only the coordinates — come from three shell variables:
 #
 #   DS_OP_ACCOUNT='<account>.1password.com'
 #   DS_OP_LINEAR_REF='op://<vault>/<linear-item>/credential'
 #   DS_OP_GITHUB_REF='op://<vault>/<github-item>/credential'
+#
+# **Define them in the untracked runtime config**, alongside the `LINEAR_*` ids
+# that already live there. One personal config file, not two: the separate
+# coordinates file existed to keep *scripts* out of the shell profile, and with
+# the function bodies now committed here there is nothing left to keep out. The
+# secrets boundary is unchanged — the runtime config is equally outside the
+# repo, and anything tracked carries placeholder shapes only.
+#
+# The optional `$_DS_SECRETS_FILE` is sourced first if it happens to exist, so
+# a machine still using that shape keeps working; plain assignments satisfy the
+# function either way, because everything below reads shell-visible variables.
 #
 # Four things about the shape below are load-bearing:
 #
@@ -102,7 +127,7 @@ _ds_base() {
 #   * The `${VAR:-…}` guard makes it at most one fetch per shell, so helpers
 #     that chain into one another don't re-prompt. It also lets an
 #     already-exported value win — the override path when a key is pinned by
-#     hand, and the escape hatch if the coordinates file is absent entirely.
+#     hand, and the escape hatch when no coordinates are set at all.
 #   * `--account` is explicit because the laptop is signed into more than one
 #     1Password account, and a bare `op read` cannot disambiguate.
 #   * An unresolved secret WARNS rather than failing the launch. An empty key
@@ -194,6 +219,20 @@ _ds_daily_session() {
 # Start a WORKTREE session. Creates the `eng-###` worktree directory whose
 # branch arrives named `worktree-eng-###` — there is no CLI flag to drop the
 # prefix, so `init-pr` renames it. The implementation-session entry point.
+#
+# Three things ride the launch, and each was a parity gap when this helper was
+# committed — the operator's own profile had been passing all three, and the
+# committed copy silently did not, so a session started with `aps` differed
+# from one started by hand:
+#
+#   * `--permission-mode acceptEdits`. The shared `settings.local.json` sets no
+#     default permission mode, so without this an implementation session starts
+#     in the default mode and prompts on every edit. This is the gap with teeth.
+#   * `-n "$tag"` — a display name, so the session is identifiable in the
+#     prompt box, the `/resume` picker, and the terminal title. `raps` resolves
+#     by directory, so this is for the human, not the tooling.
+#   * `/init-pr` as the initial prompt, so the bootstrap runs without being
+#     asked for — the same trick `paps` and `haps` use for their own skills.
 aps() {
   if [[ -z "$1" ]]; then
     print -u2 'Usage: aps <tag>'
@@ -209,7 +248,7 @@ aps() {
 
   _ds_base || return 1
   _ds_secrets
-  claude -w "$tag"
+  claude -w "$tag" -n "$tag" --permission-mode acceptEdits /init-pr
 }
 
 # Resume a worktree session by number: `raps 814` resolves to the `eng-814`
@@ -235,13 +274,18 @@ raps() {
 
 # Start a NAMED session in the current directory (no worktree). The
 # general-purpose named-session entry point.
+#
+# `--permission-mode acceptEdits` for the same reason as `aps`: the shared
+# settings file sets no default, so omitting it starts every session in the
+# default mode. It is deliberate here too rather than inherited — a named
+# session is a working session, not a read-only one.
 naps() {
   if [[ -z "$1" ]]; then
     print -u2 'Usage: naps <name>'
     return 1
   fi
   _ds_secrets
-  claude -n "$1"
+  claude -n "$1" --permission-mode acceptEdits
 }
 
 # Resume a named session by the same name — the counterpart to `naps`, as
@@ -299,4 +343,30 @@ haps() {
     return 1
   fi
   _ds_daily_session housekeeping "housekeeping-$(date +%-d)" /housekeeping ''
+}
+
+# Resume the whole FLEET: one iTerm tab per in-flight Linear issue, each with
+# its session resumed and flagged green for attention. The batch counterpart to
+# `raps`, for after a machine restart.
+#
+# `faps` prints the plan and opens nothing; `faps go` applies it. The default is
+# read-only deliberately — this one verb can open many tabs and resume many
+# sessions, so seeing the list first is worth one extra word.
+#
+# It resolves the fleet itself (state type `started`, so In Progress *and* In
+# Review) and skips any issue whose tab is already open, so it is safe to run
+# twice. The deterministic work — the Linear query, the tag derivation, the
+# already-live check, the AppleScript — lives in the committed tool; this is the
+# thin verb over it, per the skill-tooling convention.
+faps() {
+  _ds_base || return 1
+  _ds_secrets
+  if [[ "$1" == "go" ]]; then
+    python3 "$_DS_REPO/.claude/tools/fleet_resume.py" --apply
+  elif [[ -z "$1" ]]; then
+    python3 "$_DS_REPO/.claude/tools/fleet_resume.py"
+  else
+    print -u2 'Usage: faps [go]   (no argument = show the plan; `go` = open the tabs)'
+    return 1
+  fi
 }

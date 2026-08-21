@@ -98,6 +98,22 @@ repos:
     language: 'pygrep'
     name: 'Lines over 80 columns'
   repo: 'local'
+# Committed agent material must never name a real machine's home directory —
+# two test modules had hardcoded the operator's, which reads machine-specific
+# where it should be fixture-driven. The check is on the path's *user segment*,
+# not on the shape: a placeholder (`/Users/me`, `/Users/x`) passes, since the
+# sibling tools legitimately need home-shaped example paths. Scoped to the
+# agent-config trees and the convention docs; the decks are exempt by ruling,
+# and fall outside `files` by construction.
+- hooks:
+  - entry: 'python3 .claude/tools/check_home_paths.py'
+    files: '^(\.claude/|docs/conventions/|CLAUDE\.md$)'
+    id: 'check-home-paths'
+    language: 'system'
+    name: 'No real home paths in agent material'
+    types:
+    - 'file'
+  repo: 'local'
 # hadolint-py wraps the hadolint binary so the hook needs neither Docker nor
 # a manual install. `files` matches `Dockerfile` and `*.Dockerfile` (identify
 # doesn't tag the latter as the `dockerfile` type), so `types: file`.
@@ -160,6 +176,16 @@ repos:
     id: 'shellcheck'
   repo: 'https://github.com/shellcheck-py/shellcheck-py'
   rev: 'v0.10.0.1'
+# NO Rust intra-doc-link check runs anywhere — not here, not in the Makefile,
+# not in CI. Recorded so the absence is not re-derived: it has been established
+# by hand twice, and this codebase's docs lean heavily on intra-doc links.
+# `cargo doc` surfaces broken ones, and also surfaces five pre-existing
+# public-links-to-private-item warnings in `feeds` that would have to be fixed
+# or waived before any gate could go green. Adding the gate is filed as its own
+# product-side task ("Add a Rust intra-doc-link gate"): a CI workflow plus Rust
+# doc fixes sits outside the agent-config boundary, so it does not belong in a
+# meta-work batch. Until it lands, broken intra-doc links are DELIBERATELY
+# unchecked.
 - hooks:
   - entry: 'cargo fmt --'
     id: 'rustfmt'

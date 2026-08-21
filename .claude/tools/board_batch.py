@@ -46,9 +46,10 @@ edges are human-curated end to end (``CLAUDE.md`` → "Blocking relations"), and
 this subcommand exists only because there is no MCP path for relations at all.
 So it takes an **explicit pair list**, has **no discovery mode**, and
 **refuses an empty list**. It is never called by a filing skill or by
-automation: ``sync_blockers.py`` remains the only automated relation writer and
-files ``related`` links only. The no-automated-blocking-edges rule is
-unchanged — this tool is how a human's decision gets *executed*.
+automation, and since the automated file-collision machinery retired it is
+the only relation writer left in the repo at all. The
+no-automated-blocking-edges rule is unchanged — this tool is how a human's
+decision gets *executed*.
 
 **Body edits stay on the MCP ``patch`` path, deliberately.** Linear's API has
 no patch primitive: ``description`` is a whole string, so a Python body-writer
@@ -150,7 +151,7 @@ def _post(api_key: str, query: str, variables: dict) -> dict:
     """POST a GraphQL operation and return its ``data``, surfacing transport
     and GraphQL-level errors with their messages.
 
-    Deliberately the same shape as ``sync_blockers.py``'s helper rather than a
+    Deliberately the same shape as ``trim_levers.py``'s helper rather than a
     second HTTP idiom in this directory.
     """
     body = json.dumps({"query": query, "variables": variables}).encode("utf-8")

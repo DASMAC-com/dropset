@@ -10,6 +10,9 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
+
+import merge_tasks as mt
 
 from merge_tasks import (
     MergeTasksError,
@@ -143,7 +146,7 @@ class AssembleTests(unittest.TestCase):
                 {
                     "id": "ENG-622",
                     "number": 622,
-                    "title": "Claude: Tweak sync-blockers",
+                    "title": "Claude: Tweak trim-context",
                     "description": (
                         "Folded body.\n\n**Fingerprint**: stage:tweak\n"
                         "**Touches**: .claude/tools/**\n"
@@ -154,7 +157,7 @@ class AssembleTests(unittest.TestCase):
 
     def test_folds_as_part_section_preserving_fingerprints(self):
         out = assemble(self._issues())
-        self.assertIn("# Part 1 — Tweak sync-blockers", out["description"])
+        self.assertIn("# Part 1 — Tweak trim-context", out["description"])
         # both fingerprints survive
         self.assertIn("**Fingerprint**: audit:dedup", out["description"])
         self.assertIn("**Fingerprint**: stage:tweak", out["description"])
@@ -458,7 +461,7 @@ class AssembleCliTests(unittest.TestCase):
                 {
                     "id": "ENG-622",
                     "number": 622,
-                    "title": "Tweak sync-blockers",
+                    "title": "Tweak trim-context",
                     "description": "Folded.\n\n**Touches**: .claude/tools/**\n",
                 },
             ],
@@ -502,7 +505,7 @@ class AssembleCliTests(unittest.TestCase):
             # and the file holds the merged body
             with open(body, encoding="utf-8") as fh:
                 written = fh.read()
-            self.assertIn("# Part 1 — Tweak sync-blockers", written)
+            self.assertIn("# Part 1 — Tweak trim-context", written)
             self.assertTrue(written.rstrip().endswith(".claude/tools/**"))
 
     def test_ops_out_writes_ops_and_omits_them_from_stdout(self):
@@ -550,6 +553,133 @@ class AssembleCliTests(unittest.TestCase):
             self.assertIn("ambiguous", out["patch_fallback_reason"])
             # nothing was written, so the skill can't mistake a stale file for ops
             self.assertFalse(os.path.exists(ops_path))
+
+
+class FetchTests(unittest.TestCase):
+    """The zero-echo half: bodies are read in-process and written to a file,
+    never printed."""
+
+    def _nodes(self, *numbers):
+        return {
+            "issues": {
+                "nodes": [
+                    {
+                        "id": f"uuid-{n}",
+                        "identifier": f"ENG-{n}",
+                        "number": n,
+                        "title": f"Issue {n}",
+                        "description": f"Body of {n}\n",
+                    }
+                    for n in numbers
+                ]
+            }
+        }
+
+    def test_it_returns_the_assemble_input_shape(self):
+        with mock.patch.object(mt, "_post", return_value=self._nodes(615, 620)):
+            got = mt.fetch("key", 615, [615, 620])
+        self.assertEqual(got["survivor"], "ENG-615")
+        self.assertEqual([n["number"] for n in got["issues"]], [615, 620])
+        # The shape `assemble` consumes, so the two compose without glue.
+        self.assertEqual(mt.assemble(got)["title"], "Issue 615")
+
+    def test_it_filters_on_the_number_list_in_one_call(self):
+        seen = []
+
+        def fake(api_key, query, variables):
+            seen.append(variables)
+            return self._nodes(615, 620)
+
+        with mock.patch.object(mt, "_post", side_effect=fake):
+            mt.fetch("key", 615, [615, 620])
+        # One round trip for the whole set, not one per issue.
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0]["filter"], {"number": {"in": [615, 620]}})
+
+    def test_issues_come_back_sorted_by_number(self):
+        with mock.patch.object(mt, "_post", return_value=self._nodes(620, 615)):
+            got = mt.fetch("key", 615, [615, 620])
+        self.assertEqual([n["number"] for n in got["issues"]], [615, 620])
+
+    def test_a_missing_issue_is_refused_not_silently_dropped(self):
+        # A short result would produce a fold that LOOKS complete while losing
+        # an issue's content -- and the non-survivor is then canceled as a
+        # duplicate of a survivor that never absorbed it.
+        with mock.patch.object(mt, "_post", return_value=self._nodes(615)):
+            with self.assertRaises(MergeTasksError) as caught:
+                mt.fetch("key", 615, [615, 620])
+        message = str(caught.exception)
+        self.assertIn("ENG-620", message)
+        self.assertIn("partial fold", message)
+
+    def test_a_survivor_outside_the_fetched_set_is_refused(self):
+        with mock.patch.object(mt, "_post", return_value=self._nodes(615, 620)):
+            with self.assertRaises(MergeTasksError) as caught:
+                mt.fetch("key", 999, [615, 620])
+        self.assertIn("ENG-999", str(caught.exception))
+
+    def test_a_graphql_error_is_surfaced_not_swallowed(self):
+        payload = {"errors": [{"message": "bad filter"}]}
+        with mock.patch.object(mt, "urllib") as fake_urllib:
+            handle = mock.MagicMock()
+            handle.__enter__.return_value = io.BytesIO(json.dumps(payload).encode())
+            fake_urllib.request.urlopen.return_value = handle
+            fake_urllib.error.HTTPError = Exception
+            fake_urllib.error.URLError = Exception
+            with self.assertRaises(MergeTasksError) as caught:
+                mt._post("key", "query", {})
+        self.assertIn("bad filter", str(caught.exception))
+
+    def test_the_cli_prints_no_body_only_identifiers_and_a_byte_count(self):
+        # The whole point of the mode: a body in stdout would undo it.
+        with tempfile.TemporaryDirectory() as d:
+            out_path = os.path.join(d, "issues.json")
+            with (
+                mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}),
+                mock.patch.object(mt, "_post", return_value=self._nodes(615, 620)),
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = mt.run(
+                        [
+                            "merge_tasks.py",
+                            "fetch",
+                            "--survivor",
+                            "615",
+                            "--out",
+                            out_path,
+                            "615",
+                            "ENG-620",
+                        ]
+                    )
+            self.assertEqual(rc, 0)
+            printed = buf.getvalue()
+            self.assertNotIn("Body of", printed)
+            parsed = json.loads(printed)
+            self.assertEqual(parsed["fetched"], ["ENG-615", "ENG-620"])
+            self.assertEqual(parsed["issues_json_path"], out_path)
+            self.assertGreater(parsed["bytes"], 0)
+            # The file holds what `assemble` needs.
+            with open(out_path, encoding="utf-8") as fh:
+                on_disk = json.load(fh)
+            self.assertIn("Body of 620", on_disk["issues"][1]["description"])
+
+    def test_the_cli_refuses_without_an_api_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.dict(os.environ, {"LINEAR_API_KEY": ""}):
+                with self.assertRaises(MergeTasksError) as caught:
+                    mt.run(
+                        [
+                            "merge_tasks.py",
+                            "fetch",
+                            "--survivor",
+                            "615",
+                            "--out",
+                            os.path.join(d, "x.json"),
+                            "615",
+                        ]
+                    )
+        self.assertIn("LINEAR_API_KEY", str(caught.exception))
 
 
 if __name__ == "__main__":

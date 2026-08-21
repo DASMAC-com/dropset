@@ -35,18 +35,30 @@ rather than in tension with it. If sub-agent tooling is genuinely
 unavailable, **stop and ask**; never substitute an inline pass (the
 trade `review-pr` deleted its inline path to prevent), and never
 silently skip the rotation — a pass that did so was reasoning from a
-conflict that does not exist. Slating a finding into the Backlog is a
+conflict that does not exist.
+
+**Why `review-pr` differs, so the asymmetry reads as deliberate.**
+That skill asks one question at its entry which approves both running
+it and at which tier, and the tier choice is its spawn authorization.
+It asks because it does many things and the fan-out is one step of
+them, so an operator can reasonably want its lint-and-CI half without
+authorizing eight agents. Here the fan-out **is** the deliverable and
+there is no earlier gate for it to ride, so a question would be pure
+ceremony — invoking the skill already said yes. Same for
+`audit-scope` and `housekeeping`.
+
+Slating a finding into the Backlog is a
 sequencing decision, and it belongs to a planning session (`plan`
 step 8), never to a rotation. What gates what is recorded
 as native Linear blocking edges, which a **human curates** — an
 autonomous rotation files none (per `CLAUDE.md` → "Blocking
 relations"). It files **no relations at all**: the automated
-file-collision machinery is being retired by operator direction, so a
-rotation records no collision links and nothing here depends on them.
+file-collision machinery is **retired**, so a rotation records no
+collision links and nothing here depends on them.
 
 Invoke it directly — `/audit` — when you want a fresh batch of findings.
-It is **finite**: it runs the seven units once, files what they surface
-(recording each new issue's file collisions as it goes), and **stops** with
+It is **finite**: it runs the seven units once, files what they surface,
+and **stops** with
 a single `DONE` line. There is **no `/loop`, no finding cap, and no
 re-invocation** — the rotation *is* the bound. To audit more, run
 `/audit` again; each run is one independent rotation. `housekeeping`
@@ -345,8 +357,8 @@ File exactly as the
 `linear-task` skill does: a **plain issue with no parent**,
 assigned to the configured assignee, into the shared destination —
 **and stamped with the `Audit findings` project milestone**.
-There is **no umbrella issue**, and
-and no collision links between its issues.
+There is **no umbrella issue**, and no
+relations of any kind between its issues.
 
 **Why the milestone, and why it is not the Backlog.** The Backlog is
 the **pullable set** — the queue an implementation session pulls from
@@ -357,11 +369,11 @@ queued findings is both board bloat and bootstrap-read bloat for the
 most expensive session in the rotation. A **project milestone means
 parked**: Linear collapses it out of the default view, so a parked
 finding costs a planning bootstrap nothing while remaining a
-first-class open issue for **dedup, collision detection, and search**.
+first-class open issue for **dedup and search**.
 
 Everything else about filing is **unchanged** — the `**Fingerprint**:`
-dedup, the `**Touches**:` globs, the fewest-coherent-PRs fold and the
-`Claude:` prefix all behave exactly as before.
+dedup, the fewest-coherent-PRs fold and the `Claude:` prefix all behave
+exactly as before.
 
 **And the state is `Todo`, not `Backlog`.** The milestone alone is not
 enough: the operator's "Next" view is the *unblocked Backlog*, so a
@@ -416,8 +428,8 @@ mcp__claude_ai_Linear__save_issue(
 )
 ```
 
-**Meta-work prefix.** When a finding's `**Touches**:` sit entirely under
-the meta surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`),
+**Meta-work prefix.** When every path a finding's fix will edit sits
+under the meta surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`),
 prepend the **`Claude:`** token to the title (per
 `CLAUDE.md` → "Claude: meta-work prefix") so it reads
 `Claude: <file>: <imperative fix>`. This composes with the `arch:`
@@ -445,8 +457,8 @@ and is unaffected by this.
 should file the **fewest coherent PRs**, not one issue per finding.
 Whenever findings belong in the **same PR**, file them as **one combined
 parked issue**: one title, the per-finding notes under per-source
-sub-headings, a `**Fingerprint**:` line for **each** finding (the
-union), and a union `**Touches**:`.
+sub-headings, and a `**Fingerprint**:` line for **each** finding (the
+union).
 
 The bar is **same-PR coherence**, not same-file: fold findings that
 share a subsystem, crate, or language-domain and would obviously land as
@@ -463,24 +475,23 @@ that way.
 **Grow an issue with `patch`, never a full-body rewrite.** This is the
 highest-volume append in the repo — a seven-unit rotation can fold into
 the same issue repeatedly, and a wholesale `description` would re-send
-everything already there on *every* fold. Use the same two-op shape
-`trim-context` and `housekeeping` use (`save_issue` by `id`, `patch`
-only — never alongside `description`):
+everything already there on *every* fold. Use `save_issue` by `id` with
+`patch` only — never alongside `description` — and it is now a **single
+op**:
 
 1. an **`append`** carrying the new sub-heading and the finding's own
-   `**Fingerprint**:` line, which needs no anchor and so needs no prior
-   read of the issue at all; and
-1. a **`replace`** on the `**Touches**:` line, swapping it for the grown
-   union.
+   `**Fingerprint**:` line.
 
-Two anchor rules apply to the `replace` (full detail:
-`docs/conventions/linear-automation.md` → "Partial edits — the `patch`
-argument"). The anchor must match the **stored** text
-exactly once — `**Touches**:` is safe because there is exactly one such
-line per issue, and you know its current content from the fold you last
-made. And the anchor must carry **no `ENG-###`**, since Linear stores a
-tag as a mention node no anchor can match — so never anchor on a
-finding's own prose, which may cite one.
+An `append` needs no anchor, so it needs **no prior read of the issue at
+all** — which is the cheapest write shape the MCP offers. This used to
+be two ops, because a second `replace` had to swap the
+`**Touches**:` line for a grown union, and that op carried the whole
+anchor-matching hazard (an anchor must match the stored text exactly
+once, and must carry no `ENG-###`, since Linear stores a tag as a
+mention node no anchor can match). Retiring that field retired the
+`replace` and the hazard with it. Do not reintroduce either. Full detail
+on `patch`: `docs/conventions/linear-automation.md` → "Partial edits —
+the `patch` argument".
 
 **The coherence floor.** Never fold across separate apps, languages, or
 deploy units — a TUI Rust rendering fix, a frontend TS hook fix, and an
@@ -521,12 +532,6 @@ The description must let a cold agent act on it in its own worktree
   set, so a wiped worktree recovers dedup state from Linear instead of
   refiling everything.
 
-- `**Touches**: <glob>[, <glob>…]` — the machine-readable list of path
-  globs the fix will edit, comma-separated (for a single-file nit, just
-  that file). It documents the finding's footprint for a human reader
-  and for the fewest-coherent-PRs fold. **Mandatory** — see
-  `docs/conventions/linear-automation.md` → "Structured filing fields".
-
 - `**Discovered by**: audit <unit> @ <commit SHA>`
 
   **That SHA is what dates every citation above it.** The
@@ -542,17 +547,18 @@ The description must let a cold agent act on it in its own worktree
   survives.
 
 **Record no collision links.** A rotation files its issues and stops
-there. The automated file-collision machinery is being **retired** by
-operator direction — the tool, its skill, and every filing-time
-related-link step — so there is no per-issue sweep here and nothing new
-should depend on one. Board bookkeeping belongs to planning sessions —
-though be precise about what that buys: the planning sweep is an interim
-of **unmeasured** coverage, not an equivalent substitute (see
+there. The automated file-collision machinery is **retired** — the tool,
+its skill, and every filing-time related-link step are gone — so there
+is no per-issue sweep here and nothing new should reintroduce one. Board
+bookkeeping belongs to planning sessions — though be precise about what
+that buys: a planning session's read is an interim of **unmeasured**
+coverage, not an equivalent substitute (see
 `docs/conventions/linear-automation.md` → "Structured filing fields").
 
-The `**Touches**:` field itself stays **mandatory**: it documents each
-finding's footprint for a human reader and for the fewest-coherent-PRs
-fold, independent of what consumes it. And a rotation still files **no
+The `**Touches**:` field went with it — see
+`docs/conventions/linear-automation.md` → "Retired: `**Touches**:`".
+Name the affected files in the finding's prose instead, where an
+implementer will actually read them. And a rotation still files **no
 blocking edge** of any kind — blocking is human-curated (`CLAUDE.md` →
 "Blocking relations").
 
@@ -573,11 +579,6 @@ line; use this body instead:
   up.
 - `**Fingerprint**: <fingerprint>` — the `arch:<lens>:<topic-slug>`
   dedup key (mandatory, same role as for FILE findings).
-- `**Touches**: <glob>[, <glob>…]` — the path globs the proposal's work
-  would span (often several dirs for an `arch:` finding),
-  comma-separated. It documents the proposal's footprint for a reader.
-  **Mandatory** — see `docs/conventions/linear-automation.md` →
-  "Structured filing fields".
 - `**Discovered by**: audit <unit> @ <commit SHA>`
 
 Priority 3; these are proposals for the user to triage, not

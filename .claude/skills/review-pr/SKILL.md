@@ -52,6 +52,68 @@ PR-authoring **writes** (`create_pull_request`,
 `DASMAC-com/dropset`, so every MCP call takes
 `owner: "DASMAC-com"`, `repo: "dropset"`.
 
+## The entry gate: one question, tier and spawn together
+
+**Step 0, and it is the only interactive gate before the
+merge-queue handoff.** One `AskUserQuestion` approves *both*
+"run `/review-pr` now" and **at which tier** — and that tier
+choice **is** the authorization for the adversarial sub-agent
+fan-out. No separate spawn question is ever asked mid-flight
+(step 5 says the same from the other side).
+
+Where it is asked depends on how the skill was reached:
+
+- **Via `init-pr`'s handoff** — that handoff question *is* this
+  gate. `init-pr` computes the signals and offers the tiers in
+  the same question it uses to ask whether to run the review.
+- **Invoked directly** — ask it here, before step 1.
+
+Either way: exactly one interaction, and it carries the tier.
+
+**Scope the tier from objective signals, not from vibes.**
+Run `review_diff.py` first so the numbers are real, and read
+from its verdict: files changed, total line count, and whether
+the diff touches program code, the SDK surface, migrations, or
+generation inputs, and whether it spans crates.
+
+**The default is the full adversarial suite.** Assume the PR
+carries a lot of context. The default is never inline and never
+silently reduced — put the full suite first and label it
+recommended.
+
+**Propose a reduced tier only when the signals sit under a
+small-diff threshold**: **≤ 5 files and ≤ 60 changed lines,
+and** the diff touches none of program code, the SDK surface,
+migrations, or generation inputs, **and** it does not span
+crates. Those numbers are a starting calibration, not a law —
+the case they are drawn from is a **four-line single-file
+fix** whose full suite the operator had to talk down by hand.
+State the signals in the question so the choice is informed.
+
+A reduced tier still includes an **independent cross-check**.
+Zero-agent inline is not a tier — it remains a stop condition
+(step 5).
+
+**This does not trim the cross-check on a normal diff.** Tier
+scoping changes **how many lenses run on a trivially small
+diff, on explicit approval**; it never reduces the
+cross-check's depth or turn cap on an ordinary one. (A
+separate proposal to trim that cap was considered and
+**rejected** — see the closed record under the `Trim levers`
+milestone. The two are not in tension, and this note exists so
+the rejection is not read as superseded.)
+
+**Why `review-pr` asks and `audit` does not.** Invoking
+`audit` / `audit-scope` / `housekeeping` *is* the
+authorization for their fan-out, with no question at all —
+because the fan-out is their entire deliverable, and there is
+no earlier gate for it to ride. `review-pr` does many things
+and the fan-out is one step of them, so an operator could
+reasonably want the lint-and-CI half without authorizing eight
+agents and ~2.9M of sub-agent input. The asymmetry is
+deliberate, and it costs nothing extra: the question was
+already being asked to start the review.
+
 ## Steps
 
 1. **Locate the PR.** Identify the current branch
@@ -195,6 +257,22 @@ PR-authoring **writes** (`create_pull_request`,
      `frontend/.next/` and returned a **79.2KB** blob
      for what is a short file list.
 
+     **And read the hunk itself with the Read tool, not
+     with a context-flagged grep.** Enumerating conflicts
+     is a search; *inspecting* one is a read of a known
+     region, and this step used to say the first and
+     nothing about the second. In one session 14 bare
+     `grep` calls cost **2.5k** inspecting a `Makefile`
+     conflict and checking hook wiring — `grep -A/-B`
+     around the markers prints overlapping windows and
+     buys the region several times over. The
+     `--diff-filter=U` call above names the file; `Read`
+     it with `offset`/`limit` around the markers.
+
+     (Those calls were once recorded as unfirmable prompt
+     churn. They are not — `Bash(grep:*)` is already
+     granted here. The context cost is the whole finding.)
+
    - If it **succeeds but integrated new commits from
      the base**, the diff now reflects that integration.
      A clean *textual* rebase can still leave a
@@ -269,6 +347,30 @@ PR-authoring **writes** (`create_pull_request`,
    leaves a stale one. The trigger is already free: the tool
    printed the base delta's touched files just above, so this
    costs one bare command and no extra reads.
+
+   **And if the base delta touched a lockfile or a package
+   manifest, reinstall before any typecheck or lint.** The
+   symmetric hazard, and it was unstated — a stale
+   `node_modules` from before the base added a dependency:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install
+   ```
+
+   Fires when `base_files` includes `pnpm-lock.yaml` or a
+   `frontend/package*.json`. Three sessions hit this. The
+   failure does not look like a stale install: `tsc` reported
+   three `TS2307: Cannot find module 'vitest'` errors, which
+   read as code faults, and the actual cause was a base commit
+   that had added a test runner. **"Already installed" is not a
+   safe inference** — one session hit it after a *successful
+   install earlier in the same session*, because the rebase
+   moved the lockfile underneath it.
+
+   The same reasoning as the `programs/**` case above: the tool
+   has already printed the base delta's file list, so the
+   condition is free to check and the whole cost is one bare
+   command.
 
    This replaces hand-rolling the sequence. One session ran
    the identical `fetch` → `log` → two `diff --name-only`
@@ -470,23 +572,53 @@ PR-authoring **writes** (`create_pull_request`,
    python3 .claude/tools/run_quiet.py -- make lint
    ```
 
-   **When you go into the captured log, use the Grep *tool*
-   on it — never `Read` it whole.** A whole-file read of a
-   captured lint log is how a 500-line per-file cspell dump
-   became the single largest result of a run (PR #207). Grep
-   the log for the failure markers (`Failed`, `error[`,
-   `Error`) to find the offending hook, or read only its
-   tail; slice from there.
+   **When you go into the captured log, filter it — never
+   `Read` it whole.** A whole-file read of a captured lint log
+   is how a 500-line per-file cspell dump became the single
+   largest result of a run (PR #207). Two ways to filter, and
+   both keep the log out of the result:
 
-   **The Grep tool specifically, not a shell `grep`.** The
-   runner's logs live under `/var/folders/…`, outside the
-   workspace — and a shell `grep` at an absolute temp path
-   generalizes only to the bare-verb wildcard `Bash(grep:*)`,
-   which `firm_core.is_bareverb_wildcard` refuses, so it
-   re-prompts on **every** review, forever. The Grep tool
-   reads an out-of-workspace absolute path and prompts zero
-   times. (Where the Grep tool is genuinely absent, a bare
-   `grep` still works — you just pay the prompt.)
+   ```sh
+   python3 .claude/tools/run_quiet.py inspect <log> --grep 'Failed|error\['
+   ```
+
+   The runner's own `inspect` subcommand does the filtering in
+   its own process and reduces to the same
+   `Bash(python3 .claude/tools/:*)` allow-rule every other tool
+   here uses. With no flags it reprints the failure summary —
+   the failed-hook index, the spelling index and the tail —
+   which is what you want when the original summary has
+   scrolled away. The **Grep tool** is equally good and is the
+   right reach when it is offered; `inspect` is what makes this
+   step work in a session where it is not, which is the case
+   that once cost 58 shell `grep` calls (≈8.7k) reading these
+   very logs.
+
+   **Never a shell `grep`, `tail`, or `head` on the log.** All
+   three take no subcommand, so each generalizes only to a
+   bare-verb wildcard (`Bash(grep:*)`, `Bash(tail:*)`,
+   `Bash(head:*)`) — the shape `firm_core.is_bareverb_wildcard`
+   exists to refuse, so nothing can be firmed for them. To read
+   a region rather than search for one, use the **Read tool's
+   `offset` / `limit`** on the log path: it reads an
+   out-of-workspace absolute path directly, and a line range is
+   exactly what `offset`/`limit` express.
+
+   (This paragraph used to make that argument for `grep` and
+   then, two sentences later, say "or read only its tail" —
+   inviting the identical unfirmable shape it had just ruled
+   out. A perms sweep harvested exactly that and could firm
+   nothing for it. `head` has the same shape and the same
+   answer.)
+
+   **One correction to the rationale, since it recurs.** On
+   this machine `Bash(grep:*)` *is* already in the shared
+   allowlist and the `cruft` classifier does not flag it, so a
+   bare `grep` prompts for nothing — the re-prompting argument
+   is false here. The rule stands on **context cost** alone: a
+   shell filter prints its matched region into the tool result,
+   where `inspect` and the Grep tool return only the answer.
+   Do not restate the churn framing.
 
    **Run the formatting-class hooks scoped in ONE invocation
    after edits — don't discover them serially.** Each
@@ -516,12 +648,50 @@ PR-authoring **writes** (`create_pull_request`,
    `make lint` is the exception.** This is already prescribed
    above and is still the most-missed instruction in the step:
    one run paid ten full sweeps across ~5 fix-and-retry cycles
-   (≈5.3k) where a scoped per-hook re-run was the stated rule.
-   Re-run the hook that failed, over the paths you touched:
+   (≈5.3k) where a scoped per-hook re-run was the stated rule,
+   and a later one paid **thirteen (≈5.8k)** while editing this
+   very rule.
+
+   **The scoped form is one bare command — use it.** Restating
+   the rule is not the lever; thirteen sweeps happened *while
+   the rule was being read*. What made `make lint` the reflex
+   is that it needs no arguments, while the scoped form needed
+   a changed-file list assembled by hand. It doesn't any more:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- \
+     python3 .claude/tools/lint_paths.py --changed
+   ```
+
+   That lints exactly this branch's files — everything
+   differing from the merge-base with `origin/main`, plus
+   untracked-not-ignored paths. Append `-- <hook-id>` to
+   narrow to the hook that failed. There is no longer a
+   convenience argument for the full sweep, so treat one
+   outside the two checkpoints as a mistake.
+
+   The by-hand form still works and is what to reach for when
+   the paths you want are narrower than the branch:
 
    ```sh
    python3 .claude/tools/run_quiet.py -- pre-commit run <hook> --files <paths>
    ```
+
+   Note the cost here is **context in failure tails**, not
+   verbosity — every one of those sweeps was already wrapped
+   in `run_quiet`, so wrapping harder buys nothing. The only
+   lever is *fewer full sweeps*.
+
+   **A fast suite runs whole, through the wrapper — not per
+   module.** The same discipline on the other axis. For an
+   edit under `.claude/tools/`, the post-edit check is
+   `python3 .claude/tools/run_quiet.py -- make tools-tests`,
+   never a `-p test_X.py` discover run: measured, the narrow
+   form cost **32 calls / ≈7.1k** against **15 calls / 516
+   tokens** for the whole suite, and it missed two sibling
+   tests the edits had just broken. See
+   `docs/conventions/context-economy.md` → "When a suite is
+   fast enough to run whole".
 
    Take the full sweep once at the start, and once at the end
    to confirm green. Two corollaries:
@@ -872,24 +1042,37 @@ PR-authoring **writes** (`create_pull_request`,
    `base_fresh` holds, a foreign path can't be base drift,
    because there is no drift to leak.
 
-   **When sub-agents are unavailable, STOP and ask for them.
-   Do not run the pass inline.** Some sessions operate under
-   instructions that forbid spawning an `Agent` unless the
-   user asked for one, and some harnesses simply don't offer
-   the tool. Either way the resolution is the same, and it is
-   a **hard gate**: do not spawn, do not silently skip, and
-   **do not substitute an inline pass**. Stop here and ask
-   the user — via `AskUserQuestion` — to authorize sub-agents
-   for the fan-out, offering "yes, authorize sub-agents for
-   the review fan-out" as the recommended first option.
+   **The spawn is already authorized — do not ask again here.**
+   The entry gate (step 0) carried one `AskUserQuestion` that
+   approved both "run `/review-pr` now" and the **tier**, and
+   that explicit tier choice **is** the spawn approval. Spawn
+   the approved tier and move on. A session operating under a
+   standing "don't spawn agents unless asked" instruction has
+   already satisfied it: the user picked a tier by name.
+
+   Adding a second question here is what the one-gate rule
+   exists to remove. One review ran under exactly that standing
+   default and paid a round trip to ask, the user authorized it,
+   the fan-out then found **six blocking defects** — and the
+   question was ceremony, since the user had just typed the
+   skill name. Never add a mid-flight fan-out prompt on the
+   normal path.
+
+   **The hard gate survives for genuine tooling
+   unavailability.** If the harness does not offer the `Agent`
+   tool at all, that is not a permission question and no
+   approval can fix it: do not spawn, do not silently skip, and
+   **do not substitute an inline pass**. Stop, say the tool is
+   absent, and let the user decide — the same stop condition as
+   before, now scoped to the case that is actually about
+   availability rather than authorization.
 
    **Blocking is the intended behavior, not a degraded mode.**
-   A session under a standing no-agents instruction **cannot
-   complete a `review-pr` pass** until that instruction is
-   lifted for this step. That is stated plainly here so it is
-   implemented deliberately rather than discovered: an
-   independent adversarial pass is the *entire point* of the
-   step, so declining to run it is a stop condition.
+   A session that cannot spawn **cannot complete a `review-pr`
+   pass**. That is stated plainly here so it is implemented
+   deliberately rather than discovered: an independent
+   adversarial pass is the *entire point* of the step, so
+   declining to run it is a stop condition.
 
    **Why the inline path was removed, since it reads as the
    obvious accommodation.** A lens running in the same context
@@ -1011,18 +1194,51 @@ PR-authoring **writes** (`create_pull_request`,
    check". Gather the facts as you prepare the review (the
    pre-run greps you were going to run anyway) and pass them.
 
-   Then give each Agent the path plus its own scope:
+   **Emit the preamble at the spawn gate, and treat its
+   absence as a blocker.** Run `lens_preamble.py` immediately
+   before spawning — in the same gate that checks
+   `review_diff.py`'s `ready` — and confirm the file exists,
+   rather than emitting it once earlier in the run and trusting
+   it to still be there.
+
+   This is not defensive padding; it is a measured silent
+   degradation of the one step whose entire value is
+   independent assurance. In one review **all four lenses
+   independently reported `lens-preamble.md` missing** and said
+   so in their output, and nothing in the skill noticed. The
+   cause: the preamble had been emitted before a session
+   restart and its scratchpad was cleaned, while
+   `review_diff.py`'s slices survived because they happened to
+   be regenerated after a mid-review rebase. So the fan-out ran
+   with no standing shell rules and no suppression list, and
+   the run read as normal.
+
+   A missing preamble is a **stop**, exactly as a stale base
+   is. Re-emit it and re-check; do not spawn a lens that will
+   have to invent its own framing.
+
+   Then give each Agent the paths plus its own scope:
 
    ```txt
    Read <scratchpad>/lens-preamble.md first — it is the
-   standing brief for this review. Then: <per-lens scope>
+   standing brief for this review. Then read
+   <scratchpad>/lens-<name>.md, which holds the material
+   gathered for your lens. Then: <per-lens scope>
    ```
 
-   This is the same file-handoff pattern step 5 already uses
-   for the diff, applied to the other half of the prompt.
-   Keep **only** the per-lens material inline: the standing
-   half is what belongs in the file, and the excerpts, which
-   differ per lens, stay in the prompt.
+   **The per-lens excerpts travel by file too.** The diff and
+   the standing preamble already do; the per-lens block —
+   handler semantics, fixture helpers, known negatives,
+   measured values — used to stay inline, and that is the half
+   a retry re-buys. In one review three of four lens spawns
+   died on an upstream 529 **before taking a single turn**, and
+   each retry re-sent the full ≈6k brief for zero work.
+
+   Writing it to `<scratchpad>/lens-<name>.md` makes a retry
+   after a transient failure nearly free, which is what makes
+   the back-off policy below cheap enough to actually follow.
+   Keep inline only what identifies the lens: its dimension,
+   its scope line, its turn cap.
 
    **Then narrow the scope for these reviewers.** The
    brief deliberately lets an agent explore other repos
@@ -1280,6 +1496,48 @@ PR-authoring **writes** (`create_pull_request`,
      quantities. Use `session-metrics`' per-sub-agent
      rollup, which sums per-turn input, whenever you need
      the real figure.
+
+   - **A resumed lens re-pays its whole context, so a resume
+     is always a report-now order.** If a session restart or
+     an interruption forces a `SendMessage` resume, that
+     message re-sends the lens's entire accumulated context —
+     so an open-ended "carry on" buys the whole conversation
+     again for whatever remains. In one review two lenses
+     overran a stated 5-turn hard stop (**9 and 8 turns**) for
+     no reason other than having been resumed; the caps held
+     everywhere no resume intervened (correctness 141.8k/5,
+     cross-check 269.1k/5).
+
+     The resume prompt that worked demanded **"report now, at
+     most 2 more tool calls"** — and both lenses returned in
+     **0**. So a resume carries a hard tool-call bound and an
+     order to report, never an open continuation. If the lens
+     genuinely cannot conclude under that bound, treat it as
+     an unfinished lens and say so in the summary rather than
+     resuming it again.
+
+   **On a transient fan-out failure, back off and probe with
+   one lens.** Upstream 529s have twice taken out most of a
+   spawn batch — eight spawns across two attempts in one
+   review, six across ~15 minutes in another — and the right
+   response had to be re-derived under pressure both times,
+   because this step is emphatic that an inline pass is a stop
+   condition and says nothing about the transient case.
+
+   The policy: on repeated 529, **back off once, then relaunch
+   a single lens as a probe.** If that one comes back, relaunch
+   the rest; if the whole fan-out still fails, **park the
+   review** — report the state, leave the PR as it is, and pick
+   it up later. Substituting an inline pass is still never the
+   answer, and neither is retrying the full batch on a loop.
+
+   Two notes that keep this honest. The token cost of those
+   retries was **near zero** (a spawn that dies before its
+   first turn records 0 input), so this is a **wall-clock and
+   process** finding — do not mine it as a token multiple. And
+   the probe is cheap precisely because the excerpts travel by
+   file (above), so a relaunch re-sends a path rather than a
+   ≈6k brief.
 
    - **Give the lens a sanctioned "checks to run" section.**
      Brief every lens to end its report with an explicit
@@ -1680,6 +1938,28 @@ PR-authoring **writes** (`create_pull_request`,
      prose needs `--ext md`: the default extension set is
      source only, so a bare sweep for a string that lives in a
      `SKILL.md` returns a confident `0 match(es)`.
+
+     **`--context N` scales with match DENSITY, not count.**
+     Clustered matches make the windows overlap toward buying
+     the file outright: a `--context 3` sweep hitting 21
+     matches in a single file bought that file roughly twice
+     (≈3.1k) *after* `--files-only` had already named it. When
+     the hits cluster in one file, take `--files-only` and
+     then slice-read the region. `search_source.py` says so on
+     its own summary line when a context sweep piles up in one
+     file — read that line.
+
+     **This rule is phase-neutral, and that is why it keeps
+     getting missed.** Seven separate sessions answered a
+     location question with a full context sweep, one paying
+     ≈3.6k to find a three-line function — and several noted
+     afterwards that the rule *reads* as belonging to this
+     step, so it did not fire during the implement phase where
+     the sweeps actually happened. It applies wherever a search
+     is issued; `init-pr`'s context-discipline block states the
+     same thing for the implement phase, and
+     `docs/conventions/context-economy.md` → "The levers" is
+     the canonical statement.
 
      **Hoist for the files the lens will *predictably* need,
      not only the ones the main loop happened to read.** As
@@ -2176,6 +2456,35 @@ PR-authoring **writes** (`create_pull_request`,
    reasoned that out explicitly and re-ran anyway, because
    nothing licensed the skip.
 
+   **And there is a second, narrower conjunction that makes a
+   rebuild a provable tautology.** The rule above fires when the
+   base delta touched no generation input. But the base delta
+   *can* touch one and still stale nothing — because the base's
+   own commits merged through the queue, which regenerates and
+   gates the artifacts, so each landed carrying its regenerated
+   output. State the conjunction in terms of both tools' flags:
+
+   - `review_diff.py`'s `runs_artifact_gates` is **`false`** —
+     this branch touches no generation input, so it cannot have
+     staled anything; **and**
+   - `rebase_overlap.py`'s `base_files` shows the base delta's
+     commits carrying their **own** regenerated artifacts.
+
+   When both hold, the committed artifacts are provably fresh:
+   assert once, note the skip, and do not rebuild. The measured
+   case is the one this is drawn from — two mid-review rebases
+   forced three full lint sweeps, **two complete artifact-gate
+   sets** and three Rust suite runs, with
+   `rebase_overlap.py` reporting `runs_artifact_gates: true`
+   (licensing no skip) while `review_diff.py` reported `false`
+   for the branch's own diff. Both gate runs came back clean,
+   twice. That is wall-clock rather than context, but it is
+   wall-clock spent proving something already known.
+
+   Note what this does **not** license: skipping when the
+   branch itself touches a generation input. Then the gates run,
+   whatever the base did.
+
    **The CI-agrees-structurally argument is per-WORKFLOW, not
    per-diff.** It is tempting to reason "the diff has no
    program source, so CI skips everything" — and that is false
@@ -2389,9 +2698,18 @@ PR-authoring **writes** (`create_pull_request`,
    again **before** starting the suites:
 
    ```sh
-   python3 .claude/tools/review_diff.py --base <base> --split \
+   python3 .claude/tools/review_diff.py --base <base> --gate-only \
      --out <scratchpad>/review-diff.txt
    ```
+
+   **`--gate-only`, not `--split`.** This re-check consumes
+   `base_fresh` and nothing else, and the full verdict carries
+   the whole `files` array — one measured run printed 70
+   entries here for a diff that had just been rebased away.
+   The flag emits the verdict fields only; the gating still
+   runs in full and the exit status is unchanged. Use `--split`
+   when you actually need the slices regenerated (after a
+   rebase, for a re-spawn).
 
    If it is `false`, rebase onto `origin/<base>` and *then*
    run the suites. The ordering is the whole point: one session
@@ -2415,6 +2733,20 @@ PR-authoring **writes** (`create_pull_request`,
    compiled out, so the guard is a runtime one. Either keep the
    order below (`make test` first, then `test-no-teardown`), or
    re-run `make program` before any scoped `cargo test`.
+
+   **Batch independent mutations into one sBPF build.** When a
+   finding is verified by mutating the program and watching a
+   test flip, the cycle costs a `make program` per state:
+   baseline, mutate, revert, plus restoring the
+   default-features `.so` after `test-no-teardown`. One review
+   paid **four** builds for a single mutation. The verification
+   is worth it — this is a wall-clock cost, not a context one,
+   and it is the check that proves a test actually covers the
+   invariant it claims to. But the cost is expected rather than
+   surprising, and it is per **build**, not per mutation: apply
+   every independent mutation you mean to verify, build once,
+   run once, then revert once. Only a mutation whose effect
+   another mutation would mask needs its own cycle.
 
    **Mirror CI's path filter, including when it skips.**
    `test.yml` gates its Tests jobs on a `code` filter that
@@ -2460,6 +2792,35 @@ PR-authoring **writes** (`create_pull_request`,
    cover a suite started twenty minutes later, so re-run
    `review_diff.py` here and rebase first if it moved.
 
+   **Run the ignored tests when the diff touches one.** The
+   Tests (Postgres) job runs
+   `cargo nextest run --run-ignored all`, and the two targets
+   above do not — so an `#[ignore]`d test **executes in CI and
+   is skipped locally**, which means it can only ever fail in
+   CI. One session added one, passed locally, and reddened CI
+   at the cost of a full ~13-minute round trip.
+
+   So when the diff **adds or changes an `#[ignore]`d test**,
+   run the job's own command locally before pushing:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- cargo nextest run --run-ignored all
+   ```
+
+   Same fail-closed reasoning the artifact gates already get,
+   and it generalizes to every ignored test added from here on.
+
+   **One cargo target at a time per worktree.** A blocked build
+   is **waited on, never raced**. Launching a second `make test`
+   while the first sits on the cargo package-cache lock puts two
+   builds on one `target/`, and that produced a spurious
+   `E0463 can't find crate for dropset_sdk` doctest failure plus
+   a wasted diagnosis and a re-run. The lock *symptom* is
+   documented (the quiet runner echoes cargo's
+   "Blocking waiting for file lock" line live, precisely so a
+   blocked build doesn't read as a hung one) — this is the rule
+   that goes with it.
+
    **Start these in the background and wait on CI
    concurrently.** Step 17 blocks on GitHub CI, and running the
    local suites to completion first serializes two ~20–40
@@ -2467,7 +2828,25 @@ PR-authoring **writes** (`create_pull_request`,
    Launch the local suites with `run_in_background: true`, go
    on to push and let CI start, and collect both results as
    they land — one measured session paid **zero** extra
-   wall-clock for the overlap. Two notes from that same run:
+   wall-clock for the overlap.
+
+   **But only once the fix commits have landed.** The build
+   compiles the tree **as it finds it**, and this step sits
+   after the fan-out, so it reads as "launch as soon as you get
+   here". One session did exactly that, applied lens fixes while
+   the suite ran, and the build compiled a **half-applied edit**
+   — the new field's type had landed but its call site had not,
+   failing with a trait-bound error that read exactly like a
+   real defect in the change. Cost: a wasted full-suite cycle, a
+   misdiagnosis beat, and cargo file-lock contention with the
+   foreground runs (see the one-target-at-a-time rule above,
+   which that failure also brushed).
+
+   So: if the fan-out is still reporting, or fixes are still
+   being applied, **hold the suites**. Background them once the
+   tree is the tree you mean to test.
+
+   Two notes from that same run:
 
    - `wait_for_checks` returned `elapsed_seconds: 0`, because
      `init-pr`'s draft PR starts CI at push time and it had
@@ -2650,6 +3029,38 @@ PR-authoring **writes** (`create_pull_request`,
    the *only* signal. This repo runs CI on the PR even
    while it was a draft (that's how `init-pr` warms the
    caches), so the checks are already in flight.
+
+   **Before any long unattended wait, make the working state
+   survivable.** This step and the step-5 fan-out are the two
+   places this session sits idle for many minutes, and a
+   worktree has been deleted underneath a review **twice** —
+   the second time losing a verified-but-uncommitted fix.
+   Reconstructing it cost a fresh whole-file `Read` (≈1.3k), a
+   re-`Edit`, a re-verify, and a full cold-worktree rebuild.
+
+   The checkpoint-commit rule already existed and did not fire,
+   because **signing was down** (a locked 1Password agent) and
+   the failure was treated as a retryable nuisance. So:
+
+   - **Treat a signing failure as an unpushed-state alarm**,
+     not a nuisance. It means the checkpoint did **not**
+     happen, so the work exists in exactly one deletable
+     place. Stop and get signing working before starting a
+     wait.
+
+   - **Write the working diff to the scratchpad** before the
+     wait, so recovery is one `git apply` even if the commit
+     could not be made:
+
+     ```sh
+     python3 .claude/tools/review_diff.py --base <base> \
+       --out <scratchpad>/pre-wait.diff
+     ```
+
+   (Distinct from hunting whatever sweeper deletes the
+   worktree — that is its own open question. This is the
+   survivable-state discipline, which holds regardless of the
+   cause.)
 
    **Wait with the tool — don't poll.** One call blocks until
    the checks settle and prints one compact verdict:
@@ -2939,6 +3350,89 @@ PR-authoring **writes** (`create_pull_request`,
    - `mergeable` not conflicting (`MERGEABLE`) → proceed to
      the In Review move and the enqueue prompt below.
 
+   **If this branch adds a migration, check for a cross-branch
+   number collision before enqueueing.** The in-tree ascend
+   guard and the schema-fence tests only ever see **one** tree,
+   and they start from an **empty** database — so a duplicate
+   number is invisible until both files coexist, which first
+   happens on the merge queue's merge-group branch. Until then
+   both PRs ride green.
+
+   The dequeue is the cheap half. The shared dev Postgres may
+   already have one branch's number applied, and an applied
+   migration is **immutable** (sqlx records a checksum), so
+   renumbering the **wrong** branch wedges the shared database
+   — and the only fixes are manual surgery or a wipe that
+   destroys collected market data outside the venues' backfill
+   windows. Two in-flight PRs really did each add an `0003`.
+
+   List the other open PRs' files (one field-selected read),
+   write them to a small JSON file, and let the tool compare:
+
+   ```sh
+   gh pr list --state open --json number,files --limit 30
+   ```
+
+   ```sh
+   python3 .claude/tools/migration_collisions.py \
+     --others <scratchpad>/others.json
+   ```
+
+   The tool takes its `--others` payload from a file precisely
+   so the network read stays on the `gh`/MCP path and the
+   compare stays deterministic; it makes no network call. It
+   compares **numbers, not filenames** — `0003_telemetry.sql`
+   and `0003_roster.sql` collide — and exits non-zero on a
+   collision, so a caller checking only the status cannot
+   enqueue through one.
+
+   **On a collision, stop and coordinate the renumber
+   deliberately.** The tiebreak, and its direction is the whole
+   point: **the branch whose number is already applied to the
+   shared dev DB keeps it; the other renumbers.** Renumbering
+   the applied one is the move that wedges the database.
+
+   Skip this entirely when the branch adds no migration — the
+   tool says so and exits zero.
+
+   **A rebase-forced re-run may enqueue BEFORE re-verifying.**
+   The normal gate is "everything green locally, then
+   enqueue". That gate cannot win a race it is structurally
+   losing: `main` lands roughly **every 20 minutes** and a full
+   local re-verify costs about the same, so a base that moves
+   during the review invalidates the pass you just finished,
+   and the re-run invites the next move. One review lost **two
+   full cycles** to exactly this — `main` landed 4 commits
+   during the lens fan-out and 3 more during a 1289-second CI
+   wait, and the second batch invalidated a completely green
+   local suite *plus* that CI run.
+
+   So when the **only** reason for a re-run is a rebase, and
+   the base delta is already covered by the queue's own suite:
+   **push, enqueue, and let the queue verify.** The merge queue
+   re-runs the whole Rust suite on its own queue branch against
+   the merged result — that is the actual gate, and it is
+   fail-closed. Re-running it locally first proves nothing the
+   queue will not prove, on a tree that is already stale.
+
+   Three conditions, all required, so this cannot become a
+   general license to skip verification:
+
+   - the branch's own diff is **unchanged** since the last
+     green local pass (no new fix commits — only the rebase);
+   - `rebase_overlap.py` reports **no overlap** between the
+     base delta and this branch's files; and
+   - the queue's suite covers the base delta —
+     `runs_rust_suites` on that same report.
+
+   If any of those fails, verify locally first as usual. And
+   say in the summary that the local re-verify was skipped and
+   why, so the queue result is read as the gate it is.
+
+   (This is the standing "enqueue early, verify in parallel"
+   principle, which was recorded as a lesson but never wired
+   into this gate.)
+
    This prompt is the handoff: per `CLAUDE.md`, **In
    Review** means "okay for the human to look at the PR
    and approve enqueueing it." So move the Linear issue
@@ -3159,13 +3653,49 @@ PR-authoring **writes** (`create_pull_request`,
    polled mid-queue it reads a
    stale **In Review** and invites a premature hand-move. Only
    after the probe returns `merged: true` / `state: "MERGED"`
-   should you (re-)report the Linear status, and then **expect
-   the integration to have already set it to Done** — confirm
-   and report that, rather than offering to move it or
-   flagging it as "stuck In Review". The **In Review**
+   should you (re-)report the Linear status. The **In Review**
    transition made at the enqueue handoff stays as-is; this
    governs only what's reported/acted on *after* enqueue,
    while the merge resolves.
+
+   **On a confirmed merge, write the issue BACK to In Review.**
+   Merge and completion are different events. The integration
+   sets the issue **Done** on merge, which hides exactly the
+   sessions that still owe follow-up — session metrics, perms
+   firming, post-merge tidy, and feedback that has to reach a
+   planning session or be filed. The operator closes sessions
+   at end of day and reopens the machine later with **no Linear
+   signal** that a merged issue's session still needs
+   attention. So the issue stays effectively in review while
+   the operator is still following up with its session.
+
+   Order matters, because the auto-transition and this write
+   can race: **wait until Done is actually observed**, then
+   write In Review, then **re-check** the state:
+
+   ```txt
+   mcp__claude_ai_Linear__save_issue(
+     id: "<ENG-###>",
+     state: "In Review"
+   )
+   ```
+
+   Then run the existing tail — post-merge tidy, session
+   metrics, `firm-perms` — and close with an explicit
+   **follow-up ledger**: every operator-facing item either
+   addressed, handed to a planning session, or filed as a task.
+   Name them.
+
+   **Only an explicit approval moves it to Done.** The terminal
+   step is an `AskUserQuestion` — *"all follow-up complete:
+   metrics filed, perms firmed, feedback forwarded — mark
+   Done?"* — and nothing else sets that state.
+
+   **One residual gap, accepted:** a session that dies *before*
+   this step runs leaves the issue auto-Done with nobody to
+   re-mark it. The common case — the operator closing sessions
+   at day end after merge confirmation — is fully covered. Do
+   **not** build detection machinery for the crash case.
 
    Watch whether the PR lands or gets kicked back out with a
    **single** probe per check: the `gh api graphql` dequeue

@@ -55,10 +55,9 @@ only here: `docs/conventions/linear-automation.md`.
 
 ### Structured filing fields
 
-Every filed issue carries stable machine-readable fields the automation
-parses: `**Fingerprint**: <domain-token>:<slug>` (the dedup key) and
-`**Touches**: <glob>[, …]` (the path globs the fix will edit).
-The fingerprint's first token is a **dotless domain token, never a bare
+Every filed issue carries one stable machine-readable field the
+automation parses: `**Fingerprint**: <domain-token>:<slug>`, the dedup
+key. Its first token is a **dotless domain token, never a bare
 `name.ext`** — Linear linkifies a hostname-valid basename and corrupts
 the key (`feeds-http:…`, not `http.rs:…`). Two further Linear
 write-mangle rules bind every filed body: **never let an emphasis span
@@ -67,13 +66,19 @@ hostname-valid `name.ext`**.
 A rotation folds coupled findings into the **fewest coherent PRs** —
 fold every set that would land as one PR (same subsystem / crate /
 language-domain) into a single issue, keeping each finding's own
-`**Fingerprint**:` line and a union `**Touches**:`, but never across
-separate apps / languages / deploy units (the coherence floor). Detail:
+`**Fingerprint**:` line, but never across
+separate apps / languages / deploy units (the coherence floor).
+
+**`**Touches**:` is retired** — no filing emits the declared-scope glob
+list any more. It was the input to the collision machinery (above); with
+that gone, nothing consumed it and composing it was pure filing
+overhead. Existing bodies keep their lines as inert history and the fold
+tools still carry one they find. Detail:
 `docs/conventions/linear-automation.md`.
 
 ### Claude: meta-work prefix
 
-**Meta-work** issues — those whose `**Touches**:` sit entirely under
+**Meta-work** issues — those every one of whose edited paths sits under
 `.claude/**`, `CLAUDE.md`, or `docs/conventions/**` — carry
 a leading **`Claude:`** token on their **Linear issue title** (capital
 C, colon, space) so agent-infra work batches apart from product code.
@@ -117,7 +122,7 @@ Backlog, so a filing skill sets state **`Todo` plus the
 milestone, in the creating call**. Promotion is a
 planning-session act with **two** halves — clear the milestone
 **and** move Todo → Backlog. Parked issues are exempt from the
-serial meta chain until promoted. Detail:
+meta batch and its edge until promoted. Detail:
 `docs/conventions/linear-automation.md`.
 
 ### The audit is planning-directed
@@ -163,13 +168,16 @@ via `AskUserQuestion` with the concrete evidence and writes it only on
 an explicit yes; the default in any autonomous run is **no edge**, with
 the suspicion recorded as prose. Human-placed edges are authoritative
 and never rewritten. **One standing exception, operator-ratified:** a
-planning session chains `Claude:`-prefixed meta-work into a single
-serial blocking chain as routine bookkeeping, with no per-edge
-proposal — automated filers still place none. File overlap is **not** a
+planning session folds the open `Claude:`-prefixed meta-work into a
+single **batch issue** at bootstrap and places its one edge — behind
+whatever meta issue is In Progress — as routine bookkeeping, with no
+per-edge proposal. (This supersedes the earlier serial chain, which
+needed an edge per issue.) Automated filers still place
+none. File overlap is **not** a
 dependency, and the automated machinery that used to `related`-link it
-is being **retired** — no filing skill records collision links any
-more; reconciling overlap is planning-session work.
-Detail: `docs/conventions/linear-automation.md`.
+is **retired** — nothing records collision links any more, at filing
+time or on a sweep; reconciling overlap is planning-session work, judged
+on content. Detail: `docs/conventions/linear-automation.md`.
 
 ## GitHub via MCP
 
@@ -278,10 +286,12 @@ worktree. Each guard's **script** is committed; its
 wired**, which `make hook-wiring` reports on (it names every hook
 nothing points at, and writes nothing; `housekeeping` runs the same
 check each pass). The **session helpers** (`cdds`, `aps`, `raps`,
-`naps`, `rnaps`, `paps`, `haps`) are the exception that *is* committed, at
+`naps`, `rnaps`, `paps`, `haps`, `faps`) are the exception that *is*
+committed, at
 `.claude/shell/init.zsh`, sourced from the base checkout by one guarded
 line in the shell profile; only their 1Password coordinates stay
-untracked, in a file outside the repo. Full detail — every hook's
+untracked — defined as env vars in the runtime config, or in an optional
+file outside the repo. Full detail — every hook's
 wiring, the helper family, and the iTerm setup:
 `docs/conventions/local-integrations.md`.
 

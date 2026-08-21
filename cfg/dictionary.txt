@@ -9,6 +9,7 @@ airdrop
 alphavantage
 anza
 apikey
+applescript
 aptos
 askq
 asym
@@ -71,6 +72,7 @@ eurau
 eurc
 eurcv
 eurozone
+faps
 fieldless
 fintech
 firmable
@@ -140,6 +142,8 @@ ohlcv
 oneline
 onramps
 openxmlformats
+osacompile
+osascript
 pageinfo
 parallelizable
 pathspec

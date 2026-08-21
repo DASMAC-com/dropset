@@ -419,6 +419,37 @@ argument was *not* the reason — see that step for why.)
   is written in terms of the Rust suites, so a frontend test script read
   as out of scope. It is not. Batch a logical change, then verify once.
 
+- **When a suite is fast enough to run whole, run it whole — through the
+  wrapper.** This is a **granularity** rule, and it is a different axis
+  from the two above it: they cover how *verbose* a command is (wrap it)
+  and how *often* to run it (at checkpoints). Neither says anything about
+  how much of a suite to run, which is why the narrow form keeps getting
+  reached for on the reasonable-sounding grounds that it gives a faster
+  signal on the one module being edited.
+
+  Measured, and the reasoning does not survive it: one session made **32**
+  `python3 -m unittest discover … -p test_X.py` calls costing **≈7.1k** —
+  its single largest hardening candidate — against **15**
+  `make tools-tests` calls costing **516 tokens in total**. The per-module
+  form is ~14× the cost *per call* for a **narrower** answer, because it
+  is not wrapped by default while the `make` target is. It also missed a
+  sibling test the edit had just broken, twice in that one session (a
+  named-tuple refactor and a changed error string each broke tests in a
+  file other than the one being edited).
+
+  So for anything under `.claude/tools/`, the post-edit check is:
+
+  ```sh
+  python3 .claude/tools/run_quiet.py -- make tools-tests
+  ```
+
+  Reserve a `-p test_X.py` discover run for a suite that is genuinely
+  slow — this one runs in well under a second. The rule generalizes to
+  any test target whose whole-suite runtime is a fraction of a round
+  trip: the narrow form only pays when the suite is slow enough that the
+  *wall-clock* saving exceeds the context it costs, and a sub-second
+  suite never clears that bar.
+
 - **Match the build to the iteration, not to CI.** A production-build
   target exists to *mirror CI* — a full dependency install, a wiped
   output directory, an optimizing compile — which makes it a
@@ -429,13 +460,23 @@ argument was *not* the reason — see that step for why.)
   target; run the production build **once**, before committing.
 
 - **Inspect a run_quiet log by its printed path, not a glob.** When you
-  need more than the summary, grep the **specific log path the runner
+  need more than the summary, filter the **specific log path the runner
   printed** for that run — never a `*.log` / `make-*.log` wildcard,
   which matches every historical run in the temp dir and balloons the
-  result with cross-run noise. And when the run is a **background**
-  quiet-runner task, wait for its completion notification, then tail
-  **once** for the summary — don't poll the interim log (it suppresses
-  output mid-run, so repeated tails just return "(no output)").
+  result with cross-run noise. (The runner's `inspect` subcommand
+  refuses a second positional for exactly this reason, and offers no
+  `--latest`.) And when the run is a **background** quiet-runner task,
+  wait for its completion notification, then read the summary **once**
+  — don't poll the interim log (it suppresses output mid-run, so
+  repeated reads just return "(no output)").
+
+  **Filter in a process, not into the result.** Either
+  `run_quiet.py inspect <log> --grep <re>` or the Grep tool; both return
+  the answer rather than the matched region. Never a shell `grep` /
+  `tail` / `head` on a log — those print into the tool result, and each
+  also generalizes only to a bare-verb wildcard that the permission
+  floor refuses, so nothing can be firmed for them. To read a *region*
+  rather than search for one, use the Read tool's `offset` / `limit`.
 
 - **Scope a sub-agent fan-out.** Inlining the same large diff into N
   reviewers pays for N resident copies; scope each agent to its files,
@@ -445,6 +486,27 @@ argument was *not* the reason — see that step for why.)
   read polled across a CI / merge wait is paid per poll *and* per
   later turn — that's why `review-pr`'s waits use the compact `gh`
   reads above rather than the full-object MCP calls.
+
+- **When the question is "does property P hold across N sites",
+  write the checker — do not dump the sites.** This is the one lever
+  here that improves **correctness**, not merely cost, which is why
+  it is worth stating separately from the narrowness rules above.
+
+  Measured: verifying that no TSDoc link target was unresolvable was
+  first attempted by listing all **74** link sites (≈1.8k) and
+  adjudicating a bounded subset by eye. That **missed a real site**,
+  which a review lens then caught. A 15-line stdlib script comparing
+  each link target against its file's scope answered the question
+  definitively for ~0 context and found the miss.
+
+  The failure is structural, not a lapse of attention: an eyeball
+  sweep over a long list **silently self-limits** — it degrades into
+  spot-checking exactly when the list is long enough to matter, and
+  reports the same confident verdict either way. A checker does not.
+  So report the checker's verdict, not the list it read; and if the
+  property is worth verifying more than once, the script belongs
+  under `.claude/tools/` with a test (see
+  [skill tooling](skill-tooling.md)).
 
 - **Never read a verbose-by-refresh log whole — tail it.** This is a
   distinct class from a build cascade, and it bites hardest because the

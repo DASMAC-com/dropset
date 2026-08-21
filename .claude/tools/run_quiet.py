@@ -56,6 +56,39 @@ operators in CMD ARGS are passed verbatim as arguments rather than interpreted.
 The tool fails safe: a launch error (missing binary, etc.) prints a clear
 message and exits non-zero rather than raising an uncaught traceback.
 
+**Reading a log back**, which is the other half of the job::
+
+    python3 .claude/tools/run_quiet.py inspect LOG [--grep RE] [--context N]
+    python3 .claude/tools/run_quiet.py inspect LOG [--tail N]
+    python3 .claude/tools/run_quiet.py inspect LOG --failing
+
+With no flags this reprints the failure summary — the failed-hook index, the
+spelling index, and the tail — which is what you want after coming back to a
+run whose summary has scrolled away.
+
+This subcommand exists because the logs live under the system temp dir, outside
+the workspace, and a session that needs more than the summary has to reach in
+there. The Grep tool handles it and is the prescribed path — but it is not
+always offered, and the sessions that lacked it paid: one made **58 shell**
+``grep`` **calls (≈8.7k)**, largely reading these very logs. Filtering in this
+process instead of printing the matched region into a tool result is the whole
+saving, and it rides the directory-wide ``Bash(python3 .claude/tools/:*)``
+allow-rule that every other tool here already uses.
+
+*Correction worth keeping, because the surrounding argument used to be wrong:*
+this is justified on **context cost alone**. The "unfirmable prompt churn"
+framing once attached to it does not hold on this machine — ``Bash(grep:*)`` is
+already in the shared allowlist and the cruft classifier does not flag it, so a
+bare ``grep`` prompts for nothing. Do not restate that rationale.
+
+**There is deliberately no ``--latest`` or glob resolution.** Pass the log path
+the runner printed for *that* run. A ``make-*.log`` wildcard matches every
+historical run in the directory, and resolving "the newest" silently picks a
+different run's log when two are in flight — both of which are how a reader ends
+up confidently diagnosing the wrong failure (see
+``docs/conventions/context-economy.md`` → "Inspect a run_quiet log by its
+printed path, not a glob").
+
 Tests live in ``tests/test_run_quiet.py`` (stdlib ``unittest``), run via the
 repo's ``make tools-tests``.
 """
@@ -110,6 +143,15 @@ LOCK_WAIT_MARKER = "Blocking waiting for file lock"
 # output, so the "line" carrying it is attacker-influenced and may have no
 # newline for megabytes; `sanitize_for_echo` clamps it to this.
 MAX_ECHO_CHARS = 200
+
+# The log-reading subcommand's verb, recognized as the first argument.
+INSPECT_VERB = "inspect"
+
+# Cap on matched regions `inspect --grep` prints. The point of filtering in this
+# process is that the caller pays for the answer and not the log, so an
+# over-broad pattern must degrade into "narrow your pattern" rather than into a
+# reproduction of the file.
+MAX_GREP_MATCHES = 40
 
 
 class UsageError(Exception):
@@ -402,12 +444,184 @@ def run(tail, label, cmd):
     return code
 
 
+#: What ``inspect`` was asked for. ``failing`` and ``grep`` are independent
+#: views; with neither, the full failure summary is reprinted.
+InspectArgs = collections.namedtuple("InspectArgs", "path grep context tail failing")
+
+
+def parse_inspect_args(argv):
+    """Parse ``inspect LOG [--grep RE] [--context N] [--tail N] [--failing]``.
+
+    ``argv`` still carries the ``inspect`` verb as its first element, so the
+    caller does not have to strip it.
+    """
+    rest = argv[1:]
+    path = None
+    grep = None
+    context = 0
+    tail = DEFAULT_TAIL
+    failing = False
+    i = 0
+    n = len(rest)
+    while i < n:
+        arg = rest[i]
+        if arg == "--grep":
+            if i + 1 >= n:
+                raise UsageError("--grep needs a pattern")
+            grep = rest[i + 1]
+            i += 2
+        elif arg.startswith("--grep="):
+            grep = arg[len("--grep=") :]
+            i += 1
+        elif arg == "--context":
+            if i + 1 >= n:
+                raise UsageError("--context needs a value")
+            context = _parse_tail(rest[i + 1])
+            i += 2
+        elif arg.startswith("--context="):
+            context = _parse_tail(arg[len("--context=") :])
+            i += 1
+        elif arg == "--tail":
+            if i + 1 >= n:
+                raise UsageError("--tail needs a value")
+            tail = _parse_tail(rest[i + 1])
+            i += 2
+        elif arg.startswith("--tail="):
+            tail = _parse_tail(arg[len("--tail=") :])
+            i += 1
+        elif arg == "--failing":
+            failing = True
+            i += 1
+        elif arg.startswith("-"):
+            raise UsageError("unknown option: %s" % arg)
+        elif path is None:
+            path = arg
+            i += 1
+        else:
+            # Refuse rather than silently inspecting the first of several. A
+            # second positional is almost always a shell glob that expanded —
+            # exactly the mistake the no-glob rule exists to prevent.
+            raise UsageError(
+                "inspect takes one log path; got a second (%s). Pass the path the "
+                "runner printed for that run, never a glob." % arg
+            )
+    if path is None:
+        raise UsageError("inspect needs a log path")
+    return InspectArgs(path, grep, context, tail, failing)
+
+
+def grep_log(path, pattern, context):
+    """Matching lines from ``path``, with ``context`` lines either side.
+
+    Returns ``(rendered_lines, match_count, truncated)``. Regions are separated
+    by ``--`` and numbered, so a hit can be slice-read from the log afterwards
+    without re-grepping. Reads a line at a time and keeps only the context
+    window, so an enormous log never sits in memory.
+    """
+    try:
+        compiled = re.compile(pattern)
+    except re.error as exc:
+        raise UsageError("bad --grep pattern: %s" % exc)
+
+    out = []
+    matches = 0
+    truncated = False
+    before = collections.deque(maxlen=context if context > 0 else 0)
+    after_remaining = 0
+    last_emitted = 0
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for lineno, line in enumerate(fh, start=1):
+            text = line.rstrip("\n")
+            if compiled.search(text):
+                matches += 1
+                if matches > MAX_GREP_MATCHES:
+                    truncated = True
+                    break
+                start = lineno - len(before)
+                if last_emitted and start > last_emitted + 1:
+                    out.append("--")
+                for offset, prior in enumerate(before):
+                    out.append("%d:%s" % (start + offset, prior))
+                out.append("%d:%s" % (lineno, text))
+                last_emitted = lineno
+                before.clear()
+                after_remaining = context
+            elif after_remaining > 0:
+                out.append("%d:%s" % (lineno, text))
+                last_emitted = lineno
+                after_remaining -= 1
+                if context > 0:
+                    before.clear()
+            elif context > 0:
+                before.append(text)
+    return out, matches, truncated
+
+
+def inspect(args):
+    """Reprint part of a captured log. Returns an exit code."""
+    try:
+        summary = read_tail_and_count(args.path, args.tail)
+    except OSError as exc:
+        sys.stderr.write("run_quiet.py: cannot read %s: %s\n" % (args.path, exc))
+        return 2
+
+    if args.grep is not None:
+        lines, matches, truncated = grep_log(args.path, args.grep, args.context)
+        for line in lines:
+            sys.stdout.write(line + "\n")
+        note = ""
+        if truncated:
+            note = " (capped at %d — narrow the pattern)" % MAX_GREP_MATCHES
+        sys.stdout.write(
+            "run-quiet inspect | %d match(es) of %d line(s)%s\n"
+            % (matches, summary.lines, note)
+        )
+        # Non-zero on no match, so a caller checking only the status can tell
+        # "not present" from "present" without parsing the summary.
+        return 0 if matches else 1
+
+    if summary.failed:
+        more = " (truncated, more omitted)" if summary.truncated else ""
+        sys.stdout.write("--- failed hooks (%d)%s ---\n" % (len(summary.failed), more))
+        for fl in summary.failed:
+            sys.stdout.write(fl + "\n")
+    if summary.unknown_words:
+        more = " (truncated, more omitted)" if summary.unknown_truncated else ""
+        sys.stdout.write(
+            "--- unknown words (%d)%s ---\n" % (len(summary.unknown_words), more)
+        )
+        for word, location in summary.unknown_words:
+            sys.stdout.write("%s%s\n" % (word, " — %s" % location if location else ""))
+    if not args.failing and args.tail > 0 and summary.tail_text:
+        shown = min(args.tail, summary.lines)
+        sys.stdout.write("--- last %d line(s) ---\n" % shown)
+        sys.stdout.write(summary.tail_text)
+        if not summary.tail_text.endswith("\n"):
+            sys.stdout.write("\n")
+    sys.stdout.write("run-quiet inspect | %d line(s)\n" % summary.lines)
+    return 0
+
+
+USAGE = (
+    "usage: run_quiet.py [--tail N] [--label L] -- CMD ARGS...\n"
+    "       run_quiet.py inspect LOG [--grep RE] [--context N] "
+    "[--tail N] [--failing]\n"
+)
+
+
 def main(argv):
+    if argv and argv[0] == INSPECT_VERB:
+        try:
+            return inspect(parse_inspect_args(argv))
+        except UsageError as exc:
+            sys.stderr.write("run_quiet.py: %s\n" % exc)
+            sys.stderr.write(USAGE)
+            return 2
     try:
         tail, label, cmd = parse_args(argv)
     except UsageError as exc:
         sys.stderr.write("run_quiet.py: %s\n" % exc)
-        sys.stderr.write("usage: run_quiet.py [--tail N] [--label L] -- CMD ARGS...\n")
+        sys.stderr.write(USAGE)
         return 2
     return run(tail, label, cmd)
 
