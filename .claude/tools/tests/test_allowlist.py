@@ -14,6 +14,7 @@ from pathlib import Path
 
 from unittest import mock
 
+import allowlist
 import firm_core
 
 from allowlist import (
@@ -332,6 +333,82 @@ class CruftFileAwarenessTests(unittest.TestCase):
         out = cruft(["Read(/Users/me/.zshrc)"])
         self.assertFalse(out["machine_local_settings"])
         self.assertEqual(out["flagged"][0]["category"], "machine-path")
+
+
+class GuardConflictTests(unittest.TestCase):
+    """The semantic pass: a rule granting what a no-escape-hatch guard blocks.
+
+    Every other category judges the rule's own text; this one judges the rule
+    against a convention enforced elsewhere, which is why it exists.
+    """
+
+    def _solo(self, rule):
+        return classify(rule, 0, [rule], machine_local=True)
+
+    def test_the_live_worktree_git_grep_grant_is_flagged(self):
+        # The real entry that motivated this, verbatim in shape.
+        rule = "Bash(git -C /Users/me/repo/.claude/worktrees/* grep:*)"
+        category, reason = self._solo(rule)
+        self.assertEqual(category, "guard-conflict")
+        self.assertIn("git grep", reason)
+
+    def test_a_plain_git_grep_grant_is_flagged(self):
+        self.assertEqual(self._solo("Bash(git grep:*)")[0], "guard-conflict")
+
+    def test_the_guards_own_option_forms_are_covered(self):
+        # Delegating to the guard's predicate is what buys these for free —
+        # re-deriving "what counts as git grep" here would have missed them.
+        for rule in (
+            "Bash(git --no-pager grep:*)",
+            "Bash(git -c core.pager=cat grep:*)",
+            "Bash(git --git-dir=/x/.git grep:*)",
+        ):
+            with self.subTest(rule=rule):
+                self.assertEqual(self._solo(rule)[0], "guard-conflict")
+
+    def test_an_ordinary_git_rule_is_not_flagged(self):
+        for rule in (
+            "Bash(git status:*)",
+            "Bash(git log --grep=foo:*)",
+            "Bash(git -C /Users/me/repo/.claude/worktrees/* status:*)",
+        ):
+            with self.subTest(rule=rule):
+                self.assertIsNone(allowlist.guard_conflict(rule))
+
+    def test_a_bare_grep_grant_is_not_a_guard_conflict(self):
+        # `grep` is not `git grep`, and no guard blocks it. It is also
+        # acceptable to the safety floor by design (see firm_core's
+        # NO_BARE_WILDCARD note) — so nothing should flag it.
+        self.assertIsNone(allowlist.guard_conflict("Bash(grep:*)"))
+        self.assertIsNone(self._solo("Bash(grep:*)"))
+
+    def test_a_compound_grant_is_not_flagged(self):
+        # The compound guard takes a `#compound-ok` marker, so a rule granting
+        # a compound is not in conflict with it. Flagging those would bury the
+        # real finding in noise.
+        self.assertIsNone(allowlist.guard_conflict("Bash(ls && pwd:*)"))
+
+    def test_non_bash_rules_are_ignored(self):
+        self.assertIsNone(allowlist.guard_conflict("Read(/Users/me/x/**)"))
+        self.assertIsNone(allowlist.guard_conflict("not a rule at all"))
+
+    def test_it_precedes_the_path_verdict(self):
+        # The live entry carries an absolute worktree path, so a
+        # machine-path/stale verdict would otherwise mask the real finding.
+        rule = "Bash(git -C /Users/nobody/definitely-not-here/* grep:*)"
+        self.assertEqual(self._solo(rule)[0], "guard-conflict")
+
+    def test_a_missing_guard_degrades_to_no_finding(self):
+        # An audit tool must report what it can, not refuse to run because a
+        # hook was moved or renamed.
+        with mock.patch.object(allowlist, "_load_guard", return_value=None):
+            self.assertIsNone(allowlist.guard_conflict("Bash(git grep:*)"))
+
+    def test_the_shortlist_carries_it_with_its_own_category(self):
+        allow = ["Bash(make lint:*)", "Bash(git grep:*)"]
+        out = cruft(allow)
+        self.assertEqual([f["index"] for f in out["flagged"]], [1])
+        self.assertEqual(out["flagged"][0]["category"], "guard-conflict")
 
 
 class CruftTests(unittest.TestCase):
