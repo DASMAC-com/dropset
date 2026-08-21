@@ -516,12 +516,50 @@ PR-authoring **writes** (`create_pull_request`,
    `make lint` is the exception.** This is already prescribed
    above and is still the most-missed instruction in the step:
    one run paid ten full sweeps across ~5 fix-and-retry cycles
-   (≈5.3k) where a scoped per-hook re-run was the stated rule.
-   Re-run the hook that failed, over the paths you touched:
+   (≈5.3k) where a scoped per-hook re-run was the stated rule,
+   and a later one paid **thirteen (≈5.8k)** while editing this
+   very rule.
+
+   **The scoped form is one bare command — use it.** Restating
+   the rule is not the lever; thirteen sweeps happened *while
+   the rule was being read*. What made `make lint` the reflex
+   is that it needs no arguments, while the scoped form needed
+   a changed-file list assembled by hand. It doesn't any more:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- \
+     python3 .claude/tools/lint_paths.py --changed
+   ```
+
+   That lints exactly this branch's files — everything
+   differing from the merge-base with `origin/main`, plus
+   untracked-not-ignored paths. Append `-- <hook-id>` to
+   narrow to the hook that failed. There is no longer a
+   convenience argument for the full sweep, so treat one
+   outside the two checkpoints as a mistake.
+
+   The by-hand form still works and is what to reach for when
+   the paths you want are narrower than the branch:
 
    ```sh
    python3 .claude/tools/run_quiet.py -- pre-commit run <hook> --files <paths>
    ```
+
+   Note the cost here is **context in failure tails**, not
+   verbosity — every one of those sweeps was already wrapped
+   in `run_quiet`, so wrapping harder buys nothing. The only
+   lever is *fewer full sweeps*.
+
+   **A fast suite runs whole, through the wrapper — not per
+   module.** The same discipline on the other axis. For an
+   edit under `.claude/tools/`, the post-edit check is
+   `python3 .claude/tools/run_quiet.py -- make tools-tests`,
+   never a `-p test_X.py` discover run: measured, the narrow
+   form cost **32 calls / ≈7.1k** against **15 calls / 516
+   tokens** for the whole suite, and it missed two sibling
+   tests the edits had just broken. See
+   `docs/conventions/context-economy.md` → "When a suite is
+   fast enough to run whole".
 
    Take the full sweep once at the start, and once at the end
    to confirm green. Two corollaries:

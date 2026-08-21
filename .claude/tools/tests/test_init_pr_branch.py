@@ -14,17 +14,17 @@ from pathlib import Path
 import init_pr_branch as ipb
 
 PORCELAIN = """\
-worktree /Users/alex/repos/dropset
+worktree /repos/dropset
 HEAD 8fd8d470f85fe01073a417b25351c840df313c60
 branch refs/heads/main
 
-worktree /Users/alex/repos/dropset/.claude/worktrees/eng-603
+worktree /repos/dropset/.claude/worktrees/eng-603
 HEAD 8da1695aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 branch refs/heads/worktree-eng-603
 """
 
 PORCELAIN_NO_MAIN = """\
-worktree /Users/alex/repos/dropset/.claude/worktrees/eng-603
+worktree /repos/dropset/.claude/worktrees/eng-603
 HEAD 8da1695aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 branch refs/heads/eng-603
 """
@@ -32,7 +32,7 @@ branch refs/heads/eng-603
 
 class ParseBaseRepo(unittest.TestCase):
     def test_finds_main_worktree(self):
-        self.assertEqual(ipb.parse_base_repo(PORCELAIN), "/Users/alex/repos/dropset")
+        self.assertEqual(ipb.parse_base_repo(PORCELAIN), "/repos/dropset")
 
     def test_none_when_no_main(self):
         self.assertIsNone(ipb.parse_base_repo(PORCELAIN_NO_MAIN))
@@ -40,7 +40,7 @@ class ParseBaseRepo(unittest.TestCase):
     def test_detached_head_stanza_is_ignored(self):
         # A detached worktree has no `branch` line; it must not be misread as base.
         porcelain = "worktree /tmp/detached\nHEAD abc123\ndetached\n\n" + PORCELAIN
-        self.assertEqual(ipb.parse_base_repo(porcelain), "/Users/alex/repos/dropset")
+        self.assertEqual(ipb.parse_base_repo(porcelain), "/repos/dropset")
 
 
 class NormalizeTag(unittest.TestCase):
@@ -69,7 +69,7 @@ class NormalizeBranch(unittest.TestCase):
 
 
 class LinkEnv(unittest.TestCase):
-    """``--link-env``'s four outcomes, plus the never-clobber invariant.
+    """``--link-env``'s five outcomes, plus the never-clobber invariant.
 
     Each case builds a throwaway base repo / worktree pair on a real
     filesystem — ``os.symlink`` is the behavior under test, so it isn't mocked.
@@ -81,8 +81,9 @@ class LinkEnv(unittest.TestCase):
         root = Path(self._tmp.name)
         self.base = root / "base"
         self.worktree = root / "worktree"
-        (self.base / "frontend").mkdir(parents=True)
-        (self.worktree / "frontend").mkdir(parents=True)
+        for repo in (self.base, self.worktree):
+            (repo / "frontend").mkdir(parents=True)
+            (repo / "infra" / "localnet").mkdir(parents=True)
 
     @property
     def source(self) -> Path:
@@ -139,6 +140,30 @@ class LinkEnv(unittest.TestCase):
             os.readlink(self.dest), str(self.base / "frontend" / "gone.env")
         )
 
+    def test_links_the_secrets_enclave_file_too(self):
+        # The enclave file is a plain per-checkout path — nothing resolves it
+        # through a worktree to the main checkout the way settings.local.json
+        # is resolved, so the symlink is what gives it that resolution.
+        source = self.base / ipb._SECRETS_ENV_REL
+        dest = self.worktree / ipb._SECRETS_ENV_REL
+        source.write_text("DROPSET_OP_ACCOUNT=acct\n", encoding="utf-8")
+        self.assertEqual(
+            ipb.link_env(str(self.base), str(self.worktree), ipb._SECRETS_ENV_REL),
+            "created",
+        )
+        self.assertTrue(dest.is_symlink())
+        self.assertEqual(dest.read_text(encoding="utf-8"), "DROPSET_OP_ACCOUNT=acct\n")
+
+    def test_the_two_outcomes_are_independent(self):
+        # The whole reason for two keys: a machine that has never run the
+        # frontend has no .env.local, and that says nothing about the enclave.
+        (self.base / ipb._SECRETS_ENV_REL).write_text("K=v\n", encoding="utf-8")
+        self.assertEqual(ipb.link_env(str(self.base), str(self.worktree)), "no-source")
+        self.assertEqual(
+            ipb.link_env(str(self.base), str(self.worktree), ipb._SECRETS_ENV_REL),
+            "created",
+        )
+
 
 class MainCli(unittest.TestCase):
     """Drive ``main()`` through its ``--porcelain-file`` / ``--branch``
@@ -168,7 +193,7 @@ class MainCli(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(out["tag"], "eng-603")
         self.assertTrue(out["tag_valid"])
-        self.assertEqual(out["base_repo"], "/Users/alex/repos/dropset")
+        self.assertEqual(out["base_repo"], "/repos/dropset")
         self.assertEqual(out["normalized_branch"], "eng-603")
         self.assertTrue(out["rename_needed"])
 
@@ -178,22 +203,26 @@ class MainCli(unittest.TestCase):
         self.assertFalse(out["tag_valid"])
         self.assertIsNone(out["tag"])
 
-    def test_env_link_is_null_without_the_flag(self):
-        # The key is always present so the skill can read one stable shape.
+    def test_both_env_keys_are_null_without_the_flag(self):
+        # Both keys are always present so the skill can read one stable shape.
         _, out = self._run("eng-603", "worktree-eng-603", PORCELAIN)
         self.assertIn("env_link", out)
+        self.assertIn("secrets_env_link", out)
         self.assertIsNone(out["env_link"])
+        self.assertIsNone(out["secrets_env_link"])
 
     def test_env_link_reports_its_outcome_with_the_flag(self):
-        # End-to-end through the CLI: a temp base repo holding an env file, a
-        # temp worktree without one. The porcelain names that temp base, so
-        # the case never depends on a real checkout being present.
+        # End-to-end through the CLI: a temp base repo holding both operator
+        # files, a temp worktree with neither. The porcelain names that temp
+        # base, so the case never depends on a real checkout being present.
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp) / "base"
             worktree = Path(tmp) / "worktree"
-            (base / "frontend").mkdir(parents=True)
-            (worktree / "frontend").mkdir(parents=True)
+            for repo in (base, worktree):
+                (repo / "frontend").mkdir(parents=True)
+                (repo / "infra" / "localnet").mkdir(parents=True)
             (base / "frontend" / ".env.local").write_text("K=v\n", encoding="utf-8")
+            (base / ipb._SECRETS_ENV_REL).write_text("K=v\n", encoding="utf-8")
             porcelain = f"worktree {base}\nHEAD abc123\nbranch refs/heads/main\n"
             _, out = self._run(
                 "eng-603",
@@ -202,7 +231,9 @@ class MainCli(unittest.TestCase):
                 ["--link-env", "--worktree-root", str(worktree)],
             )
             self.assertEqual(out["env_link"], "created")
+            self.assertEqual(out["secrets_env_link"], "created")
             self.assertTrue((worktree / "frontend" / ".env.local").is_symlink())
+            self.assertTrue((worktree / ipb._SECRETS_ENV_REL).is_symlink())
 
     def test_env_link_reports_no_base_when_main_is_absent(self):
         # Isolate the root like every sibling case, so the run can never reach
@@ -215,13 +246,16 @@ class MainCli(unittest.TestCase):
                 ["--link-env", "--worktree-root", wt],
             )
         self.assertEqual(out["env_link"], "no-base")
+        self.assertEqual(out["secrets_env_link"], "no-base")
 
     def test_env_link_is_skipped_on_an_invalid_tag(self):
         # A run that fails validation stops the skill, so it must not leave a
-        # filesystem mutation behind.
+        # filesystem mutation behind — for either file.
         with tempfile.TemporaryDirectory() as wt:
             frontend = Path(wt) / "frontend"
             frontend.mkdir()
+            localnet = Path(wt) / "infra" / "localnet"
+            localnet.mkdir(parents=True)
             code, out = self._run(
                 "not-a-tag",
                 "eng-603",
@@ -230,7 +264,9 @@ class MainCli(unittest.TestCase):
             )
             self.assertEqual(code, 1)
             self.assertIsNone(out["env_link"])
+            self.assertIsNone(out["secrets_env_link"])
             self.assertFalse((frontend / ".env.local").exists())
+            self.assertFalse((localnet / "secrets.local.env").exists())
 
 
 if __name__ == "__main__":

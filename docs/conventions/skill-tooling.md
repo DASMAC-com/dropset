@@ -54,8 +54,10 @@ coupling skill tooling to the program's toolchain.
 
 Today `.claude/tools/` holds `session_metrics.py` (the
 `session-metrics` core), `init_pr_branch.py` (the `init-pr`
-branch/worktree checks **and**, under `--link-env`, the
-`frontend/.env.local` symlink — so it is not purely read-only),
+branch/worktree checks **and**, under `--link-env`, the two
+operator-file symlinks `frontend/.env.local` and
+`infra/localnet/secrets.local.env` — so it is not purely
+read-only),
 `run_quiet.py` (a generic quiet runner that captures a noisy command's
 output to a log and surfaces only a summary — see
 [context economy](context-economy.md)), `review_diff.py` (`review-pr`

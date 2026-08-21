@@ -19,15 +19,29 @@ It performs **no** git mutation — the one mutation, the branch rename, stays t
 skill's ``git branch -m`` call. ``--porcelain-file`` and ``--branch`` override
 the git reads (used by the tests, and handy for a dry run).
 
-With ``--link-env`` it also performs one **filesystem** mutation: symlinking
-this worktree's ``frontend/.env.local`` to the base repo's copy, so ``pnpm dev``
-picks up the same env without a manual copy (``.env*`` is gitignored, so the
-link is never tracked). That step used to be prose in the skill — a Glob pair
+With ``--link-env`` it also performs **filesystem** mutations: symlinking two
+operator-owned, git-ignored files from the base repo into this worktree, so
+neither has to be copied by hand. It never clobbers an existing path, and each
+file's outcome is reported separately, since a machine can legitimately have one
+and not the other:
+
+* ``frontend/.env.local`` (``env_link``) — so ``pnpm dev`` / ``make frontend``
+  pick up the same env;
+* ``infra/localnet/secrets.local.env`` (``secrets_env_link``) — the local
+  secrets enclave's one operator file, holding the vault name and one ``op://``
+  reference per credential. Unlike ``.claude/settings.local.json``, nothing
+  resolves this path through a worktree to the main checkout, so without the
+  link a fresh worktree has none and ``make fx-collectors-up`` there silently
+  falls back to whatever keys happen to be exported. Both consumers follow a
+  symlink: the ``Makefile``'s ``-include`` and its ``[ -f ]`` guard (``test -f``
+  follows links, unlike ``-h``), and ``op run --env-file``.
+
+That step used to be prose in the skill — a Glob pair
 plus a bare ``ln -s`` against an **absolute base-repo path**, which re-prompted
 the file-access gate on *every* bootstrap: the allow-rule would land in the new
 worktree's ``settings.local.json``, and every ``/init-pr`` runs in a brand-new
 worktree that has none. Folding it in here means the skill's single call carries
-no absolute path for that heuristic to gate. It never clobbers an existing file.
+no absolute path for that heuristic to gate.
 
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -48,9 +62,12 @@ _TAG_RE = re.compile(r"^eng-\d+$", re.IGNORECASE)
 # `eng-###` is what matches the Linear issue identifier.
 _WORKTREE_PREFIX = "worktree-"
 
-# The env file `--link-env` mirrors, relative to a repo root. Gitignored, so the
-# symlink is never tracked.
+# The files `--link-env` mirrors, relative to a repo root. Both are gitignored,
+# so neither symlink is ever tracked, and each is reported under its own key
+# because a machine can legitimately have one and not the other: the frontend
+# env is a dev convenience, the enclave file is credential resolution.
 _ENV_REL = os.path.join("frontend", ".env.local")
+_SECRETS_ENV_REL = os.path.join("infra", "localnet", "secrets.local.env")
 
 
 def parse_base_repo(porcelain: str) -> str | None:
@@ -99,19 +116,24 @@ def normalize_branch(branch: str) -> tuple[str, bool]:
     return branch, False
 
 
-def link_env(base_repo: str | None, worktree_root: str) -> str:
-    """Symlink ``frontend/.env.local`` in ``worktree_root`` to the base repo's
-    copy. Returns the outcome as one of five strings:
+def link_env(base_repo: str | None, worktree_root: str, rel: str = _ENV_REL) -> str:
+    """Symlink ``rel`` in ``worktree_root`` to the base repo's copy. Returns the
+    outcome as one of five strings:
 
     * ``"no-base"`` — no worktree has ``main`` checked out, so there is no base
       repo to link from;
     * ``"exists"`` — this worktree already has the path, so leave it alone (it
       may be a real file someone placed deliberately);
-    * ``"no-source"`` — nothing to link: the base repo has no env file, or this
-      worktree has no ``frontend/`` directory to link it into;
+    * ``"no-source"`` — nothing to link: the base repo has no such file, or this
+      worktree has no containing directory to link it into;
     * ``"created"`` — the symlink was created;
-    * ``"failed"`` — the symlink couldn't be created (an unwritable
-      ``frontend/``, a read-only mount, a racing writer).
+    * ``"failed"`` — the symlink couldn't be created (an unwritable parent
+      directory, a read-only mount, a racing writer).
+
+    Called once per mirrored file, so each gets its own outcome. That matters
+    because the two are independent: a machine that has never run the frontend
+    has no ``.env.local``, and one that has never touched the FX collectors has
+    no enclave file, and neither absence says anything about the other.
 
     Never clobbers: the ``"exists"`` check uses ``lexists``, so even a dangling
     symlink is left as found rather than replaced.
@@ -125,8 +147,8 @@ def link_env(base_repo: str | None, worktree_root: str) -> str:
     if base_repo is None:
         return "no-base"
 
-    source = os.path.join(base_repo, _ENV_REL)
-    dest = os.path.join(worktree_root, _ENV_REL)
+    source = os.path.join(base_repo, rel)
+    dest = os.path.join(worktree_root, rel)
 
     # `lexists`, not `exists`: a symlink whose target is gone still counts as
     # occupied — replacing it silently is exactly the clobber we're avoiding.
@@ -170,9 +192,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--link-env",
         action="store_true",
-        help="also symlink frontend/.env.local from the base repo into this "
-        "worktree (never clobbers an existing path, never raises); the outcome "
-        "is reported as `env_link` in the JSON",
+        help="also symlink frontend/.env.local and "
+        "infra/localnet/secrets.local.env from the base repo into this worktree "
+        "(never clobbers an existing path, never raises); the outcomes are "
+        "reported as `env_link` and `secrets_env_link` in the JSON",
     )
     parser.add_argument(
         "--worktree-root",
@@ -213,11 +236,14 @@ def main(argv: list[str] | None = None) -> int:
         "current_branch": branch.strip(),
         "normalized_branch": normalized_branch,
         "rename_needed": rename_needed,
-        # `null` when --link-env wasn't asked for, so the key's shape is
+        # `null` when --link-env wasn't asked for, so each key's shape is
         # stable. Also skipped on an invalid tag: that exits non-zero for the
         # skill to stop and ask, and a run that fails validation shouldn't
         # leave a filesystem mutation behind.
-        "env_link": link_env(base_repo, args.worktree_root)
+        "env_link": link_env(base_repo, args.worktree_root, _ENV_REL)
+        if args.link_env and tag is not None
+        else None,
+        "secrets_env_link": link_env(base_repo, args.worktree_root, _SECRETS_ENV_REL)
         if args.link_env and tag is not None
         else None,
     }
