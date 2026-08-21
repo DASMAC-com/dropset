@@ -2,6 +2,16 @@
 
 <!-- cspell:word backpressure -->
 
+<!-- cspell:word CLMM -->
+
+<!-- cspell:word EUROC -->
+
+<!-- cspell:word exchangerate -->
+
+<!-- cspell:word Stooq -->
+
+<!-- cspell:word XRPL -->
+
 <!-- cspell:word CoinGecko -->
 
 <!-- cspell:word stationarity -->
@@ -785,6 +795,177 @@ makes the join work: over 1608 overlapping minutes, `oanda` and
 (r = 0.993), which is the end-to-end check that both decoders and both
 timestamp paths are right.
 
+**The third intraday source already exists, and it is Pyth.** Read as
+a table of vendors, the roster above is two independent intraday
+sources with a daily-only third behind them — the stated two-source
+floor with no margin, and a two-input consensus can detect
+disagreement without being able to adjudicate it. That framing counts
+one source short of what is already wired. Pyth Hermes is keyless,
+intraday,
+publishes a confidence half-width, and is the one source designated
+believable on its own above. Where it is configured, the intraday
+composite already has **three** inputs, not two.
+
+What is short is *configuration*, not vendors. Hermes publishes 290 FX
+feeds; measured against the roster on 2026-08-21:
+
+| Currency | Pyth symbol  | Live   | Confidence | In maker config |
+| -------- | ------------ | ------ | ---------- | --------------- |
+| EUR      | `FX.EUR/USD` | yes    | 1.03 bps   | yes             |
+| GBP      | `FX.GBP/USD` | yes    | 1.03 bps   | yes             |
+| CHF      | `FX.USD/CHF` | yes    | 7.99 bps   | yes             |
+| ZAR      | `FX.USD/ZAR` | yes    | 2.94 bps   | yes             |
+| MXN      | `FX.USD/MXN` | yes    | 1.08 bps   | yes             |
+| SGD      | `FX.USD/SGD` | yes    | 4.65 bps   | yes             |
+| IDR      | `FX.USD/IDR` | yes    | 11.45 bps  | yes             |
+| AUD      | `FX.AUD/USD` | yes    | 1.39 bps   | **no**          |
+| BRL      | `FX.USD/BRL` | yes    | 10.48 bps  | **no**          |
+| CAD      | `FX.USD/CAD` | yes    | 7.70 bps   | **no**          |
+| JPY      | `FX.USD/JPY` | yes    | 0.57 bps   | **no**          |
+| TRY      | `FX.USD/TRY` | yes    | 3.27 bps   | **no**          |
+| MYR      | `FX.USD/MYR` | **no** | —          | no              |
+| NGN      | `FX.USD/NGN` | **no** | —          | no              |
+
+Two results carry. **A catalog entry is not a live feed**: MYR and NGN
+are both published in the FX catalog and both return a price of
+exactly zero at `publish_time` 0 — they have never published. Scoring
+coverage off the catalog gives 14/14; measured against actual publish
+times it is **12/14**, and the two that fail are the two thinnest
+currencies on the roster. **Five live feeds are unwired** — AUD, BRL,
+CAD, JPY and TRY publish now and are absent from
+`bots/maker-bot/src/config.rs`. Wiring them is a config change, not an
+adapter.
+
+So: wire those five, and treat **MYR and NGN as the roster's genuinely
+two-source currencies**. They are the only two depending on OANDA and
+Twelve Data alone, and therefore the only two where a further source
+would buy anything.
+
+**One caveat on independence, since the count invites more confidence
+than it earns.**
+Three vendors is not three uncorrelated looks at the market. Pyth's FX
+publishers are institutional feeds that may source the same interbank
+prices OANDA and Twelve Data do, so the composite's failure modes are
+correlated to a degree nothing here measures. Vendor diversity bounds
+*outage* and *decode* risk, which is most of what has actually gone
+wrong; it does not bound one bad interbank print propagating to all
+three alike.
+
+**Candidates probed and rejected**, recorded so the search is not
+repeated:
+
+| Source                | Intraday      | Verdict                                                                                                                                        |
+| --------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exchangerate.host`   | —             | a key is now required; the free keyless tier is gone                                                                                           |
+| `open.er-api.com`     | no            | reachable and keyless, but daily only — does not move the intraday floor                                                                       |
+| Stooq                 | claimed       | every quote URL 404s and the CSV endpoint serves a JavaScript bot challenge                                                                    |
+| Yahoo Finance `chart` | **yes, real** | 1124 bars at a 60s median gap, pricing AUD/USD in the range Pyth reports — but unofficial, and licensed for neither storage nor redistribution |
+
+Yahoo is the instructive rejection: it is the only keyless source
+probed that genuinely serves minute FX, so it fails on license rather
+than on capability, and this roster is chosen on the right to *store*
+history. Note also that it emits a gap-free minute grid padded with
+nulls — 1124 bars carrying 562 non-null closes — which makes it a grid
+source like Twelve Data, never a zero-bar session detector.
+
+### On-chain venue coverage, measured
+
+The principle below decides *whether* a venue earns a feed. This is the
+measurement it decides on: every roster stablecoin probed for its
+on-chain venues on **2026-08-21**, keyless, through GeckoTerminal's
+pool search — an aggregator in its sanctioned role of **venue
+discovery** only. It locates pools; nothing downstream quotes from it.
+
+Three caveats bound every figure here, and each one changed a reading
+rather than merely qualifying it:
+
+- **Totals are floors, not a census.** The search caps results per
+  query, so a widely-listed token is truncated.
+- **A shared ticker is not a shared token.** Matching is on symbol
+  *text*. Eleven Solana pools priced a mint other than the roster's;
+  all carried under $25/day, so the headline figures survive — but
+  `ZARU` does not. Both its pools were created within two days of the
+  probe, one is named `Zaru` rather than `ZARU`, and together they are
+  its entire apparent $24k/day. ZARU has **no genuine on-chain venue**.
+- **Depth without flow is not liquidity.** Fifteen pools hold $50k or
+  more against under $100/day. Two `EURCV` Solana pools report $66M of
+  reserve on $4/day and an `XSGD` pool $138M on $4 — all three on
+  non-roster mints, so they are valuation artifacts, not markets.
+
+| Token   | Ccy | 24h volume | Deepest venue        | Chain     | Solana 24h |
+| ------- | --- | ---------: | -------------------- | --------- | ---------: |
+| `EURC`  | EUR |   \$31.07M | Aerodrome Slipstream | Base      |    \$3.05M |
+| `XSGD`  | SGD |    \$1.89M | Aerodrome Slipstream | Base      |     \$3.4k |
+| `EURCV` | EUR |    \$1.73M | Uniswap v3           | Ethereum  |         ~0 |
+| `VCHF`  | CHF |     \$302k | ICPSwap / Raydium    | ICP       |     \$145k |
+| `AUDM`  | AUD |     \$156k | Uniswap v4           | Ethereum  |        \$0 |
+| `CADC`  | CAD |    \$71.8k | Aerodrome Slipstream | Base      |       none |
+| `AUDD`  | AUD |    \$32.7k | First Ledger         | XRPL      |       none |
+| `TGBP`  | GBP |    \$24.0k | Aerodrome Slipstream | Base      |       \$84 |
+| `MYRC`  | MYR |    \$23.4k | Uniswap v3           | Arbitrum  |    \$14.6k |
+| `IDRX`  | IDR |    \$15.8k | Aerodrome Slipstream | Base      |       \$68 |
+| `EURAU` | EUR |    \$15.3k | Aerodrome Slipstream | Base      |     \$2.3k |
+| `BRZ`   | BRL |    \$11.6k | Oku Trade            | Gnosis    |       none |
+| `cNGN`  | NGN |     \$5.7k | Uniswap v3           | Celo      |       none |
+| `ZARP`  | ZAR |      \$992 | Uniswap v3           | Ethereum  |        \$9 |
+| `MXNe`  | MXN |      \$124 | Orca                 | Solana    |      \$113 |
+| `VGBP`  | GBP |      \$111 | Raydium CLMM         | Solana    |      \$104 |
+| `GYEN`  | JPY |       \$73 | Uniswap v4           | Arbitrum  |       none |
+| `TRYB`  | TRY |        \$3 | Trader Joe           | Avalanche |       none |
+| `ZARU`  | ZAR |         ~0 | *no genuine listing* | —         |       none |
+
+**Two spec assumptions did not survive the measurement.** AUDD's
+"actual on-chain settlement venue" is Aerodrome by *depth* — $36.5k of
+reserve in AUDD/USDC against the XRPL pool's $3.0k — but not by
+*volume*: First
+Ledger's AUDD/XRP turns over $25.4k/day against Aerodrome's $5.7k
+combined. The claim is half right, and which half holds depends on
+whether the question is where AUDD *sits* or where it *moves*. And
+CADC, prioritized ahead of MXNe for this pass, has **no Solana pool at
+all** despite carrying a roster mint; 98% of its \$71.8k/day is one
+Aerodrome pool.
+
+**Three buckets, reasoning recorded.**
+
+1. **Basis-leg price input candidates** — `EURC`, `XSGD`, `EURCV`, and
+   marginally `VCHF`. These are the only tokens whose venues carry
+   enough turnover to inform a basis leg. `EURCV` qualifies with an
+   asterisk: its \$1.73M is mostly a `EUROC`/`EURCV` stable-to-stable
+   pair, which prices one euro token against another and so speaks to
+   a peg cross rather than to `token/fiat`. Cross-chain placement is
+   no bar here — a Base or XRPL venue can be an input without being a
+   competitor.
+1. **Competitive signal — already trading at scale on Solana.**
+   `EURC` above all: Orca's `EURC/USDC` does $3.05M/day across 12,836
+   transactions on $366k of reserve. `VCHF` follows at $145k/day, with
+   Raydium CLMM carrying $128k of it, then `MYRC`, whose \$14.6k is
+   about 62% of its entire global volume — the most Solana-native token
+   on the roster, at a trivial absolute size. This read routes to
+   customer development, not to the feed roster.
+1. **Ignorable** — the remaining thirteen, too thin to be either.
+
+**The earns-a-collector rule, stated.** A venue becomes an ingestion
+target only when its volume *and* depth make it a usable basis input
+under consensus weighting. A pool turning over tens of thousands a day
+is thin and manipulable: it earns little consensus weight, so
+collecting it must be justified by there being nothing better — never
+by the pool existing. Existence is the cheapest evidence available and
+this survey found it nearly everywhere.
+
+**The default expectation held.** On-chain volumes are small and
+FX-relative pricing dominates. Of nineteen roster stablecoins, three
+clear $1M/day, two more clear $150k, and \*\*twelve sit under $25k/day**
+— six of those under $1k, which is not a market so much as a listing.
+
+**Six markets have no measurable basis at all**, which generalizes the
+MXNe finding rather than repeating it. `ZARP`, `MXNe`, `VGBP`, `GYEN`,
+`TRYB` and `ZARU` each turn over under \$1k/day on-chain and reach no
+CEX, so their basis leg has neither a venue print nor a second opinion.
+An aggregator index is not merely uncorroborated for these — it is
+describing a market that barely trades. Treat a first-reading band
+breach on any of them as a configuration error before a market event,
+because no market event there is large enough to be the explanation.
+
 ### The venue principle
 
 **A venue gets a feed when its volume justifies the adapter**, and a
@@ -799,6 +980,30 @@ lagging, with Coinbase carrying the leading print — and the decoded-swap
 ingestion decision it would have forced (a decoded-data provider vs.
 archival-RPC decode) is moot with it. The same test applies uniformly to
 every other venue where a covered token trades.
+
+**Measured, that scrap needs restating on narrower grounds.** Orca's
+EURC/USDC is not thin: $3.05M/day on $366k of reserve, the largest EURC
+pool outside Base. The decision stands, but only on the *lagging* half
+— Coinbase carries the leading print, and a venue that follows adds
+nothing to a basis leg however much it turns over. Thinness was never
+the operative reason, and citing it invites a re-litigation the volume
+figure would win.
+
+**The EVM adapter question is closed as not-needed-now.** Aerodrome on
+Base is the roster's highest-coverage venue by a wide margin: the
+deepest venue for EURC, XSGD, CADC, TGBP, IDRX and EURAU, and AUDD's
+deepest USDC pool. If any single EVM adapter were ever built it is that
+one. It still is not, and the reason is the rule above rather than the
+cost. For EURC — the one token whose Aerodrome volume is unarguable —
+the basis leg is already carried by Coinbase and Kraken; for every
+other token Aerodrome's pools run from $70k/day down to $73/day, below
+the bar. Base is an EVM transport with **no reuse of the Solana RPC
+source**, so the adapter would buy a whole new transport for markets
+that cannot use it. Aerodrome is therefore covered for **monitoring**
+by the keyless polled analytics source this survey used, and quoting
+stays on CEX basis plus the FX anchor. Revisit when a roster token
+begins settling on Base at EURC's scale *without* a CEX to price it —
+that combination, not Base volume alone, is what would flip this.
 
 ______________________________________________________________________
 
@@ -1434,6 +1639,24 @@ ______________________________________________________________________
   also feed the store rather than only the maker. That is a latency
   question for the quote path, not a history question, and it waits on a
   consumer that needs sub-minute FX.
+
+  The related "is a third intraday source needed" question is
+  **resolved** (§9 "The free-tier FX roster"): Pyth is the third, it is
+  already wired, and the shortfall is five currency feeds left unwired
+  rather than a missing vendor. What that resolution leaves open is one
+  measurement, not a decision — **per-currency intraday coverage for
+  OANDA and Twelve Data across the roster** is verified only for AUD and
+  EUR. It needs one request per currency per vendor, and it is
+  **deferred rather than blocked**: the resolver in
+  `feeds/src/secrets.rs` reaches both keys today, given `DROPSET_OP_VAULT`
+  naming a vault and an authenticated `op`. What it wants is an
+  environment carrying that variable, which is a session-launch concern
+  and not a missing capability — the hosted Secrets Manager backend is
+  still pending, and nothing here waits on it.
+  Pyth's column of that matrix is measured and complete
+  above; the other two columns are the gap. Until they are filled, MYR
+  and NGN are the named at-risk currencies on the one column that could
+  be measured.
 
 - **Econ-calendar source.** Which static feed for the ECB / FOMC / CPI /
   NFP times.
