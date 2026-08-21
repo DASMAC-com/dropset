@@ -1472,11 +1472,14 @@ ______________________________________________________________________
   rather than a missing vendor. What that resolution leaves open is one
   measurement, not a decision — **per-currency intraday coverage for
   OANDA and Twelve Data across the roster** is verified only for AUD and
-  EUR. It needs one request per currency per vendor, so it is blocked
-  purely on credentials: `OANDA_API_KEY` and `TWELVEDATA_API_KEY` are
-  not resolved into a session environment by any current path, and the
-  FX vendor tier has never been wired into session-launch secret
-  resolution. Pyth's column of that matrix is measured and complete
+  EUR. It needs one request per currency per vendor, and it is
+  **deferred rather than blocked**: the resolver in
+  `feeds/src/secrets.rs` reaches both keys today, given `DROPSET_OP_VAULT`
+  naming a vault and an authenticated `op`. What it wants is an
+  environment carrying that variable, which is a session-launch concern
+  and not a missing capability — the hosted Secrets Manager backend is
+  still pending, and nothing here waits on it.
+  Pyth's column of that matrix is measured and complete
   above; the other two columns are the gap. Until they are filled, MYR
   and NGN are the named at-risk currencies on the one column that could
   be measured.
