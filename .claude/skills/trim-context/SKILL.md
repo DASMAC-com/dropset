@@ -78,6 +78,14 @@ python3 .claude/tools/trim_levers.py list
 
 If nothing is parked, report that and stop; there is no fold to do.
 
+That stop condition is **reachable**, which it once was not. `list`
+filters to **open** levers, not merely milestoned ones, so a lever closed
+as a recorded rejection drops out of the pool. Before that filter the
+pool always looked non-empty once any rejection existed — one real run
+returned 12 rows of which **9 were canceled rejections**, and only 3 were
+foldable — so this step could never fire and step 2 was invited to fold
+settled work.
+
 **2. Read only the bodies you are going to fold.** The listing gives you
 each lever's identifier, title and state. Decide from the titles which
 levers this pass folds, then read *those* bodies and no others. A parked
@@ -194,6 +202,17 @@ without it a later pass has a closed issue and no argument. This is the
 mechanism that replaces the old "not-a-trim register" idea — the register
 falls out of the lifecycle rather than being a separate artifact anyone
 has to maintain.
+
+**Clear the milestone here too, exactly as step 5 does** — so the
+`reject.json` above carries `{"state": "Canceled", "milestone": null}`,
+not the state alone. The milestone means **"awaiting a fold"**, and a
+rejected lever is not awaiting one; leaving it stamped made the two
+steps disagree about what the milestone was for. Permanence does not
+depend on it either way: the fingerprint probe searches resolved and
+archived issues, so the rejection sticks whether or not the milestone
+is still attached. (`trim_levers.py list` now also filters to open
+levers, so a still-stamped rejection no longer pollutes the pool — but
+that is the backstop, not the reason. Both halves should agree.)
 
 Reject on evidence, not on taste. Recorded rejections worth knowing
 about, each measured: narrowing a planning board read (2–3k against 87.6k

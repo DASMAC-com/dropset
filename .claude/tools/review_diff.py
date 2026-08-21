@@ -32,7 +32,8 @@ Options: ``--base`` (default ``main``), ``--out`` (where the diff is written —
 required except with ``--print-grep-excludes``), ``--no-fetch`` (skip the network
 fetch and read the local ref), ``--split`` (also write per-lens
 ``source`` / ``tests`` / ``docs`` slices beside the diff, reported under
-``slices``), ``--print-grep-excludes`` (print the exclude flags a hoisted
+``slices``), ``--gate-only`` (emit just the verdict fields — for a mid-review
+re-check), ``--print-grep-excludes`` (print the exclude flags a hoisted
 repo-wide grep should reuse, and exit).
 
 Prints JSON::
@@ -65,6 +66,15 @@ it can never drift from the reasons. Four things block:
 * something changed but every changed path is an excluded generated family, so
   there is no source to review (the step 9/10 gates still apply — this is
   reported as its own reason rather than as "nothing to review").
+
+``--gate-only`` keeps the verdict fields and drops the inventory (``commits``,
+``files``, ``slices``, ``diff_path``, ``diff_lines``). The full payload is what a
+**fan-out** needs; a mid-review *re-check* consumes only ``base_fresh`` /
+``ready`` / ``blockers``, and one measured run printed a 70-file ``files`` array
+to answer exactly that — for a diff that had just been rebased away. The gating
+still runs in full and the exit status is unchanged; only the projection
+narrows. Making the re-check nearly free is the point, because a check that
+costs a payload is a check that quietly stops being run.
 
 Standard library only. A Python skill-tool under ``.claude/tools/`` —
 deliberately **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill
@@ -610,6 +620,42 @@ def gate(base: str, out: Path, fetch: bool = True, split: bool = False) -> dict:
     return verdict
 
 
+# The fields a freshness re-check actually consumes. Everything else in the
+# verdict is inventory for the fan-out.
+GATE_ONLY_FIELDS = (
+    "base",
+    "base_ref",
+    "fetched",
+    "fetch_error",
+    "base_fresh",
+    "base_ahead",
+    "diff_empty",
+    "ready",
+    "blockers",
+)
+
+
+def gate_only(verdict: dict) -> dict:
+    """``verdict`` reduced to the fields that answer "may I proceed?".
+
+    The mid-review freshness re-checks the skill prescribes read `base_fresh`,
+    `ready` and `blockers` and nothing else — but the full verdict carries the
+    whole `files` array, which on a 70-file branch is the bulk of the payload.
+    One measured run printed all 70 entries on a re-check whose only consumed
+    fields were those three, for a diff that had just been rebased away.
+
+    The point is not the bytes on that one call: it is that a check nobody wants
+    to pay for is a check that stops being run. Making it nearly free is what
+    makes it actually happen, which is the real payoff.
+
+    `base_ahead` and `fetch_error` come along because they are the *reasons*
+    behind a verdict, and both are short (a commit list that is empty on the
+    happy path, and a string that is normally absent). `commits` and `files` do
+    not: they are unbounded in the branch's size.
+    """
+    return {k: verdict[k] for k in GATE_ONLY_FIELDS if k in verdict}
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="review_diff.py")
     parser.add_argument("--base", default="main", help="base branch (default main)")
@@ -625,6 +671,12 @@ def run(argv: list[str]) -> int:
         "--split",
         action="store_true",
         help="also write per-lens source/tests/docs slices beside the diff",
+    )
+    parser.add_argument(
+        "--gate-only",
+        action="store_true",
+        help="emit just the verdict fields (base freshness, ready, blockers) — "
+        "for a mid-review re-check that consumes no inventory",
     )
     parser.add_argument(
         "--print-grep-excludes",
@@ -643,7 +695,10 @@ def run(argv: list[str]) -> int:
         raise ReviewDiffError("--out is required (except with --print-grep-excludes)")
 
     verdict = gate(args.base, Path(args.out), fetch=not args.no_fetch, split=args.split)
-    json.dump(verdict, sys.stdout, indent=2)
+    # Narrow AFTER gating, never instead of it: the exit status below and the
+    # blockers both have to reflect the full computation, so --gate-only is a
+    # projection of the answer and not a cheaper way of reaching one.
+    json.dump(gate_only(verdict) if args.gate_only else verdict, sys.stdout, indent=2)
     sys.stdout.write("\n")
     # Exit non-zero when the gate says don't fan out, so a caller that only
     # checks the status still can't proceed on a stale base.
