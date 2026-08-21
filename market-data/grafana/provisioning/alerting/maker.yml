@@ -225,11 +225,13 @@ groups:
   # The operator needs to know it happened, not only that it is still
   # happening.
   #
-  # Scoped to `degraded` and `Halt` to match the deliverable. The other
-  # not-quoting outcomes — `Pause`, `Frozen`, `TickError` — deliberately do
-  # not page: `Pause` is already implied by the feed-stale rule that causes
-  # it, and all three are on the tick-outcome timeline. Adding them here
-  # would mean one incident paging twice.
+  # Scoped to `degraded` and `Halt` to match the deliverable. Two of the
+  # other not-quoting outcomes deliberately do not page here: `Pause` is
+  # already implied by the feed-stale rule that causes it, and `Frozen` is
+  # operator-initiated, so both would mean one incident paging twice. A tick
+  # *failure* is a different case and gets its own rule below — folding it in
+  # here would conflate "the strategy took a risk action" with "the bot is
+  # broken", which want different responses.
   - annotations:
       description: >-
         A market ran degraded or hit a kill-switch halt in the last five
@@ -303,4 +305,90 @@ groups:
     noDataState: 'OK'
     title: 'Market degraded or halted'
     uid: 'maker-degraded-or-halt'
+  # Ticks failing, per market. The gap the three rules above leave open: a
+  # market whose vault read times out on every tick still writes a row every
+  # tick, so the heartbeat is alive; its feeds are healthy, so the feed-stale
+  # rule is quiet; and it never reaches the kill-switch policy, so `degraded`
+  # is false and `action` is never `Halt`. It quotes nothing and pages
+  # nobody, which is the worst shape an operations view can have.
+  #
+  # Keyed on `tick_error IS NOT NULL` rather than on `action = 'TickError'`,
+  # deliberately: a tick that decided and *then* failed keeps its decision in
+  # `action`, so the label and the column do not partition and matching the
+  # label would miss every failure that rode along with a real decision.
+  #
+  # Set at more than half the window's ticks rather than at any single
+  # failure, because one RPC timeout is ordinary and self-heals
+  # on the next tick. At a 5 s tick a 300 s window holds ~60 ticks, so this
+  # asks for a market that is failing persistently rather than blipping.
+  - annotations:
+      description: >-
+        A market's ticks are failing persistently — more than half of the
+        last five minutes. The bot is running and writing telemetry, but it
+        is not quoting, and no other rule covers this. The recent tick
+        errors table shows what it is failing with.
+      summary: 'A market is failing its ticks and not quoting'
+    condition: 'C'
+    data:
+    - datasourceUid: 'dropset-postgres'
+      model:
+        editorMode: 'code'
+        format: 'table'
+        intervalMs: 60000
+        maxDataPoints: 1
+        rawQuery: true
+        rawSql: |-
+          SELECT
+          market,
+          (count(*) FILTER (WHERE tick_error IS NOT NULL))::double precision
+          / greatest(count(*), 1) AS failing_fraction
+          FROM maker_telemetry
+          WHERE ts > extract(epoch FROM now()) - 300
+          GROUP BY market
+        refId: 'A'
+      refId: 'A'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        expression: 'A'
+        reducer: 'last'
+        refId: 'B'
+        type: 'reduce'
+      refId: 'B'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        conditions:
+        - evaluator:
+            params:
+            - 0.5
+            type: 'gt'
+          operator:
+            type: 'and'
+          query:
+            params:
+            - 'B'
+          reducer:
+            type: 'last'
+          type: 'query'
+        expression: 'B'
+        refId: 'C'
+        type: 'threshold'
+      refId: 'C'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    execErrState: 'Error'
+    # A short hold on top of the window: the query already establishes
+    # persistence, and this keeps a restart's first few ticks from paging.
+    for: '5m'
+    # A bot that is not writing at all is the heartbeat rule's business, not
+    # this one's — so no rows means nothing to say here.
+    noDataState: 'OK'
+    title: 'Market failing its ticks'
+    uid: 'maker-tick-failing'
 ...

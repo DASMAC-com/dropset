@@ -38,6 +38,12 @@ use tokio::sync::mpsc;
 /// hand" constants is how they drift. Note this is a **character** count, so
 /// worst-case UTF-8 is ~4× this many bytes: the destination wants `TEXT`, not
 /// a `varchar(500)`.
+///
+/// It bounds the text a truncated payload *carries*, not the string's total
+/// length: the ellipsis is appended after the cut, so a truncated value is
+/// `MAX_ERROR_CHARS + 1` characters. Stated because the paragraph above
+/// invites sizing a column from it, and a `varchar` sized to exactly this
+/// would reject every truncated error.
 pub const MAX_ERROR_CHARS: usize = 500;
 
 /// How many consecutive drops pass before the reporter says so. A full channel
@@ -49,6 +55,16 @@ pub const MAX_ERROR_CHARS: usize = 500;
 /// number in the log is the length of the current outage rather than a
 /// lifetime total of unrelated blips.
 const DROP_REPORT_EVERY: u64 = 100;
+
+/// The shortest gap between two "updates dropped" warnings, in seconds.
+///
+/// The count-based damping above handles a *sustained* outage, but not a
+/// flapping one: the counter resets on every success, so a drain hovering at
+/// the edge of its write timeout scores `dropped == 1` on every turn and
+/// earns the first-of-a-run line every time — a warning plus a recovery line
+/// per tick, forever, which is the volume the damping exists to prevent. A
+/// wall-clock floor bounds the flapping case without going silent on it.
+const MIN_WARN_INTERVAL_SECS: i64 = 60;
 
 /// What the most recent turn of a feed's drive loop did.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,6 +110,23 @@ pub struct HealthUpdate {
 pub struct HealthReporter<R> {
     tx: mpsc::Sender<R>,
     dropped: u64,
+    /// Whether the permanent-closure line has been said.
+    ///
+    /// Separate from `dropped` on purpose. Latching that line on
+    /// `dropped == 0` looks equivalent and is not: a full channel increments
+    /// the same counter, so a drain that first falls *behind* and then *dies*
+    /// — the overwhelmingly likely order, since a drain slow enough to fill
+    /// the channel is the one most likely to fail next — arrives at the
+    /// `Closed` arm with a non-zero count and says nothing at all. The
+    /// operator's last line then reads "the drain is behind", meaning
+    /// transient backlog, while the true state is permanent loss.
+    closed_reported: bool,
+    /// Epoch second of the last drop warning, for [`MIN_WARN_INTERVAL_SECS`].
+    last_warn_at: i64,
+    /// Whether the current run of drops was actually warned about, so the
+    /// recovery line only speaks when there is something to recover *from*
+    /// that the operator was told about.
+    warned: bool,
 }
 
 impl<R> HealthReporter<R> {
@@ -101,7 +134,13 @@ impl<R> HealthReporter<R> {
     /// drops rather than waits, which is the property that keeps a slow drain
     /// off the drive loop.
     pub fn new(tx: mpsc::Sender<R>) -> Self {
-        Self { tx, dropped: 0 }
+        Self {
+            tx,
+            dropped: 0,
+            closed_reported: false,
+            last_warn_at: 0,
+            warned: false,
+        }
     }
 }
 
@@ -115,23 +154,36 @@ impl<R: From<HealthUpdate>> HealthReporter<R> {
         match self.tx.try_send(R::from(update)) {
             Ok(()) => {
                 if self.dropped > 0 {
-                    tracing::info!(
-                        recovered_after = self.dropped,
-                        "feed health updates flowing again"
-                    );
+                    // Only if the run was actually warned about — otherwise a
+                    // flapping drain earns a recovery line for an outage the
+                    // operator was never told had started.
+                    if self.warned {
+                        tracing::info!(
+                            recovered_after = self.dropped,
+                            "feed health updates flowing again"
+                        );
+                    }
                     self.dropped = 0;
+                    self.warned = false;
                 }
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.dropped = self.dropped.saturating_add(1);
                 // Permanent: no later turn can succeed, so say it once rather
-                // than one line per N turns forever.
-                if self.dropped == 0 {
+                // than one line per N turns forever. Latched on its own flag,
+                // not on `dropped` — see the field's comment for why sharing
+                // the counter silences exactly the case that most needs a
+                // line. Carries the count, so a `Closed` that follows a
+                // `Full` run reports the whole outage rather than just its
+                // tail.
+                if !self.closed_reported {
+                    self.closed_reported = true;
                     tracing::warn!(
+                        dropped = self.dropped,
                         "the feed health drain is gone — health updates will \
                          be dropped for the life of this process"
                     );
                 }
-                self.dropped = self.dropped.saturating_add(1);
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.dropped = self.dropped.saturating_add(1);
@@ -139,8 +191,15 @@ impl<R: From<HealthUpdate>> HealthReporter<R> {
                 // `BestEffortSink`, whose reasoning is that the first line and
                 // the recovery line are the two that carry information. The
                 // counter is a *consecutive* run, reset above on success, so
-                // the number in the log means what it says.
-                if self.dropped == 1 || self.dropped.is_multiple_of(DROP_REPORT_EVERY) {
+                // the number in the log means what it says — and the
+                // wall-clock floor keeps a flapping drain, which scores
+                // `dropped == 1` every turn, from earning that line every
+                // turn.
+                let now = now_secs();
+                let due = self.dropped == 1 || self.dropped.is_multiple_of(DROP_REPORT_EVERY);
+                if due && now.saturating_sub(self.last_warn_at) >= MIN_WARN_INTERVAL_SECS {
+                    self.last_warn_at = now;
+                    self.warned = true;
                     tracing::warn!(
                         dropped = self.dropped,
                         "feed health updates dropped — the telemetry drain is \
@@ -331,6 +390,66 @@ mod tests {
         // A consumer that has gone away must not be able to fail a feed.
         reporter.on_batch("frankfurter", &stats(1, true));
         assert_eq!(reporter.dropped, 1);
+        assert!(reporter.closed_reported, "the permanent case must be said");
+    }
+
+    /// A drain that falls behind and *then* dies is the likely order — the
+    /// drain slow enough to fill the channel is the one most likely to fail
+    /// next — and it is the case a shared latch silences: the `Closed` arm
+    /// would see a non-zero drop count and say nothing, leaving "the drain is
+    /// behind" (transient) as the operator's last word on permanent loss.
+    #[tokio::test]
+    async fn a_full_run_does_not_swallow_the_permanent_closure_line() {
+        let (tx, rx) = mpsc::channel::<Record>(1);
+        let mut reporter = HealthReporter::new(tx);
+
+        // Fall behind first: capacity 1, so the surplus drops and the counter
+        // leaves zero behind.
+        for _ in 0..3 {
+            reporter.on_batch("kraken", &stats(1, true));
+        }
+        assert_eq!(reporter.dropped, 2);
+        assert!(!reporter.closed_reported, "still merely behind");
+
+        // Then the drain dies.
+        drop(rx);
+        reporter.on_batch("kraken", &stats(1, true));
+
+        assert!(
+            reporter.closed_reported,
+            "a preceding Full run must not suppress the permanent line"
+        );
+        // And the count carries the whole outage, not just its tail.
+        assert_eq!(reporter.dropped, 3);
+    }
+
+    /// The count-based damping resets on every success, so a flapping drain
+    /// scores `dropped == 1` every turn and would earn the first-of-a-run
+    /// warning every turn. The wall-clock floor is what bounds it.
+    #[tokio::test]
+    async fn a_flapping_drain_is_warned_about_once_not_every_turn() {
+        let (tx, mut rx) = mpsc::channel::<Record>(1);
+        let mut reporter = HealthReporter::new(tx);
+
+        // First drop of the first run: warned, and the clock is stamped.
+        reporter.on_batch("oanda", &stats(1, true));
+        reporter.on_batch("oanda", &stats(1, true));
+        assert!(reporter.warned);
+        let stamped = reporter.last_warn_at;
+
+        // Drain, then flap again inside the interval.
+        assert!(rx.try_recv().is_ok());
+        reporter.on_batch("oanda", &stats(1, true));
+        assert_eq!(reporter.dropped, 0, "the success reset the run");
+        assert!(!reporter.warned, "and cleared the outstanding warning");
+
+        reporter.on_batch("oanda", &stats(1, true));
+        assert_eq!(reporter.dropped, 1, "a fresh first-of-run drop");
+        assert!(
+            !reporter.warned,
+            "but inside MIN_WARN_INTERVAL_SECS it stays quiet"
+        );
+        assert_eq!(reporter.last_warn_at, stamped, "and does not re-stamp");
     }
 
     /// The health path must NOT blanket-strip query strings, because the
