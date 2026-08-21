@@ -149,6 +149,42 @@ mod tests {
         assert_eq!(flush_level_price(reference, PPM as u32, false), Price::ZERO);
     }
 
+    /// The `PPM` clamp above removes only the degenerate "100% or more"
+    /// case: one ppm below it, a bid still materializes as a live,
+    /// matchable price six decades under the reference. The architecture
+    /// spec's **SetReferencePrice** leans on this to say the arithmetic
+    /// clamps bound neither side's distance from the market, so pin it
+    /// rather than leaving the claim to prose.
+    #[test]
+    fn flush_bid_just_under_ppm_stays_in_the_book() {
+        let reference = Price::encode(10_850_000, 0).unwrap();
+        let bid = flush_level_price(reference, PPM as u32 - 1, false);
+        assert!(
+            bid.is_matchable(),
+            "a 999_999 ppm bid must stay in the book, got {bid:?}"
+        );
+        assert!(bid < reference);
+        // ~1.085 collapses to ~1e-6, i.e. far below a mere 1e5 divisor.
+        assert!(bid.to_f64() < reference.to_f64() / 100_000.0);
+    }
+
+    /// The ask side saturates where the bid side does not: the factor is
+    /// `(PPM + offset) / PPM`, so even a `u32::MAX` offset tops out near
+    /// 4295x the reference. Pinned beside the bid case because the spec
+    /// contrasts the two — bids reach the farther of the two in ratio
+    /// terms, and a regression either way would falsify that text.
+    #[test]
+    fn flush_ask_offset_saturates_near_4295x() {
+        let reference = Price::encode(10_000_000, 0).unwrap();
+        let ask = flush_level_price(reference, u32::MAX, true);
+        assert!(ask.is_matchable(), "the saturated ask must stay encodable");
+        let ratio = ask.to_f64() / reference.to_f64();
+        assert!(
+            ratio > 4_290.0 && ratio < 4_300.0,
+            "ask ceiling drifted, ratio was {ratio}"
+        );
+    }
+
     #[test]
     fn fill_cap_bounds() {
         assert_eq!(level_fill_atoms(BPS as u16, 1_000_000), Some(1_000_000));

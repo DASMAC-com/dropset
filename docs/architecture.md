@@ -1605,17 +1605,23 @@ price truth this design refuses on purpose (the leader's stamp *is* the
 price datum). Nor does anything off-chain substitute for one: the maker
 bot's peg band and degraded-regime behavior are the bot policing *itself*,
 so they discipline an honest leader's own quoting and place no limit
-whatever on a buggy or malicious one. Only the arithmetic clamps apply: a
-bid offset at or above `1e6` ppm floors to `Price::ZERO` and drops out of
-the book, as does any ask whose materialized price is unrepresentable, so
-the far-out surface is ask-only.
+whatever on a buggy or malicious one. The arithmetic clamps remove only
+the degenerate cases and bound neither side's distance from the market: a
+bid offset at or above `1e6` ppm — a markdown of 100% or more — floors to
+`Price::ZERO` and leaves the book, and a materialized price that escapes
+the encoding does likewise on either side. Below that threshold both sides
+quote arbitrarily far out, and in ratio terms **bids reach farther than
+asks**: an ask factor tops out at `(1e6 + u32::MAX)/1e6`, roughly 4295
+times the reference, while a bid offset of `999_999` ppm prices a level six
+decades under it and still materializes as valid and matchable.
 
 What bounds the loss is **taker consent**, applied downstream in three
-independent layers — the per-level limit-price filter, the price-time walk
-that sorts a far-out level to the tail (reached only once everything better
-is exhausted), and the `min_out` soft-revert. A leader who misprices their
-own pooled inventory harms themselves; a taker who crosses a bad level
-chose to.
+layers — the per-level limit-price filter, the price-time walk that sorts a
+far-out level to the tail (reached only once everything better is
+exhausted), and the `min_out` soft-revert. The first two both key on price,
+so only `min_out` is a genuinely separate instrument. A leader who
+misprices their own pooled inventory harms themselves; a taker who crosses
+a bad level chose to.
 
 The invariant that follows binds every future consumer of a level price:
 **never derive a value bound from a level's own price — only from a price
@@ -1624,9 +1630,9 @@ the taker-consent argument above holds only for value moving through the
 priced fill; anything debited *outside* that path escapes all three layers.
 The exact-in walk obeys the invariant by giving `LegFill::Exhausted` no
 residue field at all: that arm fires precisely when the taker receives
-nothing, so the level's price is not one they accepted and `min_out` is no
-defense, since residue never reduces output. See **Fill semantics — the
-take is exact-in**.
+nothing *at that level*, so its price is not one they accepted and
+`min_out` is no defense, since residue never reduces output. See **Fill
+semantics — the take is exact-in**.
 
 Reads `market.nonce`, writes `Vault.reference_price` as the `stamp`
 (`market.nonce | FLUSH_BIT`) plus the three payload `u32`s — `price`,

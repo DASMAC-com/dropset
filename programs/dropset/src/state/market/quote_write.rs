@@ -117,9 +117,14 @@ const _: () = assert!(RP_STAMP_OFF == 0);
 ///   leader publishes. `stamp_reference_price` stores `price` raw and
 ///   `write_liquidity_profile` copies the ladder verbatim, so a leader
 ///   may anchor anywhere in the representable `Price` range (~1e-16 to
-///   ~1e16) and offset any level by up to `u32::MAX` ppm. Deliberate,
-///   and **not fixable by a write-time band**: `Level::price_offset` is
-///   measured from a reference price the *same* leader chooses, so
+///   ~1e16) and offset any level by up to `u32::MAX` ppm. The offset's
+///   *effect* saturates — asks top out near 4295 times the reference,
+///   and a bid at or above `1e6` ppm floors to `Price::ZERO` and leaves
+///   the book — but the anchor does not, so neither side's distance from
+///   the market is bounded, and in ratio terms bids reach the farther of
+///   the two. Deliberate, and **not fixable by a write-time band**:
+///   `Level::price_offset` is measured from a reference price the *same*
+///   leader chooses, so
 ///   bounding the offset bounds the ladder's *shape*, not its distance
 ///   from the market — a leader wanting to quote far out just stamps a
 ///   far-out reference instead. A band that bit would need an external
@@ -132,8 +137,9 @@ const _: () = assert!(RP_STAMP_OFF == 0);
 ///   own price, only from a price the taker demonstrably accepted**. The
 ///   exact-in walk obeys it by giving `LegFill::Exhausted` no residue
 ///   field at all (see `swap.rs`): that arm fires when the taker
-///   receives nothing, so the price is not one they accepted and
-///   `min_out` is no defense, since residue never reduces output.
+///   receives nothing *at that level*, so its price is not one they
+///   accepted and `min_out` is no defense, since residue never reduces
+///   output.
 ///
 /// Runs before any mutation, so a rejected call leaves `data` untouched.
 #[inline(always)]
