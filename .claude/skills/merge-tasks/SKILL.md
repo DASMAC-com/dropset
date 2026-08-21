@@ -1,6 +1,6 @@
 ---
 name: merge-tasks
-description: Consolidate several Linear issues into one, given their numbers. Folds each non-survivor's body into the lowest-numbered survivor as a labeled # Part section (preserving every Fingerprint), unions the Touches globs, carries relatedTo append-only while surfacing every inherited blockedBy/blocks as a proposal for the user to approve (blocking is human-curated), applies the Claude: prefix when every issue is meta-work, cancels the folded issues as duplicateOf the survivor, and records the survivor's file collisions via sync-blockers `--for`. Confirms the plan via AskUserQuestion before any write. The deterministic parsing/assembly lives in the merge_tasks.py tool.
+description: Consolidate several Linear issues into one, given their numbers. Folds each non-survivor's body into the lowest-numbered survivor as a labeled # Part section (preserving every Fingerprint), unions the Touches globs, carries relatedTo append-only while surfacing every inherited blockedBy/blocks as a proposal for the user to approve (blocking is human-curated), applies the Claude: prefix when every issue is meta-work, and cancels the folded issues as duplicateOf the survivor. Files no collision links — the automated file-overlap machinery is retired. Confirms the plan via AskUserQuestion before any write. The deterministic parsing/assembly lives in the merge_tasks.py tool.
 user-invocable: true
 ---
 
@@ -215,7 +215,7 @@ approval:
   **Fall back to wholesale** when `patch_ops_path` is `null`:
   `Read` `description_path` and pass its contents as
   `description`. `patch_fallback_reason` says why the anchor
-  couldn't be made safe; relay it in the step-7 report so a
+  couldn't be made safe; relay it in the step-6 report so a
   recurring cause (e.g. survivors accumulating a second
   `**Touches**:` line) is visible rather than silent.
 
@@ -223,34 +223,18 @@ approval:
   with `state: "Canceled"` and `duplicateOf: "<survivor>"`,
   so the board shows it folded into the survivor.
 
-**6. Record the survivor's file collisions.** The survivor's
-`**Touches**:` is now the union of every folded issue's, so
-run the incremental sweep on it to `related`-link any new
-collision against the open Backlog — one bare command that
-reduces to the
-`Bash(python3 .claude/tools/sync_blockers.py:*)`
-allow-rule:
+**6. Report.** One line: the survivor (with its final
+title), the issues folded in and canceled, and which
+inherited blocking edges were carried (and which were left
+as prose).
 
-```sh
-python3 .claude/tools/sync_blockers.py --for <survivor>
-```
-
-Best-effort: it needs `LINEAR_API_KEY` / `LINEAR_PROJECT_ID`;
-if either is unset, note it and continue. The canceled
-non-survivors drop out of the open Backlog on their own, so
-their stale links no longer matter.
-
-This files **no blocking edge**; each collision prints the
-paths the pair collides on. Expect **more** of them after a
-merge than at first filing, since the survivor's
-`**Touches**:` union is wider than any one folded issue's.
-**Relay those lines** in the report below — they name the
-next candidates for consolidation.
-
-**7. Report.** One line: the survivor (with its final
-title), the issues folded in and canceled, which inherited
-blocking edges were carried (and which were left as prose),
-and the collisions recorded.
+**No collision step.** The survivor's `**Touches**:` is now
+the union of every folded issue's, which is wider than any
+one of them — but nothing records overlap: the automated
+file-collision machinery is retired. A wider union is worth
+mentioning in the report as prose, since it is a signal for
+the next consolidation pass, but it produces no relation
+write. Reconciling overlap is planning-session work.
 
 ## Notes
 
@@ -265,9 +249,9 @@ and the collisions recorded.
   enforced by the `cross_area` warning in step 4: don't
   confirm a merge that mixes unrelated surfaces.
 - **Read-only with respect to source.** This skill writes
-  only to Linear (the survivor update, the cancellations,
-  and the survivor's `sync-blockers` overlap edges). It
-  authors no code or skill diff, and never commits or pushes.
+  only to Linear (the survivor update and the
+  cancellations). It authors no code or skill diff, and
+  never commits or pushes.
 - **Shell discipline** (per `docs/conventions/shell-commands.md`):
   every command is a single bare call that reduces to an
   allow-glob — the tool calls match

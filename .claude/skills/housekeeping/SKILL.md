@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (one aggregated propose-only task), propose merges among `Claude:`-prefixed meta-work issues only, then execute the Planning document's audit directive — one scoped audit-scope run on the named target, or no audit at all when the directive says none, which is stated in the report rather than silently skipped (`no-audit` skips regardless; the full random rotation survives only as an explicit ad-hoc /audit). Findings file parked in Todo under the Audit findings milestone. Session-metrics and the purge dry-run then always run, sequenced after the audit. It does NOT analyze the board and files no collision links: collision sweeps, Backlog-wide merge groups, and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (one aggregated propose-only task), propose merges among `Claude:`-prefixed meta-work issues only, then execute the Planning document's audit directive — one scoped audit-scope run on the named target, or no audit at all when the directive says none, which is stated in the report rather than silently skipped (`no-audit` skips regardless; the full random rotation survives only as an explicit ad-hoc /audit). Findings file parked in Todo under the Audit findings milestone. Session-metrics and the purge dry-run then always run, sequenced after the audit. It does NOT analyze the board and files no collision links at all (that machinery is retired): Backlog-wide merge groups and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -47,9 +47,10 @@ committed skills and upgrades the Claude Code CLI
 1. **Purge-conversations dry run** — in-pass and read-only;
    only the destructive apply rides the closing gate.
 
-**It does not analyze the board.** No collision sweep, no
-Backlog-wide merge-group scan, no scheduling-smell report:
-those belong to the `plan` skill, which is the session that
+**It does not analyze the board.** No collision recording
+(that machinery is retired outright), no Backlog-wide
+merge-group scan, no scheduling-smell report: the latter two
+belong to the `plan` skill, which is the session that
 actually decides sequencing. See "Why the board belongs to
 `plan`" below.
 
@@ -210,8 +211,9 @@ Three constraints on it:
 
 This skill used to analyze the board: a full collision
 sweep, a Backlog-wide scan for merge groups, and a
-scheduling-smell report. **All three moved to the `plan`
-skill** (its steps 1 and 2).
+scheduling-smell report. **All three left** — two to the
+`plan` skill (its steps 1 and 2), and the collision sweep to
+retirement.
 
 The reason is not that the work stopped mattering — it is
 that planning sessions now exist as a distinct session kind,
@@ -224,19 +226,20 @@ put the two skills in conflict over the same artifact.
 
 What moved, and where it landed:
 
-- the **full collision sweep** → `plan` step 1's bootstrap.
-  It files only `related` links and no blocking edge, so it
-  is bookkeeping rather than judgment; it moved anyway,
-  because the operator's direction is that housekeeping
-  stops touching the board at all. The **file-time**
-  `sync_blockers.py --for` calls the filing skills make are
-  unaffected — those are part of filing, not board analysis.
+- the **collision sweep** → nowhere. It moved to `plan`'s
+  bootstrap first, then retired entirely along with the
+  automated file-overlap machinery. Nothing here or anywhere
+  records collision links; a planning session judges overlap
+  from its ordinary board read.
 - **merge-group proposals** → `plan` step 2, alongside
   Queue honesty, which is the decision they serve.
-- the **scheduling-smell scan** → `plan` step 1. It had no
-  stated home there before, yet a planning session ran it
-  and immediately found two dead edges holding an Urgent
-  issue out of the available set — so it earns its place.
+- the **scheduling-smell scan** → `plan` step 1, as a
+  judgement the session makes rather than a scan it runs
+  (the tool that used to print the smells is gone). It had
+  no stated home there before, yet a planning session found
+  two dead edges holding an Urgent issue out of the
+  available set — so the check earns its place even without
+  the tool.
 
 **The one carve-out that stays here** is step 6's meta-work
 merge proposal, scoped to the `Claude:` title prefix. That
@@ -281,8 +284,8 @@ clean up on demand.
 
 Steps 3–6 file Backlog issues and mine the
 Session Metrics doc, so they use the
-same env-resolved Linear destination as `linear-task` /
-`sync-blockers`. Resolve each variable with its **own**
+same env-resolved Linear destination as `linear-task`.
+Resolve each variable with its **own**
 bare `printenv` (one `Bash(printenv:*)` allow-rule
 covers them all) — never a combined `printenv A B C`,
 which on macOS / BSD prints only the first value:
@@ -562,20 +565,16 @@ effectively never fired and the old inbox filled with
 already-filed entries. That hook is retired; don't
 re-introduce it.
 
-**This step files no collision links.** A housekeeping-driven
-filing pass does **not** run the per-issue collision sweep —
-board bookkeeping belongs to planning sessions. Do not claim
-that costs coverage nothing: the planning sweep is an interim
-of **unmeasured** coverage, since the tool behind it is itself
-scheduled for deletion and still carries a one-page read guard.
-It is an accepted trade, not an equivalence (see
-`docs/conventions/linear-automation.md` → "Structured filing
-fields").
-(The automated collision machinery is being retired outright;
-see `docs/conventions/linear-automation.md` → "Structured
-filing fields". Nothing here should depend on it.) This is the
-same no-board-analysis carve-out this skill already carries —
-see "Why the board belongs to `plan`".
+**This step files no collision links.** The automated
+collision machinery is **retired** — there is no per-issue
+sweep to run here or anywhere, and nothing should reintroduce
+one (see `docs/conventions/linear-automation.md` →
+"Structured filing fields"). Board bookkeeping belongs to
+planning sessions. Do not claim that costs coverage nothing:
+a planning session's read is an interim of **unmeasured**
+coverage. It is an accepted trade, not an equivalence. This
+is the same no-board-analysis carve-out this skill already
+carries — see "Why the board belongs to `plan`".
 
 **5. Check the convention ↔ skill reference sync.**
 `CLAUDE.md` is the **index**; the full operating
@@ -612,9 +611,10 @@ freshness lens does on the PR path — here, periodically.
 **6. Propose merges among meta-work issues only.**
 
 **This step does not analyze the board.** No collision
-sweep, no Backlog-wide merge-group scan, no scheduling-smell
-report — all three moved to the `plan` skill (its steps 1
-and 2), which is where somebody is actually deciding
+recording (that machinery is retired outright), no
+Backlog-wide merge-group scan, no scheduling-smell report —
+the latter two belong to the `plan` skill (its steps 1 and
+2), which is where somebody is actually deciding
 sequencing.
 See "Why the board belongs to `plan`" below.
 

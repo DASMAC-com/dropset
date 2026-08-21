@@ -61,8 +61,7 @@ output to a log and surfaces only a summary — see
 [context economy](context-economy.md)), `review_diff.py` (`review-pr`
 step 5's diff-and-freshness gate, which also **owns** the three path
 lists that decide the review's excludes and which CI-mirroring gates
-run), `sync_blockers.py` (the deterministic core of the
-`sync-blockers` skill), `board_batch.py` (the planning session's
+run), `board_batch.py` (the planning session's
 batched board writes and its compact board read — `list`, `fields`,
 `priorities`, `edges`; it exists because every MCP write echoes the
 issue's whole body back, and `issueUpdate` selecting `success` alone
@@ -79,7 +78,7 @@ optional dependency, per the lazy-import rule above), alongside the
 top-level `tools/` tree.
 
 A `make` target is the usual interface, but not the only one:
-`sync_blockers.py`, `review_diff.py`, `board_batch.py`, and
+`review_diff.py`, `board_batch.py`, and
 `init_pr_branch.py` are all driven directly with `python3`. Where a
 skill does that, the allow-rule it needs is the **directory-wide**
 `Bash(python3 .claude/tools/:*)` rather than a per-tool rule, so that

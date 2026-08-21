@@ -167,9 +167,10 @@ planning session chains `Claude:`-prefixed meta-work into a single
 serial blocking chain as routine bookkeeping, with no per-edge
 proposal — automated filers still place none. File overlap is **not** a
 dependency, and the automated machinery that used to `related`-link it
-is being **retired** — no filing skill records collision links any
-more; reconciling overlap is planning-session work.
-Detail: `docs/conventions/linear-automation.md`.
+is **retired** — nothing records collision links any more, at filing
+time or on a sweep; reconciling overlap is planning-session work, judged
+on content. The `**Touches**:` field stays mandatory as documentation of
+scope. Detail: `docs/conventions/linear-automation.md`.
 
 ## GitHub via MCP
 

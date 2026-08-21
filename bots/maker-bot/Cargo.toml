@@ -5,7 +5,7 @@
 # per-market fair mid, and drive the relative-quoting hot path
 # (set_reference_price) and cold path (set_liquidity_profile) with an inventory
 # skew and kill-switch policy. Rust-only, not published. No tokio: a
-# RpcClient (sdk/rs `fetch` feature), matching the TUI and sync-blockers. The
+# RpcClient (sdk/rs `fetch` feature), matching the TUI. The
 # price / fill *transport* runs on the shared `feeds` framework (source → live
 # forward sink), so a small background tokio runtime drives those async
 # sources; the quoting tick loop stays synchronous and drains the broadcast
