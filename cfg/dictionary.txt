@@ -1,4 +1,7 @@
+AUDUSD
+EURCUSD
 POSIXLY
+USDTZUSD
 addrs
 affordance
 affordances
@@ -85,6 +88,7 @@ générale
 headshot
 headshots
 heredocs
+hexdigit
 hpack
 hyperliquid
 idempotently

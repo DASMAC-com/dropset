@@ -1,12 +1,18 @@
-//! The Alpha Vantage daily FX feed process: poll `FX_DAILY` and persist closed
-//! daily bars into `cex_prices` (docs/data-feeds.md §9). Long-lived; resumes
-//! from its cursor on restart.
+//! The Alpha Vantage daily FX collector: for every pair on its roster, poll
+//! `FX_DAILY` and persist closed daily bars into `cex_prices`
+//! (docs/data-feeds.md §9). Long-lived; resumes from its cursors on restart.
 //!
 //! **Poll budget: 25 requests per day for the entire account**, which is the
-//! tightest of the three FX feeds by a wide margin. The default tick is six
-//! hours — four requests a day, leaving the rest of the budget for restarts and
-//! for anything else that shares the key (docs/data-feeds.md §10). A daily bar
-//! only changes once a day, so a tighter cadence would buy nothing.
+//! tightest of the FX feeds by a wide margin and the one a roster breaks
+//! fastest. Six hours between polls is four requests a day for a single pair;
+//! seven pairs at that cadence is 28, over the whole account's quota. So the
+//! interval is widened to fit the roster (`fx::quota_floor_secs`) and the
+//! effective value is logged.
+//!
+//! Widening costs nothing here, which is why this venue tolerates it: the
+//! endpoint takes no window and returns the **whole published series** on every
+//! call, so one poll backfills every bar missed since the last. A slower cadence
+//! makes a bar land later, never absent.
 //!
 //! This feed is daily-only: `FX_INTRADAY` is premium-gated on the free tier, so
 //! it corroborates the daily close and cannot stand in for the OANDA anchor.
@@ -21,13 +27,20 @@ use dropset_feeds::{
     CursorStore, PgCursorStore, RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
-    fx::{secret, split_canonical, FxConfig, FxDefaults},
+    fx::{quota_floor_secs, secret, split_canonical, FxConfig, FxDefaults},
+    roster::canonical_only,
     store::CexWriter,
+    supervise::run_all,
 };
 use std::time::Duration;
 
 /// The value written to `cex_prices.source`.
 const SOURCE: &str = "alphavantage";
+
+/// The share of the free tier's 25 daily requests this collector will spend.
+/// The remainder is deliberate headroom: every restart re-polls the whole
+/// roster, and the same key may be shared.
+const USABLE_DAILY_REQUESTS: u64 = 20;
 
 const DEFAULTS: FxDefaults = FxDefaults {
     base_url: "https://www.alphavantage.co",
@@ -46,36 +59,69 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = FxConfig::from_env(&DEFAULTS)?;
     let api_key = secret(alphavantage::SECRET_NAME)?;
-    let (from_symbol, to_symbol) = split_canonical(&cfg.product_id)?;
+    // Validate every pair up front: this venue splits a canonical id into two
+    // parameters, and a malformed one must fail startup rather than become a
+    // series that never appears. It derives no single venue symbol, so a pinned
+    // one has nowhere to go and `canonical_only` rejects it rather than letting
+    // an operator's override do nothing.
+    //
+    // The canonical id leads the tuple and its two derived legs follow, so the
+    // stored key is never positionally confusable with a venue-native one.
+    let mut pairs = Vec::with_capacity(cfg.products.len());
+    for product_id in canonical_only(&cfg.products)? {
+        let (from_symbol, to_symbol) = split_canonical(&product_id)?;
+        pairs.push((
+            product_id.clone(),
+            from_symbol.to_string(),
+            to_symbol.to_string(),
+        ));
+    }
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;
-    let feed = cfg.feed_name(SOURCE);
+    let cursors = PgCursorStore::new(pool.clone());
 
-    let resume = PgCursorStore::new(pool.clone()).load(&feed).await?;
-    let source = AlphaVantageDaily::resume(
-        &cfg.base_url,
-        &api_key,
-        feed.clone(),
-        from_symbol,
-        to_symbol,
-        resume,
-        cfg.backfill_start_secs,
-    )?;
+    // One transport for the process, cloned per feed. On a 25-request account
+    // quota a client per pair would give every pair the whole budget. See
+    // `AlphaVantageDaily::client`.
+    let http = AlphaVantageDaily::client(&cfg.base_url, &api_key)?;
+
+    let poll_secs = quota_floor_secs(cfg.poll_interval_secs, pairs.len(), USABLE_DAILY_REQUESTS);
+    if poll_secs != cfg.poll_interval_secs {
+        tracing::info!(
+            configured = cfg.poll_interval_secs,
+            effective = poll_secs,
+            products = pairs.len(),
+            "widened the poll interval so the roster fits the account's daily quota"
+        );
+    }
     tracing::info!(
-        %feed,
-        product = %cfg.product_id,
-        poll_secs = cfg.poll_interval_secs,
-        "alphavantage daily feed starting"
+        products = %pairs.iter().map(|(p, _, _)| p.as_str()).collect::<Vec<_>>().join(","),
+        poll_secs,
+        "alphavantage daily collector starting"
     );
 
-    // The granularity written to the row is the venue's fixed one, not the
-    // configured value: this feed cannot serve anything but daily bars.
-    let writer = CexWriter::new(SOURCE, &cfg.product_id, GRANULARITY_SECS);
-    let sink = StoreSink::new(pool, feed, writer);
-    let sinks: Vec<Box<dyn Sink<Candle>>> = vec![Box::new(sink)];
     let run_cfg = RunConfig {
-        poll_interval: Duration::from_secs(cfg.poll_interval_secs),
+        poll_interval: Duration::from_secs(poll_secs),
         ..RunConfig::default()
     };
-    run(source, sinks, run_cfg).await
+    let mut feeds = Vec::with_capacity(pairs.len());
+    for (product_id, from_symbol, to_symbol) in pairs {
+        let feed = cfg.feed_name(SOURCE, &product_id);
+        let resume = cursors.load(&feed).await?;
+        let source = AlphaVantageDaily::resume(
+            http.clone(),
+            feed.clone(),
+            &from_symbol,
+            &to_symbol,
+            resume,
+            cfg.backfill_start_secs,
+        )?;
+        // The granularity written to the row is the venue's fixed one, not the
+        // configured value: this feed cannot serve anything but daily bars.
+        let writer = CexWriter::new(SOURCE, &product_id, GRANULARITY_SECS);
+        let sinks: Vec<Box<dyn Sink<Candle>>> =
+            vec![Box::new(StoreSink::new(pool.clone(), feed.clone(), writer))];
+        feeds.push((feed, run(source, sinks, run_cfg.clone())));
+    }
+    run_all(feeds).await
 }

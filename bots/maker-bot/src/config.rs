@@ -1,5 +1,3 @@
-// cspell:word EURCUSD
-// cspell:word hexdigit
 //! Bot configuration — the knobs `docs/market-making.md` pins down.
 //!
 //! Defaults encode the spec verbatim: the tiered price feed and poll

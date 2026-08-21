@@ -320,7 +320,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  source || ' ' || product_id AS metric,\n  \"close\" AS value\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source ~ '^${source:regex}$'\n  AND product_id ~ '^${product_id:regex}$'\n  AND granularity_secs = $granularity\nORDER BY bucket_start",
+          "rawSql": "-- Candle closes and spot ticks in one series set. The tick half is\n-- what makes this panel move BETWEEN candle closes: 60s is the finest\n-- bucket any candle endpoint offers, so the candle half cannot show\n-- intra-minute movement however often it is polled.\n--\n-- Tick series are suffixed so the legend distinguishes them from the\n-- same venue's candle series, and they carry no granularity filter\n-- because a tick has no bucket width.\nSELECT\n  to_timestamp(bucket_start) AS \"time\",\n  source || ' ' || product_id AS metric,\n  \"close\" AS value\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source ~ '^${source:regex}$'\n  AND product_id ~ '^${product_id:regex}$'\n  AND granularity_secs = $granularity\nUNION ALL\nSELECT\n  to_timestamp(observed_at) AS \"time\",\n  source || ' ' || product_id || ' tick' AS metric,\n  price AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source ~ '^${source:regex}$'\n  AND product_id ~ '^${product_id:regex}$'\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -517,6 +517,109 @@
       ],
       "title": "Source x product coverage (last $coverage_mins min)",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "The same question as the candle coverage panel above, for the tick tier - which venues are printing which products into spot_ticks. Separate rather than merged into that panel because the two tiers have genuinely different columns: a candle row has a bucket width and OHLCV, a tick row has neither. Watch the confidence column: a venue that publishes one (Pyth) and suddenly stops is a different event from one that never had a confidence notion at all, which is why it is a count rather than a flag. Deliberately NOT filtered by the source/product variables, for the same reason as the panel above.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_secs"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 60
+                    },
+                    {
+                      "color": "red",
+                      "value": 180
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "id": 7,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Age thresholds are tighter than the candle panel's on purpose: a tick\n-- feed polling every 15s that has printed nothing for a minute is behind\n-- in a way a 60s candle series would not be.\nSELECT\n  source,\n  product_id,\n  count(*) AS prints,\n  count(confidence) AS with_confidence,\n  to_timestamp(max(observed_at)) AS latest_print,\n  (extract(epoch FROM now()) - max(observed_at))::bigint AS age_secs\nFROM spot_ticks\nWHERE observed_at >= extract(epoch FROM now()) - ($coverage_mins * 60)\nGROUP BY 1, 2\nORDER BY 1, 2",
+          "refId": "A"
+        }
+      ],
+      "title": "Tick coverage (last $coverage_mins min)",
+      "type": "table"
     }
   ],
   "refresh": "5s",
@@ -542,13 +645,14 @@
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT DISTINCT product_id FROM cex_prices ORDER BY 1",
+        "definition": "SELECT DISTINCT product_id FROM cex_prices UNION SELECT DISTINCT product_id FROM spot_ticks ORDER BY 1",
+        "description": "Products from both tiers. The union is load-bearing: a product that only a tick venue prices - which is most of the roster, since only EURC reaches a CEX candle endpoint - could not otherwise be selected and its series would stay invisible.",
         "includeAll": true,
         "label": "Product",
         "multi": true,
         "name": "product_id",
         "options": [],
-        "query": "SELECT DISTINCT product_id FROM cex_prices ORDER BY 1",
+        "query": "SELECT DISTINCT product_id FROM cex_prices UNION SELECT DISTINCT product_id FROM spot_ticks ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
@@ -570,13 +674,14 @@
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
+        "definition": "SELECT DISTINCT source FROM cex_prices UNION SELECT DISTINCT source FROM spot_ticks ORDER BY 1",
+        "description": "Sources from both tiers, so the tick-only venues (kraken, pyth) are selectable rather than absent. Note that 'coinbase' appears once but writes both tiers - the table a row lives in is what distinguishes a print from a bucket, not the source label.",
         "includeAll": true,
         "label": "Source",
         "multi": true,
         "name": "source",
         "options": [],
-        "query": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
+        "query": "SELECT DISTINCT source FROM cex_prices UNION SELECT DISTINCT source FROM spot_ticks ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,

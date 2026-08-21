@@ -218,18 +218,42 @@ db-schema <-> indexer: db-schema/migrations defines the indexer's tables
   migration and the event codec, and any migration it depends on has to
   land before the build that assumes it (Store::connect gates on
   require_schema).
-db-schema <-> market-data: db-schema/migrations defines cex_prices,
-  which the app's StoreWriter (market-data/src/store.rs) writes
-  idempotently; the candle field set and the closed-bucket primary key
-  must track the migration.
+db-schema <-> market-data: db-schema/migrations defines cex_prices and
+  spot_ticks, which the app's two StoreWriters (market-data/src/store.rs
+  and market-data/src/ticks.rs) write idempotently; the candle field set
+  and the closed-bucket primary key, and the tick field set and its
+  (source, product_id, observed_at) primary key, must each track the
+  migration. Two row shapes on purpose — a candle is an aggregate over a
+  window, a tick is one observation — so a change that conflates them is
+  the failure to watch for. The tick table's confidence column is
+  CHECK-constrained to NULL-or-positive, and ticks.rs coerces a malformed
+  half-width to NULL rather than letting the CHECK abort a batch and
+  crash-loop the collector; that coercion and the constraint have to move
+  together.
+db-schema <-> market-data config: a THIRD kind of contract, unlike the
+  two row-shape seams above — db-schema/migrations both defines AND seeds
+  pyth_fx_feeds, which market-data/src/pyth_roster.rs reads at startup as
+  configuration and never writes. So the migration is the only writer and
+  the integrity guarantees live in the schema, not the reader: CHECK
+  constraints pin the 64-hex feed id and the ISO-4217 currency, because
+  the Pyth adapter omits a feed it got no answer for and a mistyped id is
+  therefore indistinguishable from a venue outage. The same coordinates
+  also exist as a compiled constant in bots/maker-bot (which cannot read
+  the table — Postgres is a soft dependency in its quote path), and
+  market-data/tests/pyth_roster_agreement.rs pins the seed to that
+  constant by comparing source text, since maker-bot has no lib target.
+  A cross has to be added in both places or the test fails.
 db-schema <-> grafana dashboards: db-schema/migrations owns the
   dropset_ro reader role and the SELECT grants behind it, which the
   provisioned datasource
   (market-data/grafana/provisioning/datasources) logs in as; the panel
   SQL in market-data/grafana/dashboards and the standalone queries in
-  market-data/analytics read cex_prices and feed_cursors by column
-  name, so a renamed or dropped column breaks a dashboard or a query
-  silently — nothing compiles this SQL.
+  market-data/analytics read cex_prices, spot_ticks and feed_cursors by
+  column name, so a renamed or dropped column breaks a dashboard or a
+  query silently — nothing compiles this SQL. Panels and template
+  variables that span both price tiers UNION cex_prices with spot_ticks,
+  so a column rename on either side can break a panel that names neither
+  table in its title.
 util <-> frontend: the human-price / atoms-ratio decimal-gap conversion
   is forked across languages — util/src/decimals.rs (which the TUI and
   the maker bot share) and the frontend's humanPrice
