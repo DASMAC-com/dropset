@@ -419,6 +419,37 @@ argument was *not* the reason — see that step for why.)
   is written in terms of the Rust suites, so a frontend test script read
   as out of scope. It is not. Batch a logical change, then verify once.
 
+- **When a suite is fast enough to run whole, run it whole — through the
+  wrapper.** This is a **granularity** rule, and it is a different axis
+  from the two above it: they cover how *verbose* a command is (wrap it)
+  and how *often* to run it (at checkpoints). Neither says anything about
+  how much of a suite to run, which is why the narrow form keeps getting
+  reached for on the reasonable-sounding grounds that it gives a faster
+  signal on the one module being edited.
+
+  Measured, and the reasoning does not survive it: one session made **32**
+  `python3 -m unittest discover … -p test_X.py` calls costing **≈7.1k** —
+  its single largest hardening candidate — against **15**
+  `make tools-tests` calls costing **516 tokens in total**. The per-module
+  form is ~14× the cost *per call* for a **narrower** answer, because it
+  is not wrapped by default while the `make` target is. It also missed a
+  sibling test the edit had just broken, twice in that one session (a
+  named-tuple refactor and a changed error string each broke tests in a
+  file other than the one being edited).
+
+  So for anything under `.claude/tools/`, the post-edit check is:
+
+  ```sh
+  python3 .claude/tools/run_quiet.py -- make tools-tests
+  ```
+
+  Reserve a `-p test_X.py` discover run for a suite that is genuinely
+  slow — this one runs in well under a second. The rule generalizes to
+  any test target whose whole-suite runtime is a fraction of a round
+  trip: the narrow form only pays when the suite is slow enough that the
+  *wall-clock* saving exceeds the context it costs, and a sub-second
+  suite never clears that bar.
+
 - **Match the build to the iteration, not to CI.** A production-build
   target exists to *mirror CI* — a full dependency install, a wiped
   output directory, an optimizing compile — which makes it a

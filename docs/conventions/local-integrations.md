@@ -160,8 +160,19 @@ one file. Two consequences follow, both fixed in the skills:
   you want in *other* projects too — not worktree inheritance.
 
 What a fresh worktree genuinely lacks is anything *untracked and
-per-directory*: `frontend/node_modules`, `frontend/.env.local`. Those
-are `init-pr`'s job, and are unrelated to settings resolution.
+per-directory*: `frontend/node_modules`, `frontend/.env.local`, and
+`infra/localnet/secrets.local.env`. Those are `init-pr`'s job, and are
+unrelated to settings resolution.
+
+The last of those is worth calling out, because the resolution rule
+above does **not** cover it. The secrets enclave's operator file is a
+plain per-checkout path — nothing resolves it back to the main checkout
+— so a fresh worktree has none, and `make fx-collectors-up` there
+silently falls back to whatever keys happen to be exported. `init-pr`
+symlinks it from the base repo (`init_pr_branch.py --link-env`,
+reported as `secrets_env_link`), which is what gives that file the
+resolution `settings.local.json` gets for free. Do not generalize from
+one to the other.
 
 ### Which guards are actually wired
 

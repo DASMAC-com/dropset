@@ -14,7 +14,7 @@ import os
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 
 import lint_paths as lp
 
@@ -141,6 +141,90 @@ class UntrackedFilesAreIncluded(unittest.TestCase):
         # With nothing untracked, the resolved set is exactly what `--all-files`
         # would have produced — the tool is a superset, never a different set.
         self.assertEqual(lp.lint_files(self.root), [".gitignore", "tracked.md"])
+
+
+class ChangedNarrowsToTheBranch(unittest.TestCase):
+    """``--changed``: this branch's own files, measured from the merge-base.
+
+    Built on a throwaway repo with a real second branch, so the merge-base is
+    a genuine one rather than a mocked ref.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = os.path.realpath(self._tmp.name)
+        _git("init", "-q", "-b", "main", cwd=self.root)
+        _git("config", "user.email", "t@example.com", cwd=self.root)
+        _git("config", "user.name", "Test", cwd=self.root)
+        self._write("base.md", "base\n")
+        self._write("shared.md", "original\n")
+        self._write(".gitignore", "ignored.md\n")
+        _git("add", "-A", cwd=self.root)
+        _git("commit", "-q", "-m", "init", "--no-gpg-sign", cwd=self.root)
+        _git("checkout", "-q", "-b", "feature", cwd=self.root)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write(self, rel: str, body: str) -> None:
+        with open(os.path.join(self.root, rel), "w", encoding="utf-8") as fh:
+            fh.write(body)
+
+    def test_only_the_branch_s_own_files(self):
+        self._write("shared.md", "edited on the branch\n")
+        _git("add", "shared.md", cwd=self.root)
+        _git("commit", "-q", "-m", "edit", "--no-gpg-sign", cwd=self.root)
+        self.assertEqual(lp.changed_files(self.root, "main"), ["shared.md"])
+
+    def test_the_base_s_own_commits_are_not_reported(self):
+        # The merge-base, not the ref tip: a commit that landed on `main`
+        # after the branch point is not this branch's work, and diffing
+        # against the tip would report it as one.
+        self._write("shared.md", "edited on the branch\n")
+        _git("add", "shared.md", cwd=self.root)
+        _git("commit", "-q", "-m", "edit", "--no-gpg-sign", cwd=self.root)
+        _git("checkout", "-q", "main", cwd=self.root)
+        self._write("landed-later.md", "someone else's PR\n")
+        _git("add", "landed-later.md", cwd=self.root)
+        _git("commit", "-q", "-m", "theirs", "--no-gpg-sign", cwd=self.root)
+        _git("checkout", "-q", "feature", cwd=self.root)
+        self.assertEqual(lp.changed_files(self.root, "main"), ["shared.md"])
+
+    def test_unstaged_edits_are_included(self):
+        # The post-edit check runs before staging, so an unstaged edit is the
+        # normal case rather than an edge one.
+        self._write("shared.md", "not staged\n")
+        self.assertEqual(lp.changed_files(self.root, "main"), ["shared.md"])
+
+    def test_untracked_included_ignored_excluded(self):
+        # An untracked file is by definition the branch's work, and is the
+        # class the whole-tree resolver exists to stop losing.
+        self._write("new.md", "never git added\n")
+        self._write("ignored.md", "gitignored\n")
+        self.assertEqual(lp.changed_files(self.root, "main"), ["new.md"])
+
+    def test_deleted_file_is_filtered_out(self):
+        # `git diff` reports a deletion, but pre-commit fails on a path that
+        # isn't there — the same filter the whole-tree resolver applies.
+        os.remove(os.path.join(self.root, "base.md"))
+        self.assertEqual(lp.changed_files(self.root, "main"), [])
+
+    def test_nothing_changed_reports_success(self):
+        # Unlike the whole-tree case, an empty changed set is a real answer.
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        try:
+            with redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(lp.main(["--changed", "--base", "main"]), 0)
+        finally:
+            os.chdir(cwd)
+        self.assertIn("nothing changed", out.getvalue())
+
+    def test_an_unknown_base_ref_raises_rather_than_widening(self):
+        # A missing `origin/main` means the caller hasn't fetched. Falling back
+        # to the whole tree would turn that into a surprise full sweep.
+        with self.assertRaises(subprocess.CalledProcessError):
+            lp.changed_files(self.root, "origin/nonexistent")
 
 
 if __name__ == "__main__":
