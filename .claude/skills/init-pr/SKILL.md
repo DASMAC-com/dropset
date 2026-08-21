@@ -811,10 +811,41 @@ per-directory *content* — `frontend/node_modules`,
    points use `AskUserQuestion`" above), announce that
    the work is ready and ask — again **via
    `AskUserQuestion`** — whether to run `/review-pr` now.
-   Offer two options: "yes, run /review-pr" (**first**,
-   the recommended default) and "not yet".
 
-   - On **yes**, route straight into `/review-pr`.
+   **This question is `review-pr`'s entry gate, so it
+   carries the review tier too — one interaction, not
+   two.** The chosen tier **is** the authorization for
+   `review-pr`'s adversarial sub-agent fan-out; that skill
+   asks no separate spawn question later (see its "The
+   entry gate" section, which is the other half of this
+   contract).
+
+   So compute the signals first, from a real diff rather
+   than an impression:
+
+   ```sh
+   python3 .claude/tools/review_diff.py --base main \
+     --out <scratchpad>/review-diff.txt
+   ```
+
+   Read `files` and the per-file `changes` for size, and
+   whether any path is program code, the SDK surface, a
+   migration, or a generation input. Then offer:
+
+   - **"Yes — full adversarial suite" (first, recommended)**
+
+   - **"Yes — reduced tier"**, *only* when the signals sit
+     under the small-diff threshold `review-pr` documents
+     (≤ 5 files, ≤ 60 changed lines, no program / SDK /
+     migration / generation-input path, single crate).
+     Name the actual signals in the option so the choice is
+     informed.
+
+   - **"Not yet"**
+
+   - On either **yes**, route straight into `/review-pr`,
+     carrying the chosen tier.
+
    - On **not yet**, stop and leave the PR as it is.
 
    **Do not write a "delivered" narrative onto the Linear
