@@ -222,14 +222,24 @@ jobs:
     # timing complaint. sccache reports its own hit rate, and the SBF cache
     # exposes a hit flag. Runs on failure too — a slow failing run is exactly
     # when the numbers are wanted.
-    - if: |
-        always() && needs.changes.outputs.code == 'true'
+    # `continue-on-error` because a visibility guard must never be the thing
+    # that reds a green job: this is the last command in the block, so under
+    # `bash -e` a non-zero `sccache` would fail the step. The fence matters
+    # too — the step summary renders as Markdown, so without it sccache's
+    # column-aligned table collapses into one run-together paragraph and is
+    # legible only in the raw log, which is where it already was.
+    - continue-on-error: true
+      if: |
+        !cancelled() && needs.changes.outputs.code == 'true'
       name: 'Cache effectiveness summary'
       run: |
+        H='${{ steps.sbf-cache.outputs.cache-hit }}'
         S="$GITHUB_STEP_SUMMARY"
         echo '### Cache effectiveness' >>"$S"
-        echo 'SBF cache hit: ${{ steps.sbf-cache.outputs.cache-hit }}' >>"$S"
+        echo '```' >>"$S"
+        echo "SBF cache hit: ${H:-unknown}" >>"$S"
         sccache --show-stats >>"$S"
+        echo '```' >>"$S"
   test-no-teardown:
     name: 'Tests (no teardown)'
     needs: 'changes'
@@ -319,14 +329,24 @@ jobs:
       name: 'Run feature-off teardown-disabled tests'
       run: 'cargo nextest run --no-default-features --test teardown_disabled'
     # See the `test` job's summary step.
-    - if: |
-        always() && needs.changes.outputs.code == 'true'
+    # `continue-on-error` because a visibility guard must never be the thing
+    # that reds a green job: this is the last command in the block, so under
+    # `bash -e` a non-zero `sccache` would fail the step. The fence matters
+    # too — the step summary renders as Markdown, so without it sccache's
+    # column-aligned table collapses into one run-together paragraph and is
+    # legible only in the raw log, which is where it already was.
+    - continue-on-error: true
+      if: |
+        !cancelled() && needs.changes.outputs.code == 'true'
       name: 'Cache effectiveness summary'
       run: |
+        H='${{ steps.sbf-cache.outputs.cache-hit }}'
         S="$GITHUB_STEP_SUMMARY"
         echo '### Cache effectiveness' >>"$S"
-        echo 'SBF cache hit: ${{ steps.sbf-cache.outputs.cache-hit }}' >>"$S"
+        echo '```' >>"$S"
+        echo "SBF cache hit: ${H:-unknown}" >>"$S"
         sccache --show-stats >>"$S"
+        echo '```' >>"$S"
   # Rust↔ASM parity guard. A standalone job (no `needs` beyond `changes`)
   # so it runs in parallel with `test` / `test-no-teardown` rather than
   # extending the critical path. It is the only job that builds BOTH
@@ -408,14 +428,24 @@ jobs:
       name: 'Run Rust<->ASM parity tests'
       run: 'cargo nextest run --test asm_parity'
     # See the `test` job's summary step.
-    - if: |
-        always() && needs.changes.outputs.code == 'true'
+    # `continue-on-error` because a visibility guard must never be the thing
+    # that reds a green job: this is the last command in the block, so under
+    # `bash -e` a non-zero `sccache` would fail the step. The fence matters
+    # too — the step summary renders as Markdown, so without it sccache's
+    # column-aligned table collapses into one run-together paragraph and is
+    # legible only in the raw log, which is where it already was.
+    - continue-on-error: true
+      if: |
+        !cancelled() && needs.changes.outputs.code == 'true'
       name: 'Cache effectiveness summary'
       run: |
+        H='${{ steps.sbf-cache.outputs.cache-hit }}'
         S="$GITHUB_STEP_SUMMARY"
         echo '### Cache effectiveness' >>"$S"
-        echo 'SBF cache hit: ${{ steps.sbf-cache.outputs.cache-hit }}' >>"$S"
+        echo '```' >>"$S"
+        echo "SBF cache hit: ${H:-unknown}" >>"$S"
         sccache --show-stats >>"$S"
+        echo '```' >>"$S"
   # The SQL-backed crates (`dropset-feeds` and `dropset-indexer`) reach a real
   # Postgres through testcontainers, so their store suites are `#[ignore]`d
   # and the default `cargo nextest run` above skips them entirely — as it does
@@ -476,13 +506,16 @@ jobs:
         --features dropset-feeds/rpc,dropset-feeds/stream
     # See the `test` job's summary step. No SBF line here: this job builds no
     # program and so has no `sbf-cache` step to report on.
-    - if: |
-        always() && needs.changes.outputs.code == 'true'
+    - continue-on-error: true
+      if: |
+        !cancelled() && needs.changes.outputs.code == 'true'
       name: 'Cache effectiveness summary'
       run: |
         S="$GITHUB_STEP_SUMMARY"
         echo '### Cache effectiveness' >>"$S"
+        echo '```' >>"$S"
         sccache --show-stats >>"$S"
+        echo '```' >>"$S"
 name: 'Tests'
 'on':
   merge_group: null
