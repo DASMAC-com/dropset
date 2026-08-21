@@ -122,7 +122,7 @@ Backlog, so a filing skill sets state **`Todo` plus the
 milestone, in the creating call**. Promotion is a
 planning-session act with **two** halves — clear the milestone
 **and** move Todo → Backlog. Parked issues are exempt from the
-serial meta chain until promoted. Detail:
+meta batch and its edge until promoted. Detail:
 `docs/conventions/linear-automation.md`.
 
 ### The audit is planning-directed
@@ -168,9 +168,12 @@ via `AskUserQuestion` with the concrete evidence and writes it only on
 an explicit yes; the default in any autonomous run is **no edge**, with
 the suspicion recorded as prose. Human-placed edges are authoritative
 and never rewritten. **One standing exception, operator-ratified:** a
-planning session chains `Claude:`-prefixed meta-work into a single
-serial blocking chain as routine bookkeeping, with no per-edge
-proposal — automated filers still place none. File overlap is **not** a
+planning session folds the open `Claude:`-prefixed meta-work into a
+single **batch issue** at bootstrap and places its one edge — behind
+whatever meta issue is In Progress — as routine bookkeeping, with no
+per-edge proposal. (This supersedes the earlier serial chain, which
+needed an edge per issue.) Automated filers still place
+none. File overlap is **not** a
 dependency, and the automated machinery that used to `related`-link it
 is **retired** — nothing records collision links any more, at filing
 time or on a sweep; reconciling overlap is planning-session work, judged

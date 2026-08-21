@@ -290,10 +290,10 @@ is then a planning-session act with two halves: **clear the milestone and
 move Todo → Backlog**. Doing only one leaves the board lying about
 whether the work is available.
 
-Parked findings are also **exempt from the serial meta chain** until they
-are promoted: the chain governs work that is queued, and parked is not
-queued. Nothing about parking places or implies a blocking edge — see
-"Blocking relations".
+Parked findings are also **exempt from the meta batch and its edge**
+until they are promoted: that edge governs work which is queued, and
+parked is not queued. Nothing about parking places or implies a blocking
+edge — see "Blocking relations".
 
 **This gives `Todo` two meanings, so every Todo read must say which it
 wants.** Todo is both the board's *umbrella / initiative* tier (what a
@@ -734,17 +734,27 @@ skill's session in the base repo, human-directed, one edge at a time.
 That is the whole of the exception: not "a skill that is allowed to",
 but "the place a human does it".
 
-**One standing edge class, ratified 2026-08-18: the serial meta
-chain.** Open `Claude:`-prefixed meta-work issues are kept blocking one
-another in a single chain, so exactly one is unblocked at a time and
-agent-infra work lands one batch at a time rather than several sessions
-rewriting the same skills at once. A planning session chains a newly
-filed meta issue behind the current tail as **routine bookkeeping**,
-without a fresh per-edge proposal — the operator ratified the class, so
-each instance does not need re-ratifying.
+**One standing edge class, operator-ratified: the meta batch's edge.**
+The goal has not changed — exactly one meta issue unblocked at a time,
+so agent-infra work lands one batch at a time rather than several
+sessions rewriting the same skills at once. The **shape** has: a
+planning session now **folds** the open `Claude:`-prefixed issues into a
+single batch issue at bootstrap (see the `plan` skill, step 1), and that
+batch needs at most **one** edge — behind whatever meta issue is
+currently In Progress.
+
+*Superseded (2026-08-18 → 2026-08-20): the serial chain.* The earlier
+form kept every open meta issue blocking the next, which needed an edge
+per issue and left the board carrying a long chain to maintain. The
+batch form reaches the same one-at-a-time property with one edge, and
+the fold is itself the bookkeeping.
+
+Either way it is **routine bookkeeping**: a planning session places that
+edge without a fresh per-edge proposal, because the operator ratified
+the class rather than the instance.
 
 This narrows nothing else. It is still the planning session placing it,
-still one chain, and **automated filers still place no edges at all** —
+still one edge, and **automated filers still place no edges at all** —
 a filing skill that notices a new meta issue does not chain it. Treat
 any other edge, semantic ones included, under the one-at-a-time rule
 above.
