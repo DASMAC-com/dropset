@@ -935,8 +935,8 @@ class NoRelationsTests(unittest.TestCase):
     """The tool must not be able to file a blocking edge, even by accident.
 
     Blocking edges are human-curated in a planning session, and a parked lever is
-    exempt from the serial meta chain until it is folded. The cheapest guarantee is
-    that no relation mutation exists in the module at all.
+    exempt from the meta batch and its edge until it is folded. The cheapest
+    guarantee is that no relation mutation exists in the module at all.
     """
 
     def test_no_relation_mutation_is_present(self):

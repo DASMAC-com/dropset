@@ -254,10 +254,10 @@ and can come out of the environment.
   or skill diff, never commits, never pushes. The improvements it
   proposes are applied later by a human through a normal PR.
 - **No relations, ever.** Folding places no blocking edge; parked levers
-  are exempt from the serial meta chain until folded, and the aggregated
-  task the fold produces is what the chain governs. Blocking edges are
-  human-curated in a planning session (`CLAUDE.md` → "Blocking
-  relations").
+  are exempt from the meta batch and its edge until folded, and the
+  aggregated task the fold produces is what that edge governs. Blocking
+  edges are human-curated in a planning session (`CLAUDE.md` →
+  "Blocking relations").
 - **Runs standalone or as housekeeping's step.** `housekeeping` delegates
   its Session Metrics step to this skill; it runs just as well by hand any
   time the milestone has parked levers. Either way the behavior is
