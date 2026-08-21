@@ -88,6 +88,24 @@ def main_settings_path() -> Path | None:
 # a subcommand kept. Two kinds live here: programs that take subcommands (``git``,
 # ``cargo``) and no-subcommand programs whose *arguments* are the whole hazard
 # (``rm``, ``dd``, ``chmod``, ``curl``). ``is_bareverb_wildcard`` reads this set.
+#
+# **This is a deny-list of hazardous programs, not a floor over every verb**, and
+# that distinction has been misread. A read-only verb absent from this set —
+# ``grep``, ``tail``, ``head`` — is *deliberately* out of scope: it has no
+# subcommand to pin, so "keep the subcommand literal" has nothing to bite on,
+# and granting the whole program grants only reading. So ``Bash(grep:*)`` is
+# **acceptable by design**; the `cruft` audit not flagging it is correct, and so
+# is `firm_last` firming it.
+#
+# Recorded because a filed finding asserted the opposite — that the write path
+# refuses such a rule while the audit path lets it through, making "the two
+# halves of the same floor disagree". They do not: both consult this set, so
+# both allow `grep:*` and both refuse `git:*`. There is no write/audit split to
+# reconcile. What is true is that a bare `grep` on a log still costs *context*,
+# which is a context-economy rule, not a permission one.
+#
+# Adding a verb here is a real decision: it makes the fast firm refuse that
+# shape outright. Add one only when the whole program is hazardous.
 NO_BARE_WILDCARD = {
     # subcommand-taking programs
     "git",

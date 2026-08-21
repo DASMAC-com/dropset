@@ -687,18 +687,40 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
 - **over-broad grants** (`category: over-broad`) — a bare
   `Bash(:*)`, an unscoped `Read(…)` / `Edit(…)` root, or a
   bare-verb wildcard that subsumes many narrower rules;
+
 - **dangerous one-offs** (`category: dangerous`) — `rm -rf`,
   `curl … | sh`, `git push --force`;
+
 - **machine paths** (`category: machine-path`) — a malformed
   path (a doubled slash, so the rule can never match), or an
   absolute home path in a settings file where one does not
   belong;
+
 - **stale machine paths** (`category: machine-path-stale`) —
   an absolute path that no longer resolves on disk, which is
   what worktree rules decay into as worktrees are pruned;
+
 - **stale single-use commands** (`category: subsumed`) — a
   narrower rule an earlier one already covers (the dead weight
-  `firm-perms` never removes).
+  `firm-perms` never removes);
+
+- **guard conflicts** (`category: guard-conflict`) — a rule
+  granting a command shape a committed `PreToolUse` guard
+  blocks outright. This is the one **semantic** category: every
+  other one judges the rule's own text, while this asks whether
+  the rule contradicts a convention enforced elsewhere, which
+  no pattern over the rule alone can see. It consults each
+  guard's **own** predicate, so the audit and the run-time
+  block cannot drift; guards with an escape hatch (the
+  compound-shell one, via `#compound-ok`) are excluded, since a
+  sanctioned way through means there is no conflict.
+
+  A flagged entry is usually **inert rather than a live hole** —
+  a guard blocks at the `PreToolUse` layer whatever the
+  allowlist permits, and a guard block is not a permission
+  question. Report it anyway: it reads as sanctioning a
+  practice the conventions forbid, and it becomes live again if
+  the guard is ever unwired (which 7b checks).
 
 **Don't expect `machine-path` on this repo's own allowlist.**
 The audited file is `settings.local.json` — git-ignored and
@@ -716,6 +738,19 @@ allowlist.
 The helper is deterministic and pattern-based, so also skim
 its `flagged` list for a **secret** that leaked into a rule
 (it can't classify those) before proposing removals.
+
+**Don't argue a lever from "unfirmable prompt churn" — check
+first.** A read-only verb with no subcommand (`grep`, `tail`,
+`head`) is **out of scope** for the bare-verb floor by design:
+`firm_core.NO_BARE_WILDCARD` is a deny-list of *hazardous*
+programs, not a floor over every verb, so `Bash(grep:*)` is
+acceptable, `cruft` correctly does not flag it, and
+`firm_last` would firm it. Both halves of the floor agree —
+a filed finding once claimed they disagreed, and they do not.
+What *is* true is that a shell filter prints its output into
+the tool result, so preferring the Grep tool or
+`run_quiet.py inspect` is a **context-economy** rule, never a
+permissions one. Do not restate the churn framing.
 
 **Autonomy bound: propose, never auto-delete.** Dropping a
 permission is low-blast-radius, but silently editing the
@@ -913,6 +948,17 @@ call (its step 8).
 target and its finding count in the report, so the next planning
 close-out can carry it into the Planning document — that record
 is the ongoing audit log.
+
+**If you write that outcome into the Planning document
+yourself, append it under the one marked heading —
+`Notes for the next planning session` — never as a
+free-floating section.** The document grows without bound
+between close-out rewrites, and post-close notes from
+non-planning sessions were a named cause: one document reached
+its next bootstrap carrying two such sections. Confining them
+to one heading is what lets the `plan` bootstrap consolidate in
+a single rewrite (see that skill's step 1). Creating a new
+top-level section here is the thing that breaks it.
 
 **10. Run session-metrics — unconditionally.** The morning pass
 both *folds* parked trim levers (step 4) and *contributes* new

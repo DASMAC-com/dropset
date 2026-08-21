@@ -39,8 +39,30 @@ option, so it precedes the subcommand
   covers — the dead weight ``firm-perms`` never prunes), ``dangerous`` (an
   ``rm -rf`` / force-push / pipe-to-shell one-off), ``machine-path`` (a
   malformed path, or an absolute home path in a settings file where one does
-  not belong), and ``machine-path-stale`` (a path that no longer resolves on
-  disk — the shape worktree rules decay into as worktrees are pruned).
+  not belong), ``machine-path-stale`` (a path that no longer resolves on
+  disk — the shape worktree rules decay into as worktrees are pruned), and
+  ``guard-conflict`` (a rule granting a command shape a committed
+  ``PreToolUse`` guard blocks outright).
+
+  **``guard-conflict`` is the semantic pass.** Every other category is a
+  *pattern* judgment about the rule's own text; this one asks whether the rule
+  contradicts a **stated convention that is mechanically enforced elsewhere**,
+  which no amount of pattern-matching on the rule alone can see. The live case:
+  the allowlist carried
+  ``Bash(git -C /…/worktrees/* grep:*)`` while ``CLAUDE.md`` and
+  ``local-integrations.md`` say the git-grep guard has **no escape hatch** and
+  is "kept absolute on purpose". The entry is inert — the guard blocks at the
+  ``PreToolUse`` layer regardless of what the allowlist permits, and a guard
+  block is not a permission question — but it is *misleading*, reading as
+  sanction for a practice the conventions forbid, and it would become live
+  again if the guard were ever unwired.
+
+  It asks the **guard's own predicate**, imported from
+  ``.claude/hooks/``, rather than re-deriving "what counts as ``git grep``"
+  here. Two copies of that judgment would drift, and the guard's version is
+  the one that actually decides at run time. If the guard cannot be imported
+  the check reports nothing rather than raising: an audit tool must not break
+  because a hook moved.
 
   **``machine-path`` is file-aware.** In a ``settings.local.json`` — git-ignored
   and machine-local by design — an absolute home path is correct, not drift, so
@@ -63,6 +85,7 @@ tooling").
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
@@ -71,6 +94,10 @@ from pathlib import Path
 import firm_core
 
 DEFAULT_SETTINGS = ".claude/settings.local.json"
+
+# The committed guards live one directory over, and are not importable as a
+# package (`.claude` is not a Python root), so they are loaded by path.
+_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 
 # Absolute home paths, machine-specific by nature.
 #
@@ -288,6 +315,70 @@ def _is_subsumed(index: int, allow: list[str]) -> bool:
     return False
 
 
+def _load_guard(module_name: str):
+    """Import a committed ``PreToolUse`` guard by path, or ``None``.
+
+    Returns ``None`` on any failure — a missing file, a syntax error, an import
+    error. This is an **audit** tool: it must report what it can rather than
+    refuse to run because a hook was moved or renamed, and a guard it cannot
+    load simply contributes no findings.
+    """
+    path = _HOOKS_DIR / f"{module_name}.py"
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except (OSError, SyntaxError, ImportError, ValueError):
+        return None
+    return module
+
+
+def _rule_command(rule: str) -> str | None:
+    """The command shape a ``Bash(...)`` rule grants, or ``None``.
+
+    An allow-rule's inner text is a command **prefix** with a trailing wildcard
+    (``git -C /x grep:*``), so the suffix is stripped to leave something a
+    command-shape predicate can tokenize. Any ``*`` further left is left alone:
+    it stands for a path segment, and the guards tokenize on whitespace, so it
+    reads as an ordinary argument.
+    """
+    match = _RULE_RE.match(rule.strip())
+    if match is None or match.group(1) != "Bash":
+        return None
+    inner = match.group(2).strip()
+    for suffix in (":*", " *"):
+        if inner.endswith(suffix):
+            inner = inner[: -len(suffix)]
+            break
+    return inner.strip() or None
+
+
+def guard_conflict(rule: str) -> str | None:
+    """The reason a committed guard blocks what ``rule`` grants, else ``None``.
+
+    Asks each guard's **own** predicate rather than re-deriving its rule here,
+    so the audit and the run-time block cannot drift apart.
+
+    Only guards with **no escape hatch** are consulted. The compound-shell guard
+    is deliberately excluded: it takes a ``#compound-ok`` marker, so a rule
+    granting a compound is not in conflict with it — the marker is the sanctioned
+    way through, and flagging those would bury the real finding in noise.
+    """
+    command = _rule_command(rule)
+    if command is None:
+        return None
+    guard = _load_guard("no_git_grep")
+    if guard is not None and guard.is_git_grep(command):
+        return (
+            "grants `git grep`, which the no_git_grep guard blocks outright "
+            "(no escape hatch, by design) — inert while the guard is wired, "
+            "but it reads as sanctioning a practice the conventions forbid"
+        )
+    return None
+
+
 def is_machine_local_settings(settings_path: Path | None) -> bool:
     """Whether absolute home paths are *expected* in this settings file."""
     if settings_path is None:
@@ -326,6 +417,12 @@ def classify(
     for reason, pattern in _DANGEROUS_RES:
         if pattern.search(rule):
             return "dangerous", reason
+    # Before the path checks: a guard conflict is about what the rule *grants*,
+    # and it would otherwise be masked by the `machine-path` verdict on the
+    # absolute worktree path the live instance happens to carry.
+    guarded = guard_conflict(rule)
+    if guarded is not None:
+        return "guard-conflict", guarded
     if _MALFORMED_PATH_RE.search(rule):
         return "machine-path", "doubled slash in the path — this rule can never match"
     if _MACHINE_PATH_RE.search(rule):
