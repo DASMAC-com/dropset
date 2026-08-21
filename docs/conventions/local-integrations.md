@@ -522,9 +522,7 @@ directory).
 
 **The function is committed; its coordinates are not.** `_ds_secrets`
 lives in `.claude/shell/init.zsh` with the rest of the family, and reads
-the account, vault, and item names from an **untracked file outside the
-repo** — `~/.config/dropset/secrets.zsh`, or wherever
-`DROPSET_SECRETS_FILE` points:
+the account, vault, and item names from three shell variables:
 
 ```sh
 DS_OP_ACCOUNT='<account>.1password.com'
@@ -532,26 +530,35 @@ DS_OP_LINEAR_REF='op://<vault>/<linear-item>/credential'
 DS_OP_GITHUB_REF='op://<vault>/<github-item>/credential'
 ```
 
-That split is the point of the boundary. An `op://` reference is a
-*pointer*, not a value, so committing one would leak no credential — but
-it would publish the layout of a personal secret store into permanent
-git history, and history does not forget. The coordinates file sits
-outside the checkout deliberately: a path *inside* it could be swept up
-by an errant `git add -A`, and this boundary should not depend on
-`.gitignore` staying correct.
+**Define those in the untracked runtime config** (`~/.zshrc`), alongside
+the `LINEAR_*` ids that already live there. **One personal config file,
+not two** — that is the operator decision, and the reasoning is that the
+separate coordinates file existed to keep *scripts* out of the profile,
+so with the function bodies now committed there is nothing left for it
+to keep out.
 
-With no coordinates file present the helper resolves nothing and warns;
-an already-exported `LINEAR_API_KEY` / `GITHUB_MCP_PAT` still wins, so
+No code change was needed to make this the primary shape: the committed
+function sources its optional file *if present* and then reads whatever
+`DS_OP_*` variables are shell-visible, so plain assignments satisfy it
+as-is.
+
+That split — committed function, uncommitted coordinates — is the point
+of the boundary. An `op://` reference is a *pointer*, not a value, so
+committing one would leak no credential; but it would publish the layout
+of a personal secret store into permanent git history, and history does
+not forget.
+
+*Alternative, still supported:* a separate file outside the repo at
+`~/.config/dropset/secrets.zsh`, or wherever `DROPSET_SECRETS_FILE`
+points. It is sourced first when it exists, so a machine on that shape
+keeps working unchanged. Where it *is* used it sits outside the checkout
+deliberately — a path inside could be swept up by an errant
+`git add -A`, and this boundary should not depend on `.gitignore` staying
+correct.
+
+With no coordinates set at all the helper resolves nothing and warns; an
+already-exported `LINEAR_API_KEY` / `GITHUB_MCP_PAT` still wins, so
 pinning a key by hand remains the escape hatch.
-
-**The coordinates may live in either personal file.** The committed
-helper sources `$_DS_SECRETS_FILE` *if present* and then reads whatever
-`DS_OP_*` variables are shell-visible, so plain assignments in the
-runtime config (`~/.zshrc`) work exactly as well as a separate
-coordinates file — and one personal config file is the operator's
-preferred shape over two. Either way the boundary holds: the committed
-file names no vault, because the coordinates are supplied from outside
-the checkout.
 
 **Migrating off an in-profile copy — a one-time operator step.** Before
 the helper family was committed, `~/.zshrc` defined its **own**
@@ -596,10 +603,10 @@ Four things about that shape are load-bearing:
   startup.
 
 The coordinates above are placeholders. The real account domain, vault
-name, and item titles appear only in the untracked coordinates file — a
-plain file, not a symlink into a tracked config repo — so substitute
-your own. Naming the real ones here would buy a reader nothing (they
-have to substitute regardless).
+name, and item titles appear only in the untracked runtime config (or
+that optional coordinates file) — never in a symlink into a tracked
+config repo — so substitute your own. Naming the real ones here would
+buy a reader nothing (they have to substitute regardless).
 
 ### Session helpers (`.claude/shell/init.zsh`)
 
@@ -628,6 +635,24 @@ see the drift. It was not hypothetical; the `paps` block published here
 never worked (below). Committing the functions makes this doc describe
 something that actually runs.
 
+**And the drift ran the other way too — check parity when committing a
+personal helper.** The committed family was written from this doc rather
+than from the profile, and the profile had moved on: the operator's own
+`aps` passed `acceptEdits`, a display name, and `/init-pr`, its `naps`
+passed a permission mode, and its base-`cd` did a `git pull` — none of
+which the committed copies did. The gap went unnoticed for a while
+because every helper still *worked*; it was only the launch *shape* that
+differed, and the `acceptEdits` one meant sessions started via the
+committed `aps` prompted on every edit. Worse, the migration that
+revealed this found the profile had **never sourced** the committed
+script at all — it still carried full personal copies of every helper,
+so nothing committed here had ever run.
+
+The lesson generalizes past this one file: when moving an operative
+personal script under version control, diff the **behavior**, not just
+the shape, and decide each difference deliberately rather than
+inheriting it (the `cdds` pull was decided *against*, above).
+
 **What cannot ride this file:** the guard hooks' `settings.json` wiring.
 That is JSON read by the harness, not shell read by zsh, so sourcing
 this changes nothing about it — `make hook-wiring` remains the answer
@@ -638,15 +663,28 @@ branch arrives as `worktree-eng-###`):
 
 - **`cdds`** — `cd` to the base repo checkout. The starting point for
   anything that must not run inside a worktree (`housekeeping`, a
-  planning session).
+  planning session). **It does not `git pull`**, deliberately: a
+  navigation command should not make a network call that can be slow,
+  fail, or print, and `housekeeping` already fast-forwards `main` as its
+  first step — where the operation is visible and its failure is
+  reportable.
 
-- **`aps <tag>`** — start a **worktree** session: `claude -w <tag>`. This
-  is what creates the `eng-###` worktree directory whose branch arrives
-  named `worktree-eng-###`; there is no CLI flag to drop the prefix, so
-  `init-pr` renames it. This is the implementation-session entry point.
-  A **bare number** is given the `eng-` prefix, so `aps 882` and
-  `aps eng-882` agree and the `aps` → `raps` pair composes; a deliberate
-  non-`eng` name passes through untouched.
+- **`aps <tag>`** — start a **worktree** session:
+  `claude -w <tag> -n <tag> --permission-mode acceptEdits /init-pr`.
+  This is what creates the `eng-###` worktree directory whose branch
+  arrives named `worktree-eng-###`; there is no CLI flag to drop the
+  prefix, so `init-pr` renames it. This is the implementation-session
+  entry point. A **bare number** is given the `eng-` prefix, so
+  `aps 882` and `aps eng-882` agree and the `aps` → `raps` pair
+  composes; a deliberate non-`eng` name passes through untouched.
+
+  **`--permission-mode acceptEdits` is the load-bearing part.** The
+  shared `settings.local.json` sets no default permission mode, so
+  without it an implementation session starts in the default mode and
+  prompts on every edit. `-n <tag>` is for the human (the prompt box,
+  the `/resume` picker, the terminal title — `raps` resolves by
+  directory), and `/init-pr` runs the bootstrap without being asked, the
+  same trick `paps` and `haps` use.
 
 - **`raps <n>`** — resume a worktree session by number: takes a bare
   `<n>`, resolves it to the `eng-<n>` worktree, and resumes that
@@ -654,7 +692,8 @@ branch arrives as `worktree-eng-###`):
   resolution is the whole point — you resume `raps 814`, not a UUID.
 
 - **`naps <name>`** — start a **named** session in the current directory
-  (no worktree). The general-purpose named-session entry point.
+  (no worktree), also with `--permission-mode acceptEdits` for the reason
+  above. The general-purpose named-session entry point.
 
 - **`rnaps <name>`** — resume a named session by the same name. The
   counterpart to `naps`, as `raps` is to `aps`; added so a long-running
