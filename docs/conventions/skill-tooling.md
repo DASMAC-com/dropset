@@ -69,7 +69,13 @@ batched board writes and its compact board read — `list`, `fields`,
 issue's whole body back, and `issueUpdate` selecting `success` alone
 does not), `search_source.py` (the one scoped-search
 shape, which takes its exclude lists from `review_diff.py`),
-`lens_preamble.py` (composes the standing half of a lens brief from the
+`migration_collisions.py` (compares this branch's new migration numbers
+against other open PRs' before an enqueue — it takes the other PRs'
+files from a **file** rather than calling GitHub, so the network read
+stays on the MCP/`gh` path and the compare stays deterministic),
+`check_home_paths.py` (the committed-agent-material hygiene guard, wired
+as a scoped pre-commit hook), `lens_preamble.py` (composes the standing
+half of a lens brief from the
 [sub-agent brief](sub-agent-brief.md) plus a skill's own committed
 section, so a skill never reads either to quote it), and
 `render_review.py` (measures or contact-sheets rendered deck pages

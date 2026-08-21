@@ -3350,6 +3350,51 @@ already being asked to start the review.
    - `mergeable` not conflicting (`MERGEABLE`) → proceed to
      the In Review move and the enqueue prompt below.
 
+   **If this branch adds a migration, check for a cross-branch
+   number collision before enqueueing.** The in-tree ascend
+   guard and the schema-fence tests only ever see **one** tree,
+   and they start from an **empty** database — so a duplicate
+   number is invisible until both files coexist, which first
+   happens on the merge queue's merge-group branch. Until then
+   both PRs ride green.
+
+   The dequeue is the cheap half. The shared dev Postgres may
+   already have one branch's number applied, and an applied
+   migration is **immutable** (sqlx records a checksum), so
+   renumbering the **wrong** branch wedges the shared database
+   — and the only fixes are manual surgery or a wipe that
+   destroys collected market data outside the venues' backfill
+   windows. Two in-flight PRs really did each add an `0003`.
+
+   List the other open PRs' files (one field-selected read),
+   write them to a small JSON file, and let the tool compare:
+
+   ```sh
+   gh pr list --state open --json number,files --limit 30
+   ```
+
+   ```sh
+   python3 .claude/tools/migration_collisions.py \
+     --others <scratchpad>/others.json
+   ```
+
+   The tool takes its `--others` payload from a file precisely
+   so the network read stays on the `gh`/MCP path and the
+   compare stays deterministic; it makes no network call. It
+   compares **numbers, not filenames** — `0003_telemetry.sql`
+   and `0003_roster.sql` collide — and exits non-zero on a
+   collision, so a caller checking only the status cannot
+   enqueue through one.
+
+   **On a collision, stop and coordinate the renumber
+   deliberately.** The tiebreak, and its direction is the whole
+   point: **the branch whose number is already applied to the
+   shared dev DB keeps it; the other renumbers.** Renumbering
+   the applied one is the move that wedges the database.
+
+   Skip this entirely when the branch adds no migration — the
+   tool says so and exits zero.
+
    **A rebase-forced re-run may enqueue BEFORE re-verifying.**
    The normal gate is "everything green locally, then
    enqueue". That gate cannot win a race it is structurally
