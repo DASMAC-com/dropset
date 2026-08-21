@@ -254,7 +254,7 @@ Optional (ask on a direct run if not provided):
      PR-group rather than one per finding.
 
      Parked means *not in the pull queue*: a first-class
-     open issue for dedup, collision detection and search,
+     open issue for dedup and search,
      but out of scope for a planning bootstrap until
      somebody slates it in. That promotion is the `plan`
      skill's call (its step 8), never this one's, and it is
@@ -378,12 +378,12 @@ Optional (ask on a direct run if not provided):
        fields".
 
    **Record no collision links, and no relations of any
-   kind.** The automated file-collision machinery is being
-   retired by operator direction, so there is no per-issue
-   sweep here and nothing should be built around one; collision
-   reconciliation belongs to a planning session, which opens
-   with that pass anyway. Blocking edges remain human-curated
-   (`CLAUDE.md` → "Blocking relations").
+   kind.** The automated file-collision machinery is
+   **retired**: there is no per-issue sweep here, nothing to
+   build around one, and nothing to reintroduce. Collision
+   reconciliation belongs to a planning session, judged on
+   content from its own board read. Blocking edges remain
+   human-curated (`CLAUDE.md` → "Blocking relations").
 
 1. **Report.** Print a short tally — findings by
    dimension and severity, deduped count, and (direct run)

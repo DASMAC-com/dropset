@@ -41,12 +41,12 @@ step 8), never to a rotation. What gates what is recorded
 as native Linear blocking edges, which a **human curates** — an
 autonomous rotation files none (per `CLAUDE.md` → "Blocking
 relations"). It files **no relations at all**: the automated
-file-collision machinery is being retired by operator direction, so a
-rotation records no collision links and nothing here depends on them.
+file-collision machinery is **retired**, so a rotation records no
+collision links and nothing here depends on them.
 
 Invoke it directly — `/audit` — when you want a fresh batch of findings.
-It is **finite**: it runs the seven units once, files what they surface
-(recording each new issue's file collisions as it goes), and **stops** with
+It is **finite**: it runs the seven units once, files what they surface,
+and **stops** with
 a single `DONE` line. There is **no `/loop`, no finding cap, and no
 re-invocation** — the rotation *is* the bound. To audit more, run
 `/audit` again; each run is one independent rotation. `housekeeping`
@@ -345,8 +345,8 @@ File exactly as the
 `linear-task` skill does: a **plain issue with no parent**,
 assigned to the configured assignee, into the shared destination —
 **and stamped with the `Audit findings` project milestone**.
-There is **no umbrella issue**, and
-and no collision links between its issues.
+There is **no umbrella issue**, and no
+relations of any kind between its issues.
 
 **Why the milestone, and why it is not the Backlog.** The Backlog is
 the **pullable set** — the queue an implementation session pulls from
@@ -357,7 +357,7 @@ queued findings is both board bloat and bootstrap-read bloat for the
 most expensive session in the rotation. A **project milestone means
 parked**: Linear collapses it out of the default view, so a parked
 finding costs a planning bootstrap nothing while remaining a
-first-class open issue for **dedup, collision detection, and search**.
+first-class open issue for **dedup and search**.
 
 Everything else about filing is **unchanged** — the `**Fingerprint**:`
 dedup, the `**Touches**:` globs, the fewest-coherent-PRs fold and the
@@ -542,12 +542,12 @@ The description must let a cold agent act on it in its own worktree
   survives.
 
 **Record no collision links.** A rotation files its issues and stops
-there. The automated file-collision machinery is being **retired** by
-operator direction — the tool, its skill, and every filing-time
-related-link step — so there is no per-issue sweep here and nothing new
-should depend on one. Board bookkeeping belongs to planning sessions —
-though be precise about what that buys: the planning sweep is an interim
-of **unmeasured** coverage, not an equivalent substitute (see
+there. The automated file-collision machinery is **retired** — the tool,
+its skill, and every filing-time related-link step are gone — so there
+is no per-issue sweep here and nothing new should reintroduce one. Board
+bookkeeping belongs to planning sessions — though be precise about what
+that buys: a planning session's read is an interim of **unmeasured**
+coverage, not an equivalent substitute (see
 `docs/conventions/linear-automation.md` → "Structured filing fields").
 
 The `**Touches**:` field itself stays **mandatory**: it documents each

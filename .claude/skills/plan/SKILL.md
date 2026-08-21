@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas and the standing audit directive plus its outcome unprompted, then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled (this session is now the only place that happens — the filing-time sweep is retired), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog), and issues filed and amended to house convention. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — which also writes the next audit directive, one named subsystem or interface for housekeeping to audit, or explicitly none — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
+description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas and the standing audit directive plus its outcome unprompted, then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog), and issues filed and amended to house convention. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — which also writes the next audit directive, one named subsystem or interface for housekeeping to audit, or explicitly none — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -185,27 +185,31 @@ directive is what the close-out (step 6) will either keep or
 replace. A directive whose target has since been rewritten is
 stale and should be replaced rather than left to fire.
 
-**Reconcile file collisions once, here.** The full sweep is
-mechanical bookkeeping — it files `related` links only, never
-a blocking edge — and it belongs to the planning session
-because this is the session that touches the board:
+**Reconcile file collisions once, here — by reading, not by
+running a tool.** This is the only session that reconciles
+overlap at all: the automated file-collision machinery is
+retired, and nothing records a collision link any more.
+Judge it from the board read you already have. You are
+holding each issue's `**Touches**:` globs *and* enough of its
+prose to know what the work actually is, which is the whole
+argument for doing it here — content beats exact glob
+matching, and it is why the mechanical sweep was dropped
+rather than moved.
 
-```sh
-python3 .claude/tools/sync_blockers.py
-```
+Record the conclusions as **collision clusters** (see
+`docs/conventions/linear-automation.md` → "Overlap is a
+cluster, never an ordering"): group per shared area, never by
+connected component, and never as an ordering. Step 2 uses
+those clusters for merge proposals and step 8 uses them to
+pick a parallelizable batch. Write them into the document as
+prose — do **not** file a `related` link for one.
 
-Best-effort; it needs `LINEAR_API_KEY` and
-`LINEAR_PROJECT_ID`. Its report also surfaces the
-**collision clusters** step 2 uses for merge proposals and
-step 8 uses to pick a parallelizable batch.
-
-**Then run the read-only scheduling-smell scan** and act on
-what it finds — a dead edge holding an issue out of the
-available set is invisible until something looks for it:
-
-```sh
-python3 .claude/tools/sync_blockers.py --report-todo-blocks
-```
+**Then look for the two scheduling smells** and act on what
+you find — a dead edge holding an issue out of the available
+set is invisible until something looks for it. Read the
+blocking edges off the board directly: an edge whose blocker
+is already closed, and an unblocked Urgent issue sitting
+behind one, are both visible in the step-1 read.
 
 Two notes on cost, because they correct the obvious
 intuition. The whole board read is roughly **2–3k tokens**,
@@ -284,9 +288,10 @@ into its own pullable task. An issue that is startable only
 **Propose merge groups aggressively, to minimize open PRs.**
 Scan the Backlog for clusters that would land as a single PR
 — same subsystem, crate, or language-domain — and propose
-folding them via `/merge-tasks`. The collision clusters from
-step 1's sweep are the raw material: a cluster whose members
-share files is usually a cluster that wants to be one PR.
+folding them via `/merge-tasks`. The collision clusters you
+recorded in step 1 are the raw material: a cluster whose
+members share files is usually a cluster that wants to be one
+PR.
 The **coherence floor** still binds — never fold across
 separate apps, languages, or deploy units.
 
@@ -318,8 +323,8 @@ decision — it never derives one.
 Three things that are **not** blocking edges, each with its
 own handling:
 
-- **File overlap** — `related`-linked and reported as a
-  collision cluster by `sync-blockers`. It costs a rebase,
+- **File overlap** — recorded as a collision cluster in your
+  own notes (step 1), never as a relation. It costs a rebase,
   not an ordering.
 - **Coupling that belongs in one PR** — fold the issues into
   one via `/merge-tasks`, don't relate them.
@@ -391,31 +396,26 @@ skill binds it too:
   decided. See `docs/conventions/linear-automation.md` →
   "Partial edits".
 
-- **Record file collisions after each `save_issue`:**
+- **File no relations.** There is no per-issue collision step
+  after `save_issue` — the automated file-overlap machinery is
+  retired. Overlap is your step-1 judgement, recorded as prose
+  clusters; blocking edges are step 3's job and yours alone.
 
-  ```sh
-  python3 .claude/tools/sync_blockers.py --for <ENG-###>
-  ```
-
-  Best-effort. It files **no** blocking edge; those are
-  step 3's job and yours alone.
-
-- **Amending scope in prose is not amending scope.** The
-  collision tooling parses the `**Touches**:` field, never
-  the prose around it — so widening an issue's scope in a
-  paragraph while leaving the field alone produces an issue
-  that silently fails to collide-match in every area the
+- **Amending scope in prose is not amending scope.** A reader
+  scanning the board for overlap reads the `**Touches**:`
+  field, not the prose around it — so widening an issue's
+  scope in a paragraph while leaving the field alone produces
+  an issue whose declared scope is a lie in every area the
   prose added. This has happened: one issue's prose said
   "Touches widens beyond one file" while the field still
   named a single file, and the shipped diff spanned four
   areas.
 
   So when a re-scope changes what an issue touches, edit the
-  `**Touches**:` line **in the same write**, then re-run the
-  per-issue sweep above so the new globs actually get
-  linked. Same for `**Fingerprint**:` when the re-scope
-  changes what the issue is fundamentally *about* — that is
-  the dedup key, and a stale one silently re-files.
+  `**Touches**:` line **in the same write**. Same for
+  `**Fingerprint**:` when the re-scope changes what the issue
+  is fundamentally *about* — that is the dedup key, and a
+  stale one silently re-files.
 
 - **Tell an in-flight session when you amend its issue.**
   An implementation session reads the body once at the
@@ -552,9 +552,9 @@ searches resolved issues too.
 **8. Offer the parked audit findings — don't wait to be
 asked.** `audit` files its confirmed findings as real issues
 stamped with the **Audit findings** project milestone, which
-means they are **parked**: first-class open issues for dedup,
-collision detection and search, but costing a bootstrap read
-nothing. The repo is continuously audited, so this step is
+means they are **parked**: first-class open issues for dedup
+and search, but costing a bootstrap read nothing. The repo is
+continuously audited, so this step is
 how the planning flow continuously **absorbs** that output
 instead of letting it pile up unlooked-at.
 
@@ -571,8 +571,8 @@ On a yes:
   once, so a promoted batch is only useful if its members can
   be worked **simultaneously** — which means they must not
   collide on files. The per-issue `**Touches**:` data already
-  answers this exactly: promote a set with **no `related`
-  collision links between its members**. Where two findings
+  answers this: promote a set whose members appear in **no
+  common collision cluster** from step 1. Where two findings
   do collide, either promote one and leave the other parked
   for the next round, or fold them into a single issue under
   the fewest-coherent-PRs rule. This is the selection
@@ -612,8 +612,9 @@ expensive session in the rotation.
   conversation that spans hours or days; this skill describes
   how to run one, not a pass to execute and exit.
 - **The board is this session's alone.** `housekeeping` no
-  longer analyses the board — no collision sweep, no merge
-  groups, no scheduling smells — precisely so the two can't
+  longer analyses the board — no merge groups, no scheduling
+  smells (and no collision recording anywhere — that
+  machinery is retired) — precisely so the two can't
   reach conflicting conclusions between planning sessions.
   Its one remaining carve-out is proposing merges among
   `Claude:`-prefixed meta-work, which is upkeep on its own

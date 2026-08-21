@@ -143,7 +143,7 @@ class AssembleTests(unittest.TestCase):
                 {
                     "id": "ENG-622",
                     "number": 622,
-                    "title": "Claude: Tweak sync-blockers",
+                    "title": "Claude: Tweak trim-context",
                     "description": (
                         "Folded body.\n\n**Fingerprint**: stage:tweak\n"
                         "**Touches**: .claude/tools/**\n"
@@ -154,7 +154,7 @@ class AssembleTests(unittest.TestCase):
 
     def test_folds_as_part_section_preserving_fingerprints(self):
         out = assemble(self._issues())
-        self.assertIn("# Part 1 — Tweak sync-blockers", out["description"])
+        self.assertIn("# Part 1 — Tweak trim-context", out["description"])
         # both fingerprints survive
         self.assertIn("**Fingerprint**: audit:dedup", out["description"])
         self.assertIn("**Fingerprint**: stage:tweak", out["description"])
@@ -458,7 +458,7 @@ class AssembleCliTests(unittest.TestCase):
                 {
                     "id": "ENG-622",
                     "number": 622,
-                    "title": "Tweak sync-blockers",
+                    "title": "Tweak trim-context",
                     "description": "Folded.\n\n**Touches**: .claude/tools/**\n",
                 },
             ],
@@ -502,7 +502,7 @@ class AssembleCliTests(unittest.TestCase):
             # and the file holds the merged body
             with open(body, encoding="utf-8") as fh:
                 written = fh.read()
-            self.assertIn("# Part 1 — Tweak sync-blockers", written)
+            self.assertIn("# Part 1 — Tweak trim-context", written)
             self.assertTrue(written.rstrip().endswith(".claude/tools/**"))
 
     def test_ops_out_writes_ops_and_omits_them_from_stdout(self):

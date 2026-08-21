@@ -115,7 +115,7 @@ SEARCH_EXCLUDE_DIRS = (
     # Tool caches. These store content-addressed blobs of the very source being
     # searched, so a symbol sweep hits each match twice — once in the file and
     # once in the cache — which is how `.ruff_cache` turned up in a real sweep
-    # for `sync_blockers.py` callers.
+    # for a tool's callers.
     ".ruff_cache",
     ".pytest_cache",
     ".mypy_cache",

@@ -267,8 +267,8 @@ class BashSignatures(unittest.TestCase):
             "search_source.py",
         )
         self.assertEqual(
-            sm.bash_signature("python3 .claude/tools/sync_blockers.py --for ENG-1"),
-            "sync_blockers.py",
+            sm.bash_signature("python3 .claude/tools/init_pr_branch.py --tag eng-1"),
+            "init_pr_branch.py",
         )
 
     def test_distinct_repo_tools_get_distinct_shapes(self):

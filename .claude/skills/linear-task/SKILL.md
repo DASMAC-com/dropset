@@ -50,11 +50,11 @@ parent** (`state: "Backlog"`, no `parentId`). There is
 no umbrella issue. What gates what is recorded as
 native Linear blocking edges, which a **human curates** —
 this skill may propose one but never files one unasked
-(per `CLAUDE.md` → "Blocking relations"). The
-`sync-blockers` skill records file overlap separately, as
-a `related` link (this skill calls it after filing — see
-the final step). So just file the to-do; don't attach it
-to a parent.
+(per `CLAUDE.md` → "Blocking relations"). File overlap is
+recorded nowhere at filing time — the automated collision
+machinery is retired, and reconciling overlap is
+planning-session work. So just file the to-do; don't
+attach it to a parent, and file no relations.
 
 ## Input
 
@@ -88,10 +88,11 @@ what to file.
      `**Touches**: <glob>[, <glob>…]` line — the
      machine-readable path globs the fix will edit
      (a directory like `tui/` when it spans a dir, a
-     file when it's one file), comma-separated, so
-     `sync-blockers` can detect a file collision with
-     another issue. See `CLAUDE.md` → "Structured filing
-     fields".
+     file when it's one file), comma-separated, so a
+     planning session can see which issues will edit
+     the same code. Nothing consumes it mechanically;
+     it is still mandatory. See `CLAUDE.md` →
+     "Structured filing fields".
 
      **Two shapes Linear's writer mangles**, so keep them
      out of the body:
@@ -189,37 +190,15 @@ what to file.
    )
    ```
 
-1. **Record the new issue's file collisions.** Right
-   after `save_issue` returns the identifier, run the
-   incremental sweep to `related`-link its `**Touches**:`
-   collisions against the open Backlog — one bare command
-   that reduces to the
-   `Bash(python3 .claude/tools/sync_blockers.py:*)`
-   allow-rule (the overlap scan happens in the tool's own
-   process, so nothing enters context):
-
-   ```sh
-   python3 .claude/tools/sync_blockers.py --for <ENG-###>
-   ```
-
-   Best-effort: it needs `LINEAR_API_KEY` /
-   `LINEAR_PROJECT_ID`; if either is unset the tool says
-   so — note it and continue, the full sweep will catch
-   the collision later.
-
-   This files **no blocking edge** — a collision means the
-   two issues touch the same files, which costs at most a
-   rebase. Each one prints the paths it collides on:
-
-   ```txt
-   related-linked: ENG-806 ~ ENG-798 (overlaps on .claude/tools)
-   ```
-
-   **Relay those lines** when reporting the new issue. If
-   one of them looks like a real dependency rather than
-   incidental co-location, that is the moment to
-   `AskUserQuestion` about a blocking edge — never to file
-   one.
+   **File no relations at all.** There is no
+   collision-recording step: the automated file-overlap
+   machinery is retired, so `save_issue` is the whole
+   write. If the to-do looks like a real dependency of
+   another issue rather than incidental co-location, that
+   is the moment to `AskUserQuestion` about a blocking
+   edge — never to file one, and never to record the
+   overlap as a `related` link instead. Reconciling
+   overlap is planning-session work.
 
 1. Print the new issue's identifier (e.g. ENG-123)
    and URL so the user can jump to it.
