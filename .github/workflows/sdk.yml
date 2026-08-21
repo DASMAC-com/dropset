@@ -21,9 +21,13 @@ jobs:
     # hashed identically to theirs even though it installs the wasm32 target —
     # installed targets do not enter the rust-cache key — so the only thing
     # keeping a separate ~0.44 GB copy per ref was the key name.
+    # Restore-only, for the reason spelled out in lint.yml: this is both the
+    # fastest job and the one with the thinnest dependency set, so it is the
+    # likeliest to win the first-writer race and the worst entry to freeze.
     - uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
+        save-if: false
         shared-key: 'rust-test-${{ runner.os }}'
     - uses: 'pnpm/action-setup@v6'
       with:

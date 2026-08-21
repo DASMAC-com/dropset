@@ -7,7 +7,9 @@ three Rust-touching workflows (`lint.yml`, `sdk.yml`, `test.yml`).
 ## 1. The toolchain is pinned, in exactly one place
 
 `rust-toolchain.toml` at the repo root is the single authority for the
-compiler version. Nothing else names it — not a workflow, not a Dockerfile.
+compiler version. No workflow names a version, and each Dockerfile that
+builds Rust takes `FROM rust:1-bookworm` — a major-version base image whose
+rustup then resolves this file, so the exact compiler still comes from here.
 
 CI reads it by using `actions-rust-lang/setup-rust-toolchain` with **no**
 `toolchain` input, which installs whatever the file specifies. The more
@@ -65,7 +67,9 @@ the one change guaranteed to cost a full cold rebuild across every job.
 
 ## 3. What the caches are expected to do
 
-Rust work is cached in four layers, and all four are expected to hit:
+Rust work is cached in up to four layers, each expected to hit in the jobs
+that use it — `test-postgres` builds no program, so it has neither the SBF
+nor the Solana-toolchain layer:
 
 - **`Swatinem/rust-cache`**, scoped per `shared-key` — the registry plus
   dependency build artifacts. Workspace crates are deliberately pruned.
@@ -93,9 +97,16 @@ run of a new PR. That costs the `install-hooks` step, measured at ~100s.
 The `lint` and `sdk` jobs and the three test jobs all name one cache key,
 the test jobs' `rust-test` one. That input **replaces** rust-cache's
 automatic job-id component, so jobs naming the same key resolve to the same
-entry instead of each storing a near-identical copy. Only the first job to
-finish saves it; the others restore and then rebuild whatever their own
-feature set adds.
+entry instead of each storing a near-identical copy.
+
+Only the three test jobs **write** that entry. `lint` and `sdk` set
+`save-if: false` and are restore-only, which is load-bearing rather than
+tidy: rust-cache skips its save whenever the restore was an exact key match,
+so the first job to finish on a fresh key decides that entry's contents for
+the whole lockfile-plus-toolchain generation. `sdk` is both the fastest job
+and the one with the thinnest dependency set, so letting it win that race
+would freeze a thin entry the program-building jobs then restore on every
+later run — slowing the critical path, which is the opposite of the point.
 
 This was worth doing because the duplication was measured, not suspected: on
 a single PR ref there were four entries with identical dependency hashes —
@@ -110,8 +121,12 @@ make it restore well over a gigabyte it never reads.
 
 ### The visibility guard
 
-Every Rust test job ends with a `Cache effectiveness summary` step that
-writes the SBF cache hit flag and `sccache --show-stats` into the run
-summary. It runs on failure too. The point is that a regression to cold
-compiles shows up in the run that suffers it, instead of being reconstructed
-weeks later from a complaint that CI feels slow.
+Every Rust test job ends with a `Cache effectiveness summary` step writing
+`sccache --show-stats` into the run summary, fenced so the column-aligned
+table survives Markdown rendering. The three program-building jobs also
+report their SBF cache hit flag; `test-postgres` omits it, having no such
+step. The step runs on failure but not on cancellation, and it is
+`continue-on-error` — a visibility guard must never be the thing that reds
+an otherwise-green job. The point is that a regression to cold compiles
+shows up in the run that suffers it, instead of being reconstructed weeks
+later from a complaint that CI feels slow.

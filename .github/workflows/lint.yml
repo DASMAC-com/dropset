@@ -35,9 +35,19 @@ jobs:
     # ref stops being stored, and this job — which has no `push: main`
     # trigger, so it never saved a default-branch entry — can finally restore
     # one, warming both merge-queue runs and the first run of every new PR.
+    # `save-if: false` makes this job a restore-only consumer of that entry,
+    # and it is load-bearing rather than tidiness. rust-cache skips its save
+    # whenever the restore was an exact key match, so the FIRST job to finish
+    # on a fresh key decides the entry's contents for that whole
+    # lockfile-plus-toolchain generation. This job and sdk carry thinner
+    # dependency sets than the three test jobs, so letting either win that
+    # race would freeze a thin entry that the program-building jobs then
+    # restore on every later run — making the critical path slower, which is
+    # the opposite of the point. Only the test jobs write; lint and sdk read.
     - uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
+        save-if: false
         shared-key: 'rust-test-${{ runner.os }}'
     - uses: 'pnpm/action-setup@v6'
       with:
