@@ -90,28 +90,44 @@ It prints `{"survivor": "ENG-###", "ids": [...]}`. If the
 user named a survivor, append `--survivor <number>`. The
 tool errors if fewer than two distinct issues remain.
 
-**2. Fetch each issue once.** For every id in `ids`, call
-`mcp__claude_ai_Linear__get_issue` with
-`includeRelations: true` — one fetch per issue, no reloads
-(context-cheap). Keep each issue's `title`, `description`,
-and its `blockedBy` / `blocks` / `relatedTo` relations.
+**2. Fetch the bodies with the tool, not with `get_issue`.**
+One bare command reads every body over GraphQL **in its own
+process** and writes the file step 3 consumes:
 
-**3. Assemble the merged issue.** Write the fetched issues
-to a temp JSON file with the **Write** tool (the
-file-handoff pattern from `CLAUDE.md` → "Shell commands";
-no heredoc) — shape:
-
-```json
-{
-  "survivor": "ENG-615",
-  "issues": [
-    {"id": "ENG-615", "number": 615, "title": "…", "description": "…"},
-    {"id": "ENG-622", "number": 622, "title": "…", "description": "…"}
-  ]
-}
+```sh
+python3 .claude/tools/merge_tasks.py fetch --survivor 615 \
+  --out /tmp/merge-tasks.json 615 622 623 624
 ```
 
-Then run the tool over it, passing **both** `--out` and
+It prints identifiers and a byte count — never a body. **No
+body transits context at any point in this step.**
+
+That is the whole reason it exists. Folded bodies used to
+transit context roughly **three** times per fold: once as
+each `get_issue` echo, once as the hand-written `Write`
+composing that same JSON, and once as the `Read` of the
+generated ops. About **50k of one planning session's ~135k
+output** was body re-emission. This removes the first two —
+measured on a real pair, 68KB of body handled at zero
+context cost.
+
+The third is **structural and stays**: the ops go through
+the MCP `patch` path, whose anchor matching with atomic
+abort is load-bearing safety, and handing ops to an MCP call
+means reading them. It shrank anyway — with `**Touches**:`
+retired, a fold of post-retirement issues is appends only,
+so there is no `replace` and no anchor.
+
+**Relations still need `get_issue`.** The tool fetches
+bodies, not relations. When the fold has to carry
+`blockedBy` / `blocks` / `relatedTo` (step 3's union below),
+call `mcp__claude_ai_Linear__get_issue` with
+`includeRelations: true` for that — once per issue, no
+reloads. Skip it entirely when no issue in the set has
+relations worth carrying.
+
+**3. Assemble the merged issue.** Run the tool over the file
+step 2 wrote, passing **both** `--out` and
 `--ops-out` so neither large payload is echoed to stdout
 (per `CLAUDE.md` → "Context economy"):
 
