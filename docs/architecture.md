@@ -8,7 +8,11 @@
 
 <!-- cspell:word hyperliquid -->
 
+<!-- cspell:word misprices -->
+
 <!-- cspell:word toggleable -->
+
+<!-- cspell:word unrepresentable -->
 
 # Ephemeral Central Limit Order Book (eCLOB) Architecture
 
@@ -1586,6 +1590,40 @@ independently. Dropping the write-time checks (price validity, the
 sentinels, the clock sysvar and its future/backdate bounds, the
 occupancy and frozen gates) therefore moves no risk while removing the
 clock account and most of the hot-path CU.
+
+That argument covers an **invalid** price. A **valid but far-out** one is a
+distinct case, and it is *not* parked out of the book: it materializes,
+sorts, and matches like any other. Nothing bounds it — not `price_bits`
+(any encodable `Price`, spanning ~1e-16 to ~1e16), not
+`LiquidityProfile`'s per-level `price_offset` (any `u32` of ppm), and there
+is no band, collar, or tolerance field anywhere in `MarketHeader`. That is
+deliberate rather than an omission. A write-time band on the offset would
+bound the ladder's *shape*, not its distance from the market, because the
+offsets hang off a reference price the same leader chooses — so it is
+circumvented by construction, and a band that bit would need an external
+price truth this design refuses on purpose (the leader's stamp *is* the
+price datum). Only the arithmetic clamps apply: a bid offset at or above
+`1e6` ppm floors to `Price::ZERO` and drops out of the book, as does any
+ask whose materialized price is unrepresentable, so the far-out surface is
+ask-only.
+
+What bounds the loss is **taker consent**, applied downstream in three
+independent layers — the per-level limit-price filter, the price-time walk
+that sorts a far-out level to the tail (reached only once everything better
+is exhausted), and the `min_out` soft-revert. A leader who misprices their
+own pooled inventory harms themselves; a taker who crosses a bad level
+chose to.
+
+The invariant that follows binds every future consumer of a level price:
+**never derive a value bound from a level's own price — only from a price
+the taker demonstrably accepted.** A level price is adversary-chosen, and
+the taker-consent argument above holds only for value moving through the
+priced fill; anything debited *outside* that path escapes all three layers.
+The exact-in walk obeys the invariant by giving `LegFill::Exhausted` no
+residue field at all: that arm fires precisely when the taker receives
+nothing, so the level's price is not one they accepted and `min_out` is no
+defense, since residue never reduces output. See **Fill semantics — the
+take is exact-in**.
 
 Reads `market.nonce`, writes `Vault.reference_price` as the `stamp`
 (`market.nonce | FLUSH_BIT`) plus the three payload `u32`s — `price`,

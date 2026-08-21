@@ -113,6 +113,27 @@ const _: () = assert!(RP_STAMP_OFF == 0);
 /// * **`frozen`** — the freeze is enforced at match time (`swap` skips
 ///   frozen vaults), and re-quoting one is inert, so both kernels stay
 ///   minimal by omitting it (see `freeze_vault.rs`).
+/// * **Price and ladder values** — neither kernel bounds *what* the
+///   leader publishes. `stamp_reference_price` stores `price` raw and
+///   `write_liquidity_profile` copies the ladder verbatim, so a leader
+///   may anchor anywhere in the representable `Price` range (~1e-16 to
+///   ~1e16) and offset any level by up to `u32::MAX` ppm. Deliberate,
+///   and **not fixable by a write-time band**: `Level::price_offset` is
+///   measured from a reference price the *same* leader chooses, so
+///   bounding the offset bounds the ladder's *shape*, not its distance
+///   from the market — a leader wanting to quote far out just stamps a
+///   far-out reference instead. A band that bit would need an external
+///   price truth, which this design refuses on purpose (the leader's
+///   stamp *is* the price datum). What bounds the loss is taker consent,
+///   downstream: the per-level limit filter, the price-time walk that
+///   sorts a far-out level to the tail of the book, and the `min_out`
+///   soft-revert. Hence the invariant binding anything that consumes
+///   value at a level price — **never derive a bound from the level's
+///   own price, only from a price the taker demonstrably accepted**. The
+///   exact-in walk obeys it by giving `LegFill::Exhausted` no residue
+///   field at all (see `swap.rs`): that arm fires when the taker
+///   receives nothing, so the price is not one they accepted and
+///   `min_out` is no defense, since residue never reduces output.
 ///
 /// Runs before any mutation, so a rejected call leaves `data` untouched.
 #[inline(always)]
