@@ -1,6 +1,6 @@
-POSIXLY
 AUDUSD
 EURCUSD
+POSIXLY
 USDTZUSD
 addrs
 affordance
