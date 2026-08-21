@@ -360,8 +360,8 @@ finding costs a planning bootstrap nothing while remaining a
 first-class open issue for **dedup and search**.
 
 Everything else about filing is **unchanged** — the `**Fingerprint**:`
-dedup, the `**Touches**:` globs, the fewest-coherent-PRs fold and the
-`Claude:` prefix all behave exactly as before.
+dedup, the fewest-coherent-PRs fold and the `Claude:` prefix all behave
+exactly as before.
 
 **And the state is `Todo`, not `Backlog`.** The milestone alone is not
 enough: the operator's "Next" view is the *unblocked Backlog*, so a
@@ -416,8 +416,8 @@ mcp__claude_ai_Linear__save_issue(
 )
 ```
 
-**Meta-work prefix.** When a finding's `**Touches**:` sit entirely under
-the meta surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`),
+**Meta-work prefix.** When every path a finding's fix will edit sits
+under the meta surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`),
 prepend the **`Claude:`** token to the title (per
 `CLAUDE.md` → "Claude: meta-work prefix") so it reads
 `Claude: <file>: <imperative fix>`. This composes with the `arch:`
@@ -445,8 +445,8 @@ and is unaffected by this.
 should file the **fewest coherent PRs**, not one issue per finding.
 Whenever findings belong in the **same PR**, file them as **one combined
 parked issue**: one title, the per-finding notes under per-source
-sub-headings, a `**Fingerprint**:` line for **each** finding (the
-union), and a union `**Touches**:`.
+sub-headings, and a `**Fingerprint**:` line for **each** finding (the
+union).
 
 The bar is **same-PR coherence**, not same-file: fold findings that
 share a subsystem, crate, or language-domain and would obviously land as
@@ -463,24 +463,23 @@ that way.
 **Grow an issue with `patch`, never a full-body rewrite.** This is the
 highest-volume append in the repo — a seven-unit rotation can fold into
 the same issue repeatedly, and a wholesale `description` would re-send
-everything already there on *every* fold. Use the same two-op shape
-`trim-context` and `housekeeping` use (`save_issue` by `id`, `patch`
-only — never alongside `description`):
+everything already there on *every* fold. Use `save_issue` by `id` with
+`patch` only — never alongside `description` — and it is now a **single
+op**:
 
 1. an **`append`** carrying the new sub-heading and the finding's own
-   `**Fingerprint**:` line, which needs no anchor and so needs no prior
-   read of the issue at all; and
-1. a **`replace`** on the `**Touches**:` line, swapping it for the grown
-   union.
+   `**Fingerprint**:` line.
 
-Two anchor rules apply to the `replace` (full detail:
-`docs/conventions/linear-automation.md` → "Partial edits — the `patch`
-argument"). The anchor must match the **stored** text
-exactly once — `**Touches**:` is safe because there is exactly one such
-line per issue, and you know its current content from the fold you last
-made. And the anchor must carry **no `ENG-###`**, since Linear stores a
-tag as a mention node no anchor can match — so never anchor on a
-finding's own prose, which may cite one.
+An `append` needs no anchor, so it needs **no prior read of the issue at
+all** — which is the cheapest write shape the MCP offers. This used to
+be two ops, because a second `replace` had to swap the
+`**Touches**:` line for a grown union, and that op carried the whole
+anchor-matching hazard (an anchor must match the stored text exactly
+once, and must carry no `ENG-###`, since Linear stores a tag as a
+mention node no anchor can match). Retiring that field retired the
+`replace` and the hazard with it. Do not reintroduce either. Full detail
+on `patch`: `docs/conventions/linear-automation.md` → "Partial edits —
+the `patch` argument".
 
 **The coherence floor.** Never fold across separate apps, languages, or
 deploy units — a TUI Rust rendering fix, a frontend TS hook fix, and an
@@ -521,12 +520,6 @@ The description must let a cold agent act on it in its own worktree
   set, so a wiped worktree recovers dedup state from Linear instead of
   refiling everything.
 
-- `**Touches**: <glob>[, <glob>…]` — the machine-readable list of path
-  globs the fix will edit, comma-separated (for a single-file nit, just
-  that file). It documents the finding's footprint for a human reader
-  and for the fewest-coherent-PRs fold. **Mandatory** — see
-  `docs/conventions/linear-automation.md` → "Structured filing fields".
-
 - `**Discovered by**: audit <unit> @ <commit SHA>`
 
   **That SHA is what dates every citation above it.** The
@@ -550,9 +543,10 @@ that buys: a planning session's read is an interim of **unmeasured**
 coverage, not an equivalent substitute (see
 `docs/conventions/linear-automation.md` → "Structured filing fields").
 
-The `**Touches**:` field itself stays **mandatory**: it documents each
-finding's footprint for a human reader and for the fewest-coherent-PRs
-fold, independent of what consumes it. And a rotation still files **no
+The `**Touches**:` field went with it — see
+`docs/conventions/linear-automation.md` → "Retired: `**Touches**:`".
+Name the affected files in the finding's prose instead, where an
+implementer will actually read them. And a rotation still files **no
 blocking edge** of any kind — blocking is human-curated (`CLAUDE.md` →
 "Blocking relations").
 
@@ -573,11 +567,6 @@ line; use this body instead:
   up.
 - `**Fingerprint**: <fingerprint>` — the `arch:<lens>:<topic-slug>`
   dedup key (mandatory, same role as for FILE findings).
-- `**Touches**: <glob>[, <glob>…]` — the path globs the proposal's work
-  would span (often several dirs for an `arch:` finding),
-  comma-separated. It documents the proposal's footprint for a reader.
-  **Mandatory** — see `docs/conventions/linear-automation.md` →
-  "Structured filing fields".
 - `**Discovered by**: audit <unit> @ <commit SHA>`
 
 Priority 3; these are proposals for the user to triage, not

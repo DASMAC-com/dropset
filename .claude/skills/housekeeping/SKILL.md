@@ -505,15 +505,14 @@ Dedup and refile so a 30-minute loop never duplicates work:
   `cspell-placement:` fingerprint — going forward there is
   at most one), add the new findings to it rather than
   opening a second aggregated issue — with a **`patch`** on
-  that issue's `id` (one `append` op carrying the new
-  bullets, plus a `replace` on its `**Touches**:` line),
-  not a re-sent `description`, per
+  that issue's `id` carrying **one `append` op** with the new
+  bullets, not a re-sent `description`, per
   `docs/conventions/linear-automation.md` → "Partial edits —
-  the `patch` argument". The `append` can't clobber an
-  existing bullet, so no diffing against the live body is
-  needed for the new findings — but copy the `**Touches**:`
-  line the `replace` targets **verbatim** from the issue you
-  just read, since that op has to match it exactly once. If
+  the `patch` argument". An `append` can't clobber an
+  existing bullet and needs no anchor, so this needs no
+  diffing against the live body — and, since the
+  `**Touches**:` field retired, no second `replace` op to
+  grow a glob union either. If
   more than one such issue somehow exists (e.g. a legacy
   per-finding issue alongside an aggregated one), append to
   the **lowest-ENG** one and note the others in the report so
@@ -549,7 +548,7 @@ project milestone (**not** a document — that inbox is
 retired), folds the parked levers into a **single aggregated
 propose-only** skill-improvement Backlog task per coherent
 PR — one section per lever, each keeping its own
-`**Fingerprint**:` line under a combined `**Touches**:` — and
+`**Fingerprint**:` line — and
 then **closes the parked originals**, so the milestone
 lifecycle is the state machine and nothing needs draining.
 `trim-context` has **no** attended / propose-only split —

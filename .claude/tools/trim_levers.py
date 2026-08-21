@@ -264,6 +264,10 @@ def compose_body(body: str, fingerprint: str, touches: list[str]) -> str:
     # the prose happens to mention it.
     if not field_line_re("Fingerprint", fingerprint).search(body):
         parts.append(f"**Fingerprint**: {fingerprint}")
+    # `**Touches**:` is retired — `session-metrics` passes no `--touches`, so
+    # this branch is dead on the normal path and kept only so an explicit
+    # caller (or an old script) still composes a valid body rather than
+    # erroring. See `CLAUDE.md` -> "Structured filing fields".
     if touches and not field_line_re("Touches").search(body):
         parts.append(f"**Touches**: {', '.join(touches)}")
     # Joined with a blank line, and never leaving a field directly under a

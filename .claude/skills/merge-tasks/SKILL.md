@@ -1,6 +1,6 @@
 ---
 name: merge-tasks
-description: Consolidate several Linear issues into one, given their numbers. Folds each non-survivor's body into the lowest-numbered survivor as a labeled # Part section (preserving every Fingerprint), unions the Touches globs, carries relatedTo append-only while surfacing every inherited blockedBy/blocks as a proposal for the user to approve (blocking is human-curated), applies the Claude: prefix when every issue is meta-work, and cancels the folded issues as duplicateOf the survivor. Files no collision links — the automated file-overlap machinery is retired. Confirms the plan via AskUserQuestion before any write. The deterministic parsing/assembly lives in the merge_tasks.py tool.
+description: Consolidate several Linear issues into one, given their numbers. Folds each non-survivor's body into the lowest-numbered survivor as a labeled # Part section (preserving every Fingerprint), carries a legacy Touches line forward as one consolidated union when the folded bodies have one (the field is retired, so nothing invents one), carries relatedTo append-only while surfacing every inherited blockedBy/blocks as a proposal for the user to approve (blocking is human-curated), applies the Claude: prefix when every issue is meta-work, and cancels the folded issues as duplicateOf the survivor. Files no collision links — the automated file-overlap machinery is retired. Confirms the plan via AskUserQuestion before any write. The deterministic parsing/assembly lives in the merge_tasks.py tool.
 user-invocable: true
 ---
 
@@ -40,9 +40,14 @@ to override, the user names one explicitly (e.g. "merge
   body is preserved verbatim under its `# Part` heading, so
   the per-lever dedup keys all survive.
 
-- **Unions, never overwrites, `**Touches**:`** — the merged
-  issue carries one consolidated `**Touches**:` line that
-  is the union of every folded issue's globs.
+- **Carries a legacy `**Touches**:` line without inventing
+  one.** The declared-scope glob field is **retired** — no
+  filing emits it any more (`CLAUDE.md` → "Structured filing
+  fields"). Issues filed before that still have one, so when
+  any folded body carries globs the merged issue keeps a
+  single consolidated line holding their union, and when none
+  does it gets no line at all. Never add globs by hand to
+  give it one.
 
 - **Confirms before any write** (see step 4). Nothing is
   mutated until the human approves the plan.
@@ -121,20 +126,24 @@ ways it expressed the fold:
 
 - **`patch_ops_path`** (+ `patch_ops_count`) — the fold as
   Linear `patch` operations: one `append` per `# Part`
-  section, and one `replace` swapping the survivor's
+  section, plus — **only when a folded body carries legacy
+  globs** — one `replace` swapping the survivor's
   `**Touches**:` line for the union. **Prefer this.** The
   ops carry only the *folded* bodies, so the survivor's own
   text — 28KB is unremarkable — is never re-sent at all.
   `null` when no safe anchor exists, with
   `patch_fallback_reason` naming the rule it tripped (two
   `**Touches**:` lines, an `ENG-###` in the anchor, or over
-  Linear's 50-op cap).
+  Linear's 50-op cap). Since the field is retired, a fold of
+  issues filed after that is **appends only** — no anchor, so
+  none of those fallback cases can arise.
 - **`description_path`** — the whole merged body, the
   wholesale fallback for exactly that case.
 
 The merged body is the survivor body + each non-survivor
 folded as a `# Part N — <title>` section (every fingerprint
-preserved, one consolidated `**Touches**:` line); the `title`
+preserved, and a consolidated `**Touches**:` line only if
+some folded body had one); the `title`
 carries the **`Claude:`** prefix when `all_meta` is true (per
 `CLAUDE.md` → "Claude: meta-work prefix"), and `cross_area`
 is set when the merge mixes meta-work with product code.
@@ -157,8 +166,8 @@ carried the same way:
   Blocking is **human-curated** (`CLAUDE.md` → "Blocking
   relations"), and carrying an inherited edge onto the
   survivor is the automation **redirecting a human-placed
-  edge** onto an issue the human never placed it on — with a
-  wider `**Touches**:` union than the edge was ever judged
+  edge** onto an issue the human never placed it on — one
+  with a wider scope than the edge was ever judged
   against. So treat every inherited blocking edge as a
   **proposal**: list it in the step-4 plan, naming which
   folded issue it came from, and pass it only for the ones
@@ -228,13 +237,13 @@ title), the issues folded in and canceled, and which
 inherited blocking edges were carried (and which were left
 as prose).
 
-**No collision step.** The survivor's `**Touches**:` is now
-the union of every folded issue's, which is wider than any
-one of them — but nothing records overlap: the automated
-file-collision machinery is retired. A wider union is worth
-mentioning in the report as prose, since it is a signal for
-the next consolidation pass, but it produces no relation
-write. Reconciling overlap is planning-session work.
+**No collision step.** Nothing records overlap — the
+automated file-collision machinery is retired, and so is the
+declared-scope field it read. A survivor whose scope has
+obviously widened is worth a line in the report as prose,
+since it is a signal for the next consolidation pass, but it
+produces no relation write. Reconciling overlap is
+planning-session work.
 
 ## Notes
 

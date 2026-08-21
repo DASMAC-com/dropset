@@ -51,8 +51,8 @@ that already exists rather than filing a duplicate, so recurrence
 becomes an accumulating fact on one issue. `trim-context` is the
 **consumer**: it sweeps the milestone, folds the parked levers into the
 fewest coherent propose-only `Claude:` Backlog tasks — one section per
-lever, each keeping its own `**Fingerprint**:` line under a combined
-`**Touches**:` — and closes the parked originals. A lever judged not
+lever, each keeping its own `**Fingerprint**:` line — and closes the
+parked originals. A lever judged not
 worth acting on is **closed with its reason**, which suppresses
 refiling permanently. `housekeeping` drives `trim-context` as its
 Session Metrics step; both skills also run standalone.
@@ -86,11 +86,9 @@ implementation specs into context anyway, so it judges overlap on
 content rather than on exact glob matching. **Reconciling overlap is
 planning-session work**, done from the ordinary board read — including
 the merge-group proposals and the scheduling smells the tool used to
-report. The `**Touches**:` field itself **stays mandatory** (see
-"Structured filing fields" below): it documents scope for the human
-reader and is the raw material for any future content-based detection.
-Relations already on the board are left alone as inert history —
-nothing deletes a relation.
+report. The `**Touches**:` field it consumed went with it — see
+"Structured filing fields" below. Relations already on the board are
+left alone as inert history: nothing deletes a relation.
 
 ## Structured filing fields
 
@@ -145,42 +143,42 @@ filing skills emit them and the dedup probes match on them:
   re-proposed the very thing on intuition. An open-only dedup search
   re-opens every one of those arguments.
 
-- `**Touches**: <glob>[, <glob>…]` — the path globs the fix will
-  edit, comma-separated. Declare the **directory** when the work
-  spans a dir (`tui/`), the **file** when it's one file
-  (`programs/dropset/src/swap.rs`); list every glob for a multi-file
-  finding. The field is **documentation of scope for a human reader** —
-  it is what a planning session reads to see that two issues will edit
-  the same code, and the raw material for any future content-based
-  collision detection. Nothing consumes it mechanically: a directory
-  glob still implies every path under it, but the reader draws that
-  conclusion, not a tool. A collision is explicitly **not** a blocking
-  edge — see "Blocking relations". An issue that predates the
-  `**Touches**:` convention has no globs; backfill one when you notice.
+That is the whole field set. `**Fingerprint**:` is the only one.
 
-  **The field is mandatory; the machinery that consumed it is gone.**
-  The retirement (see the retired-machinery note above) removed the
-  `sync-blockers` tool, its skill, and every filing-time related-link
-  step. Nothing new should reintroduce automated collision recording —
-  the operator direction is toward content-based judgement in a planning
-  session, not exact glob matching. Keep emitting the field on every
-  filing.
+### Retired: `**Touches**:`
 
-  **Be honest about what that costs.** Automated collision recording was
-  **dropped**, not replaced: the planning session's read is the successor
-  and its coverage is unmeasured. That is an accepted trade — a spurious
-  edge costs more than a missing one (see "Blocking relations") — not a
-  guarantee of equivalence.
+A filed issue used to carry `**Touches**: <glob>[, <glob>…]`, the path
+globs the fix would edit. **Nothing emits it any more.** It was the
+input to the automated collision machinery (see the retired-machinery
+note above), and once that was deleted nothing read it: composing a
+glob list became filing overhead paid for a field with no consumer, and
+the operator's ruling was to drop it rather than keep it on the chance
+that something might want it later.
 
-  **Glob-vs-diff drift is mechanically detectable, and deliberately not
-  automated.** An issue whose merged PR touched paths outside its
-  declared globs is exactly the shape of a prose-widened scope that
-  never updated the field, and could be flagged after the fact. It is
-  recorded here as *evaluated, not built*: the check needs the merged
-  PR's file list, and building GitHub-dependent board machinery to catch
-  a class the amendment rule (see the `plan` skill, step 4) already
-  addresses at the source is the wrong order. Revisit if the rule proves
-  insufficient in practice.
+**Do not reintroduce it, and do not reintroduce what consumed it.** The
+direction is content-based judgement in a planning session — that
+session is holding each issue's actual prose, which is strictly more
+than a glob list tells it — not exact glob matching. If a future pass
+wants declared scope back, that is a decision to take deliberately, not
+a habit to drift into one filing at a time.
+
+**Existing lines stay, and the fold tools still carry them.** Bodies
+filed under the old convention keep their `**Touches**:` line as inert
+history, exactly like the relations. `merge_tasks.py` and
+`trim_levers.py` both emit a line only when given globs and tolerate
+their absence by construction, so folding an old issue preserves
+whatever it declared without requiring a new one to declare anything.
+
+**Be honest about what the whole retirement costs.** Automated collision
+recording was **dropped**, not replaced: a planning session's read is
+the successor and its coverage is unmeasured. That is an accepted trade
+— a spurious edge costs more than a missing one (see "Blocking
+relations") — not a guarantee of equivalence. Losing the declared-scope
+field widens that gap slightly, since there is no longer a cheap
+cross-check on an issue whose prose quietly outgrew its stated scope.
+Accepted on the same reasoning: the amendment rule (see the `plan`
+skill, step 4) addresses scope drift at the source, and a field nothing
+reads does not catch it either.
 
 ### Overlap is a cluster, never an ordering
 
@@ -222,8 +220,7 @@ one issue. This is wider than "same file or symbol" and spans **units
 within a rotation**, not only findings within a single unit.
 
 A folded issue keeps **every** finding's own `**Fingerprint**:` line
-(one per line, so per-finding dedup still matches) and a **union** of
-their `**Touches**:` globs.
+(one per line, so per-finding dedup still matches).
 
 **The coherence floor — do not fold across deploy units.** Never merge
 findings a single PR can't sensibly review or land as a whole: different
@@ -293,19 +290,24 @@ batches together and can be filtered, staged, and reviewed apart from
 product code on the board.
 
 - **Filing skills emit it.** `linear-task`, `audit`, `audit-scope`,
-  `housekeeping`, and `plan` prepend `Claude:` to a title when the
-  issue's
-  `**Touches**:` globs are all on the meta surface above. `/merge-tasks`
+  `housekeeping`, and `plan` prepend `Claude:` to a title when **every
+  path the fix will edit** is on the meta surface above. `/merge-tasks`
   applies it when every issue it consolidates is meta. (`plan` matters
   here in particular: a planning session is where most meta-work issues
   are actually filed.)
+- **The judgement is the filer's, not a field's.** This used to be
+  derived mechanically from the issue's `**Touches**:` globs; that field
+  is retired (see "Structured filing fields" above), so the filer
+  decides from what it already knows it is about to change. That is not
+  a loosening: a filer composing an issue knows the surface it is
+  describing, and the glob list was only ever that same knowledge
+  written down one step earlier.
 - **It batches meta-work on the board.** The prefix is the signal a
   human filters and groups by in Linear to see all agent-infra work at
-  once, apart from product code. It is applied at **filing time** — the
-  filing skills add it exactly when the issue's `**Touches**:` globs are
-  all on the meta surface, so the prefix and the touched paths stay
-  consistent by construction. No tool re-derives or re-checks the
-  bucket; there is no rendered `# Claude` heading to keep in sync.
+  once, apart from product code. It is applied at **filing time**, so
+  the prefix and the work's actual surface stay consistent by
+  construction. No tool re-derives or re-checks the bucket; there is no
+  rendered `# Claude` heading to keep in sync.
 - **It is a Linear-title signal only — never a PR title.** The prefix
   lives on the **issue** title for board recognition and batching. PR
   titles keep the standard `type(ENG-###): Subject` semantic-pr format
@@ -775,10 +777,10 @@ reference it.
 
 Two things that are **not** blocking edges:
 
-- **File overlap.** A `**Touches**:` collision is reconciled in a
-  planning session and recorded as a cluster (see "Overlap is a
-  cluster, never an ordering"); the automated related-linking is
-  retired.
+- **File overlap.** Two issues that will edit the same code are
+  reconciled in a planning session and recorded as a cluster (see
+  "Overlap is a cluster, never an ordering"); the automated
+  related-linking is retired.
 - **Coupling that belongs in one PR.** That is handled by combining
   into a single issue (see "Fold coupled findings into one issue"),
   not a relation.
