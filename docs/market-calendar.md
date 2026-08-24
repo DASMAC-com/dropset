@@ -421,12 +421,24 @@ accordingly.
 
 A smaller adjacent finding, noted only because this is where someone
 would look for it: the running database also holds a `feed_health`
-table that **nothing in the repo references** — not the source, not
-the migrations, both searched. How it got there is not established.
-It is unrelated to the calendar but is exactly where a feed-health
-consumer would reach by mistake, so it wants a deliberate
-drop-or-reclaim. It is tracked as its own issue rather than left
-resting in this spec.
+table that **nothing on `main` references** — not the source, not the
+migrations, both searched. It is **not** an orphan, and it must not be
+dropped. It is created by `0003_maker_telemetry.sql`, a migration in
+flight on the maker-telemetry branch (PR #348), applied to the shared
+development database ahead of that merge — the applied checksum
+matches that branch's current file exactly. Its writer is the maker
+bot's telemetry path; its readers are the Grafana operations dashboard
+and its alerting rules, all arriving in that same change.
+
+That is also why `main`'s migration sequence skips 0003: the number is
+reserved by that branch, and 0004 and 0005 landed around it. So the
+drop-or-reclaim this paragraph originally called for is settled as
+neither — `docs/data-feeds.md` §8 is where the table's ownership row
+belongs, and the telemetry branch writes it there on merge. The
+general lesson is the one worth keeping: a table with no references on
+`main` may be owned by an unmerged branch whose migration has not
+arrived yet, so check the open branches before concluding a table is
+abandoned.
 
 ### 4.2 Reconciling the sibling documents
 
