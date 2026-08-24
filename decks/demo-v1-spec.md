@@ -1113,10 +1113,10 @@ cannot be kept in step automatically, so the two silently diverge.
   is not the close: it is the thing you say when someone asks, and a pitch
   that says it unprompted has answered a question the room did not put. Its
   register still matters wherever it does get spoken — it is the least hedged
-  sentence in the deck and the only one that makes no argument at all, so the
-  failure mode is delivery, not copy. Said tentatively it sounds like a hope;
-  it only works said as a fact.
-- **Note on what this replaced — the rehearsal-draft personal why.** The page
+  sentence written for this deck and the only one that makes no argument at
+  all, so the failure mode is delivery, not copy. Said tentatively it sounds
+  like a hope; it only works said as a fact.
+- **Note on an earlier close — the rehearsal-draft personal why.** The page
   used to carry five sentences: the seventeen-year frame, the concede-then-
   turn structure, Solana placed inside the problem, and "through Dropset,
   we're going to solve this issue once and for all". All of it is preserved
@@ -1136,12 +1136,12 @@ cannot be kept in step automatically, so the two silently diverge.
   was left **wondering why we care about this**, and that people invest in a
   founder at least as much as in a problem. v2 ended on the team page, which
   states credentials and answers "can they build it" — not "why are they the
-  ones who will". This page is the room to say that, and putting it on a
-  replay of the title means the answer lands over the deck's own thesis
-  rather than over two headshots. It also gives the talk a **bookend**:
-  the tagline is the first thing said and the last, which is the oldest
-  trick there is for making a two-minute pitch feel composed rather than
-  rushed.
+  ones who will". This page was built as the room to say that, and putting it
+  on a replay of the title meant the answer landed over the deck's own thesis
+  rather than over two headshots. Both answers tried here now live in §2, so
+  what still earns the page its place is the **bookend**: the tagline is the
+  first thing said and the last, which is the oldest trick there is for
+  making a two-minute pitch feel composed rather than rushed.
 - **Note on how this page now answers it — the deck answers, the close
   doesn't.** The page kept its job and gave up its instrument. Two closing
   claims have now been tried on it and both are held in §2: the founder's
@@ -1561,9 +1561,9 @@ it was cut, and the framing is the reason it no longer does — this is the
 answer to "so what are you really saying", which makes it a **response**, not
 a close. Volunteered unprompted it answers a question the room has not asked;
 offered when someone asks it, it is the strongest sentence available. It is
-also the least hedged line in the deck and the only one that makes no argument
-at all, so the failure mode is delivery rather than copy: said tentatively it
-sounds like a hope, and it only works said as a fact.
+also the least hedged line written for this deck and the only one that makes no
+argument at all, so the failure mode is delivery rather than copy: said
+tentatively it sounds like a hope, and it only works said as a fact.
 
 ### Team, full
 
