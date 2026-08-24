@@ -1,0 +1,1173 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Maker operations: what the bot is quoting, what it decided, and whether its inputs are alive. Rows top to bottom answer, in order: is it quoting near fair value and is it alive; what did each tick decide and under which regime; how is inventory tracking; and are the feeds healthy. One market at a time via the selector, except the heartbeat, feed-health, and tick-error panels, which are process-wide by design. Every table here is written by the maker bot fire-and-forget: a gap can mean the bot stopped OR that its writes are failing, and only the container logs separate those two.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "The composed fair value against the book actually resting on-chain, with takes overlaid. Read the gap, not the levels: `fair value` vs `reference (on-chain)` is the drift the trigger policy is tolerating, and `reference (candidate)` is where this tick would move it. A `best bid`/`best ask` that stops while fair value continues usually means that side went dark (a freeze-side, a halt, or a book killed for staleness) \u2014 the series ends rather than dropping to zero, which is why nulls are never spanned here. But check the tick-outcome band before concluding it: a tick whose vault read failed also breaks these series, and there a full ladder may still be resting and matchable. Dark and unknown look identical on this panel; `TickError` below is what separates them. Fills are scaled out of the indexer's raw atoms ratio; see the panel query.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "USDC per token",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 5,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fill"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 8
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fair value"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "best (bid|ask)"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 18,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  fair AS \"fair value\",\n  on_chain_reference AS \"reference (on-chain)\",\n  reference AS \"reference (candidate)\",\n  best_bid AS \"best bid\",\n  best_ask AS \"best ask\"\nFROM maker_telemetry\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\nORDER BY ts",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH market AS (\n  SELECT\n    market_pubkey,\n    power(10::numeric, base_decimals - quote_decimals) AS price_scale\n  FROM maker_telemetry\n  WHERE market = ${market:sqlstring}\n  ORDER BY ts DESC\n  LIMIT 1\n)\nSELECT\n  to_timestamp(t.block_time) AS \"time\",\n  (t.avg_price * m.price_scale)::double precision AS \"fill\"\nFROM takes t\nJOIN market m ON t.market = m.market_pubkey\nWHERE $__unixEpochFilter(t.block_time)\nORDER BY t.block_time",
+          "refId": "B"
+        }
+      ],
+      "title": "Quotes vs fair value \u2014 $market",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Seconds since the newest telemetry sample across ALL markets \u2014 the bot's heartbeat. Not filtered by market on purpose: any market's sample proves the process is alive, so filtering would read one market's halt as a dead bot. Rising without bound means the maker is gone OR its database writes are failing; the two are indistinguishable from here, and `Feed health` plus the container logs are what separate them. Empty (`No data`) means no sample has ever been written.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 15
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  (extract(epoch FROM now()) - max(ts))::bigint AS \"seconds since last sample\"\nFROM maker_telemetry",
+          "refId": "A"
+        }
+      ],
+      "title": "Heartbeat",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "What each tick decided, including the outcomes that end the tick early. `Quote` is normal; `Reshape` and `FreezeSide` are the graduated de-risking steps; `Halt` is a kill switch; `Pause` means no usable reference; `Frozen` means the vault is frozen on-chain; `TickError` means the tick failed before deciding anything (see the errors table below); `Unknown` should never appear and means a code path reached no outcome. Note that `TickError` and a decision are not exclusive \u2014 a tick that decided `Halt` and then failed to send it shows `Halt` here, with the failure in the errors table, so count failures by `tick_error IS NOT NULL` rather than by this band. Every one of these is written by the bot on its way out of the tick, so a gap here is an absent bot rather than an idle one \u2014 or a sample dropped under telemetry backpressure, which is visible only in the bot's log, since delivery here is at-most-once.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          },
+          "mappings": [
+            {
+              "options": {
+                "FreezeSide": {
+                  "color": "orange",
+                  "index": 2
+                },
+                "Frozen": {
+                  "color": "dark-red",
+                  "index": 5
+                },
+                "Halt": {
+                  "color": "red",
+                  "index": 3
+                },
+                "Pause": {
+                  "color": "red",
+                  "index": 4
+                },
+                "Quote": {
+                  "color": "green",
+                  "index": 0
+                },
+                "Reshape": {
+                  "color": "yellow",
+                  "index": 1
+                },
+                "TickError": {
+                  "color": "purple",
+                  "index": 6
+                },
+                "Unknown": {
+                  "color": "text",
+                  "index": 7
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 11
+      },
+      "id": 3,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  action AS \"tick outcome\"\nFROM maker_telemetry\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\nORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Tick outcome \u2014 $market",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Which regime priced this market and the health gate the kill switches ran under. Health is a total function of the regime, so exactly six pairs are reachable and all six are mapped here \u2014 an unmapped pair would fall through to the base style and read as healthy. `Normal / Ok` is FX x basis with both legs live. `CryptoOnly` is structural over the FX weekend, not a fault. Anything `Degraded` tightens every kill-switch threshold. `Paused / Pause` means no usable leg at all. The two `Unverified` states are permanent and deliberately not treated as degraded: `FxPinned` has no basis source to observe, and `Uncorroborated` prices off a single unchecked source \u2014 the standing condition for most of the roster, which is why it is distinguished from `Normal / Ok` rather than sharing it.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          },
+          "mappings": [
+            {
+              "options": {
+                "CryptoOnly / Ok": {
+                  "color": "blue",
+                  "index": 1
+                },
+                "FxPinned / Unverified": {
+                  "color": "yellow",
+                  "index": 2
+                },
+                "Normal / Ok": {
+                  "color": "green",
+                  "index": 0
+                },
+                "Paused / Pause": {
+                  "color": "red",
+                  "index": 4
+                },
+                "Uncorroborated / Unverified": {
+                  "color": "yellow",
+                  "index": 3
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "pattern": ".*Degraded.*",
+                "result": {
+                  "color": "orange",
+                  "index": 3
+                }
+              },
+              "type": "regex"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 11
+      },
+      "id": 4,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  regime || ' / ' || health AS \"composition\"\nFROM maker_telemetry\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\nORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Composition regime / health \u2014 $market",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "The vault's two legs valued in USD, their total, and the launch baseline the drawdown floor is measured against. The legs crossing is the inventory skew's whole input; TVL falling toward `launch TVL` scaled by the floor fraction is what trips the TVL kill switch. NULL (a gap) means the tick never valued the vault \u2014 a failed read, a frozen vault, or a paused composition \u2014 which is not the same as an empty vault.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "USD",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  base_value_usd AS \"base leg (USD)\",\n  quote_value_usd AS \"quote leg (USD)\",\n  tvl_usd AS \"TVL (USD)\",\n  launch_tvl_usd AS \"launch TVL (USD)\"\nFROM maker_telemetry\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\nORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Inventory \u2014 $market",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "The inventory skew applied to the mid, in bps, signed. Its sign should track the inventory imbalance above: long the base leg skews the reference down to lean into offloading it. A skew pinned at a constant is the cap being hit.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "bps",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  skew_bps AS \"reference skew (bps)\"\nFROM maker_telemetry\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\nORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Reference skew \u2014 $market",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Each leg's reading age, as the ENGINE aged it \u2014 which is not `now() - sample time`. The FX anchor is aged from the publisher's own clock (Pyth publishes a `publish_time`), so a reading received this tick can legitimately be minutes old, and over the FX weekend it ages without bound while the crypto-only regime carries the mid. That is the signal, not a bug. There is no per-venue series here any more: a leg is a candidate set resolved by consensus, so the age shown is the resolved reading's. Which sources backed it, and which one is the suspect when they disagreed, is the Leg consensus table below.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "reading age",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 25
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  leg AS metric,\n  age_secs AS value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\nORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Feed staleness \u2014 $market",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Published confidence half-width as a fraction of the reading, for the legs whose source publishes one (Pyth Hermes does; a plain REST quote does not, and contributes no series here). Widening past the engine's bound puts the market in the fresh-but-uncertain regime, which widens the spread rather than stopping quoting \u2014 so a rise here is expected to show up as a wider touch above, not as a halt.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "half-width / value",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 25
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  leg AS metric,\n  confidence / value AS \"confidence (fraction of value)\"\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market = ${market:sqlstring}\n  AND confidence IS NOT NULL\n  AND value > 0\nORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Feed confidence \u2014 $market",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Every registered feed source's current liveness, written by the framework's metrics seam rather than by any per-feed wiring \u2014 so a venue adapter added later appears here on its first poll with no change to this dashboard. Not filtered by market: a source is shared across the roster. `ok_age_secs` is measured off `last_ok_at` alone, which is the point of tracking it separately from `last_error_at` \u2014 a feed erroring on every retry would look fresh by a single `updated_at`. A row with status `ok` and a populated `last_error` has RECOVERED; the error text is kept deliberately so a flap remains diagnosable after the fact.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "error": {
+                        "color": "red",
+                        "index": 1
+                      },
+                      "ok": {
+                        "color": "green",
+                        "index": 0
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ok_age_secs"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 600
+                    },
+                    {
+                      "color": "red",
+                      "value": 1800
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 9,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  feed,\n  status,\n  coalesce(extract(epoch FROM now()) - last_ok_at, 9999999)::bigint AS ok_age_secs,\n  to_timestamp(last_ok_at) AS last_ok,\n  caught_up,\n  last_records,\n  ok_count,\n  error_count,\n  to_timestamp(last_error_at) AS last_error_at,\n  last_error,\n  to_timestamp(updated_at) AS last_seen\nFROM feed_health\nORDER BY status ASC, feed",
+          "refId": "A"
+        }
+      ],
+      "title": "Feed health (all sources)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "How each leg's sources resolved, latest per market and leg. This is what replaced per-venue attribution: a leg is a candidate set, so there is no single answering feed to name.\n\nRead `consensus_state` first. `Corroborated` (3+ agreeing) and `Agreed` (2 agreeing) are healthy. `SingleTrusted` is one source designated believable alone. `SingleUnverified` is one source with nothing corroborating it \u2014 for most of this roster that is the STEADY STATE, not a fault, and it is the only signal that a market is quoted off one unchecked feed; a market appearing here that the coverage survey did not predict is a genuine signal. `Dispersed` means the sources disagreed beyond the band, and then `dispersion_outlier` names the source furthest from the consensus \u2014 the SUSPECT to distrust, never 'the feed that answered'.\n\nA leg missing from this table usually resolved to nothing: either no source offered a reading, or every candidate was too stale. But it can also mean the row was dropped \u2014 legs and their sample are separate records sharing one timestamp, and delivery is at-most-once, so under backpressure a sample can land with its legs lost. Confirm against the bot's log before reading a gap as a resolution failure. Which source went quiet is the feed-health table, which is per source rather than per leg.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "consensus_state"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "Absent": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "Agreed": {
+                        "color": "green",
+                        "index": 1
+                      },
+                      "Corroborated": {
+                        "color": "green",
+                        "index": 2
+                      },
+                      "Dispersed": {
+                        "color": "orange",
+                        "index": 3
+                      },
+                      "SingleTrusted": {
+                        "color": "blue",
+                        "index": 4
+                      },
+                      "SingleUnverified": {
+                        "color": "yellow",
+                        "index": 5
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dispersion_outlier"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_secs"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 11,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  market,\n  leg,\n  consensus_state,\n  contributor_count,\n  dispersion_outlier,\n  round(age_secs::numeric, 1) AS age_secs,\n  fresh,\n  to_timestamp(ts) AS observed\nFROM (\n  SELECT DISTINCT ON (market, leg) *\n  FROM maker_legs\n  WHERE ts > extract(epoch FROM now()) - 3600\n  ORDER BY market, leg, ts DESC\n) latest\nORDER BY market, leg",
+          "refId": "A"
+        }
+      ],
+      "title": "Leg consensus (all markets)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "The most recent ticks that failed outright, newest first, across every market. These are the ticks that reached no decision at all \u2014 typically a vault read timing out \u2014 and they are recorded rather than dropped precisely so that a stalled maker is distinguishable from a quiet one. Empty is the healthy state.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "id": 10,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  market,\n  action,\n  tick_error\nFROM maker_telemetry\nWHERE $__unixEpochFilter(ts)\n  AND tick_error IS NOT NULL\nORDER BY ts DESC\nLIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent tick errors (all markets)",
+      "type": "table"
+    }
+  ],
+  "preload": false,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "maker",
+    "market-data"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "EURC",
+          "value": "EURC"
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT market FROM maker_telemetry WHERE ts > extract(epoch FROM now()) - 86400 ORDER BY 1",
+        "description": "The market to inspect. Single-select: the per-market panels overlay several series each, so stacking the roster on top of that would be unreadable. Lists only markets the bot has actually written a sample for, so an empty selector means no telemetry has arrived at all rather than a bad default.",
+        "includeAll": false,
+        "label": "Market",
+        "multi": false,
+        "name": "market",
+        "options": [],
+        "query": "SELECT DISTINCT market FROM maker_telemetry WHERE ts > extract(epoch FROM now()) - 86400 ORDER BY 1",
+        "refresh": 1,
+        "regex": "^[A-Za-z0-9_.-]+$",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "Maker operations",
+  "uid": "maker-operations",
+  "version": 1,
+  "weekStart": ""
+}

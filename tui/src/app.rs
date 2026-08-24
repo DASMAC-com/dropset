@@ -171,10 +171,6 @@ pub struct App {
     log_file: Option<File>,
     last_refresh: Instant,
     dirty: bool,
-    /// Whether the maker bot's FX feed is currently reporting itself down —
-    /// derived from its streamed `[feed] coingecko …` log lines, surfaced as an
-    /// alert. Set on a failure line, cleared on a recovery line (or a wipe).
-    pub(crate) feed_degraded: bool,
     /// Markets the maker reported as quoting on a **pinned** basis — no
     /// independent source prices the token, so the mid rests on the FX anchor
     /// alone. A standing advisory, not a fault.
@@ -238,7 +234,6 @@ impl App {
             // Force an immediate first poll.
             last_refresh: Instant::now() - REFRESH_INTERVAL,
             dirty: true,
-            feed_degraded: false,
             unverified_markets: BTreeSet::new(),
             basis_config_suspects: BTreeSet::new(),
             spread_bps: market::DEFAULT_SPREAD_BPS,
@@ -818,7 +813,6 @@ impl App {
                 // both panes with it.
                 self.cu.clear();
                 self.fills.clear();
-                self.feed_degraded = false;
                 self.unverified_markets.clear();
                 self.basis_config_suspects.clear();
                 self.dirty = true;
@@ -836,7 +830,6 @@ impl App {
         while let Ok(ev) = self.rx.try_recv() {
             match ev {
                 JobEvent::Log(s) => {
-                    self.note_feed_state(&s);
                     self.note_basis_state(&s);
                     self.log(LogKind::Info, s);
                 }
@@ -889,22 +882,6 @@ impl App {
             }
             self.last_refresh = Instant::now();
             self.dirty = false;
-        }
-    }
-
-    /// Update the FX-feed alert from a streamed maker-bot log line: a
-    /// `[feed] coingecko … failed` / `… no prices` line marks the feed down, a
-    /// `… recovered` line marks it back up. Keyed on the maker's own deduped
-    /// feed messages (`bots/maker-bot`), so the alert flips once per transition,
-    /// not per tick.
-    fn note_feed_state(&mut self, line: &str) {
-        if !line.contains("coingecko") {
-            return;
-        }
-        if line.contains("recovered") {
-            self.feed_degraded = false;
-        } else if line.contains("failed") || line.contains("no prices") {
-            self.feed_degraded = true;
         }
     }
 
@@ -1104,8 +1081,7 @@ fn classify_basis_line(line: &str) -> Option<(String, BasisNote)> {
     // re-tags every child line as `[<symbol>] <line>` before it reaches the event
     // loop, so what arrives here is `[MXNe] [basis] MXNe: …`. An anchored
     // `strip_prefix` compiles, passes an unwrapped unit test, and then never
-    // fires on real output — which is why the sibling `note_feed_state` matches
-    // with `contains` too.
+    // fires on real output.
     let (_, tagged) = line.split_once("[basis] ")?;
     let (symbol, detail) = tagged.split_once(':')?;
     let note = if detail.contains("no independent basis source") {

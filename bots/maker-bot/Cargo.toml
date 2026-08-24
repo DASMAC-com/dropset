@@ -1,3 +1,4 @@
+# cspell:word rustls
 # Localnet market-maker bot for the FX-stablecoin demo markets. A supervisor
 # over many <token>/USDC markets quoting on the eCLOB per
 # docs/market-making.md: poll a batched tiered price feed, compose a
@@ -35,7 +36,13 @@ dropset-fair-value = { path = "../../fair-value" }
 # `HttpClient` (`http`), the fill subscription bridges through its `stream`
 # seam (`ChannelSource`), and both fan into an in-process forward (live) sink
 # the tick loop reads (docs/data-feeds.md §6).
-dropset-feeds = { path = "../../feeds", features = ["http", "stream"] }
+#
+# `store` is here for the **telemetry** path only, not for market data: the
+# operational sample the tick loop emits rides the same store sink onto the
+# shared Postgres (src/telemetry.rs). It reuses `stream`'s `ChannelSource` as
+# the bridge out of the synchronous tick, so the two features compose rather
+# than duplicating a transport.
+dropset-feeds = { path = "../../feeds", features = ["http", "store", "stream"] }
 # Shared chain plumbing: `rpc`'s Agave `http`→`ws` PubSub-URL derivation
 # (the fill subscription's endpoint). The `emit_cpi!` fill decode is the SDK's
 # shared `events` codec, not a hand-rolled discriminator.
@@ -69,6 +76,23 @@ solana-transaction = "3"
 # `UiInstruction`, the inner-instruction list) the fill decoder walks. The
 # light client-types crate, not the full `solana-transaction-status`.
 solana-transaction-status-client-types = "3"
+# The telemetry writer's row mapping (src/telemetry.rs). The queries are
+# string-typed at runtime out of `queries/*.sql`, so no compile-time
+# `DATABASE_URL` is needed — note that means `macros` below is NOT here for
+# `query!`; the feature set is deliberately identical to the `feeds` store
+# sink this rides on, because sqlx features unify across the dependency graph
+# and matching them keeps this crate from being the one that changes what
+# `feeds` compiles (in particular the TLS backend, so nothing pulls in a
+# second TLS stack). No `migrate`: DDL belongs to `dropset-db-schema`, and
+# this bot deliberately does not even depend on the schema owner — it never
+# asserts a schema, it only writes when it can (docs/data-feeds.md §8).
+sqlx = { version = "0.8", default-features = false, features = [
+  "json",
+  "macros",
+  "postgres",
+  "runtime-tokio",
+  "tls-rustls",
+] }
 # A background runtime for the `feeds` source runners only (the price polls and
 # the fill-stream bridge); the quoting tick loop stays synchronous and reads
 # the resulting broadcast channels with `try_recv`. `net` + `time` back the

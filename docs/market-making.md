@@ -670,6 +670,159 @@ ______________________________________________________________________
   **Status**); this spec stops at the strategy the leader runs, whatever
   network it runs against.
 
+______________________________________________________________________
+
+## 6. Operational telemetry
+
+The read side of running the bot: what it is quoting, what each tick
+decided, and whether its inputs are alive. The bot writes; Grafana
+renders and alerts. Nothing reads these tables back into a decision, so
+this whole section is a tap on state the quote loop already computed
+(`bots/maker-bot/src/telemetry.rs`).
+
+Numbered §6 rather than slotted before the deferred list because §5 is
+cited as "deferred" from elsewhere in the tree, and renumbering it would
+silently redirect those references.
+
+### Three tables
+
+- **`maker_telemetry`** — one sample per market per tick: the composed
+  fair value, the three references that differ (this tick's candidate,
+  what this process last stamped, and what the vault actually carries),
+  the implied touch, the valued inventory, the composition regime, and
+  the kill-switch decision.
+- **`maker_legs`** — one row per market per leg per tick: the leg's
+  resolved value, the age **the engine aged it by**, its confidence
+  half-width where the resolved reading carries one, and the three
+  consensus diagnostics below.
+- **`feed_health`** — current liveness per registered feed source,
+  upserted in place.
+
+DDL lives in `db-schema/migrations/0003_maker_telemetry.sql`, which
+carries the per-column reasoning; the single-schema-owner rule (see
+`docs/data-feeds.md` §8) means the bot issues no DDL and never asserts a
+schema.
+
+### The tick outcome is recorded on every path
+
+A tick can end at six points — the vault read failing, a frozen vault,
+a paused composition, a halt, a freeze-side, an ordinary quote — and the
+sample is emitted on all of them, including the error path. This is the
+non-obvious requirement: emitting only from the happy path yields a
+dashboard that goes *blank* precisely when something is wrong, which is
+indistinguishable from the bot having died. So `action` carries four
+values that are not `Action` variants — `Pause`, `Frozen`, `TickError`,
+and `Unknown` — for the states the policy never got to decide.
+
+`TickError` and a decision are not exclusive, which matters to anyone
+writing a query over this column: a tick that decided `Halt` and then
+failed to send the instruction records `action = 'Halt'` with a non-NULL
+`tick_error`, because the decision is the more alarming fact and the
+kill-switch alert keys on it. So count tick failures by
+`tick_error IS NOT NULL`, never by `action = 'TickError'`. `Unknown` is
+the residue — no decision *and* no failure — which no path currently
+produces; read it as a defect signal rather than a quiet tick.
+
+Correspondingly, a column is `NOT NULL` only if *every* one of those
+paths can fill it honestly. A NULL means "this tick could not know",
+which is not zero — an unknown skew and a zero skew are different
+facts, as are an unread vault and an empty one. The dashboards leave
+gaps rather than plotting zero.
+
+### Per-feed health is generic; per-leg rows carry consensus, not attribution
+
+Feed liveness rides the feeds runner's existing `FeedMetrics` seam
+(`docs/data-feeds.md` §13), so a source that is merely *registered*
+gets a row: a venue adapter added later appears with no per-feed wiring
+and no dashboard change.
+
+What that seam carries bounds what it can say, and the bound shapes the
+schema. The runner hands a recorder a feed *name* and batch stats,
+never the records — and the maker's price sources are **venue**-level
+(`pyth-hermes`, `kraken`), each yielding a map of many instruments per
+batch. So a `last_value` column on a per-source row would have to pick
+one instrument arbitrarily. Liveness therefore lives in `feed_health`,
+and readings live in `maker_legs`.
+
+**There is deliberately no "which feed supplied this leg" column**, and
+that follows from the resolver rather than being an omission. A leg is
+a *candidate set* resolved by consensus (§1): several sources
+contribute and the value is a summary of them — a median, or a
+designated source that survived contradiction. There is no single
+answering venue to name, and naming one anyway would mean picking
+arbitrarily while presenting the pick as authoritative.
+
+What the rows carry instead is what is actually knowable:
+
+- **`consensus_state`** — how well corroborated the leg was. Six
+  values, and every reader must enumerate all six: `Absent`,
+  `Corroborated` (3+ inside the band), `Agreed` (exactly two),
+  `SingleTrusted`, `SingleUnverified`, `Dispersed`. `Absent` is
+  enumerated for completeness but is not written here: a leg that
+  resolved to nothing contributes **no row**, so its absence shows up as
+  a gap in the series. Look for the missing row, not for the value.
+- **`contributor_count`** — how many healthy sources resolved it.
+- **`dispersion_outlier`** — when dispersed, the source *furthest from*
+  the consensus. This is the **suspect**, the least representative
+  member of the set — emphatically not "the feed that answered", which
+  would be exactly backwards.
+
+`SingleTrusted` and `SingleUnverified` must never be collapsed.
+`SingleUnverified` is the **steady state** for a market with no second
+source — most of this roster — rather than a fault, and it is the only
+signal that a market is being quoted off one unchecked feed. Merging
+the two would erase precisely that, and worst on the thin markets where
+it matters most. (The per-currency source-floor survey predicts which
+markets sit there permanently, so a market appearing there
+*unpredicted* is a real signal.)
+
+Per-source attribution returns later as an **additive** migration, once
+the resolver exposes a contributor set with weights; that shape is
+already decided, and this table does not approximate it early. The
+`pub const FEED_NAME` values in each `feeds::venues` module remain the
+health table's keys, and stay constants because that key is a
+cross-crate contract — a renamed source would otherwise empty a panel
+silently, with no build error. Note one asymmetry when joining
+`dispersion_outlier` to them: the resolver offers the bare venue
+(`coinbase`) while the spot source is named per product
+(`coinbase:EURC-USDC`), so that join is a prefix match on the `:`,
+not equality.
+
+### Fire-and-forget, and what that costs
+
+The quote loop is synchronous and Postgres is not, so a sample is
+`try_send` onto a bounded channel and the tick moves on; a background
+task drains it. Three consequences, all deliberate:
+
+- **A full channel drops the sample.** A maker that stalls its quote
+  loop behind a slow write is worse than a gap in a chart.
+- **A database outage does not stop telemetry permanently.** The sink
+  is wrapped best-effort, so a failed batch is dropped and logged
+  rather than killing the runner — which would otherwise leave the bot
+  blind for the rest of its life after one blip. The pool is also lazy,
+  so losing a startup race against Postgres costs a few samples rather
+  than the whole run.
+- **Delivery is therefore at-most-once.** Sound only because every
+  record here is a sample of current state that the next tick
+  supersedes. None of this may be reused for the fill/event path, where
+  the records *are* the product.
+
+### Dashboards and alerts
+
+`market-data/grafana/dashboards/maker-operations.json`, provisioned
+from the repo alongside the market-data dashboards, with alert rules in
+`market-data/grafana/provisioning/alerting/maker.yml`: dead heartbeat,
+stale feed, and degraded-or-halted. The rules evaluate and reach Firing
+in Grafana's UI; they deliver nowhere, because a real destination needs
+a secret and secrets are not committed.
+
+One ambiguity is inherent rather than an oversight: because telemetry is
+fire-and-forget, a dead heartbeat means *either* the maker stopped *or*
+the maker is healthy and cannot reach Postgres. Separating them needs a
+signal that does not travel over the database. The feed-health table
+narrows it in practice — a live bot with a dead database shows every
+feed stale at the same instant.
+
 [alpha-params]: https://github.com/DASMAC-com/dropset-alpha/blob/fd16be56a72adf2e501b1310d85eb6519a10df5d/services/maker-bot/src/model/parameters.rs#L11
 [alpha-spreads]: https://github.com/DASMAC-com/dropset-alpha/blob/fd16be56a72adf2e501b1310d85eb6519a10df5d/services/maker-bot/src/model/calculate_spreads.rs#L41
 [as2008]: https://people.orie.cornell.edu/sfs33/LimitOrderBook.pdf
