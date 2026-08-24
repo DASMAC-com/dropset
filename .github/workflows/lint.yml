@@ -46,18 +46,18 @@ jobs:
     # restore on every later run — making the critical path slower, which is
     # the opposite of the point. Only the test jobs write; lint and sdk read.
     #
-    # A corollary worth stating, because it has already been missed once by a
-    # session holding both halves: every SAVE-side rust-cache input is inert
-    # on this step. That covers `cache-workspace-crates`, which was proposed
-    # here to hand clippy back its workspace artifacts — it governs what a
-    # save prunes, and this job never saves. Setting it on the three test
-    # jobs instead does not help either: `cargo clippy` sets
-    # `RUSTC_WORKSPACE_WRAPPER`, which enters the fingerprint of workspace
+    # A corollary worth stating, because it has been missed before: while
+    # `save-if: false` stands below, every save-side rust-cache input here is
+    # inert, `cache-on-failure` included. That covers `cache-workspace-crates`,
+    # which was proposed here to hand clippy back its workspace artifacts: it
+    # governs what a save prunes, and this job never saves. Setting it on the
+    # three test jobs that share this key does not help either: `cargo clippy`
+    # sets `RUSTC_WORKSPACE_WRAPPER`, which enters the fingerprint of workspace
     # members but not of dependencies — the same asymmetry that makes deps
-    # reusable across build, test and clippy in the first place — so clippy
-    # cannot reuse workspace artifacts a test job compiled. Caching clippy's
-    # own would need this job to save under a key of its own, which needs the
-    # `push: main` trigger it deliberately lacks.
+    # reusable across build and clippy in the first place — so clippy cannot
+    # reuse workspace artifacts a test job compiled. Caching clippy's own would
+    # need this job to save under a key of its own, and that needs a
+    # default-branch run, which none of this workflow's triggers produce.
     - uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
