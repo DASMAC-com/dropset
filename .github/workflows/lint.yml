@@ -3,7 +3,6 @@ env:
   NODE_VERSION: '25'
   PRE_COMMIT_VERSION: '4.5.1'
   PYTHON_VERSION: '3.14.4'
-  RUST_VERSION: 'stable'
 jobs:
   lint:
     env:
@@ -12,13 +11,45 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
-    - uses: 'dtolnay/rust-toolchain@stable'
+    # Resolves the compiler from the workspace `rust-toolchain.toml` by giving
+    # no `toolchain` input, which is why this is actions-rust-lang rather than
+    # dtolnay/rust-toolchain: the latter's `toolchain` input defaults to
+    # matching its own `@rev`, so it cannot read a toolchain file at all and
+    # would need the version duplicated at every call site. Two of this
+    # action's defaults are deliberately neutralized in all six call sites —
+    # `cache`, because it bundles Swatinem/rust-cache and the explicit step
+    # below owns the key, and `rustflags`, which otherwise injects
+    # `-D warnings` into every cargo invocation in the job (the clippy hook
+    # passes its own, and a stray RUSTFLAGS also perturbs the rust-cache key).
+    - uses: 'actions-rust-lang/setup-rust-toolchain@v1'
       with:
-        components: 'clippy, rustfmt'
+        cache: false
+        rustflags: ''
+    # Shares the test jobs' dep-artifact cache rather than keeping a
+    # `rust-lint` key of its own. What used to keep this job on a separate
+    # entry was the `RUST_VERSION` variable defined only here: rust-cache
+    # hashes environment variables matching a `RUST` prefix into its key, so
+    # this job alone computed a different hash. That variable was dead config
+    # and is gone, so the keys now coincide — measured, `full match: true` on
+    # `v0-rust-rust-test-Linux-Linux-x64-cee1353d-…` in lint, sdk and the
+    # test jobs alike. Two wins: one ~0.6 GB copy per ref stops being stored,
+    # and this job — which has no `push: main` trigger, so it never saved a
+    # default-branch entry — can finally restore one, warming merge-queue
+    # runs and the first run of every new PR.
+    # `save-if: false` makes this job a restore-only consumer of that entry,
+    # and it is load-bearing rather than tidiness. rust-cache skips its save
+    # whenever the restore was an exact key match, so the FIRST job to finish
+    # on a fresh key decides the entry's contents for that whole
+    # lockfile-plus-toolchain generation. This job and sdk carry thinner
+    # dependency sets than the three test jobs, so letting either win that
+    # race would freeze a thin entry that the program-building jobs then
+    # restore on every later run — making the critical path slower, which is
+    # the opposite of the point. Only the test jobs write; lint and sdk read.
     - uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
-        shared-key: 'rust-lint-${{ runner.os }}'
+        save-if: false
+        shared-key: 'rust-test-${{ runner.os }}'
     - uses: 'pnpm/action-setup@v6'
       with:
         package_json_file: 'frontend/package.json'

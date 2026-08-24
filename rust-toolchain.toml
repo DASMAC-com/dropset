@@ -1,0 +1,38 @@
+# The single authoritative Rust version for this workspace: CI, local
+# development, and the Docker images all resolve the compiler from here.
+#
+# Why this file exists. CI used to resolve `dtolnay/rust-toolchain@stable`,
+# which floats. On 2026-08-20 clippy 1.98 shipped a new lint
+# (`chunks_exact_to_as_chunks`), the lint workflow runs clippy with
+# `-D warnings`, and main went red with no code change — blocking the merge
+# queue for every open PR. A floating channel means any compiler release can
+# do that again, so the channel is pinned and moves only in a deliberate
+# bump PR.
+#
+# `components` is listed so the lint gate's tools come from this file rather
+# than from whichever action installs the toolchain and whatever profile that
+# action happens to pick. rustup's default profile carries clippy and rustfmt
+# anyway, so this is belt-and-braces — but it is free, and it keeps the one
+# job running `-D warnings` off an installer default.
+#
+# It is NOT what makes the shared cache key work. An earlier revision of this
+# comment claimed it was; that was wrong. rust-cache's documented key inputs
+# are the rustc version, this file's hash, Cargo.lock / Cargo.toml, and
+# environment variables matching CARGO / CC / CFLAGS / CXX / CMAKE / RUST —
+# not the installed component set. The lint job's key diverged because
+# lint.yml alone defined `RUST_VERSION`, which matched that `RUST` prefix;
+# deleting that dead variable is what let lint share. Measured afterwards:
+# lint, sdk and the three test jobs all restore
+# `v0-rust-rust-test-Linux-Linux-x64-cee1353d-…` with `full match: true`.
+#
+# Targets are deliberately NOT listed. Measured: the SDK job installs the
+# wasm32 target and still hashes identically to the jobs that do not, so the
+# target stays declared in the SDK workflow instead of downloading in all six.
+#
+# Bumping this is a reviewed diff, never a surprise: run the full-workspace
+# `cargo clippy --all-targets -- -D warnings` locally first, so new-lint churn
+# arrives as a PR rather than as a red main. See docs/ci.md.
+
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]
