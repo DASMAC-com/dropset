@@ -68,6 +68,12 @@ Bumping the compiler is a deliberate PR, never a surprise:
    embeds a compiler-version component, so a bump invalidates every Rust
    cache at once and the next run of each job builds from scratch.
 
+Worth knowing before you touch this file for any reason: the cache key also
+embeds **the file's own hash**, so editing even a comment in
+`rust-toolchain.toml` invalidates every Rust cache and costs one cold run
+across all six jobs. That is not a reason to leave the comments wrong — it is
+a reason not to reformat the file idly.
+
 Do the bump on its own PR when convenient rather than under deadline: it is
 the one change guaranteed to cost a full cold rebuild across every job.
 
