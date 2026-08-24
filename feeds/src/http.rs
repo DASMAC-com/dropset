@@ -310,7 +310,7 @@ impl HttpClient {
     /// name registered nowhere here **no longer bypasses the redaction** —
     /// [`HttpClient::redact_query`] is default-deny, so an unregistered name is
     /// redacted like any other non-benign parameter. That is a backstop, not a
-    /// licence: register the credential here anyway, because only registration
+    /// license: register the credential here anyway, because only registration
     /// keeps it out of a `Debug` render of the client and off every call site.
     ///
     /// Registration is by **name**, so a caller that also passes a parameter of

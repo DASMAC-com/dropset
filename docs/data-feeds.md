@@ -22,6 +22,14 @@
 
 <!-- cspell:word TIMESTAMPTZ -->
 
+<!-- cspell:word concertation -->
+
+<!-- cspell:word devkum -->
+
+<!-- cspell:word Norges -->
+
+<!-- cspell:word SDMX -->
+
 # Dropset Data Feeds — Ingestion Framework and Market-Data Collection
 
 Two things over one substrate. The **`feeds`** crate is a shared
@@ -904,6 +912,18 @@ Data coverage is verified only for AUD and EUR (§13), so MYR and NGN are
 *at best* two-source and could be one or zero. That is precisely why
 they are where a further source would buy the most.
 
+**Corrected 2026-08-24 — the exposure is real but narrower, and it is
+NGN.** Measured directly against the already-wired Frankfurter source:
+it quotes MYR, which the ECB reference set carries, and does **not**
+quote NGN. So of the two, only NGN sits on OANDA and Twelve Data alone;
+MYR has a third source in the roster today. The sentence above holds
+strictly for *intraday* coverage, which is what it was measuring, but
+under the widen-then-filter direction — where a daily reading is a
+consensus input rather than a disqualification — it reads as more
+alarming about MYR than the data supports. NGN is the one roster
+currency with no daily corroborator at all, and that is what the er-api
+source below actually rescues.
+
 **The roster for AUD/USD quoting, stated outright**, since it is the
 pair this survey was opened on: **Pyth plus OANDA plus Twelve Data**,
 with Frankfurter as the daily reference and Alpha Vantage as daily
@@ -926,7 +946,7 @@ repeated:
 | Source                | Intraday      | Verdict                                                                                                                                        |
 | --------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `exchangerate.host`   | —             | a key is now required; the free keyless tier is gone                                                                                           |
-| `open.er-api.com`     | no            | reachable and keyless, but daily only — does not move the intraday floor                                                                       |
+| `open.er-api.com`     | no            | **reversed 2026-08-24 — now wired**; daily only, which the relaxed-latency direction makes a corroborator rather than a disqualification       |
 | Stooq                 | claimed       | every quote URL 404s and the CSV endpoint serves a JavaScript bot challenge                                                                    |
 | Yahoo Finance `chart` | **yes, real** | 1124 bars at a 60s median gap, pricing AUD/USD in the range Pyth reports — but unofficial, and licensed for neither storage nor redistribution |
 
@@ -936,6 +956,77 @@ capability, and this roster is chosen on the right to *store* history.
 Note also that it emits a gap-free minute grid padded with nulls — 1124
 bars carrying 562 non-null closes — which makes it a grid source like
 Twelve Data, never a zero-bar session detector.
+
+**The er-api reversal, and the central-bank family that did not survive
+alongside it** (all probed 2026-08-24). The rejection in the table was
+correct under the two-source-intraday floor it was written against; the
+widen-then-filter direction retires that floor, so a daily reading is a
+consensus input and the verdict flips. What earns this source a slot is
+not its cadence but its coverage and construction: it prices all 14
+non-USD roster currencies including NGN, and the provider documents that
+it blends central-bank and commercial sources and will not list a code
+without at least three of them. It is a differently-built estimate, not
+another render of a fix the roster already carries.
+
+*License — internal use only.* The open-access endpoint permits caching
+and commercial currency-conversion use, **prohibits re-distribution**,
+and requires attribution wherever the rates are shown. Storing readings
+and computing a fair value from them is the permitted use. Surfacing
+them **raw** through the public indexer API or an externally shared
+dashboard is not — and both read the same store, so this binds any new
+read surface rather than the adapter alone. Unlike the Yahoo rejection
+above, which forbade *storage* itself and was therefore fatal, this
+constrains only republication.
+
+*A stated correlation for the consensus filter.* The er-api blend
+contains, by the provider's own documentation, the ECB reference fix —
+**which this roster already ingests**, through Frankfurter. That is a
+declared input property rather than something the adjudicator should
+have to discover: the two
+readings are correlated by construction, so per-source noise should
+reflect it. The correlation is partial and not duplication, which is
+measurable — er-api's EUR implied 1.16798 USD/EUR on 2026-08-24 against
+the ECB's own 1.1664 fix for that date, so it is demonstrably not a
+passthrough.
+
+*Five central-bank reference APIs, probed and rejected as price inputs.*
+All were reachable, keyless and HTTP 200 — the hostility to automated
+clients found among macro and holiday calendar sources did not transfer
+here — but none is a usable consensus input:
+
+- **Norges Bank** — its `COLLECTION` attribute reads "ECB concertation
+  time 14:15 CET": the *same* observation as the ECB, not an independent
+  one.
+- **Bank of Canada** — a daily **average** across the whole day, a
+  different statistic kind from a point-in-time fix.
+- **Bank of England** — lags (latest observation 21 Aug on a 24 Aug
+  probe), and resolves only through a redirect the shared client refuses
+  by policy.
+- **SNB** — the `devkum` cube is a **monthly** average, and the obvious
+  daily cube id 404s.
+- **RBA** — a 4:00 pm Australian Eastern Standard Time mid-point;
+  rejected as a price input, but it independently covers MYR.
+
+*The ECB itself was struck for a better reason than those five: the
+roster already has it.* Frankfurter republishes the ECB reference rate,
+and the match is exact — Frankfurter's EUR of 0.85734 per USD on
+2026-08-24 inverts to 1.16640 against the ECB's own 1.1664 for that
+date. A direct adapter would have duplicated a live consensus input,
+which is precisely the error Norges Bank was rejected for.
+
+*Verified fallback, recorded as resilience insurance.* If Frankfurter
+ever degrades or gates, the ECB SDMX endpoint at `data-api.ecb.europa.eu`
+is the drop-in primary for that leg — probed 2026-08-24, keyless, and
+exact-match verified against Frankfurter's same-day value by the
+arithmetic just above. Frankfurter republishes where the ECB originates,
+so this is the one substitution that will need no fresh measurement on
+the day it is wanted.
+
+*The process lesson, since it generalizes.* A candidate source is
+checked against the **wired venues tree** before it is argued about —
+dedup against the codebase, not only against the board. The ECB adapter
+was scoped, debated and nearly built before anyone opened
+`feeds/src/venues/` and found the same data already arriving.
 
 ### On-chain venue coverage, measured
 

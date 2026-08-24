@@ -14,7 +14,7 @@
 //! — Hermes catalogues NGN but has never published a price for it, and the ECB
 //! reference set omits it entirely, which left it on two vendors alone.
 //!
-//! **Licence — internal use only, and this bounds where the data may go.** The
+//! **License — internal use only, and this bounds where the data may go.** The
 //! open-access endpoint permits caching and commercial currency-conversion use
 //! but **prohibits re-distribution**. Storing readings here and consuming them
 //! to compute a fair value is squarely the permitted use; surfacing them *raw*
@@ -25,7 +25,7 @@
 
 use super::Quotes;
 use crate::{Batch, HttpClient, Source};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::time::Duration;
@@ -128,7 +128,10 @@ impl Source for ErApiSource {
 /// coverage gap visible instead of silent, so it is drawn here rather than left
 /// to the caller.
 pub fn parse_erapi(body: &Value, currencies: &[&str]) -> Result<ErApiSnapshot> {
-    let result = body.get("result").and_then(Value::as_str).unwrap_or_default();
+    let result = body
+        .get("result")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if result != "success" {
         // The provider names the failure in `error-type`; carrying it through
         // is what makes a quota trip distinguishable from a malformed base.

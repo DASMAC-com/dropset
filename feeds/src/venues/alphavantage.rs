@@ -1,4 +1,3 @@
-// cspell:word outputsize
 //! The Alpha Vantage FX daily adapter (docs/data-feeds.md §9) — a **daily-only**
 //! third opinion on the FX rate.
 //!
