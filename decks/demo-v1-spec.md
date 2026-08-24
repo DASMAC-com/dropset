@@ -96,49 +96,44 @@ pages:
 
 > Hey everyone, I'm Alex. I'm building Dropset, the liquidity layer for every
 > national currency. Foreign exchange is the biggest market on earth, with over
-> nine trillion dollars in daily volume. Yet that liquidity is fragmented and
-> obfuscated by a patchwork of banks and OTC desks, and FX exchanges only trade
-> five days a week. Blockchains are a perfect remedy for this situation —
-> they're the most money-like digital environment possible, offering
-> permissionless
-> access and ease of transmission, especially Solana, the fastest and most
-> inexpensive public blockchain. Yet less than ten percent of the world's
-> currencies are represented by a stablecoin on Solana. So we're building
-> Dropset to provide 24/7/365 coverage for every national currency. The
-> production
-> Dropset frontend already processes Solana mainnet FX swaps, sourcing liquidity
-> from existing onchain exchanges. Dropset also curates market data for every
-> Solana-based stablecoin. However, many of these currencies still have no
-> liquidity whatsoever. This is a major market gap for an asset class with
-> nine trillion dollars of daily volume. Which is why we're building a DEX
-> specifically tailored
-> to bootstrapping stablecoin liquidity: the ephemeral central limit order book,
-> or eCLOB, which delivers propAMM efficiency while providing CLOB transparency.
-> It's built around vaults, so anyone can become a vault leader and crowdsource
-> their market-making inventory. We bootstrap the vaults for this two-sided
-> market ourselves, kicking off a public liquidity flywheel that matches
-> upstream stablecoin issuers with downstream liquidity consumers. We're already
-> working with early-stage stablecoin issuers on a liquidity pilot program, and
-> we've validated demand from onchain banking and supply chain management teams
-> who source existing liquidity onchain but suffer wide spreads when clearing FX
-> swaps off-chain through their banking solutions. In other words, latent
-> demand doesn't have a straightforward supply channel. By connecting emerging
-> stablecoin issuers and demand-side customers, we can create a comprehensive FX
-> liquidity network that accrues protocol fees. As markets mature, we have
-> access to product opportunities beyond spot, like derivatives, for business
-> use cases
-> including treasury management, B2B payment flow, hedging, and beyond.
-> Solana dominates public blockchain token launch numbers, and more recently
-> it commands a near monopoly on tokenized equity volume. It's basically the
-> perfect place for
-> moving tokens — which are the vehicle for stablecoins, and by extension for
-> public FX markets, because it facilitates permissionless liquidity flywheels
-> that take off in a positive feedback loop. We're the people to build it. The
-> team has already worked on multiple exchanges. We're already operationally
-> integrated with existing stablecoin issuers, and I've personally authored or
-> co-authored three onchain exchanges. Dropset — the liquidity layer for every
-> national currency. In other words, we're going to put all the money on the
-> blockchain and it's going to be huge.
+> nine trillion dollars in daily volume. Yet the underlying liquidity is
+> fragmented and obfuscated by a patchwork of banks and OTC desks, and FX
+> exchanges only trade five days a week. Blockchains are a perfect remedy for
+> this situation — they're the most money-like digital environment possible,
+> offering permissionless access and ease of transmission, especially Solana,
+> the fastest and most inexpensive public blockchain. Yet less than ten percent
+> of the world's currencies are represented by a stablecoin on Solana. So we're
+> building Dropset to provide 24/7/365 coverage for every national currency.
+> The production Dropset frontend already processes Solana mainnet FX swaps,
+> sourcing liquidity from existing onchain exchanges. Dropset also curates
+> market data for every Solana-based stablecoin. However, many of these
+> currencies still have no liquidity whatsoever. This is a major market gap for
+> an asset class with nine trillion dollars of daily volume. Which is why we're
+> building a DEX specifically tailored to bootstrapping stablecoin liquidity:
+> the ephemeral central limit order book, or eCLOB, which combines propAMM
+> efficiency with order book transparency. It's built around vaults, so anyone
+> can become a vault leader and crowdsource their market-making inventory. We
+> bootstrap the vaults for this two-sided market ourselves, kicking off a
+> public liquidity flywheel that matches upstream stablecoin issuers with
+> downstream liquidity consumers. We're already working with early-stage
+> stablecoin issuers on a liquidity pilot program, and we've validated demand
+> from onchain banking and supply chain management teams who source existing
+> liquidity onchain but suffer wide spreads when clearing FX swaps off-chain
+> through their banking providers. In other words, latent demand doesn't have a
+> straightforward supply channel. By connecting emerging stablecoin issuers and
+> demand-side customers we can create a comprehensive FX liquidity network that
+> accrues protocol fees. As markets mature, we have access to product
+> opportunities beyond spot, like derivatives, for business use cases including
+> treasury management, B2B payment flow, hedging, and beyond. Solana dominates
+> public blockchain token launch numbers, and more recently it commands a near
+> monopoly on tokenized equity volumes. It's basically the perfect place for
+> moving around tokens — which are the vehicle for stablecoins, and by
+> extension for public FX markets, because it facilitates permissionless
+> liquidity flywheels that take off in a positive feedback loop. And we're the
+> people to build that feedback loop. The team has already worked on multiple
+> exchanges, we're operationally integrated with existing stablecoin issuers,
+> and I've personally authored or co-authored three onchain exchanges.
+> Dropset — the liquidity layer for every national currency.
 
 ### Talk-track rules
 
@@ -228,9 +223,9 @@ cannot be kept in step automatically, so the two silently diverge.
   figure, very large: **\$9T+**, labeled "traded every day". Nothing else.
 - **Visual:** The figure *is* the visual. No meter, no capture, no facts.
 - **Spoken:** "Foreign exchange is the biggest market on earth, with over
-  nine trillion dollars in daily volume. Yet that liquidity is fragmented and
-  obfuscated by a patchwork of banks and OTC desks, and FX exchanges only
-  trade five days a week."
+  nine trillion dollars in daily volume. Yet the underlying liquidity is
+  fragmented and obfuscated by a patchwork of banks and OTC desks, and FX
+  exchanges only trade five days a week."
 - **Note:** This page and the next are **one open, split in two**, and the
   split is the point. The v2 gap page carried a sentence plus six
   chevron-marked facts plus a meter plus a screenshot — accurate, and the
@@ -518,18 +513,20 @@ cannot be kept in step automatically, so the two silently diverge.
   to survive it; it is a default, not a rule.
 - **Spoken:** "Which is why we're building a DEX specifically tailored to
   bootstrapping stablecoin liquidity: the ephemeral central limit order book,
-  or eCLOB, which delivers propAMM efficiency while providing CLOB
-  transparency. It's built around vaults, so anyone can become a vault leader
-  and crowdsource their market-making inventory."
+  or eCLOB, which combines propAMM efficiency with order book transparency.
+  It's built around vaults, so anyone can become a vault leader and
+  crowdsource their market-making inventory."
 - **Note on naming the thing — the acronym is expanded out loud.** The
   eyebrow prints "The eCLOB" and never says what it stands for, so the voice
   does: **ephemeral central limit order book** (the term of art, per
   `docs/architecture.md`). That is the one piece of this page the slide cannot
   supply, and it is why the spoken line runs so close to the printed
-  statement — the expansion is the payload, and "delivers propAMM efficiency
-  while providing CLOB transparency" is the clause that carries it. This is a
+  statement — the expansion is the payload, and "combines propAMM efficiency
+  with order book transparency" is the clause that carries it. This is a
   **deliberate exception** to the rule below; the statement earns being echoed
-  once because the echo is what attaches the acronym to its meaning.
+  once because the echo is what attaches the acronym to its meaning. Note the
+  voice says "order book" where the slide prints "CLOB": the echo translates
+  the acronym rather than repeating it, which is the attachment working.
 - **Note on the division of labour — the slide proves, the voice explains.**
   The three captioned captures carry the compute-unit costs, the maker
   quoting, and the liquidity landing on the product, and the spoken track
@@ -588,7 +585,7 @@ cannot be kept in step automatically, so the two silently diverge.
   early-stage stablecoin issuers on a liquidity pilot program, and we've
   validated demand from onchain banking and supply chain management teams who
   source existing liquidity onchain but suffer wide spreads when clearing FX
-  swaps off-chain through their banking solutions. In other words, latent
+  swaps off-chain through their banking providers. In other words, latent
   demand doesn't have a straightforward supply channel."
 - **Note on the closing sentence — it states the thesis the tiles imply.**
   "Latent demand doesn't have a straightforward supply channel" is the page's
@@ -620,11 +617,11 @@ cannot be kept in step automatically, so the two silently diverge.
   caption rule in §1's talk-track rules.
 - **Note on the pain — the one genuinely new claim on this page.** "…who source
   existing liquidity onchain but **suffer wide spreads** when clearing FX swaps
-  off-chain through their banking solutions" is the only sentence in the deck
+  off-chain through their banking providers" is the only sentence in the deck
   that says **why** the downstream side wants this, and it is what turns four
   logos from a name-drop into validated demand. It also lands the competitive
   argument without naming a competitor: the incumbent is "their banking
-  solutions", a category rather than a company. Protect this sentence if the
+  providers", a category rather than a company. Protect this sentence if the
   page is ever trimmed.
 - **Note on how hard to press it:** the wording has been through "unable to
   clear… without resorting to **exorbitant** spreads", then "**dissatisfied**
@@ -701,7 +698,7 @@ cannot be kept in step automatically, so the two silently diverge.
   rows now come from one pitch, so changing the column width moves the dots
   with it.
 - **Spoken:** "By connecting emerging stablecoin issuers and demand-side
-  customers, we can create a comprehensive FX liquidity network that accrues
+  customers we can create a comprehensive FX liquidity network that accrues
   protocol fees. As markets mature, we have access to product opportunities
   beyond spot, like derivatives, for business use cases including treasury
   management, B2B payment flow, hedging, and beyond."
@@ -789,11 +786,11 @@ cannot be kept in step automatically, so the two silently diverge.
   word: three frames of the same story, and the audience arrives at the third
   before the presenter says it.
 - **Spoken:** "Solana dominates public blockchain token launch numbers, and
-  more recently it commands a near monopoly on tokenized equity volume. It's
-  basically the perfect place for moving tokens — which are the vehicle for
-  stablecoins, and by extension for public FX markets, because it facilitates
-  permissionless liquidity flywheels that take off in a positive feedback
-  loop."
+  more recently it commands a near monopoly on tokenized equity volumes. It's
+  basically the perfect place for moving around tokens — which are the vehicle
+  for stablecoins, and by extension for public FX markets, because it
+  facilitates permissionless liquidity flywheels that take off in a positive
+  feedback loop."
 - **Note on "dominates … token launch numbers" — this reverses an earlier
   decision, and it takes on a sourcing obligation.** The line read "Solana is
   where tokens get launched", and that phrasing was chosen *specifically* to
@@ -804,7 +801,7 @@ cannot be kept in step automatically, so the two silently diverge.
   The current line is a **ranking against other chains**, so this page's own
   rule now applies to it: every comparative claim in the voice has a citation
   behind it or is rephrased away. Contrast the second half, "near monopoly on
-  tokenized equity volume", which is also a comparative and stays because 96%
+  tokenized equity volumes", which is also a comparative and stays because 96%
   is sourced under "Figure sources".
   **Action before this is spoken to investors: source it, or fall back.** A
   launch-count share from a launchpad-analytics dashboard is the kind of
@@ -842,7 +839,7 @@ cannot be kept in step automatically, so the two silently diverge.
   source supports** — wrong
   in the unsafe direction, unlike the memecoins tile's deliberate `12M+` floor
   (see the note on that tile in `DemoDeck.tsx`). "A near monopoly of onchain
-  tokenized equity volume" is a characterization rather than a figure, so it is
+  tokenized equity volumes" is a characterization rather than a figure, so it is
   defensible at 96%, it adds the reading the number cannot, and it does not
   narrate a printed value. Do not restore a spoken percentage here.
 - **Note on the compounding mechanism — restored, in its shortest form.** The
@@ -1040,10 +1037,10 @@ cannot be kept in step automatically, so the two silently diverge.
   can dispute, and the page reads stronger without one to argue with.
 - **Visual:** Both headshots, square and unframed, pulled from the
   marketing site at build time (`remote-assets.json`).
-- **Spoken:** "We're the people to build it. The team has already worked on
-  multiple exchanges. We're already operationally integrated with existing
-  stablecoin issuers, and I've personally authored or co-authored three onchain
-  exchanges."
+- **Spoken:** "And we're the people to build that feedback loop. The team has
+  already worked on multiple exchanges, we're operationally integrated with
+  existing stablecoin issuers, and I've personally authored or co-authored
+  three onchain exchanges."
 - **Note on "existing stablecoin issuers":** "several" was tried and dropped —
   it counts the integrations and invites "how many?", where "**existing**" says
   they are with issuers already in the market, which is the load-bearing part:
@@ -1056,8 +1053,14 @@ cannot be kept in step automatically, so the two silently diverge.
   providers / onramps — and the spoken track used to say all of it back. It
   was the deck's clearest case of narrating the slide, and the track now says
   none of it. What the voice supplies instead is the **claim the bios are
-  evidence for** ("we're the people to build it") and one fact the page does
-  not print: that the operational integrations already exist.
+  evidence for** ("we're the people to build that feedback loop") and one fact
+  the page does not print: that the operational integrations already exist.
+- **Note on the opener's back-reference — this page now depends on page 9.**
+  "…build **that** feedback loop" points at the positive feedback loop page 9
+  closes on, which is what lets the claim arrive as a conclusion rather than
+  as an assertion. The cost is an ordering constraint: these two pages can no
+  longer be reordered or cut independently, and if page 9 goes, this opener
+  reverts to naming the thing outright.
 - **Note on "three onchain exchanges" — know which three.** The bio on this
   page names only **one** exchange (Econia) plus the Opcode Guide, which is a
   guide and not an exchange, so a listener reading along may ask. The three are
@@ -1087,28 +1090,32 @@ cannot be kept in step automatically, so the two silently diverge.
   five-line bios under two headshots, so the gap above the portraits is
   tightened as well.
 
-#### Page 11 — Close · ~8s
+#### Page 11 — Close · ~4s
 
 - **On-slide:** The Dropset wordmark and the tagline — The liquidity layer for
   every national currency. A replay of page 1, and nothing else.
 - **Visual:** Identical to the title page, deliberately.
-- **Spoken:** "Dropset — the liquidity layer for every national currency. In
-  other words, we're going to put all the money on the blockchain and it's
-  going to be huge."
-- **Note on the close's shape — the tagline, then the scale.** Two sentences:
-  the name for the company, and what it amounts to said flat. "In other
-  words" is the hinge, and it is doing real work — it frames the second
-  sentence as a *translation* of the tagline rather than as a new claim, so
-  "all the money on the blockchain" reads as what "the liquidity layer for
-  every national currency" actually means rather than as a bigger promise
-  bolted onto it.
-- **Note on the register — "it's going to be huge" is deliberate.** It is the
-  least hedged sentence in the deck and the only one that makes no argument
-  at all. That is the point at the ninety-second mark: the room has just been
-  walked through eleven pages of evidence, and the close is where conviction
-  is more persuasive than one more reason. The failure mode to watch is
-  delivery, not copy — said tentatively it sounds like a hope, and the line
-  only works said as a fact.
+- **Spoken:** "Dropset — the liquidity layer for every national currency."
+- **Note on the close's shape — one sentence, the tagline alone.** The deck
+  ends on the name for the company and stops. The bookend is the whole
+  mechanism: the tagline is the first thing said and the last, and nothing
+  follows it into the silence where the room's first question goes. A close
+  this short is a delivery instruction as much as a copy one — the line has
+  to be said as a full stop, not as a lead-in to something that is no longer
+  coming.
+- **Note on what came out — the scale claim, now the two-beer version.** The
+  close used to run a second sentence: "In other words, we're going to put
+  all the money on the blockchain and it's going to be huge." It is held
+  under "Optional backup beats" in §2, per the talk-track rule that cut lines
+  move rather than get deleted, and it is filed there as **the two-beer
+  version of the pitch** — the answer to "what are you actually saying, once
+  everything is distilled down". That framing is also the argument for why it
+  is not the close: it is the thing you say when someone asks, and a pitch
+  that says it unprompted has answered a question the room did not put. Its
+  register still matters wherever it does get spoken — it is the least hedged
+  sentence in the deck and the only one that makes no argument at all, so the
+  failure mode is delivery, not copy. Said tentatively it sounds like a hope;
+  it only works said as a fact.
 - **Note on what this replaced — the rehearsal-draft personal why.** The page
   used to carry five sentences: the seventeen-year frame, the concede-then-
   turn structure, Solana placed inside the problem, and "through Dropset,
@@ -1135,19 +1142,20 @@ cannot be kept in step automatically, so the two silently diverge.
   the tagline is the first thing said and the last, which is the oldest
   trick there is for making a two-minute pitch feel composed rather than
   rushed.
-- **Note on how this page now answers it — scale, not biography.** The page
-  kept its job and changed its instrument. "We're going to put all the money
-  on the blockchain and it's going to be huge" answers *why we care* by
-  naming the size of the prize rather than by narrating the founder's route
-  to it, which is a claim a listener can act on in the four seconds available.
-  The founder's own argument is the better answer to the same question with
-  five minutes and an actual interlocutor, so it lives under "Optional backup
-  beats" in §2 as **the personal why, as the close**, whole and ready to be
-  spoken. Its three beats, in order, are the seventeen-year frame, the
-  contrast of what did get solved, and why FX specifically — and the rule for
-  delivering it live still holds: the failure mode is a biography, and the
-  target is the single sentence that makes a listener believe this person
-  would still be working on this in five years.
+- **Note on how this page now answers it — the deck answers, the close
+  doesn't.** The page kept its job and gave up its instrument. Two closing
+  claims have now been tried on it and both are held in §2: the founder's
+  personal why, and the scale claim that replaced it. What is left is the
+  position that the ten pages before this one have already answered *why we
+  care*, and that a final sentence arguing it again is a tell — it reads as
+  the deck not trusting its own evidence. Both held versions are the better
+  answer to the same question with five minutes and an actual interlocutor
+  than with four seconds and a timer. For the personal why, the three beats,
+  in order, are the seventeen-year frame, the contrast of what did get
+  solved, and why FX specifically — and the rule for delivering it live still
+  holds: the failure mode is a biography, and the target is the single
+  sentence that makes a listener believe this person would still be working
+  on this in five years.
 - **Note on the layout:** it reuses the title page's components exactly —
   same wordmark width, same statement size, same centred body. Reusing
   rather than rebuilding is deliberate: the replay only works if the page is
@@ -1541,6 +1549,21 @@ The uncompressed form of "money onchain still doesn't really work" in the beat
 above. This is the sentence that makes *seventeen years* land as a failure
 rather than as a duration, and it is the first thing to expand into if the
 personal why is being given room in a follow-up conversation.
+
+#### Page 11 — the two-beer version, cut from the close
+
+> In other words, we're going to put all the money on the blockchain and it's
+> going to be huge.
+
+The distillation: what the pitch actually amounts to once everything is boiled
+down, in the register you would use after two beers. It closed the deck until
+it was cut, and the framing is the reason it no longer does — this is the
+answer to "so what are you really saying", which makes it a **response**, not
+a close. Volunteered unprompted it answers a question the room has not asked;
+offered when someone asks it, it is the strongest sentence available. It is
+also the least hedged line in the deck and the only one that makes no argument
+at all, so the failure mode is delivery rather than copy: said tentatively it
+sounds like a hope, and it only works said as a fact.
 
 ### Team, full
 

@@ -1416,9 +1416,9 @@ export default function DemoDeck() {
         </SlideBody>
         <Notes>
           Foreign exchange is the biggest market on earth, with over nine
-          trillion dollars in daily volume. Yet that liquidity is fragmented
-          and obfuscated by a patchwork of banks and OTC desks, and FX
-          exchanges only trade five days a week.
+          trillion dollars in daily volume. Yet the underlying liquidity is
+          fragmented and obfuscated by a patchwork of banks and OTC desks, and
+          FX exchanges only trade five days a week.
         </Notes>
       </Slide>
 
@@ -1644,9 +1644,9 @@ export default function DemoDeck() {
         <Notes>
           Which is why we’re building a DEX specifically tailored to
           bootstrapping stablecoin liquidity: the ephemeral central limit order
-          book, or eCLOB, which delivers propAMM efficiency while providing
-          CLOB transparency. It’s built around vaults, so anyone can become a
-          vault leader and crowdsource their market-making inventory.
+          book, or eCLOB, which combines propAMM efficiency with order book
+          transparency. It’s built around vaults, so anyone can become a vault
+          leader and crowdsource their market-making inventory.
         </Notes>
       </Slide>
 
@@ -1669,7 +1669,7 @@ export default function DemoDeck() {
           we’ve validated demand from onchain banking and supply chain
           management teams who source existing liquidity onchain but suffer
           wide spreads when clearing FX swaps off-chain through their banking
-          solutions. In other words, latent demand doesn’t have a
+          providers. In other words, latent demand doesn’t have a
           straightforward supply channel.
         </Notes>
       </Slide>
@@ -1700,7 +1700,7 @@ export default function DemoDeck() {
           </SlideFill>
         </SlideBody>
         <Notes>
-          By connecting emerging stablecoin issuers and demand-side customers,
+          By connecting emerging stablecoin issuers and demand-side customers
           we can create a comprehensive FX liquidity network that accrues
           protocol fees. As markets mature, we have access to product
           opportunities beyond spot, like derivatives, for business use cases
@@ -1794,12 +1794,11 @@ export default function DemoDeck() {
             records the reversal and the fallback wording. */}
         <Notes>
           Solana dominates public blockchain token launch numbers, and more
-          recently it commands a near monopoly on tokenized equity
-          volume. It’s basically
-          the perfect place for moving tokens — which are the vehicle for
-          stablecoins, and by extension for public FX markets, because it
-          facilitates permissionless liquidity flywheels that take off in a
-          positive feedback loop.
+          recently it commands a near monopoly on tokenized equity volumes.
+          It’s basically the perfect place for moving around tokens — which
+          are the vehicle for stablecoins, and by extension for public FX
+          markets, because it facilitates permissionless liquidity flywheels
+          that take off in a positive feedback loop.
         </Notes>
       </Slide>
 
@@ -1844,10 +1843,10 @@ export default function DemoDeck() {
           </FlexBox>
         </SlideBody>
         <Notes>
-          We’re the people to build it. The team has already worked on multiple
-          exchanges. We’re already operationally integrated with existing
-          stablecoin issuers, and I’ve personally authored or co-authored
-          three onchain exchanges.
+          And we’re the people to build that feedback loop. The team has
+          already worked on multiple exchanges, we’re operationally integrated
+          with existing stablecoin issuers, and I’ve personally authored or
+          co-authored three onchain exchanges.
         </Notes>
       </Slide>
 
@@ -1863,21 +1862,22 @@ export default function DemoDeck() {
             headshots, and it gives the talk a bookend: the tagline is the first
             thing said and the last.
 
-            The close is now **two sentences**: the tagline, then the ambition
-            stated flat. The page used to carry a rehearsal-draft personal why
-            — the seventeen-years-old argument, money onchain still not really
-            working — and it is held under "Optional backup beats" in the spec
-            rather than deleted, because it is the right material for a
-            follow-up conversation. What it is not is a *closing* line: it
-            spends the last seconds of the pitch on exposition, and a listener
-            who has sat through ten pages of the problem does not need the
-            problem restated at them. The scale claim does the work instead,
-            and the sentiment behind it is better argued live, against an
-            actual question, than recited. */}
+            The close is now **one sentence**: the tagline, and nothing after
+            it. Two earlier closes are held in the spec rather than deleted.
+            The rehearsal-draft personal why — the seventeen-years-old
+            argument, money onchain still not really working — sits under
+            "Optional backup beats" because it is the right material for a
+            follow-up conversation; what it is not is a *closing* line, since
+            it spends the last seconds of the pitch on exposition, and a
+            listener who has sat through ten pages of the problem does not
+            need the problem restated at them. The scale claim that replaced
+            it — all the money on the blockchain, and it is going to be huge —
+            is held there too, as the **two-beer version** of the pitch: the
+            distillation to reach for when someone asks what this actually
+            amounts to, not the line the deck ends on. Both are better argued
+            live, against an actual question, than recited. */}
         <Notes>
-          Dropset — the liquidity layer for every national currency. In other
-          words, we’re going to put all the money on the blockchain and it’s
-          going to be huge.
+          Dropset — the liquidity layer for every national currency.
         </Notes>
       </Slide>
     </Deck>
