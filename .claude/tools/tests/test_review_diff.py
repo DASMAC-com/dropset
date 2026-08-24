@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 import review_diff as rd
 
@@ -786,6 +788,216 @@ class GateOnlyProjectionTests(unittest.TestCase):
 
     def test_the_projection_never_invents_a_value(self):
         self.assertEqual(rd.gate_only({}), {})
+
+
+class RustTestRangeTests(unittest.TestCase):
+    """Finding the inline `#[cfg(test)]` regions a category split cannot see."""
+
+    def test_a_simple_test_module_is_found(self):
+        text = "fn a() {}\n\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(3, 6)])
+
+    def test_nesting_inside_the_module_does_not_close_it_early(self):
+        text = (
+            "#[cfg(test)]\nmod tests {\n    fn t() {\n        if x { y(); }\n    }\n}\n"
+        )
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 6)])
+
+    def test_a_brace_inside_a_string_literal_does_not_close_the_module(self):
+        text = '#[cfg(test)]\nmod tests {\n    let s = "}";\n    fn t() {}\n}\n'
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_a_brace_inside_a_raw_string_does_not_close_the_module(self):
+        # Raw strings are common in test fixtures, which is exactly where this
+        # parser runs — a false close would send real source into the tests slice.
+        text = '#[cfg(test)]\nmod tests {\n    let s = r#"}"#;\n    fn t() {}\n}\n'
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_a_brace_in_a_line_comment_is_ignored(self):
+        text = "#[cfg(test)]\nmod tests {\n    // }\n    fn t() {}\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_several_regions_are_all_found(self):
+        text = "#[cfg(test)]\nmod a {\n}\nfn mid() {}\n#[cfg(test)]\nmod b {\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 3), (5, 7)])
+
+    def test_a_file_with_no_tests_yields_nothing(self):
+        self.assertEqual(rd.rust_test_ranges("fn a() {}\n"), [])
+
+    def test_an_unbalanced_region_claims_to_end_of_file_rather_than_vanishing(self):
+        # Losing a test region to the source slice is the failure being fixed,
+        # so an unparsable tail errs toward `tests`.
+        text = "#[cfg(test)]\nmod tests {\n    fn t() {}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 3)])
+
+
+class InlineRustTestSplitTests(unittest.TestCase):
+    """The end-to-end property: a Rust diff's test hunks reach the tests slice.
+
+    The regression: a 4,351-line Rust diff produced a **zero-line** tests slice
+    because inline `#[cfg(test)]` rides the source file, so the test-adequacy
+    lens read three source slices and became the run's costliest agent.
+    """
+
+    SOURCE = (
+        "pub fn add(a: i32, b: i32) -> i32 {\n"
+        "    a + b\n"
+        "}\n"
+        "\n"
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        "    use super::*;\n"
+        "\n"
+        "    #[test]\n"
+        "    fn it_adds() {\n"
+        "        assert_eq!(add(1, 2), 3);\n"
+        "    }\n"
+        "}\n"
+    )
+
+    DIFF = (
+        "diff --git a/src/lib.rs b/src/lib.rs\n"
+        "index 111..222 100644\n"
+        "--- a/src/lib.rs\n"
+        "+++ b/src/lib.rs\n"
+        "@@ -1,3 +1,3 @@\n"
+        " pub fn add(a: i32, b: i32) -> i32 {\n"
+        "-    a - b\n"
+        "+    a + b\n"
+        " }\n"
+        "@@ -9,3 +9,3 @@\n"
+        "     #[test]\n"
+        "-    fn it_adds() { assert_eq!(add(1, 2), 4); }\n"
+        "+    fn it_adds() { assert_eq!(add(1, 2), 3); }\n"
+        "\n"
+    )
+
+    def _split(self):
+        d = Path(self.tmp.name)
+        (d / "src").mkdir(parents=True, exist_ok=True)
+        (d / "src" / "lib.rs").write_text(self.SOURCE, encoding="utf-8")
+        diff_path = d / "review-diff.txt"
+        diff_path.write_text(self.DIFF, encoding="utf-8")
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            return rd.split_diff(diff_path, d)
+        finally:
+            os.chdir(cwd)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_the_test_hunk_lands_in_the_tests_slice(self):
+        slices = self._split()
+        tests_text = Path(slices["tests"]["path"]).read_text(encoding="utf-8")
+        self.assertIn("it_adds", tests_text)
+        self.assertGreater(slices["tests"]["lines"], 0)
+
+    def test_the_source_hunk_stays_in_the_source_slice(self):
+        slices = self._split()
+        source_text = Path(slices["source"]["path"]).read_text(encoding="utf-8")
+        self.assertIn("a + b", source_text)
+        self.assertNotIn("it_adds", source_text)
+
+    def test_each_slice_carries_the_file_header_so_it_reads_as_a_diff(self):
+        # A hunk without its `diff --git`/`+++` preamble is not readable as a
+        # diff, and a lens is handed the slice file directly.
+        slices = self._split()
+        for name in ("source", "tests"):
+            text = Path(slices[name]["path"]).read_text(encoding="utf-8")
+            self.assertIn("diff --git a/src/lib.rs b/src/lib.rs", text)
+            self.assertIn("+++ b/src/lib.rs", text)
+
+    def test_a_rust_file_with_no_inline_tests_is_untouched(self):
+        d = Path(self.tmp.name)
+        (d / "src").mkdir(parents=True, exist_ok=True)
+        (d / "src" / "plain.rs").write_text("fn a() {}\n", encoding="utf-8")
+        diff_path = d / "review-diff.txt"
+        diff_path.write_text(
+            "diff --git a/src/plain.rs b/src/plain.rs\n"
+            "--- a/src/plain.rs\n"
+            "+++ b/src/plain.rs\n"
+            "@@ -1 +1 @@\n"
+            "-fn a() {}\n"
+            "+fn a() {}\n",
+            encoding="utf-8",
+        )
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            slices = rd.split_diff(diff_path, d)
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(slices["tests"]["lines"], 0)
+        self.assertGreater(slices["source"]["lines"], 0)
+
+
+class OverlappingPrsTests(unittest.TestCase):
+    """In-flight overlap: reported, never blocking, and never in context."""
+
+    ROWS = [
+        {
+            "number": 12,
+            "title": "Other work",
+            "headRefName": "eng-12",
+            "files": [{"path": "src/lib.rs"}, {"path": "README.md"}],
+        },
+        {
+            "number": 13,
+            "title": "Unrelated",
+            "headRefName": "eng-13",
+            "files": [{"path": "docs/other.md"}],
+        },
+    ]
+
+    def _run(self, paths, rows=None, branch="eng-99"):
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(self.ROWS if rows is None else rows),
+        )
+        with (
+            mock.patch.object(rd.subprocess, "run", return_value=completed),
+            mock.patch.object(rd, "_git", return_value=branch),
+        ):
+            return rd.overlapping_prs(paths)
+
+    def test_an_intersecting_pr_is_reported_with_its_shared_files(self):
+        result = self._run(["src/lib.rs"])
+        self.assertTrue(result["checked"])
+        self.assertEqual([p["number"] for p in result["prs"]], [12])
+        self.assertEqual(result["prs"][0]["shared_files"], ["src/lib.rs"])
+
+    def test_a_non_intersecting_pr_is_not_reported(self):
+        result = self._run(["src/only_mine.rs"])
+        self.assertEqual(result["prs"], [])
+
+    def test_the_pr_for_this_branch_is_excluded(self):
+        result = self._run(["src/lib.rs"], branch="eng-12")
+        self.assertEqual(result["prs"], [])
+
+    def test_results_are_ranked_by_how_much_they_overlap(self):
+        result = self._run(["src/lib.rs", "README.md", "docs/other.md"])
+        self.assertEqual([p["number"] for p in result["prs"]], [12, 13])
+
+    def test_a_missing_gh_is_reported_not_raised(self):
+        # Overlap is advisory, so an unavailable gh must not fail the gate.
+        with mock.patch.object(rd.subprocess, "run", side_effect=OSError("no gh")):
+            result = rd.overlapping_prs(["src/lib.rs"])
+        self.assertFalse(result["checked"])
+        self.assertIn("no gh", result["error"])
+        self.assertEqual(result["prs"], [])
+
+    def test_a_gh_failure_is_reported_not_raised(self):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="not authenticated"
+        )
+        with mock.patch.object(rd.subprocess, "run", return_value=completed):
+            result = rd.overlapping_prs(["src/lib.rs"])
+        self.assertFalse(result["checked"])
+        self.assertIn("not authenticated", result["error"])
 
 
 if __name__ == "__main__":

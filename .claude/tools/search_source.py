@@ -620,6 +620,32 @@ CONTEXT_FILE_NUDGE = 3
 # already identified it — so a slice-read of the region is the cheaper move.
 CONTEXT_DENSITY_NUDGE = 10
 
+# The widest `--context` a single-file scope may ask for before this tool
+# refuses. Anything past a line or two of either side is on its way to buying
+# the file, and a slice `Read` buys it once at a known price.
+SINGLE_FILE_CONTEXT_LIMIT = 2
+
+
+def single_file_scope(globs, dirs) -> str | None:
+    """The one file this invocation can possibly search, or ``None``.
+
+    Detected from the **arguments**, before any file is opened, which is the
+    whole point: the density advisory below is correct but arrives *with the
+    result*, after the tokens are spent — it teaches the next call, not the one
+    that pays. A wildcard-free ``--glob`` (or ``--dir``) naming one path is a
+    scope signal available up front.
+    """
+    candidates = []
+    for group in (globs, dirs):
+        if group:
+            candidates.extend(group)
+    if len(candidates) != 1:
+        return None
+    only = candidates[0]
+    if any(ch in only for ch in "*?"):
+        return None
+    return only if Path(only).is_file() else None
+
 
 def print_result(result: dict, files_only: bool, context: int) -> None:
     """Emit ``grep -n``-shaped lines on stdout and one summary line on stderr."""
@@ -788,6 +814,25 @@ def run(argv: list[str]) -> int:
 
     if exts and args.all_text:
         raise SearchSourceError("--ext and --all-text are alternatives")
+
+    # Refuse a wide context window once the scope is provably one file. Sweeping
+    # a named file buys its matched regions at an N-line markup, and on clustered
+    # matches the windows overlap toward buying the file outright — at a HIGHER
+    # price than reading it. Measured on one session: a context-6 constants probe
+    # (39 matches, overflowed the result cap, spilled 32KB to disk, three
+    # constants actually wanted), a context-12 struct probe, and a context-40
+    # single-symbol probe that is a whole-file read with extra steps — ~11.9k
+    # together, roughly 60% of that session's entire Bash cost.
+    if not args.files_only and args.context > SINGLE_FILE_CONTEXT_LIMIT:
+        target = single_file_scope(globs, dirs)
+        if target is not None:
+            raise SearchSourceError(
+                f"--context {args.context} over the single file {target} is a "
+                f"whole-file read with extra steps. Once the scope is one file, "
+                f"drop the context and slice-read it: re-run with --files-only "
+                f"(or --context {SINGLE_FILE_CONTEXT_LIMIT} or less) to get the "
+                f"line numbers, then Read {target} with offset/limit."
+            )
 
     if args.all_text:
         extensions = None

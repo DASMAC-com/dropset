@@ -973,5 +973,86 @@ class CliTests(unittest.TestCase):
             )
 
 
+class SingleFileContextRefusalTests(unittest.TestCase):
+    """Once the scope is one named file, a wide context window is refused.
+
+    Sweeping a named file buys its matched regions at an N-line markup, and on
+    clustered matches the windows overlap toward buying the file outright — at a
+    higher price than reading it. The existing density advisory is correct but
+    arrives *with the result*, after the tokens are spent; this guard reads the
+    arguments and fires before the work happens.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "one.rs").write_text("fn needle() {}\n", encoding="utf-8")
+        (self.root / "two.rs").write_text("fn needle() {}\n", encoding="utf-8")
+        self.cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self.cwd)
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = ss.run(["search_source.py"] + argv)
+        return code, out.getvalue() + err.getvalue()
+
+    def test_a_single_file_glob_with_wide_context_is_refused(self):
+        with self.assertRaises(ss.SearchSourceError) as caught:
+            ss.run(["search_source.py", "needle", "--glob", "one.rs", "--context", "6"])
+        message = str(caught.exception)
+        self.assertIn("one.rs", message)
+        self.assertIn("offset/limit", message)
+
+    def test_the_refusal_names_the_cheaper_alternatives(self):
+        with self.assertRaises(ss.SearchSourceError) as caught:
+            ss.run(["search_source.py", "needle", "--glob", "one.rs", "--context", "9"])
+        self.assertIn("--files-only", str(caught.exception))
+
+    def test_a_narrow_context_on_one_file_is_allowed(self):
+        code, _ = self._run(
+            [
+                "needle",
+                "--glob",
+                "one.rs",
+                "--context",
+                str(ss.SINGLE_FILE_CONTEXT_LIMIT),
+            ]
+        )
+        self.assertEqual(code, 0)
+
+    def test_files_only_is_always_allowed_however_wide_the_context(self):
+        # --files-only prints no context at all, so the cost the guard exists to
+        # stop cannot arise.
+        code, _ = self._run(
+            ["needle", "--glob", "one.rs", "--context", "40", "--files-only"]
+        )
+        self.assertEqual(code, 0)
+
+    def test_a_wildcard_glob_is_not_a_single_file_scope(self):
+        code, _ = self._run(["needle", "--glob", "*.rs", "--context", "6"])
+        self.assertEqual(code, 0)
+
+    def test_two_globs_are_not_a_single_file_scope(self):
+        code, _ = self._run(
+            ["needle", "--glob", "one.rs", "--glob", "two.rs", "--context", "6"]
+        )
+        self.assertEqual(code, 0)
+
+    def test_a_glob_naming_no_existing_file_is_not_refused(self):
+        # It resolves to nothing, so there is no file to slice-read instead.
+        code, _ = self._run(["needle", "--glob", "absent.rs", "--context", "6"])
+        self.assertEqual(code, 1)
+
+    def test_single_file_scope_detects_a_dir_naming_one_file(self):
+        self.assertEqual(ss.single_file_scope(None, ("one.rs",)), "one.rs")
+
+    def test_single_file_scope_returns_none_for_a_directory(self):
+        (self.root / "sub").mkdir()
+        self.assertIsNone(ss.single_file_scope(None, ("sub",)))
+
+
 if __name__ == "__main__":
     unittest.main()

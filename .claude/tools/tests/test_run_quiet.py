@@ -631,5 +631,122 @@ class InspectLog(unittest.TestCase):
         self.assertIn("exit 0", out.getvalue())
 
 
+class CargoFailureWindow(unittest.TestCase):
+    """The tail lands on cargo's PASSING lines; the failures block is the payload.
+
+    cargo prints `test … ok` lines first and the failure detail under a bare
+    `failures:` marker, so a last-N tail routinely shows a passing chunk plus the
+    `test result:` line. Measured: 25 wrapped runs spending ~40 tail lines each
+    to convey one assertion, ~5.5k — a top hardening candidate despite already
+    being wrapped.
+    """
+
+    CARGO_LOG = (
+        ["running 40 tests"]
+        + ["test suite::case_%d ... ok" % i for i in range(38)]
+        + [
+            "test suite::broken ... FAILED",
+            "",
+            "failures:",
+            "",
+            "---- suite::broken stdout ----",
+            "thread 'suite::broken' panicked at src/lib.rs:12:5:",
+            "assertion `left == right` failed",
+            "  left: 3",
+            " right: 4",
+            "",
+            "failures:",
+            "    suite::broken",
+            "",
+            "test result: FAILED. 38 passed; 1 failed; finished in 0.10s",
+        ]
+        # A workspace runs several test binaries, so the failing one is normally
+        # followed by more passing output. That is precisely why a last-N tail
+        # misses the assertion — without this the fixture would be easier than
+        # the real case it stands for.
+        + ["", "running 30 tests"]
+        + ["test other::case_%d ... ok" % i for i in range(30)]
+        + ["", "test result: ok. 30 passed; 0 failed; finished in 0.05s"]
+    )
+
+    def _write(self, lines):
+        path = rq.os.path.join(rq.LOG_DIR, "test-cargo-%d.log" % rq.os.getpid())
+        rq.os.makedirs(rq.LOG_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            for line in lines:
+                fh.write(line + "\n")
+        return path
+
+    def test_the_window_starts_at_the_first_failures_marker(self):
+        got = rq.read_tail_and_count(self._write(self.CARGO_LOG), 10)
+        self.assertTrue(got.failure_text.startswith("failures:"))
+
+    def test_the_window_carries_the_assertion_the_tail_would_have_missed(self):
+        got = rq.read_tail_and_count(self._write(self.CARGO_LOG), 10)
+        self.assertIn("assertion `left == right` failed", got.failure_text)
+        # The regression, stated directly: a 10-line tail of this log does not
+        # reach the assertion at all.
+        self.assertNotIn("assertion `left == right` failed", got.tail_text)
+
+    def test_the_window_excludes_the_passing_lines(self):
+        got = rq.read_tail_and_count(self._write(self.CARGO_LOG), 10)
+        self.assertNotIn("... ok", got.failure_text)
+
+    def test_the_window_stops_at_the_result_line_of_the_failing_binary(self):
+        # Without a terminator the window runs to end-of-log and swallows every
+        # later test binary's passing output — re-buying the region it replaces.
+        got = rq.read_tail_and_count(self._write(self.CARGO_LOG), 10)
+        self.assertIn("test result: FAILED", got.failure_text)
+        self.assertNotIn("other::case_0", got.failure_text)
+        self.assertNotIn("test result: ok", got.failure_text)
+
+    def test_a_failures_block_from_a_later_binary_does_not_reopen_the_window(self):
+        lines = [
+            "failures:",
+            "first detail",
+            "test result: FAILED. 1 failed",
+            "test later::case ... ok",
+            "failures:",
+            "second detail",
+            "test result: FAILED. 1 failed",
+        ]
+        got = rq.read_tail_and_count(self._write(lines), 5)
+        self.assertIn("first detail", got.failure_text)
+        self.assertNotIn("second detail", got.failure_text)
+        self.assertNotIn("... ok", got.failure_text)
+
+    def test_a_log_with_no_marker_leaves_the_window_empty(self):
+        got = rq.read_tail_and_count(self._write(["a", "b", "c"]), 2)
+        self.assertEqual(got.failure_text, "")
+        self.assertFalse(got.failure_truncated)
+
+    def test_a_huge_failure_block_is_capped_and_says_so(self):
+        lines = ["failures:"] + [
+            "detail %d" % i for i in range(rq.MAX_FAILURE_LINES + 20)
+        ]
+        got = rq.read_tail_and_count(self._write(lines), 5)
+        self.assertTrue(got.failure_truncated)
+        self.assertEqual(got.failure_text.count("\n"), rq.MAX_FAILURE_LINES)
+
+    def test_the_printer_uses_the_window_INSTEAD_of_the_tail(self):
+        # Both would mean still paying for the region this replaces.
+        summary = rq.read_tail_and_count(self._write(self.CARGO_LOG), 10)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rq.write_failure_region(summary, 10)
+        printed = out.getvalue()
+        self.assertIn("from cargo's failures block", printed)
+        self.assertNotIn("--- last ", printed)
+
+    def test_the_printer_falls_back_to_the_tail_with_no_marker(self):
+        summary = rq.read_tail_and_count(self._write(["a", "b", "c"]), 2)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rq.write_failure_region(summary, 2)
+        printed = out.getvalue()
+        self.assertIn("--- last ", printed)
+        self.assertNotIn("failures block", printed)
+
+
 if __name__ == "__main__":
     unittest.main()
