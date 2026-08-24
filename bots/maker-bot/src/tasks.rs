@@ -351,12 +351,19 @@ struct TickCtx {
 /// heap allocation per candidate per tick to carry through the `Copy` leg
 /// types. Joining the two vocabularies later means splitting the adapter's
 /// name on `:`, not widening these.
-const SOURCE_PYTH: &str = "pyth-hermes";
-const SOURCE_FRANKFURTER: &str = "frankfurter";
-const SOURCE_COINBASE: &str = "coinbase";
-const SOURCE_KRAKEN: &str = "kraken";
-const SOURCE_COINGECKO: &str = "coingecko";
-const SOURCE_CMC: &str = "coinmarketcap";
+///
+/// Public because the dry run builds its own candidate sets and must tag them
+/// from this same vocabulary. It used to spell the tags as bare literals and
+/// drifted: it offered `pyth` where the live path offers `pyth-hermes`, so a
+/// dry run's dispersion attribution named a source no health row matches. That
+/// is the silent-join failure these names exist to avoid, reintroduced by
+/// duplication — hence one shared set of constants rather than two spellings.
+pub const SOURCE_PYTH: &str = "pyth-hermes";
+pub const SOURCE_FRANKFURTER: &str = "frankfurter";
+pub const SOURCE_COINBASE: &str = "coinbase";
+pub const SOURCE_KRAKEN: &str = "kraken";
+pub const SOURCE_COINGECKO: &str = "coingecko";
+pub const SOURCE_CMC: &str = "coinmarketcap";
 
 /// A ceiling on the age [`pyth_reading`] will report, so a wildly skewed clock
 /// or a bogus `publish_time` degrades to "stale" rather than to a negative or

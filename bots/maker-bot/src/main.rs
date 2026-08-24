@@ -37,7 +37,10 @@ use dropset_maker_bot::config::{
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::build_legs;
 use dropset_maker_bot::quote_state::QuoteStateStore;
-use dropset_maker_bot::tasks::FeedReceivers;
+use dropset_maker_bot::tasks::{
+    FeedReceivers, SOURCE_CMC, SOURCE_COINBASE, SOURCE_COINGECKO, SOURCE_FRANKFURTER,
+    SOURCE_KRAKEN, SOURCE_PYTH,
+};
 use dropset_maker_bot::telemetry::{self, Telemetry};
 use dropset_maker_bot::{chain, fills, tasks};
 use dropset_util::rpc::ws_url_from_rpc;
@@ -681,8 +684,8 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     // USDC/USD common-mode leg, shared by every market: Kraken's market print,
     // falling back to the CoinGecko index.
     let usdc_q = Candidates::none()
-        .push("kraken", q(kraken.get(USDC_KRAKEN_PAIR).copied()))
-        .push("coingecko", q(cg.get(USDC_COINGECKO_ID).copied()));
+        .push(SOURCE_KRAKEN, q(kraken.get(USDC_KRAKEN_PAIR).copied()))
+        .push(SOURCE_COINGECKO, q(cg.get(USDC_COINGECKO_ID).copied()));
     for &m in &markets {
         // FX anchor: Pyth carries its confidence half-width and is the source
         // designated believable on its own; the ECB reference corroborates it.
@@ -694,8 +697,8 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
             None => Reading::new(p.value, now),
         });
         let fx_q = Candidates::none()
-            .push_trusted("pyth", fx_pyth)
-            .push("frankfurter", q(fx.get(m.currency).copied()));
+            .push_trusted(SOURCE_PYTH, fx_pyth)
+            .push(SOURCE_FRANKFURTER, q(fx.get(m.currency).copied()));
         // Basis leg: Coinbase token/USDC, Kraken token/USD, then the reflexive
         // CoinGecko / CMC index. Kraken's USD quote is converted with the peg
         // leg's consensus, exactly as `FeedHub::legs` does — the two collections
@@ -713,16 +716,16 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         });
         let basis_q = Candidates::none()
             .push(
-                "coinbase",
+                SOURCE_COINBASE,
                 m.coinbase_product.and_then(|p| q(coinbase.get(p).copied())),
             )
-            .push("kraken", kraken_q)
+            .push(SOURCE_KRAKEN, kraken_q)
             .push(
-                "coingecko",
+                SOURCE_COINGECKO,
                 q(m.coingecko_id.and_then(|id| cg.get(id)).copied()),
             )
             .push(
-                "coinmarketcap",
+                SOURCE_CMC,
                 q(m.coinmarketcap_id.and_then(|id| cmc.get(&id)).copied()),
             );
         // A fresh engine per row — no history, so no smoothing. The pinned
