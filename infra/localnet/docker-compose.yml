@@ -295,9 +295,11 @@ services:
     # the `USDC/USD` peg — Coinbase Exchange lists no such product and
     # Binance.US quotes an administered flat 1.00. Collecting it is what lets a
     # peg dislocation be read after the fact rather than only watched live. The
-    # default roster is the two legs the maker already subscribes to; Kraken
-    # also lists `EURC/EUR`, deliberately not collected yet (see the binary's
-    # module header).
+    # default roster is the two legs the maker already subscribes to, plus
+    # `EURC/EUR` — token against its own fiat, the closest keyless stand-in for
+    # an issuer redemption rate. Nothing reads that third pair yet; it is
+    # recorded because a rate cannot be backfilled (see the binary's module
+    # header).
     #
     # Keyless and batched: one request per poll regardless of roster size, so
     # adding pairs costs nothing and needs no cadence change.
