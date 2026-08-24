@@ -67,8 +67,10 @@ it can never drift from the reasons. Four things block:
   there is no source to review (the step 9/10 gates still apply — this is
   reported as its own reason rather than as "nothing to review").
 
-``--gate-only`` keeps the verdict fields and drops the inventory (``commits``,
-``files``, ``slices``, ``diff_path``, ``diff_lines``). The full payload is what a
+``--gate-only`` keeps the verdict fields — including the two skip predicates
+``runs_rust_suites`` / ``runs_artifact_gates``, which answer "what may I skip?"
+for two booleans — and drops the unbounded inventory (``commits``, ``files``,
+``slices``, ``diff_path``, ``diff_lines``). The full payload is what a
 **fan-out** needs; a mid-review *re-check* consumes only ``base_fresh`` /
 ``ready`` / ``blockers``, and one measured run printed a 70-file ``files`` array
 to answer exactly that — for a diff that had just been rebased away. The gating
@@ -632,6 +634,8 @@ GATE_ONLY_FIELDS = (
     "diff_empty",
     "ready",
     "blockers",
+    "runs_rust_suites",
+    "runs_artifact_gates",
 )
 
 
@@ -652,6 +656,14 @@ def gate_only(verdict: dict) -> dict:
     behind a verdict, and both are short (a commit list that is empty on the
     happy path, and a string that is normally absent). `commits` and `files` do
     not: they are unbounded in the branch's size.
+
+    `runs_rust_suites` and `runs_artifact_gates` come along too, and the
+    question they answer is why. "May I proceed?" has a second half — "and what
+    may I skip?" — which is exactly what those two predicates decide at steps 9
+    and 11. Dropping them would mean a re-check that reports `ready` but leaves
+    the caller reaching for the full verdict to learn which suites the diff
+    still forces, which defeats the purpose. They are two booleans, so unlike
+    `commits` / `files` they cost nothing to carry.
     """
     return {k: verdict[k] for k in GATE_ONLY_FIELDS if k in verdict}
 

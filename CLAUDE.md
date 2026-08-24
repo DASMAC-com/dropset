@@ -70,16 +70,34 @@ language-domain) into a single issue, keeping each finding's own
 separate apps / languages / deploy units (the coherence floor).
 
 **`**Touches**:` is retired** — no filing emits the declared-scope glob
-list any more. It was the input to the collision machinery (above); with
+list any more. It was the input to the collision machinery (see
+"Blocking relations" below); with
 that gone, nothing consumed it and composing it was pure filing
 overhead. Existing bodies keep their lines as inert history and the fold
 tools still carry one they find. Detail:
 `docs/conventions/linear-automation.md`.
 
+### The Linear state tracks the session, not the PR
+
+The Linear state is the state machine of the **agentic programming
+session**; the PR's own merged/open state tracks the code. So **In
+Review** covers both PR-under-review *and*
+merged-with-follow-up-outstanding, and **Done** means operator-ratified
+complete — never merely merged. Linear's GitHub integration
+auto-transitions to Done on merge, so `review-pr` writes the issue
+**back** to In Review and only an explicit approval moves it to Done.
+Two consequences elsewhere: `housekeeping` prunes a worktree on the
+issue's **status type** (completed / canceled), never on PR-merged; and
+the fleet-resume launcher resumes In Progress **or** In Review. Detail:
+`docs/conventions/linear-automation.md`.
+
 ### Claude: meta-work prefix
 
 **Meta-work** issues — those every one of whose edited paths sits under
-`.claude/**`, `CLAUDE.md`, or `docs/conventions/**` — carry
+`.claude/**`, `CLAUDE.md`, `docs/conventions/**`, or `cfg/**` (the lint
+and dictionary config the agent material drives), plus at most an
+incidental comment fix in product code where it names retired agent
+material — carry
 a leading **`Claude:`** token on their **Linear issue title** (capital
 C, colon, space) so agent-infra work batches apart from product code.
 Filing skills (`linear-task`, `audit`, `audit-scope`, `housekeeping`,
@@ -170,7 +188,8 @@ the suspicion recorded as prose. Human-placed edges are authoritative
 and never rewritten. **One standing exception, operator-ratified:** a
 planning session folds the open `Claude:`-prefixed meta-work into a
 single **batch issue** at bootstrap and places its one edge — behind
-whatever meta issue is In Progress — as routine bookkeeping, with no
+whatever meta issue is In Progress **or In Review** (both mean a session
+is still working it) — as routine bookkeeping, with no
 per-edge proposal. (This supersedes the earlier serial chain, which
 needed an edge per issue.) Automated filers still place
 none. File overlap is **not** a

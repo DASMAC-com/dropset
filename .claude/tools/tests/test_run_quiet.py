@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -562,10 +563,26 @@ class InspectLog(unittest.TestCase):
         path = self._log(["line %d" % k for k in range(rq.MAX_GREP_MATCHES + 20)])
         _, out = self._inspect(path, "--grep", "line")
         self.assertIn("narrow the pattern", out)
-        self.assertLessEqual(
-            len([ln for ln in out.splitlines() if ln.startswith("1")]),
-            rq.MAX_GREP_MATCHES + 1,
-        )
+        # Count the numbered match lines exactly. An earlier version counted
+        # lines merely starting with "1", which is 11 whether the cap fires or
+        # not — an assertion that passed identically with the cap removed.
+        emitted = [ln for ln in out.splitlines() if re.match(r"^\d+:", ln)]
+        self.assertEqual(len(emitted), rq.MAX_GREP_MATCHES)
+
+    def test_the_capped_summary_reports_what_it_printed(self):
+        # Not one more. Counting before the cap test reported 41 for a run that
+        # emitted 40 regions — neither what the caller saw nor what the log has.
+        path = self._log(["line %d" % k for k in range(rq.MAX_GREP_MATCHES + 20)])
+        _, out = self._inspect(path, "--grep", "line")
+        self.assertIn("%d match(es)+" % rq.MAX_GREP_MATCHES, out)
+
+    def test_grep_takes_precedence_over_failing(self):
+        # Documented precedence rather than silent behavior: given both, the
+        # narrower view wins.
+        path = self._log(["cspell" + "." * 30 + "Failed", "boom here"])
+        _, out = self._inspect(path, "--grep", "boom", "--failing")
+        self.assertIn("2:boom here", out)
+        self.assertNotIn("failed hooks", out)
 
     def test_a_bad_pattern_is_a_usage_error_not_a_traceback(self):
         path = self._log(["alpha"])

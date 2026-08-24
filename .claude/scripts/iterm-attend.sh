@@ -30,6 +30,15 @@ FORCE_MARK=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --tty)
+      # The `[ $# -ge 2 ]` guard is load-bearing, not defensive padding: in
+      # bash a `shift 2` with only one positional left FAILS and leaves the
+      # parameters UNCHANGED, so `--tty` as the final argument would spin this
+      # loop forever. The script is bound to a keyboard shortcut via Run
+      # Coprocess, so a hang is silent. `bash -n` proves syntax, not this.
+      [ $# -ge 2 ] || {
+        echo "iterm-attend.sh: --tty needs a path" >&2
+        exit 2
+      }
       TTY_PATH="$2"
       shift 2
       ;;

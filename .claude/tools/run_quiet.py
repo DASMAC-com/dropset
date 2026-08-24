@@ -444,8 +444,12 @@ def run(tail, label, cmd):
     return code
 
 
-#: What ``inspect`` was asked for. ``failing`` and ``grep`` are independent
-#: views; with neither, the full failure summary is reprinted.
+#: What ``inspect`` was asked for.
+#:
+#: ``grep`` takes precedence: given both, the grep view is printed and
+#: ``failing`` is ignored. They are separate views of one log rather than
+#: composable filters, and a caller asking for both wants the narrower one.
+#: With neither, the full failure summary is reprinted.
 InspectArgs = collections.namedtuple("InspectArgs", "path grep context tail failing")
 
 
@@ -533,10 +537,14 @@ def grep_log(path, pattern, context):
         for lineno, line in enumerate(fh, start=1):
             text = line.rstrip("\n")
             if compiled.search(text):
-                matches += 1
-                if matches > MAX_GREP_MATCHES:
+                if matches >= MAX_GREP_MATCHES:
+                    # Test BEFORE counting, so `matches` is what was actually
+                    # printed. Counting first reported 41 for a capped run that
+                    # emitted 40 regions — a number that was neither what the
+                    # caller saw nor what the log holds.
                     truncated = True
                     break
+                matches += 1
                 start = lineno - len(before)
                 if last_emitted and start > last_emitted + 1:
                     out.append("--")
@@ -571,10 +579,10 @@ def inspect(args):
             sys.stdout.write(line + "\n")
         note = ""
         if truncated:
-            note = " (capped at %d — narrow the pattern)" % MAX_GREP_MATCHES
+            note = "+ (capped at %d — narrow the pattern)" % MAX_GREP_MATCHES
         sys.stdout.write(
-            "run-quiet inspect | %d match(es) of %d line(s)%s\n"
-            % (matches, summary.lines, note)
+            "run-quiet inspect | %d match(es)%s of %d line(s)\n"
+            % (matches, note, summary.lines)
         )
         # Non-zero on no match, so a caller checking only the status can tell
         # "not present" from "present" without parsing the summary.

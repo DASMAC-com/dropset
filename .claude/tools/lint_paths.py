@@ -172,14 +172,31 @@ def merge_base(root: str, base_ref: str) -> str:
     missing ``origin/main`` means the caller has not fetched, and silently
     falling back to the whole tree would turn a stale-base mistake into a
     surprise full sweep.
+
+    Git's own stderr is **echoed and attached** rather than dropped.
+    ``capture_output=True`` takes it off the terminal, and
+    ``CalledProcessError`` renders as nothing but "returned non-zero exit
+    status 128" — so the operator would learn that a ref lookup failed but not
+    *which* ref or why, which is the entire diagnostic content. Echoing is what
+    actually surfaces it (the attribute alone does not print, whoever catches
+    it); the ``stderr=`` attachment is for a programmatic caller.
     """
-    return subprocess.run(
+    proc = subprocess.run(
         ["git", "merge-base", "HEAD", base_ref],
         capture_output=True,
         text=True,
-        check=True,
         cwd=root,
-    ).stdout.strip()
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or f"git merge-base HEAD {base_ref} failed"
+        print(f"lint-paths: {detail}", file=sys.stderr)
+        raise subprocess.CalledProcessError(
+            proc.returncode,
+            proc.args,
+            output=proc.stdout,
+            stderr=detail,
+        )
+    return proc.stdout.strip()
 
 
 def changed_files(root: str, base_ref: str = DEFAULT_BASE) -> list[str]:

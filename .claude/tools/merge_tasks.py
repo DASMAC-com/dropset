@@ -103,7 +103,12 @@ query MergeFetch($filter: IssueFilter, $first: Int!) {
 # — the surface the ``Claude:`` issue-title prefix batches. The canonical
 # definition is ``docs/conventions/linear-automation.md`` → "The Claude:
 # meta-work prefix"; keep this copy in sync with it.
-META_BASES = (".claude", "docs/conventions")
+#
+# ``cfg`` is in the set because the lint config and the cspell dictionary are
+# what the agent material drives: a meta batch that wires a hook or adds a
+# spelling escape edits them, and without this a batch that plainly IS
+# meta-work would fail the test and lose its prefix.
+META_BASES = (".claude", "docs/conventions", "cfg")
 
 CLAUDE_PREFIX = "Claude: "
 
@@ -505,12 +510,17 @@ def fetch(api_key: str, survivor: int, numbers: list[int]) -> dict:
     # passing nodes through untouched hands `assemble` a survivor key it can
     # never match. Caught by a test that composes the two — which is the point
     # of having one: the two halves are only useful together.
+    # The UUID is deliberately **not** carried. Nothing downstream takes one:
+    # `assemble` keys on the identifier, and the skill's close-out writes go
+    # through the MCP, which addresses issues as `ENG-###` too. Emitting a
+    # second id "in case" would just be an unused field that a later reader has
+    # to work out is dead — and picking the wrong one of two id-shaped keys is
+    # exactly the bug the normalization above exists to prevent.
     return {
         "survivor": survivor_id,
         "issues": [
             {
                 "id": node.get("identifier"),
-                "uuid": node.get("id"),
                 "number": node.get("number"),
                 "title": node.get("title"),
                 "description": node.get("description") or "",

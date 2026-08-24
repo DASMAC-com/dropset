@@ -85,6 +85,7 @@ tooling").
 from __future__ import annotations
 
 import argparse
+import functools
 import importlib.util
 import json
 import re
@@ -315,13 +316,24 @@ def _is_subsumed(index: int, allow: list[str]) -> bool:
     return False
 
 
+@functools.lru_cache(maxsize=None)
 def _load_guard(module_name: str):
     """Import a committed ``PreToolUse`` guard by path, or ``None``.
 
-    Returns ``None`` on any failure — a missing file, a syntax error, an import
-    error. This is an **audit** tool: it must report what it can rather than
-    refuse to run because a hook was moved or renamed, and a guard it cannot
-    load simply contributes no findings.
+    Returns ``None`` on **any** failure. This is an *audit* tool: it must
+    report what it can rather than refuse to run because a hook was moved,
+    renamed, or edited into something that no longer imports — and a guard it
+    cannot load simply contributes no findings.
+
+    ``except Exception`` is deliberate rather than a list of expected classes.
+    An earlier version caught ``(OSError, SyntaxError, ImportError,
+    ValueError)``, which covers a *file* rename but not a module whose
+    top-level execution raises anything else — so the promise in the paragraph
+    above was not actually kept, and one renamed symbol could take down the
+    whole ``cruft`` run. The narrow catch was the bug; breadth is the contract.
+
+    Cached: ``classify`` runs per rule, so an uncached load compiles and
+    executes the guard once for every entry — 387 times on the real allowlist.
     """
     path = _HOOKS_DIR / f"{module_name}.py"
     try:
@@ -330,7 +342,7 @@ def _load_guard(module_name: str):
             return None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-    except (OSError, SyntaxError, ImportError, ValueError):
+    except Exception:
         return None
     return module
 
@@ -358,19 +370,33 @@ def _rule_command(rule: str) -> str | None:
 def guard_conflict(rule: str) -> str | None:
     """The reason a committed guard blocks what ``rule`` grants, else ``None``.
 
-    Asks each guard's **own** predicate rather than re-deriving its rule here,
+    Asks the guard's **own** predicate rather than re-deriving its rule here,
     so the audit and the run-time block cannot drift apart.
 
-    Only guards with **no escape hatch** are consulted. The compound-shell guard
-    is deliberately excluded: it takes a ``#compound-ok`` marker, so a rule
-    granting a compound is not in conflict with it — the marker is the sanctioned
-    way through, and flagging those would bury the real finding in noise.
+    **Exactly one guard is consulted today**, and the boundary is worth stating
+    rather than leaving as an accident of implementation:
+
+    * ``no_compound_bash`` is excluded **by policy** — it takes a
+      ``#compound-ok`` marker, so a rule granting a compound is not in conflict
+      with it. The marker is the sanctioned way through, and flagging those
+      would bury the real finding in noise.
+    * ``worktree_edit_guard`` is excluded **by construction** — it governs
+      file-mutating tools, and :func:`_rule_command` returns ``None`` for any
+      non-``Bash`` rule, so a ``Read(...)`` / ``Edit(...)`` grant can never
+      reach a guard check at all.
+
+    The predicate is fetched with ``getattr`` rather than attribute access: a
+    guard that loads but has had its predicate renamed would otherwise raise
+    ``AttributeError`` from inside ``classify`` and take down the whole
+    ``cruft`` run — the same class of event ``_load_guard``'s catch exists for,
+    arriving one step later.
     """
     command = _rule_command(rule)
     if command is None:
         return None
     guard = _load_guard("no_git_grep")
-    if guard is not None and guard.is_git_grep(command):
+    predicate = getattr(guard, "is_git_grep", None) if guard else None
+    if callable(predicate) and predicate(command):
         return (
             "grants `git grep`, which the no_git_grep guard blocks outright "
             "(no escape hatch, by design) — inert while the guard is wired, "

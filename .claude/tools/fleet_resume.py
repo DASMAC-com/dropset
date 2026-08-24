@@ -59,7 +59,7 @@ IN_FLIGHT_TYPE = "started"
 # `eng-<n>` worktree and continues that session there.
 RESUME_VERB = "raps"
 
-# An `ENG-###` identifier, or the tag inside an iTerm tab name. The tab name
+# An `ENG-###` identifier, or the tag inside an iTerm session name. The name
 # carries a status glyph prefix ("◐ eng-914"), so this is a search, not a match.
 _TAG_RE = re.compile(r"\beng-(\d+)\b", re.IGNORECASE)
 
@@ -162,6 +162,17 @@ def in_flight(api_key: str, project_id: str) -> list[dict]:
         if not info.get("hasNextPage"):
             return nodes
         after = info.get("endCursor")
+        if not after:
+            # Relay guarantees a non-null endCursor whenever hasNextPage is
+            # true, so this is unreachable against a conforming server. It is
+            # here because the failure mode if it ever happened is the one
+            # thing this module has no other defense against: `after` resets to
+            # None, the identical first-page query is re-issued, and the loop
+            # never terminates. Every other malformed-response path raises.
+            raise FleetResumeError(
+                "Linear reported another page but returned no cursor — "
+                "refusing to re-issue the same query indefinitely"
+            )
 
 
 def tag_of(identifier: str) -> str | None:
@@ -192,10 +203,15 @@ def _osascript(script: str) -> str:
 
 
 def live_tags() -> set[str]:
-    """The tags of sessions already open in iTerm, from the tab names.
+    """The tags of sessions already open in iTerm, from the **session** names.
+
+    (Session, not tab: `_LIST_SESSIONS` enumerates `name of s`. The two are
+    equivalent for the one-pane tabs these helpers create, but the distinction
+    matters if a tab is ever split.)
 
     The name carries a status glyph, so this searches rather than matches.
-    A tab whose name has no tag (a plain shell) contributes nothing.
+    A session whose name has no tag (a plain shell, a planning session)
+    contributes nothing.
     """
     out = _osascript(_LIST_SESSIONS)
     return {m.group(1) for m in _TAG_RE.finditer(out)}
@@ -204,10 +220,18 @@ def live_tags() -> set[str]:
 def _applescript_literal(value: str) -> str:
     """Quote a string for AppleScript source.
 
-    Only backslash and double-quote need escaping, and the values here are
-    already constrained (a digit run from :func:`tag_of`) — but the command is
-    assembled into a script that gets *executed*, so it is quoted properly
-    rather than trusted to stay constrained.
+    Backslash and double-quote are escaped, which is what the values here
+    actually need: every one is an ``eng-<digits>`` tag from :func:`tag_of`, so
+    neither character can occur. It is done anyway because the result is
+    assembled into a script that gets *executed*, and "the input is
+    constrained" is a property of today's caller, not of this function.
+
+    **Not a general AppleScript quoter.** A literal newline or other control
+    character would pass through unescaped and break the emitted source —
+    AppleScript string literals have no escape for those, so handling them
+    would mean splitting into a concatenation of ``character id`` terms. That
+    is unnecessary for a digit-run tag and is deliberately not implemented; if
+    this ever quotes free-form text, it needs that work first.
     """
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -257,12 +281,21 @@ def mark_attention(tty: str) -> bool:
     """
     if not _ATTEND.exists():
         return False
-    completed = subprocess.run(
-        [str(_ATTEND), "--tty", tty, "--mark"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [str(_ATTEND), "--tty", tty, "--mark"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        # `.exists()` is not `.access(X_OK)`: a checkout that stripped the exec
+        # bit raises PermissionError here — an OSError, not a FleetResumeError,
+        # so uncaught it would surface as a raw traceback at the worst possible
+        # moment, AFTER every tab is already open and resumed and before
+        # `result` is ever printed. The tint is the only casualty; report it
+        # through `unmarked` like any other failed mark.
+        return False
     return completed.returncode == 0
 
 

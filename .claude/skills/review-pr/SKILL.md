@@ -594,31 +594,32 @@ already being asked to start the review.
    that once cost 58 shell `grep` calls (≈8.7k) reading these
    very logs.
 
-   **Never a shell `grep`, `tail`, or `head` on the log.** All
-   three take no subcommand, so each generalizes only to a
-   bare-verb wildcard (`Bash(grep:*)`, `Bash(tail:*)`,
-   `Bash(head:*)`) — the shape `firm_core.is_bareverb_wildcard`
-   exists to refuse, so nothing can be firmed for them. To read
-   a region rather than search for one, use the **Read tool's
-   `offset` / `limit`** on the log path: it reads an
-   out-of-workspace absolute path directly, and a line range is
-   exactly what `offset`/`limit` express.
+   **Never a shell `grep`, `tail`, or `head` on the log — and
+   the reason is context cost, not permissions.** A shell filter
+   prints its matched region *into the tool result*, where
+   `inspect` and the Grep tool return only the answer. That
+   difference is the whole argument. To read a region rather
+   than search for one, use the **Read tool's `offset` /
+   `limit`** on the log path: it reads an out-of-workspace
+   absolute path directly, and a line range is exactly what
+   `offset`/`limit` express.
 
-   (This paragraph used to make that argument for `grep` and
-   then, two sentences later, say "or read only its tail" —
-   inviting the identical unfirmable shape it had just ruled
-   out. A perms sweep harvested exactly that and could firm
-   nothing for it. `head` has the same shape and the same
-   answer.)
+   **Do not argue this from "unfirmable prompt churn" — that
+   claim is false and has been checked.**
+   `firm_core.NO_BARE_WILDCARD` is a deny-list of *hazardous
+   programs*; `grep`, `tail` and `head` were never members. So
+   `is_bareverb_wildcard("Bash(grep:*)")` is `False`, the fast
+   firm would happily write that rule, and `Bash(grep:*)` is in
+   fact **already granted** on this machine and prompts for
+   nothing. Both halves of the permission floor agree; there is
+   no permission-churn objection to lean on.
 
-   **One correction to the rationale, since it recurs.** On
-   this machine `Bash(grep:*)` *is* already in the shared
-   allowlist and the `cruft` classifier does not flag it, so a
-   bare `grep` prompts for nothing — the re-prompting argument
-   is false here. The rule stands on **context cost** alone: a
-   shell filter prints its matched region into the tool result,
-   where `inspect` and the Grep tool return only the answer.
-   Do not restate the churn framing.
+   (This paragraph twice carried the opposite claim. The first
+   version argued it for `grep` and then, two sentences later,
+   said "or read only its tail" — inviting the identical shape
+   it had just ruled out, which a perms sweep then harvested.
+   The second version fixed the tail half but kept the false
+   rationale. Stating it once, correctly, is the fix.)
 
    **Run the formatting-class hooks scoped in ONE invocation
    after edits — don't discover them serially.** Each

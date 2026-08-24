@@ -51,6 +51,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# NOTE ON SCOPE, so the summary line is not read as broader than the check.
+# A number already MERGED to the base ref since this branch's merge-base is in
+# neither set — not in `mine` (the file is not on this branch) and not in
+# `--others` (that PR is closed). The in-tree ascend guard catches that case at
+# rebase or on the merge-group branch, which is why it is left uncovered here
+# rather than adding a third comparison.
+
 # Where migrations live, relative to the repo root.
 DEFAULT_DIR = "db-schema/migrations"
 
@@ -76,6 +83,29 @@ def migration_number(path: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def repo_root() -> str:
+    """The working tree's top level.
+
+    Every git call below is pinned here rather than trusting the caller's cwd,
+    because ``directory`` is a **pathspec** and git resolves a pathspec
+    relative to the *current directory*, not the repo root — while
+    ``DEFAULT_DIR`` is documented (and written) as root-relative.
+
+    That mismatch fails in the worst possible direction for a gate. Run from
+    any subdirectory, ``git diff … -- db-schema/migrations`` matches nothing,
+    ``mine`` is empty, nothing can collide, and the tool reports
+    ``clear: true`` and **exits 0** — a mis-invoked run is indistinguishable
+    from a genuinely clean branch. ``git merge-base`` works from anywhere, so
+    nothing fails loudly to give the mistake away.
+    """
+    return subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
 def added_migrations(base_ref: str = DEFAULT_BASE, directory: str = DEFAULT_DIR):
     """This branch's **added** migration paths, from the merge-base with
     ``base_ref``.
@@ -84,18 +114,30 @@ def added_migrations(base_ref: str = DEFAULT_BASE, directory: str = DEFAULT_DIR)
     migration has a different (worse) problem — editing an applied migration
     breaks its checksum — and it is not a numbering collision, so it must not
     be reported as one.
+
+    Refuses a ``directory`` that does not exist at the repo root. An absent
+    migrations directory means the pathspec is wrong, and the honest answer to
+    "did anything collide?" is then an error, not "no".
     """
+    root = repo_root()
+    if not Path(root, directory).is_dir():
+        raise MigrationCollisionsError(
+            f"no migrations directory at {directory!r} (relative to {root}) — "
+            f"refusing to report 'clear' from a pathspec that matches nothing"
+        )
     base = subprocess.run(
         ["git", "merge-base", "HEAD", base_ref],
         capture_output=True,
         text=True,
         check=True,
+        cwd=root,
     ).stdout.strip()
     out = subprocess.run(
         ["git", "diff", "--name-only", "--diff-filter=A", "-z", base, "--", directory],
         capture_output=True,
         text=True,
         check=True,
+        cwd=root,
     ).stdout
     return sorted({p for p in out.split("\0") if p.strip()})
 
@@ -120,6 +162,20 @@ def load_others(path: str) -> list[dict]:
         if not isinstance(entry, dict) or "pr" not in entry:
             raise MigrationCollisionsError(
                 f"{path}: every entry needs a `pr` key; got {entry!r}"
+            )
+        files = entry.get("files")
+        # `files` may be absent or empty — a PR touching no migration is the
+        # common case, and `collisions` handles both. But a **string** must be
+        # refused: it is a plausible slip when hand-assembling a one-file PR
+        # from the GitHub read, and it fails silently open — iterating a string
+        # yields its characters, each of which `migration_number` maps to None,
+        # so nothing collides and the tool reports `clear`.
+        if files is not None and not isinstance(files, list):
+            raise MigrationCollisionsError(
+                f"{path}: `files` must be a list of paths, got "
+                f"{type(files).__name__} for PR {entry['pr']} — a bare string "
+                f"would be iterated character by character and silently "
+                f"collide with nothing"
             )
     return data
 

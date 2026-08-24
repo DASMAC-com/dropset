@@ -331,7 +331,12 @@ whole reason the vocabulary is worth writing down:
 
   The batch form largely supersedes the chain: one batch issue
   needs at most **one** edge — behind whatever meta issue is
-  currently In Progress — where a chain needed one per issue.
+  currently **In Progress or In Review** — where a chain needed
+  one per issue. Both states, because an In Review meta issue is
+  a merged session that still owes follow-up, and taking only In
+  Progress would leave the edge with no anchor precisely then
+  (see `docs/conventions/linear-automation.md` → "The Linear
+  state tracks the SESSION, not the PR").
 
   Whichever shape it takes, this is the **one standing
   exception** to the proposal-per-edge rule: an

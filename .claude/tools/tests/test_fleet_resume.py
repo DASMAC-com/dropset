@@ -20,8 +20,10 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 import fleet_resume as fr
@@ -123,6 +125,17 @@ class Plan(unittest.TestCase):
         self.assertEqual(seen[0]["state"], {"type": {"eq": "started"}})
         self.assertEqual(seen[0]["project"], {"id": {"eq": "proj"}})
 
+    def test_a_next_page_with_no_cursor_raises_instead_of_looping(self):
+        # Unreachable against a Relay-conforming server, but the failure mode
+        # is an infinite loop re-issuing the identical query.
+        with (
+            mock.patch.object(fr, "_post", return_value=_page([], True, None)),
+            mock.patch.object(fr, "live_tags", return_value=set()),
+        ):
+            with self.assertRaises(fr.FleetResumeError) as caught:
+                fr.plan("key", "proj")
+        self.assertIn("no cursor", str(caught.exception))
+
     def test_it_follows_the_cursor(self):
         pages = [_page([_issue("ENG-1")], True, "c1"), _page([_issue("ENG-2")])]
         calls = []
@@ -210,6 +223,84 @@ class Summary(unittest.TestCase):
         )
         self.assertIn("1 opened", line)
         self.assertIn("could not be marked", line)
+
+    def test_unrecognized_identifiers_are_surfaced_when_present(self):
+        """The one branch of `summarize` nothing else covers.
+
+        An unrecognized identifier is an issue whose key `tag_of` could not
+        parse, which means it is silently absent from both `resume` and
+        `skipped_already_live` — the summary line is the only place it is ever
+        mentioned. A dropped `if` here would read as a clean fleet.
+        """
+        line = fr.summarize(
+            {
+                "in_flight": 3,
+                "resume": [{}],
+                "skipped_already_live": [{}],
+                "unrecognized_identifier": ["OPS-7"],
+            }
+        )
+        self.assertIn("1 unrecognized", line)
+
+    def test_no_unrecognized_clause_when_the_list_is_empty(self):
+        """The counterpart: a clean fleet must not carry a `0 unrecognized`."""
+        line = fr.summarize(
+            {
+                "in_flight": 1,
+                "resume": [{}],
+                "skipped_already_live": [],
+                "unrecognized_identifier": [],
+            }
+        )
+        self.assertNotIn("unrecognized", line)
+
+
+class MarkAttention(unittest.TestCase):
+    """The argv `mark_attention` passes is the ONLY consumer of the two flags
+    this PR adds to `iterm-attend.sh`, and shell is untested by design here —
+    so without these cases nothing anywhere asserts the two sides agree.
+
+    Note this is NOT the declared `--apply`-effect gap: asserting the argv
+    opens no tabs and resumes no sessions.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = self._tmp.name
+
+    def _stub(self, body: str, mode: int = 0o755) -> str:
+        path = os.path.join(self.root, "iterm-attend.sh")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        os.chmod(path, mode)
+        return path
+
+    def test_it_passes_the_tty_and_the_mark_flag(self):
+        record = os.path.join(self.root, "argv.txt")
+        stub = self._stub('#!/bin/sh\nprintf "%s\\n" "$@" > ' + record + "\nexit 0\n")
+        with mock.patch.object(fr, "_ATTEND", Path(stub)):
+            self.assertTrue(fr.mark_attention("/dev/ttys009"))
+        with open(record, encoding="utf-8") as fh:
+            argv = fh.read().split()
+        # Exactly the contract iterm-attend.sh's own arg loop parses.
+        self.assertEqual(argv, ["--tty", "/dev/ttys009", "--mark"])
+
+    def test_a_non_zero_exit_reports_false(self):
+        stub = self._stub("#!/bin/sh\nexit 3\n")
+        with mock.patch.object(fr, "_ATTEND", Path(stub)):
+            self.assertFalse(fr.mark_attention("/dev/ttys009"))
+
+    def test_a_missing_script_reports_false(self):
+        with mock.patch.object(fr, "_ATTEND", Path(self.root) / "gone.sh"):
+            self.assertFalse(fr.mark_attention("/dev/ttys009"))
+
+    def test_a_non_executable_script_reports_false_rather_than_raising(self):
+        # `.exists()` is not `.access(X_OK)`. Uncaught, this raised a traceback
+        # after every tab was already open and resumed.
+        stub = self._stub("#!/bin/sh\nexit 0\n", mode=0o644)
+        with mock.patch.object(fr, "_ATTEND", Path(stub)):
+            self.assertFalse(fr.mark_attention("/dev/ttys009"))
 
 
 class Cli(unittest.TestCase):

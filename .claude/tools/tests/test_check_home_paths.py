@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -131,29 +132,81 @@ class TheRepoItselfIsClean(unittest.TestCase):
     """The guard must pass on the trees it is wired over — otherwise it lands
     red and gets disabled rather than obeyed. This is the same set the hook's
     ``files:`` regex selects, checked here so a violation surfaces in the suite
-    and not only at lint time."""
+    and not only at lint time.
+
+    **The file list comes from git, and that is load-bearing twice over.**
+
+    It fixes the scope: the hook is fed *tracked* files by pre-commit, so a
+    tracked-only list is what actually mirrors it. Walking the tree instead
+    would additionally pick up the **gitignored, machine-local**
+    ``.claude/settings.local.json``, which legitimately carries absolute home
+    paths — the same carve-out ``allowlist.is_machine_local_settings`` encodes
+    — and this test would land red on the operator's machine for a file the
+    hook never sees.
+
+    And it fixes the root: an earlier version derived the root by walking
+    ``os.pardir`` twice from this file, which lands on ``<repo>/.claude`` and
+    made the whole assertion **vacuous** — it walked two directories that do
+    not exist, scanned zero files, and asserted ``[] == []``. It would have
+    passed with every file in the repo naming a real home directory. Hence the
+    non-zero count assertion below: a check that cannot report what it examined
+    cannot be trusted to have examined anything.
+    """
+
+    # Mirrors the hook's `files:` regex in cfg/pre-commit-lint.yml. Keep in
+    # sync with it: this test is the tripwire for that hook, not a separate
+    # policy.
+    SCOPES = (".claude/", "docs/conventions/", "CLAUDE.md")
+
+    def _tracked(self) -> list[str]:
+        root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        listing = subprocess.run(
+            ["git", "ls-files", "-z", "--", *self.SCOPES],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=root,
+        ).stdout
+        return [
+            os.path.join(root, p)
+            for p in listing.split("\0")
+            if p and os.path.lexists(os.path.join(root, p))
+        ]
 
     def test_committed_agent_material_has_no_real_home_paths(self):
-        root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
+        scanned = self._tracked()
+        # The anti-vacuity assertion. Without it this test passed while
+        # scanning nothing at all.
+        self.assertGreater(
+            len(scanned),
+            50,
+            "resolved suspiciously few files — the scope is probably wrong, "
+            "and a scan of nothing trivially reports clean",
         )
-        scanned: list[str] = []
-        for tree in (".claude", os.path.join("docs", "conventions")):
-            for dirpath, dirnames, filenames in os.walk(os.path.join(root, tree)):
-                # Live worktrees are full checkouts of this same repo and are
-                # gitignored, so walking them would scan everything N times —
-                # and would report a sibling branch's violations as this one's.
-                dirnames[:] = [
-                    d for d in dirnames if d not in ("worktrees", "__pycache__")
-                ]
-                scanned.extend(os.path.join(dirpath, f) for f in filenames)
-        scanned.append(os.path.join(root, "CLAUDE.md"))
         findings = chp.scan_files(scanned)
         self.assertEqual(
             [f.render() for f in findings],
             [],
             "committed agent material names a real home directory",
         )
+
+    def test_the_scan_would_actually_catch_a_violation_in_that_scope(self):
+        """Proves the tripwire is armed, not merely silent.
+
+        The case above can only ever report "nothing found", which is exactly
+        the shape that hid its own vacuity. This one confirms the same
+        machinery flags a planted violation.
+        """
+        planted = self._tracked()[:1]
+        self.assertTrue(planted, "no tracked agent-material files resolved")
+        findings = chp.scan_text(planted[0], f"home = '{mac(REAL, '/x')}'")
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].segment, REAL)
 
 
 if __name__ == "__main__":

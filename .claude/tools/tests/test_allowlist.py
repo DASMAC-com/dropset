@@ -404,6 +404,32 @@ class GuardConflictTests(unittest.TestCase):
         with mock.patch.object(allowlist, "_load_guard", return_value=None):
             self.assertIsNone(allowlist.guard_conflict("Bash(git grep:*)"))
 
+    def test_the_loader_itself_degrades_rather_than_raising(self):
+        # The case above patches away `_load_guard` — i.e. it patches away the
+        # very function whose degradation IS the guarantee, so the fail-safe
+        # was asserted nowhere. Exercise the real loader on a name that does
+        # not resolve.
+        self.assertIsNone(allowlist._load_guard("no_such_guard_module"))
+
+    def test_a_guard_missing_its_predicate_does_not_crash_the_audit(self):
+        # A guard that LOADS but has had its predicate renamed is the same
+        # class of event as a moved file, arriving one step later — it must
+        # not raise AttributeError out of `classify`.
+        class _Renamed:
+            pass
+
+        with mock.patch.object(allowlist, "_load_guard", return_value=_Renamed()):
+            self.assertIsNone(allowlist.guard_conflict("Bash(git grep:*)"))
+
+    def test_the_guard_is_loaded_once_not_once_per_rule(self):
+        # `classify` runs per entry; an uncached load compiled and executed the
+        # hook 387 times on the real allowlist.
+        allowlist._load_guard.cache_clear()
+        allow = [f"Bash(git grep -n p{i}:*)" for i in range(5)]
+        out = cruft(allow)
+        self.assertEqual(len(out["flagged"]), 5)
+        self.assertEqual(allowlist._load_guard.cache_info().misses, 1)
+
     def test_the_shortlist_carries_it_with_its_own_category(self):
         allow = ["Bash(make lint:*)", "Bash(git grep:*)"]
         out = cruft(allow)

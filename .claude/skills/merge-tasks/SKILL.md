@@ -197,7 +197,10 @@ write, show the plan and wait for the go-ahead (the same
 TUI-selector pattern the other skill handoffs use):
 
 - the chosen **survivor** and the issues folding into it,
-- the union of the `**Touches**:` globs,
+- the consolidated `**Touches**:` union — **only when a folded
+  body carries a legacy one**. The field is retired, so a fold
+  of post-retirement issues has no union to show and this line
+  is simply absent,
 - the resulting title (note when the `Claude:` prefix is
   applied),
 - every **inherited blocking edge** (per step 3), each

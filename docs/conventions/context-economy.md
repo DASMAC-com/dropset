@@ -473,10 +473,18 @@ argument was *not* the reason — see that step for why.)
   **Filter in a process, not into the result.** Either
   `run_quiet.py inspect <log> --grep <re>` or the Grep tool; both return
   the answer rather than the matched region. Never a shell `grep` /
-  `tail` / `head` on a log — those print into the tool result, and each
-  also generalizes only to a bare-verb wildcard that the permission
-  floor refuses, so nothing can be firmed for them. To read a *region*
-  rather than search for one, use the Read tool's `offset` / `limit`.
+  `tail` / `head` on a log — those print the matched region into the
+  tool result, where it is then replayed on every later turn. To read a
+  *region* rather than search for one, use the Read tool's `offset` /
+  `limit`.
+
+  **The reason is context cost, and only that.** Do not argue it from
+  permission churn: `firm_core.NO_BARE_WILDCARD` is a deny-list of
+  *hazardous programs* and `grep` / `tail` / `head` were never members,
+  so the permission floor does **not** refuse them — `Bash(grep:*)` is
+  already granted here and prompts for nothing. A lever argued from
+  "unfirmable churn" is arguing from something that was measured and
+  found false.
 
 - **Scope a sub-agent fan-out.** Inlining the same large diff into N
   reviewers pays for N resident copies; scope each agent to its files,

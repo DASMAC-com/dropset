@@ -104,7 +104,10 @@ repos:
 # not on the shape: a placeholder (`/Users/me`, `/Users/x`) passes, since the
 # sibling tools legitimately need home-shaped example paths. Scoped to the
 # agent-config trees and the convention docs; the decks are exempt by ruling,
-# and fall outside `files` by construction.
+# and fall outside `files` by construction. pre-commit only ever hands it files
+# git tracks, so the untracked `settings.local.json` — where a real home path is
+# *expected* — is out of reach by the same mechanism that makes it safe to scope
+# this broadly.
 - hooks:
   - entry: 'python3 .claude/tools/check_home_paths.py'
     files: '^(\.claude/|docs/conventions/|CLAUDE\.md$)'

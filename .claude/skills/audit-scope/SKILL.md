@@ -308,7 +308,7 @@ Optional (ask on a direct run if not provided):
 
      **Meta-work prefix.** If every path the finding's fix
      will edit sits under the meta surface (`.claude/**`,
-     `CLAUDE.md`, `docs/conventions/**`),
+     `CLAUDE.md`, `docs/conventions/**`, `cfg/**`),
      prepend the **`Claude:`** token to the title —
      `Claude: <file>: <imperative fix>` — per `CLAUDE.md` →
      "Claude: meta-work prefix". A finding touching product

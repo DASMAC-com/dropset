@@ -104,14 +104,21 @@ def scan_files(paths: list[str]) -> list[Finding]:
 
     A binary file under a scanned tree (a committed ``.wasm``, say) is not what
     this guard is about, and a ``UnicodeDecodeError`` escaping here would fail
-    the hook for a reason that has nothing to do with the rule.
+    the hook for a reason that has nothing to do with the rule. A path that is
+    gone (staged then deleted) is likewise not a violation.
+
+    The skip list is deliberately **narrow**. An earlier version caught
+    ``OSError`` wholesale, which additionally swallowed a permission error and
+    a bad file descriptor — cases where the guard returns "pass" for a file it
+    never read. For a check whose whole value is having no hole, an unreadable
+    file should fail loudly rather than silently count as clean.
     """
     findings: list[Finding] = []
     for path in paths:
         try:
             with open(path, encoding="utf-8") as handle:
                 text = handle.read()
-        except (OSError, UnicodeDecodeError):
+        except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError):
             continue
         findings.extend(scan_text(path, text))
     return findings

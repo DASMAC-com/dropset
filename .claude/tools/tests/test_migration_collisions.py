@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 import migration_collisions as mc
 
@@ -144,6 +145,23 @@ class LoadOthers(unittest.TestCase):
             mc.load_others(self._write('[{"files": ["m/0001_a.sql"]}]'))
         self.assertIn("`pr`", str(caught.exception))
 
+    def test_a_string_files_value_is_refused_rather_than_silently_clearing(self):
+        # The fail-open shape: iterating a string yields characters, each of
+        # which maps to no migration number, so nothing collides and the tool
+        # would report `clear` for a PR it never actually compared.
+        payload = '[{"pr": 351, "files": "db-schema/migrations/0003_pyth.sql"}]'
+        with self.assertRaises(mc.MigrationCollisionsError) as caught:
+            mc.load_others(self._write(payload))
+        message = str(caught.exception)
+        self.assertIn("must be a list", message)
+        self.assertIn("351", message)
+
+    def test_an_absent_or_empty_files_key_is_still_allowed(self):
+        # The deliberate case the type check must NOT break: a PR touching no
+        # migration at all.
+        path = self._write('[{"pr": 1}, {"pr": 2, "files": []}]')
+        self.assertEqual([e["pr"] for e in mc.load_others(path)], [1, 2])
+
 
 class AddedMigrations(unittest.TestCase):
     """``added_migrations`` over a real throwaway repo — the diff filter is the
@@ -219,6 +237,42 @@ class AddedMigrations(unittest.TestCase):
         self.assertFalse(parsed["clear"])
         self.assertEqual(parsed["mine_numbers"], [2])
         self.assertIn("COLLISION", err.getvalue())
+
+    def test_running_from_a_subdirectory_still_sees_this_branch_s_migrations(self):
+        # `directory` is a git PATHSPEC, resolved against the cwd — while
+        # DEFAULT_DIR is root-relative. Before the repo_root() pin, an off-root
+        # run matched nothing and reported `clear: true`, exit 0, which is
+        # indistinguishable from a genuinely clean branch on an enqueue gate.
+        self._commit("0002_new.sql", "create table b();")
+        sub = os.path.join(self.root, mc.DEFAULT_DIR)
+        os.chdir(sub)
+        self.addCleanup(os.chdir, self.root)
+        self.assertEqual(
+            mc.added_migrations("main"),
+            [os.path.join(mc.DEFAULT_DIR, "0002_new.sql")],
+        )
+
+    def test_a_missing_migrations_directory_is_an_error_not_a_clear(self):
+        # The other half of the same fail-open shape: a wrong --dir must not
+        # answer "nothing collided".
+        with self.assertRaises(mc.MigrationCollisionsError) as caught:
+            mc.added_migrations("main", "no/such/dir")
+        self.assertIn("refusing to report", str(caught.exception))
+
+    def test_main_maps_a_bad_payload_to_exit_two_not_a_traceback(self):
+        # The contract distinguishes 2 (bad input / git failure) from 1
+        # (collision); a caller gating enqueue on the status depends on it.
+        argv = [
+            "migration_collisions.py",
+            "--others",
+            os.path.join(self.root, "nope.json"),
+        ]
+        err = io.StringIO()
+        with mock.patch.object(mc.sys, "argv", argv):
+            with redirect_stderr(err):
+                code = mc.main()
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read", err.getvalue())
 
     def test_the_cli_exits_zero_when_clear(self):
         self._commit("0002_new.sql", "create table b();")

@@ -429,7 +429,8 @@ mcp__claude_ai_Linear__save_issue(
 ```
 
 **Meta-work prefix.** When every path a finding's fix will edit sits
-under the meta surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`),
+under the meta surface (`.claude/**`, `CLAUDE.md`, `docs/conventions/**`,
+`cfg/**`),
 prepend the **`Claude:`** token to the title (per
 `CLAUDE.md` → "Claude: meta-work prefix") so it reads
 `Claude: <file>: <imperative fix>`. This composes with the `arch:`

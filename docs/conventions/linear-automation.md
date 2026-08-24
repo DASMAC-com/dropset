@@ -92,9 +92,10 @@ left alone as inert history: nothing deletes a relation.
 
 ## Structured filing fields
 
-Every filed issue carries machine-readable fields the automation reads
-back, on top of the human prose. Keep the field **names** stable — the
-filing skills emit them and the dedup probes match on them:
+Every filed issue carries one machine-readable field the automation
+reads back, on top of the human prose — `**Fingerprint**:`. It was two
+until `**Touches**:` was retired (see below). Keep the field **name**
+stable: the filing skills emit it and the dedup probes match on it.
 
 - `**Fingerprint**: <domain-token>:<slug>` — the dedup key `audit`
   matches on so a finding is never refiled. Mandatory on audit
@@ -315,10 +316,30 @@ read that skips the tool would not inherit it.
 ## The `Claude:` meta-work prefix
 
 **Meta-work** is agent-infra change — work whose touched paths sit
-**entirely** under `.claude/**`, `CLAUDE.md`, or `docs/conventions/**`.
-Anything that also touches product / on-chain / SDK / frontend code is
-**not** meta — including the shared build scripts under `brand-assets/`,
-which are product-adjacent, not agent-infra. Every meta-work Linear issue title
+**entirely** under `.claude/**`, `CLAUDE.md`, `docs/conventions/**`, or
+`cfg/**`. Anything that also touches product / on-chain / SDK / frontend
+code is **not** meta — including the shared build scripts under
+`brand-assets/`, which are product-adjacent, not agent-infra.
+
+**Why `cfg/**` is in the set.** It holds the lint hook config and the
+cspell dictionary, which are what the agent material *drives*: a meta
+batch that wires a guard hook or adds a spelling escape edits them
+necessarily. Leaving them out made the definition exclude most real meta
+batches — including the one that introduced this wording, which added a
+hook to `cfg/pre-commit-lint.yml` and four words to `cfg/dictionary.txt`.
+A definition that its own change fails is the wrong definition.
+
+**One narrow allowance beyond that**, for the same reason: an
+**incidental comment fix in product code**, where that comment names
+agent material the batch just retired, does not disqualify. Retiring a
+tool means scrubbing references to it, and a reference can sit in a
+product file's header comment. The test is that the *substance* is
+agent-infra — not that no product file is touched at all. A change with
+real product content is not meta, however small.
+
+Keep `META_BASES` in `.claude/tools/merge_tasks.py` in sync with this
+list; that copy is what `is_meta_glob` reads when folding a legacy
+body. Every meta-work Linear issue title
 carries a leading **`Claude:`** token (capital C, colon, space) —
 e.g. `Claude: Add a /merge-tasks skill` — so all agent-infra work
 batches together and can be filtered, staged, and reviewed apart from
@@ -741,7 +762,17 @@ sessions rewriting the same skills at once. The **shape** has: a
 planning session now **folds** the open `Claude:`-prefixed issues into a
 single batch issue at bootstrap (see the `plan` skill, step 1), and that
 batch needs at most **one** edge — behind whatever meta issue is
-currently In Progress.
+currently **In Progress *or* In Review**.
+
+**Both states, deliberately** — this is where the edge rule meets the
+session-state convention above, and taking only In Progress leaves the
+rule with no anchor exactly when it is needed. An In Review meta issue
+is a session that has merged its code but still owes follow-up, and the
+fleet-resume launcher already treats it as live (it resumes on state
+type `started`, which covers both). The edge is about *scheduling the
+next batch*, so it should key on the same "is a session still working
+this?" question the rest of the convention keys on — not on whether the
+code happens to have landed.
 
 *Superseded (2026-08-18 → 2026-08-20): the serial chain.* The earlier
 form kept every open meta issue blocking the next, which needed an edge
