@@ -19,6 +19,17 @@ rather than wedging the session.
 Escape hatch: a command carrying the literal marker `#compound-ok` is
 let through, so a genuinely-unavoidable compound (rare) stays possible
 and auditable in the transcript.
+
+**Parser audit, recorded so it is not repeated.** A sibling project's
+destructive-command guard shipped a *grep-based* command extractor that
+silently truncated at an escaped quote, letting a root delete through
+when it followed a quoted argument. That bug class was checked for here
+and does not apply: the command string comes from a real `json.loads`
+of the PreToolUse payload and is never re-extracted out of a larger
+blob by pattern. The scanner below is character-level and quote-aware
+rather than regex over the whole string, which is the property that
+makes it safe. If this is ever "simplified" into a regex over the raw
+payload, that is the regression to look for.
 """
 
 import json

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# cspell:word gpgsign
 """Stdlib ``unittest`` tests for ``review_diff.py``.
 
 The pure logic — pattern matching, ``--numstat`` parsing, and the gate/verdict

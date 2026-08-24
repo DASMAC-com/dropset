@@ -86,6 +86,7 @@ frontmatter
 getpid
 gifs
 globbable
+gpgsign
 granularities
 griefer
 gyen
