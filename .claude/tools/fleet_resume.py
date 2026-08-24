@@ -45,11 +45,11 @@ import os
 import re
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-ENDPOINT = "https://api.linear.app/graphql"
+import linear_api
+
+ENDPOINT = linear_api.ENDPOINT
 
 # The state type that means "a session owns this issue". Linear's set is
 # triage / backlog / unstarted / started / completed / canceled.
@@ -115,28 +115,17 @@ def _env(name: str) -> str:
 def _post(api_key: str, query: str, variables: dict) -> dict:
     """POST a GraphQL operation and return its ``data``.
 
-    Deliberately the same shape as ``trim_levers.py``'s helper rather than a
-    third HTTP idiom in this directory.
+    Delegates to the shared transport rather than keeping a third HTTP idiom in
+    this directory — which is also what gives this tool the redirect refusal (a
+    followed 3xx would re-send the ``Authorization`` header to a new host).
     """
-    body = json.dumps({"query": query, "variables": variables}).encode("utf-8")
-    request = urllib.request.Request(
-        ENDPOINT,
-        data=body,
-        headers={"Authorization": api_key, "Content-Type": "application/json"},
+    return linear_api.post(
+        api_key,
+        query,
+        variables,
+        endpoint=ENDPOINT,
+        error=FleetResumeError,
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.load(response)
-    except urllib.error.HTTPError as exc:
-        raise FleetResumeError(f"Linear returned HTTP {exc.code}") from exc
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise FleetResumeError(f"cannot reach Linear: {exc}") from exc
-    if payload.get("errors"):
-        messages = "; ".join(
-            e.get("message", "?") for e in payload["errors"] if isinstance(e, dict)
-        )
-        raise FleetResumeError(f"Linear rejected the query: {messages}")
-    return payload.get("data") or {}
 
 
 def in_flight(api_key: str, project_id: str) -> list[dict]:

@@ -64,14 +64,13 @@ human-curated in a planning session. Stdlib only; a Python skill-tool under
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.request
 
-ENDPOINT = "https://api.linear.app/graphql"
+import linear_api
+
+ENDPOINT = linear_api.ENDPOINT
 
 # Overall per-request timeout, so a hung endpoint can't wedge a run.
 REQUEST_TIMEOUT = 30
@@ -114,55 +113,25 @@ class TrimLeversError(Exception):
 
 
 def env_var(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise TrimLeversError(f"{name} is unset — export it before running")
-    if not (value.isascii() and value.isprintable()):
-        # A pasted key with an embedded newline otherwise reaches http.client's
-        # header validation, which raises a ValueError quoting the offending
-        # value — i.e. leaking the credential into a traceback. `isascii` is
-        # checked too: a non-Latin-1 printable (a smart quote from a paste)
-        # passes `isprintable` and then fails inside the header encode as an
-        # uncaught UnicodeEncodeError, which names the offending character.
-        raise TrimLeversError(f"{name} is not printable ASCII")
-    return value
+    return linear_api.env_var(name, error=TrimLeversError)
 
 
 def _post(api_key: str, query: str, variables: dict) -> dict:
     """POST a GraphQL operation and return its ``data``.
 
-    Transport, GraphQL and shape errors all surface as :class:`TrimLeversError`
-    so the CLI never emits a traceback (which could quote the credential).
+    Delegates to the shared transport, which refuses redirects so a 3xx can
+    never re-send the ``Authorization`` header to another host. Errors surface
+    as :class:`TrimLeversError` so the CLI never emits a traceback (which could
+    quote the credential).
     """
-    payload = json.dumps({"query": query, "variables": variables}).encode("utf-8")
-    req = urllib.request.Request(
-        ENDPOINT,
-        data=payload,
-        headers={"Content-Type": "application/json", "Authorization": api_key},
-        method="POST",
+    return linear_api.post(
+        api_key,
+        query,
+        variables,
+        endpoint=ENDPOINT,
+        timeout=REQUEST_TIMEOUT,
+        error=TrimLeversError,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            raw = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        raise TrimLeversError(f"Linear API returned HTTP {e.code}: {detail}") from e
-    except urllib.error.URLError as e:
-        raise TrimLeversError(f"Linear API request failed: {e.reason}") from e
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise TrimLeversError(f"decoding Linear GraphQL response: {e}") from e
-
-    errors = parsed.get("errors")
-    if errors:
-        joined = "; ".join(e.get("message", "") for e in errors)
-        raise TrimLeversError(f"Linear GraphQL error: {joined}")
-    data = parsed.get("data")
-    if data is None:
-        raise TrimLeversError("Linear GraphQL response carried no data")
-    return data
 
 
 # --------------------------------------------------------------------------

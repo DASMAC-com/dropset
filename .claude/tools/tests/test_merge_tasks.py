@@ -619,13 +619,15 @@ class FetchTests(unittest.TestCase):
         self.assertIn("ENG-999", str(caught.exception))
 
     def test_a_graphql_error_is_surfaced_not_swallowed(self):
+        # `_post` delegates to the shared transport, so the seam is that
+        # module's opener. What is pinned here is that the delegation still
+        # raises **this tool's** error class rather than the shared one — a CLI
+        # that let `LinearApiError` escape would print a traceback.
         payload = {"errors": [{"message": "bad filter"}]}
-        with mock.patch.object(mt, "urllib") as fake_urllib:
-            handle = mock.MagicMock()
-            handle.__enter__.return_value = io.BytesIO(json.dumps(payload).encode())
-            fake_urllib.request.urlopen.return_value = handle
-            fake_urllib.error.HTTPError = Exception
-            fake_urllib.error.URLError = Exception
+        handle = mock.MagicMock()
+        handle.__enter__.return_value = io.BytesIO(json.dumps(payload).encode())
+        with mock.patch.object(mt.linear_api, "_OPENER") as opener:
+            opener.open.return_value = handle
             with self.assertRaises(MergeTasksError) as caught:
                 mt._post("key", "query", {})
         self.assertIn("bad filter", str(caught.exception))
