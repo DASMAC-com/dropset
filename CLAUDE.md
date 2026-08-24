@@ -143,19 +143,30 @@ planning-session act with **two** halves — clear the milestone
 meta batch and its edge until promoted. Detail:
 `docs/conventions/linear-automation.md`.
 
-### The audit is planning-directed
+### An audit is a board issue, not a directive
 
-`housekeeping` does not run a random rotation. Each planning
-close-out writes an **audit directive** into the Planning
-document naming **one** subsystem or interface from the audit
-registry — or explicitly **none** — and `housekeeping` executes
-exactly that, as one scoped `audit-scope` run, stating in its
-report when it ran none. The broad random rotation survives only
-as an explicit ad-hoc `/audit`. And the **adversarial sub-agent
-fan-out is authorized by the invocation itself**: never
-substitute an inline pass, never silently skip it — if the
-tooling is absent, stop and ask. Detail: the `audit`,
-`audit-scope`, `housekeeping` and `plan` skills.
+**`housekeeping` runs no audit at all** and reads no Planning
+document. Auditing reaches the board the way every other
+capacity spend does: a planning session files an **audit
+issue** — a first-class Backlog task naming **one** target from
+the audit registry, with its scope, rationale, and sequencing —
+and the session that pulls it executes exactly that, as one
+scoped `audit-scope` run. Findings still land **parked**
+(`Todo` plus the `Audit findings` milestone), and promotion is
+still the planning session's two-halves act.
+
+Cadence is kept by the **audit heartbeat**: every planning
+bootstrap reads the Planning document's bounded **audit-state
+table** (one row per registry unit — last audited, finding
+count, outcome pointer) and either files an audit issue or
+**declines with a recorded reason**. An unrecorded
+non-decision is the failure that guard exists to catch. The
+broad random rotation survives only as an explicit ad-hoc
+`/audit`. And the **adversarial sub-agent fan-out is authorized
+by the invocation itself** — pulling an audit issue *is* the
+authorization: never substitute an inline pass, never silently
+skip it; if the tooling is absent, stop and ask. Detail: the
+`audit`, `audit-scope` and `plan` skills.
 
 ### Trim levers are parked issues, not a document
 

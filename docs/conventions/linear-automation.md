@@ -275,6 +275,58 @@ the issue auto-Done with nobody to re-mark it. The common case — the
 operator closing sessions at day end after merge confirmation — is
 covered, and no detection machinery is built for the crash case.
 
+## An audit is a board issue, not a directive
+
+Auditing is **planning-filed board work**. It is not a step in any
+automated pass, and no skill reads an audit directive from the Planning
+document — that path is retired, along with `housekeeping`'s only
+Planning-document read.
+
+**Why the directive path went.** An audit is a real capacity spend, and
+routing it through a document made it an invisible daily tax: three
+handoffs across two skills and a document, plus a built-in staleness
+window between writing the directive and firing it. It also failed
+quietly in a way nothing could see — the skill that claimed to read the
+directive never resolved `LINEAR_PLANNING_DOC_ID` anywhere, so an
+unresolved document id was indistinguishable from a legitimate
+"directive says none" and reported clean. And the audits that matter
+keep turning out to be **issue-shaped**: they carry scope, rationale,
+sequencing, and accreted operator scope the way real work does.
+
+**The audit issue.** A first-class **Backlog** task carrying:
+
+- a **named target** from `docs/conventions/audit-registry.md` — a
+  subsystem, an inter-subsystem interface, or a random-target pass when
+  breadth is what is wanted;
+- the **scope** (what is in, what is out);
+- the **rationale** — which criterion fired (*just settled*, *about to
+  be built on*, *suspect*) and its evidence;
+- the **sequencing**, as prose. No blocking edge: an automated filer
+  places none, and this one is filed by a planning session, which
+  places edges deliberately (see "Blocking relations").
+
+The session that pulls it runs **one scoped `audit-scope`** pass
+against that target. Pulling and invoking it **is** the authorization
+for the adversarial sub-agent fan-out. Its findings file **parked**,
+exactly as before — see the next section.
+
+**Because a filed audit is a snapshot, re-verify before running it.**
+An audit issue pulled weeks after filing states a premise about code
+that may have moved; check the target still exists in the shape the
+rationale describes before spending the fan-out, the same discipline a
+`trim-context` part gets.
+
+**The heartbeat is what keeps the cadence.** Every planning bootstrap
+reads the Planning document's bounded **audit-state table** — one row
+per registry unit: last-audited date, finding count, and an outcome
+pointer (issue numbers) — and either files an audit issue or
+**declines with a recorded reason**. The table is **state-shaped, never
+an append log**: a row is replaced when its unit is re-audited, so the
+table is bounded by the registry rather than by how long the practice
+has run, and the history lives on the board. The known risk of the
+issue model is cadence decay by neglect; the heartbeat is the guard,
+which is why an unrecorded non-decision counts as a failure of it.
+
 ## Parked findings sit in **Todo**, never Backlog
 
 An issue stamped with a parking milestone — `Audit findings` for audit

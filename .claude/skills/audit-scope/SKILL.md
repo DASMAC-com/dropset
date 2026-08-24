@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear issues, each parked in state Todo under the `Audit findings` project milestone rather than dropped into the pull queue, and with no relations or collision links filed at all. The sub-agent fan-out is authorized by the invocation itself — never substitute an inline pass, never silently skip it. The shared audit engine that `audit` drives one file at a time, and that `housekeeping` runs scoped to the Planning document's audit directive.
+description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear issues, each parked in state Todo under the `Audit findings` project milestone rather than dropped into the pull queue, and with no relations or collision links filed at all. The sub-agent fan-out is authorized by the invocation itself — never substitute an inline pass, never silently skip it. The shared audit engine that `audit` drives one file at a time, and that a session pulling a planning-filed audit issue runs once against that issue's named target.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -37,8 +37,8 @@ See `docs/conventions/linear-automation.md` → "Parked
 findings sit in **Todo**, never Backlog".
 
 **The adversarial sub-agent cross-check is authorized by the
-invocation.** Invoking this skill (or `audit`, or
-`housekeeping`) **is** the request for the fan-out — it is
+invocation.** Invoking this skill (or `audit`, or pulling an
+audit issue) **is** the request for the fan-out — it is
 the engine's mechanism, not an optional extra, so a
 session-level "don't spawn agents unless asked" default is
 *satisfied* by that authorization rather than in tension
@@ -57,9 +57,14 @@ deliverable and there is no earlier gate to ride, so a
 question would be ceremony. Recorded so the difference does
 not read as an oversight.
 
-**This skill is what `housekeeping` runs**, scoped to the
-one target named by the Planning document's audit directive.
-The broad random rotation is `/audit`, an ad-hoc invocation.
+**This skill is what an audit issue runs.** Auditing reaches
+the board as a first-class Backlog issue filed by a planning
+session's audit heartbeat, naming one target from
+`docs/conventions/audit-registry.md` with its scope and
+rationale; the session that pulls it invokes this skill once,
+scoped to that target. `housekeeping` runs no audit and reads
+no directive — that path is retired. The broad random
+rotation is `/audit`, an ad-hoc invocation.
 
 ## Two ways it runs
 
@@ -232,6 +237,35 @@ Optional (ask on a direct run if not provided):
    each run of non-alphanumeric characters collapsed to a
    single `-`), a `title`, a one-line `rationale`, and a
    `fix_sketch`.
+
+   **Every dimension prompt ends with the self-deflation
+   clause**, and it is not optional boilerplate — it is the
+   cheapest noise gate in this skill. Measured: five
+   dimension agents returned **46** findings and two
+   skeptics (~2.7M input) killed **37** — an ~80%
+   false-positive rate at the dimension stage, with three
+   findings refiling the audited document's own stated
+   design intent. The skeptics earn their cost and are not
+   the problem; the problem is upstream, in what gets
+   returned. Tell each agent, in these terms:
+
+   - **Drop what the artifact states as deliberate.** If the
+     file, its doc comment, or a sibling convention names
+     the thing as an intentional tradeoff, it is not a
+     finding — re-filing an artifact's own stated intent is
+     the single most common false positive.
+   - **Drop what hurts no reader materially.** Name who is
+     hurt and how; if you cannot, drop it.
+   - **Return a considered-and-dropped list** — the
+     candidates you rejected, one line of reason each. This
+     is what makes the deflation checkable rather than a
+     claim, and it lets the cross-check see what was already
+     weighed.
+   - **State the expected order of magnitude up front.** A
+     scoped audit of one document or module returns **a
+     handful** of findings, not forty. An agent returning
+     dozens should re-read this clause before answering, and
+     say so if it still believes the count.
 
 1. **Adversarial cross-check.** Spawn a fresh skeptic
    sub-agent (brief it with the same sub-agent brief) with

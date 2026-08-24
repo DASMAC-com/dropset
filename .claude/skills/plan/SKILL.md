@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas and the standing audit directive plus its outcome unprompted, then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog), the open Claude-prefixed meta tasks folded into one batch issue by default at bootstrap, and issues filed and amended to house convention. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which also writes the next audit directive, one named subsystem or interface for housekeeping to audit, or explicitly none — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
+description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog), the open Claude-prefixed meta tasks folded into one batch issue by default at bootstrap, and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -172,18 +172,66 @@ context the session was started to hold.
 
 **And fire step 8's parked-findings offer here**, as part of
 this same bootstrap. It is written up as step 8 because
-`audit` and `housekeeping` both cite it by that name, but it
+`audit` and `audit-scope` both cite it by that name, but it
 **runs now** — a count and a prompt, alongside the umbrellas.
 Do not defer it to the end of the session.
 
-**Read the standing audit directive and its outcome too.**
-The document carries one — a named subsystem or interface for
-`housekeeping` to audit, or explicitly none — plus what the
-previous one found. Surface both alongside the umbrellas: the
-outcome is the audit log the operator reads, and the standing
-directive is what the close-out (step 6) will either keep or
-replace. A directive whose target has since been rewritten is
-stale and should be replaced rather than left to fire.
+**Run the audit heartbeat — every bootstrap, unprompted.**
+The document carries a bounded **audit-state table**, one row
+per unit in `docs/conventions/audit-registry.md`: the unit,
+the date it was last audited, the finding count, and an
+outcome pointer (the issue numbers). Read it alongside the
+umbrellas and act on it:
+
+- **A unit crosses staleness**, or one of the standing
+  criteria fires — it *just settled*, is *about to be built
+  on*, or is *suspect* — → **file an audit issue** (step 4's
+  filing conventions, the shape described below).
+- **Nothing qualifies** → **decline explicitly, and record
+  the reason** in the document. "No audit this session,
+  because the roster is fresh and the feature phase is
+  rewriting three of the units" is a complete answer; silence
+  is not.
+
+**The heartbeat is the guard against decay-by-neglect**, and
+it is the *only* thing that still makes audits happen without
+willpower. The daily directive bought that property at the
+cost of an invisible tax; the heartbeat keeps the property
+and makes each audit a deliberate, sequenced act. So the
+decline branch is not an escape hatch — an unrecorded
+non-decision is the failure this step exists to catch.
+
+**What an audit issue looks like.** A first-class **Backlog**
+task in the key-custody shape — not a parked finding, not a
+directive:
+
+- a **named target** from the audit registry (a subsystem, an
+  inter-subsystem interface, or a random-target pass when the
+  heartbeat wants breadth rather than depth);
+- the **scope** — what is in and what is out;
+- the **rationale** — which of the three criteria fired, and
+  the evidence for it;
+- the **sequencing** — what it should land after, as prose.
+
+The session that pulls it executes it as **one scoped
+`audit-scope` run**, and its findings file **parked** exactly
+as before (state `Todo` plus the **Audit findings**
+milestone). Pulling and invoking the issue **is** the
+authorization for that run's adversarial sub-agent fan-out.
+
+**An audit issue is a real capacity spend, so it competes in
+the queue like everything else.** That visibility is the
+point of the model: an audit that cannot win a priority
+argument against feature work is an audit that should not run
+this week, and the old daily default hid exactly that
+question.
+
+**Staleness is judged against the code, not the calendar
+alone.** A row whose target has since been rewritten wholesale
+is stale in the way that *matters* — the previous findings are
+against code that no longer exists — and is a strong
+candidate. A row untouched because its subsystem is untouched
+is not urgent merely for being old.
 
 **Fold the meta work into one batch — by default, unprompted.**
 After sweeping the open `Claude:`-prefixed set, fold **every**
@@ -233,8 +281,8 @@ So:
 - **Non-planning sessions append only under one marked
   heading**, `Notes for the next planning session`, never as
   free-floating sections. That rule is stated wherever those
-  sessions are told to write here (`housekeeping`'s post-close
-  note step, and any skill reporting into planning).
+  sessions are told to write here — the `architect` session's
+  close-out handoff, and any skill reporting into planning.
 
 Adopted operationally at plan-20, which performed the
 consolidating rewrite mid-session on the operator's flag; this
@@ -578,29 +626,47 @@ main deliverable.** The board shows *what* was decided; the
 doc is the only place that carries *why*, and why is what the
 next session needs.
 
-**The close-out also writes the audit directive.** The
-rewritten document carries an **audit directive** naming
-**one** subsystem or interface from
-`docs/conventions/audit-registry.md` — or explicitly **none**
-— for `housekeeping` to audit until the next planning session
-replaces it. Choose the target because it *just settled*, is
-*about to be built on*, or is *suspect*; "none" is a
-legitimate and often correct answer in a heavy-feature phase.
+**The close-out carries the audit-state table forward — it
+writes no directive.** The rewritten document carries the
+bounded table the bootstrap heartbeat reads: one row per unit
+in `docs/conventions/audit-registry.md`, each with the date it
+was last audited, the finding count, and an outcome pointer
+(the issue numbers).
 
-This is what replaced the daily random rotation. A random
-seven-unit pass in a heavy-feature phase audits code that is
-about to be rewritten: one pass filed **fifteen** parked
-findings, several against maker-model and fair-value files
-that open Backlog issues were already slated to rewrite. The
-engine was working; the targeting was not — and because the
-parked pool drains only through the promotion step (step 8,
-which runs at bootstrap), over-filing costs this session
+**It is state-shaped, never an append log.** A row is
+*replaced* when its unit is audited again; the table's size is
+bounded by the registry, not by how long the practice has run.
+The history lives on the board — the audit issues and their
+parked findings are the durable record, and the outcome
+pointer is how you get from a row to it. A table that has
+started growing rows per audit rather than per unit has become
+the unbounded log this design exists to avoid.
+
+**Update the rows for whatever landed this cycle**: an audit
+issue that a session pulled and completed updates its unit's
+row with the new date, count, and issue pointer. An audit
+issue filed but not yet pulled changes no row — the row
+records what was *audited*, not what was *scheduled*.
+
+**Why no directive.** An audit is a real capacity spend, and
+the directive path made it an invisible daily tax with three
+handoffs across two skills and a document, plus a built-in
+staleness window between writing the directive and firing it.
+The audits that matter keep turning out to be issue-shaped —
+carrying scope, rationale, and sequencing the way real work
+does — so they are filed as issues and compete in the queue.
+The daily random rotation this replaced had the same targeting
+failure from the other direction: one pass filed **fifteen**
+parked findings, several against maker-model and fair-value
+files that open Backlog issues were already slated to rewrite.
+The engine was working; the targeting was not — and because
+the parked pool drains only through the promotion step (step
+8, which runs at bootstrap), over-filing costs this session
 directly.
 
-Also **record the previous directive's outcome** — its target
-and finding count, from the housekeeping report — so the
-document accumulates the ongoing audit log the operator asked
-for: what has been audited, when, and what it found.
+The known risk of the issue model is cadence decay by
+neglect. The bootstrap heartbeat (step 1) is the guard, which
+is why its decline branch must record a reason.
 
 **7. Capture the session's token profile at close-out.** Run
 the committed metrics tool over the planning transcript, then
