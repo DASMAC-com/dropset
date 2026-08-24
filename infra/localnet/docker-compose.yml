@@ -310,9 +310,12 @@ services:
     # the `USDC/USD` peg — Coinbase Exchange lists no such product and
     # Binance.US quotes an administered flat 1.00. Collecting it is what lets a
     # peg dislocation be read after the fact rather than only watched live. The
-    # default roster is the two legs the maker already subscribes to; Kraken
-    # also lists `EURC/EUR`, deliberately not collected yet (see the binary's
-    # module header).
+    # default roster is the two legs the maker already subscribes to, plus
+    # `EURC/EUR` — token against its own fiat, the closest keyless stand-in for
+    # an issuer redemption rate. No model leg reads that third pair yet; it is
+    # recorded because Kraken's keyless OHLC serves only a rolling window, so
+    # tick resolution is unrecoverable afterwards (see the binary's module
+    # header).
     #
     # Keyless and batched: one request per poll regardless of roster size, so
     # adding pairs costs nothing and needs no cadence change.
@@ -334,7 +337,7 @@ services:
     environment:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
-      PRODUCT_IDS: '${KRAKEN_PRODUCT_IDS:-USDC-USD,EURC-USD}'
+      PRODUCT_IDS: '${KRAKEN_PRODUCT_IDS:-USDC-USD,EURC-USD,EURC-EUR}'
       RUST_LOG: 'info'
     restart: 'unless-stopped'
   maker-bot:

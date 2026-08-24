@@ -62,7 +62,8 @@
 //! region (and Binance.US lists no EUR pair at all), and **Circle** publishes
 //! no keyless redemption-rate endpoint — Kraken's `USDC/USD` market print
 //! stands in for peg truth until credentials exist. (Kraken lists `EURC/EUR`
-//! too, the closer issuer-rate proxy, but nothing subscribes to it yet.)
+//! too, the closer issuer-rate proxy; the tick collector records it, but this
+//! model does not read it.)
 //! OANDA is the same story as Circle.
 
 use dropset_fair_value::{Candidates, Legs};

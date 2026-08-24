@@ -15,10 +15,10 @@
 //! - **`EURC/EUR` — token against its own fiat**, the cross redemption
 //!   arbitrage enforces directly, and the closest *live* stand-in for an
 //!   issuer redemption rate (Circle publishes no keyless one —
-//!   `/v1/exchange/rates` is credentialed). **This adapter can decode it, but
-//!   no consumer subscribes to it yet**: the maker's roster asks only for
-//!   `<token>/USD` plus the shared `USDC/USD`. It is listed here as the
-//!   venue's capability, not as a wired leg.
+//!   `/v1/exchange/rates` is credentialed). **The market-data tick collector
+//!   records it; the maker does not read it**, its roster asking only for
+//!   `<token>/USD` plus the shared `USDC/USD`. So it is a stored series
+//!   rather than a wired model leg.
 //!
 //! **Pairs are Kraken's own names, not ours.** Kraken keys its response by its
 //! canonical pair name, which for legacy assets carries the `X`/`Z` prefixes

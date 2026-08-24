@@ -9,12 +9,16 @@
 //! watched live.
 //!
 //! The default roster collects the two legs the maker already subscribes to —
-//! `USDC-USD` and `EURC-USD`. Kraken *also* lists `EURC/EUR`, token against its
-//! own fiat, which is the closest live stand-in for an issuer redemption rate
-//! and which nothing consumes yet; adding `EURC-EUR` here would cost no extra
-//! request, since the poll is batched. Left out deliberately rather than by
-//! oversight: what to record is a decision about the store's contents, not a
-//! detail of this collector, and this PR collects what is wired.
+//! `USDC-USD` and `EURC-USD` — plus `EURC-EUR`, token against its own fiat,
+//! which is the closest live keyless stand-in for an issuer redemption rate.
+//! Nothing consumes that third pair yet, and it is collected anyway: the poll
+//! is batched, so it costs no extra request, and what it records cannot be
+//! reconstructed after the fact. Kraken's keyless OHLC serves only a rolling
+//! window — about 12 hours of 1-minute bars, 30 days of hourly ones — so this
+//! collector's 15-second series, and any minute resolution older than half a
+//! day, exist only where something was already recording. Recording ahead of
+//! a consumer is the cheap side of that asymmetry. A credentialed Circle Mint
+//! feed supersedes it once keys exist.
 //!
 //! Keyless, batched, and cheap: one request per poll regardless of roster size,
 //! so unlike the metered FX venues nothing here has to widen its cadence as
@@ -47,9 +51,11 @@ const SOURCE: &str = "kraken";
 /// it exists because the store sink is built around a feed identity.
 const FEED: &str = "ticks:kraken";
 
-/// The two legs the maker's fair-value model needs corroborated, which are also
-/// the only two of the demo roster Kraken lists.
-const DEFAULT_PRODUCTS: &str = "USDC-USD,EURC-USD";
+/// The roster polled when nothing overrides it: the legs the maker's
+/// fair-value model needs corroborated — also the only two of the demo roster
+/// Kraken lists — followed by the `EURC-EUR` redemption proxy, which is
+/// recorded for the store rather than read by the maker.
+const DEFAULT_PRODUCTS: &str = "USDC-USD,EURC-USD,EURC-EUR";
 
 /// How many polls a configured pair may stay unpriced before it is reported as
 /// a roster mistake rather than a venue gap.
