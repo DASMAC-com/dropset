@@ -224,8 +224,60 @@ Priority order survives only as the order sources are offered in, which
 decides which ones fill a leg that has more than it can hold. It no longer
 decides what the leg is worth.
 
-The bot surfaces, per leg per market, how many sources answered and which one
-diverged.
+#### Attribution
+
+The bot surfaces, per leg per market, how many sources answered, which one
+diverged, and — the contract this section states in full — **which sources the
+value is actually composed of, and in what proportion**.
+
+Attribution is a **set with weights**, not a single name. The ladder had a
+well-defined "tier that answered" and consumers were built on it; under
+consensus that concept does not survive, because the value usually belongs to
+the set. Naming one contributor anyway would resurrect ladder semantics as a
+lie dressed as data. The weights are **exact rather than heuristic**: every
+resolution is a linear combination of contributor values, so each case has one
+right answer.
+
+| resolution                           | contributors                            |
+| ------------------------------------ | --------------------------------------- |
+| a designated source anchoring alone  | that source at `1.0`                    |
+| a lone source, corroborated or not   | that source at `1.0`                    |
+| median, odd count                    | the middle source at `1.0`              |
+| median, even count                   | the two middle sources at `0.5` each    |
+| an agreeing pair                     | both at `0.5` — the even case, with two |
+| a dispersed pair with no designation | none; the leg resolves to nothing       |
+
+Four properties bind any consumer of this:
+
+- The weights **sum to 1 whenever the leg resolved to anything**, and the set
+  is **empty whenever it did not**. An empty set means no value, never an
+  unattributed one.
+- A single name is offered **only for a singleton set**. An averaged pair has
+  no dominant member, and picking a side of an exact tie is the ladder lie
+  this replaces — so a single-name column renders null there rather than
+  guessing.
+- Contributors name the sources to **believe**; the dispersion outlier names
+  the one to **distrust**. Reading either as the other is exactly backwards.
+- A median's outer members are counted but **not credited**. They bound the
+  answer without entering it, which is the robustness the median buys, so the
+  source count and the contributor count legitimately differ.
+
+Each contributor also carries **its own reading's age**, which is diagnostic
+only. The leg's age remains the oldest age across *every healthy candidate* —
+including the zero-weight outer members — so a leg can be older than every
+contributor credited. Excluding the uncredited members would let a stale
+source vanish from the one number that polices staleness, so every freshness
+and staleness test keeps reading the leg's age, never a contributor's.
+
+Source names here are the **bare venue** vocabulary. That is not always the
+feed adapter's own source name: a venue whose endpoint is per *product* names
+itself per product (`coinbase:EURC-USDC`) while the tag stays `coinbase`.
+Widening the tag is deliberately not the fix — a per-product name is built at
+runtime, which would cost an allocation per contributor per tick on the
+quoting hot path — so a consumer joining to per-feed health matches on the `:`
+prefix rather than on equality. A mismatched join here fails **silently**,
+returning nothing rather than erroring, which is why the rule is stated rather
+than left to be inferred.
 
 ### Basis estimation
 

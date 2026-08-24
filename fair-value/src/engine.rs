@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use crate::basis::{BasisEma, Fold};
 use crate::config::FairValueConfig;
-use crate::consensus::{Candidates, Consensus, ConsensusState};
+use crate::consensus::{Candidates, Consensus, ConsensusState, Contributors};
 
 /// The raw feed legs for one market on one tick. Each leg carries **every
 /// source that answered**, not the winner of a priority ladder — the engine
@@ -281,12 +281,24 @@ pub enum Health {
 
 /// How one leg's sources resolved — the operator-facing half of the consensus
 /// filter (§1 "the bot surfaces which source is live per leg").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+///
+/// `PartialEq` but **not** `Eq`, since the contributor weights are floats.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct LegReport {
     /// How well corroborated the leg was.
     pub state: ConsensusState,
-    /// How many healthy sources contributed.
+    /// How many healthy sources were judged. Not the number *credited* below:
+    /// a median's outer members are counted here but carry no weight.
     pub n: usize,
+    /// Which sources the leg's value is composed of, and in what proportion —
+    /// empty when the leg resolved to nothing. See [`Contributors`] for the
+    /// case table and the properties a consumer may rely on.
+    ///
+    /// This is the attribution a telemetry or dashboard layer reads. It names
+    /// the sources to **believe**, where [`LegReport::outlier`] names the one
+    /// to distrust; the two are not interchangeable and reading either as the
+    /// other is exactly backwards.
+    pub contributors: Contributors,
     /// The source furthest from the consensus, when the set was dispersed.
     /// This is the name to put in front of an operator: a dispersion flag with
     /// no suspect attached is an alarm nobody can act on.
@@ -305,6 +317,7 @@ impl From<Consensus> for LegReport {
         Self {
             state: c.state,
             n: c.n,
+            contributors: c.contributors,
             outlier: c.outlier,
         }
     }
@@ -1962,6 +1975,72 @@ mod tests {
         assert_eq!(r.regime, Regime::FxPinned);
         assert_eq!(r.crypto_leg.n, 0);
         assert_eq!(r.crypto_leg.state, ConsensusState::Absent);
+    }
+
+    #[test]
+    fn a_leg_report_carries_the_anchors_source_name() {
+        // The concrete gap this attribution closes. In the one case where
+        // single-feed attribution is honest — a designated source anchoring its
+        // leg — the report used to carry the state and the count but no name at
+        // all, so a consumer had nothing to populate a dominant element from.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none()
+                    .push_trusted("pyth-hermes", Some(fresh(1.140)))
+                    .push("frankfurter", Some(fresh(1.141))),
+                crypto_usdc: pair(1.140, 1.142),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        let anchor = r.fx_leg.contributors.dominant().expect("a lone anchor");
+        assert_eq!(anchor.source, "pyth-hermes");
+        assert_eq!(anchor.weight, 1.0);
+        assert_eq!(r.fx_leg.n, 2, "both were judged; one was credited");
+    }
+
+    #[test]
+    fn a_leg_report_credits_a_set_rather_than_naming_a_winner() {
+        // The other half of the same contract: where the value belongs to the
+        // set, the report says so instead of promoting one member.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: src(fresh(1.0)),
+                crypto_usdc: pair(1.140, 1.142),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.crypto_leg.contributors.len(), 2);
+        assert_eq!(
+            r.crypto_leg.contributors.dominant(),
+            None,
+            "an averaged pair has no single winner to name"
+        );
+        assert!(r.crypto_leg.contributors.iter().all(|c| c.weight == 0.5));
+    }
+
+    #[test]
+    fn a_leg_that_resolved_to_nothing_reports_no_contributors() {
+        // Empty must mean "no value", never "a value we failed to attribute" —
+        // a dashboard reads the emptiness as the former.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none(),
+                crypto_usdc: pair(1.140, 1.142),
+                ..Legs::default()
+            },
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.fx_leg.state, ConsensusState::Absent);
+        assert!(r.fx_leg.contributors.is_empty());
+        assert!(LegReport::default().contributors.is_empty());
     }
 
     #[test]

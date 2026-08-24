@@ -78,7 +78,9 @@ mod engine;
 mod reading;
 
 pub use config::{ConfigError, FairValueConfig};
-pub use consensus::{Candidate, Candidates, Consensus, ConsensusState, MAX_CANDIDATES};
+pub use consensus::{
+    Candidate, Candidates, Consensus, ConsensusState, Contributor, Contributors, MAX_CANDIDATES,
+};
 pub use engine::{
     observed_basis, Anchor, ClockCtx, Degrade, FairValue, FairValueEngine, Health, LegReport, Legs,
     Regime,
