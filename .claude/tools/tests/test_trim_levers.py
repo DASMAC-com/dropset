@@ -959,5 +959,129 @@ class NoRelationsTests(unittest.TestCase):
             self.assertNotIn(key, got)
 
 
+class BodiesBearingReadTests(unittest.TestCase):
+    """One call for the whole pool, instead of one fetch per lever.
+
+    The fold's *reads* had become its larger cost: the plain listing prints
+    titles only, so a fold ran a `get_issue` per lever — 21 on one pass — and
+    the nearest body-bearing sweep cost 10.6k for 65 issues with every
+    description truncated anyway.
+    """
+
+    NODES = [
+        {
+            "identifier": "ENG-2",
+            "url": "u2",
+            "title": "Second",
+            "description": "**Fingerprint**: beta:two\n\nBODY-TWO",
+            "state": {"name": "Todo", "type": "unstarted"},
+            "projectMilestone": {"name": tl.MILESTONE_NAME},
+        },
+        {
+            "identifier": "ENG-1",
+            "url": "u1",
+            "title": "First",
+            "description": "**Fingerprint**: alpha:one\n\nBODY-ONE",
+            "state": {"name": "Todo", "type": "unstarted"},
+            "projectMilestone": {"name": tl.MILESTONE_NAME},
+        },
+    ]
+
+    def _page(self):
+        return {
+            "issues": {
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                "nodes": self.NODES,
+            }
+        }
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.dict(
+                os.environ, {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"}
+            ),
+            mock.patch.object(tl, "_post", return_value=self._page()),
+        ):
+            with redirect_stdout(out), redirect_stderr(err):
+                code = tl.run(["trim_levers.py"] + argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_plain_listing_does_not_ask_for_bodies(self):
+        # The cheap listing must stay cheap; bodies are opted into.
+        seen = {}
+
+        def fake_post(api_key, query, variables):
+            seen["query"] = query
+            return self._page()
+
+        with (
+            mock.patch.dict(
+                os.environ, {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"}
+            ),
+            mock.patch.object(tl, "_post", side_effect=fake_post),
+        ):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                tl.run(["trim_levers.py", "list"])
+        self.assertNotIn("description", seen["query"])
+
+    def test_fingerprints_mode_prints_the_dedup_key_per_lever(self):
+        code, out, _ = self._run(["list", "--fingerprints"])
+        self.assertEqual(code, 0)
+        self.assertIn("alpha:one", out)
+        self.assertIn("beta:two", out)
+
+    def test_fingerprints_mode_does_not_print_the_bodies(self):
+        _, out, err = self._run(["list", "--fingerprints"])
+        self.assertNotIn("BODY-ONE", out + err)
+        self.assertNotIn("BODY-TWO", out + err)
+
+    def test_a_lever_without_a_fingerprint_is_named_not_skipped(self):
+        with mock.patch.object(
+            self,
+            "NODES",
+            [
+                {
+                    "identifier": "ENG-3",
+                    "url": "u3",
+                    "title": "Keyless",
+                    "description": "no key here",
+                    "state": {"name": "Todo", "type": "unstarted"},
+                    "projectMilestone": {"name": tl.MILESTONE_NAME},
+                }
+            ],
+        ):
+            _, out, _ = self._run(["list", "--fingerprints"])
+        self.assertIn("(no fingerprint)", out)
+
+    def test_bodies_out_writes_a_sliceable_document_and_prints_only_sizes(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bodies.md")
+            code, out, err = self._run(["list", "--bodies-out", path])
+            self.assertEqual(code, 0)
+            written = open(path, encoding="utf-8").read()
+        self.assertIn("BODY-ONE", written)
+        self.assertIn("BODY-TWO", written)
+        # Zero echo: the payload is in the file, never in the output.
+        self.assertNotIn("BODY-ONE", out + err)
+        self.assertIn("chars to", err)
+
+    def test_the_written_document_carries_one_heading_per_lever(self):
+        # `read_result.py --headings` / `--section` is the intended next call.
+        rendered = tl.render_bodies(self.NODES)
+        self.assertIn("## ENG-1 | First", rendered)
+        self.assertIn("## ENG-2 | Second", rendered)
+
+    def test_the_document_is_ordered_by_identifier(self):
+        rendered = tl.render_bodies(self.NODES)
+        self.assertLess(rendered.index("## ENG-1"), rendered.index("## ENG-2"))
+
+    def test_the_bodies_file_is_owner_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bodies.md")
+            self._run(["list", "--bodies-out", path])
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+
 if __name__ == "__main__":
     unittest.main()

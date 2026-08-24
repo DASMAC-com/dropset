@@ -584,5 +584,96 @@ class ModeSelectionTests(unittest.TestCase):
                 self.assertEqual(code, 1)
 
 
+class ConflictingPrTests(unittest.TestCase):
+    """`none` is ambiguous, and one of its two meanings is blocking.
+
+    A CONFLICTING PR cannot produce ANY pull_request workflow run — the merge
+    ref cannot be created — so there is no run, no error, and nothing to tell it
+    apart from CI that has not started. One session spent ~20 minutes and ~16
+    polls on that, including an amend-and-force-push nudge at an event that
+    could never fire.
+    """
+
+    def _stub(self, checks, merge_payload=None, code=0):
+        real_watch, real_read, real_gh = wfc.watch_checks, wfc.read_checks, wfc._gh
+        wfc.watch_checks = lambda pr, repo, interval, timeout, log: True
+        wfc.read_checks = lambda pr, repo: checks
+        wfc._gh = lambda args: (code, json.dumps(merge_payload or {}), "boom")
+        self.addCleanup(setattr, wfc, "watch_checks", real_watch)
+        self.addCleanup(setattr, wfc, "read_checks", real_read)
+        self.addCleanup(setattr, wfc, "_gh", real_gh)
+
+    def test_no_checks_plus_conflicting_reports_conflicting(self):
+        self._stub([], {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"})
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertEqual(verdict["conclusion"], "conflicting")
+        self.assertTrue(verdict["blocked_by_conflict"])
+        self.assertEqual(verdict["merge_state_status"], "DIRTY")
+
+    def test_no_checks_and_mergeable_stays_none(self):
+        # The other meaning: genuinely no checks apply (a docs-only path filter).
+        self._stub([], {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"})
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertEqual(verdict["conclusion"], "none")
+        self.assertFalse(verdict["blocked_by_conflict"])
+
+    def test_the_probe_is_skipped_when_checks_exist(self):
+        # It answers a question only `none` raises; asking always would be a
+        # gh call per wait for nothing.
+        called = []
+        real_gh = wfc._gh
+        wfc._gh = lambda args: called.append(args) or (0, "{}", "")
+        self.addCleanup(setattr, wfc, "_gh", real_gh)
+        real_watch, real_read = wfc.watch_checks, wfc.read_checks
+        wfc.watch_checks = lambda pr, repo, interval, timeout, log: True
+        wfc.read_checks = lambda pr, repo: [check("a", "pass")]
+        self.addCleanup(setattr, wfc, "watch_checks", real_watch)
+        self.addCleanup(setattr, wfc, "read_checks", real_read)
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertEqual(verdict["conclusion"], "pass")
+        self.assertEqual(called, [])
+
+    def test_a_conflict_is_not_downgraded_to_timeout(self):
+        # `conflicting` is definite and strictly more informative, exactly as
+        # `fail` is — a caller branching on conclusion must be able to act.
+        real_watch, real_read, real_gh = wfc.watch_checks, wfc.read_checks, wfc._gh
+        wfc.watch_checks = lambda pr, repo, interval, timeout, log: False
+        wfc.read_checks = lambda pr, repo: []
+        wfc._gh = lambda args: (
+            0,
+            json.dumps({"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"}),
+            "",
+        )
+        self.addCleanup(setattr, wfc, "watch_checks", real_watch)
+        self.addCleanup(setattr, wfc, "read_checks", real_read)
+        self.addCleanup(setattr, wfc, "_gh", real_gh)
+        verdict = wfc.wait(285, repo="o/r", timeout=0)
+        self.assertEqual(verdict["conclusion"], "conflicting")
+
+    def test_a_failed_probe_leaves_the_verdict_as_none(self):
+        # The probe is a diagnosis aid; a gh failure must not invent a state.
+        self._stub([], code=1)
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertEqual(verdict["conclusion"], "none")
+        self.assertFalse(verdict["blocked_by_conflict"])
+
+    def test_the_probe_is_field_selected(self):
+        seen = {}
+        real_watch, real_read, real_gh = wfc.watch_checks, wfc.read_checks, wfc._gh
+        wfc.watch_checks = lambda pr, repo, interval, timeout, log: True
+        wfc.read_checks = lambda pr, repo: []
+        wfc._gh = lambda args: (seen.update(args=args), (0, "{}", ""))[1]
+        self.addCleanup(setattr, wfc, "watch_checks", real_watch)
+        self.addCleanup(setattr, wfc, "read_checks", real_read)
+        self.addCleanup(setattr, wfc, "_gh", real_gh)
+        wfc.wait(285, repo="o/r")
+        joined = " ".join(seen["args"])
+        self.assertIn("mergeable,mergeStateStatus", joined)
+        # The collection-valued fields would reintroduce the payload this tool
+        # exists to avoid.
+        self.assertNotIn("files", joined)
+        self.assertNotIn("commits", joined)
+
+
 if __name__ == "__main__":
     unittest.main()

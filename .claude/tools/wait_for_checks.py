@@ -65,15 +65,28 @@ Prints JSON::
     {
       "pr": 285,
       "repo": "DASMAC-com/dropset",
-      "conclusion": "pass",      // pass | fail | pending | none | timeout
+      "conclusion": "pass",      // pass | fail | pending | none |
+                                 // conflicting | timeout
       "settled": true,
       "elapsed_seconds": 127,
       "watch_rounds": 1,         // >1 means a check registered late
       "counts": {"pass": 12, "fail": 0, "pending": 0, "skipping": 3},
       "failing": [{"name": "…", "workflow": "…", "link": "…", "run_id": "…"}],
       "pending_checks": [],      // names still outstanding, when any are
+      "mergeable": null,         // probed only when the conclusion was `none`
+      "merge_state_status": null,
+      "blocked_by_conflict": false,
       "log_path": "/…/wait-for-checks-285.log"
     }
+
+``none`` is **ambiguous and is disambiguated for you.** A CONFLICTING PR cannot
+produce any ``pull_request`` workflow run at all — the merge ref cannot be
+created — so there is no run, no error, and nothing to tell it apart from CI
+that has not started yet. One session spent ~20 minutes and ~16 polls on that,
+including an amend-and-force-push nudge at an event that could never fire. So
+on ``none`` this tool probes ``mergeable`` and reports ``conflicting`` when
+that is the cause. Treat ``none`` as "no checks apply"; treat ``conflicting``
+as **blocking** — rebase, then re-run.
 
 or, under ``--run``::
 
@@ -441,6 +454,37 @@ def summarize(checks: list[dict]) -> dict:
     }
 
 
+def mergeability(pr: int, repo: str) -> dict:
+    """``{"mergeable": …, "merge_state_status": …, "error": …}`` for one PR.
+
+    Read **field-selected**, because the only two fields wanted here sit beside
+    collection-valued ones (``files``, ``commits``) that would reintroduce the
+    payload this tool exists to avoid.
+    """
+    code, out, err = _gh(
+        [
+            "pr",
+            "view",
+            str(pr),
+            "--repo",
+            repo,
+            "--json",
+            "mergeable,mergeStateStatus",
+        ]
+    )
+    if code != 0:
+        return {"mergeable": None, "merge_state_status": None, "error": err.strip()}
+    try:
+        payload = json.loads(out or "{}")
+    except json.JSONDecodeError as exc:
+        return {"mergeable": None, "merge_state_status": None, "error": str(exc)}
+    return {
+        "mergeable": payload.get("mergeable"),
+        "merge_state_status": payload.get("mergeStateStatus"),
+        "error": None,
+    }
+
+
 def wait(
     pr: int,
     repo: str = DEFAULT_REPO,
@@ -490,7 +534,24 @@ def wait(
     elapsed = int(time.monotonic() - started)
 
     conclusion = summary["conclusion"]
-    if not settled and conclusion != "fail":
+
+    # A CONFLICTING PR cannot produce ANY pull_request workflow run, because the
+    # merge ref cannot be created. There is no run, no error, and nothing to
+    # distinguish it from CI that has not started — one session spent ~20 minutes
+    # and ~16 polls on exactly this, including an amend-and-force-push nudge at
+    # an event that could never fire. So a bare `none` is ambiguous, and the
+    # ambiguity is resolved here rather than left to the caller: `none` means
+    # either no-checks-apply, or cannot-run-until-the-conflict-clears, and the
+    # second is blocking.
+    blocked_by_conflict = False
+    merge_state: dict = {"mergeable": None, "merge_state_status": None, "error": None}
+    if conclusion == "none":
+        merge_state = mergeability(pr, repo)
+        if (merge_state.get("mergeable") or "").upper() == "CONFLICTING":
+            blocked_by_conflict = True
+            conclusion = "conflicting"
+
+    if not settled and conclusion not in ("fail", "conflicting"):
         # A timed-out watch must never claim `pass` off a snapshot it stopped
         # waiting on. But a `fail` it *did* observe is definite and strictly more
         # informative than `timeout`, so that one survives — otherwise a caller
@@ -508,6 +569,10 @@ def wait(
         "failing": summary["failing"],
         "pending_checks": summary["pending_checks"],
         "unresolved_buckets": summary["unresolved_buckets"],
+        # Only populated when the conclusion was `none`: the cause probe.
+        "mergeable": merge_state["mergeable"],
+        "merge_state_status": merge_state["merge_state_status"],
+        "blocked_by_conflict": blocked_by_conflict,
         "log_path": str(log),
     }
 

@@ -357,13 +357,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(out.strip(), "In Review")
         self.assertIn("field status", err)
 
-    def test_field_alone_refuses_a_long_field_and_names_a_mode(self):
+    def test_field_alone_prints_the_head_of_a_long_field(self):
+        # Deliberately a head-plus-notice rather than a refusal: `--field` on a
+        # long field is a whole-read wearing a slicing tool's clothes, and it
+        # does not look like one at the call site. One session's three largest
+        # results were the same issue body read three times through this flag.
         long_field = "\n".join(f"line {i}" for i in range(50))
-        with self.assertRaises(ReadResultError) as caught:
-            _invoke(_persisted({"description": long_field}), "--field", "description")
-        message = str(caught.exception)
-        self.assertIn("too long to print", message)
-        self.assertIn("--headings", message)
+        rc, out, _ = _invoke(
+            _persisted({"description": long_field}), "--field", "description"
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(out.splitlines()), rr.FIELD_PRINT_MAX_LINES)
+        self.assertIn("line 0", out)
+        self.assertNotIn("line 49", out)
+
+    def test_the_long_field_summary_names_the_withheld_count_and_the_flags(self):
+        long_field = "\n".join(f"line {i}" for i in range(50))
+        _, _, err = _invoke(
+            _persisted({"description": long_field}), "--field", "description"
+        )
+        self.assertIn(str(50 - rr.FIELD_PRINT_MAX_LINES), err)
+        self.assertIn("withheld", err)
+        self.assertIn("NOT a slice", err)
+        self.assertIn("--headings", err)
 
     def test_field_alone_prints_a_field_exactly_at_the_cap(self):
         # The boundary is inclusive: refusing at exactly the cap would make the
