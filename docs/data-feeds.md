@@ -2,11 +2,15 @@
 
 <!-- cspell:word backpressure -->
 
+<!-- cspell:word CETES -->
+
 <!-- cspell:word CLMM -->
 
 <!-- cspell:word EUROC -->
 
 <!-- cspell:word exchangerate -->
+
+<!-- cspell:word Robinhood -->
 
 <!-- cspell:word Stooq -->
 
@@ -876,10 +880,20 @@ a warning: the catalog will happily offer two feeds that never tick.
 and are absent from both the maker config and the seed. Because the two
 agree, wiring them is one coherent change rather than a reconciliation.
 
-So: wire those five, and treat **MYR and NGN as the roster's genuinely
-two-source currencies**. They are the only two depending on OANDA and
-Twelve Data alone, and therefore the only two where a further source
-would buy anything.
+So: wire those five, and treat **MYR and NGN as the roster's most
+exposed currencies**. They are the only two with no Pyth column at all,
+so they depend on OANDA and Twelve Data alone — and note carefully that
+this is an upper bound, not a measurement: per-currency OANDA and Twelve
+Data coverage is verified only for AUD and EUR (§13), so MYR and NGN are
+*at best* two-source and could be one or zero. That is precisely why
+they are where a further source would buy the most.
+
+**The roster for AUD/USD quoting, stated outright**, since it is the
+pair this survey was opened on: **Pyth plus OANDA plus Twelve Data**,
+with Frankfurter as the daily reference and Alpha Vantage as daily
+corroboration. All three intraday sources are free, AUD is live on Pyth
+at a 1.39 bps half-width, and the only outstanding work is wiring the
+Pyth feed the maker config and the seed both lack.
 
 **One caveat on independence, since the count invites more confidence
 than it earns.** Three vendors is not three uncorrelated looks at the
@@ -922,36 +936,46 @@ rather than merely qualifying it:
   query, so a widely-listed token is truncated.
 - **A shared ticker is not a shared token.** Matching is on symbol
   *text*. Eleven Solana pools priced a mint other than the roster's; all
-  carried under $25/day, so the headline figures survive — but `ZARU`
-  does not. Both its pools were created within two days of the probe,
-  one is named `Zaru` rather than `ZARU`, and together they are its
-  entire apparent $24k/day. ZARU has **no genuine on-chain venue**.
+  carried under $25 a day, so the headline figures survive that. `ZARU`
+  is the separate and much larger case: its two pools are on Base and a
+  Robinhood-routed venue, not Solana, they were created within two days
+  of the probe, one is named `Zaru` rather than `ZARU`, and together they
+  are its entire apparent $24k a day. **No genuine ZARU venue was
+  found** — an absence from a capped search rather than a proof of
+  absence, but the ticker mismatch and the creation dates make it a
+  well-evidenced one.
 - **Depth without flow is not liquidity.** Fifteen pools hold $50k or
   more against under $100/day. Two `EURCV` Solana pools report $66M of
   reserve on $4/day and an `XSGD` pool $138M on $4 — all three on
   non-roster mints, so they are valuation artifacts, not markets.
 
-| Token   | Ccy | 24h volume | Deepest venue        | Chain     | Solana 24h |
-| ------- | --- | ---------: | -------------------- | --------- | ---------: |
-| `EURC`  | EUR |   \$31.07M | Aerodrome Slipstream | Base      |    \$3.05M |
-| `XSGD`  | SGD |    \$1.89M | Aerodrome Slipstream | Base      |     \$3.4k |
-| `EURCV` | EUR |    \$1.73M | Uniswap v3           | Ethereum  |         ~0 |
-| `VCHF`  | CHF |     \$302k | ICPSwap / Raydium    | ICP       |     \$145k |
-| `AUDM`  | AUD |     \$156k | Uniswap v4           | Ethereum  |        \$0 |
-| `CADC`  | CAD |    \$71.8k | Aerodrome Slipstream | Base      |       none |
-| `AUDD`  | AUD |    \$32.7k | First Ledger         | XRPL      |       none |
-| `TGBP`  | GBP |    \$24.0k | Aerodrome Slipstream | Base      |       \$84 |
-| `MYRC`  | MYR |    \$23.4k | Uniswap v3           | Arbitrum  |    \$14.6k |
-| `IDRX`  | IDR |    \$15.8k | Aerodrome Slipstream | Base      |       \$68 |
-| `EURAU` | EUR |    \$15.3k | Aerodrome Slipstream | Base      |     \$2.3k |
-| `BRZ`   | BRL |    \$11.6k | Oku Trade            | Gnosis    |       none |
-| `cNGN`  | NGN |     \$5.7k | Uniswap v3           | Celo      |       none |
-| `ZARP`  | ZAR |      \$992 | Uniswap v3           | Ethereum  |        \$9 |
-| `MXNe`  | MXN |      \$124 | Orca                 | Solana    |      \$113 |
-| `VGBP`  | GBP |      \$111 | Raydium CLMM         | Solana    |      \$104 |
-| `GYEN`  | JPY |       \$73 | Uniswap v4           | Arbitrum  |       none |
-| `TRYB`  | TRY |        \$3 | Trader Joe           | Avalanche |       none |
-| `ZARU`  | ZAR |         ~0 | *no genuine listing* | —         |       none |
+Columns: total 24h volume across every matched pool; then the single
+**busiest** pool by 24h volume — its venue, pair and chain — and the
+reserve sitting in *that* pool. Busiest is not always deepest, and AUDD
+is the row where the two part company, so read the reserve column as the
+depth of the busiest pool and never as the token's greatest depth.
+
+| Token   | Ccy | 24h volume | Busiest pool's venue | Pair                | Chain     | That pool's reserve | Solana 24h |
+| ------- | --- | ---------: | -------------------- | ------------------- | --------- | ------------------: | ---------: |
+| `EURC`  | EUR |   \$31.07M | Aerodrome Slipstream | `EURC/WETH` 0.05%   | Base      |              \$683k |    \$3.05M |
+| `XSGD`  | SGD |    \$1.89M | Aerodrome Slipstream | `XSGD/USDC` 0.01%   | Base      |              \$451k |     \$3.4k |
+| `EURCV` | EUR |    \$1.73M | Uniswap v3           | `EUROC/EURCV` 0.01% | Ethereum  |             \$5.91M |         ~0 |
+| `VCHF`  | CHF |     \$302k | ICPSwap              | `VCHF/ICP`          | ICP       |              \$485k |     \$145k |
+| `AUDM`  | AUD |     \$156k | Uniswap v4           | `AUDM/USDT` 0.01%   | Ethereum  |             \$66.8k |        \$0 |
+| `CADC`  | CAD |    \$71.8k | Aerodrome Slipstream | `CADC/USDC` 0.05%   | Base      |              \$133k |       none |
+| `AUDD`  | AUD |    \$32.7k | First Ledger         | `AUDD/XRP`          | XRPL      |              \$3.0k |       none |
+| `TGBP`  | GBP |    \$24.0k | Aerodrome Slipstream | `tGBP/USDC` 0.05%   | Base      |              \$293k |       \$84 |
+| `MYRC`  | MYR |    \$23.4k | Uniswap v3           | `MYRC/USDT` 0.3%    | Arbitrum  |              \$125k |    \$14.6k |
+| `IDRX`  | IDR |    \$15.8k | Aerodrome Slipstream | `IDRX/frxUSD`       | Base      |             \$81.6k |       \$68 |
+| `EURAU` | EUR |    \$15.3k | Aerodrome Slipstream | `EURAU/USDC` 0.05%  | Base      |              \$141k |     \$2.3k |
+| `BRZ`   | BRL |    \$11.6k | Oku Trade            | `BRZ/USDC.e` 0.05%  | Gnosis    |             \$40.7k |       none |
+| `cNGN`  | NGN |     \$5.7k | Uniswap v3           | `USDT/cNGN` 0.01%   | Celo      |             \$57.8k |       none |
+| `ZARP`  | ZAR |      \$992 | Uniswap v3           | `ZARP/USDC` 0.05%   | Ethereum  |             \$24.8k |        \$9 |
+| `MXNe`  | MXN |      \$124 | Orca                 | `MXNe/CETES`        | Solana    |              \$180k |      \$113 |
+| `VGBP`  | GBP |      \$111 | Raydium CLMM         | `VGBP/USDC`         | Solana    |             \$78.9k |      \$104 |
+| `GYEN`  | JPY |       \$73 | Uniswap v4           | `GYEN/USDC` 0.008%  | Arbitrum  |              \$9.7k |       none |
+| `TRYB`  | TRY |        \$3 | Trader Joe           | `TRYB/USDC.e`       | Avalanche |                \$66 |       none |
+| `ZARU`  | ZAR |         ~0 | *none genuine*       | —                   | —         |                   — |       none |
 
 **Two spec assumptions did not survive the measurement.** AUDD's "actual
 on-chain settlement venue" is Aerodrome by *depth* — $36.5k of reserve
@@ -959,9 +983,11 @@ in AUDD/USDC against the XRPL pool's $3.0k — but not by *volume*: First
 Ledger's AUDD/XRP turns over $25.4k/day against Aerodrome's $5.7k
 combined. The claim is half right, and which half holds depends on
 whether the question is where AUDD *sits* or where it *moves*. And CADC,
-prioritized ahead of MXNe for this pass, has **no Solana pool at all**
-despite carrying a roster mint; 98% of its \$71.8k/day is one Aerodrome
-pool.
+prioritized ahead of MXNe for this pass, returned **no Solana pool in
+the probe at all** despite carrying a roster mint; 98% of its \$71.8k a
+day is one Aerodrome pool. Per the first caveat that is a capped
+search's silence rather than a proof — but it is silence where every
+comparable roster token returned something.
 
 **Three buckets, reasoning recorded.**
 
@@ -980,7 +1006,11 @@ pool.
    62% of its entire global volume — the most Solana-native token on the
    roster, at a trivial absolute size. This read routes to customer
    development, not to the feed roster.
-1. **Ignorable** — the remaining thirteen, too thin to be either.
+1. **Ignorable** — the remaining fourteen, too thin to be either.
+   `EURC` and `VCHF` appear in both bucket 1 and bucket 2, so the five
+   classified tokens are `EURC`, `XSGD`, `EURCV`, `VCHF` and `MYRC`, and
+   19 − 5 leaves fourteen. `ZARU` is counted among them on the strict
+   reading that a token with no venue found is trivially ignorable.
 
 **The earns-a-collector rule, stated.** A venue becomes an ingestion
 target only when its volume *and* depth make it a usable basis input
@@ -992,8 +1022,8 @@ found it nearly everywhere.
 
 **The default expectation held.** On-chain volumes are small and
 FX-relative pricing dominates. Of nineteen roster stablecoins, three
-clear $1M/day, two more clear $150k, and \*\*twelve sit under $25k/day** —
-six of those under $1k, which is not a market so much as a listing.
+clear $1M/day and two more clear $150k. Twelve sit under $25k a day, and
+six of those under $1k — which is not a market so much as a listing.
 
 **Six markets have no measurable basis at all**, which generalizes the
 MXNe finding rather than repeating it. `ZARP`, `MXNe`, `VGBP`, `GYEN`,
