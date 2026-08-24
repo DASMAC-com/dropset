@@ -330,15 +330,27 @@ CREATE TABLE maker_legs (
 
 CREATE INDEX maker_legs_ts_idx ON maker_legs (ts);
 
--- Current status of every registered feed source, upserted in place.
+-- Current status of every registered *polled* feed source, upserted in
+-- place.
 --
 -- Written by the framework's own metrics seam, so a source that is merely
 -- *registered* gets a row with no per-feed wiring — a later venue adapter
 -- (Orca / Raydium / Aerodrome) appears here the first time it polls.
 --
+-- "Polled" is the load-bearing word, and a **push** source is deliberately
+-- excluded rather than merely absent. The runner reports a batch when the
+-- source yields one, and a streaming source yields only when its transport
+-- delivers — so a push source's `last_ok_at` would track the last *record*,
+-- not the last time the transport was known good. The maker's fill
+-- subscription is the live example: on a market with no fills for half an
+-- hour its row would age out and the staleness rule would page about a
+-- price feed, which it is not. No threshold repairs that, because silence
+-- is a push source's healthy state. Such a source needs its own liveness
+-- signal, and this table is not it.
+--
 -- Deliberately last-state rather than a history. The question this answers
--- is "is this poller alive right now", which the TUI's feed-health pane and
--- the staleness alert both ask of the latest state only; keeping a row per
+-- is "is this poller alive right now", which the staleness alert and the
+-- feed-health panel both ask of the latest state only; keeping a row per
 -- poll would grow without bound at the poll cadences (5 s for Hermes) to
 -- serve a question nothing asks.
 --

@@ -275,15 +275,21 @@ Two authoring notes, both the kind that fail silently:
   a table frame is not evaluated per series, and per-series is exactly
   what the three multi-dimensional rules (per feed, per market) need.
 
-**None of this watches a default localnet run.** Maker telemetry is off
-unless `DROPSET_DATABASE_URL` is set, which the plain localnet path does
-not set — so on a bare `make demo` the bot writes no rows, every panel
-here is empty, and every rule sits at `NoData`, which these rules treat
-as healthy on purpose. That is the right default (a dashboard outage must
-never become a trading outage) but it means "the alerts are quiet" proves
-nothing until the bot is actually pointed at a database. Check the
-heartbeat panel first; if it reads `No data`, nothing below it is
-evidence of anything.
+**Whether any of this is watching depends on how the maker was started,
+and the two paths differ.** The compose `maker-bot` service sets
+`DROPSET_DATABASE_URL` with a default pointing at the stack's own
+Postgres, so telemetry is **on** for a compose-run maker; unset that
+variable to turn it off. A maker run on the host — a bare
+`cargo run` of the bot — sets nothing, so telemetry is **off** there
+unless you export it yourself.
+
+That difference decides how to read an empty dashboard, and it inverts
+between the two. Under compose, an empty heartbeat panel is a **real
+fault** — the bot is gone, or its writes are failing. On the host path
+it is the expected default and proves nothing. Either way, check the
+heartbeat panel first: these rules treat `NoData` as healthy on purpose
+(a dashboard outage must never become a trading outage), so "the alerts
+are quiet" is only evidence once you know rows are arriving.
 
 Note the alerting mount is why `provisioning/` subdirectories are
 mounted by name — see **The tree** above.

@@ -272,13 +272,49 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         .ws_url
         .clone()
         .unwrap_or_else(|| ws_url_from_rpc(&cfg.rpc_url));
-    let fills = fills::spawn(ws_url, cfg.rpc_url.clone(), leader.pubkey())
-        .map(|source| spawn_feed(&rt, source, RunConfig::default(), &telemetry));
+    // `HealthRow::Skip`: a push source's silence is its healthy state, so a
+    // staleness row for it would page falsely on any quiet market. See
+    // `HealthRow`.
+    let fills = fills::spawn(ws_url, cfg.rpc_url.clone(), leader.pubkey()).map(|source| {
+        spawn_feed(
+            &rt,
+            source,
+            RunConfig::default(),
+            &telemetry,
+            HealthRow::Skip,
+        )
+    });
 
     // The runtime must outlive the supervisor loop that reads its channels; it
     // does — `run_supervisor` runs until the process is killed, and `rt` is held
     // in this frame the whole time.
     tasks::run_supervisor(feeds, cfg.clone(), contexts, fills)
+}
+
+/// Whether a spawned source contributes a `feed_health` row.
+///
+/// Every **polled** source should: that table plus its staleness rule is how
+/// a silent venue is noticed, and auto-registration is the point of driving
+/// them all through one seam.
+///
+/// A **push** source must not, and the reason is that staleness is not
+/// defined for it. `ChannelSource::next` blocks until a record arrives, so
+/// the runner reports a batch only when the transport delivers one — for the
+/// fill subscription that means the health row's last-success timestamp
+/// tracks *the last trade*, not the last time the socket was known good. On a
+/// market that simply has no fills for half an hour, which is the ordinary
+/// localnet state and common on a thin real market, that row ages out and the
+/// generic stale-feed rule pages saying a **price** feed died, pointing the
+/// operator at the wrong panel entirely. No threshold fixes it: silence is
+/// this source's healthy state, so nothing distinguishes a dead socket from a
+/// quiet market. The honest position is that this table does not cover push
+/// sources, and a dead fill socket needs its own signal rather than a
+/// misapplied one.
+enum HealthRow {
+    /// Report liveness — every polled price source.
+    Report,
+    /// Report nothing, for a push source whose silence is normal.
+    Skip,
 }
 
 /// Spawn a feeds `source` on `rt`, forwarding its records onto an in-process
@@ -288,18 +324,21 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
 /// here (as `feeds::run` does) would swallow the signal that stops the
 /// synchronous tick loop.
 ///
-/// Every source spawned here is driven through `run_until_with_metrics` with a
-/// health recorder attached, which is what makes the `feed_health` table
-/// complete by construction: the recorder keys on the source's own name, so a
-/// venue adapter added later reports without this function learning anything
-/// about it. When telemetry is disabled the plain `run_until` is used, so a
-/// run with no database costs nothing rather than reporting into a dead
-/// channel.
+/// A polled source spawned here is driven through `run_until_with_metrics`
+/// with a health recorder attached, which is what makes the `feed_health`
+/// table complete by construction: the recorder keys on the source's own name,
+/// so a venue adapter added later reports without this function learning
+/// anything about it. When telemetry is disabled the plain `run_until` is
+/// used, so a run with no database costs nothing rather than reporting into a
+/// dead channel.
+///
+/// `health` is what a **push** source opts out with — see [`HealthRow`].
 fn spawn_feed<S>(
     rt: &Runtime,
     source: S,
     cfg: RunConfig,
     telemetry: &Telemetry,
+    health: HealthRow,
 ) -> broadcast::Receiver<S::Record>
 where
     S: Source + Send + 'static,
@@ -307,7 +346,11 @@ where
 {
     let (sink, rx) = forward_channel(FEED_CHANNEL_CAP);
     let sinks: Vec<Box<dyn Sink<S::Record>>> = vec![Box::new(sink)];
-    match telemetry.health_reporter() {
+    let reporter = match health {
+        HealthRow::Report => telemetry.health_reporter(),
+        HealthRow::Skip => None,
+    };
+    match reporter {
         Some(metrics) => {
             rt.spawn(async move {
                 if let Err(e) = run_until_with_metrics(
@@ -438,6 +481,7 @@ fn spawn_price_feeds(
             error_backoff: FEED_ERROR_BACKOFF,
         },
         telemetry,
+        HealthRow::Report,
     );
     let kraken = spawn_feed(
         rt,
@@ -447,6 +491,7 @@ fn spawn_price_feeds(
             error_backoff: FEED_ERROR_BACKOFF,
         },
         telemetry,
+        HealthRow::Report,
     );
     // Coinbase's ticker endpoint is per product, so a roster of N listed tokens
     // is N sources rather than one batched poll. They share **one cloned
@@ -466,6 +511,7 @@ fn spawn_price_feeds(
                     error_backoff: FEED_ERROR_BACKOFF,
                 },
                 telemetry,
+                HealthRow::Report,
             )
         })
         .collect::<Vec<_>>();
@@ -477,6 +523,7 @@ fn spawn_price_feeds(
             error_backoff: FEED_ERROR_BACKOFF,
         },
         telemetry,
+        HealthRow::Report,
     );
     // Wired whenever any selected market names a CMC id — no credential to
     // gate on, since this adapter is on the keyless public route.
@@ -491,6 +538,7 @@ fn spawn_price_feeds(
                 error_backoff: FEED_ERROR_BACKOFF,
             },
             telemetry,
+            HealthRow::Report,
         ))
     };
     let frankfurter = spawn_feed(
@@ -501,6 +549,7 @@ fn spawn_price_feeds(
             error_backoff: FEED_ERROR_BACKOFF,
         },
         telemetry,
+        HealthRow::Report,
     );
     Ok(FeedReceivers {
         pyth,

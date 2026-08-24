@@ -4,8 +4,14 @@
 # hosted stack alert on identical conditions, the same way the dashboards
 # beside them are committed rather than click-configured.
 #
-# Three rules, one per failure this issue names: the bot stopped, a feed
-# stopped, a market stopped quoting normally.
+# Five rules. Three cover the failures this issue names — the bot stopped, a
+# feed stopped, a market stopped quoting normally — and two cover ways a
+# market can stop quoting while all three of those read healthy: its ticks
+# failing, and its composition paused. Both were added after tracing what an
+# operator actually sees, and both are the same shape of gap: rows keep
+# arriving, so the heartbeat is alive; the feeds answer, so staleness is
+# quiet; and the kill-switch policy is never reached, so nothing is degraded
+# or halted. A market can be dark and matchless with every signal green.
 #
 # WHAT PROVISIONING BUYS AND WHAT IT DOES NOT. These rules evaluate and
 # reach Firing in Grafana's Alerting UI with no further setup, which is what
@@ -26,14 +32,14 @@
 # Each rule is a three-node chain: the SQL query, a `reduce` to one value per
 # series, then a `threshold`. The reduce is not redundant even for a
 # single-row query — a threshold applied straight to a table frame is not
-# evaluated per series, and it is the per-series behavior the two
-# multi-dimensional rules depend on.
+# evaluated per series, and it is the per-series behavior the four
+# multi-dimensional rules depend on (one per feed, three per market).
 apiVersion: 1
 groups:
 - folder: 'Dropset'
   # A minute, against a 5 s tick: fast enough that the operator learns of a
   # dead maker within a minute of its `for` elapsing, slow enough that the
-  # three queries here are nothing beside the ingestion load on the same box.
+  # five queries here are nothing beside the ingestion load on the same box.
   interval: '1m'
   name: 'maker-operations'
   orgId: 1
@@ -225,13 +231,18 @@ groups:
   # The operator needs to know it happened, not only that it is still
   # happening.
   #
-  # Scoped to `degraded` and `Halt` to match the deliverable. Two of the
-  # other not-quoting outcomes deliberately do not page here: `Pause` is
-  # already implied by the feed-stale rule that causes it, and `Frozen` is
-  # operator-initiated, so both would mean one incident paging twice. A tick
-  # *failure* is a different case and gets its own rule below — folding it in
-  # here would conflate "the strategy took a risk action" with "the bot is
-  # broken", which want different responses.
+  # Scoped to `degraded` and `Halt` to match the deliverable. The other
+  # not-quoting outcomes each get their own treatment rather than being
+  # folded in here, because they want different responses: a tick *failure*
+  # is "the bot is broken", a *pause* is "the bot has no usable price", and
+  # neither is "the strategy took a risk action". Both have their own rules
+  # below.
+  #
+  # `Frozen` is the one deliberately left unpaged, and the reason is that it
+  # is operator-initiated: paging on it would fire on every intentional
+  # freeze, which is how a rule teaches its operator to ignore it. It stays
+  # visible on the tick-outcome timeline. The cost is honest — a vault frozen
+  # and then forgotten raises nothing — and is accepted.
   - annotations:
       description: >-
         A market ran degraded or hit a kill-switch halt in the last five
@@ -391,4 +402,98 @@ groups:
     noDataState: 'OK'
     title: 'Market failing its ticks'
     uid: 'maker-tick-failing'
+  # Composition paused, per market. The last of the three "quoting nothing
+  # while everything reads healthy" gaps, and the least obvious of them.
+  #
+  # `Pause` means no usable reference, so the maker quotes nothing — and once
+  # the on-chain reference ages past its staleness bound the resting book is
+  # killed, so the market is not merely idle but dark. None of the other four
+  # rules covers it: rows arrive every tick (heartbeat alive), the pause never
+  # reaches the kill-switch policy (`degraded` false, `action` never `Halt`),
+  # and the tick itself succeeded (`tick_error` NULL).
+  #
+  # It is NOT implied by the feed-stale rule, which is the tempting
+  # assumption and is wrong twice over. First on timing: that rule needs
+  # 1800 s of silence plus a 5 m hold, while the engine's leg-staleness bound
+  # is far shorter — so an ordinary dead feed leaves a window of tens of
+  # minutes in which every market is paused with nothing firing. Second,
+  # it can never fire at all for a *stuck publisher*: `last_ok_at` records a
+  # successful poll, not a fresh reading, so a venue answering 200 with a
+  # frozen publish timestamp keeps that column current forever while the
+  # engine ages the leg off the publisher's own clock and pauses. That case
+  # has no feed-side signal anywhere; this rule is the only thing that sees
+  # it.
+  - annotations:
+      description: >-
+        A market's composition is paused for more than half of the last five
+        minutes — it has no usable reference, so it is quoting nothing, and
+        once the on-chain reference ages out its resting book is killed too.
+        Check the composition-regime panel for which leg is missing and the
+        leg-consensus panel for whether a source is stuck rather than
+        absent: a feed answering with a frozen timestamp leaves the feed
+        health table looking entirely healthy.
+      summary: 'A market is paused and not quoting'
+    condition: 'C'
+    data:
+    - datasourceUid: 'dropset-postgres'
+      model:
+        editorMode: 'code'
+        format: 'table'
+        intervalMs: 60000
+        maxDataPoints: 1
+        rawQuery: true
+        rawSql: |-
+          SELECT
+          market,
+          (count(*) FILTER (WHERE action = 'Pause'))::double precision
+          / greatest(count(*), 1) AS paused_fraction
+          FROM maker_telemetry
+          WHERE ts > extract(epoch FROM now()) - 300
+          GROUP BY market
+        refId: 'A'
+      refId: 'A'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        expression: 'A'
+        reducer: 'last'
+        refId: 'B'
+        type: 'reduce'
+      refId: 'B'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        conditions:
+        - evaluator:
+            params:
+            - 0.5
+            type: 'gt'
+          operator:
+            type: 'and'
+          query:
+            params:
+            - 'B'
+          reducer:
+            type: 'last'
+          type: 'query'
+        expression: 'B'
+        refId: 'C'
+        type: 'threshold'
+      refId: 'C'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    execErrState: 'Error'
+    # A pause on a single tick is ordinary — a feed blips and the next tick
+    # composes again. The window plus this hold is what distinguishes that
+    # from a market that has stopped pricing.
+    for: '5m'
+    # No rows is the heartbeat rule's business, not this one's.
+    noDataState: 'OK'
+    title: 'Market paused and not quoting'
+    uid: 'maker-paused'
 ...
