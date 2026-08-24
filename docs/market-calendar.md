@@ -424,21 +424,29 @@ would look for it: the running database also holds a `feed_health`
 table. When this section was written, nothing on `main` referenced it
 — not the source, not the migrations, both searched. It is **not** an
 orphan, and it must not be dropped. It is created by the maker
-telemetry migration (0003, arriving with the maker-telemetry PR #348),
-which was applied to the shared development database ahead of that
-merge; the applied checksum matched that branch's file exactly. Its
-writer is the maker bot's telemetry path; its readers are the Grafana
-operations dashboard and its alerting rules, all arriving in that same
-change.
+telemetry migration (numbered 0003 on that branch), which arrives with
+the maker-telemetry PR #348 and was applied to the shared development
+database ahead of that merge; the applied checksum matched the
+branch's file exactly. Its writer is the maker bot's telemetry path;
+its readers are the Grafana operations dashboard and its alerting
+rules, all arriving in that same change.
 
-If `main`'s migration sequence still shows a hole at 0003, that change
-has not landed yet and the number is reserved for it; once it lands,
-the sequence closes and `docs/data-feeds.md` §8 carries the table's
-ownership row. Either way, the drop-or-reclaim this paragraph
-originally called for is settled as neither. The general lesson is the
-one worth keeping: a table with no references on `main` may be owned
-by an unmerged branch whose migration has not arrived yet, so check the
-open branches before concluding a table is abandoned.
+Until that PR merges, the table exists only on its branch and in the
+shared development database, and `main`'s migration sequence may show
+a hole where its migration sits; once it merges, `docs/data-feeds.md`
+§8 is where the telemetry tables' ownership is recorded. Either way,
+the drop-or-reclaim this paragraph originally called for is settled as
+neither.
+
+The hazard the original note raised still stands, and the
+investigation sharpened it: the table is unrelated to the calendar but
+is exactly where a feed-health consumer would reach by mistake — more
+so now that it is known to be live and maker-owned rather than
+abandoned. A calendar reader wanting feed staleness wants its own
+table, not this one. And the general lesson is worth keeping: a table
+with no references on `main` may be owned by an unmerged branch whose
+migration has not arrived yet, so check the open branches before
+concluding a table is abandoned.
 
 ### 4.2 Reconciling the sibling documents
 
