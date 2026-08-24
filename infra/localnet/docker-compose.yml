@@ -319,7 +319,7 @@ services:
     environment:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
-      PRODUCT_IDS: '${KRAKEN_PRODUCT_IDS:-USDC-USD,EURC-USD}'
+      PRODUCT_IDS: '${KRAKEN_PRODUCT_IDS:-USDC-USD,EURC-USD,EURC-EUR}'
       RUST_LOG: 'info'
     restart: 'unless-stopped'
   maker-bot:

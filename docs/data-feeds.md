@@ -673,9 +673,13 @@ oversights — each was probed and ruled out on evidence:
   than read from the issuer: Kraken's `USDC/USD` is a real market print of
   the peg, and it is the leg that is **wired**. Kraken also lists `EURC/EUR`
   — the cross redemption arbitrage enforces directly, and the natural
-  issuer-rate proxy — but nothing subscribes to it yet: the maker's roster
-  asks only for `<token>/USD` plus the shared `USDC/USD`. A credentialed
-  Circle Mint feed supersedes both when keys exist.
+  issuer-rate proxy — which the tick collector now **records**, though no
+  consumer reads it: the maker's roster still asks only for `<token>/USD`
+  plus the shared `USDC/USD`. It is collected ahead of its consumer because
+  the poll is batched, so the pair costs no extra request, and a rate cannot
+  be backfilled — the venue serves the present, so an uncollected week is
+  gone for good. A credentialed Circle Mint feed supersedes both when keys
+  exist.
 - **OANDA is credentialed but the credential is free**, which is why it is now
   wired rather than deferred: a practice account issues a v20 token at no cost
   and serves minute FX bars back **years**. Pyth Hermes remains the streaming
