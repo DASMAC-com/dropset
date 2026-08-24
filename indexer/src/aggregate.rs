@@ -12,8 +12,8 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Identifies one take: the transaction signature and the index of the
-/// instruction within it, which is what every fill leg of that take shares.
+/// Identifies one take: the transaction signature and that transaction's
+/// index within its block — the pair every fill leg of the take shares.
 type TakeKey = (String, i64);
 
 /// Group fill legs into takes by `(signature, txn_index)`, summing the
@@ -33,6 +33,8 @@ pub fn group_takes(fills: &[FillRow]) -> Vec<Take> {
             let total_fill_quote: Decimal = legs.iter().map(|l| l.fill_quote).sum();
             let total_taker_fee: Decimal = legs.iter().map(|l| l.taker_fee_atoms).sum();
             let first = legs[0];
+            // Every leg of a take comes from one transaction, so they all
+            // carry its slot.
             let slot = first.slot;
             let avg_price = if total_fill_base.is_zero() {
                 None
