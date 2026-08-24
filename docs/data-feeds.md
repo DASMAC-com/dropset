@@ -674,12 +674,13 @@ oversights — each was probed and ruled out on evidence:
   the peg, and it is the leg that is **wired**. Kraken also lists `EURC/EUR`
   — the cross redemption arbitrage enforces directly, and the natural
   issuer-rate proxy — which the tick collector now **records**, though no
-  consumer reads it: the maker's roster still asks only for `<token>/USD`
+  model leg reads it: the maker's roster still asks only for `<token>/USD`
   plus the shared `USDC/USD`. It is collected ahead of its consumer because
-  the poll is batched, so the pair costs no extra request, and a rate cannot
-  be backfilled — the venue serves the present, so an uncollected week is
-  gone for good. A credentialed Circle Mint feed supersedes both when keys
-  exist.
+  the poll is batched, so the pair costs no extra request, and the series
+  cannot be reconstructed afterwards: Kraken's keyless OHLC serves only a
+  rolling window (~12 hours of 1-minute bars, 30 days of hourly), so tick
+  resolution exists only where something was already recording. A
+  credentialed Circle Mint feed supersedes both when keys exist.
 - **OANDA is credentialed but the credential is free**, which is why it is now
   wired rather than deferred: a practice account issues a v20 token at no cost
   and serves minute FX bars back **years**. Pyth Hermes remains the streaming
