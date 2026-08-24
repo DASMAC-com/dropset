@@ -226,9 +226,11 @@ decides what the leg is worth.
 
 #### Attribution
 
-The bot surfaces, per leg per market, how many sources answered, which one
-diverged, and — the contract this section states in full — **which sources the
-value is actually composed of, and in what proportion**.
+The bot surfaces, per leg per market, how many sources answered and which one
+diverged. The resolver additionally *exposes* — for a telemetry or dashboard
+layer to surface — **which sources the value is actually composed of, and in
+what proportion**. That attribution is the contract this section states in
+full, so a later consumer does not have to infer it.
 
 Attribution is a **set with weights**, not a single name. The ladder had a
 well-defined "tier that answered" and consumers were built on it; under
@@ -238,16 +240,26 @@ lie dressed as data. The weights are **exact rather than heuristic**: every
 resolution is a linear combination of contributor values, so each case has one
 right answer.
 
-| resolution                           | contributors                            |
-| ------------------------------------ | --------------------------------------- |
-| a designated source anchoring alone  | that source at `1.0`                    |
-| a lone source, corroborated or not   | that source at `1.0`                    |
-| median, odd count                    | the middle source at `1.0`              |
-| median, even count                   | the two middle sources at `0.5` each    |
-| an agreeing pair                     | both at `0.5` — the even case, with two |
-| a dispersed pair with no designation | none; the leg resolves to nothing       |
+Every case is exact, and **the first row that applies wins**:
 
-Four properties bind any consumer of this:
+| resolution                                  | contributors                            |
+| ------------------------------------------- | --------------------------------------- |
+| a designated source that is not the outlier | that source at `1.0`                    |
+| a lone source, designated or not            | that source at `1.0`                    |
+| median, odd count                           | the middle source at `1.0`              |
+| median, even count                          | the two middle sources at `0.5` each    |
+| an agreeing pair                            | both at `0.5` — the even case, with two |
+| a dispersed pair, no designation surviving  | none; the leg resolves to nothing       |
+
+**That first row is a precedence rule, not a special case**, and reading it as
+"only when the source is alone" is the trap. A designation anchors whether or
+not anything corroborates it, so it overrides every median and pair row below:
+a designated member of an agreeing pair takes `1.0`, not `0.5`, and a
+designated source among three or four takes `1.0` even though a median exists.
+The one thing that displaces it is being **contradicted** — a designation that
+is itself the outlier is dropped, and the rows below then apply.
+
+Four further properties bind any consumer of this:
 
 - The weights **sum to 1 whenever the leg resolved to anything**, and the set
   is **empty whenever it did not**. An empty set means no value, never an
@@ -263,11 +275,22 @@ Four properties bind any consumer of this:
   source count and the contributor count legitimately differ.
 
 Each contributor also carries **its own reading's age**, which is diagnostic
-only. The leg's age remains the oldest age across *every healthy candidate* —
-including the zero-weight outer members — so a leg can be older than every
-contributor credited. Excluding the uncredited members would let a stale
-source vanish from the one number that polices staleness, so every freshness
-and staleness test keeps reading the leg's age, never a contributor's.
+only. How that relates to the leg's age differs **by arm**, and the intuitive
+reading is wrong in one of them:
+
+- Resolved to a **median**, the leg's age is the oldest across *every healthy
+  candidate*, including the zero-weight outer members — so a leg can be older
+  than every contributor credited. Excluding the uncredited members would let
+  a stale source vanish from the one number that polices staleness.
+- **Anchored** by a designated source, the others enter neither the value nor
+  its age: the leg carries the anchor's own age alone, and a stale
+  corroborator does not raise it. That is the same judgement as not letting
+  one move the value — the designation says this source stands without their
+  help.
+- A **lone** source is both at once, so the two readings coincide.
+
+Either way, every freshness and staleness test reads the leg's age, never a
+contributor's.
 
 Source names here are the **bare venue** vocabulary. That is not always the
 feed adapter's own source name: a venue whose endpoint is per *product* names

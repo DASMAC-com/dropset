@@ -226,6 +226,9 @@ impl Candidates {
         let mut ranked = healthy;
         let ranked = &mut ranked[..n];
         ranked.sort_by(|a, b| {
+            // The healthy set is compacted into slots `0..n` above, so no
+            // interior `None` reaches this comparator; the `INFINITY` arm only
+            // satisfies the type.
             let value = |c: &Option<Candidate>| c.map_or(f64::INFINITY, |c| c.reading.value);
             value(a)
                 .partial_cmp(&value(b))
@@ -318,7 +321,7 @@ impl Candidates {
             None if dispersed && n == 2 => (None, Contributors::none()),
             None => (
                 Some(representative(&healthy[..n], consensus)),
-                middle_of(&ranked[..n]),
+                middle_of(ranked),
             ),
         };
 
@@ -415,14 +418,24 @@ pub struct Contributor {
     /// no freshness or staleness test may read this field in its place — that
     /// would be reading a flattering view of the very set it exists to police.
     ///
-    /// Be exact about how the two relate, because the intuitive reading is
-    /// wrong: the leg's age is the oldest age across **every healthy
-    /// candidate**, not across the contributors. A median's outer members carry
-    /// no weight but were still part of the set that got judged, so a leg can
-    /// be older than every contributor named here. That is deliberate —
-    /// excluding the zero-weight members would let a stale outer source vanish
-    /// from the one number that polices staleness — but it means these ages
-    /// account for a contributor's own freshness, not necessarily the leg's.
+    /// Be exact about how the two relate, because it differs **by arm** and the
+    /// intuitive reading is wrong in one of them:
+    ///
+    /// - Resolved to a **median**, the leg's age is the oldest across *every
+    ///   healthy candidate*, including the outer members that carry no weight.
+    ///   They were still part of the set that got judged, so the leg can be
+    ///   older than every contributor named here — and excluding them would let
+    ///   a stale outer source vanish from the one number that polices staleness.
+    /// - **Anchored** by a designated source, the others neither enter the value
+    ///   nor its age: the leg carries the anchor's own age alone. A stale
+    ///   corroborator does *not* raise it, which is the same judgement as not
+    ///   letting one drag the value — the designation says this source stands
+    ///   without their help.
+    /// - A **lone** source is both at once, so the two readings coincide.
+    ///
+    /// Either way these ages account for a contributor's own freshness, not
+    /// necessarily the leg's, and no freshness or staleness test may read one in
+    /// place of [`Consensus::reading`]`.age`.
     pub age: Duration,
 }
 
@@ -493,7 +506,7 @@ impl Contributors {
 
     /// Whether the leg resolved to nothing.
     pub fn is_empty(&self) -> bool {
-        self.slots[0].is_none()
+        self.iter().next().is_none()
     }
 
     /// The one source that *is* this leg's value, when there is one.
@@ -541,22 +554,32 @@ pub struct Consensus {
     /// **empty whenever [`Consensus::reading`] is `None`**.
     ///
     /// This is attribution, and it is deliberately a *set* rather than a single
-    /// name (see [`Contributor`]). Every case is exact:
+    /// name (see [`Contributor`]). Every case is exact, and **the first row
+    /// that applies wins**:
     ///
     /// | resolution | contributors |
     /// |---|---|
-    /// | a designated source anchoring alone | that source at `1.0` |
-    /// | a lone source, corroborated or not | that source at `1.0` |
+    /// | a designated source that is not the outlier | that source at `1.0` |
+    /// | a lone source, designated or not | that source at `1.0` |
     /// | median, odd count | the middle source at `1.0` |
     /// | median, even count | the two middle sources at `0.5` each |
     /// | an agreeing pair | both at `0.5` — the even case with two |
-    /// | a dispersed pair with no designation | none; the leg resolves to nothing |
+    /// | a dispersed pair, no designation surviving | none; the leg resolves to nothing |
     ///
-    /// A dispersed set of three or more still yields contributors, because the
-    /// median still stands — that is what the robustness buys. The members
-    /// outside the middle bound the answer without entering it, so they carry
-    /// no weight and do not appear here; [`Consensus::n`] is the count that
-    /// includes them.
+    /// **The first row is a precedence rule, not a special case**, and reading
+    /// it as "only when the source is alone" is the trap: a designation anchors
+    /// whether or not anything corroborates it, so it overrides every median
+    /// and pair row below. A designated member of an agreeing pair takes `1.0`,
+    /// not `0.5`; a designated source among three takes `1.0` even though a
+    /// median exists. The one thing that displaces it is being **contradicted**
+    /// — a designation that is itself the outlier is dropped, and the rows
+    /// below then apply.
+    ///
+    /// A dispersed set of three or more still yields contributors, because
+    /// either a surviving designation anchors it or the median stands — that is
+    /// what the robustness buys. The members outside the middle bound the
+    /// answer without entering it, so they carry no weight and do not appear
+    /// here; [`Consensus::n`] is the count that includes them.
     ///
     /// Note what this is **not**: it names the sources to believe, where
     /// [`Consensus::outlier`] names the one to distrust. Reading either as the
@@ -564,7 +587,9 @@ pub struct Consensus {
     pub contributors: Contributors,
     /// The source furthest from the consensus, when the set is dispersed.
     pub outlier: Option<&'static str>,
-    /// How many healthy candidates contributed.
+    /// How many healthy sources were **judged** — not the number credited in
+    /// [`Consensus::contributors`]. A median's outer members are counted here
+    /// and carry no weight there, so the two legitimately differ.
     pub n: usize,
 }
 
@@ -585,6 +610,12 @@ fn median(sorted: &[f64]) -> f64 {
 /// the same ranking. The members outside the middle bound the answer without
 /// entering it — which is exactly the robustness a median buys — so they carry
 /// no weight and do not appear.
+///
+/// Reached only from [`Candidates::resolve`], where the healthy set is
+/// **compacted into its first `n` slots** and `n >= 2`, so neither `None` arm
+/// below can fire. They return an under-credited set rather than indexing
+/// because a panic on the quoting hot path would be the worse failure — but the
+/// packing is the actual guarantee here, not the fallback.
 fn middle_of(ranked: &[Option<Candidate>]) -> Contributors {
     let n = ranked.len();
     let Some(hi) = ranked.get(n / 2).copied().flatten() else {
@@ -997,7 +1028,8 @@ mod tests {
         assert!(!Candidates::none().any_invalid(STALE));
     }
 
-    /// The contributor set as `(source, weight)`, dominant first.
+    /// The contributor set as `(source, weight)`, in iteration order — which is
+    /// deliberately *not* a ranking; see [`Contributors::dominant`].
     fn credits(c: &Consensus) -> Vec<(&'static str, f64)> {
         c.contributors
             .iter()
@@ -1051,6 +1083,7 @@ mod tests {
             .push("kraken", Some(r(1.140)))
             .push("coingecko", Some(r(1.145)))
             .resolve(STALE, BAND);
+        assert_eq!(c.state, ConsensusState::Corroborated, "within the band");
         assert_eq!(credits(&c), [("kraken", 1.0)]);
         assert_eq!(c.n, 3, "all three were judged, one was credited");
     }
@@ -1063,8 +1096,25 @@ mod tests {
             .push("coingecko", Some(r(1.142)))
             .push("coinmarketcap", Some(r(1.145)))
             .resolve(STALE, BAND);
+        assert_eq!(c.state, ConsensusState::Corroborated, "within the band");
         assert_eq!(credits(&c), [("kraken", 0.5), ("coingecko", 0.5)]);
         assert_eq!(c.n, 4);
+    }
+
+    #[test]
+    fn a_dispersed_even_set_still_credits_its_middle_pair() {
+        // The even-count twin of `a_dispersed_majority_still_credits_its_median`.
+        // Four or more survive one bad source exactly as three do, so the leg
+        // keeps a usable value and must keep its attribution with it.
+        let c = Candidates::none()
+            .push("coinbase", Some(r(1.130)))
+            .push("kraken", Some(r(1.140)))
+            .push("coingecko", Some(r(1.142)))
+            .push("coinmarketcap", Some(r(1.400)))
+            .resolve(STALE, BAND);
+        assert_eq!(c.state, ConsensusState::Dispersed);
+        assert_eq!(c.outlier, Some("coinmarketcap"));
+        assert_eq!(credits(&c), [("kraken", 0.5), ("coingecko", 0.5)]);
     }
 
     #[test]
@@ -1099,6 +1149,80 @@ mod tests {
             .resolve(STALE, BAND);
         assert_eq!(credits(&c), [("pyth-hermes", 1.0)]);
         assert_eq!(c.reading.unwrap().value, 1.140);
+    }
+
+    #[test]
+    fn a_designation_outranks_every_median_and_pair_rule() {
+        // The precedence the contract table states, and the thing most likely
+        // to be misread off it: a designation does not merely cover the
+        // "anchoring alone" case, it OVERRIDES the median and pair rows. Both
+        // sets below would credit differently under those rows, so each one
+        // fails if the anchor arm ever stops being matched first.
+        let agreeing_pair = Candidates::none()
+            .push_trusted("pyth-hermes", Some(r(1.140)))
+            .push("frankfurter", Some(r(1.142)))
+            .resolve(STALE, BAND);
+        assert_eq!(agreeing_pair.state, ConsensusState::Agreed);
+        assert_eq!(
+            credits(&agreeing_pair),
+            [("pyth-hermes", 1.0)],
+            "not 0.5/0.5 — the designation anchors the pair"
+        );
+        assert_eq!(
+            agreeing_pair.reading.unwrap().value,
+            1.140,
+            "not the midpoint"
+        );
+
+        // Four sources, so the even-median row would credit the middle PAIR.
+        let even_median = Candidates::none()
+            .push_trusted("pyth-hermes", Some(r(1.130)))
+            .push("frankfurter", Some(r(1.140)))
+            .push("coingecko", Some(r(1.142)))
+            .push("coinmarketcap", Some(r(1.145)))
+            .resolve(STALE, BAND);
+        assert_eq!(
+            credits(&even_median),
+            [("pyth-hermes", 1.0)],
+            "not the middle pair at 0.5 each"
+        );
+        assert_eq!(even_median.n, 4, "all four judged, one credited");
+    }
+
+    #[test]
+    fn a_designation_rescues_a_dispersed_pair_that_would_otherwise_go_dark() {
+        // The empty-set row is scoped to a dispersed pair with NO designation,
+        // and this is why. For a pair the outlier is `partner_of` the trusted
+        // source — the un-designated one by construction — so the anchor
+        // survives and the leg keeps a value instead of resolving to nothing.
+        // Nothing else pins that, so a regression in the pair outlier rule
+        // would silently dark this leg.
+        let c = Candidates::none()
+            .push_trusted("pyth-hermes", Some(r(1.140)))
+            .push("frankfurter", Some(r(0.60)))
+            .resolve(STALE, BAND);
+        assert_eq!(c.state, ConsensusState::Dispersed);
+        assert_eq!(c.outlier, Some("frankfurter"));
+        assert_eq!(credits(&c), [("pyth-hermes", 1.0)]);
+        assert_eq!(c.reading.unwrap().value, 1.140, "the leg is not dark");
+    }
+
+    #[test]
+    fn an_anchored_leg_carries_only_the_anchors_age() {
+        // The arm where the median's age rule does NOT apply. An anchor's
+        // corroborators do not enter the value, and they do not enter its age
+        // either — so a stale corroborator cannot age an anchored leg, which is
+        // the same judgement as not letting one move its value.
+        let c = Candidates::none()
+            .push_trusted("pyth-hermes", Some(Reading::new(1.140, secs(2))))
+            .push("frankfurter", Some(Reading::new(1.141, secs(120))))
+            .resolve(STALE, BAND);
+        assert_eq!(credits(&c), [("pyth-hermes", 1.0)]);
+        assert_eq!(
+            c.reading.unwrap().age,
+            secs(2),
+            "the anchor's own age, NOT the oldest healthy candidate's"
+        );
     }
 
     #[test]
@@ -1205,10 +1329,12 @@ mod tests {
     #[test]
     fn a_contributor_age_is_its_own_and_can_be_younger_than_the_leg() {
         // The distinction this field exists for, and the one that would
-        // otherwise be misread. The leg's age is the oldest across *every
-        // healthy candidate* — including the outer members that carry no
-        // weight — so it can exceed every credited age. A staleness gate must
-        // keep reading the leg; these ages only explain a contributor.
+        // otherwise be misread. On a **median** the leg's age is the oldest
+        // across every healthy candidate — including the outer members that
+        // carry no weight — so it can exceed every credited age. (The anchor
+        // arm behaves differently; `an_anchored_leg_carries_only_the_anchors_age`
+        // pins that.) A staleness gate must keep reading the leg; these ages
+        // only explain a contributor.
         let c = Candidates::none()
             .push("stale-outer", Some(Reading::new(1.130, secs(90))))
             .push("fresh-middle", Some(Reading::new(1.140, secs(1))))
