@@ -12,10 +12,14 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Identifies one take: the transaction signature and the index of the
+/// instruction within it, which is what every fill leg of that take shares.
+type TakeKey = (String, i64);
+
 /// Group fill legs into takes by `(signature, txn_index)`, summing the
 /// per-leg figures into the take-level totals interface.md §1 derives.
 pub fn group_takes(fills: &[FillRow]) -> Vec<Take> {
-    let mut groups: BTreeMap<(String, i64), Vec<&FillRow>> = BTreeMap::new();
+    let mut groups: BTreeMap<TakeKey, Vec<&FillRow>> = BTreeMap::new();
     for f in fills {
         groups
             .entry((f.signature.clone(), f.txn_index))
@@ -29,7 +33,7 @@ pub fn group_takes(fills: &[FillRow]) -> Vec<Take> {
             let total_fill_quote: Decimal = legs.iter().map(|l| l.fill_quote).sum();
             let total_taker_fee: Decimal = legs.iter().map(|l| l.taker_fee_atoms).sum();
             let first = legs[0];
-            let slot = legs.iter().map(|l| l.slot).max().unwrap_or(first.slot);
+            let slot = first.slot;
             let avg_price = if total_fill_base.is_zero() {
                 None
             } else {
@@ -63,7 +67,7 @@ pub async fn run_once(store: &Store, batch_limit: i64) -> anyhow::Result<usize> 
         return Ok(0);
     }
 
-    let touched: BTreeSet<(String, i64)> = new_fills
+    let touched: BTreeSet<TakeKey> = new_fills
         .iter()
         .map(|f| (f.signature.clone(), f.txn_index))
         .collect();
