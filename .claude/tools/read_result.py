@@ -34,6 +34,14 @@ Usage::
     # What changed between two fetches of the same object?
     python3 .claude/tools/read_result.py <new> --field description --diff <old>
 
+    # One scalar, no mode needed — the commonest thing this is wanted for
+    python3 .claude/tools/read_result.py <file> --field status
+
+``--field`` alone prints a field of at most ``FIELD_PRINT_MAX_LINES`` lines and
+names a mode for anything longer. That case — reading one scalar back out of a
+spilled MCP echo, an issue's ``status`` after a state-only write — used to error
+with "pick a mode" and had to be spelled ``--field status --slice 1:1``.
+
 Every mode prints to stdout and a one-line summary to stderr. Prefer the
 narrowest mode that answers the question — ``--headings`` to navigate,
 ``--section`` or ``--slice`` to read, ``--grep`` to locate, and ``--count`` when
@@ -65,6 +73,13 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 # those end a section early — so `--section` returned a SILENTLY TRUNCATED block
 # and `--headings` listed phantom entries. Caught in review.
 FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
+
+# How long a field may be before ``--field`` alone refuses to print it and names
+# a mode instead. Past this the modes are the point: the payload was spilled to
+# disk precisely to stay out of a transcript, and dumping it whole would undo
+# that. The commonest real use is one scalar — an issue's ``status`` after a
+# state-only write — which is why passing ``--field`` by itself works at all.
+FIELD_PRINT_MAX_LINES = 20
 
 
 class ReadResultError(Exception):
@@ -319,7 +334,9 @@ def run(argv: list[str]) -> int:
         "--field",
         default=None,
         metavar="DOTTED",
-        help="dotted path into the payload parsed as JSON (e.g. description)",
+        help="dotted path into the payload parsed as JSON (e.g. description). "
+        f"May be passed alone to print a field of at most "
+        f"{FIELD_PRINT_MAX_LINES} lines",
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
@@ -381,9 +398,19 @@ def run(argv: list[str]) -> int:
         old = payload(Path(args.diff), args.field).splitlines()
         out = diff(old, lines, n, args.diff)
         summary = f"{len(out)} diff line(s)" if out else "identical"
+    elif args.field:
+        if len(lines) > FIELD_PRINT_MAX_LINES:
+            raise ReadResultError(
+                f"field {args.field} is {len(lines)} lines, too long to print "
+                f"(over {FIELD_PRINT_MAX_LINES}) — pick a mode: --headings, "
+                f"--section, --grep, --slice, --diff, or --count"
+            )
+        out = lines
+        summary = f"field {args.field}, {len(lines)} line(s)"
     else:
         raise ReadResultError(
-            "pick a mode: --headings, --section, --grep, --slice, --diff, or --count"
+            "pick a mode: --headings, --section, --grep, --slice, --diff, or "
+            "--count. (--field may be passed alone for a short field.)"
         )
 
     for line in out:

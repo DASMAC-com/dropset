@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` Backlog task under the fewest-coherent-PRs rule — one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line under a combined `**Touches**:` — then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
+description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` Backlog task under the fewest-coherent-PRs rule — one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line — then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -78,6 +78,14 @@ python3 .claude/tools/trim_levers.py list
 
 If nothing is parked, report that and stop; there is no fold to do.
 
+That stop condition is **reachable**, which it once was not. `list`
+filters to **open** levers, not merely milestoned ones, so a lever closed
+as a recorded rejection drops out of the pool. Before that filter the
+pool always looked non-empty once any rejection existed — one real run
+returned 12 rows of which **9 were canceled rejections**, and only 3 were
+foldable — so this step could never fire and step 2 was invited to fold
+settled work.
+
 **2. Read only the bodies you are going to fold.** The listing gives you
 each lever's identifier, title and state. Decide from the titles which
 levers this pass folds, then read *those* bodies and no others. A parked
@@ -102,10 +110,13 @@ carries:
 
 - one **`**Fingerprint**: <domain>:<lever-slug>`** line **per lever**,
   copied from the parked original so later dedup still matches
-  individually, and
-- a single **`**Touches**:`** line that **unions** every folded lever's
-  globs (per `docs/conventions/linear-automation.md` → "Structured filing
-  fields").
+  individually.
+
+That is the whole field set. There is **no `**Touches**:` line** — the
+declared-scope glob field is retired (per
+`docs/conventions/linear-automation.md` → "Retired: `**Touches**:`"), so
+there is no union to compose. Each part's prose names the skill or
+convention doc it edits, which is what an implementer reads anyway.
 
 Set `state`, `priority` and any relations in the **creating** call — a
 follow-up write buys a second full body echo for nothing (same convention
@@ -120,8 +131,7 @@ mcp__claude_ai_Linear__save_issue(
   title: "Claude: <umbrella summary of this fold's trim levers>",
   description: "<one `# Part N — <title>` section per lever — each the
     lever, the sessions that motivate it, the concrete skill /
-    convention-doc edit it implies, and its own **Fingerprint**: line>
-    \n\n**Touches**: <combined globs>",
+    convention-doc edit it implies, and its own **Fingerprint**: line>",
   priority: 3,
 )
 ```
@@ -193,6 +203,17 @@ mechanism that replaces the old "not-a-trim register" idea — the register
 falls out of the lifecycle rather than being a separate artifact anyone
 has to maintain.
 
+**Clear the milestone here too, exactly as step 5 does** — so the
+`reject.json` above carries `{"state": "Canceled", "milestone": null}`,
+not the state alone. The milestone means **"awaiting a fold"**, and a
+rejected lever is not awaiting one; leaving it stamped made the two
+steps disagree about what the milestone was for. Permanence does not
+depend on it either way: the fingerprint probe searches resolved and
+archived issues, so the rejection sticks whether or not the milestone
+is still attached. (`trim_levers.py list` now also filters to open
+levers, so a still-stamped rejection no longer pollutes the pool — but
+that is the backstop, not the reason. Both halves should agree.)
+
 Reject on evidence, not on taste. Recorded rejections worth knowing
 about, each measured: narrowing a planning board read (2–3k against 87.6k
 of writes — worthwhile for judgment, not tokens); abridging a bootstrap
@@ -233,10 +254,10 @@ and can come out of the environment.
   or skill diff, never commits, never pushes. The improvements it
   proposes are applied later by a human through a normal PR.
 - **No relations, ever.** Folding places no blocking edge; parked levers
-  are exempt from the serial meta chain until folded, and the aggregated
-  task the fold produces is what the chain governs. Blocking edges are
-  human-curated in a planning session (`CLAUDE.md` → "Blocking
-  relations").
+  are exempt from the meta batch and its edge until folded, and the
+  aggregated task the fold produces is what that edge governs. Blocking
+  edges are human-curated in a planning session (`CLAUDE.md` →
+  "Blocking relations").
 - **Runs standalone or as housekeeping's step.** `housekeeping` delegates
   its Session Metrics step to this skill; it runs just as well by hand any
   time the milestone has parked levers. Either way the behavior is

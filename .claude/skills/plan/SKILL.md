@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas and the standing audit directive plus its outcome unprompted, then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled (this session is now the only place that happens — the filing-time sweep is retired), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog), and issues filed and amended to house convention. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — which also writes the next audit directive, one named subsystem or interface for housekeeping to audit, or explicitly none — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
+description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas and the standing audit directive plus its outcome unprompted, then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog), the open Claude-prefixed meta tasks folded into one batch issue by default at bootstrap, and issues filed and amended to house convention. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which also writes the next audit directive, one named subsystem or interface for housekeeping to audit, or explicitly none — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -185,27 +185,87 @@ directive is what the close-out (step 6) will either keep or
 replace. A directive whose target has since been rewritten is
 stale and should be replaced rather than left to fire.
 
-**Reconcile file collisions once, here.** The full sweep is
-mechanical bookkeeping — it files `related` links only, never
-a blocking edge — and it belongs to the planning session
-because this is the session that touches the board:
+**Fold the meta work into one batch — by default, unprompted.**
+After sweeping the open `Claude:`-prefixed set, fold **every**
+open, not-In-Progress, `Claude:`-prefixed Backlog issue into
+the lowest-numbered survivor via `/merge-tasks`. This is
+routine bookkeeping in the same operator-ratified class as the
+meta blocking edge, so it does **not** need a per-fold
+proposal.
 
-```sh
-python3 .claude/tools/sync_blockers.py
-```
+It is a default because the alternative demonstrably does not
+hold: one bootstrap found **five** open meta tasks — three of
+them unchained filings from automated passes — and the fold
+had to be operator-prompted **twice** (first for three issues,
+then for all five).
 
-Best-effort; it needs `LINEAR_API_KEY` and
-`LINEAR_PROJECT_ID`. Its report also surfaces the
-**collision clusters** step 2 uses for merge proposals and
-step 8 uses to pick a parallelizable batch.
+**Two hard exclusions:**
 
-**Then run the read-only scheduling-smell scan** and act on
-what it finds — a dead edge holding an issue out of the
-available set is invisible until something looks for it:
+- **Never fold an issue that is In Progress.** That mutates a
+  spec while a session is implementing it. This is why one
+  batch of mined levers landed as a *new* issue rather than on
+  the prior batch — that one was live in a worktree.
+- **Never fold across the meta / product boundary.** The
+  coherence floor binds here as everywhere.
 
-```sh
-python3 .claude/tools/sync_blockers.py --report-todo-blocks
-```
+**Bound the Planning document at the same time.** It grows
+without bound *between* close-out rewrites — the same failure
+shape as the retired Session Metrics inbox. The
+wholesale-rewrite-at-close-out convention bounds a planning
+session's own appends, and nothing bounded what accumulated in
+between: `housekeeping` and implementation sessions append
+post-close notes with no consolidation owner, an abrupt close
+skips the rewrite entirely, and one document reached the next
+bootstrap carrying **two post-close sections plus a full day
+of in-session notes**.
+
+So:
+
+- **If the document carries foreign notes, or a prior
+  session's unconsolidated in-session notes, the bootstrap's
+  first write is the wholesale rewrite** — not another append.
+  The close-out rewrite gate (step 6) stays as it is; this
+  adds one at the other end.
+- **A planning session's own incremental notes stay** — they
+  are the abrupt-close insurance — but they live under a
+  single `In-session notes` heading, so any rewrite sweeps
+  exactly one section.
+- **Non-planning sessions append only under one marked
+  heading**, `Notes for the next planning session`, never as
+  free-floating sections. That rule is stated wherever those
+  sessions are told to write here (`housekeeping`'s post-close
+  note step, and any skill reporting into planning).
+
+Adopted operationally at plan-20, which performed the
+consolidating rewrite mid-session on the operator's flag; this
+is what stops the behavior depending on memory.
+
+**Reconcile file collisions once, here — by reading, not by
+running a tool.** This is the only session that reconciles
+overlap at all: the automated file-collision machinery is
+retired, and nothing records a collision link any more.
+Judge it from the board read you already have. You are
+holding enough of each issue's prose to know what the work
+actually is, which is the whole argument for doing it here —
+content beats the exact glob matching the retired tool did,
+and it is why that sweep was dropped rather than moved. (The
+declared-scope `**Touches**:` field went with it, so there is
+no shortcut: read what the issue is about.)
+
+Record the conclusions as **collision clusters** (see
+`docs/conventions/linear-automation.md` → "Overlap is a
+cluster, never an ordering"): group per shared area, never by
+connected component, and never as an ordering. Step 2 uses
+those clusters for merge proposals and step 8 uses them to
+pick a parallelizable batch. Write them into the document as
+prose — do **not** file a `related` link for one.
+
+**Then look for the two scheduling smells** and act on what
+you find — a dead edge holding an issue out of the available
+set is invisible until something looks for it. Read the
+blocking edges off the board directly: an edge whose blocker
+is already closed, and an unblocked Urgent issue sitting
+behind one, are both visible in the step-1 read.
 
 Two notes on cost, because they correct the obvious
 intuition. The whole board read is roughly **2–3k tokens**,
@@ -258,23 +318,34 @@ whole reason the vocabulary is worth writing down:
   enters Next, set it Urgent, so agent-infra improvements are
   the next pull rather than queuing behind product work.
 
-- **The serial meta chain** (operator rule, 2026-08-18). Open
-  `Claude:`-prefixed issues are kept blocking one another in
-  **one serial chain**: file a new meta issue, and this
-  session chains it behind the current tail. So exactly
-  **one** meta issue is ever unblocked in Next — Urgent, per
-  the rule above — and meta improvements land one batch at a
-  time as each head merges, instead of several sessions
-  rewriting the same skills at once.
+- **One meta batch, not a serial chain** (operator rule,
+  2026-08-20, superseding the 08-18 chain rule). At bootstrap,
+  **fold** the open `Claude:`-prefixed meta issues into a
+  single batch issue rather than maintaining a chain of many.
+  See "Fold the meta work into one batch" in step 1 — that is
+  where the fold happens; this entry records what it means for
+  the *board*: exactly **one** meta issue is unblocked in Next
+  (Urgent, per the rule above), so meta improvements land one
+  batch at a time instead of several sessions rewriting the
+  same skills at once.
 
-  This is the **one standing exception** to the
-  proposal-per-edge rule: an operator-ratified edge *class*,
-  so a planning session places a chain edge as routine
-  bookkeeping without a fresh per-edge `AskUserQuestion`. It
-  changes nothing for anyone else — **automated filers still
-  place no edges, ever** (`CLAUDE.md` → "Blocking
-  relations"). The exception is this session's, and it is
-  scoped to this one chain.
+  The batch form largely supersedes the chain: one batch issue
+  needs at most **one** edge — behind whatever meta issue is
+  currently **In Progress or In Review** — where a chain needed
+  one per issue. Both states, because an In Review meta issue is
+  a merged session that still owes follow-up, and taking only In
+  Progress would leave the edge with no anchor precisely then
+  (see `docs/conventions/linear-automation.md` → "The Linear
+  state tracks the SESSION, not the PR").
+
+  Whichever shape it takes, this is the **one standing
+  exception** to the proposal-per-edge rule: an
+  operator-ratified edge *class*, so a planning session places
+  it as routine bookkeeping without a fresh per-edge
+  `AskUserQuestion`. It changes nothing for anyone else —
+  **automated filers still place no edges, ever** (`CLAUDE.md`
+  → "Blocking relations"). The exception is this session's, and
+  it is scoped to the meta batch.
 
 When an issue isn't: reorder it behind what it depends on,
 re-scope it, or split the first genuinely actionable unit
@@ -284,9 +355,10 @@ into its own pullable task. An issue that is startable only
 **Propose merge groups aggressively, to minimize open PRs.**
 Scan the Backlog for clusters that would land as a single PR
 — same subsystem, crate, or language-domain — and propose
-folding them via `/merge-tasks`. The collision clusters from
-step 1's sweep are the raw material: a cluster whose members
-share files is usually a cluster that wants to be one PR.
+folding them via `/merge-tasks`. The collision clusters you
+recorded in step 1 are the raw material: a cluster whose
+members share files is usually a cluster that wants to be one
+PR.
 The **coherence floor** still binds — never fold across
 separate apps, languages, or deploy units.
 
@@ -318,8 +390,8 @@ decision — it never derives one.
 Three things that are **not** blocking edges, each with its
 own handling:
 
-- **File overlap** — `related`-linked and reported as a
-  collision cluster by `sync-blockers`. It costs a rebase,
+- **File overlap** — recorded as a collision cluster in your
+  own notes (step 1), never as a relation. It costs a rebase,
   not an ordering.
 - **Coupling that belongs in one PR** — fold the issues into
   one via `/merge-tasks`, don't relate them.
@@ -349,19 +421,19 @@ skill binds it too:
   the operator pulls from. See step 1 for the full three-tier
   schema, milestones included.
 
-- **`Claude:` prefix** on meta-work titles (anything whose
-  `**Touches**:` sit entirely under `.claude/**`,
+- **`Claude:` prefix** on meta-work titles (anything every
+  one of whose edited paths sits under `.claude/**`,
   `CLAUDE.md`, or `docs/conventions/**`). A planning session
   is where most meta-work gets filed, so this is the skill
   that emits the prefix most often.
 
-- **The structured filing fields are mandatory**, exactly as
-  for every other filing skill — a `**Fingerprint**:` line
-  (the dedup key) and a `**Touches**:` line (the path globs)
-  on every issue. The fingerprint's first token is a
-  **dotless domain token**, never a bare `name.ext` — Linear
-  linkifies a hostname-valid basename and corrupts the key.
-  See `CLAUDE.md` → "Structured filing fields".
+- **The `**Fingerprint**:` line is mandatory**, exactly as
+  for every other filing skill — it is the dedup key, and its
+  first token is a **dotless domain token**, never a bare
+  `name.ext`, since Linear linkifies a hostname-valid
+  basename and corrupts the key. It is now the **only**
+  structured field: `**Touches**:` is retired and nothing
+  emits it. See `CLAUDE.md` → "Structured filing fields".
 
 - **Field-only writes go through the tool, not the MCP.**
   Priority, state, parent, milestone, labels and assignee
@@ -391,31 +463,26 @@ skill binds it too:
   decided. See `docs/conventions/linear-automation.md` →
   "Partial edits".
 
-- **Record file collisions after each `save_issue`:**
+- **File no relations.** There is no per-issue collision step
+  after `save_issue` — the automated file-overlap machinery is
+  retired. Overlap is your step-1 judgement, recorded as prose
+  clusters; blocking edges are step 3's job and yours alone.
 
-  ```sh
-  python3 .claude/tools/sync_blockers.py --for <ENG-###>
-  ```
+- **A re-scope has to reach the whole body, not one
+  paragraph.** Appending "this also needs X" while the rest
+  of the issue still describes the narrower job leaves a spec
+  that contradicts itself, and the implementing session reads
+  it cold. This has happened in the sharper form the retired
+  `**Touches**:` field used to make visible: one issue's prose
+  said its scope was widening while the declared-scope line
+  still named a single file, and the shipped diff spanned four
+  areas. Losing the field lost the tell, not the failure — so
+  re-read the sections a re-scope contradicts and amend them
+  in the **same write**.
 
-  Best-effort. It files **no** blocking edge; those are
-  step 3's job and yours alone.
-
-- **Amending scope in prose is not amending scope.** The
-  collision tooling parses the `**Touches**:` field, never
-  the prose around it — so widening an issue's scope in a
-  paragraph while leaving the field alone produces an issue
-  that silently fails to collide-match in every area the
-  prose added. This has happened: one issue's prose said
-  "Touches widens beyond one file" while the field still
-  named a single file, and the shipped diff spanned four
-  areas.
-
-  So when a re-scope changes what an issue touches, edit the
-  `**Touches**:` line **in the same write**, then re-run the
-  per-issue sweep above so the new globs actually get
-  linked. Same for `**Fingerprint**:` when the re-scope
-  changes what the issue is fundamentally *about* — that is
-  the dedup key, and a stale one silently re-files.
+  Same for `**Fingerprint**:` when the re-scope changes what
+  the issue is fundamentally *about* — that is the dedup key,
+  and a stale one silently re-files.
 
 - **Tell an in-flight session when you amend its issue.**
   An implementation session reads the body once at the
@@ -445,6 +512,25 @@ session is working from — a re-scope, a changed sequencing, a
 retired approach. When that happens, **message the affected
 worktree session** rather than letting it discover the change
 at review time. Use `ListAgents` to find them.
+
+**When a session owns the issue, hand it the amendment — do
+not write the body yourself.** This avoids both costs at once:
+the full-body `save_issue` echo *and* the coordinating message
+that would otherwise have to tell that session what changed.
+Done twice in one planning session, and both times the message
+*was* the amendment.
+
+The surrounding datapoint is what makes this a refinement
+rather than a replacement: cross-session `SendMessage`
+coordination is **cheap** — eleven messages at roughly 0.5k
+each in that session — and it prevented duplicated work three
+times. So message freely; this rule only says that when the
+message is going to be sent anyway, it should carry the edit
+instead of a description of the edit.
+
+The owning session is also the one that can judge the
+amendment against what it has already built, which a planning
+session cannot see.
 
 **6. Write back — incrementally, then rewritten at the
 gate.**
@@ -552,9 +638,9 @@ searches resolved issues too.
 **8. Offer the parked audit findings — don't wait to be
 asked.** `audit` files its confirmed findings as real issues
 stamped with the **Audit findings** project milestone, which
-means they are **parked**: first-class open issues for dedup,
-collision detection and search, but costing a bootstrap read
-nothing. The repo is continuously audited, so this step is
+means they are **parked**: first-class open issues for dedup
+and search, but costing a bootstrap read nothing. The repo is
+continuously audited, so this step is
 how the planning flow continuously **absorbs** that output
 instead of letting it pile up unlooked-at.
 
@@ -570,9 +656,9 @@ On a yes:
   clusters.** The operator runs several worktree sessions at
   once, so a promoted batch is only useful if its members can
   be worked **simultaneously** — which means they must not
-  collide on files. The per-issue `**Touches**:` data already
-  answers this exactly: promote a set with **no `related`
-  collision links between its members**. Where two findings
+  collide on files. Your step-1 clusters already answer this:
+  promote a set whose members appear in **no common
+  cluster**. Where two findings
   do collide, either promote one and leave the other parked
   for the next round, or fold them into a single issue under
   the fewest-coherent-PRs rule. This is the selection
@@ -612,8 +698,9 @@ expensive session in the rotation.
   conversation that spans hours or days; this skill describes
   how to run one, not a pass to execute and exit.
 - **The board is this session's alone.** `housekeeping` no
-  longer analyses the board — no collision sweep, no merge
-  groups, no scheduling smells — precisely so the two can't
+  longer analyses the board — no merge groups, no scheduling
+  smells (and no collision recording anywhere — that
+  machinery is retired) — precisely so the two can't
   reach conflicting conclusions between planning sessions.
   Its one remaining carve-out is proposing merges among
   `Claude:`-prefixed meta-work, which is upkeep on its own

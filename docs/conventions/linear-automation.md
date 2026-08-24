@@ -7,9 +7,7 @@ Skills that **file** Linear issues (`linear-task`, `audit`,
 filing destination — team, project, assignee — from **environment
 variables**, never hard-coded UUIDs. (Skills that only **update**
 an existing issue by id — `init-pr`, `review-pr` — need no
-destination; `sync-blockers` only files `related` relations between
-Backlog issues, reading `LINEAR_PROJECT_ID` as a query filter — see its
-own paragraph below.) Set them once in your
+destination.) Set them once in your
 shell profile (`~/.zshrc`):
 
 ```sh
@@ -53,8 +51,8 @@ that already exists rather than filing a duplicate, so recurrence
 becomes an accumulating fact on one issue. `trim-context` is the
 **consumer**: it sweeps the milestone, folds the parked levers into the
 fewest coherent propose-only `Claude:` Backlog tasks — one section per
-lever, each keeping its own `**Fingerprint**:` line under a combined
-`**Touches**:` — and closes the parked originals. A lever judged not
+lever, each keeping its own `**Fingerprint**:` line — and closes the
+parked originals. A lever judged not
 worth acting on is **closed with its reason**, which suppresses
 refiling permanently. `housekeeping` drives `trim-context` as its
 Session Metrics step; both skills also run standalone.
@@ -78,43 +76,26 @@ one), so each pass spilled it to disk and mined it with a throwaway
 script — structural at roughly ten parallel sessions a day, not a
 tidiness problem.
 
-The **sync-blockers Python tool** (the deterministic core of the
-`sync-blockers` skill — see "Structured filing fields" below) is a
-single, dependency-free `python3` script at
-`.claude/tools/sync_blockers.py`, run directly (the
-`Bash(python3 .claude/tools/sync_blockers.py:*)` allow-rule —
-there is no `make` target). Its one job is **relation maintenance**: it
-reads the open Backlog's `**Touches**:` globs and existing relations,
-and files a real `related` relation for each `**Touches**:` collision
-that has no relation yet, naming the paths the pair collides on. It
-files **no blocking edge** — see "Blocking relations" below. That
-relation write is its **only** Linear write — it renders no document,
-ranks nothing, and never folds or closes an issue (consolidation is
-`merge-tasks`' job). It runs in **four modes**: `--for ENG-###`
-compares just the named issue against the backlog (**no filing skill
-calls this any more** — the filing-time sweep is retired, so this mode
-is hand-run only); a
-bare invocation is the full pairwise sweep for occasional
-reconciliation, reporting **collision clusters** (the input to the
-`plan` skill's merge-group proposal), the surviving human-declared
-**semantic blocks**, and the two scheduling **smells**;
-and `--report-todo-blocks` prints those smells alone as JSON. (A
-`--demote` migration mode also existed; it ran once, is spent, and was
-removed — see "Blocking relations" below.) It uses the
-standard library only (`urllib` + `json`) for its GraphQL calls, so it
-adds no dependency to the Rust build and inherits the repo's `ruff`
-hooks; its unit tests run under `make tools-tests`. It reads
-`LINEAR_PROJECT_ID` plus its own `LINEAR_API_KEY` (a personal Linear
-API key, because a script can't ride the OAuth-based `claude.ai` Linear
-MCP); `--dry-run` prints the links it *would* file and writes nothing.
-It resolves all of these via `os.environ`, never a hard-coded id, and
-the key is never committed.
+*Retired:* the **automated file-collision machinery** — a
+`sync-blockers` skill and its `sync_blockers.py` core, which read the
+open Backlog's `**Touches**:` globs and filed a `related` relation for
+every glob overlap it found. Nothing files a collision link any more,
+at filing time or on a sweep. The mechanical overlap web added little
+over what a planning session already knows: that session reads the
+implementation specs into context anyway, so it judges overlap on
+content rather than on exact glob matching. **Reconciling overlap is
+planning-session work**, done from the ordinary board read — including
+the merge-group proposals and the scheduling smells the tool used to
+report. The `**Touches**:` field it consumed went with it — see
+"Structured filing fields" below. Relations already on the board are
+left alone as inert history: nothing deletes a relation.
 
 ## Structured filing fields
 
-Every filed issue carries machine-readable fields the automation reads
-back, on top of the human prose. Keep the field **names** stable — the
-filing skills emit them and `sync-blockers` parses them:
+Every filed issue carries one machine-readable field the automation
+reads back, on top of the human prose — `**Fingerprint**:`. It was two
+until `**Touches**:` was retired (see below). Keep the field **name**
+stable: the filing skills emit it and the dedup probes match on it.
 
 - `**Fingerprint**: <domain-token>:<slug>` — the dedup key `audit`
   matches on so a finding is never refiled. Mandatory on audit
@@ -163,75 +144,67 @@ filing skills emit them and `sync-blockers` parses them:
   re-proposed the very thing on intuition. An open-only dedup search
   re-opens every one of those arguments.
 
-- `**Touches**: <glob>[, <glob>…]` — the path globs the fix will
-  edit, comma-separated. Declare the **directory** when the work
-  spans a dir (`tui/`), the **file** when it's one file
-  (`programs/dropset/src/swap.rs`); list every glob for a multi-file
-  finding. The `sync-blockers` tool reads this to detect file
-  collisions **deterministically** — a directory glob collides with
-  any path under it, and two issues that collide are coupled. Such a
-  pair *was* related-linked automatically; that is retired (see below),
-  so a collision is now reconciled in a planning session and the field
-  stands on its own as documentation of scope. A collision is
-  explicitly **not** a blocking edge — see
-  "Blocking relations". An issue that predates the `**Touches**:`
-  convention has no globs to check; backfill one and re-run the sweep.
+That is the whole field set. `**Fingerprint**:` is the only one.
 
-  **Being retired — do not build on it.** By operator direction the
-  automated file-collision machinery (the `sync-blockers` tool, its
-  skill, and every filing-time related-link step) is on its way out; a
-  separate chained meta issue owns the deletion and the reference scrub.
-  Two consequences apply already: **a housekeeping-driven filing pass no
-  longer runs a per-issue collision sweep**, and nothing new should
-  depend on the tool existing. Whether the per-issue convention narrows
-  for the other filing skills is a planning-session question,
-  deliberately left open here. The `**Touches**:` field itself stays: it
-  documents scope for a human reader regardless of what consumes it.
+### Retired: `**Touches**:`
 
-  **Be honest about what that costs.** It is tempting to say the removal
-  costs coverage nothing because a planning session opens with the full
-  reconciliation sweep. That over-claims twice: the named catch-all is
-  `sync_blockers.py`'s own sweep, which is (a) scheduled for deletion by
-  the same direction, with no successor named, and (b) still carrying the
-  one-page read guard its sibling board tool has since fixed — so a
-  Backlog past that page reconciles a **subset**. State it as it is:
-  automated collision recording is being **dropped**, with the planning
-  sweep as an interim of unmeasured coverage. That is an accepted trade —
-  a spurious edge costs more than a missing one (see "Blocking
-  relations") — not a guarantee of equivalence.
+A filed issue used to carry `**Touches**: <glob>[, <glob>…]`, the path
+globs the fix would edit. **Nothing emits it any more.** It was the
+input to the automated collision machinery (see the retired-machinery
+note above), and once that was deleted nothing read it: composing a
+glob list became filing overhead paid for a field with no consumer, and
+the operator's ruling was to drop it rather than keep it on the chance
+that something might want it later.
 
-  **Glob-vs-diff drift is mechanically detectable, and deliberately not
-  automated yet.** An issue whose merged PR touched paths outside its
-  declared globs is exactly the shape of a prose-widened scope that
-  never updated the field, and could be flagged after the fact. It is
-  recorded here as *evaluated, not built*: the check needs the merged
-  PR's file list, which means `sync_blockers.py` would take a GitHub
-  dependency it currently does not have — it is Linear-only and
-  stdlib-only by design. Adding one to catch a class the amendment rule
-  (see the `plan` skill, step 4) already addresses at the source is the
-  wrong order. Revisit if the rule proves insufficient in practice.
+**Do not reintroduce it, and do not reintroduce what consumed it.** The
+direction is content-based judgement in a planning session — that
+session is holding each issue's actual prose, which is strictly more
+than a glob list tells it — not exact glob matching. If a future pass
+wants declared scope back, that is a decision to take deliberately, not
+a habit to drift into one filing at a time.
 
-### Collision clusters, not serial chains
+**Existing lines stay, and the fold tools still carry them.** Bodies
+filed under the old convention keep their `**Touches**:` line as inert
+history, exactly like the relations. `merge_tasks.py` and
+`trim_levers.py` both emit a line only when given globs and tolerate
+their absence by construction, so folding an old issue preserves
+whatever it declared without requiring a new one to declare anything.
 
-File overlap is reported as a **cluster** — the issues that collide on
-one shared path — rather than as an ordering. A cluster is the candidate
-set for "these would land as one PR", which is what the `plan` skill's
-merge-group proposal step consumes (it also picks the parallelizable
-batch when promoting parked audit findings). Grouping is **per path**,
-not by
-connected component: coupling chains through shared files, so the
-transitive reading collapsed 25 of 27 open issues into one cluster,
-which proposes nothing. Clusters therefore overlap — an issue appears
-under every path it touches.
+**Be honest about what the whole retirement costs.** Automated collision
+recording was **dropped**, not replaced: a planning session's read is
+the successor and its coverage is unmeasured. That is an accepted trade
+— a spurious edge costs more than a missing one (see "Blocking
+relations") — not a guarantee of equivalence. Losing the declared-scope
+field widens that gap slightly, since there is no longer a cheap
+cross-check on an issue whose prose quietly outgrew its stated scope.
+Accepted on the same reasoning: the amendment rule (see the `plan`
+skill, step 4) addresses scope drift at the source, and a field nothing
+reads does not catch it either.
 
-The previous design turned each collision into a `blocks` edge instead,
-and paid for it: because `**Touches**` globs are coarse (crate-level),
-the orientation was arbitrary (lower number blocks higher), and block
-semantics are binary, the board grew giant serial chains — a day-1
-mainnet param-channel issue sat behind **eight** overlap blockers, and
-a docs-only pair was block-linked because both touched
-`docs/market-making.md` in unrelated sections. A cluster carries the
-same information without asserting an order nobody decided.
+### Overlap is a cluster, never an ordering
+
+When a planning session judges that two issues will edit the same code,
+the conclusion it records is a **cluster** — the issues that collide on
+one shared area — never an ordering. A cluster is the candidate set for
+"these would land as one PR", which is what the merge-group proposal
+step consumes (it also picks the parallelizable batch when promoting
+parked audit findings).
+
+Group **per shared area, not by connected component.** Coupling chains
+through shared files, so the transitive reading is worthless: when the
+retired tool computed it that way it collapsed 25 of 27 open issues into
+one cluster, which proposes nothing. Clusters therefore overlap — an
+issue appears under every area it touches.
+
+And a cluster is **not** a chain of edges. An earlier design turned each
+collision into a `blocks` edge, and paid for it: because `**Touches**`
+globs are coarse (crate-level), the orientation was arbitrary (lower
+number blocks higher), and block semantics are binary, the board grew
+giant serial chains — a day-1 mainnet param-channel issue sat behind
+**eight** overlap blockers, and a docs-only pair was block-linked
+because both touched `docs/market-making.md` in unrelated sections. A
+cluster carries the same information without asserting an order nobody
+decided.
 
 ### Fold coupled findings into one issue
 
@@ -248,8 +221,7 @@ one issue. This is wider than "same file or symbol" and spans **units
 within a rotation**, not only findings within a single unit.
 
 A folded issue keeps **every** finding's own `**Fingerprint**:` line
-(one per line, so per-finding dedup still matches) and a **union** of
-their `**Touches**:` globs.
+(one per line, so per-finding dedup still matches).
 
 **The coherence floor — do not fold across deploy units.** Never merge
 findings a single PR can't sensibly review or land as a whole: different
@@ -268,6 +240,41 @@ delivered checklist items and moves it to In Review at the merge-queue
 handoff — once the PR is ready, CI is green, and the review summary has
 been printed for the human.
 
+### The Linear state tracks the SESSION, not the PR
+
+This is the framing that makes the transitions above cohere, and it is
+easy to get backwards. **The Linear state is the state machine of the
+agentic programming session**; the PR's own merged/open state tracks the
+*code*. They are different clocks.
+
+So:
+
+- **In Review** covers *both* PR-under-review **and**
+  merged-with-follow-up-outstanding. A session still owes work after its
+  merge — session metrics, perms firming, post-merge tidy, feedback to
+  hand to a planning session — and that work is invisible if the issue
+  reads Done.
+- **Done means operator-ratified complete.** Never merely merged.
+
+Linear's GitHub integration auto-transitions an issue to Done on merge,
+which is exactly wrong under this reading: it hides the sessions that
+still owe something. So `review-pr`'s outcome-watch step **writes the
+issue back to In Review** once it observes that auto-Done, runs its
+follow-up tail, and moves to Done only on an explicit `AskUserQuestion`
+approval. Two consequences elsewhere:
+
+- **`housekeeping` prunes on the issue's status TYPE, not on
+  PR-merged** — only `completed` or `canceled`. A merged PR whose issue
+  reads In Review is a live session, and pruning its worktree is how
+  work has been lost before.
+- **The fleet-resume launcher resumes In Progress *or* In Review**, so a
+  merged-but-unfinished session reopens on machine start.
+
+Accepted gap: a session that dies before its outcome watch runs leaves
+the issue auto-Done with nobody to re-mark it. The common case — the
+operator closing sessions at day end after merge confirmation — is
+covered, and no detection machinery is built for the crash case.
+
 ## Parked findings sit in **Todo**, never Backlog
 
 An issue stamped with a parking milestone — `Audit findings` for audit
@@ -284,10 +291,10 @@ is then a planning-session act with two halves: **clear the milestone and
 move Todo → Backlog**. Doing only one leaves the board lying about
 whether the work is available.
 
-Parked findings are also **exempt from the serial meta chain** until they
-are promoted: the chain governs work that is queued, and parked is not
-queued. Nothing about parking places or implies a blocking edge — see
-"Blocking relations".
+Parked findings are also **exempt from the meta batch and its edge**
+until they are promoted: that edge governs work which is queued, and
+parked is not queued. Nothing about parking places or implies a blocking
+edge — see "Blocking relations".
 
 **This gives `Todo` two meanings, so every Todo read must say which it
 wants.** Todo is both the board's *umbrella / initiative* tier (what a
@@ -309,29 +316,62 @@ read that skips the tool would not inherit it.
 ## The `Claude:` meta-work prefix
 
 **Meta-work** is agent-infra change — work whose touched paths sit
-**entirely** under `.claude/**`, `CLAUDE.md`, or `docs/conventions/**`.
-Anything that also touches product / on-chain / SDK / frontend code is
-**not** meta — including the shared build scripts under `brand-assets/`,
-which are product-adjacent, not agent-infra. Every meta-work Linear issue title
+**entirely** under `.claude/**`, `CLAUDE.md`, `docs/conventions/**`, or
+`cfg/**`. Anything that also touches product / on-chain / SDK / frontend
+code is **not** meta — including the shared build scripts under
+`brand-assets/`, which are product-adjacent, not agent-infra.
+
+**Why `cfg/**` is in the set.** It holds the lint hook config and the
+cspell dictionary, which are what the agent material *drives*: a meta
+batch that wires a guard hook or adds a spelling escape edits them
+necessarily. Leaving them out made the definition exclude most real meta
+batches — including the one that introduced this wording, which added a
+hook to `cfg/pre-commit-lint.yml` and four words to `cfg/dictionary.txt`.
+A definition that its own change fails is the wrong definition.
+
+This does **not** contradict the audit registry, which files `cfg/**`
+under `ci-infra`. The two answer different questions: the registry
+assigns a path to the subsystem whose *failure modes* an audit lens
+should reason about, while this list decides which Linear issues batch
+together as agent-infra work. `cfg/pre-commit-lint.yml` is honestly both
+— audited as CI config, filed as meta — and neither classification is
+downstream of the other.
+
+**One narrow allowance beyond that**, for the same reason: an
+**incidental comment fix in product code**, where that comment names
+agent material the batch just retired, does not disqualify. Retiring a
+tool means scrubbing references to it, and a reference can sit in a
+product file's header comment. The test is that the *substance* is
+agent-infra — not that no product file is touched at all. A change with
+real product content is not meta, however small.
+
+Keep `META_BASES` in `.claude/tools/merge_tasks.py` in sync with this
+list; that copy is what `is_meta_glob` reads when folding a legacy
+body. Every meta-work Linear issue title
 carries a leading **`Claude:`** token (capital C, colon, space) —
 e.g. `Claude: Add a /merge-tasks skill` — so all agent-infra work
 batches together and can be filtered, staged, and reviewed apart from
 product code on the board.
 
 - **Filing skills emit it.** `linear-task`, `audit`, `audit-scope`,
-  `housekeeping`, and `plan` prepend `Claude:` to a title when the
-  issue's
-  `**Touches**:` globs are all on the meta surface above. `/merge-tasks`
+  `housekeeping`, and `plan` prepend `Claude:` to a title when **every
+  path the fix will edit** is on the meta surface above. `/merge-tasks`
   applies it when every issue it consolidates is meta. (`plan` matters
   here in particular: a planning session is where most meta-work issues
   are actually filed.)
+- **The judgement is the filer's, not a field's.** This used to be
+  derived mechanically from the issue's `**Touches**:` globs; that field
+  is retired (see "Structured filing fields" above), so the filer
+  decides from what it already knows it is about to change. That is not
+  a loosening: a filer composing an issue knows the surface it is
+  describing, and the glob list was only ever that same knowledge
+  written down one step earlier.
 - **It batches meta-work on the board.** The prefix is the signal a
   human filters and groups by in Linear to see all agent-infra work at
-  once, apart from product code. It is applied at **filing time** — the
-  filing skills add it exactly when the issue's `**Touches**:` globs are
-  all on the meta surface, so the prefix and the touched paths stay
-  consistent by construction. No tool re-derives or re-checks the
-  bucket; there is no rendered `# Claude` heading to keep in sync.
+  once, apart from product code. It is applied at **filing time**, so
+  the prefix and the work's actual surface stay consistent by
+  construction. No tool re-derives or re-checks the bucket; there is no
+  rendered `# Claude` heading to keep in sync.
 - **It is a Linear-title signal only — never a PR title.** The prefix
   lives on the **issue** title for board recognition and batching. PR
   titles keep the standard `type(ENG-###): Subject` semantic-pr format
@@ -710,9 +750,9 @@ removes the wasted round trip entirely.
 
 ## Blocking relations
 
-**No automated writer files a blocking edge — ever.** Not
-`sync_blockers.py`, not a filing skill (`linear-task`, `audit`,
-`audit-scope`, `trim-context`, `housekeeping`, `merge-tasks`, `plan`),
+**No automated writer files a blocking edge — ever.** Not a filing
+skill (`linear-task`, `audit`, `audit-scope`, `trim-context`,
+`housekeeping`, `merge-tasks`, `plan`),
 not an autonomous audit rotation. This holds for edges an agent believes are
 genuinely semantic, not just for file-overlap ones.
 
@@ -723,17 +763,37 @@ skill's session in the base repo, human-directed, one edge at a time.
 That is the whole of the exception: not "a skill that is allowed to",
 but "the place a human does it".
 
-**One standing edge class, ratified 2026-08-18: the serial meta
-chain.** Open `Claude:`-prefixed meta-work issues are kept blocking one
-another in a single chain, so exactly one is unblocked at a time and
-agent-infra work lands one batch at a time rather than several sessions
-rewriting the same skills at once. A planning session chains a newly
-filed meta issue behind the current tail as **routine bookkeeping**,
-without a fresh per-edge proposal — the operator ratified the class, so
-each instance does not need re-ratifying.
+**One standing edge class, operator-ratified: the meta batch's edge.**
+The goal has not changed — exactly one meta issue unblocked at a time,
+so agent-infra work lands one batch at a time rather than several
+sessions rewriting the same skills at once. The **shape** has: a
+planning session now **folds** the open `Claude:`-prefixed issues into a
+single batch issue at bootstrap (see the `plan` skill, step 1), and that
+batch needs at most **one** edge — behind whatever meta issue is
+currently **In Progress *or* In Review**.
+
+**Both states, deliberately** — this is where the edge rule meets the
+session-state convention above, and taking only In Progress leaves the
+rule with no anchor exactly when it is needed. An In Review meta issue
+is a session that has merged its code but still owes follow-up, and the
+fleet-resume launcher already treats it as live (it resumes on state
+type `started`, which covers both). The edge is about *scheduling the
+next batch*, so it should key on the same "is a session still working
+this?" question the rest of the convention keys on — not on whether the
+code happens to have landed.
+
+*Superseded (2026-08-18 → 2026-08-20): the serial chain.* The earlier
+form kept every open meta issue blocking the next, which needed an edge
+per issue and left the board carrying a long chain to maintain. The
+batch form reaches the same one-at-a-time property with one edge, and
+the fold is itself the bookkeeping.
+
+Either way it is **routine bookkeeping**: a planning session places that
+edge without a fresh per-edge proposal, because the operator ratified
+the class rather than the instance.
 
 This narrows nothing else. It is still the planning session placing it,
-still one chain, and **automated filers still place no edges at all** —
+still one edge, and **automated filers still place no edges at all** —
 a filing skill that notices a new meta issue does not chain it. Treat
 any other edge, semantic ones included, under the one-at-a-time rule
 above.
@@ -756,9 +816,9 @@ costs more than the rehearsal.
 Read it as the human's hands, not as a new writer. It takes an
 **explicit pair list**, has **no discovery mode**, and **refuses an
 empty list** — so it cannot originate an edge, only carry one out. It
-is never called by a filing skill or by any automated pass.
-`sync_blockers.py` remains the **only** automated relation writer and
-files `related` links exclusively.
+is never called by a filing skill or by any automated pass. With the
+collision machinery retired, it is the **only** relation writer left in
+the repo at all, and it writes nothing it was not handed.
 
 The reason is that the board's **available-vs-blocked view is a
 scheduling instrument the human drives**: a hand-built blocking queue
@@ -780,16 +840,16 @@ reasoning is never lost.
 
 **Human-placed edges are authoritative.** The automation never
 rewrites, redirects, or removes one — with **no** exception. There was
-one: `sync-blockers` carried a `--demote` mode, a one-time migration that
-converted pre-existing auto-filed `blocks` edges to `related` under
-explicit confirmation. It ran on 2026-08-10 and is **spent**, so it has
-been removed. Every candidate it could still find is a false positive:
-the six legitimate hand-placed blocking edges collide on files, and the
-tool cannot distinguish them from artifacts, so a second run under
-`--apply` would delete the intended blocking graph in one command. It was
-dead code and a live foot-gun, so it is gone rather than guarded.
-Blocking-edge changes now happen only where they always should have: in
-a planning session, human-directed, one at a time.
+one, and it is worth recording why it is gone: the retired collision
+tool carried a `--demote` mode, a one-time migration that converted
+pre-existing auto-filed `blocks` edges to `related` under explicit
+confirmation. It ran on 2026-08-10, was **spent**, and was removed
+before the tool itself was. Every candidate it could still have found
+was a false positive: the legitimate hand-placed blocking edges collide
+on files too, and no mechanical rule distinguishes them from artifacts,
+so a second run would have deleted the intended blocking graph in one
+command. Blocking-edge changes happen only where they always should
+have: in a planning session, human-directed, one at a time.
 
 The mechanics, for when a human does ask for an edge: `save_issue`
 takes `blockedBy` (the `ENG-###`s that must land first) and `blocks`
@@ -801,15 +861,14 @@ reference it.
 
 Two things that are **not** blocking edges:
 
-- **File overlap.** A `**Touches**:` collision is reconciled in a
-  planning session and reported as a cluster (see "Collision clusters,
-  not serial chains"); the automated related-linking is retired.
+- **File overlap.** Two issues that will edit the same code are
+  reconciled in a planning session and recorded as a cluster (see
+  "Overlap is a cluster, never an ordering"); the automated
+  related-linking is retired.
 - **Coupling that belongs in one PR.** That is handled by combining
   into a single issue (see "Fold coupled findings into one issue"),
   not a relation.
 
-`sync-blockers` reads whatever edges exist to avoid double-linking a
-pair — a declared edge suppresses the related link it would otherwise
-file — and reports them back under the sweep's *semantic blocks*
-section, which, with nothing automated writing one, *is* the intended
-scheduling order.
+Since nothing automated writes an edge any more, every blocking edge on
+the board *is* a human scheduling decision, and the blocked set *is* the
+intended order of attack. Read it that way.

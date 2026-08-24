@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import io
+import os
+import re
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
@@ -472,6 +475,160 @@ class MainCli(unittest.TestCase):
             code = rq.main(["--label", "via-main", "--", PY, "-c", "pass"])
         self.assertEqual(code, 0)
         self.assertIn("via-main", out.getvalue())
+
+
+class ParseInspectArgs(unittest.TestCase):
+    def test_the_log_path_is_positional(self):
+        got = rq.parse_inspect_args(["inspect", "/tmp/x.log"])
+        self.assertEqual(got.path, "/tmp/x.log")
+        self.assertIsNone(got.grep)
+        self.assertFalse(got.failing)
+        self.assertEqual(got.tail, rq.DEFAULT_TAIL)
+
+    def test_both_flag_spellings_are_accepted(self):
+        for argv in (
+            ["inspect", "/tmp/x.log", "--grep", "boom", "--context", "2"],
+            ["inspect", "/tmp/x.log", "--grep=boom", "--context=2"],
+        ):
+            with self.subTest(argv=argv):
+                got = rq.parse_inspect_args(argv)
+                self.assertEqual(got.grep, "boom")
+                self.assertEqual(got.context, 2)
+
+    def test_a_missing_path_is_a_usage_error(self):
+        with self.assertRaises(rq.UsageError):
+            rq.parse_inspect_args(["inspect", "--grep", "x"])
+
+    def test_a_second_positional_is_refused_as_a_probable_glob(self):
+        # A shell glob that expanded is the likeliest cause, and silently
+        # inspecting the first of several is how a reader diagnoses the wrong
+        # run's failure.
+        with self.assertRaises(rq.UsageError) as caught:
+            rq.parse_inspect_args(["inspect", "/tmp/a.log", "/tmp/b.log"])
+        self.assertIn("glob", str(caught.exception))
+
+    def test_an_unknown_option_is_refused(self):
+        with self.assertRaises(rq.UsageError):
+            rq.parse_inspect_args(["inspect", "/tmp/x.log", "--latest"])
+
+
+class InspectLog(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = self._tmp.name
+
+    def _log(self, lines, name="run.log"):
+        path = os.path.join(self.root, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("".join(ln + "\n" for ln in lines))
+        return path
+
+    def _inspect(self, *argv):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = rq.main(["inspect", *argv])
+        return code, out.getvalue()
+
+    def test_grep_prints_numbered_matches_only(self):
+        path = self._log(["alpha", "boom here", "gamma", "delta"])
+        code, out = self._inspect(path, "--grep", "boom")
+        self.assertEqual(code, 0)
+        self.assertIn("2:boom here", out)
+        self.assertNotIn("alpha", out)
+        self.assertIn("1 match(es) of 4 line(s)", out)
+
+    def test_grep_context_includes_both_sides(self):
+        path = self._log(["a", "b", "boom", "d", "e"])
+        _, out = self._inspect(path, "--grep", "boom", "--context", "1")
+        self.assertIn("2:b", out)
+        self.assertIn("3:boom", out)
+        self.assertIn("4:d", out)
+        self.assertNotIn("1:a", out)
+        self.assertNotIn("5:e", out)
+
+    def test_disjoint_regions_are_separated(self):
+        path = self._log(["boom"] + ["pad %d" % k for k in range(10)] + ["boom"])
+        _, out = self._inspect(path, "--grep", "boom", "--context", "1")
+        self.assertIn("--", out)
+
+    def test_no_match_exits_non_zero(self):
+        # So a caller checking only the status can tell absent from present.
+        path = self._log(["alpha", "beta"])
+        code, out = self._inspect(path, "--grep", "boom")
+        self.assertEqual(code, 1)
+        self.assertIn("0 match(es)", out)
+
+    def test_an_over_broad_pattern_is_capped_rather_than_dumped(self):
+        path = self._log(["line %d" % k for k in range(rq.MAX_GREP_MATCHES + 20)])
+        _, out = self._inspect(path, "--grep", "line")
+        self.assertIn("narrow the pattern", out)
+        # Count the numbered match lines exactly. An earlier version counted
+        # lines merely starting with "1", which is 11 whether the cap fires or
+        # not — an assertion that passed identically with the cap removed.
+        emitted = [ln for ln in out.splitlines() if re.match(r"^\d+:", ln)]
+        self.assertEqual(len(emitted), rq.MAX_GREP_MATCHES)
+
+    def test_the_capped_summary_reports_what_it_printed(self):
+        # Not one more. Counting before the cap test reported 41 for a run that
+        # emitted 40 regions — neither what the caller saw nor what the log has.
+        path = self._log(["line %d" % k for k in range(rq.MAX_GREP_MATCHES + 20)])
+        _, out = self._inspect(path, "--grep", "line")
+        self.assertIn("%d match(es)+" % rq.MAX_GREP_MATCHES, out)
+
+    def test_grep_takes_precedence_over_failing(self):
+        # Documented precedence rather than silent behavior: given both, the
+        # narrower view wins.
+        path = self._log(["cspell" + "." * 30 + "Failed", "boom here"])
+        _, out = self._inspect(path, "--grep", "boom", "--failing")
+        self.assertIn("2:boom here", out)
+        self.assertNotIn("failed hooks", out)
+
+    def test_a_bad_pattern_is_a_usage_error_not_a_traceback(self):
+        path = self._log(["alpha"])
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = rq.main(["inspect", path, "--grep", "([unclosed"])
+        self.assertEqual(code, 2)
+        self.assertIn("bad --grep pattern", err.getvalue())
+
+    def test_no_flags_reprints_the_failure_summary(self):
+        path = self._log(
+            [
+                "cspell" + "." * 30 + "Failed",
+                "docs/x.md:1:1 - Unknown word (zzz)",
+                "trailing detail",
+            ]
+        )
+        code, out = self._inspect(path)
+        self.assertEqual(code, 0)
+        self.assertIn("failed hooks (1)", out)
+        self.assertIn("zzz", out)
+        self.assertIn("trailing detail", out)
+
+    def test_failing_suppresses_the_tail_but_keeps_the_indexes(self):
+        path = self._log(
+            ["cspell" + "." * 30 + "Failed"] + ["noise %d" % k for k in range(5)]
+        )
+        _, out = self._inspect(path, "--failing")
+        self.assertIn("failed hooks (1)", out)
+        self.assertNotIn("noise 4", out)
+
+    def test_a_missing_log_is_a_clean_error(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = rq.main(["inspect", os.path.join(self.root, "gone.log")])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read", err.getvalue())
+
+    def test_the_inspect_verb_does_not_shadow_a_command_named_inspect(self):
+        # `run_quiet.py -- inspect ...` still RUNS a command called inspect:
+        # the verb is only recognized as the very first argument.
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = rq.main(["--", PY, "-c", "print('ran')"])
+        self.assertEqual(code, 0)
+        self.assertIn("exit 0", out.getvalue())
 
 
 if __name__ == "__main__":

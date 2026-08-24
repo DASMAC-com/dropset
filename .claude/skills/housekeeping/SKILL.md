@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (one aggregated propose-only task), propose merges among `Claude:`-prefixed meta-work issues only, then execute the Planning document's audit directive — one scoped audit-scope run on the named target, or no audit at all when the directive says none, which is stated in the report rather than silently skipped (`no-audit` skips regardless; the full random rotation survives only as an explicit ad-hoc /audit). Findings file parked in Todo under the Audit findings milestone. Session-metrics and the purge dry-run then always run, sequenced after the audit. It does NOT analyze the board and files no collision links: collision sweeps, Backlog-wide merge groups, and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (one aggregated propose-only task), propose merges among `Claude:`-prefixed meta-work issues only, then execute the Planning document's audit directive — one scoped audit-scope run on the named target, or no audit at all when the directive says none, which is stated in the report rather than silently skipped (`no-audit` skips regardless; the full random rotation survives only as an explicit ad-hoc /audit). Findings file parked in Todo under the Audit findings milestone. Session-metrics and the purge dry-run then always run, sequenced after the audit. It does NOT analyze the board and files no collision links at all (that machinery is retired): Backlog-wide merge groups and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -47,9 +47,10 @@ committed skills and upgrades the Claude Code CLI
 1. **Purge-conversations dry run** — in-pass and read-only;
    only the destructive apply rides the closing gate.
 
-**It does not analyze the board.** No collision sweep, no
-Backlog-wide merge-group scan, no scheduling-smell report:
-those belong to the `plan` skill, which is the session that
+**It does not analyze the board.** No collision recording
+(that machinery is retired outright), no Backlog-wide
+merge-group scan, no scheduling-smell report: the latter two
+belong to the `plan` skill, which is the session that
 actually decides sequencing. See "Why the board belongs to
 `plan`" below.
 
@@ -210,8 +211,9 @@ Three constraints on it:
 
 This skill used to analyze the board: a full collision
 sweep, a Backlog-wide scan for merge groups, and a
-scheduling-smell report. **All three moved to the `plan`
-skill** (its steps 1 and 2).
+scheduling-smell report. **All three left** — two to the
+`plan` skill (its steps 1 and 2), and the collision sweep to
+retirement.
 
 The reason is not that the work stopped mattering — it is
 that planning sessions now exist as a distinct session kind,
@@ -224,19 +226,20 @@ put the two skills in conflict over the same artifact.
 
 What moved, and where it landed:
 
-- the **full collision sweep** → `plan` step 1's bootstrap.
-  It files only `related` links and no blocking edge, so it
-  is bookkeeping rather than judgment; it moved anyway,
-  because the operator's direction is that housekeeping
-  stops touching the board at all. The **file-time**
-  `sync_blockers.py --for` calls the filing skills make are
-  unaffected — those are part of filing, not board analysis.
+- the **collision sweep** → nowhere. It moved to `plan`'s
+  bootstrap first, then retired entirely along with the
+  automated file-overlap machinery. Nothing here or anywhere
+  records collision links; a planning session judges overlap
+  from its ordinary board read.
 - **merge-group proposals** → `plan` step 2, alongside
   Queue honesty, which is the decision they serve.
-- the **scheduling-smell scan** → `plan` step 1. It had no
-  stated home there before, yet a planning session ran it
-  and immediately found two dead edges holding an Urgent
-  issue out of the available set — so it earns its place.
+- the **scheduling-smell scan** → `plan` step 1, as a
+  judgement the session makes rather than a scan it runs
+  (the tool that used to print the smells is gone). It had
+  no stated home there before, yet a planning session found
+  two dead edges holding an Urgent issue out of the
+  available set — so the check earns its place even without
+  the tool.
 
 **The one carve-out that stays here** is step 6's meta-work
 merge proposal, scoped to the `Claude:` title prefix. That
@@ -281,8 +284,8 @@ clean up on demand.
 
 Steps 3–6 file Backlog issues and mine the
 Session Metrics doc, so they use the
-same env-resolved Linear destination as `linear-task` /
-`sync-blockers`. Resolve each variable with its **own**
+same env-resolved Linear destination as `linear-task`.
+Resolve each variable with its **own**
 bare `printenv` (one `Bash(printenv:*)` allow-rule
 covers them all) — never a combined `printenv A B C`,
 which on macOS / BSD prints only the first value:
@@ -382,8 +385,34 @@ already-pre-approved `Bash(gh pr list:*)` read-rule (see
 gh pr list --state merged --json number,headRefName,mergedAt --limit 100
 ```
 
-The returned `headRefName`s are the branches whose PR
-**merged**. Hand that set to the prune helper, which does the
+**But PR-merged is not the prune criterion — the ISSUE'S
+STATUS TYPE is.** A merged PR whose Linear issue reads
+**In Review** is a session with outstanding follow-up (see
+`review-pr`'s outcome-watch step, which writes the issue back
+to In Review on merge precisely so this is visible), and
+pruning its worktree would recreate the worktree-loss incident
+in a third variant. So intersect the merged set with the board:
+
+- resolve each merged branch's `ENG-###` from its branch name,
+  read that issue's **status type**, and prune only when the
+  type is **`completed`** or **`canceled`**. Marked-duplicate
+  is a canceled-type state carrying `duplicateOf`, so it is
+  covered by construction.
+- **Match on status TYPES, never state names.** A workflow
+  rename would otherwise silently widen the prune, and this
+  step deletes things.
+- **One guard:** a `canceled` issue whose PR is still **open**
+  is *skipped and flagged in the report*, never pruned
+  silently. Both worktree-loss incidents began as a
+  prune-while-PR-open.
+- A merged branch with **no resolvable issue** falls through
+  to `left` — report it rather than guessing.
+
+This also makes the fleet-resume launcher compose exactly: In
+Progress **or** In Review means resume it, so a
+merged-but-unfinished session reopens on machine start.
+
+Hand the surviving set to the prune helper, which does the
 deterministic git work — for every worktree **other than**
 the `refs/heads/main` base, remove the ones whose branch
 merged (bare `git worktree remove`, no `--force`, so a dirty
@@ -502,15 +531,14 @@ Dedup and refile so a 30-minute loop never duplicates work:
   `cspell-placement:` fingerprint — going forward there is
   at most one), add the new findings to it rather than
   opening a second aggregated issue — with a **`patch`** on
-  that issue's `id` (one `append` op carrying the new
-  bullets, plus a `replace` on its `**Touches**:` line),
-  not a re-sent `description`, per
+  that issue's `id` carrying **one `append` op** with the new
+  bullets, not a re-sent `description`, per
   `docs/conventions/linear-automation.md` → "Partial edits —
-  the `patch` argument". The `append` can't clobber an
-  existing bullet, so no diffing against the live body is
-  needed for the new findings — but copy the `**Touches**:`
-  line the `replace` targets **verbatim** from the issue you
-  just read, since that op has to match it exactly once. If
+  the `patch` argument". An `append` can't clobber an
+  existing bullet and needs no anchor, so this needs no
+  diffing against the live body — and, since the
+  `**Touches**:` field retired, no second `replace` op to
+  grow a glob union either. If
   more than one such issue somehow exists (e.g. a legacy
   per-finding issue alongside an aggregated one), append to
   the **lowest-ENG** one and note the others in the report so
@@ -546,7 +574,7 @@ project milestone (**not** a document — that inbox is
 retired), folds the parked levers into a **single aggregated
 propose-only** skill-improvement Backlog task per coherent
 PR — one section per lever, each keeping its own
-`**Fingerprint**:` line under a combined `**Touches**:` — and
+`**Fingerprint**:` line — and
 then **closes the parked originals**, so the milestone
 lifecycle is the state machine and nothing needs draining.
 `trim-context` has **no** attended / propose-only split —
@@ -562,20 +590,16 @@ effectively never fired and the old inbox filled with
 already-filed entries. That hook is retired; don't
 re-introduce it.
 
-**This step files no collision links.** A housekeeping-driven
-filing pass does **not** run the per-issue collision sweep —
-board bookkeeping belongs to planning sessions. Do not claim
-that costs coverage nothing: the planning sweep is an interim
-of **unmeasured** coverage, since the tool behind it is itself
-scheduled for deletion and still carries a one-page read guard.
-It is an accepted trade, not an equivalence (see
-`docs/conventions/linear-automation.md` → "Structured filing
-fields").
-(The automated collision machinery is being retired outright;
-see `docs/conventions/linear-automation.md` → "Structured
-filing fields". Nothing here should depend on it.) This is the
-same no-board-analysis carve-out this skill already carries —
-see "Why the board belongs to `plan`".
+**This step files no collision links.** The automated
+collision machinery is **retired** — there is no per-issue
+sweep to run here or anywhere, and nothing should reintroduce
+one (see `docs/conventions/linear-automation.md` →
+"Structured filing fields"). Board bookkeeping belongs to
+planning sessions. Do not claim that costs coverage nothing:
+a planning session's read is an interim of **unmeasured**
+coverage. It is an accepted trade, not an equivalence. This
+is the same no-board-analysis carve-out this skill already
+carries — see "Why the board belongs to `plan`".
 
 **5. Check the convention ↔ skill reference sync.**
 `CLAUDE.md` is the **index**; the full operating
@@ -612,9 +636,10 @@ freshness lens does on the PR path — here, periodically.
 **6. Propose merges among meta-work issues only.**
 
 **This step does not analyze the board.** No collision
-sweep, no Backlog-wide merge-group scan, no scheduling-smell
-report — all three moved to the `plan` skill (its steps 1
-and 2), which is where somebody is actually deciding
+recording (that machinery is retired outright), no
+Backlog-wide merge-group scan, no scheduling-smell report —
+the latter two belong to the `plan` skill (its steps 1 and
+2), which is where somebody is actually deciding
 sequencing.
 See "Why the board belongs to `plan`" below.
 
@@ -662,18 +687,40 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
 - **over-broad grants** (`category: over-broad`) — a bare
   `Bash(:*)`, an unscoped `Read(…)` / `Edit(…)` root, or a
   bare-verb wildcard that subsumes many narrower rules;
+
 - **dangerous one-offs** (`category: dangerous`) — `rm -rf`,
   `curl … | sh`, `git push --force`;
+
 - **machine paths** (`category: machine-path`) — a malformed
   path (a doubled slash, so the rule can never match), or an
   absolute home path in a settings file where one does not
   belong;
+
 - **stale machine paths** (`category: machine-path-stale`) —
   an absolute path that no longer resolves on disk, which is
   what worktree rules decay into as worktrees are pruned;
+
 - **stale single-use commands** (`category: subsumed`) — a
   narrower rule an earlier one already covers (the dead weight
-  `firm-perms` never removes).
+  `firm-perms` never removes);
+
+- **guard conflicts** (`category: guard-conflict`) — a rule
+  granting a command shape a committed `PreToolUse` guard
+  blocks outright. This is the one **semantic** category: every
+  other one judges the rule's own text, while this asks whether
+  the rule contradicts a convention enforced elsewhere, which
+  no pattern over the rule alone can see. It consults each
+  guard's **own** predicate, so the audit and the run-time
+  block cannot drift; guards with an escape hatch (the
+  compound-shell one, via `#compound-ok`) are excluded, since a
+  sanctioned way through means there is no conflict.
+
+  A flagged entry is usually **inert rather than a live hole** —
+  a guard blocks at the `PreToolUse` layer whatever the
+  allowlist permits, and a guard block is not a permission
+  question. Report it anyway: it reads as sanctioning a
+  practice the conventions forbid, and it becomes live again if
+  the guard is ever unwired (which 7b checks).
 
 **Don't expect `machine-path` on this repo's own allowlist.**
 The audited file is `settings.local.json` — git-ignored and
@@ -691,6 +738,19 @@ allowlist.
 The helper is deterministic and pattern-based, so also skim
 its `flagged` list for a **secret** that leaked into a rule
 (it can't classify those) before proposing removals.
+
+**Don't argue a lever from "unfirmable prompt churn" — check
+first.** A read-only verb with no subcommand (`grep`, `tail`,
+`head`) is **out of scope** for the bare-verb floor by design:
+`firm_core.NO_BARE_WILDCARD` is a deny-list of *hazardous*
+programs, not a floor over every verb, so `Bash(grep:*)` is
+acceptable, `cruft` correctly does not flag it, and
+`firm_last` would firm it. Both halves of the floor agree —
+a filed finding once claimed they disagreed, and they do not.
+What *is* true is that a shell filter prints its output into
+the tool result, so preferring the Grep tool or
+`run_quiet.py inspect` is a **context-economy** rule, never a
+permissions one. Do not restate the churn framing.
 
 **Autonomy bound: propose, never auto-delete.** Dropping a
 permission is low-blast-radius, but silently editing the
@@ -853,7 +913,20 @@ session-level "don't spawn agents unless asked" default is
 pass skipped its rotation entirely on the reasoning that a
 don't-spawn-agents-unless-asked default forbade the fan-out;
 that reasoning was wrong, and with this text landed the conflict
-should not recur. Two corollaries:
+should not recur.
+
+**`review-pr` is the one skill that asks, and that is
+deliberate.** It puts a single question at its entry approving
+both "run now" and at which tier, and the tier choice is its
+spawn authorization. It asks because it does many things and
+the fan-out is one step of them, so an operator can reasonably
+want its lint-and-CI half without authorizing eight agents.
+Here — and in `audit` / `audit-scope` — the fan-out **is** the
+deliverable and there is no earlier gate for a question to ride,
+so asking would be ceremony. Do not read the difference as an
+oversight in either direction.
+
+Two corollaries:
 
 - **Never substitute an inline pass.** If sub-agent tooling is
   genuinely unavailable, **stop and ask** — mirroring
@@ -875,6 +948,17 @@ call (its step 8).
 target and its finding count in the report, so the next planning
 close-out can carry it into the Planning document — that record
 is the ongoing audit log.
+
+**If you write that outcome into the Planning document
+yourself, append it under the one marked heading —
+`Notes for the next planning session` — never as a
+free-floating section.** The document grows without bound
+between close-out rewrites, and post-close notes from
+non-planning sessions were a named cause: one document reached
+its next bootstrap carrying two such sections. Confining them
+to one heading is what lets the `plan` bootstrap consolidate in
+a single rewrite (see that skill's step 1). Creating a new
+top-level section here is the thing that breaks it.
 
 **10. Run session-metrics — unconditionally.** The morning pass
 both *folds* parked trim levers (step 4) and *contributes* new

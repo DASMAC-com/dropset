@@ -707,6 +707,86 @@ class GateTests(unittest.TestCase):
         self.assertIn("slices", parsed)
         self.assertTrue(Path(parsed["slices"]["source"]["path"]).exists())
 
+    def test_gate_only_keeps_the_verdict_and_drops_the_inventory(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rd.run(
+                [
+                    "review_diff.py",
+                    "--base",
+                    "main",
+                    "--out",
+                    str(self.out),
+                    "--no-fetch",
+                    "--gate-only",
+                ]
+            )
+        self.assertEqual(code, 0)
+        parsed = json.loads(buf.getvalue())
+        # The fields a mid-review re-check consumes.
+        for field in ("base_fresh", "ready", "blockers", "base_ahead", "diff_empty"):
+            self.assertIn(field, parsed)
+        # The inventory, which is unbounded in the branch's size.
+        for field in ("files", "commits", "diff_path", "diff_lines", "slices"):
+            self.assertNotIn(field, parsed)
+
+    def test_gate_only_still_gates_and_still_sets_the_exit_status(self):
+        # The narrowing is a projection of the answer, not a cheaper way of
+        # reaching one: an unready verdict must still exit non-zero.
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rd.run(
+                [
+                    "review_diff.py",
+                    "--base",
+                    "main",
+                    "--out",
+                    str(self.out),
+                    "--no-fetch",
+                    "--gate-only",
+                ]
+            )
+        self.assertEqual(code, 1)
+        parsed = json.loads(buf.getvalue())
+        self.assertFalse(parsed["ready"])
+        self.assertTrue(parsed["blockers"])
+
+    def test_gate_only_writes_the_diff_file_as_usual(self):
+        # It narrows the printed JSON, not the work — the diff on disk is what
+        # a later full call or a lens brief still points at.
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        with redirect_stdout(io.StringIO()):
+            rd.run(
+                [
+                    "review_diff.py",
+                    "--base",
+                    "main",
+                    "--out",
+                    str(self.out),
+                    "--no-fetch",
+                    "--gate-only",
+                ]
+            )
+        self.assertTrue(self.out.exists())
+
+
+class GateOnlyProjectionTests(unittest.TestCase):
+    """`gate_only` as a pure projection, independent of any repo."""
+
+    def test_it_selects_exactly_the_named_fields(self):
+        verdict = {k: k for k in rd.GATE_ONLY_FIELDS}
+        verdict.update({"files": ["a"], "commits": ["b"], "slices": {}})
+        self.assertEqual(set(rd.gate_only(verdict)), set(rd.GATE_ONLY_FIELDS))
+
+    def test_a_missing_optional_field_is_skipped_not_faked(self):
+        # `slices` is absent without --split, and `fetch_error` on the happy
+        # path; projecting a `None` for either would read as a real value.
+        self.assertEqual(rd.gate_only({"ready": True}), {"ready": True})
+
+    def test_the_projection_never_invents_a_value(self):
+        self.assertEqual(rd.gate_only({}), {})
+
 
 if __name__ == "__main__":
     unittest.main()

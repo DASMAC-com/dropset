@@ -40,6 +40,23 @@ ordinary xargs partitioning for concurrency — they were once suspected of hidi
 the violation and they do not: every chunk runs, and the chunk holding a bad
 file reports it. Chunking is not the bug; the file list is.
 
+``--changed`` narrows that list to **this branch's own work** — everything that
+differs from the merge-base with ``origin/main``, plus every
+untracked-not-ignored file. It exists to make the *cheap* check the *easy* one.
+Both `review-pr` and `init-pr` already prescribe a scoped re-run after an edit,
+with the full sweep reserved for the checkpoints — and both are routinely
+ignored, because at the moment of typing ``make lint`` is the shape in muscle
+memory while the scoped form
+(``pre-commit run <hook> --config … --files <paths…>``) needs the changed-file
+list assembled by hand. One measured session paid **13 full sweeps (≈5.8k)**
+while editing the very rule that forbids them. So this is not new machinery:
+the tool already owns the file list, and this is a filter over it that collapses
+the scoped form to one bare command.
+
+Note the cost being avoided is **context, in failure tails** — the bytes are
+hook output on a fail, so wrapping a full sweep in ``run_quiet.py`` does nothing
+(it already is wrapped). The only lever is *fewer full sweeps*.
+
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
 """
@@ -55,6 +72,11 @@ import sys
 # runs differ only in their file list (and this tool's list is the superset).
 DEFAULT_CONFIG = "cfg/pre-commit-lint.yml"
 
+# What `--changed` measures against. The **merge-base** with this ref, never the
+# ref itself: diffing against the tip reports the base's own commits as changes
+# too, which is the same symmetric-diff trap `rebase_overlap.py` documents.
+DEFAULT_BASE = "origin/main"
+
 # Tracked (`--cached`) plus untracked-but-not-gitignored (`--others` with
 # `--exclude-standard`), NUL-separated so a path containing a space — or, in
 # principle, a newline — survives the round trip.
@@ -62,6 +84,18 @@ _LS_FILES = [
     "git",
     "ls-files",
     "--cached",
+    "--others",
+    "--exclude-standard",
+    "-z",
+]
+
+# `--changed`'s untracked half. A file that has never been added is by
+# definition part of this branch's work, and it is exactly the class the
+# whole-tree resolver above exists to stop losing — so it must survive the
+# narrowing too, not just the full sweep.
+_LS_OTHERS = [
+    "git",
+    "ls-files",
     "--others",
     "--exclude-standard",
     "-z",
@@ -131,12 +165,73 @@ def lint_files(root: str) -> list[str]:
     return existing(parse_ls_files(raw), root)
 
 
+def merge_base(root: str, base_ref: str) -> str:
+    """Return the merge-base of ``HEAD`` and ``base_ref``.
+
+    Raises ``subprocess.CalledProcessError`` when the ref is unknown — a
+    missing ``origin/main`` means the caller has not fetched, and silently
+    falling back to the whole tree would turn a stale-base mistake into a
+    surprise full sweep.
+
+    Git's own stderr is **echoed and attached** rather than dropped.
+    ``capture_output=True`` takes it off the terminal, and
+    ``CalledProcessError`` renders as nothing but "returned non-zero exit
+    status 128" — so the operator would learn that a ref lookup failed but not
+    *which* ref or why, which is the entire diagnostic content. Echoing is what
+    actually surfaces it (the attribute alone does not print, whoever catches
+    it); the ``stderr=`` attachment is for a programmatic caller.
+    """
+    proc = subprocess.run(
+        ["git", "merge-base", "HEAD", base_ref],
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or f"git merge-base HEAD {base_ref} failed"
+        print(f"lint-paths: {detail}", file=sys.stderr)
+        raise subprocess.CalledProcessError(
+            proc.returncode,
+            proc.args,
+            output=proc.stdout,
+            stderr=detail,
+        )
+    return proc.stdout.strip()
+
+
+def changed_files(root: str, base_ref: str = DEFAULT_BASE) -> list[str]:
+    """Resolve just this branch's own files: everything differing from the
+    merge-base with ``base_ref``, plus every untracked-not-ignored path.
+
+    ``git diff <commit>`` compares that commit to the **working tree**, so
+    unstaged edits are included — which is what a post-edit check wants, since
+    the edit being checked has usually not been staged yet.
+    """
+    base = merge_base(root, base_ref)
+    tracked = subprocess.run(
+        ["git", "diff", "--name-only", "-z", base, "--"],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=root,
+    ).stdout
+    untracked = subprocess.run(
+        _LS_OTHERS,
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=root,
+    ).stdout
+    return existing(parse_ls_files(tracked + "\0" + untracked), root)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="lint_paths.py",
         description=(
             "Run pre-commit over every file in the working tree, including "
-            "untracked ones that `--all-files` silently skips. Extra arguments "
+            "untracked ones that `--all-files` silently skips, or with "
+            "`--changed` over just this branch's own files. Extra arguments "
             "after `--` are forwarded to pre-commit (e.g. a single hook id)."
         ),
     )
@@ -144,6 +239,19 @@ def main(argv: list[str] | None = None) -> int:
         "--config",
         default=DEFAULT_CONFIG,
         help=f"the pre-commit config to run (default: {DEFAULT_CONFIG})",
+    )
+    parser.add_argument(
+        "--changed",
+        action="store_true",
+        help="lint only this branch's own files — everything differing from "
+        "the merge-base with the base ref, plus untracked-not-ignored paths. "
+        "The post-edit check; the full sweep stays for the checkpoints.",
+    )
+    parser.add_argument(
+        "--base",
+        default=DEFAULT_BASE,
+        help=f"the ref --changed takes its merge-base against "
+        f"(default: {DEFAULT_BASE})",
     )
     parser.add_argument(
         "--print",
@@ -160,11 +268,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = repo_root()
-    files = lint_files(root)
+    files = changed_files(root, args.base) if args.changed else lint_files(root)
 
     if args.print_only:
         for path in files:
             print(path)
+        return 0
+
+    # An empty **changed** set is a legitimate answer — a branch with nothing
+    # to check yet, or one whose only edits were reverted — so it reports
+    # success. The whole-tree case below cannot say that.
+    if args.changed and not files:
+        print(f"lint-paths: nothing changed vs the merge-base with {args.base}")
         return 0
 
     # Deliberately non-zero. An empty set means the resolver found nothing to

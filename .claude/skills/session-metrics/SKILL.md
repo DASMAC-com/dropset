@@ -228,9 +228,13 @@ python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
   python3 .claude/tools/trim_levers.py file \
       --title '<the lever, as an imperative>' \
       --fingerprint <domain>:<slug> \
-      --touches '<glob>,<glob>' \
       --body-file <scratchpad>/lever.md
   ```
+
+  **No `--touches`.** The declared-scope glob field is
+  retired (`CLAUDE.md` → "Structured filing fields") — name
+  the skill or tool the lever would edit in the body prose,
+  which is what `trim-context` reads when it folds.
 
 - **`MATCH ENG-###`** — this lever has been seen before.
   **Append this session's evidence** to the issue that already
@@ -302,8 +306,8 @@ this replaced grew past the tool-result cap precisely because
 nothing bounded per-entry length.
 
 **No relations, no blocking edges.** Parked levers are exempt
-from the serial meta chain until `trim-context` folds them; the
-writer has no relation mutation at all.
+from the meta batch and its edge until `trim-context` folds
+them; the writer has no relation mutation at all.
 
 **A re-run is safe.** The probe makes this idempotent: a second
 run for the same session finds each lever already filed and

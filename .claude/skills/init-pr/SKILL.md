@@ -201,6 +201,35 @@ not only to the sub-agents you brief:
   the run used. The map you want is of the file you are
   opening, not of the repo.
 
+  **Don't put a comment-line alternation in a section map.**
+  Adding `^#` / `^##` to the pattern defeats the map's own
+  purpose in a comment-heavy file: a section-map grep over the
+  563-line `Makefile` used
+  `^[a-zA-Z0-9_-]*:|^# |^##` and so returned every comment
+  line in a file that is mostly prose comments — **≈5.4k** to
+  answer "where are the rules", and that session's single
+  largest result. The `Makefile` is the case in point; any
+  file whose comments outweigh its declarations behaves the
+  same. Match the **declaration** shape only (for a Makefile,
+  `^[a-zA-Z0-9_-]+:`), and if you genuinely want the prose
+  headings, ask for them as a separate narrow query.
+
+- **If you already ran the map, slice from it.** A map
+  followed by a whole-file Read means the map was wasted —
+  you paid for the section list and then bought the file
+  anyway. One session ran the structure grep over both router
+  modules and then read both whole (**≈8.6k, 62% of all its
+  Read cost**); one of those reads was sanctioned (that file
+  was both edited and excerpted into two lens briefs), but the
+  router *test* module's ≈4.2k was not — never edited, never
+  briefed, nothing amortized it. Four regions were needed and
+  the map had already named all four.
+
+  This is the **operational trigger** the whole-read rule
+  below lacks. "Whole only when you will both edit and brief"
+  is necessary and did not fire here; "you have a map, so
+  slice" would have.
+
 - **This covers a sibling `SKILL.md` or convention doc too —
   those are what a mid-session handoff actually reaches
   for.** The rule reads as being about large *source* files,
@@ -243,14 +272,28 @@ not only to the sub-agents you brief:
   Absent all three, slice.
 
 - **Route any repeated verbose-on-success command through the
-  quiet runner** — `cargo`, `make`, **and `pnpm`**. Run it as
-  `python3 .claude/tools/run_quiet.py -- <cmd>` **during
-  implementation**, not only during `review-pr`. Naming only
-  cargo and make is what let a whole runner slip: one session
-  ran the frontend test script 12 times and a frontend `exec`
-  9 times, all unwrapped, ≈5.2k combined for output that is one
-  line when it passes — and every entry in that session's
-  hardening table was a `pnpm` shape.
+  quiet runner** — and read that **by shape, not by name.**
+  *Any* long-running build, lint, deploy, or acceptance target
+  goes through `python3 .claude/tools/run_quiet.py -- <cmd>`
+  (or runs backgrounded), **during implementation**, not only
+  during `review-pr`.
+
+  Naming runners individually is what keeps letting one slip.
+  The list once said cargo and make: one session then ran the
+  cspell hook unwrapped and landed its truncated per-file
+  cascade in context (**≈2.5k**) because `pre-commit` was not
+  on the list, and another paid **3.5k across 7 bare
+  invocations** of a Docker collector-stack target because it
+  was an *acceptance check* rather than a named command. A
+  third ran the frontend test script 12 times and a frontend
+  `exec` 9 times unwrapped, ≈5.2k for output that is one line
+  when it passes.
+
+  So the shapes that qualify include, and are not limited to,
+  `cargo`, `make`, `pnpm`, `docker`, `pre-commit run`, and
+  `python3 .claude/tools/lint_paths.py`. If you are about to
+  run something whose success output is longer than its
+  verdict, wrap it.
 
   **Nothing prints until the command exits**, so do not poll
   the log of a *backgrounded* run — one session made seven such
@@ -263,6 +306,44 @@ not only to the sub-agents you brief:
   rule is written in terms of the Rust suites, so a frontend
   test script read as out of scope. It is not — batch a logical
   change, then verify once, whatever the runner is.
+
+- **Lint the changed set, not the whole tree.** After an edit,
+  the post-edit check is one bare command:
+
+  ```sh
+  python3 .claude/tools/run_quiet.py -- \
+    python3 .claude/tools/lint_paths.py --changed
+  ```
+
+  It resolves this branch's own files (merge-base with
+  `origin/main`, plus untracked-not-ignored paths) and runs the
+  hooks over just those; append `-- <hook-id>` to narrow
+  further. The full `make lint` is for the two checkpoints —
+  once before committing, once at the end — and nowhere else.
+  This exists because restating the rule demonstrably does not
+  work: one session paid **13 full sweeps (≈5.8k)** while
+  editing the rule that forbids them, for the plain reason that
+  `make lint` needed no arguments and the scoped form did. Now
+  neither does.
+
+- **Run a fast suite whole, through the wrapper — not per
+  module.** For an edit under `.claude/tools/`:
+
+  ```sh
+  python3 .claude/tools/run_quiet.py -- make tools-tests
+  ```
+
+  Not `python3 -m unittest discover … -p test_X.py`. The narrow
+  form feels cheaper because it targets the one tool you edited,
+  and it is not: measured at **32 calls / ≈7.1k** against **15
+  calls / 516 tokens** for the whole suite, because the `make`
+  target is wrapped and the discover call is not. It is ~14× per
+  call for a *narrower* answer — and it missed a sibling test
+  the edit had just broken, twice in one session. Reserve the
+  per-module form for a suite slow enough that the wall-clock
+  saving exceeds the context; this one runs in under a second.
+  See `docs/conventions/context-economy.md` → "When a suite is
+  fast enough to run whole".
 
 - **Poll CI with the committed tool, not by hand.** One session
   ran `gh pr checks` four times manually (922 tokens) before
@@ -309,6 +390,30 @@ not only to the sub-agents you brief:
   region. `search_source.py` now says so on its own summary
   line when a context sweep spans many files or piles up in one.
 
+- **Don't re-derive a diff — of your own edits, or one
+  already written to disk.** This section covers slice-reading
+  files and says nothing about diffs, and that is where the
+  calls land: in one session a bare `git diff` of two source
+  files was the **largest single result (≈2.9k)** and the
+  `git diff` shape totalled **4.3k over 6 calls** — all during
+  the *implement* phase, before `review-pr` ran. Another paid
+  **≈4.3k** diffing a file it had itself just authored via
+  `Edit`.
+
+  Two cases, one rule:
+
+  - **You wrote it.** Content that reached the tree through
+    `Edit` / `Write` is already in context, so diffing it buys
+    it twice. No command needed.
+  - **A tool already wrote the diff.** Read
+    `review_diff.py --split`'s slices rather than re-running
+    `git diff` over the same range.
+
+  Reach for `git diff` when the change came from somewhere you
+  have **not** read — a rebase, a hook autofix, a sibling
+  session — and take `--stat` first when the question is only
+  *which files moved*.
+
 - **Verify a list-producing flag with a count, not the list.**
   One session's largest single result (≈5.8k) was a new tool's
   `--print` dumping ~600 paths to answer the yes/no question
@@ -328,8 +433,9 @@ not only to the sub-agents you brief:
 
 The deterministic string/path work this bootstrap needs —
 **tag validation**, **base-repo resolution**,
-**branch-name normalization**, and the
-**`frontend/.env.local` symlink** — lives in the Python
+**branch-name normalization**, and the **two operator-file
+symlinks** (`frontend/.env.local` and
+`infra/localnet/secrets.local.env`) — lives in the Python
 skill-tool `.claude/tools/init_pr_branch.py` (per
 `CLAUDE.md` → "Skill tooling"), so the skill drives it
 instead of hand-parsing `git worktree list` in prose. Run
@@ -348,9 +454,15 @@ python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
   "current_branch": "worktree-eng-603",
   "normalized_branch": "eng-603",
   "rename_needed": true,     // true iff a `worktree-` prefix is stripped
-  "env_link": "created"      // created|exists|no-source|no-base|failed
+  "env_link": "created",     // frontend/.env.local
+  "secrets_env_link": "exists"  // infra/localnet/secrets.local.env
 }
 ```
+
+Both link fields carry the same five-value vocabulary —
+`created` / `exists` / `no-source` / `no-base` / `failed` —
+and are reported **separately**, because a machine can
+legitimately have one file and not the other.
 
 Steps 1, 2, 3, and 4 read their answers from this one call.
 
@@ -360,7 +472,9 @@ symlink used to be prose here: two existence checks plus an
 re-prompted on *every* bootstrap because the file-access
 heuristic gates on the absolute path. Folding the step into
 the call above means the command line carries **no absolute
-path** at all, so there is nothing left to gate.
+path** at all, so there is nothing left to gate. The
+enclave file rides the same flag for the same reason, and
+adding it cost the command line nothing.
 
 **A note on where allow-rules live, since this skill used to
 state it wrongly.** `settings.local.json` is **one shared
@@ -376,8 +490,9 @@ a rule to `~/.claude/settings.json` when you want it in
 files resolve across worktrees".
 
 What a cold worktree genuinely lacks is untracked
-per-directory *content* — `frontend/node_modules` and
-`frontend/.env.local` — which is what step 3 handles.
+per-directory *content* — `frontend/node_modules`,
+`frontend/.env.local`, and `infra/localnet/secrets.local.env`
+— which is what step 3 handles.
 
 ## Steps
 
@@ -421,32 +536,51 @@ per-directory *content* — `frontend/node_modules` and
    base repo's checked-out `main` working tree. That matters
    only to whoever is working in the base repo directly, not
    to this bootstrap, so leave it to them. `base_repo` from
-   the helper's output is still worth keeping — the env
-   symlink used it, and a `null` value is the same condition
-   that reports `env_link: "no-base"`.
+   the helper's output is still worth keeping — the two
+   symlinks used it, and a `null` value is the same condition
+   that reports `"no-base"` for both of them.
 
-1. **Confirm the `frontend/.env.local` symlink.** The
+1. **Confirm the two operator-file symlinks.** The
    `--link-env` flag on the helper call above **already did
-   this** — it symlinks the base repo's env file into this
-   worktree so `pnpm dev` / `make frontend` pick up the same
-   env without a manual copy (`.env*` is in
-   `frontend/.gitignore`, so the link isn't tracked). There
-   is no shell to run here; just read `env_link` from that
-   one JSON result:
+   this** — it symlinks each of the base repo's copies into
+   this worktree, so neither has to be copied by hand. Both
+   are git-ignored, so neither link is tracked. There is no
+   shell to run here; just read the two fields from that one
+   JSON result:
+
+   - **`env_link`** — `frontend/.env.local`, so `pnpm dev` /
+     `make frontend` pick up the same env.
+   - **`secrets_env_link`** —
+     `infra/localnet/secrets.local.env`, the local secrets
+     enclave's one operator file (the vault name plus one
+     `op://` reference per credential). Without it,
+     `make fx-collectors-up` in this worktree silently falls
+     back to whatever keys happen to be exported. Unlike
+     `settings.local.json`, this path is **not** resolved
+     through a worktree to the main checkout, so the symlink
+     is what gives it that resolution.
+
+   Each field carries the same five values:
 
    - `"created"` — the link was made.
    - `"exists"` — this worktree already had the path, so it
      was left untouched (it may be a real file someone placed
      deliberately; the tool never clobbers).
-   - `"no-source"` — nothing to link: either main has no env
-     file, or this worktree has no `frontend/` directory to
+   - `"no-source"` — nothing to link: either main has no such
+     file, or this worktree has no containing directory to
      link it into.
    - `"no-base"` — main isn't checked out anywhere, so there
      was no base repo to link from (the same condition that
      skipped the pull above).
    - `"failed"` — the link couldn't be created (an unwritable
-     `frontend/`, a read-only mount). Mention it and carry
-     on; `pnpm dev` will want the env file copied by hand.
+     parent directory, a read-only mount). Mention it and
+     carry on; the file will want copying by hand.
+
+   **Read the two independently.** A machine that has never
+   run the frontend has no `.env.local`, and one that has
+   never touched the FX collectors has no enclave file;
+   neither absence says anything about the other, which is why
+   there are two fields rather than one.
 
    Every outcome is fine to proceed on; none of them blocks
    the bootstrap. The tool never raises here — it reports
@@ -744,10 +878,41 @@ per-directory *content* — `frontend/node_modules` and
    points use `AskUserQuestion`" above), announce that
    the work is ready and ask — again **via
    `AskUserQuestion`** — whether to run `/review-pr` now.
-   Offer two options: "yes, run /review-pr" (**first**,
-   the recommended default) and "not yet".
 
-   - On **yes**, route straight into `/review-pr`.
+   **This question is `review-pr`'s entry gate, so it
+   carries the review tier too — one interaction, not
+   two.** The chosen tier **is** the authorization for
+   `review-pr`'s adversarial sub-agent fan-out; that skill
+   asks no separate spawn question later (see its "The
+   entry gate" section, which is the other half of this
+   contract).
+
+   So compute the signals first, from a real diff rather
+   than an impression:
+
+   ```sh
+   python3 .claude/tools/review_diff.py --base main \
+     --out <scratchpad>/review-diff.txt
+   ```
+
+   Read `files` and the per-file `changes` for size, and
+   whether any path is program code, the SDK surface, a
+   migration, or a generation input. Then offer:
+
+   - **"Yes — full adversarial suite" (first, recommended)**
+
+   - **"Yes — reduced tier"**, *only* when the signals sit
+     under the small-diff threshold `review-pr` documents
+     (≤ 5 files, ≤ 60 changed lines, no program / SDK /
+     migration / generation-input path, single crate).
+     Name the actual signals in the option so the choice is
+     informed.
+
+   - **"Not yet"**
+
+   - On either **yes**, route straight into `/review-pr`,
+     carrying the chosen tier.
+
    - On **not yet**, stop and leave the PR as it is.
 
    **Do not write a "delivered" narrative onto the Linear

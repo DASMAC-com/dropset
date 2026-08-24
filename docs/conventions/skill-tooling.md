@@ -54,21 +54,32 @@ coupling skill tooling to the program's toolchain.
 
 Today `.claude/tools/` holds `session_metrics.py` (the
 `session-metrics` core), `init_pr_branch.py` (the `init-pr`
-branch/worktree checks **and**, under `--link-env`, the
-`frontend/.env.local` symlink — so it is not purely read-only),
+branch/worktree checks **and**, under `--link-env`, the two
+operator-file symlinks `frontend/.env.local` and
+`infra/localnet/secrets.local.env` — so it is not purely
+read-only),
 `run_quiet.py` (a generic quiet runner that captures a noisy command's
 output to a log and surfaces only a summary — see
 [context economy](context-economy.md)), `review_diff.py` (`review-pr`
 step 5's diff-and-freshness gate, which also **owns** the three path
 lists that decide the review's excludes and which CI-mirroring gates
-run), `sync_blockers.py` (the deterministic core of the
-`sync-blockers` skill), `board_batch.py` (the planning session's
+run), `board_batch.py` (the planning session's
 batched board writes and its compact board read — `list`, `fields`,
 `priorities`, `edges`; it exists because every MCP write echoes the
 issue's whole body back, and `issueUpdate` selecting `success` alone
 does not), `search_source.py` (the one scoped-search
 shape, which takes its exclude lists from `review_diff.py`),
-`lens_preamble.py` (composes the standing half of a lens brief from the
+`fleet_resume.py` (the fleet-resume launcher behind the `faps` verb —
+resolves the in-flight issues from Linear, skips the ones already open,
+and emits one AppleScript that opens and resumes the rest; read-only
+unless `--apply`), `migration_collisions.py` (compares this branch's new
+migration numbers
+against other open PRs' before an enqueue — it takes the other PRs'
+files from a **file** rather than calling GitHub, so the network read
+stays on the MCP/`gh` path and the compare stays deterministic),
+`check_home_paths.py` (the committed-agent-material hygiene guard, wired
+as a scoped pre-commit hook), `lens_preamble.py` (composes the standing
+half of a lens brief from the
 [sub-agent brief](sub-agent-brief.md) plus a skill's own committed
 section, so a skill never reads either to quote it), and
 `render_review.py` (measures or contact-sheets rendered deck pages
@@ -79,7 +90,7 @@ optional dependency, per the lazy-import rule above), alongside the
 top-level `tools/` tree.
 
 A `make` target is the usual interface, but not the only one:
-`sync_blockers.py`, `review_diff.py`, `board_batch.py`, and
+`review_diff.py`, `board_batch.py`, and
 `init_pr_branch.py` are all driven directly with `python3`. Where a
 skill does that, the allow-rule it needs is the **directory-wide**
 `Bash(python3 .claude/tools/:*)` rather than a per-tool rule, so that

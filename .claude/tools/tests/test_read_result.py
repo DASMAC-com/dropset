@@ -341,10 +341,47 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("a:one", out)
 
-    def test_no_mode_is_refused_with_the_list_of_modes(self):
+    def test_no_mode_and_no_field_is_refused_with_the_list_of_modes(self):
         with self.assertRaises(ReadResultError) as caught:
             _invoke(_plain(BODY))
         self.assertIn("--headings", str(caught.exception))
+        # The refusal names the --field-alone shortcut, so a reader who wanted
+        # one scalar doesn't have to guess a mode for it.
+        self.assertIn("--field", str(caught.exception))
+
+    def test_field_alone_prints_a_short_field(self):
+        # The commonest real use: one scalar back out of a spilled MCP echo,
+        # e.g. an issue's status after a state-only write.
+        rc, out, err = _invoke(_persisted({"status": "In Review"}), "--field", "status")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "In Review")
+        self.assertIn("field status", err)
+
+    def test_field_alone_refuses_a_long_field_and_names_a_mode(self):
+        long_field = "\n".join(f"line {i}" for i in range(50))
+        with self.assertRaises(ReadResultError) as caught:
+            _invoke(_persisted({"description": long_field}), "--field", "description")
+        message = str(caught.exception)
+        self.assertIn("too long to print", message)
+        self.assertIn("--headings", message)
+
+    def test_field_alone_prints_a_field_exactly_at_the_cap(self):
+        # The boundary is inclusive: refusing at exactly the cap would make the
+        # documented limit off by one.
+        at_cap = "\n".join(f"line {i}" for i in range(rr.FIELD_PRINT_MAX_LINES))
+        rc, out, _ = _invoke(_persisted({"body": at_cap}), "--field", "body")
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(out.splitlines()), rr.FIELD_PRINT_MAX_LINES)
+
+    def test_an_explicit_mode_still_wins_over_field_alone(self):
+        # --field is checked last, so it never shadows a mode the caller asked
+        # for on the same command line.
+        rc, out, err = _invoke(
+            _persisted({"status": "In Review"}), "--field", "status", "--count"
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("character(s)", out)
+        self.assertIn("count", err)
 
     def test_a_missing_file_is_a_clean_error(self):
         with self.assertRaises(ReadResultError) as caught:
