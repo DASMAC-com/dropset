@@ -329,6 +329,14 @@ batches — including the one that introduced this wording, which added a
 hook to `cfg/pre-commit-lint.yml` and four words to `cfg/dictionary.txt`.
 A definition that its own change fails is the wrong definition.
 
+This does **not** contradict the audit registry, which files `cfg/**`
+under `ci-infra`. The two answer different questions: the registry
+assigns a path to the subsystem whose *failure modes* an audit lens
+should reason about, while this list decides which Linear issues batch
+together as agent-infra work. `cfg/pre-commit-lint.yml` is honestly both
+— audited as CI config, filed as meta — and neither classification is
+downstream of the other.
+
 **One narrow allowance beyond that**, for the same reason: an
 **incidental comment fix in product code**, where that comment names
 agent material the batch just retired, does not disqualify. Retiring a

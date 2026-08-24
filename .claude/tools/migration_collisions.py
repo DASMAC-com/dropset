@@ -38,6 +38,16 @@ and the network read stays where the convention puts it::
 Prints JSON and exits **non-zero on a collision**, so a caller that checks only
 the status still cannot enqueue through one.
 
+**The bound: this compares against *open* PRs only.** A sibling that already
+**merged** is not in the ``--others`` set, and its migration is not in this
+branch's tree either until the branch rebases — so a collision with a merged
+sibling passes this check cleanly. That gap is covered from the other side and
+deliberately not duplicated here: the rebase in ``review-pr`` step 2 pulls the
+merged file into the tree, at which point the in-tree ascend guard sees both
+numbers and fires, and the merge queue's merge-group branch is a second
+backstop. The case this tool exists for is the one neither of those can reach —
+two PRs open *simultaneously*, each green, neither containing the other's file.
+
 Stdlib only. A Python skill-tool under ``.claude/tools/`` — deliberately **not**
 a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
 """
