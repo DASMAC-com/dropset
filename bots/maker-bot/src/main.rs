@@ -47,6 +47,7 @@ use dropset_util::rpc::ws_url_from_rpc;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
@@ -173,8 +174,13 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     // off-localnet --rpc is always a misconfiguration — fail fast rather than
     // emit doomed sends.
     chain::assert_localnet(&client)?;
-    let leader = solana_keypair::read_keypair_file(&args.leader_key)
-        .map_err(|e| anyhow!("read leader key {}: {e}", args.leader_key))?;
+    // One signing handle for the whole process, shared by every market's
+    // context, so roster size doesn't multiply the number of long-lived
+    // copies of the key material.
+    let leader = Arc::new(
+        solana_keypair::read_keypair_file(&args.leader_key)
+            .map_err(|e| anyhow!("read leader key {}: {e}", args.leader_key))?,
+    );
 
     // The leader pays for its own quoting txns; top it up on localnet.
     let balance = client
@@ -243,7 +249,7 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         );
         contexts.push(BotContext::new(
             chain::rpc(&cfg.rpc_url),
-            leader.insecure_clone(),
+            Arc::clone(&leader),
             cfg.vault_idx,
             addrs.clone(),
             *market,

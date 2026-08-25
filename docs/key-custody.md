@@ -97,8 +97,9 @@ Every consumer of the leader key in the maker, enumerated:
 
 | Form                   | Sites                                             | Reaches                                                    |
 | ---------------------- | ------------------------------------------------- | ---------------------------------------------------------- |
-| `&ctx.leader` (secret) | `tasks.rs` 659, 984, 1096, 1120, 1144, 1173       | `chain::` signing calls only                               |
-| `leader.pubkey()`      | `tasks.rs` 615, 841; `main.rs` 178, 183, 186, 278 | balance check, airdrop log, fill subscription, state reads |
+| `&ctx.leader` (secret) | `tasks.rs` 666, 991, 1103, 1127, 1151, 1180       | `chain::` signing calls only                               |
+| `leader.pubkey()`      | `tasks.rs` 622, 848; `main.rs` 187, 192, 195, 287 | balance check, airdrop log, fill subscription, state reads |
+| `Arc::clone(&leader)`  | `main.rs` 252                                     | hands each context a handle — a pointer copy, not bytes    |
 
 The secret half is passed to `chain::` signing calls and to nothing
 else. Public keys are the only form that leaves this set.
@@ -112,7 +113,7 @@ crate's call sites, not a general clean bill for key custody.
 
 Three structural facts support it:
 
-- `Context` (`context.rs:73-80`) does **not** derive `Debug`. A derived
+- `Context` (`context.rs:77-170`) does **not** derive `Debug`. A derived
   `Debug` on a struct holding a `Keypair` is the classic
   accidental-disclosure path — a single `{:?}` in an error branch would
   reach for it. It is absent and should stay absent, which is worth a
@@ -132,29 +133,41 @@ Three structural facts support it:
   silently remove it — which is why §3.3 turns it into something we own
   and §5 makes it a re-audit trigger.
 
-### 1.4 The defect: the key is cloned per market
+### 1.4 Resolved: the key was cloned per market
 
-`main.rs:241-243` builds one `Context` per market inside a loop, and
-each gets its own copy of the leader:
+**Status: fixed.** Recorded rather than deleted because §3.1 is written
+against it, and because §6's signing-seam re-check is what would catch
+it coming back.
 
-```rust
-leader.insecure_clone(),
-```
+The defect, as found: the startup loop built one `Context` per market
+and gave each its own `leader.insecure_clone()`, so the 32-byte secret
+existed in memory once *per market*, in long-lived structs, for the
+life of the process. The method that put it there is named
+`insecure_clone` by upstream precisely because it defeats the
+single-owner discipline the type is designed around. The context doc
+comment already said the markets "share a leader", which was true of
+the *identity* and false of the *storage*.
 
-So the 32-byte secret exists in memory once per market, in long-lived
-structs, for the life of the process — and the method that puts it
-there is named `insecure_clone` by upstream precisely because it
-defeats the single-owner discipline the type is designed around.
+The key is now read once (`main.rs:180`) into an `Arc<Keypair>` that
+every context shares (`context.rs:95`), and the `insecure_clone` call
+is gone. One long-lived copy of the secret exists for any roster size.
 
-This directly contradicts the goal of one narrow signing seam. The
-context doc comment even says the markets "share a leader", which is
-true of the *identity* and false of the *storage*.
+Be precise about what the type does and does not hold, because a
+security spec that overstates its own guarantee is worse than one that
+records a gap. `Keypair` is deliberately not `Clone` upstream, so
+cloning the handle to build the next context cannot duplicate key
+material: the *accidental* return of the N-copies shape is closed. The
+deliberate one is not — `insecure_clone` stays reachable through the
+same `Deref` that lets `&ctx.leader` reach the signing helpers.
+Foreclosing it is §3.1's signer interface; until that exists, §6's
+re-derivation of the §1.3 producer set is what would catch a
+reintroduction.
 
-The fix is a design question rather than a one-line change, so it is
-specified in §3.1 rather than patched here, and is tracked separately.
-On localnet with a throwaway committed key the present cost is nil; the
-reason to fix it is that the deployed shape inherits this structure
-unless it is changed first.
+This is the storage half of §3.1 and not the whole of it — contexts
+still receive something that *is* a `Keypair` rather than something
+that merely signs. Narrowing that to a signer interface is the part
+still outstanding, and it belongs with the deployment work, where a
+non-file key first exists.
 
 ### 1.5 CI leak surface: measured clean
 
@@ -210,9 +223,14 @@ built so it can be built to them.
 
 The process must hold exactly **one** owner of the secret, behind a
 narrow interface that exposes signing and never exposes bytes. Callers
-receive something that can sign; they do not receive a `Keypair`. This
-retires the per-market `insecure_clone` of §1.4: contexts share one
-signer handle rather than each owning a copy.
+receive something that can sign; they do not receive a `Keypair`.
+
+The storage half of this has landed (§1.4): the per-market
+`insecure_clone` is gone and the contexts share one handle. The
+interface half has not — that handle is still an `Arc<Keypair>`, so a
+caller holding a context can reach the bytes. Closing that is
+deployment work, since a signer interface is only meaningful once
+there is a non-file key behind it.
 
 **That is necessary and it is not sufficient, and the gap is the most
 important rule in this document.** A narrow seam prevents key *theft*.

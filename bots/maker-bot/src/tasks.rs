@@ -1206,6 +1206,7 @@ mod tests {
         Candidates::none().push(source, Some(Reading::new(value, Duration::from_secs(1))))
     }
     use solana_keypair::Keypair;
+    use std::sync::Arc;
 
     /// A `Context` that never talks to a validator. `RpcClient::new` doesn't
     /// connect, so this is only unsound if the code under test actually sends —
@@ -1231,7 +1232,7 @@ mod tests {
         let quote_state = QuoteStateStore::new(dir).for_market(market.market, cfg.symbol);
         Context::new(
             chain::rpc("http://127.0.0.1:1"),
-            Keypair::new(),
+            Arc::new(Keypair::new()),
             0,
             market,
             cfg,
@@ -1428,7 +1429,7 @@ mod tests {
         };
         let ctx = Context::new(
             chain::rpc("http://127.0.0.1:1"),
-            Keypair::new(),
+            Arc::new(Keypair::new()),
             0,
             addrs,
             MARKETS[0],

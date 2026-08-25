@@ -21,6 +21,7 @@ use dropset_fair_value::{FairValueConfig, FairValueEngine};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 /// The discovered market and its token metadata — everything the bot needs to
@@ -75,7 +76,23 @@ pub enum ProfileKind {
 /// vault, armed profile, and inventory belief.
 pub struct Context {
     pub client: RpcClient,
-    pub leader: Keypair,
+    /// The leader / quote-authority signer, shared by every market's context
+    /// rather than copied into each — one long-lived copy of the 32-byte
+    /// secret regardless of roster size.
+    ///
+    /// `Keypair` is deliberately not `Clone` upstream, so `.clone()` here can
+    /// only clone the handle: the type closes the *accidental* path back to a
+    /// copy per market, not the deliberate one (`insecure_clone` stays
+    /// reachable through `Deref`). The narrow signer interface that would
+    /// close that is specified in `docs/key-custody.md` §3.1.
+    ///
+    /// That same `Deref` is what leaves the use sites unchanged —
+    /// `&ctx.leader` coerces to the `&Keypair` the `chain` helpers take, and
+    /// `ctx.leader.pubkey()` resolves. The secret half reaches those signing
+    /// calls and nothing else, but that is a property of the call sites
+    /// rather than of this type — which is why the recurring key-custody
+    /// audit re-derives it instead of assuming it.
+    pub leader: Arc<Keypair>,
     pub vault_idx: u32,
     pub market: MarketAddrs,
     /// The market's feed identity (CoinGecko / CoinMarketCap ids, the FX
@@ -158,7 +175,7 @@ impl Context {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: RpcClient,
-        leader: Keypair,
+        leader: Arc<Keypair>,
         vault_idx: u32,
         market: MarketAddrs,
         cfg: MarketConfig,
