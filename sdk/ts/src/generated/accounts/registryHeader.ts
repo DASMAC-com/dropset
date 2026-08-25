@@ -28,12 +28,12 @@ defaultFeeConfig: FeeConfig;
  * lifecycle and rent reclamation**.
  */
 marketCount: number; 
-/** Default skin-in-the-game floor (ppm, [`Ppm32`]) stamped into markets. */
+/** Default skin-in-the-game floor (ppm, `Ppm32`) stamped into markets. */
 defaultMinLeaderShare: number; 
-/** Default taker fee (ppm, [`Ppm16`]) stamped into markets. */
+/** Default taker fee (ppm, `Ppm16`) stamped into markets. */
 defaultTakerFee: number; 
 /**
- * Default platform-fee ceiling (bps, [`Bps16`]) stamped into
+ * Default platform-fee ceiling (bps, `Bps16`) stamped into
  * `MarketHeader.max_platform_fee` at creation. Bounds the
  * caller-declared `platform_fee_bps` a `swap` may skim off the taker's
  * output; retunable per market afterwards via `SetMaxPlatformFee`.
@@ -59,12 +59,12 @@ defaultFeeConfig: FeeConfigArgs;
  * lifecycle and rent reclamation**.
  */
 marketCount: number; 
-/** Default skin-in-the-game floor (ppm, [`Ppm32`]) stamped into markets. */
+/** Default skin-in-the-game floor (ppm, `Ppm32`) stamped into markets. */
 defaultMinLeaderShare: number; 
-/** Default taker fee (ppm, [`Ppm16`]) stamped into markets. */
+/** Default taker fee (ppm, `Ppm16`) stamped into markets. */
 defaultTakerFee: number; 
 /**
- * Default platform-fee ceiling (bps, [`Bps16`]) stamped into
+ * Default platform-fee ceiling (bps, `Bps16`) stamped into
  * `MarketHeader.max_platform_fee` at creation. Bounds the
  * caller-declared `platform_fee_bps` a `swap` may skim off the taker's
  * output; retunable per market afterwards via `SetMaxPlatformFee`.

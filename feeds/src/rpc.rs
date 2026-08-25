@@ -211,7 +211,7 @@ struct RpcCursor {
 /// nothing is ever left behind the cursor.
 ///
 /// Enumeration is bounded per poll, not in total: a walk that hits
-/// [`DEFAULT_MAX_PAGES_PER_POLL`] resumes where it stopped on the next poll
+/// `DEFAULT_MAX_PAGES_PER_POLL` resumes where it stopped on the next poll
 /// (reporting a backlog, so the runner loops straight back) rather than
 /// emitting from an unknown position.
 pub struct RpcPollSource<T = RpcClient> {
@@ -262,7 +262,7 @@ impl<T: RpcTransport> RpcPollSource<T> {
 
     /// Cap how many signature pages one poll enumerates before yielding.
     /// Raising it reaches the bound in fewer polls at the cost of a longer
-    /// single `next()`; the default is [`DEFAULT_MAX_PAGES_PER_POLL`].
+    /// single `next()`; the default is `DEFAULT_MAX_PAGES_PER_POLL`.
     pub fn with_max_pages_per_poll(mut self, pages: usize) -> Self {
         self.max_pages_per_poll = pages.max(1);
         self

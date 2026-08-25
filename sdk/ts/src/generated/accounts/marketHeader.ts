@@ -17,7 +17,7 @@ export type MarketHeader = { discriminator: ReadonlyUint8Array;
 /** Per-fill / per-quote monotonic counter. */
 nonce: bigint; 
 /**
- * Head of the active DLL: sector index or [`NULL_SECTOR`]. Walked
+ * Head of the active DLL: sector index or `NULL_SECTOR`. Walked
  * by the matching engine on every taker.
  */
 head: number; 
@@ -103,7 +103,7 @@ export type MarketHeaderArgs = {
 /** Per-fill / per-quote monotonic counter. */
 nonce: number | bigint; 
 /**
- * Head of the active DLL: sector index or [`NULL_SECTOR`]. Walked
+ * Head of the active DLL: sector index or `NULL_SECTOR`. Walked
  * by the matching engine on every taker.
  */
 head: number; 

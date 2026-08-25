@@ -49,7 +49,7 @@ grossDeposited: bigint;
 entryRefPrice: Price; 
 /**
  * Shares-weighted average VPS (`L / total_shares`) across deposits,
- * Q32.32. Same encoding and practical bound as [`crate::Vault::hwm`].
+ * Q32.32. Same encoding and practical bound as `Vault::hwm`.
  */
 entryVps: bigint; 
 /** Slot of the first deposit. Captured once at PDA init. */
@@ -111,7 +111,7 @@ grossDeposited: number | bigint;
 entryRefPrice: PriceArgs; 
 /**
  * Shares-weighted average VPS (`L / total_shares`) across deposits,
- * Q32.32. Same encoding and practical bound as [`crate::Vault::hwm`].
+ * Q32.32. Same encoding and practical bound as `Vault::hwm`.
  */
 entryVps: number | bigint; 
 /** Slot of the first deposit. Captured once at PDA init. */

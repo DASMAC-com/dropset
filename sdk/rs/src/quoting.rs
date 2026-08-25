@@ -1,7 +1,7 @@
 //! Native-vs-relative quoting.
 //!
 //! The program quotes *relatively*: a single `reference_price` plus a
-//! [`LiquidityProfile`](crate::layout::LiquidityProfile) of per-level ppm
+//! [`LiquidityProfile`] of per-level ppm
 //! offsets and bps sizes (architecture.md § LiquidityProfile). This module
 //! adds the **native CLOB** direction — a leader (or MM
 //! bot) specifies a full book of absolute price levels and atom sizes, and
@@ -195,7 +195,7 @@ pub fn profile_bytes(profile: &LiquidityProfile) -> [u8; PROFILE_BYTES] {
 /// `expiry_offset_secs` is measured from — an `i64` (the shape of both `Clock.unix_timestamp` and
 /// a `SystemTime` epoch delta), clamped into the on-chain `u32` here so a
 /// pre-epoch or post-2106 value can never wrap into a live-looking one.
-/// A caller wanting a fresh quote passes [`now_unix`]; a stale or zero
+/// A caller wanting a fresh quote passes `now_unix`; a stale or zero
 /// value is stored raw and simply kills the leader's own levels.
 ///
 /// The two arrive in **different** native widths (`u64` slot, `i64`

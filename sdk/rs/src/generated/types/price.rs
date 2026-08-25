@@ -21,8 +21,8 @@
 ///       = significand × 10^(unbiased_exponent − 7)
 /// ```
 ///
-/// Two sentinel encodings: [`Price::ZERO`] (`0x0000_0000`, market sell)
-/// and [`Price::INFINITY`] (`0xFFFF_FFFF`, market buy). All other valid
+/// Two sentinel encodings: `Price::ZERO` (`0x0000_0000`, market sell)
+/// and `Price::INFINITY` (`0xFFFF_FFFF`, market buy). All other valid
 /// bit patterns represent regular prices.
 ///
 /// **Integer order is price order.** With the exponent in the high bits

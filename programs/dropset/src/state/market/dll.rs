@@ -66,7 +66,7 @@ pub trait VaultDll {
     /// `tombstone_head`, and stamp `tombstoned` so deposit / realize
     /// handlers can treat it as dead with a cheap local read rather than
     /// an O(n) `vault_list_of` walk. The active→tombstone mirror of
-    /// [`reclaim_sector`] — routing every active-list membership change
+    /// [`Self::reclaim_sector`] — routing every active-list membership change
     /// through the trait keeps `active_count` from drifting when a
     /// handler open-codes the transition and forgets the counter. Returns
     /// the post-decrement `active_count` for the `CloseVaultEvent`.
@@ -78,7 +78,7 @@ pub trait VaultDll {
 
     /// Thread an already-stamped sector onto the active DLL and increment
     /// `active_count` — the free/new→active counterpart to
-    /// [`tombstone_sector`]. The caller stamps the sector's
+    /// [`Self::tombstone_sector`]. The caller stamps the sector's
     /// leader-controlled fields **before** this call so the matching
     /// engine's "a vault on the active DLL has a non-default leader"
     /// invariant holds at every step (see `create_vault`).

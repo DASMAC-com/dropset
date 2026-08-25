@@ -410,7 +410,7 @@ impl HttpClient {
         err
     }
 
-    /// Raise this source's minimum interval above [`DEFAULT_MIN_INTERVAL`] —
+    /// Raise this source's minimum interval above `DEFAULT_MIN_INTERVAL` —
     /// the seam for a venue whose keyless tier is stricter than the default
     /// floor. Most venues need it; docs/data-feeds.md §10 tabulates every
     /// venue's documented limit and the floor derived from it.
@@ -443,7 +443,7 @@ impl HttpClient {
     }
 
     /// Change this source's response-body cap from
-    /// [`DEFAULT_MAX_RESPONSE_BYTES`] — for a venue whose legitimate payload is
+    /// `DEFAULT_MAX_RESPONSE_BYTES` — for a venue whose legitimate payload is
     /// larger (a wide batched fetch, a long candle page).
     pub fn with_max_response_bytes(mut self, max: usize) -> Self {
         self.max_response_bytes = max;

@@ -120,7 +120,7 @@ impl Drop for BotManager {
 }
 
 /// Build the command that runs the maker bot scoped to one `symbol` (the maker
-/// resolves the symbol to its market itself). See [`bot_command`] for how the
+/// resolves the symbol to its market itself). See `bot_command` for how the
 /// binary is located.
 pub fn maker_command(repo_root: &Path, symbol: &str, rpc_url: &str) -> Command {
     bot_command(
@@ -132,7 +132,7 @@ pub fn maker_command(repo_root: &Path, symbol: &str, rpc_url: &str) -> Command {
 
 /// Build the command that runs the taker bot scoped to one market by its PDA
 /// `address` (the taker has no symbol roster, so the TUI passes the selected
-/// market's address directly). See [`bot_command`] for how the binary is
+/// market's address directly). See `bot_command` for how the binary is
 /// located.
 pub fn taker_command(repo_root: &Path, address: &Pubkey, rpc_url: &str) -> Command {
     bot_command(

@@ -27,7 +27,7 @@ use super::{MarketHeader, ReferencePrice, Vault, FLUSH_BIT};
 /// for the matching [`crate::errors::DropsetError`] variant (its index plus
 /// 6000), so the ASM fast path and the Anchor reference build surface the
 /// *same* code on the same domain failure. The equality is pinned by
-/// [`tests::error_codes_match_dropset`].
+/// `tests::error_codes_match_dropset`.
 pub mod err {
     /// Signer is not the target vault's `quote_authority`
     /// (`DropsetError::Unauthorized`).

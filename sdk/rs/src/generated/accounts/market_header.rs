@@ -16,7 +16,7 @@ pub struct MarketHeader {
     pub discriminator: [u8; 8],
     /// Per-fill / per-quote monotonic counter.
     pub nonce: u64,
-    /// Head of the active DLL: sector index or [`NULL_SECTOR`]. Walked
+    /// Head of the active DLL: sector index or `NULL_SECTOR`. Walked
     /// by the matching engine on every taker.
     pub head: u32,
     /// Head of the tombstone DLL: sectors that have been `CloseVault`'d

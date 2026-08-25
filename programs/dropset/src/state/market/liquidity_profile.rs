@@ -42,7 +42,7 @@ const _: () = assert!(PROFILE_SIZE == 2 * N_LEVELS * 14);
 /// domain guard is that it equals the target vault's `quote_authority`.
 /// The bytes are stored raw — there is no write-time validation of the
 /// ladder (see the module docs on where the size invariant lives, and
-/// [`authorize_quote_write`] for the guards both quote-write kernels
+/// `authorize_quote_write` for the guards both quote-write kernels
 /// deliberately omit).
 ///
 /// On any domain failure it returns a [`super::err`] code with `data`

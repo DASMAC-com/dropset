@@ -4,7 +4,7 @@
 //! burst-drain so a held key collapses into one render. On top of that it
 //! also drains background-job events and re-polls on-chain state on a timer
 //! (or immediately when a job signals a change), so the panel tracks the
-//! validator without a blocking read. A [`TerminalGuard`] restores the
+//! validator without a blocking read. A `TerminalGuard` restores the
 //! terminal on the way out; the owned [`Validator`] kills the child and
 //! wipes its temp ledger on `Drop`, so quitting leaves no orphan.
 
