@@ -254,6 +254,16 @@ db-schema <-> grafana dashboards: db-schema/migrations owns the
   variables that span both price tiers UNION cex_prices with spot_ticks,
   so a column rename on either side can break a panel that names neither
   table in its title.
+  The market-data dashboard additionally reads three MAKER-written tables
+  (maker_telemetry.fair, maker_legs' fused columns, and
+  maker_leg_contributions), so the ingestion dashboard now depends on the
+  maker's writers and not only the collectors'. Two consequences: a
+  maker-side column rename breaks an ingestion panel, and those panels are
+  legitimately empty on a database no maker has run against — which is a
+  different condition from a collector outage and must not be read as one.
+  Its Market template variable and its Source/Product variables come from
+  different vocabularies (market symbol vs feed product id) with no join
+  in the schema, so they are correlated by the operator, not by SQL.
 util <-> frontend: the human-price / atoms-ratio decimal-gap conversion
   is forked across languages — util/src/decimals.rs (which the TUI and
   the maker bot share) and the frontend's humanPrice

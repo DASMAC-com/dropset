@@ -568,23 +568,24 @@ reader rather than a role per consumer on purpose: every reader needs
 exactly the same grants, so splitting them would multiply bookkeeping
 without buying isolation.
 
-| Table                                                              | Writer              | Contents                                                    |
-| ------------------------------------------------------------------ | ------------------- | ----------------------------------------------------------- |
-| `feed_cursors`                                                     | `feeds` store sink  | Resumable per-feed position (JSONB)                         |
-| `cex_prices`                                                       | market-data         | CEX reference candles, per venue and product                |
-| `spot_ticks`                                                       | market-data         | Point-in-time prints, per venue and product                 |
-| `pyth_fx_feeds`                                                    | migration (seed)    | Pyth FX roster — venue reference data, read-only at runtime |
-| `fx_rates` *(planned)*                                             | market-data         | Fiat-cross bars for the FX anchor leg                       |
-| `peg_rates` *(planned)*                                            | market-data         | Issuer / redemption reference rates                         |
-| `fx_events` *(deferred)*                                           | market-data         | Economic-calendar event times — see §13                     |
-| `fx_sessions` *(planned)*                                          | market-data         | Generated FX session / week instants (UTC)                  |
-| `basis_series` *(planned)*                                         | market-data         | Derived per-market basis series                             |
-| `vol_estimates` *(planned)*                                        | market-data         | Realized volatility by market and window                    |
-| `regimes` *(planned)*                                              | market-data         | Regime tags every other stat is sliced by                   |
-| `fill_events`, `events`, `takes`, `market_stats`, `indexer_cursor` | indexer             | On-chain event capture and its rollups                      |
-| `maker_telemetry`, `maker_legs`                                    | maker bot           | Per-tick quoting state, and each feed leg's reading         |
-| `feed_health`                                                      | maker bot *(today)* | Per-source feed liveness, upserted in place                 |
-| Maker parameter tables *(planned)*                                 | maker go-between    | Slow parameters published to the bot                        |
+| Table                                                              | Writer              | Contents                                                                                       |
+| ------------------------------------------------------------------ | ------------------- | ---------------------------------------------------------------------------------------------- |
+| `feed_cursors`                                                     | `feeds` store sink  | Resumable per-feed position (JSONB)                                                            |
+| `cex_prices`                                                       | market-data         | CEX reference candles, per venue and product                                                   |
+| `spot_ticks`                                                       | market-data         | Point-in-time prints, per venue and product                                                    |
+| `pyth_fx_feeds`                                                    | migration (seed)    | Pyth FX roster — venue reference data, read-only at runtime                                    |
+| `fx_rates` *(planned)*                                             | market-data         | Fiat-cross bars for the FX anchor leg                                                          |
+| `peg_rates` *(planned)*                                            | market-data         | Issuer / redemption reference rates                                                            |
+| `fx_events` *(deferred)*                                           | market-data         | Economic-calendar event times — see §13                                                        |
+| `fx_sessions` *(planned)*                                          | market-data         | Generated FX session / week instants (UTC)                                                     |
+| `basis_series` *(planned)*                                         | market-data         | Derived per-market basis series                                                                |
+| `vol_estimates` *(planned)*                                        | market-data         | Realized volatility by market and window                                                       |
+| `regimes` *(planned)*                                              | market-data         | Regime tags every other stat is sliced by                                                      |
+| `fill_events`, `events`, `takes`, `market_stats`, `indexer_cursor` | indexer             | On-chain event capture and its rollups                                                         |
+| `maker_telemetry`, `maker_legs`                                    | maker bot           | Per-tick quoting state (incl. the fair series), and each feed leg's reading and fused estimate |
+| `maker_leg_contributions`                                          | maker bot           | Per-source fusion weights behind each leg's fused estimate                                     |
+| `feed_health`                                                      | maker bot *(today)* | Per-source feed liveness, upserted in place                                                    |
+| Maker parameter tables *(planned)*                                 | maker go-between    | Slow parameters published to the bot                                                           |
 
 Adding a table means naming its writer here. A table with two writers is
 a design error, not a configuration choice.

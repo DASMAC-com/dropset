@@ -197,9 +197,18 @@ impl FeedHub {
             .then(|| aged(self.fx.get(market.currency)))
             .flatten();
 
+        // Frankfurter republishes the ECB's **daily** reference fix, so it is
+        // offered as a reference-class source rather than a tape: fused into the
+        // estimate at a variance its own age inflates, and kept out of the fast
+        // median that guards dislocations. Pooling a daily fix with a live tape
+        // in one median is what lets a rate hours old drag the fast signal.
+        //
+        // A market with no tape FX source still resolves off it — the resolver
+        // falls back to the reference set when nothing faster answered — so this
+        // does not dark the fix-anchored markets.
         let fx = Candidates::none()
             .push_trusted(SOURCE_PYTH, fx_pyth)
-            .push(SOURCE_FRANKFURTER, fx_reference);
+            .push_reference(SOURCE_FRANKFURTER, fx_reference);
 
         // USDC/USD common-mode leg, shared across every market.
         let usdc_usd = Candidates::none()
@@ -523,18 +532,30 @@ pub fn run_supervisor(
             // consensus describe a resolution the composed value never used
             // the moment a per-market override lands.
             let (leg_stale, leg_dispersion) = ctx.engine.leg_bounds();
+            let dt = ctx
+                .last_compose
+                .map_or(Duration::ZERO, |t| now.duration_since(t));
+            ctx.last_compose = Some(now);
+            let fair = ctx.engine.compose(legs, dt, clock);
+            // Emitted **after** composing, which is the one ordering that works
+            // now that a leg row carries its fused estimate: the fusion is
+            // stateful and advances inside `compose`, so a row built before it
+            // would report the previous tick's estimate beside this tick's
+            // consensus. `Legs` is `Copy`, so composing has not consumed it.
             ctx.telemetry.emit(Record::Legs(telemetry::leg_samples(
                 ts,
                 ctx.cfg.symbol,
                 &legs,
                 leg_stale,
                 leg_dispersion,
+                &fair,
             )));
-            let dt = ctx
-                .last_compose
-                .map_or(Duration::ZERO, |t| now.duration_since(t));
-            ctx.last_compose = Some(now);
-            let fair = ctx.engine.compose(legs, dt, clock);
+            ctx.telemetry
+                .emit(Record::Contributions(telemetry::contribution_samples(
+                    ts,
+                    ctx.cfg.symbol,
+                    &fair,
+                )));
             report_leg_health(ctx, &fair);
             let got_fill = routed.get(&ctx.market.market).copied();
             if let Err(e) = quote_market(ctx, &cfg, now, ts, fair, got_fill) {
@@ -1611,10 +1632,22 @@ mod tests {
         let fx = resolved(&legs, |l| l.fx, &tick);
         assert_eq!(fx.reading.unwrap().value, 1.1500);
         assert_eq!(fx.reading.unwrap().confidence, Some(0.0001));
+        // Pyth stands alone in the **fast** set: Frankfurter republishes the
+        // ECB's daily fix, which is reference class and so corroborates nothing
+        // about the live signal. It is not absent — it is fused into the
+        // estimate, and it is still counted as a healthy source of the leg — but
+        // a rate that may be hours old is not a second opinion on where the
+        // market is right now, and reporting `Agreed` would say it was.
         assert_eq!(
             fx.state,
-            ConsensusState::Agreed,
-            "corroborated by the ECB rate"
+            ConsensusState::SingleTrusted,
+            "the daily fix does not corroborate the fast signal"
+        );
+        assert_eq!(fx.n, 1);
+        assert_eq!(
+            fx.healthy().iter().flatten().count(),
+            2,
+            "but both sources reach the estimator"
         );
     }
 

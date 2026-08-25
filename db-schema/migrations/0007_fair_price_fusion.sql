@@ -1,0 +1,248 @@
+-- The fair-price estimator's output: each leg's fused estimate and the
+-- per-source weights behind it (docs/market-making.md §1 fair-price
+-- estimation).
+--
+-- This is the **additive migration 0003 said was already decided**. That
+-- migration's `maker_legs` comment records why there was no answering-feed
+-- column — a leg is a candidate set, so any single name would have been an
+-- arbitrary pick presented as authoritative — and notes that per-source
+-- attribution returns "once the resolver exposes a contributor set with
+-- weights". That exposure now exists on both mechanisms, so the column refused
+-- then is honest now.
+--
+-- **There are two attributions of one leg-tick, and this table carries the
+-- second.** Be precise about which, because they are not interchangeable and
+-- neither is derivable from the other:
+--
+--   * the **consensus** attribution (`Contributor` on the resolver's per-leg
+--     report) says which sources the *fast consensus* is a linear combination
+--     of, with exact weights — a median of three credits its middle member 1.0,
+--     an agreeing pair credits each 0.5.
+--   * the **fusion** attribution, here, says how much each source's *precision*
+--     moved the estimate the composition actually priced off.
+--
+-- The fusion weights are the ones that explain the price, which is why they land
+-- first. The consensus weights are a **separate additive follow-up and are NOT
+-- in this table yet** — the `mechanism` column below exists so they can be added
+-- without rewriting a primary key, and nothing here should be read as having
+-- already discharged that.
+--
+-- **The fair-price series itself needs no new table.** `maker_telemetry.fair`
+-- is that series, per market per tick, and it has been since 0003. What changed
+-- is upstream of the column, not in it: `fair` is now composed from the fused
+-- leg estimates rather than from the bare consensus medians. A reader plotting
+-- it is plotting the estimator's output, and nothing about the column's shape,
+-- key, or nullability moved.
+--
+-- Two numbers per leg, both kept, because they answer different questions and
+-- their **gap is the estimator's whole contribution**:
+--
+--   * `value`       — the fast consensus median over the tape-class sources.
+--                     Moves immediately when they agree on a step, which is
+--                     what makes it the dislocation guard.
+--   * `fused_value` — the fused estimate: every healthy source combined by
+--                     precision, including the slow reference fixes the median
+--                     deliberately excludes.
+--
+-- **Which of the two the composition priced off depends on `fusion_step`.**
+-- Normally it is `fused_value`. On a `Carried` tick nothing was fused, so that
+-- column holds an estimate from an EARLIER tick and the composition falls back
+-- to `value` — deliberately, since pairing a stale estimate with this tick's
+-- age would report it as freshly observed. So a query reconstructing "what was
+-- quoted" must read `fusion_step` alongside, never `fused_value` alone.
+--
+-- A panel plotting only one of them cannot show the estimator lagging or
+-- leading, which is the thing an operator most needs to watch while the
+-- calibration constants are still placeholders.
+
+-- The fused estimate per leg. All four columns are nullable together: the peg
+-- leg is not fused at all (it feeds a band check, and a guard that must fire on
+-- any bad reading has no business reading a smoothed one), and a fused leg has
+-- nothing to report until its filter is seeded.
+--
+-- Nullability here means the same thing it means throughout 0003: unknown, not
+-- zero. A panel plotting a NULL `fused_sigma` as zero would render "no estimate
+-- yet" as "perfect confidence", which is the most misleading reading available.
+ALTER TABLE maker_legs
+    ADD COLUMN fused_value DOUBLE PRECISION,
+    -- Standard deviation, not variance — the form a spread-width model
+    -- consumes, and the one that is in the leg's own units so it can be plotted
+    -- as a band around `fused_value` without the reader taking a square root in
+    -- SQL.
+    --
+    -- **Read it as a LOWER BOUND on a leg fed by a slow source, not as the
+    -- uncertainty.** The filter keeps no record of which measurements it has
+    -- already absorbed, so a daily reference fix that has not republished
+    -- contributes its precision again on every 5 s tick — thousands of counts
+    -- of one observation, each treated as independent evidence. The estimate
+    -- converges correctly either way; it is this column that comes out too
+    -- tight, by several times on a reference-only leg. Documented in
+    -- `fair-value/src/fusion.rs`, and to be closed before anything prices off
+    -- it.
+    ADD COLUMN fused_sigma DOUBLE PRECISION,
+    -- What the filter did, as the Rust variant's `Debug` name — the same
+    -- convention every other enum-ish column in this schema uses, for the same
+    -- reason: an alert matches these literally, and a second convention in one
+    -- row is how a row that should fire an alert drifts from what the alert
+    -- keys on.
+    --
+    -- **Four values, and a reader must enumerate all four**: `Carried` (nothing
+    -- was fused; the estimate was held and widened), `Seeded` (the filter had no
+    -- prior — a first tick at any source count, which includes but is not
+    -- limited to the single-source pass-through), `Fused` (the ordinary batch
+    -- update), and `Reseeded { innovation_frac: … }` (the fast median departed
+    -- far enough to read as a real dislocation, so the estimate was adopted
+    -- rather than smoothed toward).
+    --
+    -- **`Carried` is not a synonym for "the feeds went quiet"**, and reading it
+    -- that way will misdiagnose the interesting case. Three conditions produce
+    -- it: no source answered, *every* source was trimmed, or the accumulated
+    -- precision came out non-finite. The middle one appears beside a **non-zero**
+    -- `contributor_count`, and means the estimator refused what it was offered —
+    -- a very different operator story from silence. Join against
+    -- `maker_leg_contributions` to see which sources it refused.
+    --
+    -- `Reseeded` is the one to watch. A run of them is either a genuinely
+    -- jumpy market or a re-seed gate set too tight, and the two are
+    -- distinguishable only by looking at `innovation_frac` alongside the
+    -- `value` series. Note it is the *only* value carrying a payload, so a
+    -- query matching it must use `LIKE 'Reseeded%'`, never equality.
+    ADD COLUMN fusion_step TEXT,
+    -- How many sources were actually fused.
+    --
+    -- **Not the same as `contributor_count`, and they differ in both
+    -- directions.** That column counts the fast consensus; this counts the
+    -- fusion's admitted set. A daily reference fix is fused but corroborates
+    -- nothing about the fast signal, so it raises this and not that; a source
+    -- trimmed for sitting outside the dispersion band did contribute to the
+    -- consensus count but is not fused, so it raises that and not this.
+    -- Treating either as the other's synonym will misreport how well
+    -- corroborated a quote was.
+    ADD COLUMN fused_count INTEGER;
+
+-- One row per market per leg per source per tick: the per-source attribution.
+--
+-- **Volume.** Sources per leg times legs times markets times ticks, against
+-- `maker_legs`' legs times markets times ticks. At the 5 s tick and today's
+-- rosters that is about six rows per tick per market (two FX sources plus up to
+-- four on the basis leg) against `maker_legs`' three, so roughly **2x**, or
+-- ~100k rows/day/market against ~52k. It is the fastest-growing of the maker's
+-- tables and the first of them that will want a retention policy, recorded at
+-- creation rather than discovered later.
+--
+-- Deliberately not claimed: that it is the widest table in the schema. The
+-- comparison above is against `maker_legs` only, and `spot_ticks` grows per
+-- venue per product per print, which is plausibly the same order or more. Sizing
+-- this table against the collectors' would need its own measurement.
+--
+-- Note the row count does **not** fall to zero when a leg goes dark. A leg
+-- whose sources all get trimmed still writes a full set of zero-weight rows
+-- every tick — deliberately, since that is the disagreement worth seeing — so
+-- the steady-state rate is the same sick or healthy. Only a leg with no
+-- candidates at all stops writing.
+--
+-- **Rows here can outlive their `maker_legs` parent, in both directions.** A
+-- leg whose fast consensus resolved to nothing writes no `maker_legs` row at
+-- all, while the fusion may still have measured its candidates — so an inner
+-- join from this table to `maker_legs` silently drops those leg-ticks, which are
+-- exactly the dispersed ones. Join outward, or read this table on its own.
+--
+-- **Disclosure.** `0002` grants the read-only `dropset_ro` role `SELECT` on
+-- every table in `public`, present and future, so this table is readable by
+-- whoever holds the dashboard password. `0003` was careful that its
+-- "already public on-chain" argument covers inventory and *not* strategy
+-- internals, so that exemption does not carry here and this table needs its own
+-- reason.
+--
+-- It is this: per-source weights and per-source prints are **observations of
+-- public venue quotes**, plus the estimator's arithmetic over them. The quotes
+-- are public by construction — anyone may poll the same keyless endpoints — and
+-- the weights are a deterministic function of the published confidences and the
+-- calibration constants in `FairValueConfig`, which are committed in the
+-- repository rather than secret. So the disclosure is a *convenience* to a
+-- dashboard reader, not a leak of anything unobtainable.
+--
+-- What that argument does **not** cover, stated so a later column does not
+-- inherit an exemption it was never given: a credential, an inventory figure, or
+-- any venue- or transport-produced free text. No column here carries any of
+-- those (`source` and `mechanism` are compile-time constants; the rest are
+-- numbers), and none may be added without extending this reasoning.
+--
+-- **`weight = 0` rows are the point, not noise.** A source outside the
+-- dispersion band of the fast consensus is excluded from the estimate but still
+-- written, carrying the reading it actually printed. That row is the record of
+-- what the estimator declined to believe — an aggregate printing half the peg,
+-- or an official reference rate contradicting the tape. A query filtering
+-- `weight > 0` is discarding exactly the disagreements this table exists to
+-- surface.
+--
+-- **What the weights sum to, precisely, because the obvious guess is wrong.**
+-- A trimmed source contributes no precision at all, so it takes nothing out of
+-- the total — the weights over a leg-tick sum to **exactly 1** on a seeding or
+-- re-seeding tick whether or not anything was trimmed. The only thing that ever
+-- makes them sum to less than 1 is an ordinary update, where the shortfall is
+-- the **prior estimate's** own share. The prior is deliberately not a row (see
+-- below), so a sum below 1 is the one way to see how much of the estimate came
+-- from history rather than from this tick's feeds.
+--
+-- **The prior is deliberately not a row here.** After an ordinary update the
+-- previous estimate holds part of the posterior information, but it is not a
+-- source and no feed is accountable for it. Naming it would put a row in an
+-- attribution table that nothing can be attributed to; the shortfall carries
+-- the same information without inventing a contributor.
+CREATE TABLE maker_leg_contributions (
+    ts       BIGINT           NOT NULL,
+    market   TEXT             NOT NULL,
+    -- The leg's role in the §1 composition (`fx`, `crypto_usdc`), never a
+    -- venue. `usdc_usd` never appears: the peg leg is not fused.
+    leg      TEXT             NOT NULL,
+    -- The `feeds` source name. Joins to `feed_health` — with the same caveat
+    -- `maker_legs.dispersion_outlier` carries, since a spot source is named per
+    -- product (`coinbase:EURC-USDC`) while the resolver offers the bare venue
+    -- (`coinbase`): that join is a prefix match on the `:`, not equality.
+    source    TEXT             NOT NULL,
+    -- Which attribution this row is. Today the writer emits only `'fusion'`.
+    --
+    -- It is in the table from the start, and in the primary key, because the
+    -- consensus attribution is a **known** future row set rather than a guess:
+    -- the resolver already exposes it, and the schema history already promised
+    -- it lands in telemetry. Adding a discriminator to a primary key after the
+    -- fact is a table rewrite; adding rows under one is free.
+    --
+    -- A reader must therefore filter on it. A query that does not will silently
+    -- double-count the day consensus rows land, and mix two weight vocabularies
+    -- that share a range but not a meaning — exact linear-combination shares
+    -- against shares of posterior information.
+    --
+    -- TEXT holding the mechanism name rather than an enum type or a smallint,
+    -- for the same reason every enum-ish column in 0003 is TEXT: a new value
+    -- must not turn a telemetry write into a constraint violation that fails the
+    -- write it is trying to report on.
+    mechanism TEXT             NOT NULL,
+    -- What this source read, in the leg's own units. Recorded per source rather
+    -- than derived, because the whole value of this table is seeing the
+    -- individual prints the summary in `maker_legs` collapses.
+    value     DOUBLE PRECISION NOT NULL,
+    -- The measurement variance the source was fused at: its published
+    -- confidence where it has one, else its class noise, inflated by the
+    -- reading's own age. Variance rather than sigma here — unlike
+    -- `maker_legs.fused_sigma`, this is not plotted as a band but compared
+    -- between sources, and the precision that decides a weight is 1/variance.
+    --
+    -- NULLable because it is a property of the *fusion* mechanism: a consensus
+    -- contributor has no measurement variance, since a median does not weigh
+    -- precision. A NULL here is therefore "this mechanism has no such notion",
+    -- never "zero variance" — which would read as perfect certainty.
+    variance  DOUBLE PRECISION,
+    -- Share of the leg's value attributable to this source, in [0, 1]. Its
+    -- precise meaning depends on `mechanism`: for `'fusion'` it is a share of
+    -- the posterior information, and zero means trimmed — see the note above.
+    weight    DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY (market, leg, source, mechanism, ts)
+);
+
+-- The dashboards scan recent rows across all markets, which the primary key
+-- cannot serve — it orders by market first, so "the last 15 minutes over every
+-- market" is a full scan. Same reasoning, and same shape, as the two indexes
+-- 0003 added for the same access pattern.
+CREATE INDEX maker_leg_contributions_ts_idx ON maker_leg_contributions (ts);

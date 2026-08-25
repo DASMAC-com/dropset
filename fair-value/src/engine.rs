@@ -33,6 +33,7 @@ use std::time::Duration;
 use crate::basis::{BasisEma, Fold};
 use crate::config::FairValueConfig;
 use crate::consensus::{Candidates, Consensus, ConsensusState, Contributors};
+use crate::fusion::{Fusion, FusionReport, FusionStep};
 
 /// The raw feed legs for one market on one tick. Each leg carries **every
 /// source that answered**, not the winner of a priority ladder — the engine
@@ -356,6 +357,18 @@ pub struct FairValue {
     pub fx_leg: LegReport,
     /// How the crypto reference's sources resolved this tick.
     pub crypto_leg: LegReport,
+    /// How the FX anchor's sources **fused** this tick — the estimate, its
+    /// variance, what the update did, and each source's share.
+    ///
+    /// Reported separately from `fx_leg` because the two answer different
+    /// questions about the same set: the leg report says how well the sources
+    /// agreed, and this says what they add up to and how confidently. A
+    /// dispersed leg with a tight fused variance is a real and readable state —
+    /// several sources disagreeing about the level while each is individually
+    /// precise — and one field could not express it.
+    pub fx_fusion: FusionReport,
+    /// How the crypto reference's sources fused this tick.
+    pub crypto_fusion: FusionReport,
     /// Health gate for the kill switches.
     pub health: Health,
     /// The FX anchor is fresh but too uncertain (§1 fm6) — quote, but the
@@ -390,6 +403,8 @@ impl FairValue {
             basis_outlier: false,
             fx_leg: LegReport::default(),
             crypto_leg: LegReport::default(),
+            fx_fusion: FusionReport::none(),
+            crypto_fusion: FusionReport::none(),
             usdc_breach: false,
         }
     }
@@ -411,6 +426,33 @@ impl FairValue {
 pub struct FairValueEngine {
     cfg: FairValueConfig,
     basis: BasisEma,
+    /// The fusion estimator for the FX anchor leg — the number `fair = fx ×
+    /// basis` is composed from.
+    fx_fusion: Fusion,
+    /// The fusion estimator for the crypto reference leg. Fed the same way and
+    /// for the same reason: that leg carries several sources of genuinely
+    /// different fidelity (a venue tape against an aggregate index), and it is
+    /// both the basis numerator and the crypto-only anchor.
+    ///
+    /// **This basis leg is smoothed twice, in series, and that is a real
+    /// consequence rather than an illusion to argue away.** An earlier version
+    /// of this comment claimed the two filters worked on orthogonal axes —
+    /// fusion across sources, the EMA across time — and that a single-source
+    /// leg was untouched by the fusion. Both halves are false: the filter is
+    /// recursive, so after its seeding tick even one source is blended against
+    /// the carried prior, and [`Fusion::predict`] grows the variance with
+    /// elapsed time. Fusion is therefore *also* temporal.
+    ///
+    /// What makes the composition acceptable is not orthogonality but the
+    /// separation of their time constants. The fusion converges within a tick
+    /// or two when its measurements are precise (its weight is set by variance
+    /// ratios, not by a half-life), while the EMA's half-life is minutes — so
+    /// the EMA remains the thing that decides how slowly the basis tracks.
+    /// That separation is a **calibration** property, so it holds only while
+    /// `fusion.drift_frac_per_sec` stays small against `basis_half_life`; both
+    /// are TBD(analytics) placeholders, and the pair must be calibrated
+    /// together rather than independently.
+    crypto_fusion: Fusion,
     /// Time accumulated across ticks since the basis EMA was last updated. The
     /// EMA folds an observation only in the normal regime, but `compose` runs
     /// every tick — so the decay must see the elapsed time since the last
@@ -442,6 +484,8 @@ impl FairValueEngine {
                 cfg.basis_max_reseed_weight,
                 cfg.basis_max_jump_frac,
             ),
+            fx_fusion: Fusion::new(cfg.fusion),
+            crypto_fusion: Fusion::new(cfg.fusion),
             since_basis: Duration::ZERO,
             cfg,
         }
@@ -496,12 +540,35 @@ impl FairValueEngine {
             legs.crypto_usdc.resolve(stale, dispersion)
         };
 
-        let mut out = self.compose_resolved(&legs, clock, fx, crypto, usdc);
+        // Fuse each leg's healthy sources into the value the composition prices
+        // off. The filters are advanced on every tick they have candidates,
+        // whatever the composition then does with the result — an estimator fed
+        // only on the ticks that happened to compose cleanly would carry a
+        // variance that meant nothing.
+        let fx_fusion =
+            self.fx_fusion
+                .update(fx.healthy(), fx.reading.map(|r| r.value), dispersion, dt);
+        let crypto_fusion = self.crypto_fusion.update(
+            crypto.healthy(),
+            crypto.reading.map(|r| r.value),
+            dispersion,
+            dt,
+        );
+
+        let mut out = self.compose_resolved(
+            &legs,
+            clock,
+            fused_into(fx, &fx_fusion),
+            fused_into(crypto, &crypto_fusion),
+            usdc,
+        );
         // The per-leg view is reported whatever the composition did with it, so
         // an operator can see a dispersed leg even on a tick that degraded for
         // some unrelated reason.
         out.fx_leg = fx.into();
         out.crypto_leg = crypto.into();
+        out.fx_fusion = fx_fusion;
+        out.crypto_fusion = crypto_fusion;
         out
     }
 
@@ -782,6 +849,49 @@ impl FairValueEngine {
     pub fn basis_out_of_band(&self, basis: f64) -> bool {
         basis < self.cfg.basis_low || basis > self.cfg.basis_high
     }
+}
+
+/// A resolved leg with its **fused** value substituted for the fast consensus,
+/// keeping the consensus reading's age and confidence.
+///
+/// Three things about this substitution are deliberate.
+///
+/// It keeps the consensus reading's `age` and `confidence`, which are the
+/// *most conservative* summaries of the contributing set (oldest age, widest
+/// half-width). The fused value is a better estimate of the level; it does not
+/// make the set any fresher or any more certain than its worst member, and
+/// reporting otherwise would flatter every downstream freshness and uncertainty
+/// gate.
+///
+/// It substitutes only where the leg **already resolved to something**. A leg
+/// that resolved to `None` — an absent leg, or a dispersed pair with no
+/// majority to appeal to — keeps its `None`, so the composition's degrade paths
+/// see exactly what they saw before. Fusing a dispersed pair would produce a
+/// precision-weighted mean of two readings that cannot adjudicate between
+/// themselves, which is the guess the consensus filter exists to refuse: it
+/// would silently rescue the very case the dispersion gate darks.
+///
+/// It leaves `state`, `n` and `outlier` alone. Those describe how well
+/// corroborated the *fast* signal was, and fusing does not corroborate
+/// anything — it estimates. An operator reading `SingleUnverified` beside a
+/// fused value is being told the truth: one source, better estimated.
+fn fused_into(mut leg: Consensus, fusion: &FusionReport) -> Consensus {
+    // A carried estimate is not substituted, and that exception is what keeps
+    // the age claim above honest. On a `Carried` tick the filter fused nothing,
+    // so `value` is an estimate from an *earlier* tick — pairing it with this
+    // tick's age and confidence would report a stale number as freshly
+    // observed, which is the exact misrepresentation the age-preservation rule
+    // exists to prevent. Reachable when every candidate is dropped for having
+    // no establishable variance, which the consensus reading survives.
+    if fusion.step == FusionStep::Carried {
+        return leg;
+    }
+    if let (Some(reading), Some(value)) = (leg.reading.as_mut(), fusion.value) {
+        if value.is_finite() && value > 0.0 {
+            reading.value = value;
+        }
+    }
+    leg
 }
 
 /// The two-peg basis implied by one crypto reading and one FX reading:
@@ -1638,6 +1748,66 @@ mod tests {
         assert_eq!(r.crypto_leg.state, ConsensusState::SingleUnverified);
     }
 
+    /// `fused_into` substitutes the **value** and nothing else. The age and the
+    /// confidence stay the consensus set's most conservative summaries, because
+    /// a better estimate of the level does not make the set fresher or more
+    /// certain — and both feed gates that would be flattered by it (freshness,
+    /// and the §1 fm6 uncertain/widen signal).
+    ///
+    /// Asserted because the invariant is stated in prose and enforced by
+    /// nothing: an edit that also wrote a fused sigma into `confidence` would
+    /// leave every other test in this file green.
+    #[test]
+    fn fusing_substitutes_the_value_and_leaves_age_and_confidence_alone() {
+        // The confidence half-width is observable through exactly one channel —
+        // `uncertain`, the §1 fm6 widen-the-spread signal — so that is what this
+        // asserts. Re-resolving the candidate set here instead would test
+        // `Candidates::resolve` and never reach `fused_into` at all, which is
+        // how the first version of this test came to assert nothing about the
+        // substitution it is named for.
+        //
+        // The wide source's 2% half-width trips the 1% bound, so `uncertain`
+        // must be set. The fused estimate's own sigma is ~4 orders of magnitude
+        // tighter, so if a later edit wrote it into `confidence`, `uncertain`
+        // would silently go false — and this assertion catches that.
+        let wide = Reading::with_confidence(1.1400, secs(120), 0.0228);
+        let tight = Reading::with_confidence(1.1402, secs(1), 0.0001);
+        let legs = Legs {
+            fx: Candidates::none()
+                .push("oanda", Some(wide))
+                .push("twelvedata", Some(tight)),
+            // Near the FX level, so the implied basis sits at ~1.0 and inside
+            // the sane band — otherwise the composition pauses and every field
+            // this test reads is the paused default rather than the composed one.
+            crypto_usdc: src(fresh(1.1401)),
+            ..Legs::default()
+        };
+
+        let mut e = engine();
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
+        assert_eq!(r.regime, Regime::Normal, "precondition: it composed");
+
+        // The fused estimate did move the level off the plain midpoint — the
+        // tight source dominates by precision.
+        let fused = r.fx_fusion.value.expect("the fx leg fused");
+        assert!(
+            (fused - 1.1402).abs() < 1e-4,
+            "the tight source dominates the estimate: {fused}"
+        );
+        assert!(
+            r.fx_fusion.variance.sqrt() < 0.001,
+            "precondition: the fused sigma is far tighter than the widest \
+             half-width, so substituting it would be observable"
+        );
+
+        // ...and the composition still reports the *set's* widest half-width,
+        // not the estimate's.
+        assert!(
+            r.uncertain,
+            "the widest contributing half-width must still drive the fm6 signal"
+        );
+    }
+
     #[test]
     fn a_corroborated_pair_of_basis_sources_composes_normally() {
         let mut e = engine();
@@ -1652,10 +1822,16 @@ mod tests {
         );
         assert_eq!(r.regime, Regime::Normal);
         assert_eq!(r.crypto_leg.state, ConsensusState::Agreed);
-        assert!(
-            (r.basis.unwrap() - 1.021).abs() < 1e-9,
-            "the pair's midpoint"
-        );
+        // The fusion estimator, not the median, sets the value now: two agreeing
+        // sources are combined by precision rather than one of them being
+        // picked. Their variances are within a hair of each other here, so the
+        // result sits between the two readings and a hair off their midpoint —
+        // asserted as a property rather than as a literal, because the exact
+        // offset is a function of the calibration constants and would otherwise
+        // pin this test to them.
+        let basis = r.basis.unwrap();
+        assert!(1.020 < basis && basis < 1.022, "between the two sources");
+        assert!((basis - 1.021).abs() < 1e-4, "and near their midpoint");
     }
 
     #[test]
@@ -1677,14 +1853,34 @@ mod tests {
             secs(5),
             ClockCtx::in_session(),
         );
+        // Not the bad print, and — the part the fusion estimator could have
+        // broken — not an average that includes it either. The trim admits only
+        // the sources within the dispersion band of the median, so the two
+        // venues near 1.02 are fused and the aggregate is excluded outright.
+        //
+        // The number is worth stating precisely, because the untrimmed fusion
+        // this replaced landed at ~0.857 here: dragged out of the sane basis
+        // band by the very print the consensus filter was built to survive, and
+        // so darkening the market. Robustness first, then estimation.
+        let basis = r.basis.unwrap();
         assert!(
-            (r.basis.unwrap() - 1.020).abs() < 1e-9,
-            "the median, not the bad print and not an average: {:?}",
-            r.basis
+            (basis - 1.0205).abs() < 1e-3,
+            "the two credible venues fused: {basis:?}"
         );
         assert!(r.crypto_leg.dispersed());
         assert_eq!(r.crypto_leg.outlier, Some("coingecko"));
         assert_eq!(r.crypto_leg.n, 3);
+        // The excluded source is reported rather than dropped: it is listed as a
+        // contributor carrying its own reading at zero weight, so an operator
+        // can see what was declined and why the fused value ignores it.
+        let excluded = r
+            .crypto_fusion
+            .contributions()
+            .find(|c| c.source == "coingecko")
+            .expect("the trimmed source is still attributed");
+        assert_eq!(excluded.weight, 0.0);
+        assert_eq!(excluded.value, 0.530);
+        assert_eq!(r.crypto_fusion.n, 2, "two sources actually fused");
     }
 
     #[test]
@@ -1693,15 +1889,18 @@ mod tests {
         // the composition falls to the carried-basis path — but the operator is
         // still told which source is furthest out.
         let mut e = engine();
-        e.compose(
-            Legs {
-                fx: src(fresh(1.0)),
-                crypto_usdc: pair(1.020, 1.021),
-                ..Legs::default()
-            },
-            secs(5),
-            ClockCtx::in_session(),
-        );
+        let seeded = e
+            .compose(
+                Legs {
+                    fx: src(fresh(1.0)),
+                    crypto_usdc: pair(1.020, 1.021),
+                    ..Legs::default()
+                },
+                secs(5),
+                ClockCtx::in_session(),
+            )
+            .basis
+            .expect("the first tick seeds a basis");
         let r = e.compose(
             Legs {
                 fx: src(fresh(1.0)),
@@ -1720,10 +1919,11 @@ mod tests {
             Regime::Degraded(Degrade::NoBasisLeg),
             "a leg that cannot adjudicate is a leg that is down"
         );
-        assert!(
-            (r.basis.unwrap() - 1.0205).abs() < 1e-9,
-            "the carried basis"
-        );
+        // Exactly the estimate the first tick seeded — the dark leg moved
+        // nothing. Compared against that tick's own output rather than a
+        // literal, since what this asserts is that the basis was *carried*, not
+        // what the seeding fusion happened to compute.
+        assert_eq!(r.basis.unwrap(), seeded, "the carried basis");
     }
 
     #[test]

@@ -56,6 +56,30 @@ else. An anchor now exists, so all four run — but the split still
 matters, because a venue whose currency has no anchor collected yet
 keeps three of the four working.
 
+### Next: run the vol query on the fair series, not on a venue tape
+
+Every query here reads `cex_prices` or `spot_ticks` — a **single
+source's** prints. There is now a better input for the volatility work
+specifically: the fair-price estimator persists its output per market per
+tick as `maker_telemetry.fair`, fused from every healthy source rather
+than taken from whichever venue was picked
+(`docs/market-making.md` §1 "Fair-price estimation").
+
+That series is the intended base for **expected volatility with weekly
+cyclical seasonality**, which in turn feeds the level-lifetime and width
+model in §2's ladder. It is deliberately **not built here yet** — this
+note exists so the next author starts from the fused series rather than
+re-deriving one from a venue tape, and so the two invariants below are
+re-read first: `maker_telemetry` is written per *tick*, not per closed
+bucket, so "adjacent-bucket returns only" needs restating for it rather
+than assuming.
+
+Two properties of that series to know before using it. `fair` is NULL
+exactly when the composition paused, so a gap is a real absence of a
+price and not a missing sample. And it only exists for ticks a **maker
+was running** — the collectors and the maker are independent writers, so
+history predating a maker run has candles but no fair series.
+
 ## Two invariants every query here holds
 
 **Adjacent-bucket returns only.** A log return is computed between two

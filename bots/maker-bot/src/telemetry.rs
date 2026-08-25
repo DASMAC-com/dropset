@@ -48,7 +48,7 @@ use crate::model::killswitch::Action;
 use crate::model::ladder::Side;
 use anyhow::Result;
 use async_trait::async_trait;
-use dropset_fair_value::{Candidates, FairValue, Legs};
+use dropset_fair_value::{Candidates, FairValue, FusionReport, Legs};
 // `MAX_ERROR_CHARS` bounds the tick-error text a sample carries. Taken from
 // the framework rather than restated, so the two error columns cannot drift
 // apart — see its own doc there for why the bound is a character count.
@@ -167,6 +167,81 @@ pub struct LegSample {
     /// operator should distrust, so that reading is exactly backwards. `None`
     /// whenever the leg was not dispersed, which is the normal case.
     pub dispersion_outlier: Option<String>,
+    /// The leg's **fused** estimate, which the composition prices off — with one
+    /// exception: on a `Carried` tick nothing was fused, so this is an estimate
+    /// from an *earlier* tick and the composition falls back to `value` instead.
+    /// Read the two together with `fusion_step`, never `fused_value` alone.
+    ///
+    /// `value` is the fast consensus that guards dislocations. The two are
+    /// different numbers with different jobs and both are recorded, because
+    /// their gap is the estimator's whole contribution.
+    ///
+    /// `None` for the USDC peg leg, which is not fused: it feeds a band check
+    /// rather than a price, and a guard that must fire on any bad reading has
+    /// no business reading a smoothed one.
+    pub fused_value: Option<f64>,
+    /// Standard deviation of the fused estimate, in the leg's own units — the
+    /// quantity a spread-width model wants.
+    ///
+    /// `None` wherever `fused_value` is. The writer also filters a non-finite
+    /// sigma, which no path currently produces — kept as a cheap guard on a
+    /// column a dashboard plots, not as a state a consumer must handle.
+    ///
+    /// **A lower bound, not the uncertainty, on a leg fed by a slow source** —
+    /// the filter re-absorbs an unchanged reading every tick, so a daily fix's
+    /// precision is counted repeatedly. See `fair-value/src/fusion.rs`.
+    pub fused_sigma: Option<f64>,
+    /// What the fusion did this tick, as the Rust variant's `Debug` name, in
+    /// the same convention every other enum-ish column uses. Four values:
+    /// `Carried`, `Seeded`, `Fused`, and `Reseeded` — the last carrying the size
+    /// of the dislocation it adopted.
+    pub fusion_step: Option<String>,
+    /// How many sources were actually fused, which is **not**
+    /// `contributor_count`: that counts the fast consensus, while this counts
+    /// the fusion's admitted set. They differ in both directions — a reference
+    /// fix is fused but does not corroborate, and a trimmed outlier corroborates
+    /// the count but is not fused.
+    pub fused_count: Option<i32>,
+}
+
+/// The `mechanism` value this writer emits. The consensus attribution the
+/// resolver also exposes is a separate follow-up and writes no rows yet — see
+/// the migration for why the discriminator exists ahead of its second value.
+pub const MECHANISM_FUSION: &str = "fusion";
+
+/// One source's share of one leg's fused estimate — the `maker_leg_contributions`
+/// row.
+///
+/// This is the per-source attribution the schema has been waiting for, and it is
+/// specifically the **fusion** one: how much each source's precision moved the
+/// estimate the composition priced off. The resolver's own `Contributor` set is
+/// a different attribution of the same leg-tick — the exact linear combination
+/// behind the *fast consensus* — and lands under its own `mechanism` later.
+#[derive(Clone, Debug)]
+pub struct ContributionSample {
+    pub ts: i64,
+    pub market: String,
+    pub leg: String,
+    /// The `feeds` source name. Joins to `feed_health`, with the same caveat
+    /// `maker_legs.dispersion_outlier` carries: a spot source is named per
+    /// product (`coinbase:EURC-USDC`) while the resolver offers the bare venue,
+    /// so that join is a prefix match on the `:`, not equality.
+    pub source: String,
+    /// Which attribution this row is — [`MECHANISM_FUSION`] today.
+    pub mechanism: String,
+    /// What this source read.
+    pub value: f64,
+    /// The measurement variance it was fused at. `None` for a mechanism with no
+    /// such notion, never zero — a zero would read as perfect certainty.
+    pub variance: Option<f64>,
+    /// Its share of the posterior information, in `[0, 1]`.
+    ///
+    /// **Zero is meaningful and common**: it is a source that answered and was
+    /// *excluded* by the trim for sitting outside the dispersion band. Its
+    /// `value` is the interesting number on such a row — it is what the
+    /// estimator declined to believe. A reader filtering `weight > 0` is
+    /// discarding exactly the disagreements this table exists to surface.
+    pub weight: f64,
 }
 
 /// What the telemetry channel carries.
@@ -183,6 +258,7 @@ pub struct LegSample {
 pub enum Record {
     Sample(Box<Sample>),
     Legs(Vec<LegSample>),
+    Contributions(Vec<ContributionSample>),
     Health(HealthUpdate),
 }
 
@@ -351,6 +427,13 @@ impl StoreWriter for TelemetryWriter {
                     }
                     n
                 }
+                Record::Contributions(rows) => {
+                    let mut n = 0;
+                    for row in rows {
+                        n += write_contribution(tx, row).await?;
+                    }
+                    n
+                }
                 Record::Health(update) => write_health(tx, update).await?,
             };
         }
@@ -407,8 +490,32 @@ async fn write_leg(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, leg: &LegSamp
         .bind(&leg.consensus_state)
         .bind(leg.contributor_count)
         .bind(&leg.dispersion_outlier)
+        .bind(leg.fused_value)
+        .bind(leg.fused_sigma)
+        .bind(&leg.fusion_step)
+        .bind(leg.fused_count)
         .execute(&mut **tx)
         .await?;
+    Ok(res.rows_affected())
+}
+
+async fn write_contribution(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    row: &ContributionSample,
+) -> Result<u64> {
+    let res = sqlx::query(include_str!(
+        "../queries/maker_leg_contributions_insert.sql"
+    ))
+    .bind(row.ts)
+    .bind(&row.market)
+    .bind(&row.leg)
+    .bind(&row.source)
+    .bind(&row.mechanism)
+    .bind(row.value)
+    .bind(row.variance)
+    .bind(row.weight)
+    .execute(&mut **tx)
+    .await?;
     Ok(res.rows_affected())
 }
 
@@ -462,19 +569,36 @@ async fn write_health(
 /// not a zero. But note a leg can be `Absent` *with* candidates that were all
 /// stale, and that case does produce no row either — the staleness signal for
 /// it lives in `feed_health`, which is per source rather than per leg.
+///
+/// `fair` supplies each fused leg's estimate. Only the two legs the composition
+/// prices off are fused, so the peg leg's fusion fields stay `None` — which is
+/// the honest record, not a gap: that leg feeds a band check rather than a
+/// price, and a guard whose job is to fire on any bad reading must not be
+/// reading a smoothed one.
+///
+/// Note the consequence of the early return below for a fused leg that resolved
+/// to **nothing**: no row is written at all, so a `Carried` estimate on an
+/// absent leg is not recorded. The composition may still be pricing off that
+/// carried estimate, so `maker_telemetry.fair` can be non-NULL across a tick
+/// where this table has no row for the leg that produced it.
 pub fn leg_samples(
     ts: i64,
     market: &str,
     legs: &Legs,
     stale_after: std::time::Duration,
     dispersion_frac: f64,
+    fair: &FairValue,
 ) -> Vec<LegSample> {
     let mut out = Vec::with_capacity(3);
-    let mut push = |leg: &str, candidates: Candidates| {
+    let mut push = |leg: &str, candidates: Candidates, fusion: Option<&FusionReport>| {
         let resolved = candidates.resolve(stale_after, dispersion_frac);
         let Some(r) = resolved.reading else {
             return;
         };
+        // A fusion that has never been seeded has no estimate to report, so the
+        // whole group stays NULL rather than reporting a variance for a value
+        // that does not exist.
+        let fused = fusion.filter(|f| f.value.is_some());
         out.push(LegSample {
             ts,
             market: market.to_string(),
@@ -486,11 +610,52 @@ pub fn leg_samples(
             consensus_state: format!("{:?}", resolved.state),
             contributor_count: i32::try_from(resolved.n).unwrap_or(i32::MAX),
             dispersion_outlier: resolved.outlier.map(str::to_string),
+            fused_value: fused.and_then(|f| f.value),
+            fused_sigma: fused
+                .and_then(FusionReport::sigma)
+                .filter(|s| s.is_finite()),
+            fusion_step: fused.map(|f| format!("{:?}", f.step)),
+            fused_count: fused.map(|f| i32::try_from(f.n).unwrap_or(i32::MAX)),
         });
     };
-    push(LEG_FX, legs.fx);
-    push(LEG_CRYPTO_USDC, legs.crypto_usdc);
-    push(LEG_USDC_USD, legs.usdc_usd);
+    push(LEG_FX, legs.fx, Some(&fair.fx_fusion));
+    push(LEG_CRYPTO_USDC, legs.crypto_usdc, Some(&fair.crypto_fusion));
+    push(LEG_USDC_USD, legs.usdc_usd, None);
+    out
+}
+
+/// The per-source attribution rows for one market's tick — one per source that
+/// answered a fused leg, carrying the weight it was given.
+///
+/// **Every source that could be measured gets a row, including the ones the
+/// trim excluded** (at weight zero). Writing only the sources that moved the
+/// estimate would leave a fused value in the table with no record of what it
+/// declined to believe, which is precisely the disagreement an operator needs to
+/// see: an official reference rate contradicting the tape is signal, not noise.
+///
+/// A source whose reading has no establishable variance — non-finite or
+/// non-positive — is skipped upstream by the filter and so gets no row at all.
+/// That is not the same state as a trimmed source, and conflating the two would
+/// read a broken feed as a disagreeing one.
+pub fn contribution_samples(ts: i64, market: &str, fair: &FairValue) -> Vec<ContributionSample> {
+    let mut out = Vec::new();
+    for (leg, report) in [
+        (LEG_FX, &fair.fx_fusion),
+        (LEG_CRYPTO_USDC, &fair.crypto_fusion),
+    ] {
+        for c in report.contributions() {
+            out.push(ContributionSample {
+                ts,
+                market: market.to_string(),
+                leg: leg.to_string(),
+                source: c.source.to_string(),
+                mechanism: MECHANISM_FUSION.to_string(),
+                value: c.value,
+                variance: Some(c.variance),
+                weight: c.weight,
+            });
+        }
+    }
     out
 }
 
@@ -813,7 +978,7 @@ mod tests {
     use super::*;
     use crate::config::DEFAULT_LADDER;
     use crate::model::killswitch::HaltReason;
-    use dropset_fair_value::{Anchor, Health, LegReport, Reading, Regime};
+    use dropset_fair_value::{Anchor, FusionReport, Health, LegReport, Reading, Regime};
     use std::time::Duration;
 
     /// The tightest default ladder tier, as a fraction — the touch offset every
@@ -839,6 +1004,8 @@ mod tests {
             basis_outlier: false,
             fx_leg: LegReport::default(),
             crypto_leg: LegReport::default(),
+            fx_fusion: FusionReport::none(),
+            crypto_fusion: FusionReport::none(),
             health: Health::Ok,
             uncertain: false,
             basis_breach: false,
@@ -1099,7 +1266,7 @@ mod tests {
     /// if these grow again.
     #[test]
     fn every_insert_matches_the_bind_order_beside_it() {
-        let cases: [(&str, &str, &[&str], usize); 4] = [
+        let cases: [(&str, &str, &[&str], usize); 5] = [
             (
                 "maker_telemetry_insert",
                 include_str!("../queries/maker_telemetry_insert.sql"),
@@ -1151,8 +1318,27 @@ mod tests {
                     "consensus_state",
                     "contributor_count",
                     "dispersion_outlier",
+                    "fused_value",
+                    "fused_sigma",
+                    "fusion_step",
+                    "fused_count",
                 ],
-                10,
+                14,
+            ),
+            (
+                "maker_leg_contributions_insert",
+                include_str!("../queries/maker_leg_contributions_insert.sql"),
+                &[
+                    "ts",
+                    "market",
+                    "leg",
+                    "source",
+                    "mechanism",
+                    "value",
+                    "variance",
+                    "weight",
+                ],
+                8,
             ),
             (
                 "feed_health_ok",
@@ -1285,7 +1471,7 @@ mod tests {
             static_usd: 1.14,
         };
 
-        let rows = leg_samples(42, "EURC", &legs, STALE, BAND);
+        let rows = leg_samples(42, "EURC", &legs, STALE, BAND, &fair(None));
         assert_eq!(rows.len(), 2, "the empty peg leg contributes no row");
 
         let fx = &rows[0];
@@ -1323,8 +1509,8 @@ mod tests {
             static_usd: 1.14,
         };
 
-        let a = leg_samples(1, "EURC", &trusted, STALE, BAND);
-        let b = leg_samples(1, "EURC", &unverified, STALE, BAND);
+        let a = leg_samples(1, "EURC", &trusted, STALE, BAND, &fair(None));
+        let b = leg_samples(1, "EURC", &unverified, STALE, BAND, &fair(None));
         assert_eq!(a[0].consensus_state, "SingleTrusted");
         assert_eq!(b[0].consensus_state, "SingleUnverified");
         assert_ne!(a[0].consensus_state, b[0].consensus_state);
@@ -1345,7 +1531,7 @@ mod tests {
             static_usd: 1.14,
         };
 
-        let rows = leg_samples(1, "EURC", &legs, STALE, BAND);
+        let rows = leg_samples(1, "EURC", &legs, STALE, BAND, &fair(None));
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].consensus_state, "Dispersed");
         assert_eq!(rows[0].contributor_count, 3);
@@ -1353,6 +1539,112 @@ mod tests {
         // The median still carries the leg — dispersed is flagged, not
         // discarded, once there are three or more sources.
         assert!(rows[0].value > 1.13);
+    }
+
+    /// A composed tick whose basis leg carries a bad print: the fused estimate
+    /// is recorded beside the fast consensus, and the trimmed source gets its
+    /// own attribution row at weight zero.
+    #[test]
+    fn a_fused_leg_records_its_estimate_and_every_contributor() {
+        use dropset_fair_value::{FairValueConfig, FairValueEngine};
+
+        let legs = Legs {
+            fx: one("pyth-hermes", 1.0),
+            crypto_usdc: one("coinbase", 1.020)
+                .push("kraken", Some(Reading::new(1.021, Duration::ZERO)))
+                .push("coingecko", Some(Reading::new(0.530, Duration::ZERO))),
+            usdc_usd: one("kraken", 1.0),
+            static_usd: 1.14,
+        };
+        let mut engine = FairValueEngine::new(FairValueConfig::default());
+        let fair = engine.compose(legs, Duration::from_secs(5), Default::default());
+
+        let rows = leg_samples(7, "EURC", &legs, STALE, BAND, &fair);
+        let basis = rows
+            .iter()
+            .find(|r| r.leg == LEG_CRYPTO_USDC)
+            .expect("the basis leg resolved");
+
+        // The two numbers are both present and both meaningful: the fast
+        // median that guards dislocations, and the fused estimate the
+        // composition actually priced off.
+        assert_eq!(basis.value, 1.020, "the fast consensus median");
+        let fused = basis.fused_value.unwrap();
+        assert!(
+            (1.020..=1.021).contains(&fused),
+            "the stray print did not drag it: {fused}"
+        );
+        assert_eq!(basis.fusion_step.as_deref(), Some("Seeded"));
+        assert_eq!(basis.contributor_count, 3, "three corroborated the median");
+        assert_eq!(basis.fused_count, Some(2), "but only two were fused");
+        assert!(basis.fused_sigma.unwrap() > 0.0);
+
+        // The peg leg is not fused at all, and says so with NULLs rather than
+        // borrowing another leg's numbers.
+        let peg = rows.iter().find(|r| r.leg == LEG_USDC_USD).unwrap();
+        assert_eq!(peg.fused_value, None);
+        assert_eq!(peg.fusion_step, None);
+        assert_eq!(peg.fused_count, None);
+
+        // Every source that answered a fused leg is attributed, the trimmed one
+        // included — that row is the record of what the estimator refused.
+        let rows = contribution_samples(7, "EURC", &fair);
+        let stray = rows
+            .iter()
+            .find(|r| r.source == "coingecko")
+            .expect("the trimmed source is still written");
+        assert_eq!(stray.weight, 0.0);
+        assert_eq!(stray.value, 0.530);
+        assert_eq!(stray.leg, LEG_CRYPTO_USDC);
+        assert!(
+            rows.iter().all(|r| r.leg != LEG_USDC_USD),
+            "the peg leg is never fused"
+        );
+        assert!(
+            rows.iter().filter(|r| r.weight > 0.0).count() == 3,
+            "one FX source and the two credible venues"
+        );
+    }
+
+    /// The `fusion_step` column's rendered text is a wire contract: the
+    /// migration tells readers to match the dislocation case with
+    /// `LIKE 'Reseeded%'`, because it is the one value carrying a payload.
+    /// Pinned here because renaming the variant or its field would silently
+    /// break every dashboard and alert predicate keyed on it, with nothing
+    /// else in the suite failing.
+    #[test]
+    fn the_reseeded_step_renders_with_its_payload_and_a_stable_prefix() {
+        use dropset_fair_value::{FairValueConfig, FairValueEngine};
+
+        let mut engine = FairValueEngine::new(FairValueConfig::default());
+        let pair = |a: f64, b: f64| Legs {
+            fx: one("oanda", a).push("twelvedata", Some(Reading::new(b, Duration::ZERO))),
+            crypto_usdc: one("coinbase", 1.0),
+            usdc_usd: one("kraken", 1.0),
+            static_usd: 1.14,
+        };
+
+        // Seed, then step the tape far enough to trip the innovation gate.
+        engine.compose(
+            pair(1.1400, 1.1401),
+            Duration::from_secs(5),
+            Default::default(),
+        );
+        let legs = pair(1.1600, 1.1601);
+        let fair = engine.compose(legs, Duration::from_secs(5), Default::default());
+
+        let rows = leg_samples(9, "EURC", &legs, STALE, BAND, &fair);
+        let fx = rows.iter().find(|r| r.leg == LEG_FX).unwrap();
+        let step = fx.fusion_step.as_deref().expect("the fx leg fused");
+        assert!(
+            step.starts_with("Reseeded"),
+            "the alert-keyed prefix must be stable: {step}"
+        );
+        assert!(
+            step.contains("innovation_frac"),
+            "and it must carry the dislocation size: {step}"
+        );
+        assert_ne!(step, "Reseeded", "equality matching must not work on it");
     }
 
     /// A leg whose only candidate is too stale to use resolves to nothing, so
@@ -1369,7 +1661,7 @@ mod tests {
             usdc_usd: Candidates::none(),
             static_usd: 1.14,
         };
-        assert!(leg_samples(1, "EURC", &legs, STALE, BAND).is_empty());
+        assert!(leg_samples(1, "EURC", &legs, STALE, BAND, &fair(None)).is_empty());
     }
 
     #[test]
