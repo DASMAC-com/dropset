@@ -124,6 +124,28 @@ repos:
     types:
     - 'file'
   repo: 'local'
+# Every Rust service in infra/localnet/docker-compose.yml builds with its
+# context set to the repo root and its Dockerfile does `COPY . .`, so the root
+# `.dockerignore` is the only thing standing between a build and the whole
+# checkout — 90.9 GB across 868k files when measured without it. This guard
+# asserts the file still names each known-fat tree, and that the effective
+# context stays under an order-of-magnitude ceiling (the second catches a new
+# fat tree nobody wrote a pattern for, which the first cannot).
+#
+# `always_run` with `pass_filenames: false` rather than a `files` regex, and
+# the distinction is the whole point: pre-commit does not hand a hook the
+# files a commit DELETES, so a `files: '^\.dockerignore$'` scoping would go
+# quiet in exactly the commit that removes the file. The check is a pruned
+# tree-walk that never descends into what it excludes, so it costs
+# milliseconds on every run.
+- hooks:
+  - always_run: true
+    entry: 'python3 .claude/tools/docker_context.py'
+    id: 'docker-context'
+    language: 'system'
+    name: 'Docker build context stays bounded'
+    pass_filenames: false
+  repo: 'local'
 # hadolint-py wraps the hadolint binary so the hook needs neither Docker nor
 # a manual install. `files` matches `Dockerfile` and `*.Dockerfile` (identify
 # doesn't tag the latter as the `dockerfile` type), so `types: file`.

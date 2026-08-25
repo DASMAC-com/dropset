@@ -1632,8 +1632,10 @@ compose file; consolidating them is what makes a cross-boundary join a
 query rather than an export. Its data sits on a **named volume**: the
 indexer could always re-sync from chain, but a CEX backfill window is
 finite, so collected price history that scrolls out of it is
-unrecoverable. Stopping services keeps the volume; only an explicit
-`down -v` (`make clean-docker`) discards it.
+unrecoverable. Stopping services keeps the volume, and so does
+`make clean-docker` — which removes every container, local image and the
+build cache, but deliberately not the data. Only `make clean-docker-volume`
+discards it, and nothing else reaches that target.
 
 **The dashboards are configuration, not a service to write.** Grafana
 OSS joins the same compose file (`market-data/grafana/`), provisioned
