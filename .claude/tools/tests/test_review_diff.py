@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# cspell:word gpgsign
 """Stdlib ``unittest`` tests for ``review_diff.py``.
 
 The pure logic — pattern matching, ``--numstat`` parsing, and the gate/verdict
@@ -11,11 +10,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 import review_diff as rd
 
@@ -465,6 +466,44 @@ class GateTests(unittest.TestCase):
         v = rd.gate("main", self.out, fetch=False)
         self.assertEqual(v["ready"], not v["blockers"])
 
+    def test_only_narrows_the_inventory_not_just_the_diff(self):
+        # The inventory is what a caller reads to size and route the review, so
+        # a `--only` run that still lists every changed path defeats the point
+        # of scoping — and on a 58-file diff that is the whole result.
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        self.commit("docs/guide.md", "# Guide\n", "Docs")
+        v = rd.gate("main", self.out, fetch=False, only=["tui/**"])
+        self.assertEqual([f["path"] for f in v["files"]], ["tui/src/ui.rs"])
+        self.assertTrue(v["ready"])
+
+    def test_only_matches_a_single_segment_glob(self):
+        # `dir/*.py` must not match `dir/sub/x.py`. Delegating to git's own
+        # pathspec is what makes this hold without a second matcher to drift.
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        self.commit("tui/src/nested/deep.rs", "fn d() {}\n", "Nested")
+        v = rd.gate("main", self.out, fetch=False, only=["tui/src/*.rs"])
+        self.assertEqual([f["path"] for f in v["files"]], ["tui/src/ui.rs"])
+
+    def test_an_only_that_matches_nothing_names_the_GLOB_not_the_branch(self):
+        # The misleading case: with the inventory narrowed, an unmatched glob
+        # makes `files` empty, which would otherwise report "no files changed
+        # between the base and HEAD" and send the reader to check the branch.
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        v = rd.gate("main", self.out, fetch=False, only=["frontend/**"])
+        self.assertFalse(v["ready"])
+        joined = " ".join(v["blockers"])
+        self.assertIn("matched none", joined)
+        self.assertIn("frontend/**", joined)
+        self.assertNotIn("no files changed", joined)
+
+    def test_an_only_matching_solely_generated_families_says_so(self):
+        self.commit("pnpm-lock.yaml", "lockfileVersion: 9\n" * 20, "Bump deps")
+        v = rd.gate("main", self.out, fetch=False, only=["pnpm-lock.yaml"])
+        self.assertFalse(v["ready"])
+        joined = " ".join(v["blockers"])
+        self.assertIn("excluded generated", joined)
+        self.assertNotIn("matched none", joined)
+
     def test_failed_fetch_blocks_rather_than_claiming_freshness(self):
         """The tool must not report a base it could not verify as fresh. This
         repo has no `origin` remote, so a real fetch attempt fails."""
@@ -786,6 +825,380 @@ class GateOnlyProjectionTests(unittest.TestCase):
 
     def test_the_projection_never_invents_a_value(self):
         self.assertEqual(rd.gate_only({}), {})
+
+
+class RustTestRangeTests(unittest.TestCase):
+    """Finding the inline `#[cfg(test)]` regions a category split cannot see."""
+
+    def test_a_simple_test_module_is_found(self):
+        text = "fn a() {}\n\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(3, 6)])
+
+    def test_nesting_inside_the_module_does_not_close_it_early(self):
+        text = (
+            "#[cfg(test)]\nmod tests {\n    fn t() {\n        if x { y(); }\n    }\n}\n"
+        )
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 6)])
+
+    def test_a_brace_inside_a_string_literal_does_not_close_the_module(self):
+        text = '#[cfg(test)]\nmod tests {\n    let s = "}";\n    fn t() {}\n}\n'
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_a_brace_inside_a_raw_string_does_not_close_the_module(self):
+        # Raw strings are common in test fixtures, which is exactly where this
+        # parser runs — a false close would send real source into the tests slice.
+        text = '#[cfg(test)]\nmod tests {\n    let s = r#"}"#;\n    fn t() {}\n}\n'
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_a_brace_in_a_line_comment_is_ignored(self):
+        text = "#[cfg(test)]\nmod tests {\n    // }\n    fn t() {}\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_several_regions_are_all_found(self):
+        text = "#[cfg(test)]\nmod a {\n}\nfn mid() {}\n#[cfg(test)]\nmod b {\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 3), (5, 7)])
+
+    def test_a_file_with_no_tests_yields_nothing(self):
+        self.assertEqual(rd.rust_test_ranges("fn a() {}\n"), [])
+
+    def test_a_braceless_cfg_test_item_does_not_swallow_the_next_item(self):
+        # `#[cfg(test)] mod test_support;` has no block at all. Walking to "the
+        # next {" swallowed whatever braced item followed, routing PRODUCTION
+        # code into the tests slice. The repo contains this exact idiom.
+        text = (
+            "#[cfg(test)]\n"
+            "mod test_support;\n"
+            "\n"
+            "pub fn production() {\n"
+            "    real_work();\n"
+            "}\n"
+        )
+        ranges = rd.rust_test_ranges(text)
+        self.assertEqual(ranges, [(1, 2)])
+        self.assertFalse(rd._in_any_range(4, ranges))
+
+    def test_a_braceless_cfg_test_use_does_not_swallow_the_next_item(self):
+        text = "#[cfg(test)]\nuse std::sync::Arc;\n\npub fn production() {\n}\n"
+        ranges = rd.rust_test_ranges(text)
+        self.assertFalse(rd._in_any_range(4, ranges))
+
+    def test_a_trailing_comment_does_not_defeat_the_braceless_terminator(self):
+        # `mod test_support; // helpers only` does not END with `;`, so the
+        # terminator missed it and the walk ran on to the next `{` — swallowing
+        # production code into the tests slice, the very failure the braceless
+        # case above exists to prevent.
+        text = (
+            "#[cfg(test)]\n"
+            "mod test_support; // helpers only\n"
+            "\n"
+            "pub fn production() {\n"
+            "    real_work();\n"
+            "}\n"
+        )
+        ranges = rd.rust_test_ranges(text)
+        self.assertEqual(ranges, [(1, 2)])
+        self.assertFalse(rd._in_any_range(4, ranges))
+
+    def test_a_lifetime_does_not_close_the_range_early(self):
+        # `&'static str` is a lifetime, not a char literal. Treating it as an
+        # open literal made the scan skip the trailing `{`, so the range ended
+        # an item early and the rest of the module went back to `source`.
+        text = (
+            "#[cfg(test)]\n"
+            "mod tests {\n"
+            "    fn helper() -> &'static str {\n"
+            '        "x"\n'
+            "    }\n"
+            "\n"
+            "    #[test]\n"
+            "    fn later() {}\n"
+            "}\n"
+            "pub fn production() {}\n"
+        )
+        ranges = rd.rust_test_ranges(text)
+        self.assertEqual(ranges, [(1, 9)])
+        self.assertTrue(rd._in_any_range(8, ranges))
+        self.assertFalse(rd._in_any_range(10, ranges))
+
+    def test_a_where_clause_lifetime_bound_is_also_not_a_literal(self):
+        text = "#[cfg(test)]\nmod tests {\n    fn f<T>() where T: 'static {\n    }\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_a_real_char_literal_is_still_skipped(self):
+        text = "#[cfg(test)]\nmod tests {\n    let c = '}';\n    fn t() {}\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_an_escaped_char_literal_is_still_skipped(self):
+        text = "#[cfg(test)]\nmod tests {\n    let c = '\\'';\n    fn t() {}\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_an_unbalanced_region_claims_to_end_of_file_rather_than_vanishing(self):
+        # Losing a test region to the source slice is the failure being fixed,
+        # so an unparsable tail errs toward `tests`.
+        text = "#[cfg(test)]\nmod tests {\n    fn t() {}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 3)])
+
+
+class InlineRustTestSplitTests(unittest.TestCase):
+    """The end-to-end property: a Rust diff's test hunks reach the tests slice.
+
+    The regression: a 4,351-line Rust diff produced a **zero-line** tests slice
+    because inline `#[cfg(test)]` rides the source file, so the test-adequacy
+    lens read three source slices and became the run's costliest agent.
+    """
+
+    SOURCE = (
+        "pub fn add(a: i32, b: i32) -> i32 {\n"
+        "    a + b\n"
+        "}\n"
+        "\n"
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        "    use super::*;\n"
+        "\n"
+        "    #[test]\n"
+        "    fn it_adds() {\n"
+        "        assert_eq!(add(1, 2), 3);\n"
+        "    }\n"
+        "}\n"
+    )
+
+    DIFF = (
+        "diff --git a/src/lib.rs b/src/lib.rs\n"
+        "index 111..222 100644\n"
+        "--- a/src/lib.rs\n"
+        "+++ b/src/lib.rs\n"
+        "@@ -1,3 +1,3 @@\n"
+        " pub fn add(a: i32, b: i32) -> i32 {\n"
+        "-    a - b\n"
+        "+    a + b\n"
+        " }\n"
+        "@@ -9,3 +9,3 @@\n"
+        "     #[test]\n"
+        "-    fn it_adds() { assert_eq!(add(1, 2), 4); }\n"
+        "+    fn it_adds() { assert_eq!(add(1, 2), 3); }\n"
+        "\n"
+    )
+
+    def _split(self):
+        d = Path(self.tmp.name)
+        (d / "src").mkdir(parents=True, exist_ok=True)
+        (d / "src" / "lib.rs").write_text(self.SOURCE, encoding="utf-8")
+        diff_path = d / "review-diff.txt"
+        diff_path.write_text(self.DIFF, encoding="utf-8")
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            return rd.split_diff(diff_path, d)
+        finally:
+            os.chdir(cwd)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_the_test_hunk_lands_in_the_tests_slice(self):
+        slices = self._split()
+        tests_text = Path(slices["tests"]["path"]).read_text(encoding="utf-8")
+        self.assertIn("it_adds", tests_text)
+        self.assertGreater(slices["tests"]["lines"], 0)
+
+    def test_the_source_hunk_stays_in_the_source_slice(self):
+        slices = self._split()
+        source_text = Path(slices["source"]["path"]).read_text(encoding="utf-8")
+        self.assertIn("a + b", source_text)
+        self.assertNotIn("it_adds", source_text)
+
+    def test_each_slice_carries_the_file_header_so_it_reads_as_a_diff(self):
+        # A hunk without its `diff --git`/`+++` preamble is not readable as a
+        # diff, and a lens is handed the slice file directly.
+        slices = self._split()
+        for name in ("source", "tests"):
+            text = Path(slices[name]["path"]).read_text(encoding="utf-8")
+            self.assertIn("diff --git a/src/lib.rs b/src/lib.rs", text)
+            self.assertIn("+++ b/src/lib.rs", text)
+
+    def test_an_ADDED_rust_file_carries_a_complete_header_into_each_slice(self):
+        # `new file mode` is not `index `/`--- `/`+++ `, so a prefix whitelist
+        # let it through early and the tests slice got `diff --git` immediately
+        # followed by `@@` — no ---/+++ at all, i.e. a malformed diff handed to
+        # a lens.
+        d = Path(self.tmp.name)
+        (d / "src").mkdir(parents=True, exist_ok=True)
+        (d / "src" / "added.rs").write_text(self.SOURCE, encoding="utf-8")
+        diff_path = d / "review-diff.txt"
+        diff_path.write_text(
+            "diff --git a/src/added.rs b/src/added.rs\n"
+            "new file mode 100644\n"
+            "index 0000000..111\n"
+            "--- /dev/null\n"
+            "+++ b/src/added.rs\n"
+            "@@ -0,0 +1,3 @@\n"
+            "+pub fn add(a: i32, b: i32) -> i32 {\n"
+            "+    a + b\n"
+            "+}\n"
+            "@@ -0,0 +9,3 @@\n"
+            "+    #[test]\n"
+            "+    fn it_adds() {}\n"
+            "+\n",
+            encoding="utf-8",
+        )
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            slices = rd.split_diff(diff_path, d)
+        finally:
+            os.chdir(cwd)
+        for name in ("source", "tests"):
+            text = Path(slices[name]["path"]).read_text(encoding="utf-8")
+            self.assertIn("diff --git a/src/added.rs", text)
+            self.assertIn("new file mode 100644", text)
+            self.assertIn("+++ b/src/added.rs", text)
+
+    def test_an_all_tests_file_leaves_the_source_slice_empty(self):
+        # A body line belongs to ITS OWN hunk's slice. Flushing the header to
+        # `source` on every body line instead wrote the whole preamble into the
+        # source slice for a file with no source hunks at all — a phantom "file
+        # changed" entry with nothing after it, and a non-zero source count,
+        # which is exactly the signal a caller reads as "spawn a source lens".
+        d = Path(self.tmp.name)
+        (d / "src").mkdir(parents=True, exist_ok=True)
+        (d / "src" / "lib.rs").write_text(self.SOURCE, encoding="utf-8")
+        diff_path = d / "review-diff.txt"
+        diff_path.write_text(
+            "diff --git a/src/lib.rs b/src/lib.rs\n"
+            "index 111..222 100644\n"
+            "--- a/src/lib.rs\n"
+            "+++ b/src/lib.rs\n"
+            "@@ -9,3 +9,3 @@ mod tests {\n"
+            "-    fn it_adds() { assert_eq!(add(1, 2), 4); }\n"
+            "+    fn it_adds() { assert_eq!(add(1, 2), 3); }\n"
+            "\n",
+            encoding="utf-8",
+        )
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            slices = rd.split_diff(diff_path, d)
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(slices["source"]["lines"], 0)
+        source_text = Path(slices["source"]["path"]).read_text(encoding="utf-8")
+        self.assertNotIn("diff --git", source_text)
+        self.assertIn("it_adds", Path(slices["tests"]["path"]).read_text("utf-8"))
+
+    def test_a_header_only_diff_is_not_dropped_from_every_slice(self):
+        # A mode change has no hunk at all, so nothing ever triggered a flush
+        # and the file vanished from the output entirely.
+        d = Path(self.tmp.name)
+        (d / "src").mkdir(parents=True, exist_ok=True)
+        (d / "src" / "lib.rs").write_text(self.SOURCE, encoding="utf-8")
+        diff_path = d / "review-diff.txt"
+        diff_path.write_text(
+            "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\n",
+            encoding="utf-8",
+        )
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            slices = rd.split_diff(diff_path, d)
+        finally:
+            os.chdir(cwd)
+        joined = "".join(
+            Path(slices[name]["path"]).read_text(encoding="utf-8")
+            for name in ("source", "tests", "docs")
+        )
+        self.assertIn("diff --git a/src/lib.rs", joined)
+        self.assertIn("new mode 100755", joined)
+
+    def test_a_rust_file_with_no_inline_tests_is_untouched(self):
+        d = Path(self.tmp.name)
+        (d / "src").mkdir(parents=True, exist_ok=True)
+        (d / "src" / "plain.rs").write_text("fn a() {}\n", encoding="utf-8")
+        diff_path = d / "review-diff.txt"
+        diff_path.write_text(
+            "diff --git a/src/plain.rs b/src/plain.rs\n"
+            "--- a/src/plain.rs\n"
+            "+++ b/src/plain.rs\n"
+            "@@ -1 +1 @@\n"
+            "-fn a() {}\n"
+            "+fn a() {}\n",
+            encoding="utf-8",
+        )
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            slices = rd.split_diff(diff_path, d)
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(slices["tests"]["lines"], 0)
+        self.assertGreater(slices["source"]["lines"], 0)
+
+
+class OverlappingPrsTests(unittest.TestCase):
+    """In-flight overlap: reported, never blocking, and never in context."""
+
+    ROWS = [
+        {
+            "number": 12,
+            "title": "Other work",
+            "headRefName": "eng-12",
+            "files": [{"path": "src/lib.rs"}, {"path": "README.md"}],
+        },
+        {
+            "number": 13,
+            "title": "Unrelated",
+            "headRefName": "eng-13",
+            "files": [{"path": "docs/other.md"}],
+        },
+    ]
+
+    def _run(self, paths, rows=None, branch="eng-99"):
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(self.ROWS if rows is None else rows),
+        )
+        with (
+            mock.patch.object(rd.subprocess, "run", return_value=completed),
+            mock.patch.object(rd, "_git", return_value=branch),
+        ):
+            return rd.overlapping_prs(paths)
+
+    def test_an_intersecting_pr_is_reported_with_its_shared_files(self):
+        result = self._run(["src/lib.rs"])
+        self.assertTrue(result["checked"])
+        self.assertEqual([p["number"] for p in result["prs"]], [12])
+        self.assertEqual(result["prs"][0]["shared_files"], ["src/lib.rs"])
+
+    def test_a_non_intersecting_pr_is_not_reported(self):
+        result = self._run(["src/only_mine.rs"])
+        self.assertEqual(result["prs"], [])
+
+    def test_the_pr_for_this_branch_is_excluded(self):
+        result = self._run(["src/lib.rs"], branch="eng-12")
+        self.assertEqual(result["prs"], [])
+
+    def test_results_are_ranked_by_how_much_they_overlap(self):
+        result = self._run(["src/lib.rs", "README.md", "docs/other.md"])
+        self.assertEqual([p["number"] for p in result["prs"]], [12, 13])
+
+    def test_a_missing_gh_is_reported_not_raised(self):
+        # Overlap is advisory, so an unavailable gh must not fail the gate.
+        with mock.patch.object(rd.subprocess, "run", side_effect=OSError("no gh")):
+            result = rd.overlapping_prs(["src/lib.rs"])
+        self.assertFalse(result["checked"])
+        self.assertIn("no gh", result["error"])
+        self.assertEqual(result["prs"], [])
+
+    def test_a_gh_failure_is_reported_not_raised(self):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="not authenticated"
+        )
+        with mock.patch.object(rd.subprocess, "run", return_value=completed):
+            result = rd.overlapping_prs(["src/lib.rs"])
+        self.assertFalse(result["checked"])
+        self.assertIn("not authenticated", result["error"])
 
 
 if __name__ == "__main__":

@@ -87,9 +87,37 @@ copy, so the wording stays in one place.
 >   **un-globbable** shape — a `find / …` sweep, or several `git -C …`
 >   calls strung together with `&&` / `|` / `;` into one compound that
 >   can't reduce to a rule.
+> - **A check handed to you pre-phrased as a command is still yours to
+>   re-shape.** An inherited "checks to run" item often arrives already
+>   written as an adjudication grep; run it at the width **your**
+>   question needs, not the width it was written at. If you only need to
+>   know whether something exists, take `--files-only` even when the
+>   item spelled out a context sweep.
 > - **One bare command per Bash call** — no pipes, `&&`, `;`, command
 >   substitution `$(…)`, redirects, or heredocs. Each call must reduce
 >   to a `prefix:*` allow-rule.
+
+**Findings-returning agents also get the self-deflation clause.** When
+the agent's job is to *return findings* — an audit dimension, a review
+lens — append this to its brief. It is the cheapest noise gate
+available: five dimension agents once returned **46** findings and two
+skeptics (~2.7M input) killed **37**, an ~80% false-positive rate at the
+producing stage, with three findings re-filing the audited artifact's own
+stated design intent.
+
+> - **Drop what the artifact states as deliberate.** If the file, its
+>   doc comment, or a sibling convention names the thing as an
+>   intentional tradeoff, it is not a finding. Re-filing an artifact's
+>   own stated intent is the single most common false positive.
+> - **Drop what hurts no reader materially.** Name who is hurt and how;
+>   if you cannot, drop it.
+> - **Return a considered-and-dropped list** — the candidates you
+>   rejected, one line of reason each. That makes the deflation
+>   checkable rather than a claim, and lets a later cross-check see what
+>   was already weighed.
+> - **A scoped pass returns a handful of findings, not forty.** If your
+>   count is heading into the dozens, re-read this clause before
+>   answering — and if you still believe the count, say so explicitly.
 
 **Pass the material inline.** Whatever the agent must reason over —
 the diff, the commit log, the issue set — goes **in the prompt**, so

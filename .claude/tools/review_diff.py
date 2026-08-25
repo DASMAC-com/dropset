@@ -90,6 +90,7 @@ import argparse
 import fnmatch
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -366,11 +367,18 @@ def parse_numstat_z(text: str) -> list[dict]:
     return files
 
 
-def write_diff(base_ref: str, out_path: Path) -> int:
+def write_diff(base_ref: str, out_path: Path, only: list[str] | None = None) -> int:
     """Write the excluded review diff to ``out_path``; return its line count.
 
     The diff is streamed straight to the file — it never passes through this
     process's memory, and never through the model's context.
+
+    ``only`` restricts the diff to the given path globs. That is how an oversized
+    slice gets subdivided: the review step asks for slices past ~1k lines to be
+    broken up, and until this existed ``--split`` could only cut by *category*,
+    so 3,156- and 4,148-line source slices went to every lens whole (the
+    costliest single agent on one such run took 634.7k of input). The hand-rolled
+    alternative was three separate ``git diff`` calls with literal path lists.
 
     Two deliberate choices:
 
@@ -388,6 +396,12 @@ def write_diff(base_ref: str, out_path: Path) -> int:
     """
     out_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     pathspec = [f":(top,exclude){p}" for p in DIFF_EXCLUDES]
+    if only:
+        # Positive limiters are anchored at the repo root for the same reason the
+        # excludes are: an unanchored pattern would resolve against the process
+        # cwd and silently scope the diff differently depending on where the tool
+        # was run from.
+        pathspec = [f":(top,glob){p}" for p in only] + pathspec
     try:
         fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
@@ -442,6 +456,178 @@ def _diff_header_path(line: str) -> str | None:
     return rest[marker + 3 :] or None
 
 
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+# The attribute that marks an inline Rust test module.
+_CFG_TEST_RE = re.compile(r"^\s*#\[cfg\(test\)\]")
+
+
+def rust_test_ranges(text: str) -> list[tuple[int, int]]:
+    """1-based inclusive line ranges of every ``#[cfg(test)]`` item in ``text``.
+
+    Rust keeps its unit tests **inside the source file**, so a category split
+    that keys on the path alone produces a **zero-line tests slice** on a diff
+    that is full of test changes. Measured: a 4,351-line Rust diff split to
+    exactly zero test lines, so the test-adequacy lens had to read three source
+    slices and became that run's costliest agent at 473.6k.
+
+    Brace matching rather than regex-per-line, because a test module contains
+    arbitrary nesting. String and char literals are skipped so a ``"}"`` inside
+    a test fixture cannot close the module early; line comments are skipped for
+    the same reason. Raw strings (``r#"..."#``) are handled too — they are
+    common in test fixtures, which is exactly where this runs.
+
+    **A brace-less annotated item ends at its semicolon.** `#[cfg(test)]` also
+    guards declarations with no block at all — `#[cfg(test)] mod test_support;`
+    and `#[cfg(test)] use …;` are both common, and the repo contains the first.
+    Walking forward to "the next `{`" on those swallows whatever braced item
+    happens to follow, which routes **production code into the tests slice**.
+    So the walk stops at a `;` that closes the item before any brace opens.
+
+    Block comments (``/* … */``) are **not** handled — a `{` inside one still
+    counts. Stated rather than claimed otherwise: it needs multi-line state,
+    and an unbalanced brace only ever over-claims a range, which errs toward
+    tests rather than losing them.
+    """
+    lines = text.splitlines()
+    ranges: list[tuple[int, int]] = []
+    index = 0
+    while index < len(lines):
+        if not _CFG_TEST_RE.match(lines[index]):
+            index += 1
+            continue
+        start = index
+        # Walk forward to the first `{` that opens the annotated item, then brace
+        # match to its close. An attribute may be followed by more attributes, a
+        # doc comment, or the `mod`/`fn` line itself.
+        depth = 0
+        opened = False
+        cursor = index
+        while cursor < len(lines):
+            depth, opened_here = _scan_braces(lines[cursor], depth)
+            opened = opened or opened_here
+            if opened and depth <= 0:
+                break
+            if not opened and _ends_item_without_block(lines[cursor]):
+                # `#[cfg(test)] mod test_support;` — the item is complete and
+                # no block ever opens. Claim these lines and nothing more.
+                break
+            cursor += 1
+        if cursor >= len(lines):
+            # Unbalanced (a truncated or unparsable file): claim to the end
+            # rather than dropping the region, so tests are never lost to source.
+            ranges.append((start + 1, len(lines)))
+            break
+        ranges.append((start + 1, cursor + 1))
+        index = cursor + 1
+    return ranges
+
+
+# An item the `#[cfg(test)]` attribute guards that has no block: a `;` closes
+# it. Checked only before any brace has opened, so a `;` inside a test body is
+# irrelevant. Attribute and comment lines are skipped so `#[cfg(test)]` itself
+# (and a doc comment under it) does not end the walk.
+def _ends_item_without_block(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#[") or stripped.startswith("//"):
+        return False
+    # A TRAILING comment has to come off before the `;` test, or
+    # `#[cfg(test)] mod test_support; // helpers only` does not end the walk and
+    # the scan runs on to swallow the next braced item — routing production code
+    # into the tests slice, the exact failure this helper exists to prevent.
+    # Splitting on `//` can misread a `//` inside a string literal on such a
+    # line; that is a vanishingly rare shape, and erring here costs at most one
+    # extra line of an already-correct range.
+    code = stripped.split("//", 1)[0].rstrip()
+    return code.endswith(";")
+
+
+def _char_literal_end(line: str, start: int) -> int | None:
+    """Index just past a Rust char literal at ``start``, or ``None``.
+
+    ``None`` means the `'` is a lifetime, not a literal. The forms accepted are
+    `'x'` and an escape `'\\n'` / `'\\''` / `'\\u{1F600}'`.
+    """
+    if start + 1 >= len(line):
+        return None
+    if line[start + 1] == "\\":
+        close = line.find("'", start + 2)
+        return close + 1 if close != -1 else None
+    # A plain char literal is exactly one character wide.
+    if start + 2 < len(line) and line[start + 2] == "'":
+        return start + 3
+    return None
+
+
+def _scan_braces(line: str, depth: int) -> tuple[int, bool]:
+    """``(new_depth, saw_open_brace)`` for one line, ignoring braces in literals."""
+    opened = False
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == "/" and i + 1 < len(line) and line[i + 1] == "/":
+            break  # line comment: nothing after it counts
+        if ch == "r" and i + 1 < len(line) and line[i + 1] in '#"':
+            # Raw string: r"..." or r#"..."#. Skip to its terminator.
+            hashes = 0
+            j = i + 1
+            while j < len(line) and line[j] == "#":
+                hashes += 1
+                j += 1
+            if j < len(line) and line[j] == '"':
+                close = '"' + "#" * hashes
+                end = line.find(close, j + 1)
+                if end == -1:
+                    break  # runs past end of line; the rest cannot hold braces
+                i = end + len(close)
+                continue
+        if ch == "'":
+            # A `'` in Rust is a char literal ONLY in `'x'` or `'\n'` form —
+            # otherwise it is a LIFETIME (`&'static str`, `where T: 'a`), which
+            # has no closing quote. Treating a lifetime as an open literal made
+            # the scan run to end-of-line and skip the trailing `{`, so `depth`
+            # never incremented while the matching `}` still decremented it —
+            # ending the test range an item early and routing the rest of the
+            # module back to `source`.
+            end = _char_literal_end(line, i)
+            if end is None:
+                i += 1  # a lifetime: ordinary text, keep scanning this line
+                continue
+            i = end
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < len(line):
+                if line[j] == "\\":
+                    j += 2
+                    continue
+                if line[j] == '"':
+                    break
+                j += 1
+            i = j + 1
+            continue
+        if ch == "{":
+            depth += 1
+            opened = True
+        elif ch == "}":
+            depth -= 1
+        i += 1
+    return depth, opened
+
+
+def _in_any_range(line_no: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(start <= line_no <= end for start, end in ranges)
+
+
+def _read_post_image(path: str) -> str | None:
+    """The working-tree text of ``path``, or ``None`` if it is gone or binary."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
 def split_diff(diff_path: Path, out_dir: Path) -> dict:
     """Partition a review diff into per-lens slices; return ``{name: {path, lines}}``.
 
@@ -477,13 +663,92 @@ def split_diff(diff_path: Path, out_dir: Path) -> dict:
         # Anything before the first `diff --git` header (there is normally
         # nothing) goes to source, the default slice.
         current = "source"
+        # State for the inline-Rust-tests split. `header` buffers a file's whole
+        # preamble so it can be replayed into whichever slice first receives one
+        # of that file's hunks — a hunk without its file header is not readable
+        # as a diff.
+        #
+        # Everything before the first `@@` is buffered, rather than only the
+        # line shapes a whitelist happened to name. The whitelist form missed
+        # `new file mode`, `rename from`/`rename to` and `copy from`/`copy to`,
+        # which fell through and were emitted early — so an ADDED .rs file with
+        # inline tests produced a tests slice whose header was `diff --git`
+        # immediately followed by `@@`, with no `---`/`+++` at all. It also
+        # dropped a header-only diff (a mode change) from every slice.
+        test_ranges: list[tuple[int, int]] = []
+        header: list[str] = []
+        header_written: set[str] = set()
+        in_preamble = False
+        file_slice = "source"
+
+        def emit(name: str, text: str) -> None:
+            handles[name].write(text)
+            counts[name] += 1
+
+        def flush_header(name: str) -> None:
+            """Replay the buffered preamble into ``name`` at most once."""
+            if name in header_written:
+                return
+            for head_line in header:
+                emit(name, head_line)
+            header_written.add(name)
+
         with open(diff_path, "r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 header_path = _diff_header_path(line)
                 if header_path is not None:
-                    current = slice_for(header_path)
-                handles[current].write(line)
-                counts[current] += 1
+                    # A preceding file whose diff was header-only (a mode change,
+                    # a pure rename) never reached a hunk, so flush it now rather
+                    # than dropping it.
+                    if header and not header_written:
+                        flush_header(file_slice)
+                    file_slice = slice_for(header_path)
+                    current = file_slice
+                    header = [line]
+                    header_written = set()
+                    in_preamble = True
+                    # Only a Rust file landing in `source` can hide test hunks.
+                    test_ranges = []
+                    if file_slice == "source" and header_path.endswith(".rs"):
+                        text = _read_post_image(header_path)
+                        if text is not None:
+                            test_ranges = rust_test_ranges(text)
+                    continue
+
+                match = _HUNK_RE.match(line)
+                if match:
+                    in_preamble = False
+                    if test_ranges:
+                        start = int(match.group(1))
+                        # A hunk counts as tests when its post-image lines fall
+                        # inside a cfg(test) region. Judged on the START line:
+                        # a hunk straddling the boundary is rare, and putting it
+                        # with its opening context is the readable choice.
+                        current = (
+                            "tests" if _in_any_range(start, test_ranges) else file_slice
+                        )
+                    else:
+                        current = file_slice
+                    flush_header(current)
+                    emit(current, line)
+                    continue
+
+                if in_preamble:
+                    header.append(line)
+                    continue
+
+                # `current`, NOT `file_slice`. A body line belongs to whichever
+                # slice its hunk went to, and flushing to `file_slice` here
+                # wrote the whole preamble into `source` for a Rust file whose
+                # hunks were ALL test hunks — a phantom "file changed" entry
+                # with no hunks after it, and a non-zero source count that a
+                # caller reads as "spawn a source lens".
+                flush_header(current)
+                emit(current, line)
+
+            # And the same flush for the LAST file in the diff.
+            if header and not header_written:
+                flush_header(file_slice)
     except OSError as exc:
         raise ReviewDiffError(f"cannot write diff slices: {exc}") from exc
     finally:
@@ -493,6 +758,84 @@ def split_diff(diff_path: Path, out_dir: Path) -> dict:
     return {
         name: {"path": str(paths[name]), "lines": counts[name]} for name in SLICE_NAMES
     }
+
+
+def overlapping_prs(paths: list[str], limit: int = 30) -> dict:
+    """Open PRs whose changed files intersect ``paths``.
+
+    **The hazard this catches is in-flight overlap, not base drift.** The
+    freshness gate compares HEAD against the base and is satisfied whenever the
+    base has not moved — so a known-overlapping PR that lands *during* the
+    fan-out passes every check and still invalidates the review. Measured: a
+    five-lens pass (~1.23M input) was invalidated exactly that way, and the
+    overlap had been written in the issue days earlier.
+
+    **Reports, never blocks.** Waiting is sometimes right and sometimes not; the
+    decision belongs to the caller, who can see the priorities. This returns the
+    evidence.
+
+    The per-PR file lists are collection-valued and large — a ``gh pr list``
+    carrying ``files`` measured ~4.0k for a two-line answer across eleven PRs.
+    They are fetched **into this process** and only the intersection is
+    returned, which is the whole reason this lives in a tool.
+
+    A missing or unauthenticated ``gh`` is not an error: overlap is advisory, so
+    the failure is reported in ``error`` and the caller proceeds.
+    """
+    mine = set(paths)
+    if not mine:
+        return {"checked": False, "error": "no changed paths", "prs": []}
+    try:
+        completed = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--limit",
+                str(limit),
+                "--json",
+                "number,title,headRefName,files",
+            ],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        return {"checked": False, "error": f"gh unavailable: {exc}", "prs": []}
+    if completed.returncode != 0:
+        detail = (completed.stderr or "").strip() or f"exit {completed.returncode}"
+        return {"checked": False, "error": detail, "prs": []}
+    try:
+        rows = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        return {"checked": False, "error": f"decoding gh output: {exc}", "prs": []}
+
+    try:
+        current = _git(["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    except ReviewDiffError:
+        current = ""
+
+    hits = []
+    for row in rows:
+        if row.get("headRefName") == current:
+            continue  # this PR
+        theirs = {f.get("path") for f in (row.get("files") or [])}
+        shared = sorted(mine & theirs)
+        if shared:
+            hits.append(
+                {
+                    "number": row.get("number"),
+                    "title": row.get("title"),
+                    "branch": row.get("headRefName"),
+                    "shared_files": shared,
+                    "shared_count": len(shared),
+                }
+            )
+    hits.sort(key=lambda h: h["shared_count"], reverse=True)
+    return {"checked": True, "error": None, "prs": hits}
 
 
 def grep_excludes() -> dict:
@@ -532,7 +875,14 @@ def grep_excludes() -> dict:
     }
 
 
-def gate(base: str, out: Path, fetch: bool = True, split: bool = False) -> dict:
+def gate(
+    base: str,
+    out: Path,
+    fetch: bool = True,
+    split: bool = False,
+    only: list[str] | None = None,
+    overlap: bool = False,
+) -> dict:
     """Run the whole preamble and return the verdict dict (see module docs).
 
     ``ready`` is derived from ``blockers`` — never computed alongside it — so the
@@ -557,12 +907,37 @@ def gate(base: str, out: Path, fetch: bool = True, split: bool = False) -> dict:
 
     base_ahead = oneline_log(f"HEAD..{base_ref}")
     commits = oneline_log(f"{base_ref}..HEAD")
-    diff_lines = write_diff(base_ref, out)
-    files = parse_numstat_z(_git(["diff", "--numstat", "-z", f"{base_ref}..HEAD"]))
+    diff_lines = write_diff(base_ref, out, only=only)
+    # `--only` narrows the INVENTORY as well as the diff. Letting git apply the
+    # same limiters keeps one owner for the glob semantics — a second matcher
+    # here would drift from the pathspec `write_diff` uses, and a single-segment
+    # glob like `dir/*.py` is exactly where a hand-rolled one gets it wrong.
+    #
+    # Note this applies the positive limiters ONLY, never DIFF_EXCLUDES: the
+    # inventory stays unfiltered with respect to the generated families.
+    numstat = ["diff", "--numstat", "-z", f"{base_ref}..HEAD"]
+    if only:
+        numstat += ["--", *[f":(top,glob){p}" for p in only]]
+    files = parse_numstat_z(_git(numstat))
 
-    paths = [f["path"] for f in files]
-    runs_rust_suites = touches_ci_code(paths)
-    runs_artifact_gates = touches_generation_input(paths)
+    # ...but the GATE PREDICATES are computed from the UNLIMITED file list, and
+    # that distinction is the whole point of this pair of calls. `--only` is a
+    # statement about what to *review*, never about what the branch changed:
+    # narrowing to `.claude/**` on a branch that also touched a generation input
+    # would otherwise report `runs_artifact_gates: false` and step 9 would skip
+    # a gate CI is about to run. One extra cheap git call, only when `--only` is
+    # passed, buys a predicate that cannot go blind.
+    if only:
+        gate_paths = [
+            f["path"]
+            for f in parse_numstat_z(
+                _git(["diff", "--numstat", "-z", f"{base_ref}..HEAD"])
+            )
+        ]
+    else:
+        gate_paths = [f["path"] for f in files]
+    runs_rust_suites = touches_ci_code(gate_paths)
+    runs_artifact_gates = touches_generation_input(gate_paths)
 
     base_fresh = not base_ahead
     diff_empty = diff_lines == 0
@@ -584,10 +959,29 @@ def gate(base: str, out: Path, fetch: bool = True, split: bool = False) -> dict:
             f"{base_ref} has {len(base_ahead)} commit(s) HEAD lacks — re-fetch, "
             f"rebase onto {base_ref}, and re-run this gate before fanning out"
         )
-    if not files:
+    if not files and only:
+        # Checked BEFORE the bare no-files case: with `--only` the inventory is
+        # limited too, so an empty one means the GLOB matched nothing — not that
+        # the branch is empty. Reporting "no files changed between the base and
+        # HEAD" here would name the wrong cause and send the reader to check the
+        # branch instead of the pattern.
+        blockers.append(
+            f"--only {', '.join(only)} matched none of this branch's changed "
+            f"paths — check the glob (it is anchored at the repo root, and `*` "
+            f"does not cross a `/`)"
+        )
+    elif not files:
         blockers.append(
             f"no files changed between {base_ref} and HEAD — nothing to review "
             f"(check the base and the branch)"
+        )
+    elif diff_empty and only:
+        # The limiters matched paths, but every one of them is also an excluded
+        # generated family, so the diff came out empty.
+        blockers.append(
+            f"{out} is empty: --only {', '.join(only)} matched "
+            f"{len(files)} path(s), but all of them are excluded generated "
+            f"families ({', '.join(DIFF_EXCLUDES)})"
         )
     elif diff_empty:
         # Distinct from "nothing changed": every changed path is an excluded
@@ -610,6 +1004,7 @@ def gate(base: str, out: Path, fetch: bool = True, split: bool = False) -> dict:
         "diff_path": str(out),
         "diff_lines": diff_lines,
         "diff_empty": diff_empty,
+        "only": only or [],
         "files": files,
         "runs_rust_suites": runs_rust_suites,
         "runs_artifact_gates": runs_artifact_gates,
@@ -619,6 +1014,13 @@ def gate(base: str, out: Path, fetch: bool = True, split: bool = False) -> dict:
     if split:
         # Slices live beside the full diff, so one --out choice places everything.
         verdict["slices"] = split_diff(out, out.parent)
+    if overlap:
+        # Deliberately NOT a blocker: in-flight overlap is a decision for the
+        # caller (wait, or proceed with a documented re-run cost), not a gate.
+        # `gate_paths`, for the same reason the predicates use it: overlap with
+        # another PR is a property of what this BRANCH changed, not of the slice
+        # `--only` asked to review.
+        verdict["overlapping_prs"] = overlapping_prs(gate_paths)
     return verdict
 
 
@@ -685,6 +1087,21 @@ def run(argv: list[str]) -> int:
         help="also write per-lens source/tests/docs slices beside the diff",
     )
     parser.add_argument(
+        "--only",
+        action="append",
+        default=None,
+        metavar="GLOB",
+        help="restrict the diff to these path globs; repeatable. Use it to "
+        "subdivide an oversized slice instead of handing a lens the whole thing",
+    )
+    parser.add_argument(
+        "--overlap",
+        action="store_true",
+        help="also report open PRs whose files intersect this diff — the "
+        "in-flight hazard the base-freshness gate cannot see. Advisory, never a "
+        "blocker",
+    )
+    parser.add_argument(
         "--gate-only",
         action="store_true",
         help="emit just the verdict fields (base freshness, ready, blockers) — "
@@ -706,7 +1123,14 @@ def run(argv: list[str]) -> int:
     if args.out is None:
         raise ReviewDiffError("--out is required (except with --print-grep-excludes)")
 
-    verdict = gate(args.base, Path(args.out), fetch=not args.no_fetch, split=args.split)
+    verdict = gate(
+        args.base,
+        Path(args.out),
+        fetch=not args.no_fetch,
+        split=args.split,
+        only=args.only,
+        overlap=args.overlap,
+    )
     # Narrow AFTER gating, never instead of it: the exit status below and the
     # blockers both have to reflect the full computation, so --gate-only is a
     # projection of the answer and not a cheaper way of reaching one.

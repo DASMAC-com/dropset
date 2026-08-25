@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (one aggregated propose-only task), propose merges among `Claude:`-prefixed meta-work issues only, then execute the Planning document's audit directive — one scoped audit-scope run on the named target, or no audit at all when the directive says none, which is stated in the report rather than silently skipped (`no-audit` skips regardless; the full random rotation survives only as an explicit ad-hoc /audit). Findings file parked in Todo under the Audit findings milestone. Session-metrics and the purge dry-run then always run, sequenced after the audit. It does NOT analyze the board and files no collision links at all (that machinery is retired): Backlog-wide merge groups and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (one aggregated propose-only task), propose merges among `Claude:`-prefixed meta-work issues only, then capture session metrics and run the purge dry-run. It runs NO audit of its own and reads no Planning document: auditing is planning-filed board work — a planning session files an audit issue naming its target, and the session that pulls it runs one scoped audit-scope pass (the broad random rotation survives only as an explicit ad-hoc /audit). It does NOT analyze the board and files no collision links at all (that machinery is retired): Backlog-wide merge groups and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -9,10 +9,9 @@ user-invocable: true
 
 The **one thing to fire up when you arrive**: it
 does the morning upkeep — the chores that pile up while
-you develop but don't belong to any one PR — then executes
-the Planning document's **audit directive**, which names one
-target to audit or explicitly none. Pass `no-audit` to skip
-that step regardless. It first
+you develop but don't belong to any one PR. It is **pure
+mechanical upkeep**: it runs no audit and reads no Planning
+document. It first
 fast-forwards `main` so the pass runs on the latest
 committed skills and upgrades the Claude Code CLI
 (best-effort), then:
@@ -34,16 +33,8 @@ committed skills and upgrades the Claude Code CLI
    near-duplicate `Claude:`-prefixed issues, which are this
    skill's own filing output. Nothing else about the board
    is touched.
-1. **Execute the Planning document's audit directive** —
-   one scoped `audit-scope` run on the named subsystem or
-   interface, or **no audit at all** when the directive says
-   none (stated in the report, never silently skipped).
-   Findings land **parked** — state `Todo` *plus* the Audit
-   findings milestone — so they cost the pull queue nothing.
-   Pass `no-audit` to skip regardless. The broad random
-   rotation survives only as an explicit ad-hoc `/audit`.
-1. **Capture session metrics** — unconditionally, after the
-   audit step, filing each trim lever as a parked issue.
+1. **Capture session metrics** — unconditionally, filing
+   each trim lever as a parked issue.
 1. **Purge-conversations dry run** — in-pass and read-only;
    only the destructive apply rides the closing gate.
 
@@ -55,7 +46,7 @@ actually decides sequencing. See "Why the board belongs to
 `plan`" below.
 
 The morning entry point is a **single one-shot run**:
-upkeep → audit directive → session-metrics → purge dry-run →
+upkeep → session-metrics → purge dry-run →
 closing gate → exit. By default the upkeep
 goes **start-to-finish with no `AskUserQuestion`
 interrupting it** — it files or flags its deferred items and
@@ -86,26 +77,8 @@ a Backlog task to fix later.
 Optional, and accepts two independent arguments in any
 order:
 
-- **The `no-audit` flag** — the audit runs **by default**.
-  A bare `/housekeeping` does upkeep *and* one finite
-  `/audit` rotation (step 11); passing `no-audit` (e.g.
-  `housekeeping no-audit`) skips the rotation for a
-  deliberately quick pass.
-
-  **This reverses the old opt-in `audit` flag**, and the
-  reason is Part 10's parking change rather than a change of
-  heart about audits. A rotation now files its findings
-  **parked** under the Audit findings milestone, so it no
-  longer injects anything into the pull queue — which was
-  the entire cost of running it often. With that cost gone,
-  the default that keeps the repo continuously audited is
-  the right one. (`/audit` is itself finite — one rotation,
-  no cap — so the flag only decides *whether* to run it, not
-  how much.)
-
 - **The `cspell` flag** — when the invocation includes
-  `cspell` (e.g. `housekeeping cspell` or
-  `housekeeping no-audit cspell`, and likewise under
+  `cspell` (e.g. `housekeeping cspell`, and likewise under
   `/loop 30m housekeeping cspell`), the pass runs the
   opt-in spelling-escape check (step 3); without it that
   step is skipped.
@@ -132,7 +105,7 @@ The morning driver has to **run to completion** — a direct
 two modes, and the default is the non-interrupting one:
 
 - **One-shot (the default).** A bare `/housekeeping` (with
-  or without `no-audit` / `cspell`) and **every** `/loop`
+  or without `cspell`) and **every** `/loop`
   cadence run. It fires **no** *intermediate*
   `AskUserQuestion`: each interactive step takes its
   **non-prompting branch** — the same branch the steps below
@@ -144,9 +117,9 @@ two modes, and the default is the non-interrupting one:
   session-metrics and purge-conversations offers) are
   **skipped**. The deferred items are filed or flagged in
   the report for a later attended pass — nothing is ever
-  deleted unattended. The **only** thing that may interrupt
-  a one-shot is a genuine high-severity `/audit` finding on
-  the `PushNotification` path (step 11); that stays.
+  deleted unattended. With the audit step gone, **nothing**
+  interrupts a one-shot pass at all: every step either acts
+  mechanically or defers to the closing gate.
 - **Interactive** (`/housekeeping interactive`). Restores
   every **per-step** `AskUserQuestion` gate listed above, so
   you can act on the candidates as each step reaches them.
@@ -258,17 +231,14 @@ wrong place.
 
 It is safe to run repeatedly and makes **no source
 edits** of its own: its only writes are removing
-merged worktrees, filing / staging Linear issues, and
-annotating the Linear Session Metrics doc with
-recommended dispositions (it never edits a skill
-unattended). Its last step runs one `/audit` rotation
-(step 11), but housekeeping itself makes no source edit —
-the rotation only files Linear issues, and files them
-parked.
+merged worktrees and filing / staging Linear issues
+(it never edits a skill unattended). Trim levers are
+**parked issues** written through the zero-echo
+writer — the old "Session Metrics" inbox document is
+retired, so nothing here annotates one.
 
 Run it **once when you arrive** for the full morning-driver
-flow (upkeep, then one audit rotation, then exit), pass
-`no-audit` for upkeep only, or drive ad-hoc upkeep on a
+flow (upkeep, then exit), or drive ad-hoc upkeep on a
 timer:
 
 ```sh
@@ -282,8 +252,8 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 3–6 file Backlog issues and mine the
-Session Metrics doc, so they use the
+Steps 3–6 file Backlog issues and sweep the
+`Trim levers` milestone, so they use the
 same env-resolved Linear destination as `linear-task`.
 Resolve each variable with its **own**
 bare `printenv` (one `Bash(printenv:*)` allow-rule
@@ -382,8 +352,21 @@ already-pre-approved `Bash(gh pr list:*)` read-rule (see
 `docs/conventions/github-mcp.md`):
 
 ```sh
-gh pr list --state merged --json number,headRefName,mergedAt --limit 100
+gh pr list --state merged --json number,headRefName,mergedAt --limit 30
 ```
+
+**Match the window to the question — 100 was a payload for
+nothing.** This step decides about the handful of worktrees
+that exist right now, and worktrees are **days old by
+construction**, so a 100-PR window pays for ~96 rows the
+decision never reads. Field-selecting was already right; the
+*width* was not. Widen it only if a real worktree's branch
+falls off the end.
+
+**Do not select a collection-valued field here** — adding
+`files` or `commits` to the `--json` list reintroduces the
+whole payload this call exists to avoid (measured at ~4.0k
+for a two-line answer across eleven PRs).
 
 **But PR-merged is not the prune criterion — the ISSUE'S
 STATUS TYPE is.** A merged PR whose Linear issue reads
@@ -439,21 +422,32 @@ are not dropped automatically — they land in `skipped` /
 
 **Then mark notifications for merged PRs done.** Merged PRs
 leave GitHub notifications that otherwise pile up with no
-easy bulk clear. List the unread notifications through the
-GitHub MCP and dismiss only the ones whose PR has **merged**
-— a robust catch-all that also covers auto-merged PRs and
-others' PRs the worktree sweep above never touches:
+easy bulk clear. Dismiss only the ones whose PR has
+**merged** — a robust catch-all that also covers auto-merged
+PRs and others' PRs the worktree sweep above never touches.
 
-```txt
-mcp__github__list_notifications(
-  owner: "DASMAC-com",
-  repo: "dropset",
-)
+**Read the sweep field-selected.** Only three fields are
+consumed — the thread id, the subject type, and the subject
+url — and the MCP getter embeds the **complete repository
+object** (every `*_url` template) once per notification,
+which measured **~3.7k for three rows**:
+
+```sh
+gh api /notifications --jq '.[] | {id, url: .subject.url}'
 ```
 
-For each notification whose `subject.type` is
-`PullRequest`, read that PR (its number is the tail of
-`subject.url`) and key on `merged_at` exactly as above:
+**And the merged set you already have IS the merged-at
+check.** For any notification whose PR number appears in the
+`gh pr list --state merged` result fetched moments ago,
+membership in that set *is* the confirmation — a per-PR read
+verifies something the session is already holding. In the
+measured pass all three notifications were already in the
+just-fetched merged set, so all three per-PR reads were
+redundant.
+
+Fall back to a per-PR read **only** for a notification whose
+number is outside that window (an older PR the 30-row list
+did not reach):
 
 ```txt
 mcp__github__pull_request_read(
@@ -464,7 +458,8 @@ mcp__github__pull_request_read(
 )
 ```
 
-- `merged_at` is **non-null** → mark that one notification
+- merged (by set membership, or by a non-null `merged_at`
+  from the fallback read) → mark that one notification
   **done**:
 
   ```txt
@@ -824,6 +819,22 @@ here to change — flag an over-long index line in the report and
 trim it while curating, but the durable fix is upstream in that
 instruction.
 
+**Read the memory BEFORE re-verifying the fact it records.**
+The asymmetry is the same one as slice-before-whole-read, and
+it is missed for the same reason — the memory feels like the
+thing being *checked* rather than a source to consult. One
+session paid a **≈4.2k CLI help dump** to establish four flag
+facts, then read the saved memory afterwards and found it had
+recorded all four correctly. Read the entry first; re-verify
+only when it cites a version, path, or location that has since
+moved, and then verify **that** rather than re-deriving the
+whole fact.
+
+This is also the standing recall caveat: a memory reflects
+what was true when written, so a claim about a file, function
+or flag is checked against `HEAD` — but *checked*, not
+rebuilt from scratch.
+
 **Gate the scan on a cadence first.** Reading the whole
 store and repo-verifying every reference is the pass's
 **dominant compute**, and the store changes slowly, so
@@ -878,89 +889,7 @@ it:
 python3 .claude/tools/memory_scan_gate.py record <memory_dir>
 ```
 
-**9. Execute the Planning document's audit directive.** The
-audit is **directed**, not random. Each planning close-out
-writes an **audit directive** into the Planning document naming
-**one** subsystem or interface from the audit registry — or
-explicitly **none** — chosen because it just settled, is about
-to be built on, or is suspect. This step reads that directive
-and does what it says:
-
-- **Directive names a target** → invoke `audit-scope` (via the
-  Skill tool) **once**, scoped to that target. Same adversarial
-  cross-check, same parked filing.
-- **Directive says none, or there is no directive** → run **no
-  audit**, and **say so in the report**. A skipped audit must be
-  stated, never silently omitted.
-- **`no-audit` was passed** → skip regardless, and say so.
-
-**Why directed rather than random.** The old default was a
-seven-unit random rotation, and in a heavy-feature phase that
-targets code about to change: one pass filed **fifteen** parked
-findings, several against maker-model and fair-value files that
-open Backlog issues were already slated to rewrite. The engine
-was working; the targeting was wrong, and the parked pool drains
-only through planning promotion, so over-filing is a real cost.
-The full random rotation survives **only** as an explicit ad-hoc
-`/audit` invocation — never as any default.
-
-**The sub-agent fan-out is authorized by this invocation.**
-Invoking `housekeeping` (or `audit` / `audit-scope`) **is** the
-explicit request for the adversarial sub-agent cross-check — the
-fan-out is the skill's mechanism, not an optional extra. A
-session-level "don't spawn agents unless asked" default is
-*satisfied* by that authorization, not in tension with it. One
-pass skipped its rotation entirely on the reasoning that a
-don't-spawn-agents-unless-asked default forbade the fan-out;
-that reasoning was wrong, and with this text landed the conflict
-should not recur.
-
-**`review-pr` is the one skill that asks, and that is
-deliberate.** It puts a single question at its entry approving
-both "run now" and at which tier, and the tier choice is its
-spawn authorization. It asks because it does many things and
-the fan-out is one step of them, so an operator can reasonably
-want its lint-and-CI half without authorizing eight agents.
-Here — and in `audit` / `audit-scope` — the fan-out **is** the
-deliverable and there is no earlier gate for a question to ride,
-so asking would be ceremony. Do not read the difference as an
-oversight in either direction.
-
-Two corollaries:
-
-- **Never substitute an inline pass.** If sub-agent tooling is
-  genuinely unavailable, **stop and ask** — mirroring
-  `review-pr`, which deleted its inline path precisely because
-  an inline substitute was measured to catch materially less.
-- **Never silently skip.** Skipping is not the resolution to an
-  instruction conflict; reporting it is.
-
-**Findings land parked, and say so.** Every finding carries the
-**Audit findings** project milestone and state **Todo** — parked
-means a first-class open issue for dedup and search, but **not**
-in the pull queue. So when reporting, give **counts and titles
-only**, and state plainly that the findings are parked and
-awaiting sequencing. A `/housekeeping` run must not read as
-having queued work; promoting a finding is the `plan` skill's
-call (its step 8).
-
-**Record the outcome for the audit log.** Note the directive's
-target and its finding count in the report, so the next planning
-close-out can carry it into the Planning document — that record
-is the ongoing audit log.
-
-**If you write that outcome into the Planning document
-yourself, append it under the one marked heading —
-`Notes for the next planning session` — never as a
-free-floating section.** The document grows without bound
-between close-out rewrites, and post-close notes from
-non-planning sessions were a named cause: one document reached
-its next bootstrap carrying two such sections. Confining them
-to one heading is what lets the `plan` bootstrap consolidate in
-a single rewrite (see that skill's step 1). Creating a new
-top-level section here is the thing that breaks it.
-
-**10. Run session-metrics — unconditionally.** The morning pass
+**9. Run session-metrics — unconditionally.** The morning pass
 both *folds* parked trim levers (step 4) and *contributes* new
 ones, so it runs `/session-metrics` for the **current** session
 as a normal step, not an offer.
@@ -974,12 +903,11 @@ silently skipped it and reported it as "deferred". **One-shot
 mode defers approvals, not work**; that is the principle, and
 this step is its clearest case.
 
-It runs **after** the audit step above deliberately, so the
-levers it files reflect the whole pass including the audit's own
-cost. The order is: … → audit → session-metrics → purge dry-run
-→ batched close.
+It runs **late in the pass** deliberately, so the levers it
+files reflect the whole pass. The order is: … → upkeep →
+session-metrics → purge dry-run → batched close.
 
-**11. Run the purge-conversations dry-run in-pass; gate only the
+**10. Run the purge-conversations dry-run in-pass; gate only the
 delete.** Local transcripts and caches (`~/.claude/projects`,
 `~/.claude/file-history`, the CLI cache) accumulate — the
 base-repo project dir alone measured 151M. Run
@@ -993,7 +921,7 @@ Only the **destructive apply** rides the closing batched
 exactly what *would* be freed and deletes nothing — strictly
 more useful than skipping the step and calling it deferred.
 
-**12. Report.** Print a short summary:
+**11. Report.** Print a short summary:
 
 - Mode: **one-shot** (the default — ran to completion with
   no prompts, deferred items flagged) or **interactive**.
@@ -1045,23 +973,23 @@ more useful than skipping the step and calling it deferred.
   was offered and accepted for this session, or skipped.
 - Purge-conversations: whether a `/purge-conversations` run
   was offered and accepted (with the MB freed), or skipped.
-- Audit: one `/audit` rotation ran inline — report its
-  **count and the finding titles only**, and say that they
-  are **parked** under the Audit findings milestone awaiting
-  sequencing by a planning session. Or that it was skipped
-  because `no-audit` was passed.
 
-**13. Fire the closing gate.** With the report printed, batch
+There is **no audit line**, because this pass runs no audit.
+If a report ever carries one, something has re-grown the step
+this skill deliberately dropped.
+
+**12. Fire the closing gate.** With the report printed, batch
 every deferred decision into the single `AskUserQuestion`
 described in "The closing gate" above — the meta-work merge
 groups, the allowlist cruft, the stale memories,
 the inbox size — including only the categories that are
 non-empty. This runs in **both** modes.
 
-**The parked audit findings are not part of this gate.**
-Offering to slate them in is the `plan` skill's step 8;
-asking here would put a sequencing decision in the session
-that deliberately does not do sequencing.
+**Nothing about auditing rides this gate**, because this
+pass files no findings. Sequencing parked findings — and
+filing the audit issues that produce them — is the `plan`
+skill's work; asking here would put a sequencing decision in
+the session that deliberately does not do sequencing.
 
 Act on whatever comes back, and if nothing does (an
 unattended run with nobody watching), that's fine: the pass

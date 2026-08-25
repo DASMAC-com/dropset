@@ -10,7 +10,8 @@
 
 This doc covers the **user-local Claude Code configuration** the repo
 *documents but does not commit*: the compound-shell guard hook, the
-git-grep guard hook, the worktree edit-path guard hook, the iTerm2
+git-grep guard hook, the worktree edit-path guard hook, the
+destructive-command guard hook, the iTerm2
 tab-color integration, and the shell setup they lean on. None of it is
 enforced on a checkout.
 
@@ -176,14 +177,16 @@ one to the other.
 
 ### Which guards are actually wired
 
-Reach was never the problem — **wiring** is. All three guard scripts
+Reach was never the problem — **wiring** is. All **four** guard scripts
 are committed under `.claude/hooks/`, but a script only runs if a
-`PreToolUse` entry points at it. As of 2026-08-14 the main checkout
-wires **only** `no_compound_bash.py`. `no_git_grep.py` and
-`worktree_edit_guard.py` are committed and unwired, so neither
-currently fires — including the worktree edit-path guard, which exists
-specifically for worktree sessions. Wire the ones you want using the
-blocks in each guard's section below.
+`PreToolUse` entry points at it, and a committed-but-unwired guard is a
+documented protection that does not exist. That has happened: as of
+2026-08-14 the main checkout wired **only** `no_compound_bash.py`,
+leaving `no_git_grep.py` and `worktree_edit_guard.py` inert — including
+the worktree edit-path guard, which exists specifically for worktree
+sessions. `no_destructive_bash.py` is the newest and starts unwired
+like the rest. Wire the ones you want using the blocks in each guard's
+section below.
 
 Don't trust that paragraph's date — **ask**, since the answer is
 per-machine and changes the moment someone edits a git-ignored file:
@@ -259,6 +262,88 @@ the same matcher (matching `PreToolUse` hooks all run, order-independent):
       }
     ]
   }
+}
+```
+
+<!-- markdownlint-enable MD013 -->
+
+## The destructive-command guard hook
+
+The two guards above check shell **form**; the worktree guard below
+checks edit **path**. None checks command **danger**, and that is the
+failure discovered latest and most expensively — a recursive delete or
+a force-push is noticed after it has run.
+
+`.claude/hooks/no_destructive_bash.py` closes that gap in **two
+tiers**:
+
+- **ASK** — a recursive force-delete (`-r` or BSD `-R`), a force-push
+  (flag-first, flag-last, or a `+src:dst` refspec), a hard reset, a
+  `git clean` that removes untracked files, destructive SQL (`DROP`,
+  `TRUNCATE`, a `DELETE` with no `WHERE`), a docker prune or volume
+  removal, a forced branch delete. Blocked with a message naming what
+  tripped, and **overridable** with the literal marker
+  `#destructive-ok` in the command — so a deliberate one stays
+  possible and stays auditable in the transcript.
+- **DENY** — a very small catastrophic set that **no marker lifts**: a
+  recursive delete of `/`, `~`, or `$HOME` (bare, trailing-slash or
+  globbed), and a force-push to the default branch in any of its
+  spellings.
+
+**Two places the coverage is deliberately narrow, so it is not
+over-read:**
+
+- **Destructive SQL is recognized only when a SQL client is named on
+  the same line** (`psql`, `mysql`, `sqlite3`, `sqlx`, `pg_dump`,
+  `cockroach`, `clickhouse`). Un-gated, the patterns matched ordinary
+  English and blocked ordinary commit messages: a subject line of
+  `Drop table borders` tripped it. A guard that blocks `git commit` is
+  a guard that gets turned off, the worse security outcome. The cost is
+  that a
+  heredoc or a piped `echo … | psql` puts the keyword on a different
+  line from the client and is not seen; two of those three shapes are
+  already barred by the compound guard.
+- **`git clean` is exempted only by a real dry-run flag** — a short
+  cluster containing `n`, or `--dry-run`. A looser test read any flag
+  containing an `n` as a preview, so an ordinary
+  `--exclude=node_modules` made a real `git clean -fdx` look like a dry
+  run and go unclassified. This is the failure mode to watch for across
+  this whole file: **a false-positive fix opening a real hole.**
+
+Two implementation notes worth keeping, because both were found by the
+script's own self-test rather than in review:
+
+- **The tier is decided before the marker is read.** Reading the
+  escape hatch first would hand the deny tier an override. The
+  self-test pins this.
+- **The command is classified with its trailing comment removed.** A
+  shell comment is inert, so this is faithful — and it closes a real
+  bypass: the deny patterns anchor the target path at end-of-command,
+  so `rm -rf / #destructive-ok` failed to match deny, fell through to
+  ask, and was then lifted by the very marker deny must ignore.
+- **Lines are classified one at a time, but a trailing backslash is
+  collapsed first.** Newline is a command separator, so a multi-line
+  payload is several commands and must not be matched as one blob —
+  except after a `\`, where the newline is *not* a separator and
+  splitting on it cut `rm -rf \` away from its `/` target, dropping a
+  deny to a liftable ask.
+
+**It is a best-effort advisory stop, not a policy boundary.** It
+matches patterns over one command string; it is not a sandbox, and an
+unusual spelling gets through. Its job is to catch the slip, and it is
+worth having on exactly that basis.
+
+Self-test: `python3 .claude/hooks/no_destructive_bash.py --self-test`.
+Wire it under the same `Bash` matcher as the two above:
+
+<!-- markdownlint-disable MD013 -->
+
+```json
+{
+  "type": "command",
+  "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_destructive_bash.py\"",
+  "statusMessage": "Checking for destructive commands",
+  "timeout": 10
 }
 ```
 
@@ -751,6 +836,29 @@ branch arrives as `worktree-eng-###`):
   housekeeping sessions cannot collide. **No model pin**, deliberately —
   housekeeping is upkeep, not board decisions, so it does not inherit
   the planning tier and runs on the saved default.
+
+- **`caps <topic>`** — start **or resume** an **architect** session on
+  one topic: the CEO hat, and the complement to `paps` rather than a
+  variant of it. Same base-repo launch, same model pin, same
+  idempotency; the different half is the briefing (`/architect`) and
+  what it may write — **nothing to the board**.
+
+  It keys on the **topic, not the date**, which is the one substantive
+  difference from `paps` / `haps`: a design thread outlives a day, so
+  `_ds_topic_sid` omits the date from the seed. Putting the date in
+  would silently start a fresh conversation each morning and lose the
+  thread — the failure the verb exists to prevent. Each topic gets its
+  own resumable session, so parallel threads never share context.
+
+  The display name is `ceo-<topic>`, which makes the fleet listing read
+  by role: `eng-*` implementers, `plan-*` planning, `ceo-*`
+  architecture. The topic is validated to lowercase letters, digits and
+  dashes, since it reaches both a session name and a filename.
+
+  All three standing verbs share one core, `_ds_session`, which takes
+  an already-computed id — `paps` and `haps` hand it a daily id,
+  `caps` a topic id. That split is deliberate: the operator's stated
+  abstraction is that these launchers differ **only in the briefing**.
 
 - **`faps [go]`** — resume the whole **fleet**: one iTerm tab per
   in-flight Linear issue, each with `raps <n>` typed **and Enter

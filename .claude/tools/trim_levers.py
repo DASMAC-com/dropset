@@ -64,14 +64,13 @@ human-curated in a planning session. Stdlib only; a Python skill-tool under
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.request
 
-ENDPOINT = "https://api.linear.app/graphql"
+import linear_api
+
+ENDPOINT = linear_api.ENDPOINT
 
 # Overall per-request timeout, so a hung endpoint can't wedge a run.
 REQUEST_TIMEOUT = 30
@@ -114,55 +113,25 @@ class TrimLeversError(Exception):
 
 
 def env_var(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise TrimLeversError(f"{name} is unset — export it before running")
-    if not (value.isascii() and value.isprintable()):
-        # A pasted key with an embedded newline otherwise reaches http.client's
-        # header validation, which raises a ValueError quoting the offending
-        # value — i.e. leaking the credential into a traceback. `isascii` is
-        # checked too: a non-Latin-1 printable (a smart quote from a paste)
-        # passes `isprintable` and then fails inside the header encode as an
-        # uncaught UnicodeEncodeError, which names the offending character.
-        raise TrimLeversError(f"{name} is not printable ASCII")
-    return value
+    return linear_api.env_var(name, error=TrimLeversError)
 
 
 def _post(api_key: str, query: str, variables: dict) -> dict:
     """POST a GraphQL operation and return its ``data``.
 
-    Transport, GraphQL and shape errors all surface as :class:`TrimLeversError`
-    so the CLI never emits a traceback (which could quote the credential).
+    Delegates to the shared transport, which refuses redirects so a 3xx can
+    never re-send the ``Authorization`` header to another host. Errors surface
+    as :class:`TrimLeversError` so the CLI never emits a traceback (which could
+    quote the credential).
     """
-    payload = json.dumps({"query": query, "variables": variables}).encode("utf-8")
-    req = urllib.request.Request(
-        ENDPOINT,
-        data=payload,
-        headers={"Content-Type": "application/json", "Authorization": api_key},
-        method="POST",
+    return linear_api.post(
+        api_key,
+        query,
+        variables,
+        endpoint=ENDPOINT,
+        timeout=REQUEST_TIMEOUT,
+        error=TrimLeversError,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            raw = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        raise TrimLeversError(f"Linear API returned HTTP {e.code}: {detail}") from e
-    except urllib.error.URLError as e:
-        raise TrimLeversError(f"Linear API request failed: {e.reason}") from e
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise TrimLeversError(f"decoding Linear GraphQL response: {e}") from e
-
-    errors = parsed.get("errors")
-    if errors:
-        joined = "; ".join(e.get("message", "") for e in errors)
-        raise TrimLeversError(f"Linear GraphQL error: {joined}")
-    data = parsed.get("data")
-    if data is None:
-        raise TrimLeversError("Linear GraphQL response carried no data")
-    return data
 
 
 # --------------------------------------------------------------------------
@@ -321,6 +290,25 @@ query ParkedLevers($filter: IssueFilter, $first: Int!, $after: String) {
       identifier
       url
       title
+      state { name type }
+      projectMilestone { name }
+    }
+  }
+}
+"""
+
+# The same listing, plus the bodies. Deliberately a SEPARATE query rather than a
+# widened `_PARKED_QUERY`: bodies are the expensive half, so the cheap listing
+# must stay cheap and the caller must ask for them on purpose.
+_PARKED_BODIES_QUERY = """
+query ParkedLeverBodies($filter: IssueFilter, $first: Int!, $after: String) {
+  issues(filter: $filter, first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      identifier
+      url
+      title
+      description
       state { name type }
       projectMilestone { name }
     }
@@ -535,6 +523,52 @@ def parked(api_key: str, project_id: str) -> list[dict]:
             _PARKED_QUERY,
         )
     )
+
+
+def parked_with_bodies(api_key: str, project_id: str) -> list[dict]:
+    """:func:`parked`, but each row carries its ``description`` too.
+
+    **One call for the whole pool**, which is the point. The fold's *reads* had
+    become its larger cost: the plain listing prints titles only, so a fold ran
+    one ``get_issue`` per lever — 21 per-issue fetches on one pass — and the
+    nearest sweep that did carry bodies (a project-wide Todo read) cost 10.6k
+    for 65 issues with every description truncated anyway, so five per-issue
+    follow-ups ran regardless. The read cost is what sized one fold down to five
+    levers.
+
+    The filter is :func:`parked`'s, exactly, so the two cannot disagree about
+    what "parked" means.
+    """
+    return open_parked(
+        _paged(
+            api_key,
+            {
+                "project": {"id": {"eq": project_id}},
+                "projectMilestone": {"name": {"eq": MILESTONE_NAME}},
+                "state": {"type": {"nin": ["completed", "canceled"]}},
+            },
+            _PARKED_BODIES_QUERY,
+        )
+    )
+
+
+def render_bodies(levers: list[dict]) -> str:
+    """The parked pool as one document, ready to be sliced with read_result.py.
+
+    Written to a FILE rather than printed: the bodies are the payload this whole
+    pipeline exists to keep out of a transcript, and the caller wants a few
+    sections of it, not all of it. One `## <identifier>` heading per lever makes
+    ``read_result.py --headings`` / ``--section`` the natural next call.
+    """
+    parts = []
+    for lever in sorted(levers, key=lambda m: str(m.get("identifier"))):
+        parts.append(f"## {lever.get('identifier')} | {lever.get('title')}")
+        parts.append("")
+        parts.append(f"{lever.get('url')}")
+        parts.append("")
+        parts.append((lever.get("description") or "").rstrip())
+        parts.append("")
+    return "\n".join(parts).rstrip() + "\n"
 
 
 def resolve_milestone_id(api_key: str, project_id: str) -> str:
@@ -782,6 +816,20 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     _add_dry_run(a, top_level=False)
 
     lst = sub.add_parser("list", help="the parked pool, for the fold")
+    lst.add_argument(
+        "--fingerprints",
+        action="store_true",
+        help="also print each lever's Fingerprint — the dedup key, which is what "
+        "a sibling lookup actually needs, and which the plain listing omits",
+    )
+    lst.add_argument(
+        "--bodies-out",
+        default=None,
+        metavar="FILE",
+        help="fetch every parked body in ONE call and write them to FILE (one "
+        "'## <identifier>' section each); prints sizes only. Slice it with "
+        "read_result.py rather than fetching per issue",
+    )
     _add_dry_run(lst, top_level=False)
 
     return parser.parse_args(argv[1:])
@@ -808,10 +856,39 @@ def run(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "list":
-        levers = parked(api_key, project_id)
+        # Bodies are fetched only when asked for, and a fingerprints-only read
+        # needs them (the key lives in the body) — so one query serves both.
+        wants_bodies = bool(args.bodies_out) or args.fingerprints
+        levers = (
+            parked_with_bodies(api_key, project_id)
+            if wants_bodies
+            else parked(api_key, project_id)
+        )
         for m in sorted(levers, key=lambda m: str(m.get("identifier"))):
             state = (m.get("state") or {}).get("name")
-            print(f"{m.get('identifier')} [{state}] {m.get('url')} | {m.get('title')}")
+            line = f"{m.get('identifier')} [{state}] {m.get('url')} | {m.get('title')}"
+            if args.fingerprints:
+                keys = field_values(m.get("description") or "", "Fingerprint")
+                line += f" | {', '.join(keys) if keys else '(no fingerprint)'}"
+            print(line)
+        if args.bodies_out:
+            rendered = render_bodies(levers)
+            try:
+                # 0o600 for the same reason the review diff is: a lever body can
+                # quote whatever a session had in scope.
+                fd = os.open(
+                    args.bodies_out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(rendered)
+            except OSError as exc:
+                raise TrimLeversError(f"cannot write {args.bodies_out}: {exc}") from exc
+            # Sizes only. Printing the rendered text here would undo the point.
+            print(
+                f"-- wrote {len(levers)} body(ies), {len(rendered)} chars to "
+                f"{args.bodies_out} — slice it with read_result.py --headings",
+                file=sys.stderr,
+            )
         print(f"-- {len(levers)} parked lever(s)", file=sys.stderr)
         return 0
 

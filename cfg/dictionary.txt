@@ -37,6 +37,7 @@ cargobill
 cdds
 cdylib
 cfgs
+clickhouse
 clippy
 clob
 cngn
@@ -86,6 +87,7 @@ frontmatter
 getpid
 gifs
 globbable
+gpgsign
 granularities
 griefer
 gyen
@@ -179,6 +181,7 @@ ratatui
 raydium
 readback
 reauthored
+refspec
 regclass
 rels
 repeg

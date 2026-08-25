@@ -37,10 +37,16 @@ Usage::
     # One scalar, no mode needed — the commonest thing this is wanted for
     python3 .claude/tools/read_result.py <file> --field status
 
-``--field`` alone prints a field of at most ``FIELD_PRINT_MAX_LINES`` lines and
-names a mode for anything longer. That case — reading one scalar back out of a
-spilled MCP echo, an issue's ``status`` after a state-only write — used to error
-with "pick a mode" and had to be spelled ``--field status --slice 1:1``.
+``--field`` alone prints a field of at most ``FIELD_PRINT_MAX_LINES`` lines.
+That case — reading one scalar back out of a spilled MCP echo, an issue's
+``status`` after a state-only write — used to error with "pick a mode" and had
+to be spelled ``--field status --slice 1:1``.
+
+**On a longer field it prints the HEAD and says how much it withheld**, because
+``--field`` on a long field is a whole-read wearing a slicing tool's clothes and
+does not look like one at the call site: the three largest results of one
+session were the same issue body, read three times through this flag (~14.8k).
+The summary line names the narrower flags, so the next call is a slice.
 
 Every mode prints to stdout and a one-line summary to stderr. Prefer the
 narrowest mode that answers the question — ``--headings`` to navigate,
@@ -400,13 +406,25 @@ def run(argv: list[str]) -> int:
         summary = f"{len(out)} diff line(s)" if out else "identical"
     elif args.field:
         if len(lines) > FIELD_PRINT_MAX_LINES:
-            raise ReadResultError(
-                f"field {args.field} is {len(lines)} lines, too long to print "
-                f"(over {FIELD_PRINT_MAX_LINES}) — pick a mode: --headings, "
-                f"--section, --grep, --slice, --diff, or --count"
+            # Print the HEAD and say what was withheld, rather than either
+            # dumping the field or refusing outright. `--field` on a long field
+            # is a whole-read wearing a slicing tool's clothes, and it does not
+            # look like one at the call site: the three largest results of one
+            # session were the same issue body read three times (~14.8k) through
+            # this flag. A head plus an explicit withheld count orients the
+            # reader in a bounded number of lines and names the narrower flag to
+            # reach for next.
+            withheld = len(lines) - FIELD_PRINT_MAX_LINES
+            out = lines[:FIELD_PRINT_MAX_LINES]
+            summary = (
+                f"field {args.field}, HEAD {FIELD_PRINT_MAX_LINES} of "
+                f"{len(lines)} line(s) — {withheld} withheld. --field is NOT a "
+                f"slice: narrow with --headings, --section, --grep, --slice or "
+                f"--count"
             )
-        out = lines
-        summary = f"field {args.field}, {len(lines)} line(s)"
+        else:
+            out = lines
+            summary = f"field {args.field}, {len(lines)} line(s)"
     else:
         raise ReadResultError(
             "pick a mode: --headings, --section, --grep, --slice, --diff, or "

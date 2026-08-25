@@ -76,6 +76,25 @@ to override, the user names one explicitly (e.g. "merge
   assembled. Recommend the split for that reason, and don't
   claim a cost argument that no longer holds.
 
+  **Exemption — the `Claude:` meta class has no size bound.**
+  Operator-ratified, 2026-08-24: Claude meta work aggregates
+  into **one** batch issue regardless of body size, so this
+  warning does **not** fire on a `Claude:`-prefixed survivor.
+  The readability argument above is real but is outweighed
+  here by a scheduling fact — at most one meta task ever runs
+  in flight, because they all contend on the same skill files.
+  A second meta issue therefore buys no parallelism and costs
+  a merge conflict, and churn speed through the
+  self-improvement loop matters more than per-issue
+  readability.
+
+  The exemption is about **size only**: the coherence floor
+  still binds absolutely, and meta work never folds together
+  with product code. And it is **only** for this class — the
+  split recommendation stands for product issues, where the
+  work genuinely can run in parallel and readability is what
+  decides whether it does.
+
 ## Steps
 
 **1. Resolve the survivor and the deduped set.** Pass the
@@ -197,20 +216,25 @@ write, show the plan and wait for the go-ahead (the same
 TUI-selector pattern the other skill handoffs use):
 
 - the chosen **survivor** and the issues folding into it,
+
 - the consolidated `**Touches**:` union — **only when a folded
   body carries a legacy one**. The field is retired, so a fold
   of post-retirement issues has no union to show and this line
   is simply absent,
+
 - the resulting title (note when the `Claude:` prefix is
   applied),
+
 - every **inherited blocking edge** (per step 3), each
   naming the folded issue it came from, so the user can say
   which carry over to the survivor — the default for any
   edge not explicitly approved is **not carried**, and
+
 - a **cross-area warning** when `cross_area` is true — the
   issues span unrelated surfaces (meta-work mixed with
   product / on-chain code), so the merge may not be
   intended; surface it so the user can confirm, and
+
 - an **oversized-survivor warning** when the merged body
   exceeds roughly **20KB** — per "What it does — and does
   not" above, a survivor this large stops being a readable
@@ -218,6 +242,13 @@ TUI-selector pattern the other skill handoffs use):
   from it. Name the size and recommend **splitting** instead
   of growing; that makes "cancel" the honest default for this
   one case, so say which way you'd go.
+
+  **Skip this warning entirely when the survivor's title
+  carries the `Claude:` prefix.** That class is exempt by
+  operator ratification — one batch, one in flight, no size
+  bound — so firing it there would recommend against the
+  ratified default on every meta fold. See the exemption under
+  "What it does — and does not" above.
 
 Offer "yes, merge" (**first**, the recommended default) and
 "cancel". Proceed only on an explicit yes.

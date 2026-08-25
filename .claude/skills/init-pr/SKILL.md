@@ -179,6 +179,27 @@ here precisely because no skill is driving. These habits, per
 `CLAUDE.md` → "Context economy", apply to the **main loop**,
 not only to the sub-agents you brief:
 
+- **When the task's headline item rests on a disposition
+  ANOTHER session owns, confirm it with one message before
+  mapping anything.** This is first because it invalidates
+  work rather than merely costing tokens: one session spent
+  ≈3.5k mapping every reference for a tier deletion, and a
+  planning ruling minutes later **reversed the premise** — the
+  query shapes were right, the premise was not, and the whole
+  map was reverted.
+
+  The tell is a spec whose central item is phrased as a
+  settled decision you did not watch being made: "drop the X
+  tier", "now that Y is retired", "since Z was ratified". A
+  filed issue is a **snapshot of its discovery commit**, and a
+  disposition another session owns can move under it. One
+  message costs a fraction of one map.
+
+  This is the same discipline as verifying an issue's
+  `file:line` citations against `HEAD` (see the surfaced-task
+  step below) — applied to its *premises* rather than its
+  coordinates.
+
 - **Slice-read large files.** To find an append point,
   confirm an import, or edit one function in a big source
   (a 600–1000-line module whose `#[cfg(test)]` block is half
@@ -213,6 +234,22 @@ not only to the sub-agents you brief:
   same. Match the **declaration** shape only (for a Makefile,
   `^[a-zA-Z0-9_-]+:`), and if you genuinely want the prose
   headings, ask for them as a separate narrow query.
+
+  **On a prose file, the declaration shape IS the heading
+  marker — `^#`, and nothing else.** The rule above reads as
+  being about source, so a doc gets mapped with an alternation
+  that also matches its content: one map over a 1,275-line doc
+  matched headings **and every table row**, returning ≈2.6k for
+  a where-question that two headings answered — the widest
+  branch bought the file's entire tabular content.
+  `read_result.py --headings <file>` already does exactly the
+  right thing on any markdown file, so prefer it outright.
+
+  **The general form, which is the part to carry away: ask
+  what the widest branch of your alternation matches on its
+  own.** If any branch would match ordinary content rather
+  than a declaration, the map is no longer smaller than the
+  file, and the map was the whole point.
 
 - **If you already ran the map, slice from it.** A map
   followed by a whole-file Read means the map was wasted —
@@ -326,6 +363,24 @@ not only to the sub-agents you brief:
   `make lint` needed no arguments and the scoped form did. Now
   neither does.
 
+  **Scope the FILE list, never the crate set — and verify in
+  the exact form CI runs.** These are different axes and only
+  one of them is safe. Narrowing which *files* are linted is
+  what the command above does, and it is correct. Narrowing
+  which *crate* clippy sees changes **what clippy can
+  analyze**: a crate-scoped `cargo clippy` reported **five
+  false dead-code errors** in an untouched crate, because
+  scoping excluded that crate's own test targets — the only
+  consumers of the helpers it then called dead. The CI form
+  exited clean on the same tree.
+
+  The trap is that the scoped form *looks* more disciplined
+  while being confidently wrong, and a false positive here
+  costs more than the sweep it saved: the session has to
+  disprove five errors before it can trust the tree. So take
+  the invocation the hook config specifies, and if you want it
+  narrower, narrow `--files`.
+
 - **Run a fast suite whole, through the wrapper — not per
   module.** For an edit under `.claude/tools/`:
 
@@ -387,8 +442,26 @@ not only to the sub-agents you brief:
   in a single file bought that file roughly twice (≈3.1k)
   *after* `--files-only` had already identified it. When matches
   cluster in one file, take `--files-only` then slice-read the
-  region. `search_source.py` now says so on its own summary
-  line when a context sweep spans many files or piles up in one.
+  region.
+
+  **That advisory line is a DIRECTIVE — do not consume a
+  result it flags.** `search_source.py` prints it when the
+  sweep clusters or spreads, and detection is not what is
+  missing: one session got the correct advisory on its **top
+  two sinks** (≈3.1k, 39% of its whole Bash cost) and used
+  both results anyway. When you see it, re-issue with
+  `--files-only` (or add a `--glob`) and slice-read the region
+  it names. Once the scope narrows to one named file the tool
+  stops advising and **refuses** a wide `--context` outright.
+
+  **A pattern you have not searched before starts
+  `--files-only`.** The advisory can only arrive *with* a
+  payload already paid for, so the first call needs its own
+  rule: locate first, earn context on a narrowed second call.
+  Five of one session's seven largest results were
+  context-bearing sweeps (≈7.4k of a ≈25k session). This does
+  not override the location-vs-adjudication split above —
+  adjudication sweeps take context and are right to.
 
 - **Don't re-derive a diff — of your own edits, or one
   already written to disk.** This section covers slice-reading
@@ -843,6 +916,31 @@ per-directory *content* — `frontend/node_modules`,
    criteria sometimes live in an anchored comment, not the
    body, and that is a payload the session does *not*
    already have.
+
+   **On a long spec, spill the body to a scratchpad file on
+   the FIRST read and grep the file thereafter.** A
+   consolidated spec is consulted many times across a session,
+   and each consultation through `--field description` buys it
+   again: the three largest results of one measured session
+   were **the same issue body, read three times (≈14.8k)**.
+   `--field` on a long field is a whole read wearing a slicing
+   tool's clothes, and it does not look like one at the call
+   site — which is why the tool now prints only the head and
+   names what it withheld.
+
+   If the echo overflowed the result cap, the harness has
+   already written it to disk and named the path; otherwise
+   write it yourself. Then work from the file:
+
+   ```sh
+   python3 .claude/tools/read_result.py --field description \
+     --headings <persisted-result-or-spill>
+   python3 .claude/tools/read_result.py --field description \
+     --section 'What changes' <persisted-result-or-spill>
+   ```
+
+   Read the whole body **once**, to plan; after that, reach
+   for a heading map or a section, never the field again.
 
    Present the description and any checklist as the plan
    of work so the session can proceed straight into the

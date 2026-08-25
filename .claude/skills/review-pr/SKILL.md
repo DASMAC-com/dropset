@@ -326,6 +326,69 @@ already being asked to start the review.
    predicates feed steps 9 and 11, which say what a re-run
    forced by a rebase may skip.
 
+   **An EMPTY overlap discharges the re-run, and you assert
+   the prior result instead of paying for it again.** The
+   rebase itself stays unconditional — skipping it produces
+   phantom hunks, which is a separate and worse failure — but
+   when the freshness re-check shows the base moved *and* the
+   overlap is empty, a re-run of `review_diff.py` and a full
+   `make lint` **provably cannot change their answer**: they
+   examine files the base delta did not touch. Measured on one
+   docs-only PR: the base moved **four** times, the overlap
+   was empty on all four, and the session still paid three
+   `review_diff` re-runs and two full lints.
+
+   So on an empty overlap, write one line into the review
+   notes — "base moved to `<sha>`; overlap empty; lint and
+   suite results from `<sha>` still stand" — and move on. Any
+   **non-empty** overlap re-runs everything as before.
+
+   This is deliberately **not** a loosening of the freshness
+   gate itself, which caught a real defect in that same
+   session. The gate still runs every round; what changes is
+   only what an empty answer entitles you to skip.
+
+   **Bind the assertion to a content fingerprint, so it is
+   checkable rather than remembered.** "The prior result still
+   stands" is a claim about *content*, and a commit SHA is the
+   wrong key for it — a commit, an amend, a squash and a
+   no-overlap rebase all change the SHA while changing no
+   bytes, which is exactly why re-runs keep firing. Record the
+   result against the tree's content instead:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- make lint
+   ```
+
+   ```sh
+   python3 .claude/tools/tree_fingerprint.py record --check lint
+   ```
+
+   and before any later stage that would re-run it:
+
+   ```sh
+   python3 .claude/tools/tree_fingerprint.py check --check lint
+   ```
+
+   It grades three ways and exits 0 only on the first:
+
+   - **`fresh`** — recorded against this exact content. Assert
+     it, note the assertion, skip the re-run.
+   - **`stale`** — the content moved. Re-run.
+   - **`missing`** — never recorded. Run it, and record it.
+
+   The three-way answer is why this is not a boolean: a
+   binary check would have to call "never recorded" stale and
+   re-run, which is the behavior being replaced. Do the same
+   for `tools-tests` and the artifact gates — any check whose
+   answer is a function of the tree's content and nothing
+   else.
+
+   **What it does not cover:** anything depending on state
+   outside the tree — CI, the merge queue, a live service. A
+   green fingerprint says the content is unchanged, not that
+   the world is.
+
    **If the base delta touched `programs/**`, run
    `make program` before any suite.** The rebase just pulled
    new program source into this worktree, and a scoped
@@ -542,6 +605,18 @@ already being asked to start the review.
      discrepancy** — do not retry, since each retry re-echoes
      the whole body.
 
+     **A tick legitimately deferred past the fan-out RIDES the
+     In-Review write — it never gets its own save.** Some
+     boxes cannot honestly be ticked here, because the
+     adversarial pass has not run and may yet invalidate the
+     work. Deferring those is correct. What is not correct is
+     what then happened: they fired their own `save_issue`
+     **beside** the In-Review transition, two full-body echoes
+     (~1.2k per review) where one write served both. The
+     In-Review transition at the merge-queue handoff is a write
+     you are making anyway — carry the deferred ticks in its
+     `patch` array.
+
      **And the budget spans skills.** Everything above is
      within-skill discipline, which one measured session
      followed exactly and still paid 24.5k on one issue —
@@ -645,6 +720,17 @@ already being asked to start the review.
    `.sh` and `.github/**`. Grep it for `id:` / `files:` /
    `types_or:` instead.
 
+   **That rule is about a CLASS of file, not that one
+   filename — a CI workflow is a config index too.** It kept
+   being read as advice about `pre-commit-lint.yml`
+   specifically, so the workflow files stayed exempt: one
+   session read the lint workflow whole (~770 tokens, 40% of
+   its entire Read cost) to learn **one line**, which then sent
+   it to grep the hook config anyway. Answer
+   "how does CI run X?" by grepping the workflow **and** the
+   hook config for the invocation — never by reading either
+   whole. Neither is prose; both are indexes.
+
    **After a fix, the scoped re-run is the default — a full
    `make lint` is the exception.** This is already prescribed
    above and is still the most-missed instruction in the step:
@@ -682,6 +768,78 @@ already being asked to start the review.
    verbosity — every one of those sweeps was already wrapped
    in `run_quiet`, so wrapping harder buys nothing. The only
    lever is *fewer full sweeps*.
+
+   **Scoping one HOOK is not enough when the violations span
+   hooks — scope the whole SET instead.** This is the failure
+   the per-hook advice above leaves open, and it is the
+   expensive one: 15 full `make lint` sweeps, each surfacing a
+   single violation class, three cspell words discovered on
+   three separate sweeps. The working form runs **every** hook
+   over **only** the changed files — a hook id is what you
+   append to narrow further, not what makes it scoped:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- \
+     pre-commit run --config cfg/pre-commit-lint.yml --files <paths>
+   ```
+
+   `lint_paths.py --changed` above is this same shape with the
+   file list resolved for you, so prefer it; reach for the
+   explicit form only when the paths are narrower than the
+   branch.
+
+   **The dictionary sorter fails-then-fixes by design.** Like
+   the markdown hooks, `cfg/dictionary.txt`'s `--unique` sorter
+   rewrites the file and reports failure, so adding a word
+   costs a second run. Expect it; it is not a defect, and a
+   rebase that leaves the merge-union dictionary unsorted
+   produces exactly the same benign one-round fail-then-fix.
+
+   **Run cspell over the changed files FIRST when the change
+   authors prose.** New technical terms are known to the author
+   in advance, so discovering them one per round is pure
+   waste — measured at three serial rounds for three words, and
+   at **26 `make lint` runs (~12.8k of failure tails)** on a
+   prose-heavy change where several cycles each bought a single
+   unknown word. Run the spelling hook alone over the changed
+   paths as a pre-flight, take the whole list of unknown words
+   in one go, and only then run the full set:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- \
+     pre-commit run cspell --config cfg/pre-commit-lint.yml --files <paths>
+   ```
+
+   Then place each word by the rule in
+   `docs/conventions/docs-and-style.md`: a word used in **two
+   or more** files goes in `cfg/dictionary.txt`; a word used in
+   exactly one gets a top-of-file `cspell:word` escape in that
+   file, one word per directive. Worked example: a term you
+   introduce in a tool *and* its test is two files, so it goes
+   in the dictionary; a term appearing only in one module's
+   docstring gets the inline escape. And note the dictionary is
+   **US spelling**, so a British variant — an `-our` ending, an
+   `-ise` verb — fails by construction. Write the US form
+   rather than adding the variant to the dictionary; three such
+   words tripped this hook while this very rule was being
+   written.
+
+   **The markdown two-step applies to the SCOPED invocation,
+   not to the full sweep.** "Two runs by construction" is true
+   and is stated above; what it must not license is two *full*
+   sweeps per fix. One markdown-only PR ran `make lint` **eight
+   times** on exactly that reading. Take the full sweep once at
+   the start and once at the end, and let the fix-verify loop
+   in between be the scoped run.
+
+   **Don't hand-verify a formatting fact the gate already
+   owns — and never with a byte-length tool.** Five hand-rolled
+   `awk 'length($0)>80'` width checks in one session were both
+   redundant with the lint run happening anyway *and wrong*:
+   `awk` counts bytes, an em-dash is three, so compliant lines
+   in this repo's em-dash-heavy prose flagged LONG and the
+   false signal then had to be refuted. The MD013 hook reports
+   every real violation with its line number.
 
    **A fast suite runs whole, through the wrapper — not per
    module.** The same discipline on the other axis. For an
@@ -960,6 +1118,36 @@ already being asked to start the review.
    spending another round rewording the brief. Prompt
    tightening has saturated; slice granularity has not.
 
+   **Use `--only` to cut it; do not hand-roll the split.**
+   `--split` cuts by *category* (source / tests / docs) and
+   cannot subdivide within one, which is why this paragraph
+   used to prescribe a subdivision the tool could not perform:
+   3,156- and 4,148-line source slices went to every lens
+   whole (the costliest single agent on one such run took
+   **634.7k** of input), and a second session hand-rolled the
+   split as three separate `git diff` calls with literal path
+   lists. The flag takes repeatable path globs:
+
+   ```sh
+   python3 .claude/tools/review_diff.py --base main \
+     --out <scratchpad>/review-diff-programs.txt \
+     --only 'programs/**' --split
+   ```
+
+   Run it once per sub-slice, and hand each lens its own
+   `--out` path.
+
+   **Rust inline tests are already extracted for you.** Rust
+   keeps unit tests inside the source file, so the category
+   split used to produce a **zero-line** tests slice on a diff
+   full of test changes — measured on a 4,351-line Rust diff,
+   after which the test-adequacy lens read three source slices
+   and became that run's costliest agent (473.6k).
+   `--split` now routes `#[cfg(test)]` hunks into the tests
+   slice by parsing the post-image, so the tests slice is
+   trustworthy on Rust; if it comes back empty on a Rust diff
+   now, that means something.
+
    **Once this has run, the slice files ARE the diff — for the
    main loop too.** Having written them, do not turn round and
    re-derive the same content with a bare `git diff` to read it
@@ -1159,6 +1347,26 @@ already being asked to start the review.
    `<scratchpad>/facts.md` from what **this** run actually verified — one claim
    per line, negatives included — and pass the path. Pass `--no-facts` only to
    state on the record that nothing was verified.
+
+   **A fact stating a formula states the WIDTH it is computed
+   in.** A formula reads as complete, so it never trips the
+   what-am-I-omitting check — and an incomplete one sends a
+   lens back to the source to answer the question the fact was
+   supposed to settle. Measured: a facts block gave the
+   flush-level factor formula without its width, so the
+   claim-accuracy lens re-read the matching-math module cold to
+   check whether a PPM multiply plus a max offset could trap.
+   It computes in `u128`; one word would have closed it, and
+   the lens spent a call from its turn cap on a file the facts
+   already covered.
+
+   So any fact carrying a formula, an expression, or a
+   conversion also states:
+
+   - the **type or width** it is performed in (`u64`, `u128`,
+     `i32`, an `f64` intermediate);
+   - the **rounding direction**, where one applies;
+   - whether it **saturates or wraps** on overflow.
 
    It composes two committed halves, each with a single
    owner: the canonical shell rules from the convention doc,
@@ -1486,17 +1694,69 @@ already being asked to start the review.
 
      **These figures are summed per-turn input, not the
      `subagent_tokens` the Agent tool reports.** The two
-     differ by roughly an order of magnitude, because a
-     sub-agent's context is re-sent on every one of its
-     turns: two lenses whose Agent results read ≈102k and
-     ≈104k had per-turn input summing to **911.6k and
-     604.3k**. So judging a fan-out from the Agent result
-     line concludes a lens was cheap when it was the most
-     expensive thing in the session — and comparing that
-     number against the exemplars above compares unlike
+     differ because a sub-agent's context is re-sent on
+     every one of its turns: two lenses whose Agent results
+     read ≈102k and ≈104k had per-turn input summing to
+     **911.6k and 604.3k**. So judging a fan-out from the
+     Agent result line concludes a lens was cheap when it was
+     the most expensive thing in the session — and comparing
+     that number against the exemplars above compares unlike
      quantities. Use `session-metrics`' per-sub-agent
      rollup, which sums per-turn input, whenever you need
      the real figure.
+
+     **The divergence tracks TURN COUNT — it is not a
+     constant.** This used to say "roughly an order of
+     magnitude" unconditionally, which misleads in the common
+     case: measured at **1.7x–2.5x** on 2–3-turn lenses, and
+     only many-turn lenses approach 10x. A session calibrating
+     its fan-out budget on the flat figure misjudges it
+     several-fold. Multiply by turns, not by ten.
+
+   - **Bound each lens by TURNS, not only by lens count.**
+     Cost tracks turns nearly linearly for the reason just
+     given, and the measured spread is wide: on a 52-file meta
+     PR the lenses ran 4–5x over the efficient exemplars above
+     (~3.24M total), with **3 turns = 162.8k** against
+     **8 turns = 797.6k**. Two halves, both in the brief:
+
+     - A **hard per-lens turn budget of ~4**, stated in the
+       prompt the way the cross-check already states its call
+       cap. A lens that has not found its finding by then is
+       exploring, not reviewing.
+     - **Hand it a pre-sliced diff path and an explicit read
+       allowance**, and ask it to **self-report which files it
+       opened**. Unbounded reading is what turns a 3-turn lens
+       into an 8-turn one, and the self-report is what makes
+       the overrun visible next time.
+
+     Neither half reduces the number of lenses. And this is
+     **not** the cross-check cap — that rejection stands, and
+     this evidence does not disturb it: the cross-check ranked
+     only fourth in cost here, and its synthesis reframed the
+     whole finding set.
+
+   - **Gate a lens on its historical YIELD, not only on the
+     diff's shape.** The conditional gating above keys entirely
+     on what the diff *looks like* — security on a trust
+     surface, freshness on touched paths, style skipped for
+     meta-work. That is one axis; yield is a second, and it
+     reaches what prompt discipline cannot: one measured pass
+     ran the fan-out at roughly **95% of total session cost**
+     while fully compliant with every tightening rule in this
+     step.
+
+     So: a lens returning **zero findings across ten or more
+     dispatches** is auto-skipped, and the skip is reported in
+     the review summary rather than being silent.
+
+     **The exemption list is the essential half.** A lens that
+     rarely fires is not a lens that does not matter — it may
+     be the one standing between the repo and the expensive
+     failure. Name **insurance lenses** exempt from yield
+     gating outright; **security is the canonical case**, and
+     any lens whose absence would be discovered only in
+     production belongs beside it.
 
    - **A resumed lens re-pays its whole context, so a resume
      is always a report-now order.** If a session restart or
@@ -1594,6 +1854,34 @@ already being asked to start the review.
    that it received its comparison files *and their excerpts*
    inline. One tool call, because there was nothing left to go
    and fetch.
+
+   **Check for in-flight overlapping PRs BEFORE spending the
+   fan-out.** The base-freshness gate cannot see this hazard:
+   it compares HEAD against the base and is satisfied whenever
+   the base has not moved, so an open PR that overlaps this
+   diff and **lands during the review** passes every check and
+   still invalidates it. Measured: a five-lens pass (~1.23M
+   input, ~4.36M total sub-agent input for the session) was
+   invalidated exactly that way — and the overlap had been
+   written into the issue days earlier.
+
+   ```sh
+   python3 .claude/tools/review_diff.py --base main \
+     --out <scratchpad>/review-diff.txt --split --overlap
+   ```
+
+   The tool intersects each open PR's file list with this
+   diff's, **inside its own process**, and returns only the
+   overlap — the per-PR file lists never reach context (a
+   `gh pr list --json files` costs ~4.0k for a two-line
+   answer). It **reports, never blocks**: a missing or
+   unauthenticated `gh` is noted and the gate proceeds.
+
+   When the overlap is substantial, surface it as a decision
+   before spawning — wait for the other PR to land, or proceed
+   with the re-run cost documented in the review notes.
+   Waiting is sometimes right and sometimes not; what is never
+   right is spending the fan-out without knowing.
 
    **Scale the fan-out to the diff.** The full lens set
    below plus the step-6 cross-check is the right spend for
@@ -1946,9 +2234,22 @@ already being asked to start the review.
      matches in a single file bought that file roughly twice
      (≈3.1k) *after* `--files-only` had already named it. When
      the hits cluster in one file, take `--files-only` and
-     then slice-read the region. `search_source.py` says so on
-     its own summary line when a context sweep piles up in one
-     file — read that line.
+     then slice-read the region.
+
+     **The helper's advisory line is a DIRECTIVE, not a
+     note.** `search_source.py` already prints the right
+     warning when a context sweep clusters in one file or
+     spreads across many — detection is not the missing half,
+     **obedience** is. One session got the correct advisory on
+     its **top two sinks** (≈3.1k, 39% of its whole Bash cost)
+     and consumed both results anyway. When you see that line:
+     do not use the result. Re-issue with `--files-only` (or
+     add a `--glob`), then slice-read the region it names.
+
+     Once the scope is a **single named file**, the helper no
+     longer advises — it **refuses** a wide `--context`
+     outright, because that shape is a whole-file read with
+     extra steps. Take `--files-only` and slice.
 
      **This rule is phase-neutral, and that is why it keeps
      getting missed.** Seven separate sessions answered a
@@ -2141,17 +2442,48 @@ already being asked to start the review.
    - **Correctness** — logic errors, off-by-ones,
      unhandled edge cases, incorrect assumptions,
      broken invariants.
+
+     **Standing sub-question, mandatory on any diff touching
+     dashboards, alerts, health tables, status displays, or
+     watchers: "if this were broken right now, would anything
+     actually emit?"** On an observability diff this is *the*
+     lens, not a nit — the artifact's whole purpose is making
+     failure visible, so rendering healthy while broken is a
+     defect in the deliverable itself.
+
+     All three blocking defects in one such review were this
+     single species — the system materially broken while every
+     rendered signal read benign:
+
+     - an action string written by **no code path**, while
+       four readers matched on it;
+     - two of six reachable regime/health pairs unmapped,
+       falling through to the base style and reading healthy —
+       one of them the standing condition for most of the
+       roster;
+     - a paused market that quotes nothing, goes dark, and
+       trips **no rule**.
+
+     The same shape bit twice more in that session outside the
+     diff: a merge-queue watcher looping on a quoting error is
+     indistinguishable from one patiently waiting, and alert
+     rules that (correctly) treat no-data as healthy prove
+     nothing until rows are known to arrive. Ask the question
+     of the watcher and the alert, not only of the panel.
+
    - **Security** (conditional — spawn only when the trust-
      surface gate above fires: a program handler,
      deserialization, an auth path, or external I/O; skipped
      on host / localnet tooling and on meta-work diffs) —
      injection, unchecked input, missing validation, unsafe
      operations, secrets in code.
+
    - **Style & consistency** (skipped on a meta-work diff —
      `.claude/**` / `CLAUDE.md` / `docs/**` with no product
      code — which has no codebase idioms to measure against)
      — naming, patterns, idioms that diverge from the rest of
      the codebase.
+
    - **Completeness** — missing tests, TODO/FIXME
      left behind, partial implementations, and code the diff
      introduces that is dead **by design** (reachable-nowhere
@@ -2161,6 +2493,7 @@ already being asked to start the review.
      covers this diff's language); this lens adjudicates
      judgment calls, from the diff plus one read of each
      touched file.
+
    - **`CLAUDE.md` + `docs/conventions/` freshness**
      (conditional — spawn only when the surface gate above
      fires) — does the project's convention set still match
@@ -2179,6 +2512,7 @@ already being asked to start the review.
      **directly violates or invalidates** — or a dangling
      reference — as **blocking**; merely-stale prose as a
      **warning** with the suggested correction.
+
    - **CI skip-list freshness** (conditional — spawn only
      when the surface gate above fires) — the `Tests` workflow
      (`.github/workflows/test.yml`) skips the Rust suite
@@ -2263,6 +2597,38 @@ already being asked to start the review.
    halves are the value: it finds what per-lens scope cannot
    see, and it is the thing that stops a plausible-but-wrong
    finding from reaching the catalogue.
+
+   **It is also unconditional — whatever the tier — when the
+   fan-out's own FIXES span multiple artifact types.** Every
+   gate above keys on the **original diff**: its size, its
+   tier, its surfaces. But the failures a cross-check actually
+   catches are often ones **the review itself created**, which
+   no size- or tier-based criterion can account for because
+   they post-date every lens report. Measured, both from one
+   review:
+
+   - a fix commit updated the README, the migration, the panel
+     and the doc — and left the **alert file's own header**
+     still saying "three rules";
+   - a README claim about the localnet database URL was
+     **inverted by the same PR's compose file**.
+
+   Each lens only ever saw its own slice, so neither was
+   visible to any of them. So: when the fan-out produces fix
+   commits spanning different artifact types — code plus SQL
+   plus dashboard JSON plus YAML plus prose — run the
+   cross-check **regardless of tier**, and point it at the fix
+   commits rather than only at the original diff. That is a
+   different axis from size, and cheap to state.
+
+   Two supporting data points for this same section. The
+   **checks-to-run list earned its keep decisively**: two of
+   three blocking findings in that review came from following
+   a lens's unresolved-check item rather than from its
+   findings — defend it against any future trim. And the
+   cross-check **overran its stated call cap** (15 against 12)
+   while being the highest-value pass, which is one more
+   instance of the overruns-most-returns-most note below.
 
    **Give this pass a higher cap than the primary lenses —
    8–10 tool calls, explicitly.** The primary lenses are being
@@ -2378,13 +2744,29 @@ already being asked to start the review.
    context for a green result.
 
 1. **Re-lint after fixes.** If any fix commits
-   were made in the previous step, re-run
-   `make lint` **through the quiet runner**
-   (`python3 .claude/tools/run_quiet.py -- make lint`) to
-   catch violations introduced by
-   those fixes. Apply the same fix-and-retry
+   were made in the previous step, re-run the lint **scoped
+   to the changed files** to catch violations introduced by
+   those fixes:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- \
+     python3 .claude/tools/lint_paths.py --changed
+   ```
+
+   Apply the same fix-and-retry
    logic as the lint step (step 4) — including its
-   scoped per-hook re-run on a failure.
+   scoped per-hook re-run on a failure. The **full**
+   `make lint` belongs to the two checkpoints (once before
+   committing, once at the end), never to this loop.
+
+   **And run a fast suite at CHECKPOINTS — the lever there is
+   frequency, not scope.** One session ran the whole tools
+   suite dozens of times in an edit-one-tool loop, most runs
+   re-buying confidence it already had. Do not read that as a
+   reason to narrow the *scope*: step 4's measurement points
+   the other way (the per-module discover run cost more **and**
+   missed two sibling tests the edits had just broken). Whole
+   suite, through the wrapper, fewer times.
 
 1. **Regenerate committed generated artifacts
    (mirror the IDL / SDK / vectors / WASM CI gates).** CI
@@ -2683,6 +3065,27 @@ already being asked to start the review.
    git add docs/conventions/audit-registry.md
    git commit -S -m "Update audit registry"
    ```
+
+   **A named gate with no committed artifact is a finding.**
+   When a spec, doc or issue in this diff designates something
+   as a **re-runnable acceptance check** — "the query in §6.1
+   is the gate", "this script verifies the invariant" — then
+   that artifact must exist as a **file in the repo**. Prose
+   describing a gate is not a gate: prose decays, and nothing
+   re-runs it.
+
+   Measured: a market-calendar spec designated its §6.1/§6.2
+   acceptance tests as re-runnable gates and **none existed as
+   a file**; the session ran fourteen ad-hoc `psql` calls,
+   wrote every query in the house style, and threw them all
+   away. So flag it as blocking, and land the artifact with
+   the spec — a query goes to the market-data analytics
+   directory in its existing `psql -v` idiom, a check goes to
+   `.claude/tools/` with a test.
+
+   The same rule is why the Grafana alert rules now have
+   `grafana_check.py`: they were a named gate nothing in CI
+   parsed.
 
 1. **Run the test suite (mirror CI).** The `Tests`
    workflow runs `make test` and
@@ -3131,6 +3534,22 @@ already being asked to start the review.
    build cascades, but a watcher is the same shape by a
    different mechanism.
 
+   **The cost scales with refresh count, so it gets worse the
+   longer CI takes.** A later session measured the same shape
+   at **~20 refreshes producing a 265-line result — its single
+   largest, ≈6.2k** — to convey the one bit "CI finished".
+   If for some reason you are not using `wait_for_checks.py`,
+   the two acceptable substitutes are:
+
+   - a **narrowed poll** that prints one line per poll — the
+     status rollup counting non-completed checks, not the
+     table; or
+   - a **backgrounded** watcher whose output is never read,
+     only its exit status.
+
+   What is never acceptable is a streaming table in a tool
+   result.
+
    Tell the human **once**, up front, that CI is in flight and
    you're standing by, then stay silent until the verdict. Three
    operational notes:
@@ -3141,15 +3560,35 @@ already being asked to start the review.
      re-run it plain to resume waiting. A model-driven re-call
      on the next turn is fine as a fallback; it is just not the
      prescription.
+
    - **`conclusion: "none"`** means the head commit has no
-     checks at all — nothing to wait on. Note it in the report
-     and treat it as green rather than waiting forever.
+     checks at all — but that is **two** situations, and only
+     one of them is benign. Either no checks apply (a
+     path-filtered diff), **or** the PR is CONFLICTING and no
+     `pull_request` workflow run can be created at all: the
+     merge ref does not exist, so there is no run, no error,
+     and nothing to distinguish it from CI that has not
+     started. That cost one session ~20 minutes and ~16 polls,
+     including an amend-and-force-push nudge at an event which
+     could never have fired. The tool now probes `mergeable`
+     on this verdict and reports the cause, so:
+
+     - **`none`** with `blocked_by_conflict: false` → no
+       checks apply. Note it and treat it as green.
+     - **`conclusion: "conflicting"`** → **blocking**. Rebase
+       onto the base, push, and re-run the wait. Do not treat
+       it as green, and do not wait: nothing will ever arrive.
+
+     This corrected an earlier version of this step which said
+     `none` means treat-as-green unconditionally. It does not.
+
    - **`conclusion: "timeout"`** means the watch hit its bound
      (default one hour), or exhausted its re-watch rounds, with
      the checks still unsettled. It reports the counts it
      observed but deliberately never claims `pass` off a
      snapshot it stopped waiting on — treat it as unverified,
      not green. Its `pending_checks` names what was still out.
+
    - **`watch_rounds` > 1** means a check registered *after* gh
      had taken its census — routine on a PR touching a path some
      workflow watches with its own trigger set, and not a
@@ -3226,6 +3665,43 @@ already being asked to start the review.
      deps) — treat it as unverifiable, exactly as the lint
      step does, rather than chasing it in the CI log.
 
+     **A red CI `Lint` with a GREEN local reproduce is
+     probably toolchain skew, not a transient.** This branch
+     used to read the pair as "CI is flaky", and that is the
+     wrong first hypothesis: a newer clippy in CI than in this
+     worktree is *structurally consistent* with exactly that
+     pair. The tell is strong — **a clippy failure in a file
+     this branch never touched is almost certainly skew.**
+
+     Confirm it rather than guessing: query the same `Lint`
+     job on another recent branch. If it is red there too, the
+     branch is not the cause.
+
+     **Never "fix" it by editing unrelated code.** Silencing a
+     skew warning in a file the diff does not own puts an
+     unrelated change into this PR and hides the real signal.
+     Pin or report the toolchain instead.
+
+     **The log-capture path that actually works** — and the
+     trap beside it. `gh run view --log-failed` wrapped in the
+     quiet runner, then Grep the captured log:
+
+     ```sh
+     python3 .claude/tools/run_quiet.py -- \
+       gh run view <run-id> --repo DASMAC-com/dropset --log-failed
+     ```
+
+     Do **not** reach for `gh api` on a job log: `gh api`
+     refuses a response carrying terminal escape sequences
+     unless the allow flag is passed, and Actions logs are
+     colorized — so the fetch fails with **empty stdout**. A
+     scan that reads that as "no matches" measures nothing:
+     one 38-job scan reported zero matches having inspected
+     **zero logs**, and nearly became a wrong review finding.
+     Whatever you use, distinguish *fetch failed* from
+     *fetched and found nothing* — never fold a transport
+     failure into a zero count.
+
      Then convert the PR back to draft — which also
      cancels any pending "Merge when ready" — and leave
      the Linear issue in its current state (do **not**
@@ -3263,7 +3739,13 @@ already being asked to start the review.
      scaled-down run, which lenses were skipped and why
      (security lens skipped — no trust surface; style skipped
      — meta-work; cross-check skipped; freshness skipped —
-     surface gate).
+     surface gate; **a lens skipped on yield** — name it, and
+     never let a yield skip be silent).
+   - In-flight overlap: open PRs whose files intersect this
+     diff (from `review_diff.py --overlap`), and what was
+     decided about them — waited, or proceeded with the
+     re-run cost accepted. Or that there were none, or that
+     the probe could not run.
    - Lint status: pass, fail with details, or which
      hooks were unverifiable locally (deps not
      installed) and why that's safe for this diff.

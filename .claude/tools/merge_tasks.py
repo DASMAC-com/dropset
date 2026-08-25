@@ -80,10 +80,10 @@ import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.request
 
-ENDPOINT = "https://api.linear.app/graphql"
+import linear_api
+
+ENDPOINT = linear_api.ENDPOINT
 
 _FETCH_QUERY = """
 query MergeFetch($filter: IssueFilter, $first: Int!) {
@@ -438,28 +438,17 @@ def _write_private(path: str, text: str) -> None:
 def _post(api_key: str, query: str, variables: dict) -> dict:
     """POST a GraphQL operation and return its ``data``.
 
-    Deliberately the same shape as ``trim_levers.py``'s helper rather than a
-    fourth HTTP idiom in this directory.
+    Delegates to the shared transport rather than keeping a fourth HTTP idiom
+    in this directory — which is also what gives this tool the redirect refusal
+    (a followed 3xx would re-send the ``Authorization`` header to a new host).
     """
-    body = json.dumps({"query": query, "variables": variables}).encode("utf-8")
-    request = urllib.request.Request(
-        ENDPOINT,
-        data=body,
-        headers={"Authorization": api_key, "Content-Type": "application/json"},
+    return linear_api.post(
+        api_key,
+        query,
+        variables,
+        endpoint=ENDPOINT,
+        error=MergeTasksError,
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.load(response)
-    except urllib.error.HTTPError as exc:
-        raise MergeTasksError(f"Linear returned HTTP {exc.code}") from exc
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise MergeTasksError(f"cannot reach Linear: {exc}") from exc
-    if payload.get("errors"):
-        messages = "; ".join(
-            e.get("message", "?") for e in payload["errors"] if isinstance(e, dict)
-        )
-        raise MergeTasksError(f"Linear rejected the query: {messages}")
-    return payload.get("data") or {}
 
 
 def fetch(api_key: str, survivor: int, numbers: list[int]) -> dict:

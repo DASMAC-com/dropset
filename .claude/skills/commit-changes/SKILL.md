@@ -45,6 +45,38 @@ changes here belong to this session.
    `--all-files` still proves nothing about a file
    git has never seen — run `make lint` instead.
 
+   **For a fast suite the lever is FREQUENCY, not
+   scope — run it whole, here, at the checkpoint.**
+   Both halves matter and they are easy to confuse:
+
+   - **Scope:** run it **whole, through the wrapper**.
+     A `-p test_X.py` discover run is *narrower* and
+     **more** expensive — 32 calls / ≈7.1k against 15
+     calls / 516 tokens — because the `make` target is
+     wrapped and the discover call is not, and it
+     missed sibling tests the edit had just broken.
+     This is what `review-pr` and `init-pr` also say.
+   - **Frequency:** run it at a **checkpoint**, not
+     after every single-file edit. One session ran the
+     suite dozens of times in an edit-one-tool loop,
+     most runs re-buying confidence it already had.
+     (Deliberately no figure here: the one measured
+     count belongs to the scope bullet above, and
+     attaching it to both is what made these two
+     findings read as contradictory.)
+
+   So: whole suite, fewer times. The two rules point
+   the same way once you see that one is about scope
+   and the other about cadence — reading the
+   frequency finding as permission to narrow the scope
+   inverts it, and the narrow form is the one measured
+   to miss real breakage.
+
+   For a suite slow enough that wall-clock dominates,
+   the per-module form earns its keep during
+   iteration; this one runs in under a second, so it
+   does not.
+
    **Don't re-derive the diff you already have.**
    If `review_diff.py` has already written slices
    for this range, self-review reads those files —

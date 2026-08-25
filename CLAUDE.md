@@ -53,6 +53,32 @@ decisions back there. The `plan` skill is its method; the document is
 the state. Detail — the env var, and why blocking edges are placed
 only here: `docs/conventions/linear-automation.md`.
 
+### The architect session — the CEO hat
+
+Long-horizon **design** conversations run in their own session, not
+in a planning session: `plan` keeps the board coherent, `architect`
+asks whether the thing on the board is the right thing to build. Same
+seat quality, different job — so different sessions, not a mode
+toggle. Launched with **`caps <topic>`** (base repo, model-pinned,
+idempotent, one resumable session per design thread, named
+`ceo-<topic>`). It bootstraps minimally — the Planning document and
+the track umbrellas, nothing else — and writes **nothing to the
+board**: the board monopoly stays with the planning session, and the
+architect hands its conclusions over through the Planning document's
+`Notes for the next planning session` heading **and** a direct
+message. Detail: the `architect` skill.
+
+### Three more verbs
+
+**`/wrap`** is the clear-to-close gate for ending a session — a
+deterministic checklist ending in an explicit verdict, for the ragged
+endings `review-pr` does not cover. **`/harden`** turns a proven
+ad-hoc command shape into a committed, tested tool, consuming the
+candidates `session-metrics` already ranks; it refuses a shape with no
+measured recurrence. **`/root-cause`** is systematic debugging under
+two hard rules: no fix before the cause is investigated, and after
+three failed hypotheses the architecture is what gets questioned.
+
 ### Structured filing fields
 
 Every filed issue carries one stable machine-readable field the
@@ -143,19 +169,30 @@ planning-session act with **two** halves — clear the milestone
 meta batch and its edge until promoted. Detail:
 `docs/conventions/linear-automation.md`.
 
-### The audit is planning-directed
+### An audit is a board issue, not a directive
 
-`housekeeping` does not run a random rotation. Each planning
-close-out writes an **audit directive** into the Planning
-document naming **one** subsystem or interface from the audit
-registry — or explicitly **none** — and `housekeeping` executes
-exactly that, as one scoped `audit-scope` run, stating in its
-report when it ran none. The broad random rotation survives only
-as an explicit ad-hoc `/audit`. And the **adversarial sub-agent
-fan-out is authorized by the invocation itself**: never
-substitute an inline pass, never silently skip it — if the
-tooling is absent, stop and ask. Detail: the `audit`,
-`audit-scope`, `housekeeping` and `plan` skills.
+**`housekeeping` runs no audit at all** and reads no Planning
+document. Auditing reaches the board the way every other
+capacity spend does: a planning session files an **audit
+issue** — a first-class Backlog task naming **one** target from
+the audit registry, with its scope, rationale, and sequencing —
+and the session that pulls it executes exactly that, as one
+scoped `audit-scope` run. Findings still land **parked**
+(`Todo` plus the `Audit findings` milestone), and promotion is
+still the planning session's two-halves act.
+
+Cadence is kept by the **audit heartbeat**: every planning
+bootstrap reads the Planning document's bounded **audit-state
+table** (one row per registry unit — last audited, finding
+count, outcome pointer) and either files an audit issue or
+**declines with a recorded reason**. An unrecorded
+non-decision is the failure that guard exists to catch. The
+broad random rotation survives only as an explicit ad-hoc
+`/audit`. And the **adversarial sub-agent fan-out is authorized
+by the invocation itself** — pulling an audit issue *is* the
+authorization: never substitute an inline pass, never silently
+skip it; if the tooling is absent, stop and ask. Detail: the
+`audit`, `audit-scope` and `plan` skills.
 
 ### Trim levers are parked issues, not a document
 
@@ -230,8 +267,14 @@ renderer) is **Python under `.claude/tools/`** (stdlib,
 `unittest`-covered), **never** a Cargo workspace member — so it doesn't
 compile with the on-chain project. MCP is for prototyping and fallback;
 once a workflow is established and repeated, harden it into a Python
-tool the skill drives. Full detail:
-`docs/conventions/skill-tooling.md`.
+tool the skill drives — **`/harden` is the verb** that does it, and it
+refuses a shape with no measured recurrence. **Repeated skill *prose*
+gets the same treatment**: one source under `.claude/shared/`, filled
+into marked regions by `make render-skills` and gated by
+`make render-check`, which also fails on a dangling marker. Extract
+only genuinely verbatim repetition — `plan`'s and `init-pr`'s model
+guards point opposite ways and are a pair, not a duplicate. Full
+detail: `docs/conventions/skill-tooling.md`.
 
 ## Context economy
 
@@ -245,8 +288,13 @@ answers the question, read large files by slice (Grep then `Read` with
 included — and never re-fetch what's already in context. Reading a file
 whole is licensed by any **one** of three conditions (edit-plus-brief,
 a planned multi-region read, or an exemplar you will imitate N times),
-not by all of them together. A harness-persisted tool result is sliced
-with `.claude/tools/read_result.py`, never `Read` whole. Track wasteful
+not by all of them together — and **citing a file is not one of them**.
+A harness-persisted tool result is sliced
+with `.claude/tools/read_result.py`, never `Read` whole; a file at
+another git ref is sliced with `.claude/tools/show_at_ref.py`, never a
+whole-blob `git show`. A **script you write is a tool-result
+generator** — default it to a ranked summary and gate the full series
+behind a flag. Track wasteful
 payloads as you go for `/session-metrics`. Full detail:
 `docs/conventions/context-economy.md`.
 
@@ -269,12 +317,20 @@ too (`--dir` / `--glob`), which is an independent axis, and remember
 `--context` scales with match *density*, so clustered matches want
 `--files-only` plus a slice-read instead. Keep a
 stable command + subcommand prefix and let only the args vary.
+Never sweep `.claude/` bare — the worktrees live under it, so a
+recursive grep there walks every checkout's `target/` (one such pass
+timed out at 120s); scope to `skills` / `tools` / `hooks`. And a
+multi-URL `curl` status probe must repeat `-o /dev/null` **per URL**
+(the flag binds to one) or use `-I`.
 This holds for shell you **author** in skills, scripts, and Makefile
-targets too, and for work you hand a sub-agent. Two opt-in `PreToolUse`
-guard hooks mechanically enforce these rules:
+targets too, and for work you hand a sub-agent. Three opt-in
+`PreToolUse` guard hooks mechanically enforce these rules:
 `.claude/hooks/no_compound_bash.py` blocks compounds (escape marker
-`#compound-ok`), and `.claude/hooks/no_git_grep.py` blocks `git grep`
-(no escape hatch, deliberately — use the Grep tool). Each script is
+`#compound-ok`), `.claude/hooks/no_git_grep.py` blocks `git grep`
+(no escape hatch, deliberately — use the Grep tool), and
+`.claude/hooks/no_destructive_bash.py` blocks destructive commands in
+two tiers (an overridable ask via `#destructive-ok`, and a small
+catastrophic deny no marker lifts). Each script is
 committed but its
 `settings.json` wiring is **user-local, not committed**. The rules and
 the always-re-prompt patterns are in
@@ -288,12 +344,14 @@ The **user-local Claude Code configuration** the repo documents but
 does **not** commit: the compound-shell guard hook, the **git-grep
 guard** (blocks `git grep` in Bash calls, nudging to the Grep tool —
 no escape hatch, kept absolute on purpose: the one capability it costs
-is revision-scoped search, which has adequate workarounds and no
-guard-safe carve-out), the **worktree edit-path guard** (blocks a
-file-mutating tool
+is revision-scoped search, which is now served by the committed
+`show_at_ref.py` rather than by a guard carve-out), the **worktree
+edit-path guard** (blocks a file-mutating tool
 that targets a base-repo absolute path from a worktree session —
 editing the base copy the worktree build never sees is a recurring,
-expensive slip), the iTerm2 tab-color integration, and the shell setup
+expensive slip), the **destructive-command guard** (an overridable ask
+tier and a small no-override deny tier; best-effort advisory, not a
+policy boundary), the iTerm2 tab-color integration, and the shell setup
 they lean on — including the **session secrets**, which are resolved
 from 1Password at session launch rather than written into a config
 file. Both settings files are git-ignored, so all of it
@@ -313,6 +371,22 @@ untracked — defined as env vars in the runtime config, or in an optional
 file outside the repo. Full detail — every hook's
 wiring, the helper family, and the iTerm setup:
 `docs/conventions/local-integrations.md`.
+
+## What a skill may decide alone
+
+Three tiers, and every skill's autonomy boundary is one of them.
+**Mechanical** — a defensible default with no real alternative — is
+decided silently. **Taste** — a real alternative, bounded and
+reversible cost — is decided, then surfaced at a gate the human already
+reads, naming the road not taken. **User challenge** — overriding
+something the operator *explicitly specified* — is never decided: the
+operator's direction is the default, and the case for changing it is
+put through `AskUserQuestion` with evidence, silence meaning no. The
+canonical instance is the blocking-edge prohibition. The test for which
+tier applies is **the asymmetry of the two errors**. Note that
+"propose, don't act" is the third tier only — invoking `audit` /
+`audit-scope` / the review fan-out **is** their authorization. Full
+detail: `docs/conventions/decision-classification.md`.
 
 ## Briefing sub-agents
 

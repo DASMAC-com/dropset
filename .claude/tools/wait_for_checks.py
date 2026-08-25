@@ -65,15 +65,28 @@ Prints JSON::
     {
       "pr": 285,
       "repo": "DASMAC-com/dropset",
-      "conclusion": "pass",      // pass | fail | pending | none | timeout
+      "conclusion": "pass",      // pass | fail | pending | none |
+                                 // conflicting | timeout
       "settled": true,
       "elapsed_seconds": 127,
       "watch_rounds": 1,         // >1 means a check registered late
       "counts": {"pass": 12, "fail": 0, "pending": 0, "skipping": 3},
       "failing": [{"name": "…", "workflow": "…", "link": "…", "run_id": "…"}],
       "pending_checks": [],      // names still outstanding, when any are
+      "mergeable": null,         // probed only when the conclusion was `none`
+      "merge_state_status": null,
+      "blocked_by_conflict": false,
       "log_path": "/…/wait-for-checks-285.log"
     }
+
+``none`` is **ambiguous and is disambiguated for you.** A CONFLICTING PR cannot
+produce any ``pull_request`` workflow run at all — the merge ref cannot be
+created — so there is no run, no error, and nothing to tell it apart from CI
+that has not started yet. One session spent ~20 minutes and ~16 polls on that,
+including an amend-and-force-push nudge at an event that could never fire. So
+on ``none`` this tool probes ``mergeable`` and reports ``conflicting`` when
+that is the cause. Treat ``none`` as "no checks apply"; treat ``conflicting``
+as **blocking** — rebase, then re-run.
 
 or, under ``--run``::
 
@@ -109,6 +122,12 @@ import time
 from pathlib import Path
 
 DEFAULT_REPO = "DASMAC-com/dropset"
+
+# How many times to re-probe a mergeable value of UNKNOWN, and how long to wait
+# between. GitHub computes mergeability asynchronously; a couple of seconds is
+# usually enough, and concluding from UNKNOWN is the failure being avoided.
+MERGEABLE_RETRIES = 3
+MERGEABLE_RETRY_DELAY = 2
 
 # gh's own refresh cadence under --watch. 30s matches CI's granularity: the
 # shortest job on this repo is several seconds and the longest many minutes, so a
@@ -441,6 +460,37 @@ def summarize(checks: list[dict]) -> dict:
     }
 
 
+def mergeability(pr: int, repo: str) -> dict:
+    """``{"mergeable": …, "merge_state_status": …, "error": …}`` for one PR.
+
+    Read **field-selected**, because the only two fields wanted here sit beside
+    collection-valued ones (``files``, ``commits``) that would reintroduce the
+    payload this tool exists to avoid.
+    """
+    code, out, err = _gh(
+        [
+            "pr",
+            "view",
+            str(pr),
+            "--repo",
+            repo,
+            "--json",
+            "mergeable,mergeStateStatus",
+        ]
+    )
+    if code != 0:
+        return {"mergeable": None, "merge_state_status": None, "error": err.strip()}
+    try:
+        payload = json.loads(out or "{}")
+    except json.JSONDecodeError as exc:
+        return {"mergeable": None, "merge_state_status": None, "error": str(exc)}
+    return {
+        "mergeable": payload.get("mergeable"),
+        "merge_state_status": payload.get("mergeStateStatus"),
+        "error": None,
+    }
+
+
 def wait(
     pr: int,
     repo: str = DEFAULT_REPO,
@@ -490,7 +540,38 @@ def wait(
     elapsed = int(time.monotonic() - started)
 
     conclusion = summary["conclusion"]
-    if not settled and conclusion != "fail":
+
+    # A CONFLICTING PR cannot produce ANY pull_request workflow run, because the
+    # merge ref cannot be created. There is no run, no error, and nothing to
+    # distinguish it from CI that has not started — one session spent ~20 minutes
+    # and ~16 polls on exactly this, including an amend-and-force-push nudge at
+    # an event that could never fire. So a bare `none` is ambiguous, and the
+    # ambiguity is resolved here rather than left to the caller: `none` means
+    # either no-checks-apply, or cannot-run-until-the-conflict-clears, and the
+    # second is blocking.
+    blocked_by_conflict = False
+    merge_state: dict = {"mergeable": None, "merge_state_status": None, "error": None}
+    if conclusion == "none":
+        merge_state = mergeability(pr, repo)
+        state = (merge_state.get("mergeable") or "").upper()
+        if state == "UNKNOWN":
+            # GitHub computes mergeability ASYNCHRONOUSLY, and right after a
+            # push — precisely the window this probe runs in — `UNKNOWN` is the
+            # common answer. Taking it as "not conflicting" would report a
+            # genuinely conflicting PR as `none` and reproduce the exact
+            # 20-minute dead wait this probe was added to prevent. So re-probe
+            # rather than concluding from it.
+            for _ in range(MERGEABLE_RETRIES):
+                time.sleep(MERGEABLE_RETRY_DELAY)
+                merge_state = mergeability(pr, repo)
+                state = (merge_state.get("mergeable") or "").upper()
+                if state != "UNKNOWN":
+                    break
+        if state == "CONFLICTING":
+            blocked_by_conflict = True
+            conclusion = "conflicting"
+
+    if not settled and conclusion not in ("fail", "conflicting"):
         # A timed-out watch must never claim `pass` off a snapshot it stopped
         # waiting on. But a `fail` it *did* observe is definite and strictly more
         # informative than `timeout`, so that one survives — otherwise a caller
@@ -508,6 +589,15 @@ def wait(
         "failing": summary["failing"],
         "pending_checks": summary["pending_checks"],
         "unresolved_buckets": summary["unresolved_buckets"],
+        # Only populated when the conclusion was `none`: the cause probe.
+        "mergeable": merge_state["mergeable"],
+        "merge_state_status": merge_state["merge_state_status"],
+        # Surfaced rather than dropped: without it, "the probe failed" and "the
+        # PR is not conflicting" both read as `mergeable: null`, so the header's
+        # claim that `none` is disambiguated for you would be false with no
+        # signal that it had not been.
+        "mergeable_error": merge_state["error"],
+        "blocked_by_conflict": blocked_by_conflict,
         "log_path": str(log),
     }
 

@@ -78,12 +78,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import re
 import sys
-import urllib.error
-import urllib.request
 
-ENDPOINT = "https://api.linear.app/graphql"
+import linear_api
+
+ENDPOINT = linear_api.ENDPOINT
 
 # How many issues one page of a listing query reads. Reads follow the cursor, so
 # this is a page size and not a board ceiling. It used to be both, with a comment
@@ -136,53 +136,25 @@ class BoardBatchError(Exception):
 
 
 def env_var(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise BoardBatchError(f"{name} is unset — export it before running")
-    if not value.isprintable():
-        # A pasted key with an embedded newline otherwise reaches http.client's
-        # header validation, which raises a ValueError whose message quotes the
-        # offending value — i.e. leaks the credential into a traceback.
-        raise BoardBatchError(f"{name} contains a non-printable character")
-    return value
+    return linear_api.env_var(name, error=BoardBatchError)
 
 
 def _post(api_key: str, query: str, variables: dict) -> dict:
     """POST a GraphQL operation and return its ``data``, surfacing transport
     and GraphQL-level errors with their messages.
 
-    Deliberately the same shape as ``trim_levers.py``'s helper rather than a
-    second HTTP idiom in this directory.
+    Delegates to the shared transport rather than keeping a second HTTP idiom
+    in this directory — which is also what gives this tool the redirect refusal
+    (a followed 3xx would re-send the ``Authorization`` header to a new host).
     """
-    body = json.dumps({"query": query, "variables": variables}).encode("utf-8")
-    req = urllib.request.Request(
-        ENDPOINT,
-        data=body,
-        headers={"Authorization": api_key, "Content-Type": "application/json"},
-        method="POST",
+    return linear_api.post(
+        api_key,
+        query,
+        variables,
+        endpoint=ENDPOINT,
+        timeout=REQUEST_TIMEOUT,
+        error=BoardBatchError,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            raw = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        raise BoardBatchError(f"Linear API returned HTTP {e.code}: {detail}") from e
-    except urllib.error.URLError as e:
-        raise BoardBatchError(f"Linear API request failed: {e.reason}") from e
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise BoardBatchError(f"decoding Linear GraphQL response: {e}") from e
-
-    errors = parsed.get("errors")
-    if errors:
-        joined = "; ".join(e.get("message", "") for e in errors)
-        raise BoardBatchError(f"Linear GraphQL error: {joined}")
-    data = parsed.get("data")
-    if data is None:
-        raise BoardBatchError("Linear GraphQL response carried no data")
-    return data
 
 
 _ISSUES_QUERY = """
@@ -197,10 +169,31 @@ query($filter: IssueFilter, $first: Int!, $after: String) {
       priority
       state { name type }
       projectMilestone { name }
+      team { id }
     }
   }
 }
 """
+
+# The team's workflow states, for resolving a state NAME to its UUID. Linear's
+# `stateId` takes an id and nothing else: a name reaches it as an opaque string
+# and dies as an unnamed `Argument Validation Error`, which cost one session six
+# round trips to diagnose because the documented example prescribed a name.
+_STATES_QUERY = """
+query TeamStates($teamId: String!) {
+  team(id: $teamId) { states(first: 100) { nodes { id name } } }
+}
+"""
+
+# A Linear id is a UUID. Used to tell "already an id" from "a name to resolve",
+# and to refuse a name on the fields this tool cannot resolve for you.
+UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
+
+# Fields this tool cannot resolve for you: their value must already be an id.
+# Named individually so the refusal below can say which one.
+ID_ONLY_FIELDS = ("milestone", "assignee")
 
 
 def _fetch_filtered(api_key: str, issue_filter: dict) -> list[dict]:
@@ -403,14 +396,96 @@ def build_update_input(fields: dict) -> dict:
         elif name == "labels":
             if not isinstance(value, list):
                 raise BoardBatchError("labels must be a list of label ids")
+            for item in value:
+                _refuse_obvious_name("labels", item)
+            update[arg] = value
+        elif name in ID_ONLY_FIELDS:
+            _refuse_obvious_name(name, value)
             update[arg] = value
         else:
             # `null` clears the field — which is how a milestone is cleared to
             # un-park a finding, so it must pass through rather than be dropped.
+            # `state` and `parent` are resolved later, once the issue (and so its
+            # team) is known; see `_resolve_field_values`.
             update[arg] = value
     if not update:
         raise BoardBatchError("no fields to update")
     return update
+
+
+def _refuse_obvious_name(field: str, value) -> None:
+    """Refuse a value that is plainly a human-readable name, not an id.
+
+    Linear takes an id here and nothing else, and a name reaches it as an opaque
+    string that dies as an unnamed ``Argument Validation Error`` — the same trap
+    that cost one session six round trips on ``state``. ``state`` and ``parent``
+    are *resolved* rather than refused; these fields have no cheap lookup, so the
+    next best thing is failing with a message that names the problem.
+
+    The test is deliberately **whitespace**, not UUID-shape: the ids callers pass
+    are opaque strings this tool must not second-guess, while every real instance
+    of the trap (``"Audit findings"``, ``"In Review"``, a person's name) contains
+    a space. That keeps the guard free of false positives.
+    """
+    if isinstance(value, str) and value.strip() and any(c.isspace() for c in value):
+        raise BoardBatchError(
+            f"{field} was given {value!r}, which is a name rather than an id. Linear "
+            f"accepts only ids for {field}, and a name fails as an unnamed "
+            "Argument Validation Error — look the id up and pass that."
+        )
+
+
+def resolve_state_name(nodes: list, wanted: str) -> str:
+    """A state id for ``wanted``, matched case-insensitively by name."""
+    lowered = wanted.strip().lower()
+    for node in nodes:
+        if str(node.get("name", "")).strip().lower() == lowered:
+            return str(node["id"])
+    names = ", ".join(sorted(str(n.get("name")) for n in nodes))
+    raise BoardBatchError(f"no state named {wanted!r} on this team — have: {names}")
+
+
+def _team_states(api_key: str, team_id: str, cache: dict) -> list:
+    """The team's workflow states, read once per team per run."""
+    if team_id not in cache:
+        data = _post(api_key, _STATES_QUERY, {"teamId": team_id})
+        cache[team_id] = (((data.get("team") or {}).get("states")) or {}).get(
+            "nodes"
+        ) or []
+    return cache[team_id]
+
+
+def _resolve_field_values(
+    api_key: str,
+    issue: dict,
+    update: dict,
+    by_number: dict[int, dict],
+    cache: dict,
+) -> None:
+    """Turn caller-friendly ``state`` / ``parent`` values into ids, in place.
+
+    Resolution happens in the pre-flight, **including on a dry run**. That is
+    the point: ``--dry-run`` used to resolve issue numbers but never field
+    values, so a state name gave a confident green and then failed for real —
+    a false green is worse than no check.
+    """
+    state = update.get("stateId")
+    if isinstance(state, str) and not UUID_RE.match(state):
+        team_id = (issue.get("team") or {}).get("id")
+        if not team_id:
+            raise BoardBatchError(
+                f"{issue['identifier']} carried no team, so state {state!r} cannot "
+                "resolve — pass a state UUID instead"
+            )
+        update["stateId"] = resolve_state_name(
+            _team_states(api_key, team_id, cache), state
+        )
+
+    parent = update.get("parentId")
+    if parent is not None and not (isinstance(parent, str) and UUID_RE.match(parent)):
+        # An issue number or `ENG-###` — resolved through the same lookup the
+        # tool already uses for the issues being updated.
+        update["parentId"] = resolve_issue(parent, by_number)["id"]
 
 
 def apply_fields(
@@ -432,11 +507,15 @@ def apply_fields(
     want them.
     """
     emit = print if emit is None else emit
-    # Pre-flight: resolve and build everything, mutating nothing.
+    # Pre-flight: resolve and build everything, mutating nothing. Field VALUES
+    # are resolved here too, so a dry run validates them rather than reporting a
+    # green it has not earned.
     planned = []
+    state_cache: dict = {}
     for raw_number, fields in updates.items():
         issue = resolve_issue(raw_number, by_number)
         update = build_update_input(fields)
+        _resolve_field_values(api_key, issue, update, by_number, state_cache)
         summary = ", ".join(f"{k}={fields[k]!r}" for k in sorted(fields))
         planned.append((issue, update, summary))
 

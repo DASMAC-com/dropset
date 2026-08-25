@@ -19,6 +19,27 @@ rather than wedging the session.
 Escape hatch: a command carrying the literal marker `#compound-ok` is
 let through, so a genuinely-unavoidable compound (rare) stays possible
 and auditable in the transcript.
+
+**Parser audit, recorded so it is not repeated — including what the
+first pass got wrong.** A sibling project's destructive-command guard
+shipped a *grep-based* command extractor that silently truncated at an
+escaped quote, letting a root delete through when it followed a quoted
+argument. That specific bug class does not apply here: the command
+string comes from a real `json.loads` of the PreToolUse payload and is
+never re-extracted out of a larger blob by pattern, and the scanner
+below is character-level and quote-aware rather than regex over the
+whole string. If this is ever "simplified" into a regex over the raw
+payload, that is the regression to look for.
+
+**But the first audit declared the parser clean and it was not.** The
+comment branch returned on the first unquoted `#`, treating the rest of
+the *string* as inert while the comment beside it said "the rest of the
+line" — so on a multi-line command, `ls # note` followed by
+`rm -rf / && pwd` reported clean. Adversarial review of the sibling
+destructive guard, where the same defect was an outright bypass of its
+no-override deny tier, is what surfaced it. Both are fixed. The lesson
+worth keeping: an audit that checks for one named bug class is not an
+audit of the parser, and should not be recorded as one.
 """
 
 import json
@@ -70,10 +91,20 @@ def find_violation(cmd):
         elif c == '"':
             quote = '"'
         elif c == "#" and (i == 0 or cmd[i - 1].isspace()):
-            # An unquoted '#' at a word boundary starts a shell comment; the
-            # rest of the line is inert. Any operator before it would already
-            # have returned, so the command is clean.
-            return None
+            # An unquoted '#' starts a comment that ends at the NEWLINE — so
+            # skip to it and keep scanning, rather than returning.
+            #
+            # This used to `return None`, which read the rest of the STRING as
+            # inert. The comment beside it already said "the rest of the line",
+            # so the code and its own comment disagreed: on a multi-line
+            # command, `ls # note` followed by `rm -rf / && pwd` reported clean.
+            # Found while auditing the sibling destructive guard, which had the
+            # same defect in a place where it mattered far more.
+            newline = cmd.find("\n", i)
+            if newline == -1:
+                return None
+            i = newline + 1
+            continue
         elif c == "`":
             return "a backtick command substitution (`)"
         elif c == "$" and i + 1 < n and cmd[i + 1] == "(":
@@ -94,14 +125,22 @@ def find_violation(cmd):
 
 
 def unquoted_comment(cmd):
-    """Return the unquoted trailing shell comment (from its `#`), or None.
+    """Return the unquoted shell comment text, or None if there is none.
 
     A `#` begins a comment only when unquoted and at a word boundary (start
     of string or after whitespace) — `foo#bar` and a quoted `"#x"` are
     literal text, not comments. This is what anchors the escape hatch to a
     genuine comment instead of any substring.
+
+    Each comment ends at its NEWLINE, and on a multi-line command every
+    comment is collected and joined. Previously this returned everything from
+    the first `#` to end of string, which folded ordinary command text into
+    "the comment" — harmless for this guard's escape-hatch lookup, but the
+    same defect was a real bypass in the sibling destructive guard, so both
+    are fixed together rather than left to diverge.
     """
     quote = None
+    found = []
     i = 0
     n = len(cmd)
     while i < n:
@@ -124,8 +163,16 @@ def unquoted_comment(cmd):
         elif c == '"':
             quote = '"'
         elif c == "#" and (i == 0 or cmd[i - 1].isspace()):
-            return cmd[i:]
+            newline = cmd.find("\n", i)
+            if newline == -1:
+                found.append(cmd[i:])
+                break
+            found.append(cmd[i:newline])
+            i = newline + 1
+            continue
         i += 1
+    if found:
+        return "\n".join(found)
     return None
 
 

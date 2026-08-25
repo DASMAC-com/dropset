@@ -700,5 +700,142 @@ class CliTests(unittest.TestCase):
         self.assertEqual(posted, [])
 
 
+class FieldValueResolutionTests(unittest.TestCase):
+    """A state NAME must become a UUID before it reaches Linear.
+
+    Passing the name through is not a loud failure — it dies as an unnamed
+    ``Argument Validation Error``, which cost one session ~2k and six round
+    trips to trace back to a documented example that was simply wrong. Worse,
+    ``--dry-run`` reported a confident green throughout, because it resolved
+    issue numbers and never field values.
+    """
+
+    STATE_ID = "11111111-2222-3333-4444-555555555555"
+
+    def setUp(self):
+        issue = _issue(10)
+        issue["team"] = {"id": "team-1"}
+        self.by_number = index_by_number([issue, _issue(11)])
+
+    def _post_factory(self, calls):
+        def fake_post(api_key, query, variables):
+            calls.append((query, variables))
+            if "TeamStates" in query:
+                return {
+                    "team": {
+                        "states": {
+                            "nodes": [
+                                {"id": self.STATE_ID, "name": "In Review"},
+                                {"id": "other-id", "name": "Done"},
+                            ]
+                        }
+                    }
+                }
+            return {"issueUpdate": {"success": True}}
+
+        return fake_post
+
+    def test_a_state_name_is_resolved_to_a_uuid(self):
+        calls = []
+        with mock.patch.object(bb, "_post", side_effect=self._post_factory(calls)):
+            apply_fields("k", {"10": {"state": "In Review"}}, self.by_number)
+        writes = [v for q, v in calls if "issueUpdate" in q]
+        self.assertEqual(writes[0]["input"], {"stateId": self.STATE_ID})
+
+    def test_the_name_match_is_case_insensitive(self):
+        calls = []
+        with mock.patch.object(bb, "_post", side_effect=self._post_factory(calls)):
+            apply_fields("k", {"10": {"state": "in review"}}, self.by_number)
+        writes = [v for q, v in calls if "issueUpdate" in q]
+        self.assertEqual(writes[0]["input"], {"stateId": self.STATE_ID})
+
+    def test_a_uuid_state_passes_through_without_a_lookup(self):
+        calls = []
+        with mock.patch.object(bb, "_post", side_effect=self._post_factory(calls)):
+            apply_fields("k", {"10": {"state": self.STATE_ID}}, self.by_number)
+        self.assertFalse([q for q, _ in calls if "TeamStates" in q])
+
+    def test_an_unknown_state_name_names_the_available_states(self):
+        calls = []
+        with mock.patch.object(bb, "_post", side_effect=self._post_factory(calls)):
+            with self.assertRaises(BoardBatchError) as caught:
+                apply_fields("k", {"10": {"state": "Shipped"}}, self.by_number)
+        self.assertIn("In Review", str(caught.exception))
+
+    def test_a_dry_run_resolves_field_values_rather_than_reporting_a_false_green(self):
+        # The regression this guards: --dry-run resolved issue numbers only, so
+        # a bad state name passed the check and then failed on the real run.
+        calls = []
+        with mock.patch.object(bb, "_post", side_effect=self._post_factory(calls)):
+            with self.assertRaises(BoardBatchError):
+                apply_fields(
+                    "k", {"10": {"state": "Shipped"}}, self.by_number, dry_run=True
+                )
+        self.assertFalse([q for q, _ in calls if "issueUpdate" in q])
+
+    def test_the_states_lookup_is_read_once_per_team(self):
+        calls = []
+        issue11 = _issue(11)
+        issue11["team"] = {"id": "team-1"}
+        by_number = index_by_number([self.by_number[10], issue11])
+        with mock.patch.object(bb, "_post", side_effect=self._post_factory(calls)):
+            apply_fields(
+                "k",
+                {"10": {"state": "In Review"}, "11": {"state": "Done"}},
+                by_number,
+            )
+        self.assertEqual(len([q for q, _ in calls if "TeamStates" in q]), 1)
+
+    def test_a_SECOND_team_gets_its_own_lookup(self):
+        # With both issues forced onto one team, a cache keyed on nothing at all
+        # passes identically — so the "per team" in the name above was untested.
+        # A globally-keyed cache would write issue 11 a stateId belonging to
+        # team-1, which is the unnamed Argument Validation Error this whole
+        # class exists to prevent.
+        calls = []
+        issue11 = _issue(11)
+        issue11["team"] = {"id": "team-2"}
+        by_number = index_by_number([self.by_number[10], issue11])
+        with mock.patch.object(bb, "_post", side_effect=self._post_factory(calls)):
+            apply_fields(
+                "k",
+                {"10": {"state": "In Review"}, "11": {"state": "In Review"}},
+                by_number,
+            )
+        team_queries = [v for q, v in calls if "TeamStates" in q]
+        self.assertEqual(len(team_queries), 2)
+        self.assertEqual(
+            sorted(v["teamId"] for v in team_queries), ["team-1", "team-2"]
+        )
+
+    def test_a_parent_issue_number_resolves_through_the_existing_lookup(self):
+        calls = []
+        with mock.patch.object(bb, "_post", side_effect=self._post_factory(calls)):
+            apply_fields("k", {"10": {"parent": "ENG-11"}}, self.by_number)
+        writes = [v for q, v in calls if "issueUpdate" in q]
+        self.assertEqual(writes[0]["input"], {"parentId": "uuid-11"})
+
+    def test_a_milestone_name_is_refused_with_the_reason(self):
+        # No cheap lookup exists for these, so the next best thing is failing
+        # with a message that names the problem instead of an opaque API error.
+        with self.assertRaises(BoardBatchError) as caught:
+            build_update_input({"milestone": "Audit findings"})
+        self.assertIn("name rather than an id", str(caught.exception))
+
+    def test_an_opaque_id_without_whitespace_still_passes_through(self):
+        # The guard keys on whitespace precisely so it never second-guesses an
+        # id it cannot validate.
+        self.assertEqual(
+            build_update_input({"milestone": "abc123"}),
+            {"projectMilestoneId": "abc123"},
+        )
+
+    def test_clearing_a_milestone_with_null_still_works(self):
+        # This is how a parked finding is un-parked; it must survive the guard.
+        self.assertEqual(
+            build_update_input({"milestone": None}), {"projectMilestoneId": None}
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

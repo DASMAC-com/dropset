@@ -119,6 +119,26 @@ MAX_FAILED_LINES = 40
 # follow-up grep over the log to find the word, one of them four separate times.
 UNKNOWN_WORD_RE = re.compile(r"\b(?:Unknown|Forbidden) word \(([^)]+)\)")
 
+# cargo prints its failure detail under a bare `failures:` line, AFTER the run's
+# passing `test … ok` lines. So a last-N-lines tail lands on the passing lines
+# and the final `test result:` summary, and shows the assertion only if the
+# failure happened to be near the end. Measured: 25 wrapped runs spending ~40
+# tail lines each to convey one assertion, ~5.5k — a top hardening candidate
+# DESPITE already being wrapped. Anchoring on this marker is what makes the
+# window land on the detail.
+CARGO_FAILURES_RE = re.compile(r"^\s*failures:\s*$")
+
+# Where the window STOPS. A workspace runs several test binaries, so without a
+# terminator the window would run from the first failure to end-of-log and
+# swallow every later binary's passing output — re-buying exactly the region
+# this replaces. `test result:` closes the failing binary's report.
+CARGO_RESULT_RE = re.compile(r"^\s*test result:")
+
+# Cap on the failure window, so a suite failing in fifty places still reports a
+# bounded amount. Larger than the default tail because this region is the
+# actionable payload rather than incidental trailing output.
+MAX_FAILURE_LINES = 60
+
 # Cap on distinct spelling offenders surfaced. The first run over a new doc can
 # legitimately produce dozens; the index is meant to name the fix, not to
 # reproduce the log.
@@ -321,7 +341,8 @@ def stream_to_log(cmd, log_file):
 #: and each growth would otherwise have to renumber every unpacking call site.
 LogSummary = collections.namedtuple(
     "LogSummary",
-    "lines tail_text failed truncated unknown_words unknown_truncated",
+    "lines tail_text failed truncated unknown_words unknown_truncated "
+    "failure_text failure_truncated failure_closed failure_blocks",
 )
 
 
@@ -349,11 +370,39 @@ def read_tail_and_count(path, tail):
     truncated = False
     unknown = {}
     unknown_truncated = False
+    failure_lines = []
+    failure_started = False
+    failure_done = False
+    failure_truncated = False
+    failure_closed = False
+    failure_blocks = 0
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             count += 1
             if tail > 0:
                 dq.append(line)
+            # Collect from the FIRST `failures:` marker onward. First, not last:
+            # cargo prints the marker twice — once before the per-test detail and
+            # once before the bare name list — and the detail is the half worth
+            # having.
+            if CARGO_FAILURES_RE.match(line):
+                # Counted for EVERY block, so a workspace run where three
+                # crates fail can say so rather than showing the first block as
+                # though it were the whole failure.
+                failure_blocks += 1
+                if not failure_started and not failure_done:
+                    failure_started = True
+            if failure_started:
+                if len(failure_lines) < MAX_FAILURE_LINES:
+                    failure_lines.append(line)
+                else:
+                    failure_truncated = True
+                # `test result:` closes the failing binary's report. Stop there
+                # and never restart, so a later binary's output stays out.
+                if CARGO_RESULT_RE.match(line):
+                    failure_started = False
+                    failure_done = True
+                    failure_closed = True
             if is_failed_hook_line(line):
                 if len(failed) < MAX_FAILED_LINES:
                     failed.append(line.rstrip("\n"))
@@ -378,6 +427,10 @@ def read_tail_and_count(path, tail):
         truncated,
         list(unknown.items()),
         unknown_truncated,
+        "".join(failure_lines),
+        failure_truncated,
+        failure_closed,
+        failure_blocks,
     )
 
 
@@ -435,13 +488,45 @@ def run(tail, label, cmd):
         )
         for word, location in summary.unknown_words:
             sys.stdout.write("%s%s\n" % (word, " — %s" % location if location else ""))
+    write_failure_region(summary, tail)
+    return code
+
+
+def write_failure_region(summary, tail):
+    """Print the failures window when there is one, else the tail.
+
+    They are alternatives, not both: the whole point is that on a cargo failure
+    the tail shows the *passing* lines that precede the failures block, so
+    printing both would keep paying for exactly the region this replaces.
+
+    **The window is only preferred when it is genuinely cargo's.** The marker is
+    a bare `failures:` line, which is not cargo-specific — any wrapped log that
+    happens to contain one (a different runner, a build script, a fixture echoed
+    into the output) would otherwise have its tail replaced by 60 lines starting
+    at an irrelevant marker, hiding the real error at end-of-log. Requiring the
+    closing `test result:` line is what makes it cargo's block rather than a
+    coincidence.
+    """
+    if summary.failure_text and summary.failure_closed:
+        more = " (truncated, more omitted)" if summary.failure_truncated else ""
+        # cargo emits the marker twice per failing binary (detail, then the
+        # bare name list), so >2 means more than one binary failed and this
+        # window shows only the first.
+        if summary.failure_blocks > 2:
+            more += " — %d failure block(s) in the log; only the first is shown" % (
+                summary.failure_blocks
+            )
+        sys.stdout.write("--- from cargo's failures block%s ---\n" % more)
+        sys.stdout.write(summary.failure_text)
+        if not summary.failure_text.endswith("\n"):
+            sys.stdout.write("\n")
+        return
     if tail > 0 and summary.tail_text:
         shown = min(tail, summary.lines)
         sys.stdout.write("--- last %d line(s) ---\n" % shown)
         sys.stdout.write(summary.tail_text)
         if not summary.tail_text.endswith("\n"):
             sys.stdout.write("\n")
-    return code
 
 
 #: What ``inspect`` was asked for.
@@ -600,12 +685,8 @@ def inspect(args):
         )
         for word, location in summary.unknown_words:
             sys.stdout.write("%s%s\n" % (word, " — %s" % location if location else ""))
-    if not args.failing and args.tail > 0 and summary.tail_text:
-        shown = min(args.tail, summary.lines)
-        sys.stdout.write("--- last %d line(s) ---\n" % shown)
-        sys.stdout.write(summary.tail_text)
-        if not summary.tail_text.endswith("\n"):
-            sys.stdout.write("\n")
+    if not args.failing:
+        write_failure_region(summary, args.tail)
     sys.stdout.write("run-quiet inspect | %d line(s)\n" % summary.lines)
     return 0
 

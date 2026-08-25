@@ -1,6 +1,6 @@
 ---
 name: audit
-description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. This RANDOM rotation is now an explicitly ad-hoc invocation only — it is no longer any skill's default, because housekeeping instead executes the Planning document's audit directive against one named target. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent issues (folding coupled findings that share a PR) in state Todo plus the `Audit findings` project milestone so they land PARKED rather than in the pull queue, files no relations or collision links at all (never a blocking edge — blocking is human-curated), announces counts and titles only, and stops. The adversarial sub-agent cross-check is authorized by this invocation; never substitute an inline pass and never silently skip it. Sequencing a parked finding into the Backlog is the `plan` skill's job, never this one's. No loop, no finding cap, no re-invocation — run it again for another rotation.
+description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. This RANDOM rotation is now an explicitly ad-hoc invocation only — it is no longer any skill's default: housekeeping runs no audit at all, and targeted auditing reaches the board as a planning-filed audit issue that a pulling session executes as one scoped audit-scope run. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent issues (folding coupled findings that share a PR) in state Todo plus the `Audit findings` project milestone so they land PARKED rather than in the pull queue, files no relations or collision links at all (never a blocking edge — blocking is human-curated), announces counts and titles only, and stops. The adversarial sub-agent cross-check is authorized by this invocation; never substitute an inline pass and never silently skip it. Sequencing a parked finding into the Backlog is the `plan` skill's job, never this one's. No loop, no finding cap, no re-invocation — run it again for another rotation.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -19,13 +19,16 @@ stamped with the **`Audit findings` project milestone** so it lands
 the pull queue.
 
 **This random rotation is an ad-hoc invocation, not a default.**
-`housekeeping` no longer runs it: it executes the Planning document's
-**audit directive** instead, one scoped `audit-scope` run against a
-named subsystem or interface (or none). The reason is targeting, not
-cost — a random rotation in a heavy-feature phase audits code that is
-about to be rewritten, and one pass filed fifteen parked findings,
-several against files that open Backlog issues already covered. Reach
-for `/audit` deliberately, when a broad sweep is what you want.
+No skill runs it: `housekeeping` runs no audit at all, and auditing
+reaches the board as a **planning-filed audit issue** naming one
+target, which the session that pulls it executes as a single scoped
+`audit-scope` run. The reason is targeting, not cost — a random
+rotation in a heavy-feature phase audits code that is about to be
+rewritten, and one pass filed fifteen parked findings, several against
+files that open Backlog issues already covered. Reach for `/audit`
+deliberately, when a broad sweep is what you want; a planning session
+may also file a random-target pass as an issue when its audit
+heartbeat wants breadth rather than depth.
 
 **The sub-agent fan-out is authorized by this invocation.** Invoking
 `/audit` **is** the request for the adversarial cross-check — it is the
@@ -45,7 +48,8 @@ them, so an operator can reasonably want its lint-and-CI half without
 authorizing eight agents. Here the fan-out **is** the deliverable and
 there is no earlier gate for it to ride, so a question would be pure
 ceremony — invoking the skill already said yes. Same for
-`audit-scope` and `housekeeping`.
+`audit-scope`, and for pulling an audit issue: pulling it **is** the
+authorization.
 
 Slating a finding into the Backlog is a
 sequencing decision, and it belongs to a planning session (`plan`
@@ -61,13 +65,13 @@ It is **finite**: it runs the seven units once, files what they surface,
 and **stops** with
 a single `DONE` line. There is **no `/loop`, no finding cap, and no
 re-invocation** — the rotation *is* the bound. To audit more, run
-`/audit` again; each run is one independent rotation. `housekeeping`
-runs exactly one rotation inline **by default** (skipped only with its
-`no-audit` flag) — the repo is continuously audited, which is
-affordable precisely because findings land parked.
+`/audit` again; each run is one independent rotation. Nothing runs it
+on a cadence: what keeps the repo audited is the planning session's
+**audit heartbeat**, which files targeted audit issues (and records a
+reason when it files none).
 
 This skill sets `disable-model-invocation: false`, so it can be invoked
-through the Skill tool directly (e.g. by `housekeeping`).
+through the Skill tool directly.
 
 ## The rotation
 

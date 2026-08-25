@@ -973,5 +973,115 @@ class CliTests(unittest.TestCase):
             )
 
 
+class SingleFileContextRefusalTests(unittest.TestCase):
+    """Once the scope is one named file, a wide context window is refused.
+
+    Sweeping a named file buys its matched regions at an N-line markup, and on
+    clustered matches the windows overlap toward buying the file outright — at a
+    higher price than reading it. The existing density advisory is correct but
+    arrives *with the result*, after the tokens are spent; this guard reads the
+    arguments and fires before the work happens.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "one.rs").write_text("fn needle() {}\n", encoding="utf-8")
+        (self.root / "two.rs").write_text("fn needle() {}\n", encoding="utf-8")
+        self.cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self.cwd)
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = ss.run(["search_source.py"] + argv)
+        return code, out.getvalue() + err.getvalue()
+
+    def test_a_single_file_glob_with_wide_context_is_CLAMPED_not_refused(self):
+        # Clamp, not refuse: the cost is a function of match count, not scope,
+        # so refusing rejected genuinely cheap calls and turned one call into
+        # two. A refusal is also an unanswered question — the caller gets no
+        # result at all.
+        code, printed = self._run(["needle", "--glob", "one.rs", "--context", "6"])
+        self.assertEqual(code, 0)
+        self.assertIn("needle", printed)
+
+    def test_the_clamp_says_what_it_did_and_why(self):
+        _, printed = self._run(["needle", "--glob", "one.rs", "--context", "9"])
+        self.assertIn("clamped", printed)
+        self.assertIn("one.rs", printed)
+        self.assertIn("offset/limit", printed)
+
+    def test_the_clamp_actually_narrows_the_output(self):
+        # The load-bearing property, actually asserted: an over-wide `--context`
+        # must produce EXACTLY the output the limit produces, not merely exit 0.
+        # Asserting only the exit code would pass against an implementation that
+        # ignored the clamp entirely, which is the whole thing under test.
+        def results(argv):
+            # The clamp NOTE is expected to differ — it is the explanation, not
+            # the result. Everything else must be byte-identical.
+            _, printed = self._run(argv)
+            return [ln for ln in printed.splitlines() if "NOTE: --context" not in ln]
+
+        wide = results(["needle", "--glob", "one.rs", "--context", "40"])
+        at_limit = results(
+            [
+                "needle",
+                "--glob",
+                "one.rs",
+                "--context",
+                str(ss.SINGLE_FILE_CONTEXT_LIMIT),
+            ]
+        )
+        self.assertEqual(wide, at_limit)
+        self.assertNotEqual(
+            wide, results(["needle", "--glob", "one.rs", "--context", "0"])
+        )
+
+    def test_a_narrow_context_on_one_file_is_allowed(self):
+        code, _ = self._run(
+            [
+                "needle",
+                "--glob",
+                "one.rs",
+                "--context",
+                str(ss.SINGLE_FILE_CONTEXT_LIMIT),
+            ]
+        )
+        self.assertEqual(code, 0)
+
+    def test_files_only_is_always_allowed_however_wide_the_context(self):
+        # --files-only prints no context at all, so the cost the guard exists to
+        # stop cannot arise.
+        code, _ = self._run(
+            ["needle", "--glob", "one.rs", "--context", "40", "--files-only"]
+        )
+        self.assertEqual(code, 0)
+
+    def test_a_wildcard_glob_is_not_a_single_file_scope(self):
+        code, _ = self._run(["needle", "--glob", "*.rs", "--context", "6"])
+        self.assertEqual(code, 0)
+
+    def test_two_globs_are_not_a_single_file_scope(self):
+        code, _ = self._run(
+            ["needle", "--glob", "one.rs", "--glob", "two.rs", "--context", "6"]
+        )
+        self.assertEqual(code, 0)
+
+    def test_a_glob_naming_no_existing_file_is_not_refused(self):
+        # It resolves to nothing, so there is no file to slice-read instead.
+        code, _ = self._run(["needle", "--glob", "absent.rs", "--context", "6"])
+        self.assertEqual(code, 1)
+
+    def test_single_file_scope_detects_a_dir_naming_one_file(self):
+        self.assertEqual(ss.single_file_scope(None, ("one.rs",)), "one.rs")
+
+    def test_single_file_scope_returns_none_for_a_directory(self):
+        (self.root / "sub").mkdir()
+        self.assertIsNone(ss.single_file_scope(None, ("sub",)))
+
+
 if __name__ == "__main__":
     unittest.main()

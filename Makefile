@@ -618,6 +618,22 @@ lint:
 hook-wiring:
 	python3 .claude/tools/hook_wiring.py $(ARGS)
 
+# Check that every rendered region in a skill file still matches its single
+# source under .claude/shared/. Changing a shared convention otherwise means
+# editing every skill that restates it and remembering to look — a hand-sync
+# tax paid on every meta batch, and one batch updated the same rule in three
+# separate files. Unlike `hook-wiring` this IS checkable in CI: it reads only
+# committed files. Exits 0 in sync / 1 stale (run `render-skills` and commit) /
+# 2 on a malformed or dangling marker.
+.PHONY: render-check
+render-check:
+	python3 .claude/tools/render_skills.py --check
+
+# Refill every rendered region from its source, in place.
+.PHONY: render-skills
+render-skills:
+	python3 .claude/tools/render_skills.py --write
+
 # Account for where a session's tokens went (the deterministic core of the
 # session-metrics skill). A stdlib-only Python skill-tool under .claude/tools/
 # (not a Cargo workspace member — see CLAUDE.md "Skill tooling"). Resolves the
