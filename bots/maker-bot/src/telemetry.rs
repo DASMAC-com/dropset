@@ -594,8 +594,9 @@ async fn write_health(
 /// The error text arrives already sanitized: [`LivenessReporter::failed`] puts
 /// it through the framework's [`sanitize_error`], which is the guard this
 /// column needs rather than the transport-level redaction `feed_health`
-/// relies on — a push producer's client has no such hook, and a subscribe URL
-/// carries a hosted endpoint's credential in its query string.
+/// relies on — a push producer's error never passes through the HTTP client
+/// that applies it, and a subscribe URL carries a hosted endpoint's credential
+/// in its query string.
 async fn write_liveness(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     update: &LivenessUpdate,

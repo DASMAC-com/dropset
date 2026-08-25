@@ -1921,13 +1921,14 @@ ______________________________________________________________________
     source.
   - **Its error text takes the blunt redaction.** The health path
     deliberately does *not* strip query strings, because the crate's
-    HTTP transport has already redacted by parameter name and the
-    remaining parameters are the diagnosis. A push producer's client has
-    no such hook — the maker's comes from the Solana `PubsubClient` —
+    HTTP transport has already redacted every non-allow-listed query
+    value and the remaining parameters are the diagnosis. A push
+    producer never reaches that pass — it is a method on the HTTP
+    client, and the maker's error comes from the Solana `PubsubClient` —
     and a subscribe URL carries a hosted endpoint's credential in its
     query string, so `LivenessReporter::failed` puts its text through
     `sanitize_error`. The two error columns are on deliberately
-    different footings; see `0006_push_liveness.sql`.
+    different footings; see `0007_push_liveness.sql`.
 
   Both reporters share their offer-and-damp mechanics (the full-channel
   and dead-drain handling, and the log damping that keeps a flapping

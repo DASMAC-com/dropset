@@ -10,7 +10,7 @@
 -- error, which has no name-aware redaction of its own, and a subscribe URL
 -- carries a hosted endpoint's credential in its query string. The framework's
 -- `sanitize_error` is what strips it — see the INTEGRITY note in
--- `0006_push_liveness.sql`. This column is readable by the dashboard role.
+-- `0007_push_liveness.sql`. This column is readable by the dashboard role.
 --
 -- `last_up_at` is left untouched: it records when the link was last
 -- established, and a failure to re-establish it must not advance it.

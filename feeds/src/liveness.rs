@@ -148,10 +148,11 @@ impl<R: From<LivenessUpdate>> LivenessReporter<R> {
     /// The error text is put through [`sanitize_error`], which strips URL
     /// query strings wholesale — and unlike the health path, that **is** the
     /// right instrument here. A push producer's error comes from its own
-    /// client (the Solana `PubsubClient`, a raw WebSocket), none of which has
-    /// this crate's name-aware [`crate::HttpClient::redact_query`] hook, and a
-    /// hosted endpoint carries its credential as `?api-key=…` exactly as a
-    /// price venue does. That text lands in a column the read-only dashboard
+    /// client (the Solana `PubsubClient`, a raw WebSocket), none of which
+    /// passes through [`crate::HttpClient`] and so none of which reaches its
+    /// [`redact_query`](crate::HttpClient) pass at all, and a hosted endpoint
+    /// carries its credential as `?api-key=…` exactly as a price venue does.
+    /// That text lands in a column the read-only dashboard
     /// role can `SELECT`, so without the blunt strip an error message is an
     /// exfiltration path for the credential. Losing the benign query
     /// parameters with it costs nothing here: a subscribe URL's query string

@@ -47,12 +47,13 @@
 -- INTEGRITY. `last_error` here carries arbitrary text a *producer's client*
 -- produced, and its guard is deliberately **not** the one `feed_health`'s
 -- same-named column relies on. That column trusts the `feeds` HTTP transport's
--- `HttpClient::redact_query`, which redacts a credential by registered
--- parameter name before the error is wrapped. No push producer has that hook:
--- the maker's fill subscription errors come from the Solana `PubsubClient`,
--- which has no redaction of its own, and a hosted endpoint carries its
--- credential in the subscribe URL as `?api-key=…` exactly as a price venue
--- does. So this column's writer sanitizes its text through the framework's
+-- `HttpClient::redact_query`, which rewrites every query value that is not on
+-- an explicit benign allow-list before the error is wrapped. A push producer
+-- never reaches that pass at all — it is a method on the HTTP client, and the
+-- maker's fill subscription errors come from the Solana `PubsubClient`, which
+-- has no redaction of its own — and a hosted endpoint carries its credential
+-- in the subscribe URL as `?api-key=…` exactly as a price venue does. So this
+-- column's writer sanitizes its text through the framework's
 -- `sanitize_error`, the blunt strip that removes the whole query string —
 -- the same footing as `maker_telemetry.tick_error`, and for the same reason.
 -- Losing the benign query parameters costs nothing here: a subscribe URL's

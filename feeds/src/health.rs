@@ -144,13 +144,14 @@ impl<R: From<HealthUpdate> + Send> FeedMetrics for HealthReporter<R> {
         // noticed rather than the venue that failed.
         //
         // Truncated but **not** query-stripped, deliberately. This crate's own
-        // transport already redacts URL-borne credentials, by registered
-        // parameter *name*, in `HttpClient::redact_query` — before the error is
-        // wrapped. Running [`sanitize_error`] on top would strip the whole
-        // query string and take every benign parameter with it, and those are
-        // exactly what a failed paged backfill is diagnosed from: which symbol,
-        // which interval, which window. The narrower name-aware redaction is
-        // strictly better here, so this stays out of its way.
+        // transport already redacts URL-borne credentials in
+        // `HttpClient::redact_query` — default-deny against an explicit benign
+        // allow-list — before the error is wrapped. Running [`sanitize_error`]
+        // on top would strip the whole query string and take every benign
+        // parameter with it, and those are exactly what a failed paged backfill
+        // is diagnosed from: which symbol, which interval, which window. The
+        // transport's name-keyed redaction keeps them, so this stays out of its
+        // way.
         self.offer(HealthUpdate {
             feed: feed.to_string(),
             at: now_secs(),
@@ -163,11 +164,11 @@ impl<R: From<HealthUpdate> + Send> FeedMetrics for HealthReporter<R> {
 /// embeds, then bound its length.
 ///
 /// **For a `feeds` transport error, prefer the transport's own redaction and
-/// do not use this.** [`crate::HttpClient`] redacts URL-borne credentials by
-/// registered parameter *name* before an error is wrapped, which keeps every
-/// benign parameter legible — and those are what a failed paged backfill is
-/// diagnosed from. This is the blunt instrument: it removes the whole query
-/// string, diagnostics included.
+/// do not use this.** [`crate::HttpClient`] redacts URL-borne credentials
+/// before an error is wrapped — every query value goes unless its name is on
+/// an explicit benign allow-list — which keeps the benign parameters legible,
+/// and those are what a failed paged backfill is diagnosed from. This is the
+/// blunt instrument: it removes the whole query string, diagnostics included.
 ///
 /// It exists for the error text a consumer persists from a client that has
 /// **no** such hook. The maker's tick error is the case: it comes from the

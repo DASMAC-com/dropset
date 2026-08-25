@@ -953,7 +953,7 @@ silently redirect those references.
 
 DDL lives in `db-schema/migrations/0003_maker_telemetry.sql`,
 `0007_fair_price_fusion.sql` and
-`0006_push_liveness.sql`, which carry the per-column reasoning; the
+`0007_push_liveness.sql`, which carry the per-column reasoning; the
 single-schema-owner rule (see `docs/data-feeds.md` §8) means the bot
 issues no DDL and never asserts a schema.
 
