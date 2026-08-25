@@ -53,6 +53,32 @@ decisions back there. The `plan` skill is its method; the document is
 the state. Detail — the env var, and why blocking edges are placed
 only here: `docs/conventions/linear-automation.md`.
 
+### The architect session — the CEO hat
+
+Long-horizon **design** conversations run in their own session, not
+in a planning session: `plan` keeps the board coherent, `architect`
+asks whether the thing on the board is the right thing to build. Same
+seat quality, different job — so different sessions, not a mode
+toggle. Launched with **`caps <topic>`** (base repo, model-pinned,
+idempotent, one resumable session per design thread, named
+`ceo-<topic>`). It bootstraps minimally — the Planning document and
+the track umbrellas, nothing else — and writes **nothing to the
+board**: the board monopoly stays with the planning session, and the
+architect hands its conclusions over through the Planning document's
+`Notes for the next planning session` heading **and** a direct
+message. Detail: the `architect` skill.
+
+### Three more verbs
+
+**`/wrap`** is the clear-to-close gate for ending a session — a
+deterministic checklist ending in an explicit verdict, for the ragged
+endings `review-pr` does not cover. **`/harden`** turns a proven
+ad-hoc command shape into a committed, tested tool, consuming the
+candidates `session-metrics` already ranks; it refuses a shape with no
+measured recurrence. **`/root-cause`** is systematic debugging under
+two hard rules: no fix before the cause is investigated, and after
+three failed hypotheses the architecture is what gets questioned.
+
 ### Structured filing fields
 
 Every filed issue carries one stable machine-readable field the

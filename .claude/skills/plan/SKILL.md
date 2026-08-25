@@ -464,6 +464,49 @@ skill binds it too:
 - **Fewest coherent PRs** — fold coupled findings, but never
   across separate apps, languages, or deploy units.
 
+  **The `Claude:` meta class has no size bound.**
+  Operator-ratified: meta work aggregates into **one** batch
+  issue regardless of body size, because at most one meta task
+  ever runs in flight (they contend on the same skill files),
+  so a second buys no parallelism and costs a merge conflict.
+  One batch, one in flight, no size bound. `merge-tasks`
+  suppresses its oversized-survivor warning for this class.
+  The split recommendation stands for **product** issues,
+  where the work genuinely can run in parallel. This exempts
+  size only — the coherence floor still binds, and meta never
+  folds together with product code.
+
+- **State a scope posture when staging an issue.** For each
+  issue this session stages into the queue, commit to one:
+
+  - **hold** — build what is specified, no more;
+  - **expand** — this is under-scoped for what it is trying
+    to achieve, and here is what it is missing;
+  - **cut** — this is over-scoped; here is the smaller thing
+    that gets the value.
+
+  Default it from context — the phase the roadmap is in, what
+  the operator has been asking for — and **say which you
+  took**. Naming it is the substantive part: an unstated
+  posture is **hold** by inertia, which is exactly the
+  bookkeeper's default and means scope is never actually
+  examined. A board orchestrator that only ever holds scope
+  is not neutral; it is silently endorsing whatever the
+  filing session happened to write.
+
+  **This is per-issue, at staging time, and it lives here
+  because the board does.** Scope is a staging decision and
+  board analysis is this session's monopoly, so putting the
+  challenge into an implementation session would break that
+  monopoly, and a separate skill would create a second place
+  that reasons about scope.
+
+  It is deliberately **not** the CEO-hat conversation. Long-
+  horizon design — whether this is the right thing to build at
+  all — is the `architect` session's job, in its own session
+  with its own launcher. This is the narrower act: one issue,
+  one posture, stated at the moment it is queued.
+
 - **Todo / Backlog split** — initiatives and meta work in
   **Todo**; pullable work items in **Backlog**, which is what
   the operator pulls from. See step 1 for the full three-tier

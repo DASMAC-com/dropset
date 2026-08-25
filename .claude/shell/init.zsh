@@ -192,16 +192,31 @@ _ds_daily_sid() {
 # default on every reopen after it, which is exactly the "still works, so
 # nobody notices" slip `paps` exists to remove.
 _ds_daily_session() {
-  local kind="$1" name="$2" prompt="$3" model="$4"
+  _ds_session "$(_ds_daily_sid "$1")" "$2" "$3" "$4"
+}
 
-  local sid slug transcript
+# Internal: the start-or-resume core, given an already-computed session id.
+#
+# Split out from `_ds_daily_session` so a session keyed by something other than
+# the date can reuse it unchanged. `paps` and `haps` key on the day; `caps` keys
+# on a TOPIC, because a design thread outlives a day and resuming it tomorrow is
+# the whole point. Everything below the id — the idempotency, the model pin
+# riding both branches, the permission mode — is identical for both, and the
+# operator's stated abstraction is that these launchers differ only in the
+# briefing.
+#
+#   $1 session id   $2 display name   $3 initial prompt
+#   $4 model to pin, or "" for the saved default
+_ds_session() {
+  local sid="$1" name="$2" prompt="$3" model="$4"
+
+  local slug transcript
   local -a model_flag
   [[ -n "$model" ]] && model_flag=(--model "$model")
 
   _ds_base || return 1
   _ds_secrets
 
-  sid="$(_ds_daily_sid "$kind")"
   # The transcript path Claude Code writes: the project slug replaces every `/`
   # and `.` in the cwd with `-` — the same rule .claude/tools/firm_last.py
   # encodes for reading transcripts back.
@@ -214,6 +229,25 @@ _ds_daily_session() {
     claude --session-id "$sid" -n "$name" --permission-mode acceptEdits \
       "${model_flag[@]}" "$prompt"
   fi
+}
+
+# Internal: a deterministic per-TOPIC session UUID, seeded by kind + topic.
+#
+# Deliberately no date in the seed, which is the one substantive difference from
+# `_ds_daily_sid`: an architect session is a long-horizon thread that is meant to
+# be resumed days later. Putting the date in would silently start a fresh
+# conversation each morning and lose the thread — the exact failure the verb
+# exists to prevent.
+_ds_topic_sid() {
+  local raw
+  if (( $+commands[md5] )); then
+    raw="$(printf 'dropset-%s-%s' "$1" "$2" | md5 -q)"
+  else
+    raw="$(printf 'dropset-%s-%s' "$1" "$2" | md5sum)"
+    raw="${raw%% *}"
+  fi
+  print -r -- \
+    "${raw:0:8}-${raw:8:4}-${raw:12:4}-${raw:16:4}-${raw:20:12}"
 }
 
 # Start a WORKTREE session. Creates the `eng-###` worktree directory whose
@@ -343,6 +377,35 @@ haps() {
     return 1
   fi
   _ds_daily_session housekeeping "housekeeping-$(date +%-d)" /housekeeping ''
+}
+
+# Start OR resume an ARCHITECT session on one topic — the CEO hat. Same seat
+# quality as `paps` and the same idempotency; a different job.
+#
+# Takes a TOPIC and keys the session on it, so each long-horizon design thread
+# gets its own resumable session and parallel threads never share context:
+#
+#   caps volatility-telemetry
+#
+# The name is `ceo-<topic>`, which makes the fleet listing read by role —
+# `eng-*` implementers, `plan-*` planning, `ceo-*` architecture.
+#
+# Model-pinned like `paps` for the same reason: this session argues strategy,
+# and fidelity beats tokens. It writes nothing to the board — see the skill.
+caps() {
+  local topic="$1"
+  if [[ -z "$topic" || -n "$2" ]]; then
+    print -u2 'Usage: caps <topic>   (e.g. caps volatility-telemetry)'
+    return 1
+  fi
+  # A topic reaches a session name and a filename, so keep it to the shape a
+  # branch would take rather than sanitizing something surprising later.
+  if [[ ! "$topic" =~ '^[a-z0-9][a-z0-9-]*$' ]]; then
+    print -u2 'caps: topic must be lowercase letters, digits and dashes'
+    return 1
+  fi
+  _ds_session "$(_ds_topic_sid architect "$topic")" \
+    "ceo-$topic" /architect claude-fable-5
 }
 
 # Resume the whole FLEET: one iTerm tab per in-flight Linear issue, each with
