@@ -31,7 +31,7 @@
 -- every cross the maker quotes must be one the collector records — and
 -- `market-data/tests/pyth_roster_agreement.rs` now asserts that instead.
 --
--- ONLY FEEDS THAT ACTUALLY PUBLISH ARE SEEDED, AND THIS IS THE WHOLE CARE.
+-- ONLY FEEDS THAT ACTUALLY PUBLISH ARE SEEDED.
 --
 -- Presence in the Hermes FX catalogue does not mean a feed has ever carried a
 -- price. Of the 53 catalogued feeds whose legs are both roster currencies, 27

@@ -935,8 +935,10 @@ strictly for *intraday* coverage, which is what it was measuring, but
 under the widen-then-filter direction — where a daily reading is a
 consensus input rather than a disqualification — it reads as more
 alarming about MYR than the data supports. NGN is the one roster
-currency with no daily corroborator at all, and that is what the er-api
-source below actually rescues.
+currency with no daily corroborator at all, and it is the gap the er-api
+source below exists to close — **once something collects it**. The
+adapter has landed; no collector consumes it yet, so NGN's daily
+coverage is unchanged as of this writing.
 
 **Wired 2026-08-24, and wider than "those five"**
 (`0006_pyth_fx_crosses.sql`). The five are seeded, and so are fifteen
@@ -952,8 +954,11 @@ the adapter omits a feed it got no answer for, a seeded dead feed is
 indistinguishable from an outage — silently missing data, forever — so
 every id was confirmed live before seeding, and the 26 silent ones are
 named in the migration so the check is not repeated. USD/MYR and USD/NGN
-are among them, which is the same finding as the paragraph above,
-reached independently.
+are among them. That corroborates the **Pyth-column** claim higher up —
+neither currency has a live Pyth feed — and *not* the correction beside
+it, whose whole point is that the two are unlike on **daily** coverage.
+The two results are about different columns and agree on neither
+currency's overall exposure.
 
 One consequence worth stating: the collector roster and the maker's
 compiled roster **no longer hold the same set**, deliberately. The
@@ -980,12 +985,12 @@ propagating to all three alike.
 **Candidates probed and rejected**, recorded so the search is not
 repeated:
 
-| Source                | Intraday      | Verdict                                                                                                                                        |
-| --------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `exchangerate.host`   | —             | a key is now required; the free keyless tier is gone                                                                                           |
-| `open.er-api.com`     | no            | **reversed 2026-08-24 — now wired**; daily only, which the relaxed-latency direction makes a corroborator rather than a disqualification       |
-| Stooq                 | claimed       | every quote URL 404s and the CSV endpoint serves a JavaScript bot challenge                                                                    |
-| Yahoo Finance `chart` | **yes, real** | 1124 bars at a 60s median gap, pricing AUD/USD in the range Pyth reports — but unofficial, and licensed for neither storage nor redistribution |
+| Source                | Intraday      | Verdict                                                                                                                                                   |
+| --------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exchangerate.host`   | —             | a key is now required; the free keyless tier is gone                                                                                                      |
+| `open.er-api.com`     | no            | **reversed 2026-08-24 — adapter landed, not yet collected**; daily only, which the relaxed-latency direction makes a corroborator, not a disqualification |
+| Stooq                 | claimed       | every quote URL 404s and the CSV endpoint serves a JavaScript bot challenge                                                                               |
+| Yahoo Finance `chart` | **yes, real** | 1124 bars at a 60s median gap, pricing AUD/USD in the range Pyth reports — but unofficial, and licensed for neither storage nor redistribution            |
 
 Yahoo is the instructive rejection: it is the only keyless source probed
 that genuinely serves minute FX, so it fails on license rather than on
@@ -1005,6 +1010,17 @@ it blends central-bank and commercial sources and will not list a code
 without at least three of them. It is a differently-built estimate, not
 another render of a fix the roster already carries.
 
+*Status — adapter only.* `feeds/src/venues/erapi.rs` has landed and is
+registered, but **nothing constructs it**: there is no collector, no
+sink, and no stored reading. So this source ingests nothing today and
+the roster's live coverage is unchanged. The consumer is deliberately
+separate work — unlike Frankfurter, this adapter yields a struct
+carrying the provider's refresh instants rather than a bare `Quotes`
+map, so it cannot simply drop into the maker's fair-value cascade, and
+the instants want a store that keys on them. Read every coverage claim
+about this source as a property of the *source*, not of what the
+roster currently records.
+
 *License — internal use only.* The open-access endpoint permits caching
 and commercial currency-conversion use, **prohibits re-distribution**,
 and requires attribution wherever the rates are shown. Storing readings
@@ -1022,9 +1038,9 @@ declared input property rather than something the adjudicator should
 have to discover: the two
 readings are correlated by construction, so per-source noise should
 reflect it. The correlation is partial and not duplication, which is
-measurable — er-api's EUR implied 1.16798 USD/EUR on 2026-08-24 against
-the ECB's own 1.1664 fix for that date, so it is demonstrably not a
-passthrough.
+measurable — er-api's EUR of 0.85618 per USD on 2026-08-24 inverts to
+1.16798, against the ECB's own 1.1664 fix for that date, so it is
+demonstrably not a passthrough.
 
 *Five central-bank reference APIs, probed and rejected as price inputs.*
 All were reachable, keyless and HTTP 200 — the hostility to automated

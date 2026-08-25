@@ -189,10 +189,15 @@ fn both_copies_were_actually_found() {
          probably stopped matching one file's row shape",
         seed.len()
     );
+    // This floor is also the ONLY thing now catching a market silently dropped
+    // from the maker's MARKETS. Under the old equality check, maker shrinkage
+    // failed at any roster size; under containment a shorter maker set is still
+    // contained, so it passes. Bump this number whenever MARKETS grows, or the
+    // protection quietly stops covering the difference.
     assert!(
         maker.len() >= 7,
-        "found only {} crosses in the maker constant; the extractor has \
-         probably stopped matching its format",
+        "found only {} crosses in the maker constant; either the extractor has \
+         stopped matching its format, or a market was dropped from MARKETS",
         maker.len()
     );
 }
