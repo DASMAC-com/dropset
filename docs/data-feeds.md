@@ -924,6 +924,29 @@ alarming about MYR than the data supports. NGN is the one roster
 currency with no daily corroborator at all, and that is what the er-api
 source below actually rescues.
 
+**Wired 2026-08-24, and wider than "those five"**
+(`0006_pyth_fx_crosses.sql`). The five are seeded, and so are fifteen
+crosses with **no USD leg** — EUR/GBP, EUR/JPY, GBP/CAD and the rest —
+because Hermes publishes them and a cross we may want to quote later
+cannot have its history backfilled once the market exists. The roster
+goes from 7 feeds to 27.
+
+The care that mattered was refusing to seed from the catalogue.
+Fifty-three catalogued feeds have both legs in the roster; only **27
+have ever published**, the other 26 reporting `publish_time` 0. Since
+the adapter omits a feed it got no answer for, a seeded dead feed is
+indistinguishable from an outage — silently missing data, forever — so
+every id was confirmed live before seeding, and the 26 silent ones are
+named in the migration so the check is not repeated. USD/MYR and USD/NGN
+are among them, which is the same finding as the paragraph above,
+reached independently.
+
+One consequence worth stating: the collector roster and the maker's
+compiled roster **no longer hold the same set**, deliberately. The
+collector ingests everything obtainable; the maker quotes its configured
+markets. The test that pinned them equal now pins containment instead —
+the maker may not quote a cross whose history nothing records.
+
 **The roster for AUD/USD quoting, stated outright**, since it is the
 pair this survey was opened on: **Pyth plus OANDA plus Twelve Data**,
 with Frankfurter as the daily reference and Alpha Vantage as daily

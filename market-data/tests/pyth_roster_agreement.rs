@@ -1,6 +1,6 @@
 // cspell:word splitn
 //! The Pyth FX coordinates exist twice in this repo, deliberately, and this
-//! asserts the two copies agree.
+//! asserts the maker's copy is contained in the collector's.
 //!
 //! **Why there are two.** The collector reads its roster from `pyth_fx_feeds`,
 //! seeded by `db-schema/migrations/0005_pyth_fx_feeds.sql`, because ECS offers
@@ -12,12 +12,19 @@
 //! onto the table as an override is follow-up work; the constant remains as the
 //! degraded-mode fallback either way.
 //!
-//! **Why that needs a test.** The two copies price the same crosses for the
-//! same markets, and the failure mode of divergence is silent in both
+//! **Why that needs a test.** The failure mode of divergence is silent in both
 //! directions: a wrong id in the seed makes the collector store nothing for
 //! that cross (the adapter omits feeds it got no answer for), while a wrong id
 //! in the constant makes the maker quote off a different cross than the history
 //! it is compared against. Neither errors.
+//!
+//! **Containment, not equality — the sets stopped coinciding on purpose.**
+//! `0006_pyth_fx_crosses` widened the collector to every cross Hermes publishes
+//! for a roster currency, including crosses with no USD leg, because history
+//! cannot be backfilled into a market that did not exist yet. The maker still
+//! quotes only its configured markets. So a collected cross the maker ignores
+//! is now the normal state, and the property worth pinning is the other
+//! direction: the maker must never quote a cross whose history nothing records.
 //!
 //! **Why it compares text.** The maker bot is a binary-only crate with no `lib`
 //! target, so `MARKETS` cannot be imported. Both files are read as source
@@ -80,11 +87,19 @@ fn from_maker_constant(source: &str) -> Vec<Cross> {
     out
 }
 
-/// Pull the crosses out of the migration's seed `INSERT`.
+/// Pull the crosses out of a migration's seed `INSERT`.
 ///
-/// A seed row is `('EUR', 'EUR-USD', '<64 hex>', false),` — three quoted
-/// tokens and a boolean — which is distinctive enough to pick out without
-/// parsing SQL.
+/// Two row shapes exist, because `0006_pyth_fx_crosses` added the quote leg as
+/// its own column:
+///
+/// - `('EUR', 'EUR-USD', '<64 hex>', false),` — the original three tokens.
+/// - `('EUR', 'GBP', 'EUR-GBP', '<64 hex>', false),` — four, with `quote`.
+///
+/// Both are matched on the **feed id being last**, rather than on a fixed
+/// arity. Keying off position from the front is what would silently skip every
+/// row of the newer shape — and a skipped row is invisible to a containment
+/// check, since a smaller seed still contains the maker's set right up until it
+/// doesn't.
 fn from_migration_seed(sql: &str) -> Vec<Cross> {
     let mut out = Vec::new();
     for line in sql.lines() {
@@ -93,7 +108,7 @@ fn from_migration_seed(sql: &str) -> Vec<Cross> {
             continue;
         }
         let tokens = quoted_all(line, '\'');
-        let [currency, _product_id, feed_id] = tokens.as_slice() else {
+        let (Some(currency), Some(feed_id)) = (tokens.first(), tokens.last()) else {
             continue;
         };
         if !is_feed_id(feed_id) {
@@ -114,22 +129,47 @@ fn maker_crosses() -> Vec<Cross> {
     crosses
 }
 
+/// Every seeded cross, across both migrations that seed the roster.
+///
+/// A new migration that seeds more crosses has to be added here, which is the
+/// intended friction: the containment check below is only as good as the set it
+/// compares against, and a seed file nobody reads makes it pass vacuously.
 fn seed_crosses() -> Vec<Cross> {
     let mut crosses = from_migration_seed(include_str!(
         "../../db-schema/migrations/0005_pyth_fx_feeds.sql"
     ));
+    crosses.extend(from_migration_seed(include_str!(
+        "../../db-schema/migrations/0006_pyth_fx_crosses.sql"
+    )));
     crosses.sort();
     crosses
 }
 
-/// The point of the whole file: one set of coordinates, written twice.
+/// The point of the whole file: every cross the maker quotes is one the
+/// collector records.
+///
+/// **This was an equality check, and equality was right until it wasn't.** The
+/// two sets coincided while the collector stored exactly what the maker quoted.
+/// `0006_pyth_fx_crosses` ends that deliberately — the collector now ingests
+/// every cross Hermes publishes for a roster currency, because history cannot
+/// be backfilled into a market that did not exist yet, while the maker still
+/// quotes only its configured markets. Containment is what actually protects
+/// the maker: it may not quote a cross whose history is not being recorded,
+/// because that is the reading its quote is compared against.
+///
+/// The reverse direction is intentionally unconstrained. A collected cross the
+/// maker does not quote is the normal, desired state now.
 #[test]
-fn the_seed_and_the_maker_constant_name_the_same_crosses() {
-    assert_eq!(
-        seed_crosses(),
-        maker_crosses(),
-        "the Pyth roster seed and the maker bot's MARKETS constant have \
-         diverged; they must price the same crosses the same way round"
+fn every_cross_the_maker_quotes_is_collected() {
+    let seed = seed_crosses();
+    let missing: Vec<Cross> = maker_crosses()
+        .into_iter()
+        .filter(|cross| !seed.contains(cross))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the maker bot's MARKETS constant names crosses the collector does not \
+         record, so it would quote against history that is never stored: {missing:?}"
     );
 }
 
@@ -139,10 +179,14 @@ fn the_seed_and_the_maker_constant_name_the_same_crosses() {
 fn both_copies_were_actually_found() {
     let seed = seed_crosses();
     let maker = maker_crosses();
+    // 7 from 0005 plus 20 from 0006. Pinned as a floor rather than an equality
+    // so seeding a new cross does not fail this, while a parser that stops
+    // matching either file's row shape still does — which is the whole job,
+    // since a short seed makes the containment check pass for the wrong reason.
     assert!(
-        seed.len() >= 7,
-        "found only {} crosses in the migration seed; the extractor has \
-         probably stopped matching its format",
+        seed.len() >= 27,
+        "found only {} crosses in the migration seeds; the extractor has \
+         probably stopped matching one file's row shape",
         seed.len()
     );
     assert!(
