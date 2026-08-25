@@ -164,7 +164,7 @@ class TestMeasure(unittest.TestCase):
             write(root, "keep.rs")
             result = dc.measure(root, dc.parse_dockerignore("**/node_modules\n"))
             self.assertEqual(result.files, 1)
-            self.assertEqual([path for path, _ in result.pruned], ["node_modules"])
+            self.assertEqual(result.pruned, ["node_modules"])
 
     def test_no_rules_measures_everything(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -240,13 +240,53 @@ class TestCheck(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("**/.next", "\n".join(lines))
 
-    def test_complete_file_passes(self) -> None:
+    def test_complete_file_passes_silently(self) -> None:
+        # Silent on success, like the sibling guards. The hook is
+        # `always_run`, so an "ok" line here would print on every commit.
         with tempfile.TemporaryDirectory() as root:
             write(root, ".dockerignore", "\n".join(dc.REQUIRED_PATTERNS))
             write(root, "Cargo.toml", "x")
             code, lines = dc.check(root)
             self.assertEqual(code, 0, "\n".join(lines))
-            self.assertIn("ok", "\n".join(lines))
+            self.assertEqual(lines, [])
+
+    def test_a_negated_pattern_is_rejected(self) -> None:
+        # Two independent reasons, both in the guard's message: a negation
+        # defeats `missing_patterns` (which matches the un-negated rule), and
+        # it breaks `measure`, which prunes without descending.
+        with tempfile.TemporaryDirectory() as root:
+            body = "\n".join(dc.REQUIRED_PATTERNS) + "\n!**/target/keep\n"
+            write(root, ".dockerignore", body)
+            write(root, "Cargo.toml", "x")
+            code, lines = dc.check(root)
+            self.assertEqual(code, 1)
+            self.assertIn("negated", "\n".join(lines))
+            self.assertIn("!**/target/keep", "\n".join(lines))
+
+    def test_an_unreadable_ignore_file_fails_closed_with_a_message(self) -> None:
+        # Fails, rather than silently counting as clean — but with the same
+        # actionable one-liner the missing-file case gets, not a traceback.
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, ".dockerignore"))
+            code, lines = dc.check(root)
+            self.assertEqual(code, 1)
+            self.assertIn("cannot read", "\n".join(lines))
+
+    def test_both_problems_report_together(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            kept = [n for n in dc.REQUIRED_PATTERNS if n != "**/.next"]
+            write(root, ".dockerignore", "\n".join(kept))
+            write(root, "surprise/blob.bin", "0" * 4096)
+            original = dc.CEILING_BYTES
+            dc.CEILING_BYTES = 1024
+            try:
+                code, lines = dc.check(root)
+            finally:
+                dc.CEILING_BYTES = original
+            body = "\n".join(lines)
+            self.assertEqual(code, 1)
+            self.assertIn("**/.next", body)
+            self.assertIn("ceiling", body)
 
     def test_ceiling_trips_on_a_tree_with_no_pattern(self) -> None:
         # The case the presence check cannot catch: a new fat tree nobody
@@ -275,18 +315,38 @@ class TestFindRoot(unittest.TestCase):
                 os.path.realpath(dc.find_root(deep)), os.path.realpath(root)
             )
 
-    def test_raises_when_there_is_no_root(self) -> None:
+    def test_raises_a_local_exception_when_there_is_no_root(self) -> None:
+        # NoCheckoutRoot, not SystemExit: a helper three frames down must not
+        # exit the process out from under the `main() -> int` contract.
         with tempfile.TemporaryDirectory() as root:
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(dc.NoCheckoutRoot):
                 dc.find_root(root)
 
+    def test_main_translates_it_to_an_exit_code(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            buffer = io.StringIO()
+            with redirect_stderr(buffer):
+                code = dc.main(["--measure", "--root", root, "--no-ignore"])
+            # --root given, so find_root is never consulted: this is the
+            # happy path, and it proves the translation below is about the
+            # no-root case specifically rather than about --root.
+            self.assertEqual(code, 0)
 
-class TestHuman(unittest.TestCase):
+
+class TestHumanBytes(unittest.TestCase):
     def test_scales_to_the_largest_unit(self) -> None:
-        self.assertEqual(dc.human(512), "512 B")
-        self.assertEqual(dc.human(2048), "2.0 KB")
-        self.assertEqual(dc.human(5 * 1024 * 1024), "5.0 MB")
-        self.assertEqual(dc.human(3 * 1024**3), "3.0 GB")
+        self.assertEqual(dc.human_bytes(512), "512 B")
+        self.assertEqual(dc.human_bytes(2048), "2.0 KB")
+        self.assertEqual(dc.human_bytes(5 * 1024 * 1024), "5.0 MB")
+        self.assertEqual(dc.human_bytes(3 * 1024**3), "3.0 GB")
+
+    def test_saturates_at_the_last_unit(self) -> None:
+        # The `or unit == "TB"` disjunct is what makes the trailing
+        # `raise AssertionError("unreachable")` genuinely unreachable. Pin it,
+        # so that appending a larger unit to the tuple cannot silently make
+        # that line reachable.
+        self.assertEqual(dc.human_bytes(2 * 1024**4), "2.0 TB")
+        self.assertEqual(dc.human_bytes(9999 * 1024**4), "9999.0 TB")
 
 
 class TestMain(unittest.TestCase):
@@ -316,6 +376,44 @@ class TestMain(unittest.TestCase):
             self.assertIn("target", plain.getvalue())
             self.assertIn("4.0 KB", baseline.getvalue())
             self.assertNotIn("KB", plain.getvalue().split("pruned")[0])
+
+    def test_ignore_file_reads_from_elsewhere(self) -> None:
+        # The flag's whole purpose: measure the "after" size of a checkout
+        # that does not carry the ignore file yet.
+        with tempfile.TemporaryDirectory() as root:
+            write(root, "target/big.o", "0" * 4096)
+            write(root, "keep.rs", "abc")
+            elsewhere = write(root, "elsewhere/rules.txt", "**/target\n")
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = dc.main(
+                    ["--measure", "--root", root, "--ignore-file", elsewhere]
+                )
+            self.assertEqual(code, 0)
+            self.assertIn("target", buffer.getvalue())
+
+    def test_ignore_file_without_measure_is_rejected(self) -> None:
+        # Silently ignoring it would hand back a confident number computed
+        # from a file the user did not name.
+        with tempfile.TemporaryDirectory() as root:
+            with redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    dc.main(["--root", root, "--ignore-file", "x"])
+
+    def test_ignore_file_with_no_ignore_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            with redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    dc.main(
+                        [
+                            "--measure",
+                            "--no-ignore",
+                            "--root",
+                            root,
+                            "--ignore-file",
+                            "x",
+                        ]
+                    )
 
     def test_check_failure_goes_to_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -368,9 +466,19 @@ class TestRealIgnoreFile(unittest.TestCase):
                 )
 
     def test_member_sources_survive(self) -> None:
+        # The existence assertion is what keeps this from going vacuous.
+        # `is_ignored` is a pure string operation and returns False for a path
+        # that is not there, so without it a member whose entry point moved
+        # (or a future binary-only crate with only src/main.rs) would assert
+        # "a nonexistent path is not ignored" and prove nothing.
         for member in self.members():
             source = f"{member}/src/lib.rs"
             with self.subTest(path=source):
+                self.assertTrue(
+                    os.path.exists(os.path.join(self.root, source)),
+                    f"{source} is missing — point this test at the member's "
+                    "real entry point rather than letting it pass vacuously",
+                )
                 self.assertFalse(dc.is_ignored(source, self.rules))
 
     def test_root_build_inputs_survive(self) -> None:
@@ -406,9 +514,56 @@ class TestRealIgnoreFile(unittest.TestCase):
             "frontend/public/flags/us.svg",
             "decks",
             "brand-assets",
+            # Excluded wholesale, not just the worktrees: settings.local.json
+            # is git-ignored, and Docker does not honor gitignore.
+            ".claude",
+            ".claude/settings.local.json",
+            ".claude/tools/docker_context.py",
+            # The one tree whose stated purpose is holding private keys.
+            "keys",
+            "keys/AAAA.json",
         ):
             with self.subTest(path=path):
                 self.assertTrue(dc.is_ignored(path, self.rules))
+
+    def test_the_required_markers_match_the_required_set(self) -> None:
+        # The `(REQUIRED)` markers in .dockerignore are a reader's aid that
+        # nothing parses, so without this they can drift from
+        # REQUIRED_PATTERNS in BOTH directions and no gate notices: a marked
+        # section whose patterns are not enrolled reads as guarded and is
+        # not, and an enrolled pattern under an unmarked section is guarded
+        # while the file says otherwise.
+        with open(os.path.join(self.root, ".dockerignore"), encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+
+        marked: set[str] = set()
+        in_required = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("# ==="):
+                in_required = "(REQUIRED)" in stripped
+                continue
+            if not stripped or stripped.startswith("#"):
+                continue
+            if in_required:
+                marked.add(dc.clean_pattern(stripped))
+
+        expected = {dc.clean_pattern(name) for name in dc.REQUIRED_PATTERNS}
+        self.assertEqual(
+            marked,
+            expected,
+            "the (REQUIRED) sections of .dockerignore and "
+            "REQUIRED_PATTERNS have drifted apart",
+        )
+
+    def test_the_real_file_carries_no_negation(self) -> None:
+        # `measure` prunes an excluded directory without descending, so it
+        # cannot see a re-include beneath one; and `missing_patterns` matches
+        # on the un-negated rules, so a negation defeats it. The matcher
+        # supports negation correctly — the FILE may not use one until
+        # `measure` is negation-aware. `check` enforces this; assert it here
+        # too so the reason travels with the tests.
+        self.assertEqual([rule.pattern for rule in self.rules if rule.negated], [])
 
     def test_env_files_are_excluded(self) -> None:
         # An env file baked into a layer stays in the image.

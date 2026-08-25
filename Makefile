@@ -34,7 +34,7 @@ clean:
 # were missing outright. A table claiming a bound port is free is worse than
 # no table at all, which is the argument for re-deriving it rather than
 # patching the one row that prompted the look.
-#   3000  frontend (make frontend, make frontend-localnet)
+#   3000  frontend (make frontend, make frontend-localnet, make demo)
 #   3100  explorer (make explorer) — serves 3000 in-container
 #   3200  Grafana (make grafana, make collectors-up, make demo)
 #   3300  decks (make decks)
@@ -370,12 +370,22 @@ decks-build: check-pnpm
 # progress and its errors belong on a plain terminal rather than under a TUI.
 # It is also why this target now needs `check-docker`.
 #
-# On exit the trap tears down what this invocation started, in the same order
-# of ownership as the rest of the file: `collectors-down` stops the four
-# collectors and Grafana and deliberately LEAVES `postgres` — the volume holds
-# recorded candles, and every per-app `down` target here is scoped for exactly
-# that reason. The browser tabs are the operator's to close; the containers
-# are the trap's.
+# On exit the trap runs `collectors-down`, which stops the four collectors and
+# Grafana and deliberately LEAVES `postgres` — the volume holds recorded
+# candles, and every per-app `down` target here is scoped for exactly that
+# reason. The browser tabs are the operator's to close.
+#
+# Two honest limits on that teardown, since "tears down what it started" would
+# overstate it. `collectors-up` is idempotent, so collectors the operator had
+# already started are stopped too on exit; and it runs BEFORE the trap is
+# installed, so a Ctrl-C during the image build leaves them up (`make
+# collectors-down` recovers). Both are recoverable and neither touches data.
+#
+# `DEMO_CLEANUP` disarms the trap (`trap -`) as its first act. INT and EXIT
+# are both trapped and the shell runs the EXIT handler after the INT one, so
+# without that the whole teardown ran twice on Ctrl-C. That was free when the
+# handler was a bare `kill`; it is not free now that it also runs a
+# five-service `docker compose rm -sf`.
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
 # The background half and its cleanup, hoisted into variables the way `FX_UP`
 # is: the Makefile linter caps a recipe body at 5 lines and counts
@@ -383,7 +393,7 @@ FRONTEND_LOG ?= /tmp/dropset-frontend.log
 # before these additions.
 DEMO_FRONTEND = $(MAKE) --no-print-directory frontend-localnet \
 	>$(FRONTEND_LOG) 2>&1 </dev/null
-DEMO_CLEANUP = kill -TERM -$$group 2>/dev/null; \
+DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null; \
 	$(MAKE) --no-print-directory collectors-down
 .PHONY: demo
 demo: check-docker
@@ -478,9 +488,9 @@ clean-docker-volume: check-docker
 # running. Postgres is now shared infrastructure — the collectors use the same
 # container (and `coinbase` is `restart: unless-stopped`, so it would
 # error-loop against a removed database), so no per-app `down` target may take
-# it away. `clean-docker` is what stops the whole data plane, and the only
-# thing that discards the volume; `docker compose ... stop postgres` covers the
-# ad-hoc case.
+# it away. `clean-docker` is what stops the whole data plane, and
+# `clean-docker-volume` is the only thing that discards the volume;
+# `docker compose ... stop postgres` covers the ad-hoc case.
 #
 # One first-contact snag: `up` builds only when an image is ABSENT, so a
 # worktree holding a pre-consolidation indexer image reuses it, and that image
@@ -670,7 +680,7 @@ lint:
 # Rust service in infra/localnet/docker-compose.yml builds with `context:
 # '../..'` and `COPY . .`, so without that file each build ships the whole
 # checkout to the daemon — 90.9 GB across 868k files, measured on the base
-# checkout; 8.2 MB across 726 with it. Run by the `docker-context` pre-commit
+# checkout; 7.0 MB across 630 with it. Run by the `docker-context` pre-commit
 # hook too, so `make lint` covers it; this target is for looking at the number
 # directly. `ARGS=--measure` reports the size and which trees were pruned.
 .PHONY: docker-context

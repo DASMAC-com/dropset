@@ -47,7 +47,7 @@ docs (specs, med): docs/**
 agent-infra (agent-infra, med): .claude/**, CLAUDE.md,
   docs/conventions/**
 ci-infra (ci, low): .github/**, brand-assets/**, cfg/**, infra/**,
-  keys/**, Makefile, Anchor.toml, rust-toolchain.toml
+  keys/**, Makefile, Anchor.toml, rust-toolchain.toml, .dockerignore
 maker-bot (rust-tool, low): bots/maker-bot/**
 taker-bot (rust-tool, low): bots/taker-bot/**
 util (rust-lib, low): util/**

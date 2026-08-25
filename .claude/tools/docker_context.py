@@ -17,8 +17,9 @@ tree                         size
 ``.git``                       69 MB
 ===========================  =========
 
-— about **71 GB** of context transfer per build. An operator hit it live and
-watched a single collector build climb past 40 GB before killing it.
+The whole context measured **90.9 GB across 868,258 files**; the five trees
+above account for about 71 GB of that. An operator hit it live and watched a
+single collector build climb past 40 GB before killing it.
 
 **Why the biggest tree is the one a checkout cannot see.** ``.claude/worktrees``
 holds one full checkout per agent worktree, each with its own ``target/`` and
@@ -41,9 +42,12 @@ Two checks, because the failure has two shapes:
    thought to add a pattern for. The bound is deliberately loose (see
    ``CEILING_BYTES``) — it is a tripwire for a runaway, not a budget.
 
-The measurement prunes ignored directories as it walks, so it never descends
-into the trees it is excluding; measuring the 71 GB "before" costs the same
-walk as the 130 MB "after".
+The measurement prunes ignored directories as it walks, so a *checked* run
+never descends into the trees it is excluding — which is what keeps the
+pre-commit hook to milliseconds. Note the asymmetry: ``--measure
+--no-ignore`` has no rules to prune with, so the "before" baseline really
+does stat all 868,258 files and is correspondingly slow. Only the "after"
+walk is cheap.
 
 **Not a faithful copy of Docker's matcher.** It implements the subset this
 repo's ignore file uses — comments, ``!`` negation with last-match-wins,
@@ -73,19 +77,29 @@ from typing import NamedTuple
 # context root and would miss `bots/maker-bot/target` and every worktree's own.
 REQUIRED_PATTERNS: dict[str, str] = {
     "**/target": "Rust build output — 12 GB in the base checkout",
-    ".claude/worktrees": (
-        "agent worktrees — one full checkout each, with its own target/ "
-        "and node_modules (57 GB, and git-excluded only locally)"
+    ".claude": (
+        "agent material — no build input, and it holds the worktrees: one "
+        "full checkout each with its own target/ and node_modules (57 GB, "
+        "and git-excluded only locally)"
     ),
     "**/.git": "git metadata; no build script reads it",
     "**/node_modules": "pnpm workspace deps, hoisted to the root (1.3 GB)",
     "**/.next": "Next.js build output",
     "frontend/public": "generated in full by the predev/prebuild hooks",
+    # Size is not why these are here, which is exactly why they need the
+    # presence check: the ceiling below cannot possibly catch a deleted
+    # credential pattern, since a credential is a few hundred bytes against
+    # a 512 MB bound. A layer is write-once, so an env file that reaches one
+    # stays in the image even if a later stage deletes it.
+    "**/.env": "an env file baked into a layer stays in the image",
+    "**/.env.*": "ditto, for the .env.<environment> forms",
+    "infra/localnet/secrets.local.env": "the local secrets enclave's operator file",
+    "keys": "private keys; the one tree whose stated purpose is holding them",
 }
 
 # Order-of-magnitude ceiling on the effective context, per the task's "assert
 # an order-of-magnitude ceiling rather than an exact number". The context
-# measured ~130 MB with the ignore file in place, so this leaves roughly 4x of
+# measured 7.0 MB with the ignore file in place, so this leaves roughly 70x of
 # headroom: a new crate, a fixture set, or a vendored dependency lands without
 # anyone touching this file, and only a genuinely runaway tree trips it.
 #
@@ -106,23 +120,29 @@ class Rule(NamedTuple):
 
 
 class Measurement(NamedTuple):
-    """What one context walk found."""
+    """What one context walk found.
+
+    ``pruned`` carries paths and deliberately no sizes: the walk's whole
+    trick is that it does not descend into an excluded tree, so a size is
+    precisely the thing it cannot report for one.
+    """
 
     files: int
     total_bytes: int
-    pruned: list[tuple[str, int]]
+    pruned: list[str]
 
     def render(self) -> str:
         lines = [
-            f"context: {human(self.total_bytes)} across {self.files} files",
+            f"docker-context: {human_bytes(self.total_bytes)} across "
+            f"{self.files} files",
         ]
         if self.pruned:
             lines.append(f"pruned {len(self.pruned)} directory tree(s):")
-            lines.extend(f"  {path}" for path, _ in sorted(self.pruned))
+            lines.extend(f"  {path}" for path in sorted(self.pruned))
         return "\n".join(lines)
 
 
-def human(size: int) -> str:
+def human_bytes(size: int) -> str:
     """Render a byte count in the largest unit that keeps it above 1."""
     value = float(size)
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -249,7 +269,7 @@ def measure(root: str, rules: list[Rule]) -> Measurement:
     """
     files = 0
     total = 0
-    pruned: list[tuple[str, int]] = []
+    pruned: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         rel_dir = os.path.relpath(dirpath, root)
         prefix = "" if rel_dir == "." else rel_dir + "/"
@@ -257,7 +277,7 @@ def measure(root: str, rules: list[Rule]) -> Measurement:
         keep: list[str] = []
         for name in dirnames:
             if is_ignored(prefix + name, rules):
-                pruned.append((prefix + name, 0))
+                pruned.append(prefix + name)
             else:
                 keep.append(name)
         # Mutated in place so os.walk skips the pruned trees entirely.
@@ -280,6 +300,18 @@ def measure(root: str, rules: list[Rule]) -> Measurement:
     return Measurement(files, total, pruned)
 
 
+class NoCheckoutRoot(Exception):
+    """No checkout root above the starting directory.
+
+    A local exception rather than a ``SystemExit`` raised three frames down.
+    Every other failure path here returns a code up through ``check()`` to
+    ``main()``, and a helper that exits the process on its own both breaks
+    that contract and makes ``find_root`` awkward to assert on as a library
+    function — a caller has to catch ``SystemExit`` instead of reading a
+    return value.
+    """
+
+
 def find_root(start: str) -> str:
     """Walk up from ``start`` to the checkout root, by marker file."""
     current = os.path.abspath(start)
@@ -290,8 +322,8 @@ def find_root(start: str) -> str:
             return current
         parent = os.path.dirname(current)
         if parent == current:
-            raise SystemExit(
-                f"docker-context: no checkout root above {start} "
+            raise NoCheckoutRoot(
+                f"no checkout root above {start} "
                 f"(looked for {' + '.join(_ROOT_MARKERS)})"
             )
         current = parent
@@ -320,13 +352,50 @@ def check(root: str) -> tuple[int, list[str]]:
             "",
             "Every Rust service in infra/localnet/docker-compose.yml builds "
             "with context '../..' and COPY . ., so without this file each "
-            "build ships the whole checkout (~71 GB) to the daemon.",
+            "build ships the whole checkout (90.9 GB across 868k files, "
+            "measured) to the daemon.",
             "",
             "Required patterns:",
             *(f"  {name}  # {why}" for name, why in REQUIRED_PATTERNS.items()),
         ]
+    except (IsADirectoryError, PermissionError, UnicodeDecodeError) as err:
+        # Deliberately NOT swallowed into a pass: an unreadable ignore file
+        # means the guard verified nothing, so it fails closed. What this
+        # branch buys is the same actionable one-liner the missing-file case
+        # gets, instead of a traceback surfacing out of `make lint`.
+        return 1, [
+            f"docker-context: cannot read {os.path.relpath(path, root)} "
+            f"({type(err).__name__}: {err}).",
+            "",
+            "The guard cannot verify a file it cannot read, so this is a "
+            "failure rather than a skip. Fix the file's encoding or "
+            "permissions and re-run.",
+        ]
 
     problems: list[str] = []
+
+    # A negation is rejected outright, and the two reasons compound.
+    # `missing_patterns` matches on the non-negated rules, so adding
+    # `!**/target` ALONGSIDE `**/target` leaves the presence check happy
+    # while the tree is re-included; and `measure` prunes an excluded
+    # directory without descending, so it cannot see a re-include beneath
+    # one. The matcher itself handles negation correctly — this bans it in
+    # the FILE until `measure` stops pruning such a subtree.
+    negated = [rule.pattern for rule in parse_dockerignore(text) if rule.negated]
+    if negated:
+        problems.extend(
+            [
+                f"docker-context: .dockerignore carries {len(negated)} "
+                "negated pattern(s), which this guard does not support:",
+                *(f"  !{pattern}" for pattern in negated),
+                "",
+                "A negation defeats the presence check (it matches on the "
+                "un-negated rule) and breaks the measurement (pruning never "
+                "descends into an excluded tree, so it cannot see a "
+                "re-include beneath one). Make `measure` negation-aware "
+                "before adding one.",
+            ]
+        )
 
     missing = missing_patterns(text)
     if missing:
@@ -337,8 +406,10 @@ def check(root: str) -> tuple[int, list[str]]:
         problems.extend(f"  {name}  # {REQUIRED_PATTERNS[name]}" for name in missing)
         problems.append("")
         problems.append(
-            "These trees are not build inputs and are large enough to "
-            "dominate the context transfer. Add the pattern back, or update "
+            "None of these is a build input. Most are large enough to "
+            "dominate the context transfer; the credential patterns are "
+            "here instead because the ceiling below cannot catch them — a "
+            "secret is a few hundred bytes. Add the pattern back, or update "
             "REQUIRED_PATTERNS in .claude/tools/docker_context.py if the "
             "tree genuinely moved."
         )
@@ -350,8 +421,8 @@ def check(root: str) -> tuple[int, list[str]]:
         problems.extend(
             [
                 f"docker-context: effective context is "
-                f"{human(result.total_bytes)}, over the "
-                f"{human(CEILING_BYTES)} ceiling.",
+                f"{human_bytes(result.total_bytes)}, over the "
+                f"{human_bytes(CEILING_BYTES)} ceiling.",
                 "",
                 "A tree this large is almost never meant to reach the "
                 "daemon. Run `--measure` to see what survives the ignore "
@@ -363,10 +434,10 @@ def check(root: str) -> tuple[int, list[str]]:
 
     if problems:
         return 1, problems
-    return 0, [
-        f"docker-context: ok — {human(result.total_bytes)} context, "
-        f"{len(REQUIRED_PATTERNS)} required patterns present."
-    ]
+    # Silent on success, like the sibling guards: this hook is `always_run`,
+    # so a line here would print on every commit. `--measure` is how you ask
+    # for the number.
+    return 0, []
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -406,7 +477,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    root = args.root or find_root(os.getcwd())
+    # --ignore-file only reaches the --measure path, so silently accepting it
+    # elsewhere hands back a confident number computed from a file the user
+    # did not name. Both combinations below are rejected rather than ignored.
+    if args.ignore_file and not args.measure:
+        parser.error("--ignore-file requires --measure")
+    if args.ignore_file and args.no_ignore:
+        parser.error("--ignore-file and --no-ignore are mutually exclusive")
+
+    try:
+        root = args.root or find_root(os.getcwd())
+    except NoCheckoutRoot as err:
+        print(f"docker-context: {err}", file=sys.stderr)
+        return 2
 
     if args.measure:
         rules: list[Rule] = []
