@@ -110,6 +110,17 @@ Concrete rules:
     source directories (or the specific files), or exclude the build
     output explicitly with `--exclude-dir`.
 
+    **The agent-config tree is the trap that does not look like one.**
+    `.claude/` reads as a source directory and is not: the worktrees
+    live beneath it, so a bare recursive sweep of it walks **every**
+    worktree checkout, Rust `target/` trees included. One housekeeping
+    pass did exactly that and **timed out at 120 seconds** — a wholly
+    wasted turn, costing wall-clock as well as context. Scope to the
+    subdirectory you mean (`.claude/skills`, `.claude/tools`,
+    `.claude/hooks`); never sweep the parent bare. It bites hardest in
+    the skill family that runs from the base repo — `housekeeping` and
+    `plan` — which is precisely where the worktrees are.
+
     **Better: don't hand-roll the exclude list.** There is a committed
     tool for this shape, which prunes the generated families and the
     never-search trees and reduces to one stable allow-rule however the
@@ -293,6 +304,14 @@ don't write them, in ad-hoc shell or in committed skills/scripts:
   `search_source.py` (it takes the pattern as an argument, not through
   the shell), or reword to avoid the characters — `--fixed` does not
   help, since the refusal happens before the tool ever runs.
+- **A multi-URL `curl` status probe carrying one `-o /dev/null`.** The
+  flag binds to **one** URL, so an eight-URL probe with a single
+  `-o /dev/null` writes the first response to `/dev/null` and dumps the
+  other **seven bodies** — 748KB in the measured case, limited only by
+  the harness's overflow guard rather than by anything the command did.
+  When probing several endpoints for status alone, repeat the flag per
+  URL (`-o /dev/null` once for each), or use a head-only request (`-I`)
+  so there is no body to dump in the first place.
 
 If a one-off like these still gets approved during a session, do
 **not** allow-list it (a `*` can't generalize a compound): the
@@ -302,7 +321,7 @@ emitting it.
 ## The guard hooks
 
 These rules are also enforced **mechanically**, not just by convention,
-by two opt-in `PreToolUse` Bash guard hooks that inspect each command
+by opt-in `PreToolUse` Bash guard hooks that inspect each command
 before it runs:
 
 - **`.claude/hooks/no_compound_bash.py`** blocks any unquoted compound /
@@ -313,10 +332,19 @@ before it runs:
   [why the ban stays absolute](#why-the-git-grep-ban-stays-absolute)
   below for what the one legitimate use is and why it doesn't earn a
   carve-out.
+- **`.claude/hooks/no_destructive_bash.py`** covers command **danger**,
+  which the other two do not: they check shell *form*. Two tiers — an
+  **ask** tier (recursive force-delete, force-push, hard reset,
+  `git clean -fdx`, destructive SQL, a docker prune) blocked with the
+  `#destructive-ok` marker as its escape hatch, and a small **deny**
+  tier that no marker lifts (a recursive delete of `/` or the home
+  directory, a force-push to the default branch). It is a **best-effort
+  advisory stop, not a policy boundary** — it matches patterns over one
+  command string and is not a sandbox.
 
 Each guard **script** is committed, but its wiring is not — like the
 iTerm color integration, they are user-local configuration the repo
-documents rather than enforces. Both hooks are quote-aware and fail
+documents rather than enforces. Every hook is quote-aware and fails
 open. Their behavior and the exact `settings.json` wiring live with the
 other local integrations in
 [local-integrations](local-integrations.md).
@@ -366,20 +394,44 @@ If the harness's firming logic ever changes, this rationale must be
 looks blessed when it isn't, and the re-prompt friction — favor the Grep
 tool regardless.
 
-**The gap is real but narrow, and floored by workarounds.** Every grep
-pathology in the session-metrics record to date is a *working-tree*
-search. For history:
+**The gap is real, and the tool that fills it is committed.** Use
+`show_at_ref.py` — it reads the blob at a ref inside its own process and
+prints only the slice you asked for:
+
+```sh
+python3 .claude/tools/show_at_ref.py origin/main src/lib.rs --grep '^pub fn'
+python3 .claude/tools/show_at_ref.py origin/main docs/x.md --section 'Levers'
+python3 .claude/tools/show_at_ref.py HEAD~5 src/lib.rs --slice 40:80
+```
+
+It reuses `read_result.py`'s renderers, so `--headings` / `--section` /
+`--grep` / `--slice` / `--count` behave exactly as they do on a persisted
+tool result, and it rides the existing `python3 .claude/tools/:*` grant.
+A mode is **required** — there is deliberately no print-it-all default,
+because that would rebuild the whole-file `git show` it replaces.
+
+**The earlier claim that this gap had "adequate indirect workarounds"
+was wrong, and is retracted.** Measured against the actual constraints,
+every conforming path failed: the Grep tool reads only the working tree;
+`git grep` is guard-blocked; piping `git show` into `grep` is a forbidden
+compound; and a throwaway `git worktree add --detach` costs more than the
+read it avoids. What was left was a **whole-blob `git show`** — measured
+at ~4.7k to learn one `Duration` default, and the largest single result
+of that run. The pre-registered trigger below therefore fired, and the
+tool was built.
+
+Two narrower questions still have better answers than a content search:
 
 - `git log -S` / `-G` answers *when and where* a string appeared.
-- `git show <rev>:<path>` answers *what a known file said* at a revision.
-- The rare true case — "which file contained X at rev Y, path unknown" —
-  is answered exactly by a throwaway `git worktree add --detach`
-  checkout plus the Grep tool, with zero permission friction.
+- `git show <rev>:<path>` answers *what a known file said* — but prints
+  the **whole blob**, so prefer `show_at_ref.py` unless you genuinely
+  want all of it. (`--no-patch` suppresses a *diff*, not a blob dump.)
 
-**Pre-registered trigger for revisiting.** A committed
-`.claude/tools/` rev-grep wrapper behind one firmable `python3 …:*`
-prefix is the right *shape* — it is simply the wrong *time*: the
-skill-tooling convention hardens workflows that are established and
-repeated, and this need has **zero** measured occurrences. So: if
-rev-scoped content search is hit **twice** in the session-metrics record,
-build that tool then. Never add a hook carve-out, regardless.
+**The trigger that fired, kept for the record.** The rule was: build a
+committed `.claude/tools/` wrapper behind one firmable `python3 …:*`
+prefix if rev-scoped reading is hit **twice** in the session-metrics
+record. It was — and the shape is now routine rather than rare, because
+the review flow's freshness gates make cross-reference reads ordinary in
+any review that outlives a merge. **Never add a hook carve-out**, though;
+that part of the verdict is unchanged, and the tool is what made it
+unnecessary.

@@ -153,6 +153,50 @@ read used by `housekeeping`:
   pipe, so this stays inside the shell rules and reduces to a
   `Bash(gh api:*)` allow-rule.
 
+**Field-selecting is necessary but not sufficient: a
+collection-valued field reintroduces the payload.** The rules above
+read as "name your fields and the cost goes away", and that is false for
+any field which is itself a per-item list — `files`, `commits`,
+`comments`, `reviews`. Selecting one of those across N items multiplies
+rather than narrows. Measured on both transports: a
+`gh pr list --json number,files` paid **~4.0k** for a two-line answer
+across eleven PRs, and the MCP file-list method **with minimal output
+requested** still returned **81,582 characters**.
+
+So when you field-select, ask what shape each field returns:
+
+- A **scalar** field (`number`, `mergeable`, `headRefName`, a SHA, a
+  timestamp) is the cheap case these rules are written for.
+- A **collection** field is not. If you need it, either bound it
+  (one PR rather than a list) or compute over it **inside a tool** and
+  return only the conclusion — which is what `review_diff.py --overlap`
+  does for the "which open PRs touch my files" question: it fetches the
+  per-PR file lists in its own process and prints only the
+  intersection.
+
+The one carve-out worth naming: a **path-only** file list for a single
+PR is small and legitimately useful (`--json files --jq '.files[].path'`
+for one PR), because the per-file additions/deletions/patch objects are
+what make the full form expensive.
+
+**A `gh api` log fetch needs the escape-sequences flag, and silence
+here is dangerous.** `gh api` refuses a response carrying terminal
+escape sequences unless the allow flag is passed, and Actions job logs
+are colorized — so every log fetch fails with **empty stdout**. A
+scanner that treats a non-zero exit or an empty body as "no matches"
+then silently measures nothing: one 38-job scan reported **zero
+matches having inspected zero logs**, and nearly became a wrong review
+finding. Two rules follow, and the second is the general one:
+
+- Pass the flag when fetching a job log through `gh api`. (The path
+  that works without special-casing is `gh run view --log-failed`
+  wrapped in `run_quiet.py`, then `Grep` the captured log — see
+  `review-pr`'s CI-failure branch.)
+- **Never fold a transport failure into a zero count.** A log scanner
+  must distinguish *fetch failed* from *fetched and found nothing*, and
+  report the first as an error rather than a result. This applies to any
+  scan-and-count over a fallible fetch, not only to logs.
+
 Everything else stays MCP-first; `gh` is not a general-purpose escape
 hatch.
 

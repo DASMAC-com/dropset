@@ -94,6 +94,38 @@ argument was *not* the reason — see that step for why.)
   the discipline fails at the moment of typing, not the moment of
   reading this doc, so the reminder is attached to the result.
 
+  **Once the scope is a single named file, the tool refuses a wide
+  `--context` outright.** A sweep over one file buys its matched regions
+  at an N-line markup and, on clustered matches, at a *higher* price than
+  reading the file. Measured: the three largest single results of one
+  session were exactly this shape — a `--context 6` constants probe over
+  one file (39 matches, overflowed the result cap, spilled 32KB to disk,
+  three constants actually wanted), a `--context 12` struct probe, and a
+  `--context 40` single-symbol probe that is a whole-file read with extra
+  steps — ~11.9k together, roughly **60% of that session's entire Bash
+  cost**. `search_source.py` now detects a wildcard-free single-file
+  scope from the *arguments* and refuses before doing the work; take
+  `--files-only` and slice-read the region it names.
+
+  **Treat the helper's advisory line as a DIRECTIVE, not a note.** When
+  the summary reports clustering or a many-file spread, do not consume
+  that result: re-issue `--files-only` (or add a `--glob`) and slice-read
+  the named region. The detection already works — one session got the
+  correct advisory on its top two sinks (~3.1k, 39% of its Bash cost) and
+  consumed both results anyway. Obedience is the missing half, which is
+  also why the single-file case above was promoted from an advisory to a
+  refusal.
+
+  **A pattern you have not searched before starts `--files-only`.** The
+  advisory is post-hoc by construction — it can only arrive with a
+  payload already paid for — so the first call needs a rule of its own,
+  and this is it: locate first, earn context on a narrowed second call.
+  Five of one session's seven largest results were context-bearing
+  sweeps (~7.4k of a ~25k session), and the instructive one was purely
+  locational. This does **not** override the location-vs-adjudication
+  distinction: the same session's adjudication sweeps took context and
+  were right to, finding three real stale-comment defects.
+
   **Verify a list-producing flag with a count, not the list.** One
   session's largest single result (~5.8k, ~35% of its Bash cost) was a
   new tool's `--print` dumping ~600 repo paths to answer the yes/no
@@ -165,7 +197,18 @@ argument was *not* the reason — see that step for why.)
      is a different denominator the first condition does not cover. Two
      or more imitations is enough; for exactly one, slice.
 
-  And one clarification that does *not* authorize reading whole:
+  And two clarifications that do *not* authorize reading whole:
+
+  - **Citing a file is not a use.** Condition 1 asks for an edit **and**
+    a brief; naming the file in prose satisfies neither, and it is the
+    reading that keeps getting stretched to cover it. One session read a
+    230-line module whole (~2.6k) under the edit-plus-brief license when
+    neither happened — the file was only *cited by name*, and roughly
+    forty percent of it is test code. A grep to the signatures being
+    cited does the whole job. This is deliberately distinct from the
+    rejected argument that defended genuinely amortized whole reads
+    (edited **and** quoted into five briefs); that rejection stands, and
+    this tightens the same boundary from the other side.
 
   - **"Reading 3+ files to orient" is the trigger for slicing, not an
     exception to it.** Survey-time whole-file reads were the single
@@ -185,6 +228,24 @@ argument was *not* the reason — see that step for why.)
     identified, and answering nothing the run went on to use. Pass
     `--glob <the file>`; the map you want is of the file you are opening,
     not of the repo.
+
+    **Match the declaration shape only — and on a prose file, that means
+    the heading marker alone.** A section map's whole value is that it is
+    much smaller than the file, so an alternation whose widest branch
+    matches ordinary content destroys the point. Two measured shapes:
+    a `Makefile` map spelled `^[a-zA-Z0-9_-]*:|^# |^##` returned every
+    comment line in a file that is mostly prose comments (**~5.4k**, that
+    session's single largest result, to answer "where are the rules");
+    and a map over a 1,275-line doc that matched headings **and every
+    table row** returned ~2.6k for a where-question two headings
+    answered — the widest branch bought the file's entire tabular
+    content. For a Makefile match `^[a-zA-Z0-9_-]+:`; for a prose doc
+    match the heading marker (`^#`) and nothing else; the committed
+    `read_result.py --headings` already does exactly this. The general
+    form, which is the part worth carrying: **ask what the widest branch
+    of your alternation matches on its own.** If you genuinely want the
+    prose headings *and* the declarations, ask for them as two narrow
+    queries.
 
 - **Don't read a file you are about to delete, or one you just
   authored.** Two cases adjacent to "never re-fetch what's already in
@@ -543,6 +604,35 @@ argument was *not* the reason — see that step for why.)
   stylesheet, for a question about two selectors. Print what you need,
   not the region it lives in.
 
+- **A script you write is a tool-result generator, so give it the same
+  narrowest-form discipline you give a search.** The rules above are
+  written as if every payload arrives from someone else's command; the
+  expensive ones increasingly arrive from a script authored moments
+  earlier, and that authoring step is where the blind spot lives. The
+  shape is always the same: the script correctly keeps a huge input out
+  of context, then **dumps its own intermediate** instead of the answer.
+
+  Two measured instances. An ad-hoc probe printed full per-pool tables
+  for 19 tokens (**~4.6k**, plus 2.3k on a re-run) when the decision
+  needed per-token totals plus the busiest pool — it had already kept
+  300KB of JSON out of context and then spent the saving on its own
+  output. And a throwaway analysis script dumped a ~200-line
+  chronological series **three times** as it was corrected — the top
+  three Bash results of that session, ~8.7k combined, to answer three
+  sentences.
+
+  So, when you write one:
+
+  - **Default to a ranked one-line-per-item summary**, and make detail
+    an explicit flag. Not the reverse: a flag that must be remembered to
+    *suppress* output is one that will be forgotten.
+  - **Emit the answer shape, not the series.** If the question is "when
+    did this change", print the change-point and its neighbors; if it is
+    "what values occur", print the distinct values with counts.
+  - **Park the full series in a scratchpad file** and slice it if the
+    summary turns out to be wrong. That keeps the second look cheap
+    instead of making the first one expensive.
+
 - **When replacing a binary asset, compare metadata before content.**
   Reading the outgoing artifact to compare it against the incoming one
   costs a full binary Read — one run paid ~8.8k re-reading an old
@@ -693,7 +783,18 @@ argument was *not* the reason — see that step for why.)
   enforces line length (MD013 for Markdown, the "Lines over 80
   columns" hook for code); a manual `grep -nE '^.{81,}$'` pre-check
   over a doc / Markdown diff just re-buys that result into context.
-  Trust the lint hook's output instead of a manual over-80 grep. Same
+  Trust the lint hook's output instead of a manual over-80 grep.
+
+  **And a hand-rolled width check is not merely redundant — on this
+  repo it is wrong.** `awk 'length($0)>80'` counts **bytes**, and an
+  em-dash is three of them, so a compliant line of this repo's
+  em-dash-heavy prose is flagged LONG. One session ran five such checks
+  against a gate it was already running, then had to spend further calls
+  *refuting* the false signal they produced. The gate owns line width;
+  if you ever genuinely want a width probe outside it, it must be
+  character-aware — never a byte-length tool.
+
+  Same
   for validating edited JSON: an exit-code-only check
   (`python3 -m json.tool … >/dev/null`, or the check routed through
   `run_quiet`) confirms the file still parses without a full pretty-print
@@ -706,7 +807,10 @@ wasteful mid-session — a payload you only needed a slice of, a call
 that repeated, an avoidable fan-out — keep a running note of it. At
 session end `/session-metrics` pairs those observations with the
 tool's ranked token sinks to emit *grounded* trim recommendations
-(the lever, and the concrete skill / convention-doc edit it implies)
-into the Linear "Session Metrics" inbox, which `housekeeping` later
-mines. The tool says *where* the tokens went; your running notes say
-*why* and *what to change*.
+(the lever, and the concrete skill / convention-doc edit it implies),
+filing each as its own **parked lever issue** under the `Trim levers`
+milestone through the zero-echo writer; `trim-context` later folds
+them. (The old "Session Metrics" inbox document is **retired** — it
+outgrew the tool-result cap between mining passes.) The tool says
+*where* the tokens went; your running notes say *why* and *what to
+change*.

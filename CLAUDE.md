@@ -256,8 +256,13 @@ answers the question, read large files by slice (Grep then `Read` with
 included — and never re-fetch what's already in context. Reading a file
 whole is licensed by any **one** of three conditions (edit-plus-brief,
 a planned multi-region read, or an exemplar you will imitate N times),
-not by all of them together. A harness-persisted tool result is sliced
-with `.claude/tools/read_result.py`, never `Read` whole. Track wasteful
+not by all of them together — and **citing a file is not one of them**.
+A harness-persisted tool result is sliced
+with `.claude/tools/read_result.py`, never `Read` whole; a file at
+another git ref is sliced with `.claude/tools/show_at_ref.py`, never a
+whole-blob `git show`. A **script you write is a tool-result
+generator** — default it to a ranked summary and gate the full series
+behind a flag. Track wasteful
 payloads as you go for `/session-metrics`. Full detail:
 `docs/conventions/context-economy.md`.
 
@@ -280,12 +285,20 @@ too (`--dir` / `--glob`), which is an independent axis, and remember
 `--context` scales with match *density*, so clustered matches want
 `--files-only` plus a slice-read instead. Keep a
 stable command + subcommand prefix and let only the args vary.
+Never sweep `.claude/` bare — the worktrees live under it, so a
+recursive grep there walks every checkout's `target/` (one such pass
+timed out at 120s); scope to `skills` / `tools` / `hooks`. And a
+multi-URL `curl` status probe must repeat `-o /dev/null` **per URL**
+(the flag binds to one) or use `-I`.
 This holds for shell you **author** in skills, scripts, and Makefile
-targets too, and for work you hand a sub-agent. Two opt-in `PreToolUse`
-guard hooks mechanically enforce these rules:
+targets too, and for work you hand a sub-agent. Three opt-in
+`PreToolUse` guard hooks mechanically enforce these rules:
 `.claude/hooks/no_compound_bash.py` blocks compounds (escape marker
-`#compound-ok`), and `.claude/hooks/no_git_grep.py` blocks `git grep`
-(no escape hatch, deliberately — use the Grep tool). Each script is
+`#compound-ok`), `.claude/hooks/no_git_grep.py` blocks `git grep`
+(no escape hatch, deliberately — use the Grep tool), and
+`.claude/hooks/no_destructive_bash.py` blocks destructive commands in
+two tiers (an overridable ask via `#destructive-ok`, and a small
+catastrophic deny no marker lifts). Each script is
 committed but its
 `settings.json` wiring is **user-local, not committed**. The rules and
 the always-re-prompt patterns are in
@@ -299,12 +312,14 @@ The **user-local Claude Code configuration** the repo documents but
 does **not** commit: the compound-shell guard hook, the **git-grep
 guard** (blocks `git grep` in Bash calls, nudging to the Grep tool —
 no escape hatch, kept absolute on purpose: the one capability it costs
-is revision-scoped search, which has adequate workarounds and no
-guard-safe carve-out), the **worktree edit-path guard** (blocks a
-file-mutating tool
+is revision-scoped search, which is now served by the committed
+`show_at_ref.py` rather than by a guard carve-out), the **worktree
+edit-path guard** (blocks a file-mutating tool
 that targets a base-repo absolute path from a worktree session —
 editing the base copy the worktree build never sees is a recurring,
-expensive slip), the iTerm2 tab-color integration, and the shell setup
+expensive slip), the **destructive-command guard** (an overridable ask
+tier and a small no-override deny tier; best-effort advisory, not a
+policy boundary), the iTerm2 tab-color integration, and the shell setup
 they lean on — including the **session secrets**, which are resolved
 from 1Password at session launch rather than written into a config
 file. Both settings files are git-ignored, so all of it
@@ -324,6 +339,22 @@ untracked — defined as env vars in the runtime config, or in an optional
 file outside the repo. Full detail — every hook's
 wiring, the helper family, and the iTerm setup:
 `docs/conventions/local-integrations.md`.
+
+## What a skill may decide alone
+
+Three tiers, and every skill's autonomy boundary is one of them.
+**Mechanical** — a defensible default with no real alternative — is
+decided silently. **Taste** — a real alternative, bounded and
+reversible cost — is decided, then surfaced at a gate the human already
+reads, naming the road not taken. **User challenge** — overriding
+something the operator *explicitly specified* — is never decided: the
+operator's direction is the default, and the case for changing it is
+put through `AskUserQuestion` with evidence, silence meaning no. The
+canonical instance is the blocking-edge prohibition. The test for which
+tier applies is **the asymmetry of the two errors**. Note that
+"propose, don't act" is the third tier only — invoking `audit` /
+`audit-scope` / the review fan-out **is** their authorization. Full
+detail: `docs/conventions/decision-classification.md`.
 
 ## Briefing sub-agents
 

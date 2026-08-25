@@ -1,5 +1,7 @@
 <!-- cspell:word basenames -->
 
+<!-- cspell:word strikethrough -->
+
 # Linear automation
 
 Skills that **file** Linear issues (`linear-task`, `audit`,
@@ -144,6 +146,21 @@ stable: the filing skills emit it and the dedup probes match on it.
   re-proposed the very thing on intuition. An open-only dedup search
   re-opens every one of those arguments.
 
+  **Locate a sibling issue by identifier or fingerprint — never by a
+  broad listing.** Making the narrow lookup possible is what this field
+  is *for*, so falling back to a wide list throws the field away: one
+  session returned **ten full bodies** to find two siblings. Search the
+  key, not the topic.
+
+  **And never re-fetch a body that has already been echoed.** The same
+  session followed that listing with a `get_issue` for a body the
+  listing had just returned — paying twice for one payload. Every write
+  echoes the full description back (see "Partial edits"), so after any
+  `save_issue` the body is already in hand; read it from that response.
+  For a long body, spill it once with
+  `linear_patch.py read --out <file>` and slice the file thereafter
+  rather than re-reading the field.
+
 That is the whole field set. `**Fingerprint**:` is the only one.
 
 ### Retired: `**Touches**:`
@@ -231,6 +248,22 @@ not one — even though all three are "cleanup from the same rotation".
 Fold *within* a coherent PR boundary; never across one. "Aggressive"
 means minimize PR count up to that floor, not build an incoherent
 mega-PR past it.
+
+**The `Claude:` meta class has no size bound — operator-ratified,
+2026-08-24.** Claude meta work aggregates into **one** batch issue
+regardless of body size. The reasoning is scheduling, not tidiness: at
+most one meta task ever runs in flight (they contend on the same skill
+files), so a second meta issue buys no parallelism and costs a merge
+conflict — and churn speed through the self-improvement loop matters
+more than per-issue readability. So `merge-tasks`' oversized-survivor
+warning carries an explicit **exemption for this class**, and the `plan`
+skill's fold doctrine states it: one batch, one in flight, no size
+bound. The split recommendation stays in force for **product** issues,
+where it is about reviewability of work that genuinely can run in
+parallel.
+
+This exemption is about **size only**. The coherence floor above still
+binds: meta work never folds together with product code.
 
 A worktree branch and its Linear issue **share one `ENG-###`
 number**: branch `eng-499` ↔ issue `ENG-499`. Skills resolve the
@@ -539,6 +572,27 @@ transition echoes the whole body too — and `save_document` returns a
 **truncated** `content` in every one of those cases. The echo is a fixed
 cost per call, so the lever on it is **fewer calls**, not `patch`.
 
+**Patch reduces what you SEND, never what you RECEIVE — so on a large
+body, new narrative goes in a COMMENT.** This is the practical rule the
+sentence above implies and which kept being missed: a comment is
+additive and chronological, and creating one echoes **no body at all**.
+Measured: ten saves against one large-bodied issue cost **~41.1k** in
+echoes to add ~2k of new content, and one of those was a bare state
+transition paying the full echo for a one-field write.
+
+So split by what the write actually is:
+
+- **Narrative** — a progress note, a disposition, a finding, a summary
+  of what a session did → a **comment**.
+- **Structure** — a checklist tick, a machine-parsed field, a
+  supersession, an edit to the spec itself → a **body** edit, because a
+  comment cannot change what the body says.
+
+And for the automated paths, use the zero-echo writer rather than either:
+`.claude/tools/linear_patch.py` applies patch ops, adds comments, and
+makes state transitions while printing **one line**. See the carve-out
+below.
+
 ### Carve-out: a high-volume automated pipeline may bypass the MCP
 
 The rule above — body edits go through the MCP `patch` path — governs
@@ -563,6 +617,34 @@ repeated** (a one-off interactive edit stays on the MCP path, where the
 echo is worth its cost), and the tool must **print enough to confirm the
 write** — identifier and url — so the saving is in the body, not in the
 audit trail.
+
+**The general writer: `.claude/tools/linear_patch.py`.** The trim-lever
+tool solved this for one pipeline; every skill that accumulates
+structured findings paid the echo until it was generalized. This one
+works against **any** issue:
+
+```sh
+python3 .claude/tools/linear_patch.py read  ENG-942 --out <scratch>/body.md
+python3 .claude/tools/linear_patch.py patch ENG-942 --ops <scratch>/ops.json
+python3 .claude/tools/linear_patch.py comment ENG-942 --body <scratch>/note.md
+python3 .claude/tools/linear_patch.py state ENG-942 --state 'In Review'
+```
+
+The ops file is the same vocabulary as the MCP `patch` array (`append`,
+`prepend`, `insert_before`, `insert_after`, `replace`, `replace_range`),
+applied in order and atomically, capped at 50.
+
+**The pre-read stays; only the echo goes.** Anchors must match the
+stored text, so `patch` still fetches the body — but into its own
+process, applying the ops there and printing a size delta. `read` spills
+the body to a file for slicing with `read_result.py` rather than printing
+it. Anchors carrying an `ENG-###` are refused up front, since Linear
+stores those as mention nodes and the anchor can never match.
+
+Named consumers: the `plan` and `merge-tasks` amendment paths, and any
+apply-and-cancel flow — the accumulator shapes where the echo compounds
+worst (44 saves for ~153.2k on one planning session, its eight largest
+results all echoes of the same growing batch).
 
 ### Field-only writes go through `board_batch.py`, not the MCP
 
@@ -764,22 +846,40 @@ and it keeps the write anchor-based — which is what makes it fail
 loudly instead of clobbering a concurrent amendment. A full-body
 `description` write would silently overwrite one.
 
-### Two write-mangle rules for every body you file
+### Write-mangle rules for every body you file
 
-Linear's writer rewrites some markdown on the way in, so two shapes
+Linear's writer rewrites some markdown on the way in, so these shapes
 must never appear in a filed body:
 
 - **No emphasis span may wrap a newline.** A bolded run crossing a line
   break stores garbled — `**a\nb**` comes back as `**a****\n****b**`.
   Close the emphasis on the line that opens it.
+- **No span marker may cross an inline-code boundary.** This is the
+  general rule the newline case is one instance of, and it was learned
+  the expensive way: a strikethrough drawn across inline code stored
+  **broken at every code-span boundary**, costing one ~3.1k pure-repair
+  echo. Any span marker — `**`, `_`, `~~` — that opens outside a code
+  span and closes inside one (or vice versa) will not survive the round
+  trip.
+- **Supersede prose by prefixing or quoting it, never by striking it
+  through.** That is the practical consequence of the rule above, and it
+  is the shape that actually comes up: marking a paragraph obsolete.
+  Write `SUPERSEDED (date):` in front of it, or move it under a
+  `>` quote, and leave the text unmarked.
 - **No machine-parsed field may start with a bare hostname-valid
   `name.ext`.** It gets linkified. This is the fingerprint rule in
   "Structured filing fields", stated once more here because it binds
   any field a reader or a search is expected to match on.
 
+Two things that **do** survive, confirmed by measurement and recorded so
+they are not worked around unnecessarily: a **bold** patch anchor does
+match on an issue body, and a checked box stores as an uppercase
+`- [X]` (so anchor on that spelling, not `- [x]`).
+
 A **wholesale** content replacement re-parses the entire body, so it is
-where both rules bite hardest — see the `plan` skill's close-out step,
-which additionally composes without inline code spans for this reason.
+where every rule here bites hardest — see the `plan` skill's close-out
+step, which additionally composes without inline code spans for this
+reason.
 
 ### The write floor assumes the body is read once
 
