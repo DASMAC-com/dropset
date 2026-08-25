@@ -221,6 +221,8 @@ async fn migrate_creates_every_expected_table() {
         // 0006_pyth_fx_crosses adds no table (it widens a seeded roster)
         // 0007_fair_price_fusion
         "maker_leg_contributions",
+        // 0006_push_liveness
+        "push_health",
     ] {
         let present: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
             .bind(table)

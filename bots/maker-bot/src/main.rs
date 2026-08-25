@@ -284,7 +284,20 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     // `HealthRow::Skip`: a push source's silence is its healthy state, so a
     // staleness row for it would page falsely on any quiet market. See
     // `HealthRow`.
-    let fills = fills::spawn(ws_url, cfg.rpc_url.clone(), leader.pubkey()).map(|source| {
+    //
+    // It is not unmonitored, though — it reports the one thing a push source
+    // *can* report honestly. The liveness reporter goes to the subscription
+    // thread rather than to the runner, because the transport's state is only
+    // observable to the code that owns the socket, and lands in `push_health`
+    // instead. Named here rather than derived, since unlike the health seam
+    // there is no source to auto-register from.
+    let fills = fills::spawn(
+        ws_url,
+        cfg.rpc_url.clone(),
+        leader.pubkey(),
+        telemetry.liveness_reporter(fills::FILLS_FEED),
+    )
+    .map(|source| {
         spawn_feed(
             &rt,
             source,
@@ -317,12 +330,20 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
 /// operator at the wrong panel entirely. No threshold fixes it: silence is
 /// this source's healthy state, so nothing distinguishes a dead socket from a
 /// quiet market. The honest position is that this table does not cover push
-/// sources, and a dead fill socket needs its own signal rather than a
-/// misapplied one.
+/// sources.
+///
+/// `Skip` therefore means "not through *this* seam", not "unmonitored". A push
+/// source reports its transport state instead — `feeds`'
+/// `LivenessReporter`, wired at the producer rather than the runner, writing
+/// `push_health` — which is the signal a dead socket actually has. The two are
+/// alerted on differently and must not be confused: this one pages on a stale
+/// `last_ok_at`, that one on a link that is not up.
 enum HealthRow {
     /// Report liveness — every polled price source.
     Report,
-    /// Report nothing, for a push source whose silence is normal.
+    /// Report nothing *here*, for a push source whose silence is normal. Its
+    /// transport state goes to `push_health` via a liveness reporter handed to
+    /// the producer.
     Skip,
 }
 

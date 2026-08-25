@@ -34,9 +34,17 @@
 //! in-process forward (live) sink the tick drains. The per-tick inventory diff
 //! in `tasks.rs` is the fallback for when the subscription is down or a fill is
 //! missed.
+//!
+//! Being a push source, its liveness is **not** the runner's `feed_health` row
+//! — that would track the last fill rather than the last healthy socket, and
+//! page about a price feed on any quiet market. This thread reports its own
+//! transport state through [`LivenessReporter`] instead (`push_health`): up on
+//! a successful subscribe, down when the socket closes, and down-with-reason
+//! when a subscribe fails or this thread ends. Silence is never an alert.
 
+use crate::telemetry::Record;
 use anyhow::{anyhow, Context as _, Result};
-use dropset_feeds::ChannelSource;
+use dropset_feeds::{ChannelSource, LivenessReporter};
 use dropset_sdk::events::{decode_event_payload, strip_event_tag, DropsetEvent};
 use dropset_sdk::types::FillEvent;
 use dropset_sdk::DROPSET_ID;
@@ -59,6 +67,27 @@ use tokio::sync::mpsc::Sender;
 /// How long to wait before re-subscribing after the websocket drops or a
 /// subscribe attempt fails (e.g. the validator isn't up yet).
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
+
+/// How long the subscription waits on a notification before looping to retry
+/// any liveness transition the telemetry channel refused.
+///
+/// **Not a staleness bound, and nothing derives one from it.** A timeout here
+/// is the *normal* state of a market with no fills, which is exactly why this
+/// source reports a connection state rather than a message recency. The
+/// interval exists only so a dropped liveness report is retried on a cadence
+/// instead of waiting for the next fill — on a quiet market that could be
+/// hours, and a quiet market is precisely where a dead socket hides.
+const REASSERT_INTERVAL: Duration = Duration::from_secs(30);
+
+/// This source's `feeds` `Source::name()`, and so the key its `push_health`
+/// row is upserted on.
+///
+/// One constant for both because the two are the same identity: the caller
+/// names the liveness reporter and this module names the source, and a drift
+/// between them would file the transport's state under a feed that does not
+/// exist while the real one stayed silently absent — the exact failure the
+/// reporting is for.
+pub const FILLS_FEED: &str = "maker-fills";
 
 /// The channel between the subscription thread and the `feeds` runner. Sized to
 /// absorb a fill burst between ticks; the forward sink downstream drops to the
@@ -85,22 +114,31 @@ pub struct Fill {
 ///
 /// Returns `None` if the thread can't be spawned, so the caller leaves the
 /// forward sink unset and the tick falls back to the inventory diff. The thread
-/// otherwise reconnects forever; if it dies *later* (a decode-path panic), the
-/// `feeds` stream seam reports the dropped sender as an idle source, not a
-/// close, so `ctx.fills_active` stays set — but the position stays correct
-/// because the per-cycle vault reconcile (`decide_position` in `tasks.rs`)
-/// tracks the chain whenever the position and vault diverge.
+/// otherwise reconnects forever, and its position bookkeeping is safe either
+/// way: the per-cycle vault reconcile (`decide_position` in `tasks.rs`) tracks
+/// the chain whenever the position and vault diverge.
+///
+/// If it dies *later* (a decode-path panic), the `feeds` stream seam reports
+/// the dropped sender as an idle source, not a close, so `ctx.fills_active`
+/// stays set and nothing in the record stream can tell that apart from a quiet
+/// market. `liveness` is what makes that visible: it is **moved into the
+/// thread**, so the reporter's `Drop` marks the link down when this thread
+/// ends for any reason, unwinding included.
 pub fn spawn(
     ws_url: String,
     rpc_url: String,
     quote_authority: Pubkey,
+    liveness: Option<LivenessReporter<Record>>,
 ) -> Option<ChannelSource<Fill>> {
-    let (source, tx) = ChannelSource::new("maker-fills", FILL_BUFFER);
+    let (source, tx) = ChannelSource::new(FILLS_FEED, FILL_BUFFER);
     let spawned = std::thread::Builder::new()
         .name("maker-bot-fills".into())
         .spawn(move || {
             let rpc = crate::chain::rpc(&rpc_url);
-            run(&ws_url, &rpc, &quote_authority, &tx);
+            // Bound to a local so the reporter is dropped — and so reports the
+            // link down — when this closure ends, however it ends.
+            let mut liveness = liveness;
+            run(&ws_url, &rpc, &quote_authority, &tx, &mut liveness);
         });
     match spawned {
         Ok(_) => Some(source),
@@ -115,18 +153,47 @@ pub fn spawn(
 
 /// Subscribe, forward fills, and reconnect on websocket drop until the tick's
 /// receiver is gone (bot shutting down).
-fn run(ws_url: &str, rpc: &RpcClient, quote_authority: &Pubkey, tx: &Sender<Fill>) {
+///
+/// Every exit from `subscribe_and_forward` is a transport transition, and each
+/// is reported: a close is a plain `down` (a socket the venue closed is a
+/// state, not an error), while a subscribe or stream failure carries its
+/// reason. The shutdown path reports `down` too — otherwise a cleanly stopped
+/// bot would leave a row reading `up` for the next operator to read as live.
+fn run(
+    ws_url: &str,
+    rpc: &RpcClient,
+    quote_authority: &Pubkey,
+    tx: &Sender<Fill>,
+    liveness: &mut Option<LivenessReporter<Record>>,
+) {
     loop {
-        match subscribe_and_forward(ws_url, rpc, quote_authority, tx) {
-            Ok(true) => return, // receiver dropped — bot is shutting down
+        match subscribe_and_forward(ws_url, rpc, quote_authority, tx, liveness) {
+            // Receiver dropped — bot is shutting down.
+            Ok(true) => {
+                if let Some(reporter) = liveness.as_mut() {
+                    reporter.down();
+                }
+                return;
+            }
             Ok(false) => {
+                if let Some(reporter) = liveness.as_mut() {
+                    reporter.down();
+                }
                 eprintln!("[fills] websocket closed; reconnecting in {RECONNECT_DELAY:?}")
             }
             Err(e) => {
+                if let Some(reporter) = liveness.as_mut() {
+                    reporter.failed(&e);
+                }
                 eprintln!("[fills] subscription error: {e}; reconnecting in {RECONNECT_DELAY:?}")
             }
         }
         std::thread::sleep(RECONNECT_DELAY);
+        // Retry a transition the telemetry channel refused, once per cycle.
+        // Free when there is nothing outstanding.
+        if let Some(reporter) = liveness.as_mut() {
+            reporter.reassert();
+        }
     }
 }
 
@@ -138,6 +205,7 @@ fn subscribe_and_forward(
     rpc: &RpcClient,
     quote_authority: &Pubkey,
     tx: &Sender<Fill>,
+    liveness: &mut Option<LivenessReporter<Record>>,
 ) -> Result<bool> {
     let (_subscription, notifications) = PubsubClient::logs_subscribe(
         ws_url,
@@ -148,8 +216,37 @@ fn subscribe_and_forward(
     )
     .map_err(|e| anyhow!("logs_subscribe {ws_url}: {e}"))?;
     println!("[fills] subscribed to {DROPSET_ID} logs at {ws_url}");
+    // Reported here, on the subscribe — deliberately not on the first
+    // notification. "Able to deliver" is the health signal; "did deliver"
+    // is a market fact, and conflating them is why the poll seam cannot
+    // report a push source at all.
+    if let Some(reporter) = liveness.as_mut() {
+        reporter.up();
+    }
 
-    for notification in notifications {
+    loop {
+        let notification = match notifications.recv_timeout(REASSERT_INTERVAL) {
+            Ok(notification) => notification,
+            // A quiet interval is this source's healthy state, so a timeout is
+            // not an event and must never be treated as one. It is only an
+            // opportunity to retry a liveness report the telemetry channel
+            // refused earlier — without it, a market with no fills for hours
+            // would keep a dropped transition undelivered for just as long.
+            //
+            // Matched by predicate rather than by variant: this receiver is
+            // `crossbeam_channel`'s (the pubsub client's, not `std`'s), and
+            // naming its error type would mean taking a direct dependency on
+            // that crate to write one arm.
+            Err(e) if e.is_timeout() => {
+                if let Some(reporter) = liveness.as_mut() {
+                    reporter.reassert();
+                }
+                continue;
+            }
+            // Disconnected — the only other case: the notification channel
+            // closed, which means the websocket dropped.
+            Err(_) => return Ok(false),
+        };
         let logs = notification.value;
         // A failed transaction commits no fills — its events are rolled back.
         if logs.err.is_some() {
@@ -176,8 +273,6 @@ fn subscribe_and_forward(
             Err(e) => eprintln!("[fills] decode {signature}: {e}"),
         }
     }
-    // The notification channel closed: the websocket dropped.
-    Ok(false)
 }
 
 /// Fetch the transaction and decode every `FillEvent` inner instruction that
