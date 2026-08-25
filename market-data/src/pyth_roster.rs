@@ -15,7 +15,8 @@
 //! changes a few times a year, and a process whose effective roster is fixed at
 //! start can state it in one log line — which is worth more than avoiding a
 //! restart. `dropset-migrate` owns the table and seeds it
-//! (`0005_pyth_fx_feeds.sql`); nothing here writes to it.
+//! (`0005_pyth_fx_feeds.sql`, widened by `0006_pyth_fx_crosses.sql`); nothing
+//! here writes to it.
 
 use anyhow::{anyhow, Result};
 use dropset_feeds::venues::pyth::PythFeed;
@@ -24,7 +25,13 @@ use sqlx::PgPool;
 /// One roster row: a currency cross and the Hermes coordinates that price it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PythCross {
-    /// ISO 4217 code of the fiat leg.
+    /// ISO 4217 code of the **base** leg — the first half of `product_id`.
+    ///
+    /// Named `currency` because the roster began as one feed per currency
+    /// against USD, where the non-USD leg was simply "the fiat leg". Since
+    /// `0006_pyth_fx_crosses.sql` the roster carries crosses with no USD leg at
+    /// all (`EUR-GBP`, `AUD-JPY`), so one currency names several rows and this
+    /// field is the base of a pair rather than an identifier for the feed.
     pub currency: String,
     /// The canonical id readings are stored under, e.g. `EUR-USD`.
     pub product_id: String,

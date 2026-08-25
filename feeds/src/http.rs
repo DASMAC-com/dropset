@@ -826,13 +826,21 @@ mod tests {
         // The allow-list is only affordable if it actually covers what the
         // wired adapters send: a name missing from it renders as `REDACTED`
         // and costs a round of diagnosis on a failed backfill. The
-        // single-parameter test above reaches exactly one entry, so this is
-        // what pins the rest — and it fails when a new venue lands without its
-        // benign parameters being added, which is the moment the omission is
-        // cheapest to fix.
+        // single-parameter test above reaches exactly one entry; this is what
+        // pins the rest.
         //
-        // Grouped by the adapter that sends them, so a venue removed from the
-        // tree takes its row out with it rather than leaving an orphan.
+        // Be exact about the limit, because the first draft of this comment
+        // was not — it claimed the test fires when a new venue lands without
+        // its parameters registered, and it cannot. The table below is
+        // hand-maintained, so a venue never added here is invisible to this
+        // test. What it does catch is a name being dropped from
+        // `BENIGN_QUERY_PARAMS` while a listed adapter still sends it.
+        //
+        // Adding a row is therefore a manual step when a venue lands, and the
+        // mitigation is to list every adapter even when it sends nothing —
+        // `erapi` is here with an empty set for exactly that reason, so an
+        // adapter that was forgotten is distinguishable from one that has no
+        // query parameters to declare.
         let wired: &[(&str, &[&str])] = &[
             (
                 "alphavantage",
@@ -841,6 +849,10 @@ mod tests {
             ("coinbase", &["granularity", "start", "end"]),
             ("coingecko", &["ids", "vs_currencies"]),
             ("coinmarketcap", &["ids"]),
+            // Sends none: its endpoint is path-keyed. Listed anyway, because an
+            // adapter absent from this table is indistinguishable from one that
+            // was forgotten — which is the failure mode described above.
+            ("erapi", &[]),
             ("frankfurter", &["base", "symbols"]),
             ("kraken", &["pair"]),
             ("oanda", &["granularity", "from", "to", "price"]),
