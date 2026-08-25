@@ -828,7 +828,18 @@ def gate(
     base_ahead = oneline_log(f"HEAD..{base_ref}")
     commits = oneline_log(f"{base_ref}..HEAD")
     diff_lines = write_diff(base_ref, out, only=only)
-    files = parse_numstat_z(_git(["diff", "--numstat", "-z", f"{base_ref}..HEAD"]))
+    # `--only` narrows the INVENTORY as well as the diff. Letting git apply the
+    # same limiters keeps one owner for the glob semantics — a second matcher
+    # here would drift from the pathspec `write_diff` uses, and a single-segment
+    # glob like `dir/*.py` is exactly where a hand-rolled one gets it wrong.
+    #
+    # Note this applies the positive limiters ONLY, never DIFF_EXCLUDES: `files`
+    # stays deliberately unfiltered with respect to the generated families, so
+    # step 9 can still see that an excluded family changed and needs its gate.
+    numstat = ["diff", "--numstat", "-z", f"{base_ref}..HEAD"]
+    if only:
+        numstat += ["--", *[f":(top,glob){p}" for p in only]]
+    files = parse_numstat_z(_git(numstat))
 
     paths = [f["path"] for f in files]
     runs_rust_suites = touches_ci_code(paths)
@@ -854,18 +865,29 @@ def gate(
             f"{base_ref} has {len(base_ahead)} commit(s) HEAD lacks — re-fetch, "
             f"rebase onto {base_ref}, and re-run this gate before fanning out"
         )
-    if not files:
+    if not files and only:
+        # Checked BEFORE the bare no-files case: with `--only` the inventory is
+        # limited too, so an empty one means the GLOB matched nothing — not that
+        # the branch is empty. Reporting "no files changed between the base and
+        # HEAD" here would name the wrong cause and send the reader to check the
+        # branch instead of the pattern.
+        blockers.append(
+            f"--only {', '.join(only)} matched none of this branch's changed "
+            f"paths — check the glob (it is anchored at the repo root, and `*` "
+            f"does not cross a `/`)"
+        )
+    elif not files:
         blockers.append(
             f"no files changed between {base_ref} and HEAD — nothing to review "
             f"(check the base and the branch)"
         )
     elif diff_empty and only:
-        # With --only the diff is deliberately a subset, so an empty one means
-        # the limiter matched nothing — a typo'd glob, not an excluded family.
-        # Saying "every changed path is generated" here would be simply false.
+        # The limiters matched paths, but every one of them is also an excluded
+        # generated family, so the diff came out empty.
         blockers.append(
-            f"{out} is empty because --only {', '.join(only)} matched none of the "
-            f"{len(files)} changed path(s) — check the glob"
+            f"{out} is empty: --only {', '.join(only)} matched "
+            f"{len(files)} path(s), but all of them are excluded generated "
+            f"families ({', '.join(DIFF_EXCLUDES)})"
         )
     elif diff_empty:
         # Distinct from "nothing changed": every changed path is an excluded

@@ -466,6 +466,44 @@ class GateTests(unittest.TestCase):
         v = rd.gate("main", self.out, fetch=False)
         self.assertEqual(v["ready"], not v["blockers"])
 
+    def test_only_narrows_the_inventory_not_just_the_diff(self):
+        # The inventory is what a caller reads to size and route the review, so
+        # a `--only` run that still lists every changed path defeats the point
+        # of scoping — and on a 58-file diff that is the whole result.
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        self.commit("docs/guide.md", "# Guide\n", "Docs")
+        v = rd.gate("main", self.out, fetch=False, only=["tui/**"])
+        self.assertEqual([f["path"] for f in v["files"]], ["tui/src/ui.rs"])
+        self.assertTrue(v["ready"])
+
+    def test_only_matches_a_single_segment_glob(self):
+        # `dir/*.py` must not match `dir/sub/x.py`. Delegating to git's own
+        # pathspec is what makes this hold without a second matcher to drift.
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        self.commit("tui/src/nested/deep.rs", "fn d() {}\n", "Nested")
+        v = rd.gate("main", self.out, fetch=False, only=["tui/src/*.rs"])
+        self.assertEqual([f["path"] for f in v["files"]], ["tui/src/ui.rs"])
+
+    def test_an_only_that_matches_nothing_names_the_GLOB_not_the_branch(self):
+        # The misleading case: with the inventory narrowed, an unmatched glob
+        # makes `files` empty, which would otherwise report "no files changed
+        # between the base and HEAD" and send the reader to check the branch.
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        v = rd.gate("main", self.out, fetch=False, only=["frontend/**"])
+        self.assertFalse(v["ready"])
+        joined = " ".join(v["blockers"])
+        self.assertIn("matched none", joined)
+        self.assertIn("frontend/**", joined)
+        self.assertNotIn("no files changed", joined)
+
+    def test_an_only_matching_solely_generated_families_says_so(self):
+        self.commit("pnpm-lock.yaml", "lockfileVersion: 9\n" * 20, "Bump deps")
+        v = rd.gate("main", self.out, fetch=False, only=["pnpm-lock.yaml"])
+        self.assertFalse(v["ready"])
+        joined = " ".join(v["blockers"])
+        self.assertIn("excluded generated", joined)
+        self.assertNotIn("matched none", joined)
+
     def test_failed_fetch_blocks_rather_than_claiming_freshness(self):
         """The tool must not report a base it could not verify as fresh. This
         repo has no `origin` remote, so a real fetch attempt fails."""
