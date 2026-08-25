@@ -70,12 +70,21 @@ ALTER TABLE maker_legs
     -- row is how a row that should fire an alert drifts from what the alert
     -- keys on.
     --
-    -- **Four values, and a reader must enumerate all four**: `Carried` (no
-    -- source answered; the estimate was held and widened), `Seeded` (the filter
-    -- had no prior — a first tick, or the single-source pass-through), `Fused`
-    -- (the ordinary batch update), and `Reseeded { innovation_frac: … }` (the
-    -- fast median departed far enough to read as a real dislocation, so the
-    -- estimate was adopted rather than smoothed toward).
+    -- **Four values, and a reader must enumerate all four**: `Carried` (nothing
+    -- was fused; the estimate was held and widened), `Seeded` (the filter had no
+    -- prior — a first tick at any source count, which includes but is not
+    -- limited to the single-source pass-through), `Fused` (the ordinary batch
+    -- update), and `Reseeded { innovation_frac: … }` (the fast median departed
+    -- far enough to read as a real dislocation, so the estimate was adopted
+    -- rather than smoothed toward).
+    --
+    -- **`Carried` is not a synonym for "the feeds went quiet"**, and reading it
+    -- that way will misdiagnose the interesting case. Three conditions produce
+    -- it: no source answered, *every* source was trimmed, or the accumulated
+    -- precision came out non-finite. The middle one appears beside a **non-zero**
+    -- `contributor_count`, and means the estimator refused what it was offered —
+    -- a very different operator story from silence. Join against
+    -- `maker_leg_contributions` to see which sources it refused.
     --
     -- `Reseeded` is the one to watch. A run of them is either a genuinely
     -- jumpy market or a re-seed gate set too tight, and the two are
@@ -99,12 +108,38 @@ ALTER TABLE maker_legs
 --
 -- **Volume.** This is the widest table in the schema by row count — sources per
 -- leg times legs times markets times ticks, against `maker_legs`' legs times
--- markets times ticks. At the 5 s tick, two fused legs, and today's rosters
--- (up to four sources on the basis leg) that is ~100k rows/day/market, an order
--- of magnitude above `maker_legs`. That is affordable now and is the first
--- table here that will need a retention policy; it is recorded at creation
--- rather than discovered later, and it is why the table carries no index beyond
--- its primary key.
+-- markets times ticks. At the 5 s tick and today's rosters that is about six
+-- rows per tick per market (two FX sources plus up to four on the basis leg)
+-- against `maker_legs`' three, so roughly **2x**, or ~100k rows/day/market
+-- against ~52k. It is the first table here that will want a retention policy,
+-- and that is recorded at creation rather than discovered later.
+--
+-- Note the row count does **not** fall to zero when a leg goes dark. A leg
+-- whose sources all get trimmed still writes a full set of zero-weight rows
+-- every tick — deliberately, since that is the disagreement worth seeing — so
+-- the steady-state rate is the same sick or healthy. Only a leg with no
+-- candidates at all stops writing.
+--
+-- **Disclosure.** `0002` grants the read-only `dropset_ro` role `SELECT` on
+-- every table in `public`, present and future, so this table is readable by
+-- whoever holds the dashboard password. `0003` was careful that its
+-- "already public on-chain" argument covers inventory and *not* strategy
+-- internals, so that exemption does not carry here and this table needs its own
+-- reason.
+--
+-- It is this: per-source weights and per-source prints are **observations of
+-- public venue quotes**, plus the estimator's arithmetic over them. The quotes
+-- are public by construction — anyone may poll the same keyless endpoints — and
+-- the weights are a deterministic function of the published confidences and the
+-- calibration constants in `FairValueConfig`, which are committed in the
+-- repository rather than secret. So the disclosure is a *convenience* to a
+-- dashboard reader, not a leak of anything unobtainable.
+--
+-- What that argument does **not** cover, stated so a later column does not
+-- inherit an exemption it was never given: a credential, an inventory figure, or
+-- any venue- or transport-produced free text. No column here carries any of
+-- those (`source` and `mechanism` are compile-time constants; the rest are
+-- numbers), and none may be added without extending this reasoning.
 --
 -- **`weight = 0` rows are the point, not noise.** A source outside the
 -- dispersion band of the fast consensus is excluded from the estimate but still
@@ -112,8 +147,16 @@ ALTER TABLE maker_legs
 -- what the estimator declined to believe — an aggregate printing half the peg,
 -- or an official reference rate contradicting the tape. A query filtering
 -- `weight > 0` is discarding exactly the disagreements this table exists to
--- surface, and the sum of weights over a leg-tick is then *not* 1: the
--- shortfall is the trimmed sources plus the prior estimate's own share.
+-- surface.
+--
+-- **What the weights sum to, precisely, because the obvious guess is wrong.**
+-- A trimmed source contributes no precision at all, so it takes nothing out of
+-- the total — the weights over a leg-tick sum to **exactly 1** on a seeding or
+-- re-seeding tick whether or not anything was trimmed. The only thing that ever
+-- makes them sum to less than 1 is an ordinary update, where the shortfall is
+-- the **prior estimate's** own share. The prior is deliberately not a row (see
+-- below), so a sum below 1 is the one way to see how much of the estimate came
+-- from history rather than from this tick's feeds.
 --
 -- **The prior is deliberately not a row here.** After an ordinary update the
 -- previous estimate holds part of the posterior information, but it is not a

@@ -167,11 +167,11 @@
             "gradientMode": "none",
             "lineInterpolation": "stepAfter",
             "lineWidth": 1,
-            "pointSize": 5,
+            "pointSize": 4,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
+            "showPoints": "always",
             "spanNulls": false,
             "stacking": {
               "group": "A",

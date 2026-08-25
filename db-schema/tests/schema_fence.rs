@@ -239,10 +239,14 @@ async fn migrate_creates_every_expected_table() {
         ("maker_legs", "fusion_step"),
         ("maker_legs", "fused_count"),
     ] {
+        // Scoped to `public`, matching the `to_regclass` probe above: without it
+        // a same-named table in any visible schema would satisfy this.
         let present: bool = sqlx::query_scalar(
             "SELECT EXISTS (
                  SELECT 1 FROM information_schema.columns
-                 WHERE table_name = $1 AND column_name = $2
+                 WHERE table_schema = 'public'
+                   AND table_name = $1
+                   AND column_name = $2
              )",
         )
         .bind(table)

@@ -234,18 +234,39 @@ pub struct FusedContribution {
     /// would leave the reason for it unrecoverable.
     pub variance: f64,
     /// Its share of the posterior information, in `[0, 1]`. Zero means the
-    /// source answered and was **trimmed** — see [`admits`].
+    /// source answered and was **trimmed** — it sat outside the dispersion band
+    /// of the fast consensus, so the estimator declined to believe it.
     pub weight: f64,
 }
 
 /// What one [`Fusion::update`] did.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FusionStep {
-    /// No healthy source answered. The estimate was carried and its variance
-    /// grown; nothing was fused.
+    /// Nothing was fused this tick. The estimate was carried unchanged and its
+    /// variance grown by the elapsed time.
+    ///
+    /// **Three conditions reach this, and only one of them is a feed outage.**
+    /// A reader who assumes the first will misdiagnose the others:
+    ///
+    /// - no healthy source answered at all;
+    /// - sources answered and **every one was trimmed** — either they all sat
+    ///   outside the dispersion band, or the leg had no fast consensus to trim
+    ///   against (an absent leg, or a dispersed pair). This is the case to
+    ///   watch: it appears beside a *non-zero* contributor count;
+    /// - the accumulated precision came out non-finite, so the update was
+    ///   declined rather than applied.
+    ///
+    /// So `Carried` alongside contributors means the estimator refused what it
+    /// was offered, which is a very different operator story from silence.
     Carried,
-    /// The estimate was seeded from a single source, with that source's own
-    /// variance. The N = 1 path — see the module docs.
+    /// The filter had no prior, so this tick established one outright.
+    ///
+    /// **Not the same as "one source".** This is reached whenever the estimate
+    /// is `None` — a leg's first tick at *any* source count, and every recovery
+    /// from a filter that never seeded. With one source it is the documented
+    /// N = 1 pass-through at that source's own variance; with several they
+    /// corroborate each other and combine normally. Read the count from
+    /// [`FusionReport::n`], never from this variant.
     Seeded,
     /// The ordinary batch update.
     Fused,
@@ -276,8 +297,13 @@ pub struct FusionReport {
     pub step: FusionStep,
     /// How many sources were fused this tick.
     pub n: usize,
-    /// Each contributing source's share. Positionally dense from index 0.
-    pub contributions: [Option<FusedContribution>; MAX_CANDIDATES],
+    /// Each contributing source's share.
+    ///
+    /// Private, with [`FusionReport::contributions`] as the only way in — so
+    /// the `None` padding stays an implementation detail rather than part of
+    /// the public surface. Matches [`crate::Consensus::healthy`], which made
+    /// the same choice for the same reason.
+    contributions: [Option<FusedContribution>; MAX_CANDIDATES],
 }
 
 impl FusionReport {
@@ -301,7 +327,7 @@ impl FusionReport {
 
     /// The standard deviation of the estimate, when there is one.
     pub fn sigma(&self) -> Option<f64> {
-        self.value.map(|_| self.variance.sqrt())
+        self.value.is_some().then(|| self.variance.sqrt())
     }
 
     /// Every contributing source's share, in fusion order.
@@ -310,9 +336,17 @@ impl FusionReport {
     }
 }
 
-/// The scalar fusion filter for one leg. One instance per leg per market; not
-/// `Copy`, for the same reason the basis EMA is not — it is a mutating
-/// accumulator and a silent copy-on-assign would fork its history.
+/// The scalar fusion filter for one leg. One instance per leg per market.
+///
+/// Deliberately **not** `Copy`: it is a mutating accumulator, so a silent
+/// copy-on-assign would fork its history and leave two filters diverging under
+/// one market's name.
+///
+/// Note this diverges from [`crate::basis::BasisEma`], which *is* `Copy`
+/// despite being an accumulator too — so the two are inconsistent, and this is
+/// the side that is right. `FairValueEngine` is itself not `Copy` for exactly
+/// this reason, which is what has kept the EMA's `Copy` from causing trouble:
+/// nothing today copies one out of the engine that owns it.
 #[derive(Clone, Debug)]
 pub struct Fusion {
     /// Current estimate; `None` until the first measurement seeds it.
@@ -331,11 +365,6 @@ impl Fusion {
             variance: f64::INFINITY,
             cfg,
         }
-    }
-
-    /// The current estimate, or `None` before the first measurement.
-    pub fn value(&self) -> Option<f64> {
-        self.estimate
     }
 
     /// Fuse this tick's healthy candidates into the estimate.
@@ -365,23 +394,27 @@ impl Fusion {
     ) -> FusionReport {
         self.predict(dt);
 
+        // The fill zips against the destination array rather than indexing by a
+        // running counter, so an oversized `healthy` drops its trailing
+        // candidates instead of panicking. `update` is public and takes an
+        // arbitrary slice, so the length is not this function's to assume — and
+        // the counter form is exactly the pattern `Candidates::resolve` was
+        // rewritten away from in this same change.
         let mut measurements = [None; MAX_CANDIDATES];
-        let mut total = 0;
         let mut n = 0;
-        for c in healthy.iter().flatten() {
+        for (slot, c) in measurements.iter_mut().zip(healthy.iter().flatten()) {
             let Some(variance) = self.measurement_variance(c) else {
                 continue;
             };
             let admitted = admits(fast, band, c.reading.value);
-            measurements[total] = Some(Measurement {
+            *slot = Some(Measurement {
                 candidate: *c,
                 variance,
                 admitted,
             });
-            total += 1;
             n += usize::from(admitted);
         }
-        let measurements = &measurements[..total];
+        let measurements = &measurements[..];
 
         let Some(prior) = self.estimate else {
             return self.seed(measurements, n);
@@ -431,6 +464,10 @@ impl Fusion {
     /// own age, because both are statements about the moment the source
     /// published and the estimate is about now.
     ///
+    /// The age term is `drift_frac_per_sec * value * sqrt(age)`, the same random
+    /// walk [`Fusion::predict`] integrates over elapsed time. See the note in
+    /// the body for why the square root is mandatory rather than cosmetic.
+    ///
     /// `None` for a candidate that cannot be fused at all (a non-finite or
     /// non-positive reading, or a variance that does not come out finite and
     /// positive). Such a candidate is skipped rather than defaulted: a
@@ -457,9 +494,21 @@ impl Fusion {
             }
         };
 
+        // Age inflation is **sqrt(age)** in sigma, i.e. linear in variance, and
+        // that is forced rather than chosen: it is the same random walk
+        // `predict` integrates, so the two must scale together or the single
+        // `drift_frac_per_sec` that drives both would mean two different things
+        // depending on which side read it.
+        //
+        // Getting this wrong is not a rounding matter. Linear-in-sigma inflation
+        // squares to variance proportional to age^2, which at a six-hour-old
+        // daily fix overstates the variance by ~21,600x — so the fix's weight,
+        // being one over that, all but vanishes. The source would then be
+        // reported as fused while contributing nothing, which is precisely the
+        // outcome the reference class exists to avoid.
         let age = c.reading.age.as_secs_f64();
         let staleness_sigma = if age.is_finite() && age > 0.0 {
-            self.cfg.drift_frac_per_sec * value * age
+            self.cfg.drift_frac_per_sec * value * age.sqrt()
         } else {
             0.0
         };
@@ -821,18 +870,121 @@ mod tests {
 
     /// Age inflates a measurement's variance, which is what makes a daily fix
     /// cheap by evening without anyone deciding when it stops counting.
+    ///
+    /// The **scaling** is asserted, not merely the direction. This started life
+    /// as `stale > fresh * 10.0`, which a linear-in-sigma bug also satisfied —
+    /// and that bug shipped a six-hour fix at ~21,600x its intended variance,
+    /// silently discarding the very source the reference class exists to keep.
+    /// A floor cannot catch that; a ratio can.
     #[test]
-    fn age_widens_a_measurement() {
+    fn age_inflation_is_a_random_walk_in_variance() {
         let f = fusion();
-        let fresh = f.measurement_variance(&Candidate::reference(
-            "frankfurter",
-            Reading::new(1.14, Duration::ZERO),
-        ));
-        let stale = f.measurement_variance(&Candidate::reference(
-            "frankfurter",
-            Reading::new(1.14, secs(6 * 3600)),
-        ));
-        assert!(stale.unwrap() > fresh.unwrap() * 10.0, "six hours is a lot");
+        let cfg = FusionConfig::default();
+        let value = 1.14;
+        let age = 6.0 * 3600.0;
+
+        let variance = f
+            .measurement_variance(&Candidate::reference(
+                "frankfurter",
+                Reading::new(value, secs(6 * 3600)),
+            ))
+            .unwrap();
+
+        // variance = base^2 + (drift * value)^2 * age  — linear in age, which is
+        // what makes sigma proportional to sqrt(age) and matches `predict`.
+        let base = cfg.reference_noise_frac * value;
+        let drift = cfg.drift_frac_per_sec * value;
+        let expected = base * base + drift * drift * age;
+        assert!(
+            (variance / expected - 1.0).abs() < 1e-9,
+            "variance must grow linearly in age: got {variance}, want {expected}"
+        );
+
+        // And the sigma the config comment quotes: ~1.47% at six hours, which is
+        // "percent-scale" as documented — not the 216% a linear sigma gives.
+        let sigma = variance.sqrt();
+        assert!(
+            (0.010..=0.020).contains(&(sigma / value)),
+            "a six-hour-old fix is percent-scale, not hundreds of percent: {}",
+            sigma / value
+        );
+    }
+
+    /// The same random walk must drive the prediction step and the age
+    /// inflation, or the one constant that feeds both means two things. Growing
+    /// an estimate's variance over `t` seconds and measuring a reading aged `t`
+    /// seconds must add the identical amount.
+    #[test]
+    fn prediction_and_age_inflation_agree() {
+        let mut f = fusion();
+        let value = 1.14;
+        let gap = 600;
+
+        // What the PREDICTION path adds over `gap` seconds. Seeded from a source
+        // of negligible published noise, so the seeded variance is ~0 and what
+        // remains after the carry is the drift term alone.
+        let tight = |v: f64| {
+            set(&[Candidate::new(
+                "tight",
+                Reading::with_confidence(v, Duration::ZERO, 1e-12),
+            )])
+        };
+        f.update(&tight(value), Some(value), BAND, secs(0));
+        let seeded = f.variance;
+        let predicted = f.update(&set(&[]), None, BAND, secs(gap)).variance - seeded;
+
+        // What the MEASUREMENT path adds for a reading of the same age — the
+        // same negligible base, so the difference is again the drift term.
+        let g = fusion();
+        let at = |age| {
+            g.measurement_variance(&Candidate::new(
+                "tight",
+                Reading::with_confidence(value, secs(age), 1e-12),
+            ))
+            .unwrap()
+        };
+        let measured = at(gap) - at(0);
+
+        // The two are the same random walk read from opposite ends, so they must
+        // add the identical variance. A linear-in-sigma age term fails this by a
+        // factor of `gap`.
+        assert!(
+            (predicted / measured - 1.0).abs() < 1e-9,
+            "predict added {predicted}; a reading aged {gap}s carries {measured}"
+        );
+    }
+
+    /// `reseed_floor_frac` is documented load-bearing, so removing it must break
+    /// something. Many tightly-agreeing sources drive the variance small enough
+    /// that the sigma gate alone would re-seed on ordinary noise — the floor is
+    /// the only thing holding it, so this test fails if the floor is zeroed.
+    #[test]
+    fn the_reseed_floor_holds_where_the_sigma_gate_would_not() {
+        let mut f = fusion();
+        // Six very confident sources: the posterior sigma collapses, so
+        // 4 * sigma lands far below the 20 bp floor.
+        let tight: Vec<Candidate> = ["a", "b", "c", "d", "e", "f"]
+            .iter()
+            .map(|s| Candidate::new(s, Reading::with_confidence(1.1400, Duration::ZERO, 1e-6)))
+            .collect();
+        f.update(&set(&tight), Some(1.1400), BAND, secs(5));
+
+        let sigma_gate = FusionConfig::default().reseed_sigma * f.variance.sqrt();
+        let floor = FusionConfig::default().reseed_floor_frac * 1.1400;
+        assert!(
+            sigma_gate < floor,
+            "precondition: the sigma gate must be the smaller one ({sigma_gate} vs {floor})"
+        );
+
+        // A move larger than the sigma gate but inside the floor must NOT
+        // re-seed. Without the floor this is a re-seed on ordinary noise.
+        let nudge = 1.1400 + sigma_gate * 2.0;
+        let r = f.update(&set(&tight), Some(nudge), BAND, secs(5));
+        assert_eq!(
+            r.step,
+            FusionStep::Fused,
+            "the floor must absorb a move the sigma gate alone would adopt"
+        );
     }
 
     /// The trim: a source outside the dispersion band of the fast consensus is
@@ -1016,5 +1168,10 @@ mod tests {
         bad(|c| c.reference_noise_frac = -1.0);
         bad(|c| c.reseed_floor_frac = f64::NAN);
         bad(|c| c.reseed_sigma = 0.0);
+        // The upper half of the fraction predicate: a noise fraction above 1
+        // means a sigma wider than the value itself. Covered because without a
+        // case here half of `validate`'s condition could be deleted silently.
+        bad(|c| c.tape_noise_frac = 2.0);
+        bad(|c| c.drift_frac_per_sec = 1.5);
     }
 }

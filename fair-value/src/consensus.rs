@@ -138,10 +138,9 @@ impl Candidate {
         Self {
             source,
             reading,
-            trusted: false,
+            trusted: true,
             class: SourceClass::Tape,
         }
-        .believed_alone()
     }
 
     /// A [`SourceClass::Reference`] candidate — a slow reference fix, fused but
@@ -904,9 +903,10 @@ mod tests {
             !c.contributors.iter().any(|k| k.source == "frankfurter"),
             "a fix contributes nothing to a combination it was not part of"
         );
-        assert!(
-            c.contributors.iter().count() <= 2,
-            "only the tape sources composed the median"
+        assert_eq!(
+            c.contributors.iter().count(),
+            2,
+            "exactly the two tape sources composed the median"
         );
     }
 

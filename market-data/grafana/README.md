@@ -183,9 +183,13 @@ Two things to know before reading either:
   an empty scatter means the pickers disagree, not that data is missing.
 
 The Market variable reads `maker_legs`, so on a database no maker has run
-against it is empty and both panels are blank. That is correct and
-isolated: the collectors and the maker are independent writers, and every
-ingestion panel below is unaffected.
+against it is empty. **Fusion weight by source** then goes blank; **Fair price
+over its sources** does *not* — its raw-tick arm carries no market predicate, so
+it still draws the full source scatter with no fused line over it. That is the
+same picture a picker mismatch produces, and the two are told apart by whether
+the Market picker has any values to offer at all. Either way it is isolated:
+the collectors and the maker are independent writers, and every ingestion panel
+below is unaffected.
 
 ### The two freshness tiles
 

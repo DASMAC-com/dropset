@@ -372,8 +372,11 @@ Three things about the filter are decided rather than incidental:
   addition and removing one is its absence, with no per-count special case and
   no weight vector to renormalize. The counts that would otherwise be special
   cases fall out — nothing to fuse carries the estimate and widens it, and a
-  lone source is an explicit pass-through at its own variance rather than a
-  degenerate one-source filter reporting a confidence nothing corroborated.
+  lone source on a leg **with no prior** is an explicit pass-through at its own
+  variance rather than a degenerate one-source filter reporting a confidence
+  nothing corroborated. Note the "with no prior" precisely: once the filter is
+  seeded, a lone source is blended against the carried estimate like any other
+  measurement, and the posterior is narrower than that source alone.
 
 #### Dislocations
 
@@ -405,12 +408,25 @@ price: an EMA over the live basis observations. The smoothing half-life is
 **TBD — set by the basis-process characterization** over collected
 history (`data-feeds.md` §11); it is not guessed here.
 
-Note this is a *different* axis from the fusion above, not a duplicate of it:
-the fusion combines **across sources** at one instant, and this EMA combines
-**across time**. A basis leg with one source is untouched by the first and
-still smoothed by the second. What the fusion did retire is the older claim
-here that a Kalman filter was warranted "only if the bot fuses several basis
-sources" — it now does, on both priced legs.
+**The basis leg is now smoothed twice, in series**, and that is worth stating
+plainly because the tempting justification for it is wrong. The fusion is
+*not* a purely cross-source, one-instant combiner: it is recursive, so after its
+seeding tick even a single-source leg is blended against its own carried
+prior, and its variance grows with elapsed time. So both filters act across
+time, and calling them orthogonal axes would be false.
+
+What keeps them from fighting is the **separation of their time constants**.
+The fusion's weight comes from variance ratios rather than a half-life, so it
+converges within a tick or two when its measurements are precise; this EMA's
+half-life is minutes, and so remains the thing that decides how slowly the
+basis tracks. That is a property of the *calibration*, not of the structure —
+it holds while the fusion's drift rate stays small against this half-life, and
+both are TBD placeholders, so the pair must be calibrated together rather than
+independently.
+
+What the fusion did retire is the older claim here that a Kalman filter was
+warranted "only if the bot fuses several basis sources" — it now does, on both
+priced legs.
 
 Two properties keep that smoothing from being defeated by a single reading,
 both of which matter because the estimate is *multiplied into every quote*:
@@ -922,9 +938,11 @@ silently redirect those references.
   query filtering `weight > 0` discards exactly the disagreements the
   table exists to surface.
 
-  It is the widest table in the schema by row count — roughly an order of
-  magnitude above `maker_legs` — and the first that will want a retention
-  policy.
+  It is the widest table in the schema by row count — about six rows per tick
+  per market against `maker_legs`' three, so roughly **2×** — and the first
+  that will want a retention policy. Note the rate does not drop when a leg
+  goes sick: a leg whose sources are all trimmed still writes a full
+  zero-weight set every tick, deliberately.
 
 - **`feed_health`** — current liveness per registered feed source,
   upserted in place.
@@ -960,7 +978,7 @@ which is not zero — an unknown skew and a zero skew are different
 facts, as are an unread vault and an empty one. The dashboards leave
 gaps rather than plotting zero.
 
-### Per-feed health is generic; leg rows now carry attribution too
+### Per-feed health is generic; attribution lives one table along
 
 Feed liveness rides the feeds runner's existing `FeedMetrics` seam
 (`docs/data-feeds.md` §13), so a source that is merely *registered*

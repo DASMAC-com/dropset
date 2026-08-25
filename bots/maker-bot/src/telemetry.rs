@@ -177,7 +177,12 @@ pub struct LegSample {
     /// no business reading a smoothed one.
     pub fused_value: Option<f64>,
     /// Standard deviation of the fused estimate, in the leg's own units — the
-    /// quantity a spread-width model wants. `None` wherever `fused_value` is.
+    /// quantity a spread-width model wants.
+    ///
+    /// `None` wherever `fused_value` is, **and independently** when the sigma
+    /// itself is non-finite — so a consumer drawing a ±sigma band must tolerate
+    /// a NULL sigma beside a present `fused_value` rather than assuming the two
+    /// travel together.
     pub fused_sigma: Option<f64>,
     /// What the fusion did this tick, as the Rust variant's `Debug` name, in
     /// the same convention every other enum-ish column uses. Four values:
@@ -557,11 +562,18 @@ async fn write_health(
 /// not a zero. But note a leg can be `Absent` *with* candidates that were all
 /// stale, and that case does produce no row either — the staleness signal for
 /// it lives in `feed_health`, which is per source rather than per leg.
+///
 /// `fair` supplies each fused leg's estimate. Only the two legs the composition
 /// prices off are fused, so the peg leg's fusion fields stay `None` — which is
 /// the honest record, not a gap: that leg feeds a band check rather than a
 /// price, and a guard whose job is to fire on any bad reading must not be
 /// reading a smoothed one.
+///
+/// Note the consequence of the early return below for a fused leg that resolved
+/// to **nothing**: no row is written at all, so a `Carried` estimate on an
+/// absent leg is not recorded. The composition may still be pricing off that
+/// carried estimate, so `maker_telemetry.fair` can be non-NULL across a tick
+/// where this table has no row for the leg that produced it.
 pub fn leg_samples(
     ts: i64,
     market: &str,
@@ -608,11 +620,16 @@ pub fn leg_samples(
 /// The per-source attribution rows for one market's tick — one per source that
 /// answered a fused leg, carrying the weight it was given.
 ///
-/// **Every source that answered gets a row, including the ones the trim
-/// excluded** (at weight zero). Writing only the sources that moved the estimate
-/// would leave a fused value in the table with no record of what it declined to
-/// believe, which is precisely the disagreement an operator needs to see: an
-/// official reference rate contradicting the tape is signal, not noise.
+/// **Every source that could be measured gets a row, including the ones the
+/// trim excluded** (at weight zero). Writing only the sources that moved the
+/// estimate would leave a fused value in the table with no record of what it
+/// declined to believe, which is precisely the disagreement an operator needs to
+/// see: an official reference rate contradicting the tape is signal, not noise.
+///
+/// A source whose reading has no establishable variance — non-finite or
+/// non-positive — is skipped upstream by the filter and so gets no row at all.
+/// That is not the same state as a trimmed source, and conflating the two would
+/// read a broken feed as a disagreeing one.
 pub fn contribution_samples(ts: i64, market: &str, fair: &FairValue) -> Vec<ContributionSample> {
     let mut out = Vec::new();
     for (leg, report) in [
@@ -1580,6 +1597,47 @@ mod tests {
             rows.iter().filter(|r| r.weight > 0.0).count() == 3,
             "one FX source and the two credible venues"
         );
+    }
+
+    /// The `fusion_step` column's rendered text is a wire contract: the
+    /// migration tells readers to match the dislocation case with
+    /// `LIKE 'Reseeded%'`, because it is the one value carrying a payload.
+    /// Pinned here because renaming the variant or its field would silently
+    /// break every dashboard and alert predicate keyed on it, with nothing
+    /// else in the suite failing.
+    #[test]
+    fn the_reseeded_step_renders_with_its_payload_and_a_stable_prefix() {
+        use dropset_fair_value::{FairValueConfig, FairValueEngine};
+
+        let mut engine = FairValueEngine::new(FairValueConfig::default());
+        let pair = |a: f64, b: f64| Legs {
+            fx: one("oanda", a).push("twelvedata", Some(Reading::new(b, Duration::ZERO))),
+            crypto_usdc: one("coinbase", 1.0),
+            usdc_usd: one("kraken", 1.0),
+            static_usd: 1.14,
+        };
+
+        // Seed, then step the tape far enough to trip the innovation gate.
+        engine.compose(
+            pair(1.1400, 1.1401),
+            Duration::from_secs(5),
+            Default::default(),
+        );
+        let legs = pair(1.1600, 1.1601);
+        let fair = engine.compose(legs, Duration::from_secs(5), Default::default());
+
+        let rows = leg_samples(9, "EURC", &legs, STALE, BAND, &fair);
+        let fx = rows.iter().find(|r| r.leg == LEG_FX).unwrap();
+        let step = fx.fusion_step.as_deref().expect("the fx leg fused");
+        assert!(
+            step.starts_with("Reseeded"),
+            "the alert-keyed prefix must be stable: {step}"
+        );
+        assert!(
+            step.contains("innovation_frac"),
+            "and it must carry the dislocation size: {step}"
+        );
+        assert_ne!(step, "Reseeded", "equality matching must not work on it");
     }
 
     /// A leg whose only candidate is too stale to use resolves to nothing, so

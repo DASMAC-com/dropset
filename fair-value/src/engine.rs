@@ -33,7 +33,7 @@ use std::time::Duration;
 use crate::basis::{BasisEma, Fold};
 use crate::config::FairValueConfig;
 use crate::consensus::{Candidates, Consensus, ConsensusState, Contributors};
-use crate::fusion::{Fusion, FusionReport};
+use crate::fusion::{Fusion, FusionReport, FusionStep};
 
 /// The raw feed legs for one market on one tick. Each leg carries **every
 /// source that answered**, not the winner of a priority ladder — the engine
@@ -434,11 +434,24 @@ pub struct FairValueEngine {
     /// different fidelity (a venue tape against an aggregate index), and it is
     /// both the basis numerator and the crypto-only anchor.
     ///
-    /// Fusing here and smoothing in [`BasisEma`] afterwards is not double
-    /// smoothing — the two combine along different axes. Fusion combines
-    /// *across sources* at one instant; the EMA combines *across time*. A leg
-    /// with one source is untouched by the first and still smoothed by the
-    /// second, which is exactly today's behavior.
+    /// **This basis leg is smoothed twice, in series, and that is a real
+    /// consequence rather than an illusion to argue away.** An earlier version
+    /// of this comment claimed the two filters worked on orthogonal axes —
+    /// fusion across sources, the EMA across time — and that a single-source
+    /// leg was untouched by the fusion. Both halves are false: the filter is
+    /// recursive, so after its seeding tick even one source is blended against
+    /// the carried prior, and [`Fusion::predict`] grows the variance with
+    /// elapsed time. Fusion is therefore *also* temporal.
+    ///
+    /// What makes the composition acceptable is not orthogonality but the
+    /// separation of their time constants. The fusion converges within a tick
+    /// or two when its measurements are precise (its weight is set by variance
+    /// ratios, not by a half-life), while the EMA's half-life is minutes — so
+    /// the EMA remains the thing that decides how slowly the basis tracks.
+    /// That separation is a **calibration** property, so it holds only while
+    /// `fusion.drift_frac_per_sec` stays small against `basis_half_life`; both
+    /// are TBD(analytics) placeholders, and the pair must be calibrated
+    /// together rather than independently.
     crypto_fusion: Fusion,
     /// Time accumulated across ticks since the basis EMA was last updated. The
     /// EMA folds an observation only in the normal regime, but `compose` runs
@@ -863,6 +876,16 @@ impl FairValueEngine {
 /// anything — it estimates. An operator reading `SingleUnverified` beside a
 /// fused value is being told the truth: one source, better estimated.
 fn fused_into(mut leg: Consensus, fusion: &FusionReport) -> Consensus {
+    // A carried estimate is not substituted, and that exception is what keeps
+    // the age claim above honest. On a `Carried` tick the filter fused nothing,
+    // so `value` is an estimate from an *earlier* tick — pairing it with this
+    // tick's age and confidence would report a stale number as freshly
+    // observed, which is the exact misrepresentation the age-preservation rule
+    // exists to prevent. Reachable when every candidate is dropped for having
+    // no establishable variance, which the consensus reading survives.
+    if fusion.step == FusionStep::Carried {
+        return leg;
+    }
     if let (Some(reading), Some(value)) = (leg.reading.as_mut(), fusion.value) {
         if value.is_finite() && value > 0.0 {
             reading.value = value;
@@ -1723,6 +1746,44 @@ mod tests {
         assert!(!r.degraded(), "a permanent condition must not tighten");
         assert_eq!(r.anchor, Anchor::CryptoReference);
         assert_eq!(r.crypto_leg.state, ConsensusState::SingleUnverified);
+    }
+
+    /// `fused_into` substitutes the **value** and nothing else. The age and the
+    /// confidence stay the consensus set's most conservative summaries, because
+    /// a better estimate of the level does not make the set fresher or more
+    /// certain — and both feed gates that would be flattered by it (freshness,
+    /// and the §1 fm6 uncertain/widen signal).
+    ///
+    /// Asserted because the invariant is stated in prose and enforced by
+    /// nothing: an edit that also wrote a fused sigma into `confidence` would
+    /// leave every other test in this file green.
+    #[test]
+    fn fusing_substitutes_the_value_and_leaves_age_and_confidence_alone() {
+        let stale_and_wide = Reading::with_confidence(1.1400, secs(120), 0.004);
+        let fresh_and_tight = Reading::with_confidence(1.1402, secs(1), 0.0001);
+        let legs = Legs {
+            fx: Candidates::none()
+                .push("oanda", Some(stale_and_wide))
+                .push("twelvedata", Some(fresh_and_tight)),
+            crypto_usdc: src(fresh(1.0)),
+            ..Legs::default()
+        };
+
+        let mut e = engine();
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
+
+        // The fused estimate moved the level off the plain midpoint...
+        let fused = r.fx_fusion.value.expect("the fx leg fused");
+        assert!(
+            (fused - 1.1402).abs() < 1e-4,
+            "the tight source dominates the estimate: {fused}"
+        );
+        // ...while the leg still reports the OLDEST age and the WIDEST
+        // half-width of its contributors, not the winner's.
+        let leg = legs.fx.resolve(e.leg_bounds().0, e.leg_bounds().1);
+        let reading = leg.reading.unwrap();
+        assert_eq!(reading.age, secs(120), "the oldest contributing age");
+        assert_eq!(reading.confidence, Some(0.004), "the widest half-width");
     }
 
     #[test]
