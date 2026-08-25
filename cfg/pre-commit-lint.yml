@@ -24,6 +24,13 @@ repos:
   - args:
     - '--config'
     - 'cfg/markdownlint.yml'
+    # `.claude/shared/` holds prose FRAGMENTS rendered into skill files, not
+    # documents, so MD041 (first line must be a top-level heading) does not
+    # apply to them. Excluding the directory rather than adding an inline
+    # disable comment: the renderer copies a block verbatim, so a directive at
+    # the top of a fragment would land inside every skill that includes it.
+    # The rendered result is still linted in its destination file.
+    exclude: '^\.claude/shared/'
     files: '.(md|mdc)'
     id: 'markdownlint-fix'
     types:

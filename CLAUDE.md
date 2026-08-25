@@ -267,8 +267,14 @@ renderer) is **Python under `.claude/tools/`** (stdlib,
 `unittest`-covered), **never** a Cargo workspace member — so it doesn't
 compile with the on-chain project. MCP is for prototyping and fallback;
 once a workflow is established and repeated, harden it into a Python
-tool the skill drives. Full detail:
-`docs/conventions/skill-tooling.md`.
+tool the skill drives — **`/harden` is the verb** that does it, and it
+refuses a shape with no measured recurrence. **Repeated skill *prose*
+gets the same treatment**: one source under `.claude/shared/`, filled
+into marked regions by `make render-skills` and gated by
+`make render-check`, which also fails on a dangling marker. Extract
+only genuinely verbatim repetition — `plan`'s and `init-pr`'s model
+guards point opposite ways and are a pair, not a duplicate. Full
+detail: `docs/conventions/skill-tooling.md`.
 
 ## Context economy
 

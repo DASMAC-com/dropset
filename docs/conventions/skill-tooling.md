@@ -207,6 +207,50 @@ context entirely.
 This is a guiding rule, not a mandate to rewrite every MCP call at
 once. `session-metrics` itself nominates candidates: beyond ranking
 token sinks, it flags **repeated, deterministic Bash command shapes**
-as "hardening candidates," which `housekeeping` mines into
-propose-only skill-improvement tasks — closing the loop from
-"workflow we keep running by hand" to "tool we extracted."
+as "hardening candidates," and **`/harden` is the consumer** — it
+takes a candidate, demands the provenance that it actually recurred,
+and emits the tested tool plus the skill reference that drives it.
+That closes the loop from "workflow we keep running by hand" to "tool
+we extracted"; before it existed the candidate list had no consumer
+and sat in a report.
+
+## Repeated prose gets one source and a freshness gate
+
+The same argument applies to **prose**, not just to commands. Changing
+a convention means editing the convention doc *and* every skill that
+restates it — a hand-sync tax paid on every meta batch, and enforced
+only by an agent remembering to look. One batch updated the same
+search-shape rule in three separate files and the same spelling rule
+in two.
+
+So a block that is genuinely repeated gets **one source** under
+`.claude/shared/`, and each skill marks the region it wants filled:
+
+```markdown
+<!-- render:begin fable-model-guard verb=paps -->
+<!-- render:end fable-model-guard -->
+```
+
+`make render-skills` fills every region; `make render-check` fails on
+any difference, so a hand-edited generated region is caught rather
+than silently kept. It also fails on a **dangling** marker — unclosed,
+mismatched, or naming a source that does not exist — because a region
+that never renders is the same silent failure as a
+committed-but-unwired guard hook. Unlike `hook-wiring`, this one reads
+only committed files, so it is checkable in CI.
+
+Substitution is a flat `{{name}}` replace and nothing more: no logic,
+no inheritance, no partials. **A block that needs a conditional is not
+one block — it is two.** An unresolved placeholder is refused rather
+than emitted, since a literal `{{verb}}` reaching a rendered skill
+would be read by an agent as instruction text.
+
+**Extract sparingly, and only on verbatim repetition.** The
+duplication here is thinner than it looks, which is worth recording so
+the next pass does not over-build: `plan`'s and `init-pr`'s model
+guards point in **opposite** directions — one catches a planning-tier
+model burning an implementation run, the other an implementation-tier
+model doing board work — so they are a complementary pair, not a
+duplicate. Several "runs in the base repo" mentions likewise each say
+something different about why. Extract when the prose is genuinely the
+same in two or more places; otherwise leave it written out.
