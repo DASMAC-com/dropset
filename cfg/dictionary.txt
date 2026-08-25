@@ -68,6 +68,7 @@ dtolnay
 eclob
 econia
 equi
+erapi
 etherfuse
 eurau
 eurc
@@ -146,6 +147,7 @@ onramps
 openxmlformats
 osacompile
 osascript
+outputsize
 pageinfo
 parallelizable
 pathspec

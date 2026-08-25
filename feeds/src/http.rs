@@ -1,5 +1,6 @@
 // cspell:word followable
 // cspell:word FUSD
+// cspell:word userinfo
 
 //! The HTTP-REST poll transport (`http` feature).
 
@@ -62,6 +63,60 @@ const REFUSED_REDIRECTS: [u16; 5] = [301, 302, 303, 307, 308];
 /// diagnoses.
 const REDACTED: &str = "REDACTED";
 
+/// The query-parameter names whose values are safe to render in a transport
+/// error. Everything else is redacted.
+///
+/// This is an **allow-list**, and the inversion is the point. The redaction it
+/// replaced was a deny-list keyed on names registered through
+/// [`HttpClient::with_secret_query_param`], which covered only the credentials
+/// a caller remembered to register: an adapter that hand-passed a key through
+/// [`HttpClient::get_json`]'s `query` under an unregistered name was covered by
+/// nothing at all, and its error text reaches the feed-health last-error column
+/// that the read-only dashboard role can read. Default-deny makes that class of
+/// mistake safe by construction rather than by discipline.
+///
+/// **Scoped to the query, and deliberately not claimed beyond it.** The
+/// redaction rewrites query pairs; a credential carried in a **path segment**
+/// or in URL **userinfo** is rendered by the same error and is not reached
+/// here. That is not a regression — the deny-list did not cover them either —
+/// but it bounds what "safe by construction" buys, and the boundary is live
+/// rather than theoretical: this venue set already includes a provider whose
+/// keyed tier authenticates by path (`/v6/<key>/latest/...`) where its keyless
+/// tier does not. A keyed adapter must authenticate by header or by query, not
+/// by path.
+///
+/// The entries are the benign parameters the wired adapters actually send —
+/// what a failed paged backfill is diagnosed from: which symbol, which
+/// interval, which window. A new venue with a new benign name adds it here;
+/// until then that value renders as [`REDACTED`], which costs one round of
+/// diagnosis. That is the correct direction to fail in, and it is why this list
+/// is not derived from the query at run time: a name only earns its place by a
+/// human deciding it carries no credential.
+const BENIGN_QUERY_PARAMS: &[&str] = &[
+    "base",
+    "end",
+    "end_date",
+    "from",
+    "from_symbol",
+    "function",
+    "granularity",
+    "ids",
+    "ids[]",
+    "interval",
+    "outputsize",
+    "pair",
+    "parsed",
+    "price",
+    "start",
+    "start_date",
+    "symbol",
+    "symbols",
+    "timezone",
+    "to",
+    "to_symbol",
+    "vs_currencies",
+];
+
 /// One credential query parameter: a name, and a value behind a `Debug` that
 /// never prints it.
 ///
@@ -111,8 +166,14 @@ pub struct HttpClient {
     /// Credential query parameters appended to every request — the seam for a
     /// venue that authenticates by URL rather than by header (Alpha Vantage's
     /// and Twelve Data's `apikey`). Set with
-    /// [`HttpClient::with_secret_query_param`], which is also what teaches
-    /// [`HttpClient::redact_query`] which values to keep out of an error.
+    /// [`HttpClient::with_secret_query_param`].
+    ///
+    /// Registering a credential here no longer drives the redaction:
+    /// [`HttpClient::redact_query`] is default-deny against
+    /// [`BENIGN_QUERY_PARAMS`], so an unregistered name is redacted just the
+    /// same. What registration still buys is the value never rendering through
+    /// [`SecretParam`]'s `Debug`, and the transport appending the key itself so
+    /// no call site has to carry it.
     secret_query: Vec<SecretParam>,
     min_interval: Duration,
     max_response_bytes: usize,
@@ -252,12 +313,16 @@ impl HttpClient {
     /// failure.
     ///
     /// Carrying the key *here* rather than in the caller's per-request query is
-    /// what closes it: the client then knows which parameter is a credential,
-    /// and `redact_query` strips its value out of every transport error before
-    /// it is wrapped. An adapter that hand-passes a key through `get_json`'s
-    /// `query` under a name registered nowhere here bypasses the mechanism
-    /// entirely — the same discipline `with_secret_header` asks for, and the
-    /// reason both live on the constructor rather than at the call site.
+    /// what closes it: the transport appends the credential itself, and
+    /// [`SecretParam`]'s `Debug` keeps the value out of any render of the
+    /// client.
+    ///
+    /// An adapter that hand-passes a key through `get_json`'s `query` under a
+    /// name registered nowhere here **no longer bypasses the redaction** —
+    /// [`HttpClient::redact_query`] is default-deny, so an unregistered name is
+    /// redacted like any other non-benign parameter. That is a backstop, not a
+    /// license: register the credential here anyway, because only registration
+    /// keeps it out of a `Debug` render of the client and off every call site.
     ///
     /// Registration is by **name**, so a caller that also passes a parameter of
     /// a marked name has both copies redacted. It gets a duplicate parameter on
@@ -286,32 +351,55 @@ impl HttpClient {
     /// exposure lives entirely in the *source* error's own render, which no
     /// context of ours wraps away.
     ///
-    /// Only marked values are replaced. Every benign parameter stays legible,
-    /// because they are what a failed paged backfill is diagnosed from: which
-    /// symbol, which interval, which window.
+    /// Values on [`BENIGN_QUERY_PARAMS`] stay legible, because they are what a
+    /// failed paged backfill is diagnosed from: which symbol, which interval,
+    /// which window. Every other value is replaced, registered as a credential
+    /// or not.
+    ///
+    /// **There is deliberately no early return for a client that registered no
+    /// credential.** The previous shape returned early when `secret_query` was
+    /// empty, which was sound only while the deny-list was the mechanism — under
+    /// default-deny that client is precisely the one at risk, since a key passed
+    /// through `get_json`'s `query` registers nothing. Restoring the early
+    /// return would reopen the hole this inversion closes.
+    ///
+    /// **The rewrite re-normalizes the query, which is now visible on every
+    /// venue.** `query_pairs()` decodes and `extend_pairs` re-serializes as
+    /// `application/x-www-form-urlencoded`, so a rendered URL comes back
+    /// equivalent but not byte-identical: `ids[]` reads as `ids%5B%5D`, a
+    /// literal space as `+`, and a valueless `?foo` as `foo=`. Repeated keys
+    /// and their order survive intact. Under the deny-list this pass ran only
+    /// for the two keyed adapters; it now runs for all of them, so the cosmetic
+    /// difference shows up in diagnostics that used to pass through untouched.
+    /// It is noted here so the next reader does not chase it as a bug.
     fn redact_query(&self, mut err: reqwest::Error) -> reqwest::Error {
-        if self.secret_query.is_empty() {
-            return err;
-        }
         if let Some(url) = err.url_mut() {
-            // Unreachable as called: past the early return there is at least
-            // one credential parameter, and `get_json` appends it to every
-            // request, so any URL reaching here carries a query. Kept because
-            // the alternative on an unexpected input is a rendered URL with a
-            // bare trailing `?`, and clearing an absent query is what produces
-            // it.
+            // Reachable now that any client's error passes through here: a
+            // venue whose request carries no query at all lands on this guard.
+            // Clearing an absent query renders a bare trailing `?`, so the
+            // check is what keeps such a URL intact.
             if url.query().is_some() {
                 let redacted: Vec<(String, String)> = url
                     .query_pairs()
                     .map(|(name, value)| {
-                        let secret = self
-                            .secret_query
-                            .iter()
-                            .any(|marked| marked.name == name.as_ref());
-                        let value = if secret {
-                            REDACTED.to_string()
-                        } else {
+                        // Benign **and** not registered as a credential — the
+                        // two lists compose rather than one shadowing the
+                        // other. Registering a name through
+                        // `with_secret_query_param` has to redact it
+                        // unconditionally, so that a later edit adding that
+                        // same name to the allow-list cannot silently render a
+                        // key in clear. Testing the allow-list alone would make
+                        // an explicit registration quietly ineffective, which
+                        // is the opposite of what registering it says.
+                        let keep = BENIGN_QUERY_PARAMS.contains(&name.as_ref())
+                            && !self
+                                .secret_query
+                                .iter()
+                                .any(|marked| marked.name == name.as_ref());
+                        let value = if keep {
                             value.into_owned()
+                        } else {
+                            REDACTED.to_string()
                         };
                         (name.into_owned(), value)
                     })
@@ -633,12 +721,17 @@ mod tests {
     #[tokio::test]
     async fn a_client_with_no_credential_param_keeps_its_whole_query() {
         // The counterpart to the test above: a venue with no credential
-        // parameter loses nothing from its diagnostics — the deliberate choice
-        // not to blanket-redact. Note what this does *not* pin: delete
-        // `redact_query`'s `secret_query.is_empty()` early return and it still
-        // passes, because with no marked names the rewrite is an identity
-        // round-trip. The early return is an optimization, not the behavior
-        // under test here.
+        // parameter loses nothing from its diagnostics, because every parameter
+        // it sends is on `BENIGN_QUERY_PARAMS`. That is the half of default-deny
+        // worth pinning — the inversion is only affordable if ordinary backfill
+        // diagnostics stay legible.
+        //
+        // Be exact about the reach, because the comment this replaced was
+        // scrupulous about it and the first rewrite was not: this fails if
+        // `granularity` is dropped from the allow-list, and only that name.
+        // Every other entry is covered by
+        // `every_wired_adapter_parameter_is_on_the_benign_list` below, which
+        // walks the whole set.
         let err = refusing_client()
             .get_json::<serde_json::Value>("/products/EURC-USDC/candles", &[("granularity", "60")])
             .await
@@ -646,6 +739,150 @@ mod tests {
         let rendered = format!("{err:?}");
         assert!(rendered.contains("granularity=60"), "{rendered}");
         assert!(!rendered.contains("REDACTED"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn an_unregistered_credential_is_redacted_by_default_deny() {
+        // The hole default-deny closes, and the reason this inversion is
+        // load-bearing rather than belt-and-braces. This client registers no
+        // credential at all and hand-passes one through `get_json`'s query —
+        // what an adapter author does by mistake, since nothing forces the
+        // constructor route. Under the deny-list this rendered the key in
+        // clear, and a transport error's text reaches the feed-health
+        // last-error column, which the read-only dashboard role can select and
+        // the operations panel renders verbatim.
+        let err = refusing_client()
+            .get_json::<serde_json::Value>("/query", &[("token", "super-secret-key")])
+            .await
+            .expect_err("a refused connection is an error");
+        let rendered = format!("{err:?}");
+        assert!(!rendered.contains("super-secret-key"), "{rendered}");
+        // The name still renders, so the redaction stays diagnosable — the same
+        // property the registered-credential path is pinned on.
+        assert!(rendered.contains("token=REDACTED"), "{rendered}");
+    }
+
+    #[test]
+    fn no_credential_name_is_on_the_benign_allow_list() {
+        // The allow-list is now the whole of the redaction, so a credential
+        // name landing on it would reopen the hole for every client at once —
+        // silently, and without touching `redact_query`. `apikey` is what both
+        // wired keyed adapters authenticate with (Alpha Vantage and Twelve
+        // Data); the rest are the spellings someone is most likely to reach for
+        // when wiring the next keyed venue, which is exactly when this list
+        // gets edited.
+        for name in [
+            "access_key",
+            "access_token",
+            "api_key",
+            "apikey",
+            "app_key",
+            "appid",
+            "auth",
+            "client_secret",
+            "key",
+            "passwd",
+            "password",
+            "secret",
+            "session",
+            "sig",
+            "signature",
+            "token",
+        ] {
+            assert!(
+                !BENIGN_QUERY_PARAMS.contains(&name),
+                "`{name}` must never be treated as a benign query parameter"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_registered_credential_is_redacted_even_if_its_name_looks_benign() {
+        // The allow-list and the registration list **compose**; neither
+        // shadows the other. Registering a name through
+        // `with_secret_query_param` is a statement that the value is a
+        // credential, so it must be redacted whatever the allow-list says —
+        // otherwise one careless addition to `BENIGN_QUERY_PARAMS` silently
+        // renders a live key in clear for every client that registered it.
+        //
+        // `symbol` is used as the stand-in precisely because it *is* benign
+        // and *is* on the list: testing with a name the list already rejects
+        // would pass without the composition being there at all.
+        let client = refusing_client().with_secret_query_param("symbol", "super-secret-key");
+        let err = client
+            .get_json::<serde_json::Value>("/query", &[("granularity", "60")])
+            .await
+            .expect_err("a refused connection is an error");
+        let rendered = format!("{err:?}");
+        assert!(!rendered.contains("super-secret-key"), "{rendered}");
+        assert!(rendered.contains("symbol=REDACTED"), "{rendered}");
+        // And the genuinely benign parameter beside it still renders, so the
+        // composition did not collapse into blanket redaction.
+        assert!(rendered.contains("granularity=60"), "{rendered}");
+    }
+
+    #[test]
+    fn every_wired_adapter_parameter_is_on_the_benign_list() {
+        // The allow-list is only affordable if it actually covers what the
+        // wired adapters send: a name missing from it renders as `REDACTED`
+        // and costs a round of diagnosis on a failed backfill. The
+        // single-parameter test above reaches exactly one entry; this is what
+        // pins the rest.
+        //
+        // Be exact about the limit, because the first draft of this comment
+        // was not — it claimed the test fires when a new venue lands without
+        // its parameters registered, and it cannot. The table below is
+        // hand-maintained, so a venue never added here is invisible to this
+        // test. What it does catch is a name being dropped from
+        // `BENIGN_QUERY_PARAMS` while a listed adapter still sends it.
+        //
+        // Adding a row is therefore a manual step when a venue lands, and the
+        // mitigation is to list every adapter even when it sends nothing —
+        // `erapi` is here with an empty set for exactly that reason, so an
+        // adapter that was forgotten is distinguishable from one that has no
+        // query parameters to declare.
+        let wired: &[(&str, &[&str])] = &[
+            (
+                "alphavantage",
+                &["function", "from_symbol", "to_symbol", "outputsize"],
+            ),
+            ("coinbase", &["granularity", "start", "end"]),
+            ("coingecko", &["ids", "vs_currencies"]),
+            ("coinmarketcap", &["ids"]),
+            // Sends none: its endpoint is path-keyed. Listed anyway, because an
+            // adapter absent from this table is indistinguishable from one that
+            // was forgotten — which is the failure mode described above.
+            ("erapi", &[]),
+            ("frankfurter", &["base", "symbols"]),
+            ("kraken", &["pair"]),
+            ("oanda", &["granularity", "from", "to", "price"]),
+            ("pyth", &["ids[]", "parsed"]),
+            (
+                "twelvedata",
+                &["symbol", "interval", "timezone", "start_date", "end_date"],
+            ),
+        ];
+        for (venue, params) in wired {
+            for param in *params {
+                assert!(
+                    BENIGN_QUERY_PARAMS.contains(param),
+                    "`{venue}` sends `{param}`, which is not on BENIGN_QUERY_PARAMS — \
+                     its value will render as REDACTED in every transport error"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_benign_allow_list_is_sorted_and_free_of_duplicates() {
+        // Not style policing: the list is edited by hand every time a venue
+        // lands, and an unsorted list is where a duplicate — or a second,
+        // divergent spelling of a name already present — hides. Sorted order is
+        // what makes a review of that edit a local read rather than a scan.
+        let mut sorted = BENIGN_QUERY_PARAMS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.as_slice(), BENIGN_QUERY_PARAMS);
     }
 
     /// Answer one request on loopback with `response`, returning the port to

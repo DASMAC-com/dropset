@@ -22,6 +22,14 @@
 
 <!-- cspell:word TIMESTAMPTZ -->
 
+<!-- cspell:word concertation -->
+
+<!-- cspell:word devkum -->
+
+<!-- cspell:word Norges -->
+
+<!-- cspell:word SDMX -->
+
 # Dropset Data Feeds — Ingestion Framework and Market-Data Collection
 
 Two things over one substrate. The **`feeds`** crate is a shared
@@ -321,13 +329,27 @@ surfaces in any `{:?}` of the resulting `anyhow` chain, which is exactly
 what a top-level handler logs. It needs no hostile venue, only an
 ordinary request failure. Such an adapter passes its key to
 `HttpClient::with_secret_query_param`, which appends it to every request
-and redacts its value out of every transport error before it is wrapped.
-Carrying the key on the client rather than in the adapter's per-request
-query is the point: the transport then knows which parameter is a
-credential. Passing a key through `get_json`'s `query` instead bypasses
-the mechanism, exactly as plain `with_header` would. Redaction is
-targeted, not blanket — benign parameters stay legible, because a failed
-paged backfill is diagnosed from precisely those.
+and keeps the value out of any `Debug` render of the client. Carrying the
+key there rather than in the adapter's per-request query remains the
+discipline: it is what spares every call site from holding the secret.
+
+**The redaction is default-deny.** A transport error's query values are
+replaced unless the parameter's name sits on an explicit benign
+allow-list — symbol, interval, window bounds and the like. Benign
+parameters stay legible, because a failed paged backfill is diagnosed
+from precisely those; everything else is redacted whether or not it was
+registered.
+
+That inverts the earlier **deny-list**, under which only registered names
+were replaced — so a key hand-passed through `get_json`'s `query` was
+covered by nothing at all. Registration is now a hygiene measure with a
+backstop behind it, rather than the sole defense. Two consequences worth
+stating: adding a venue whose benign parameter is not yet on the
+allow-list costs one round of diagnosis (its value renders as
+`REDACTED`), which is the safe direction to fail in; and
+`0003_maker_telemetry.sql`'s column comments still describe the old
+deny-list and its open residual risk. That migration is checksum-frozen
+and cannot be corrected in place, so this section supersedes it.
 
 **Redirects are refused, which is the third credential boundary.**
 `reqwest`'s default policy follows up to 10 redirects and strips
@@ -904,6 +926,46 @@ Data coverage is verified only for AUD and EUR (§13), so MYR and NGN are
 *at best* two-source and could be one or zero. That is precisely why
 they are where a further source would buy the most.
 
+**Corrected 2026-08-24 — the exposure is real but narrower, and it is
+NGN.** Measured directly against the already-wired Frankfurter source:
+it quotes MYR, which the ECB reference set carries, and does **not**
+quote NGN. So of the two, only NGN sits on OANDA and Twelve Data alone;
+MYR has a third source in the roster today. The sentence above holds
+strictly for *intraday* coverage, which is what it was measuring, but
+under the widen-then-filter direction — where a daily reading is a
+consensus input rather than a disqualification — it reads as more
+alarming about MYR than the data supports. NGN is the one roster
+currency with no daily corroborator at all, and it is the gap the er-api
+source below exists to close — **once something collects it**. The
+adapter has landed; no collector consumes it yet, so NGN's daily
+coverage is unchanged as of this writing.
+
+**Wired 2026-08-24, and wider than "those five"**
+(`0006_pyth_fx_crosses.sql`). The five are seeded, and so are fifteen
+crosses with **no USD leg** — EUR/GBP, EUR/JPY, GBP/CAD and the rest —
+because Hermes publishes them and a cross we may want to quote later
+cannot have its history backfilled once the market exists. The roster
+goes from 7 feeds to 27.
+
+The care that mattered was refusing to seed from the catalogue.
+Fifty-three catalogued feeds have both legs in the roster; only **27
+have ever published**, the other 26 reporting `publish_time` 0. Since
+the adapter omits a feed it got no answer for, a seeded dead feed is
+indistinguishable from an outage — silently missing data, forever — so
+every id was confirmed live before seeding, and the 26 silent ones are
+named in the migration so the check is not repeated. USD/MYR and USD/NGN
+are among them. That corroborates the **Pyth-column** claim higher up —
+neither currency has a live Pyth feed — and *not* the correction beside
+it, whose whole point is that the two are unlike on **daily** coverage.
+The two results are about different columns and agree on neither
+currency's overall exposure.
+
+One consequence worth stating: the collector roster and the maker's
+compiled roster **no longer hold the same set**, deliberately. The
+collector ingests everything obtainable; the maker quotes its configured
+markets. The test that pinned them equal now pins containment instead —
+the maker may not quote a cross whose history nothing records.
+
 **The roster for AUD/USD quoting, stated outright**, since it is the
 pair this survey was opened on: **Pyth plus OANDA plus Twelve Data**,
 with Frankfurter as the daily reference and Alpha Vantage as daily
@@ -923,12 +985,12 @@ propagating to all three alike.
 **Candidates probed and rejected**, recorded so the search is not
 repeated:
 
-| Source                | Intraday      | Verdict                                                                                                                                        |
-| --------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `exchangerate.host`   | —             | a key is now required; the free keyless tier is gone                                                                                           |
-| `open.er-api.com`     | no            | reachable and keyless, but daily only — does not move the intraday floor                                                                       |
-| Stooq                 | claimed       | every quote URL 404s and the CSV endpoint serves a JavaScript bot challenge                                                                    |
-| Yahoo Finance `chart` | **yes, real** | 1124 bars at a 60s median gap, pricing AUD/USD in the range Pyth reports — but unofficial, and licensed for neither storage nor redistribution |
+| Source                | Intraday      | Verdict                                                                                                                                                   |
+| --------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exchangerate.host`   | —             | a key is now required; the free keyless tier is gone                                                                                                      |
+| `open.er-api.com`     | no            | **reversed 2026-08-24 — adapter landed, not yet collected**; daily only, which the relaxed-latency direction makes a corroborator, not a disqualification |
+| Stooq                 | claimed       | every quote URL 404s and the CSV endpoint serves a JavaScript bot challenge                                                                               |
+| Yahoo Finance `chart` | **yes, real** | 1124 bars at a 60s median gap, pricing AUD/USD in the range Pyth reports — but unofficial, and licensed for neither storage nor redistribution            |
 
 Yahoo is the instructive rejection: it is the only keyless source probed
 that genuinely serves minute FX, so it fails on license rather than on
@@ -936,6 +998,88 @@ capability, and this roster is chosen on the right to *store* history.
 Note also that it emits a gap-free minute grid padded with nulls — 1124
 bars carrying 562 non-null closes — which makes it a grid source like
 Twelve Data, never a zero-bar session detector.
+
+**The er-api reversal, and the central-bank family that did not survive
+alongside it** (all probed 2026-08-24). The rejection in the table was
+correct under the two-source-intraday floor it was written against; the
+widen-then-filter direction retires that floor, so a daily reading is a
+consensus input and the verdict flips. What earns this source a slot is
+not its cadence but its coverage and construction: it prices all 14
+non-USD roster currencies including NGN, and the provider documents that
+it blends central-bank and commercial sources and will not list a code
+without at least three of them. It is a differently-built estimate, not
+another render of a fix the roster already carries.
+
+*Status — adapter only.* `feeds/src/venues/erapi.rs` has landed and is
+registered, but **nothing constructs it**: there is no collector, no
+sink, and no stored reading. So this source ingests nothing today and
+the roster's live coverage is unchanged. The consumer is deliberately
+separate work — unlike Frankfurter, this adapter yields a struct
+carrying the provider's refresh instants rather than a bare `Quotes`
+map, so it cannot simply drop into the maker's fair-value cascade, and
+the instants want a store that keys on them. Read every coverage claim
+about this source as a property of the *source*, not of what the
+roster currently records.
+
+*License — internal use only.* The open-access endpoint permits caching
+and commercial currency-conversion use, **prohibits re-distribution**,
+and requires attribution wherever the rates are shown. Storing readings
+and computing a fair value from them is the permitted use. Surfacing
+them **raw** through the public indexer API or an externally shared
+dashboard is not — and both read the same store, so this binds any new
+read surface rather than the adapter alone. Unlike the Yahoo rejection
+above, which forbade *storage* itself and was therefore fatal, this
+constrains only republication.
+
+*A stated correlation for the consensus filter.* The er-api blend
+contains, by the provider's own documentation, the ECB reference fix —
+**which this roster already ingests**, through Frankfurter. That is a
+declared input property rather than something the adjudicator should
+have to discover: the two
+readings are correlated by construction, so per-source noise should
+reflect it. The correlation is partial and not duplication, which is
+measurable — er-api's EUR of 0.85618 per USD on 2026-08-24 inverts to
+1.16798, against the ECB's own 1.1664 fix for that date, so it is
+demonstrably not a passthrough.
+
+*Five central-bank reference APIs, probed and rejected as price inputs.*
+All were reachable, keyless and HTTP 200 — the hostility to automated
+clients found among macro and holiday calendar sources did not transfer
+here — but none is a usable consensus input:
+
+- **Norges Bank** — its `COLLECTION` attribute reads "ECB concertation
+  time 14:15 CET": the *same* observation as the ECB, not an independent
+  one.
+- **Bank of Canada** — a daily **average** across the whole day, a
+  different statistic kind from a point-in-time fix.
+- **Bank of England** — lags (latest observation 21 Aug on a 24 Aug
+  probe), and resolves only through a redirect the shared client refuses
+  by policy.
+- **SNB** — the `devkum` cube is a **monthly** average, and the obvious
+  daily cube id 404s.
+- **RBA** — a 4:00 pm Australian Eastern Standard Time mid-point;
+  rejected as a price input, but it independently covers MYR.
+
+*The ECB itself was struck for a better reason than those five: the
+roster already has it.* Frankfurter republishes the ECB reference rate,
+and the match is exact — Frankfurter's EUR of 0.85734 per USD on
+2026-08-24 inverts to 1.16640 against the ECB's own 1.1664 for that
+date. A direct adapter would have duplicated a live consensus input,
+which is precisely the error Norges Bank was rejected for.
+
+*Verified fallback, recorded as resilience insurance.* If Frankfurter
+ever degrades or gates, the ECB SDMX endpoint at `data-api.ecb.europa.eu`
+is the drop-in primary for that leg — probed 2026-08-24, keyless, and
+exact-match verified against Frankfurter's same-day value by the
+arithmetic just above. Frankfurter republishes where the ECB originates,
+so this is the one substitution that will need no fresh measurement on
+the day it is wanted.
+
+*The process lesson, since it generalizes.* A candidate source is
+checked against the **wired venues tree** before it is argued about —
+dedup against the codebase, not only against the board. The ECB adapter
+was scoped, debated and nearly built before anyone opened
+`feeds/src/venues/` and found the same data already arriving.
 
 ### On-chain venue coverage, measured
 

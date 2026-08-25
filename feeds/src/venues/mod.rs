@@ -18,11 +18,13 @@
 //!   batching is not on offer and one source covers one product. [`coinbase`]
 //!   is both cases: its candles endpoint pages its own backfill, and its
 //!   ticker endpoint yields one spot price.
-//! - **Batched venues richer than a price** — [`pyth`] batches like the first
-//!   group but yields a confidence half-width and a publish time alongside each
-//!   rate, so it cannot ride [`Quotes`]' bare `f64`. That extra payload is
-//!   precisely what makes it the FX anchor's *primary* tier rather than another
-//!   fallback.
+//! - **Batched venues richer than a price** — [`pyth`] and [`erapi`] batch like
+//!   the first group but carry more than a rate, so neither rides [`Quotes`]'
+//!   bare `f64`. Pyth yields a confidence half-width and a publish time
+//!   alongside each rate, which is what makes it the FX anchor's *primary* tier
+//!   rather than another fallback; [`erapi`] yields the provider's own refresh
+//!   instants, without which a once-daily snapshot would be stored as though it
+//!   described the moment it happened to be fetched.
 //!
 //! **The batched-poll contract — stated here, not encoded in a trait.** Every
 //! batched quote venue above exposes exactly one inherent `poll` covering its
@@ -82,6 +84,8 @@ pub mod coingecko;
 #[cfg(feature = "http")]
 pub mod coinmarketcap;
 #[cfg(feature = "http")]
+pub mod erapi;
+#[cfg(feature = "http")]
 pub mod frankfurter;
 #[cfg(feature = "http")]
 pub mod kraken;
@@ -100,6 +104,8 @@ pub use coinbase::{CoinbaseCandles, CoinbaseTicker};
 pub use coingecko::CoinGeckoSource;
 #[cfg(feature = "http")]
 pub use coinmarketcap::CmcSource;
+#[cfg(feature = "http")]
+pub use erapi::{ErApiSnapshot, ErApiSource};
 #[cfg(feature = "http")]
 pub use frankfurter::FrankfurterSource;
 #[cfg(feature = "http")]
