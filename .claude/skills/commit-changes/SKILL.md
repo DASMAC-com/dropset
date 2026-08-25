@@ -58,9 +58,12 @@ changes here belong to this session.
      This is what `review-pr` and `init-pr` also say.
    - **Frequency:** run it at a **checkpoint**, not
      after every single-file edit. One session ran the
-     whole tools suite **32 times** in an edit-one-tool
-     loop, most runs re-buying confidence it already
-     had.
+     suite dozens of times in an edit-one-tool loop,
+     most runs re-buying confidence it already had.
+     (Deliberately no figure here: the one measured
+     count belongs to the scope bullet above, and
+     attaching it to both is what made these two
+     findings read as contradictory.)
 
    So: whole suite, fewer times. The two rules point
    the same way once you see that one is about scope

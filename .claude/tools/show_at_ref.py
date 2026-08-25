@@ -50,9 +50,13 @@ import sys
 
 import read_result
 
-# Refuse a blob larger than this rather than holding it in memory. Far above any
-# real source file; this is a runaway guard (a committed binary, a generated
-# bundle), not a policy about what is worth reading.
+# Refuse a blob larger than this rather than decoding and rendering it.
+#
+# Precisely: `subprocess.run(capture_output=True)` has ALREADY buffered the blob
+# by the time this is checked, so the cap does not prevent holding it — it
+# prevents the expensive half (a UTF-8 decode plus whatever the mode prints).
+# Far above any real source file; this is a runaway guard (a committed binary, a
+# generated bundle), not a policy about what is worth reading.
 MAX_BLOB_BYTES = 20_000_000
 
 

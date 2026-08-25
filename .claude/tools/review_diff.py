@@ -531,7 +531,15 @@ def _ends_item_without_block(line: str) -> bool:
     stripped = line.strip()
     if not stripped or stripped.startswith("#[") or stripped.startswith("//"):
         return False
-    return stripped.endswith(";")
+    # A TRAILING comment has to come off before the `;` test, or
+    # `#[cfg(test)] mod test_support; // helpers only` does not end the walk and
+    # the scan runs on to swallow the next braced item — routing production code
+    # into the tests slice, the exact failure this helper exists to prevent.
+    # Splitting on `//` can misread a `//` inside a string literal on such a
+    # line; that is a vanishingly rare shape, and erring here costs at most one
+    # extra line of an already-correct range.
+    code = stripped.split("//", 1)[0].rstrip()
+    return code.endswith(";")
 
 
 def _char_literal_end(line: str, start: int) -> int | None:
@@ -729,7 +737,13 @@ def split_diff(diff_path: Path, out_dir: Path) -> dict:
                     header.append(line)
                     continue
 
-                flush_header(file_slice)
+                # `current`, NOT `file_slice`. A body line belongs to whichever
+                # slice its hunk went to, and flushing to `file_slice` here
+                # wrote the whole preamble into `source` for a Rust file whose
+                # hunks were ALL test hunks — a phantom "file changed" entry
+                # with no hunks after it, and a non-zero source count that a
+                # caller reads as "spawn a source lens".
+                flush_header(current)
                 emit(current, line)
 
             # And the same flush for the LAST file in the diff.
@@ -899,17 +913,31 @@ def gate(
     # here would drift from the pathspec `write_diff` uses, and a single-segment
     # glob like `dir/*.py` is exactly where a hand-rolled one gets it wrong.
     #
-    # Note this applies the positive limiters ONLY, never DIFF_EXCLUDES: `files`
-    # stays deliberately unfiltered with respect to the generated families, so
-    # step 9 can still see that an excluded family changed and needs its gate.
+    # Note this applies the positive limiters ONLY, never DIFF_EXCLUDES: the
+    # inventory stays unfiltered with respect to the generated families.
     numstat = ["diff", "--numstat", "-z", f"{base_ref}..HEAD"]
     if only:
         numstat += ["--", *[f":(top,glob){p}" for p in only]]
     files = parse_numstat_z(_git(numstat))
 
-    paths = [f["path"] for f in files]
-    runs_rust_suites = touches_ci_code(paths)
-    runs_artifact_gates = touches_generation_input(paths)
+    # ...but the GATE PREDICATES are computed from the UNLIMITED file list, and
+    # that distinction is the whole point of this pair of calls. `--only` is a
+    # statement about what to *review*, never about what the branch changed:
+    # narrowing to `.claude/**` on a branch that also touched a generation input
+    # would otherwise report `runs_artifact_gates: false` and step 9 would skip
+    # a gate CI is about to run. One extra cheap git call, only when `--only` is
+    # passed, buys a predicate that cannot go blind.
+    if only:
+        gate_paths = [
+            f["path"]
+            for f in parse_numstat_z(
+                _git(["diff", "--numstat", "-z", f"{base_ref}..HEAD"])
+            )
+        ]
+    else:
+        gate_paths = [f["path"] for f in files]
+    runs_rust_suites = touches_ci_code(gate_paths)
+    runs_artifact_gates = touches_generation_input(gate_paths)
 
     base_fresh = not base_ahead
     diff_empty = diff_lines == 0
@@ -989,7 +1017,10 @@ def gate(
     if overlap:
         # Deliberately NOT a blocker: in-flight overlap is a decision for the
         # caller (wait, or proceed with a documented re-run cost), not a gate.
-        verdict["overlapping_prs"] = overlapping_prs(paths)
+        # `gate_paths`, for the same reason the predicates use it: overlap with
+        # another PR is a property of what this BRANCH changed, not of the slice
+        # `--only` asked to review.
+        verdict["overlapping_prs"] = overlapping_prs(gate_paths)
     return verdict
 
 

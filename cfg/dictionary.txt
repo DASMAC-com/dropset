@@ -37,6 +37,7 @@ cargobill
 cdds
 cdylib
 cfgs
+clickhouse
 clippy
 clob
 cngn
@@ -180,6 +181,7 @@ ratatui
 raydium
 readback
 reauthored
+refspec
 regclass
 rels
 repeg

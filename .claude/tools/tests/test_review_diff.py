@@ -882,6 +882,23 @@ class RustTestRangeTests(unittest.TestCase):
         ranges = rd.rust_test_ranges(text)
         self.assertFalse(rd._in_any_range(4, ranges))
 
+    def test_a_trailing_comment_does_not_defeat_the_braceless_terminator(self):
+        # `mod test_support; // helpers only` does not END with `;`, so the
+        # terminator missed it and the walk ran on to the next `{` — swallowing
+        # production code into the tests slice, the very failure the braceless
+        # case above exists to prevent.
+        text = (
+            "#[cfg(test)]\n"
+            "mod test_support; // helpers only\n"
+            "\n"
+            "pub fn production() {\n"
+            "    real_work();\n"
+            "}\n"
+        )
+        ranges = rd.rust_test_ranges(text)
+        self.assertEqual(ranges, [(1, 2)])
+        self.assertFalse(rd._in_any_range(4, ranges))
+
     def test_a_lifetime_does_not_close_the_range_early(self):
         # `&'static str` is a lifetime, not a char literal. Treating it as an
         # open literal made the scan skip the trailing `{`, so the range ended
@@ -1037,6 +1054,38 @@ class InlineRustTestSplitTests(unittest.TestCase):
             self.assertIn("diff --git a/src/added.rs", text)
             self.assertIn("new file mode 100644", text)
             self.assertIn("+++ b/src/added.rs", text)
+
+    def test_an_all_tests_file_leaves_the_source_slice_empty(self):
+        # A body line belongs to ITS OWN hunk's slice. Flushing the header to
+        # `source` on every body line instead wrote the whole preamble into the
+        # source slice for a file with no source hunks at all — a phantom "file
+        # changed" entry with nothing after it, and a non-zero source count,
+        # which is exactly the signal a caller reads as "spawn a source lens".
+        d = Path(self.tmp.name)
+        (d / "src").mkdir(parents=True, exist_ok=True)
+        (d / "src" / "lib.rs").write_text(self.SOURCE, encoding="utf-8")
+        diff_path = d / "review-diff.txt"
+        diff_path.write_text(
+            "diff --git a/src/lib.rs b/src/lib.rs\n"
+            "index 111..222 100644\n"
+            "--- a/src/lib.rs\n"
+            "+++ b/src/lib.rs\n"
+            "@@ -9,3 +9,3 @@ mod tests {\n"
+            "-    fn it_adds() { assert_eq!(add(1, 2), 4); }\n"
+            "+    fn it_adds() { assert_eq!(add(1, 2), 3); }\n"
+            "\n",
+            encoding="utf-8",
+        )
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            slices = rd.split_diff(diff_path, d)
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(slices["source"]["lines"], 0)
+        source_text = Path(slices["source"]["path"]).read_text(encoding="utf-8")
+        self.assertNotIn("diff --git", source_text)
+        self.assertIn("it_adds", Path(slices["tests"]["path"]).read_text("utf-8"))
 
     def test_a_header_only_diff_is_not_dropped_from_every_slice(self):
         # A mode change has no hunk at all, so nothing ever triggered a flush

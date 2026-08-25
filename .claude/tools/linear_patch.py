@@ -202,9 +202,15 @@ def apply_ops(body: str, ops: list) -> str:
             end = _require_anchor(index, op, "end")
             begin = _locate(result, start, index, key="start")
             tail = _locate(result, end, index, key="end")
-            if tail < begin:
+            if tail < begin + len(start):
+                # Not just `tail < begin`: an `end` that starts INSIDE the
+                # `start` anchor is also incoherent, and would splice away part
+                # of the very text the caller anchored on. This tool's posture
+                # elsewhere (`_locate` refusing an ambiguous anchor rather than
+                # picking one) is to refuse rather than resolve.
                 raise LinearPatchError(
-                    f"op {index}: 'end' occurs before 'start' in the stored body"
+                    f"op {index}: 'end' overlaps or comes before 'start' in "
+                    f"the stored body — the range is not well formed"
                 )
             result = result[:begin] + text + result[tail + len(end) :]
         else:

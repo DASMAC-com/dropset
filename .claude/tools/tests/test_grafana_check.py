@@ -85,6 +85,24 @@ class ParseRulesTests(unittest.TestCase):
             [("first", "First rule"), ("second", "Second rule")],
         )
 
+    def test_a_title_never_back_attaches_across_a_list_item_boundary(self):
+        # The first rule genuinely has NO title. "Attach to the previous rule if
+        # it has none" then reached across the item boundary and stole the
+        # second rule's title — leaving rule 1 looking named, rule 2 reported
+        # title-less, and the problem pointing at the wrong uid.
+        text = (
+            "groups:\n  rules:\n"
+            "  - uid: 'first'\n    condition: 'A'\n"
+            "  - uid: 'second'\n    title: 'Second rule'\n"
+        )
+        rules = gc.parse_rules(text)
+        self.assertEqual(
+            [(r["uid"], r["title"]) for r in rules],
+            [("first", ""), ("second", "Second rule")],
+        )
+        problems = gc.check_static(text)["problems"]
+        self.assertTrue([p for p in problems if "first" in p and "no title" in p])
+
     def test_a_uid_first_file_reports_no_missing_titles(self):
         text = (
             "groups:\n  rules:\n"

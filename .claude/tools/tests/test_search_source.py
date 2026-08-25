@@ -1015,8 +1015,30 @@ class SingleFileContextRefusalTests(unittest.TestCase):
         self.assertIn("offset/limit", printed)
 
     def test_the_clamp_actually_narrows_the_output(self):
-        wide, _ = self._run(["needle", "--glob", "one.rs", "--context", "40"])
-        self.assertEqual(wide, 0)
+        # The load-bearing property, actually asserted: an over-wide `--context`
+        # must produce EXACTLY the output the limit produces, not merely exit 0.
+        # Asserting only the exit code would pass against an implementation that
+        # ignored the clamp entirely, which is the whole thing under test.
+        def results(argv):
+            # The clamp NOTE is expected to differ — it is the explanation, not
+            # the result. Everything else must be byte-identical.
+            _, printed = self._run(argv)
+            return [ln for ln in printed.splitlines() if "NOTE: --context" not in ln]
+
+        wide = results(["needle", "--glob", "one.rs", "--context", "40"])
+        at_limit = results(
+            [
+                "needle",
+                "--glob",
+                "one.rs",
+                "--context",
+                str(ss.SINGLE_FILE_CONTEXT_LIMIT),
+            ]
+        )
+        self.assertEqual(wide, at_limit)
+        self.assertNotEqual(
+            wide, results(["needle", "--glob", "one.rs", "--context", "0"])
+        )
 
     def test_a_narrow_context_on_one_file_is_allowed(self):
         code, _ = self._run(

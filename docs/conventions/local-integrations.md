@@ -277,7 +277,8 @@ a force-push is noticed after it has run.
 `.claude/hooks/no_destructive_bash.py` closes that gap in **two
 tiers**:
 
-- **ASK** — a recursive force-delete, a force-push, a hard reset, a
+- **ASK** — a recursive force-delete (`-r` or BSD `-R`), a force-push
+  (flag-first, flag-last, or a `+src:dst` refspec), a hard reset, a
   `git clean` that removes untracked files, destructive SQL (`DROP`,
   `TRUNCATE`, a `DELETE` with no `WHERE`), a docker prune or volume
   removal, a forced branch delete. Blocked with a message naming what
@@ -285,8 +286,29 @@ tiers**:
   `#destructive-ok` in the command — so a deliberate one stays
   possible and stays auditable in the transcript.
 - **DENY** — a very small catastrophic set that **no marker lifts**: a
-  recursive delete of `/` or the home directory, and a force-push to
-  the default branch.
+  recursive delete of `/`, `~`, or `$HOME` (bare, trailing-slash or
+  globbed), and a force-push to the default branch in any of its
+  spellings.
+
+**Two places the coverage is deliberately narrow, so it is not
+over-read:**
+
+- **Destructive SQL is recognized only when a SQL client is named on
+  the same line** (`psql`, `mysql`, `sqlite3`, `sqlx`, `pg_dump`,
+  `cockroach`, `clickhouse`). Un-gated, the patterns matched ordinary
+  English and blocked ordinary commit messages: a subject line of
+  `Drop table borders` tripped it. A guard that blocks `git commit` is
+  a guard that gets turned off, the worse security outcome. The cost is
+  that a
+  heredoc or a piped `echo … | psql` puts the keyword on a different
+  line from the client and is not seen; two of those three shapes are
+  already barred by the compound guard.
+- **`git clean` is exempted only by a real dry-run flag** — a short
+  cluster containing `n`, or `--dry-run`. A looser test read any flag
+  containing an `n` as a preview, so an ordinary
+  `--exclude=node_modules` made a real `git clean -fdx` look like a dry
+  run and go unclassified. This is the failure mode to watch for across
+  this whole file: **a false-positive fix opening a real hole.**
 
 Two implementation notes worth keeping, because both were found by the
 script's own self-test rather than in review:
@@ -299,6 +321,12 @@ script's own self-test rather than in review:
   bypass: the deny patterns anchor the target path at end-of-command,
   so `rm -rf / #destructive-ok` failed to match deny, fell through to
   ask, and was then lifted by the very marker deny must ignore.
+- **Lines are classified one at a time, but a trailing backslash is
+  collapsed first.** Newline is a command separator, so a multi-line
+  payload is several commands and must not be matched as one blob —
+  except after a `\`, where the newline is *not* a separator and
+  splitting on it cut `rm -rf \` away from its `/` target, dropping a
+  deny to a liftable ask.
 
 **It is a best-effort advisory stop, not a policy boundary.** It
 matches patterns over one command string; it is not a sandbox, and an

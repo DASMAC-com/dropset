@@ -65,10 +65,17 @@ REQUEST_TIMEOUT = 15
 _UID_RE = re.compile(r"^\s*(?:-\s+)?uid:\s*['\"]?([A-Za-z0-9_-]+)['\"]?\s*$")
 _TITLE_RE = re.compile(r"^\s*(?:-\s+)?title:\s*(?:'([^']*)'|\"([^\"]*)\"|(\S.*?))\s*$")
 
-# The start of a rule list item, whatever its first key. Used only to count how
+# The start of a rule list item, whatever its first key. Two uses: counting how
 # many rules the file DECLARES, so a rule missing its uid can be reported rather
-# than silently omitted from the parse — a rule is identified by its uid here,
-# so without this it would simply not exist as far as the gate is concerned.
+# than silently omitted from the parse (a rule is identified by its uid here, so
+# without this it would simply not exist as far as the gate is concerned); and
+# bounding title attribution, so a title that OPENS an item is never
+# back-attached to the previous one.
+#
+# The first-key list is a bounded heuristic, not the schema. An item whose first
+# key is something else (`data:`, `execErrState:`, `isPaused:`, `orgId:`) is
+# invisible to the declared-count check — it under-reports, which is the safe
+# direction: it can miss a missing-uid rule, never invent one.
 _RULE_ITEM_RE = re.compile(
     r"^\s*-\s+(?:uid|title|condition|for|annotations|labels|noDataState):"
 )
@@ -109,6 +116,12 @@ def parse_rules(text: str) -> list[dict]:
     """
     rules: list[dict] = []
     pending_title = None
+    # Has a new list item opened since the last uid was recorded? Without this,
+    # "attach to the previous rule if it has no title" reaches ACROSS the item
+    # boundary: a uid-first rule that genuinely has no title swallows the next
+    # rule's title, so rule 1 looks named, rule 2 is reported title-less, and
+    # the problem names the wrong uid.
+    item_since_uid = False
     for number, line in enumerate(text.splitlines(), start=1):
         # Strip a trailing comment from EVERY line. The inverted form of this —
         # stripping only on lines that are entirely comments — was a no-op where
@@ -117,13 +130,16 @@ def parse_rules(text: str) -> list[dict]:
         # rule was dropped from the parse entirely. A gate going blind is the
         # worst direction for it to fail in.
         stripped = _strip_comment(line)
+        if _RULE_ITEM_RE.match(stripped):
+            item_since_uid = True
         title_match = _TITLE_RE.match(stripped)
         if title_match:
             title = next((g for g in title_match.groups() if g is not None), "")
-            if rules and not rules[-1]["title"]:
-                # The title FOLLOWS its uid — the `- uid:`-first ordering the
-                # uid regex deliberately accepts. Carrying it forward instead
-                # reported "no title" here and mis-attached it to the NEXT rule.
+            if rules and not item_since_uid and not rules[-1]["title"]:
+                # The title FOLLOWS its uid, IN THE SAME ITEM — the `- uid:`-
+                # first ordering the uid regex deliberately accepts. Carrying it
+                # forward instead reported "no title" here and mis-attached it
+                # to the NEXT rule.
                 rules[-1]["title"] = title
             else:
                 # The title PRECEDES its uid, which is how the committed file
@@ -140,6 +156,7 @@ def parse_rules(text: str) -> list[dict]:
                 }
             )
             pending_title = None
+            item_since_uid = False
     return rules
 
 

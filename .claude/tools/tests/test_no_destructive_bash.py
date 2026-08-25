@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# cspell:word refspec
 """Unit tests for the destructive-command guard hook.
 
 **Why this exists as a test module and not only as `--self-test`.** The hook

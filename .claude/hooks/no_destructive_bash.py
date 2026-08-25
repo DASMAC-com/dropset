@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # cspell:word pgdata
-# cspell:word clickhouse
-# cspell:word refspec
 """PreToolUse guard: stop catastrophic and hard-to-reverse Bash commands.
 
 The three committed guards cover shell **form** (compounds, `git grep`) and
@@ -57,7 +55,8 @@ _RM_RECURSIVE_FORCE = r"\brm\b(?=(?:\s+-\S+)*\s+-\S*[rR])(?=(?:\s+-\S+)*\s+-\S*f
 # destructive. `~/` and `$HOME/` (with the trailing slash) are included because
 # `rm -rf ~/` is a trivially plausible slip and reads as no less final.
 _CATASTROPHIC_TARGET = (
-    r"(?:/|/\*|~|~/|~/\*|\$HOME|\$HOME/|\$\{HOME\}|\$\{HOME\}/"
+    r"(?:/|/\*|~|~/|~/\*|\$HOME|\$HOME/|\$HOME/\*"
+    r"|\$\{HOME\}|\$\{HOME\}/|\$\{HOME\}/\*"
     r"|\"\$HOME\"|'\$HOME'|\"\$HOME/\"|'\$HOME/')"
 )
 
@@ -72,11 +71,17 @@ DENY_PATTERNS = (
         # Order-independent: the force flag may follow the refname just as
         # naturally as precede it, and `git push origin main --force` used to
         # fall through to the marker-liftable ask tier. The `+ref` refspec is a
-        # force push with no flag at all.
+        # force push with no flag at all — and it has to be matched in its FULL
+        # form, not just the bare `+main`: `+refs/heads/main:refs/heads/main`
+        # and `+HEAD:main` carry no flag either, and matching only the short
+        # spelling left the deny tier half-closed. The optional `[\w./-]*[:/]`
+        # prefix covers both a qualified refname and a `src:dst` pair; the
+        # trailing lookahead keeps `+main-thing:x` (a differently-named branch)
+        # out of a tier no marker can lift.
         re.compile(
             r"\bgit\s+push\b"
             r"(?=.*(?:--force\b|--force-with-lease\b|(?<!\w)-f(?!\w)"
-            r"|\+(?:main|master)\b))"
+            r"|\+(?:[\w./-]*[:/])?(?:main|master)(?=[:\s]|$)))"
             r"(?=.*\b(?:main|master)\b)"
         ),
         "a force-push to the default branch",
@@ -101,14 +106,27 @@ ASK_PATTERNS = (
         "a recursive force-delete (`rm -rf`)",
     ),
     (
-        re.compile(r"\bgit\s+push\b.*(?:--force\b|(?<!\w)-f(?!\w)|\+(?:\w|/)+:)"),
+        # `[\w./-]`, not `(?:\w|/)`: a hyphen is legal in a refname and every
+        # branch in this repo has one (`+eng-942:eng-942`), so the narrower
+        # class matched no real refspec force-push here at all.
+        re.compile(r"\bgit\s+push\b.*(?:--force\b|(?<!\w)-f(?!\w)|\+[\w./-]+:)"),
         "a force-push",
     ),
     (re.compile(r"\bgit\s+reset\s+--hard\b"), "a hard reset, which discards changes"),
     (
         # `-n` is git clean's DRY RUN. `git clean -ndx` is the recommended
         # preview and deletes nothing, so blocking it is a pure false positive.
-        re.compile(r"\bgit\s+clean\b(?![^\n]*\s-\S*n)(?:\s+-\S+)*\s+-\S*[fx]"),
+        #
+        # The exemption is deliberately narrow: it must be a SHORT-flag cluster
+        # containing `n`, or the long `--dry-run`. A looser `\s-\S*n` reads any
+        # dash-token with an `n` anywhere as a dry run, so
+        # `git clean -fdx --exclude=node_modules` and `git clean --interactive
+        # -fdx` both went unclassified — the false-positive fix opening a real
+        # hole, which is the failure mode to watch for in this whole file.
+        re.compile(
+            r"\bgit\s+clean\b(?![^\n]*\s(?:-[a-zA-Z]*n|--dry-run\b))"
+            r"(?:\s+-\S+)*\s+-\S*[fx]"
+        ),
         "a `git clean` that deletes untracked files",
     ),
     (
@@ -205,6 +223,9 @@ def split_comments(cmd):
     return "".join(out), "\n".join(comments)
 
 
+_CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
+
+
 def classify(cmd):
     """``("deny"|"ask"|None, reason)`` for one command string.
 
@@ -212,7 +233,20 @@ def classify(cmd):
     in shell, so a multi-line payload is several commands — and classifying the
     whole blob as one string would let the deny patterns' end-anchors
     (``…\\s*$``) be defeated simply by appending another line.
+
+    **A trailing backslash is the exception, so it is collapsed first.** There
+    the newline is *not* a separator, and splitting on it split one command in
+    two::
+
+        rm -rf \\
+          / #destructive-ok
+
+    left ``rm -rf \\`` on its own line, which reaches only the marker-liftable
+    ask tier — while the identical un-continued ``rm -rf /`` denies. Collapsing
+    is also the conservative direction: it can only put more of a command in
+    front of a pattern, never less.
     """
+    cmd = _CONTINUATION_RE.sub(" ", cmd)
     lines = [line for line in cmd.splitlines() if line.strip()]
     for pattern, reason in DENY_PATTERNS:
         if any(pattern.search(line) for line in lines):
@@ -327,8 +361,27 @@ def _self_test():
         # through to the marker-liftable ask tier.
         ("git push origin main --force", "deny"),
         ("git push origin master -f", "deny"),
-        # A refspec force-push carries no flag at all.
+        # A refspec force-push carries no flag at all — in ANY of its
+        # spellings. Matching only the short one left the rest on the
+        # marker-liftable ask tier, which is the tier this rule exists to
+        # escape.
         ("git push origin +main:main", "deny"),
+        ("git push origin +refs/heads/main:refs/heads/main", "deny"),
+        ("git push origin +HEAD:main", "deny"),
+        # ...but a branch that merely STARTS with `main` is a different branch.
+        ("git push origin +main-thing:main-thing", "ask"),
+        # The globbed home targets, which the un-globbed pair already denied.
+        ("rm -rf $HOME/*", "deny"),
+        ("rm -rf ${HOME}/*", "deny"),
+        ("rm -rf ~/*", "deny"),
+        # The dry-run exemption must not swallow an ordinary flag containing
+        # `n`: both of these DELETE, and a loose `-\\S*n` read them as previews.
+        ("git clean -fdx --exclude=node_modules", "ask"),
+        ("git clean --interactive -fdx", "ask"),
+        ("git clean --dry-run -fdx", None),
+        # A trailing backslash continues the command; the newline is not a
+        # separator, so this must classify as the one command it actually is.
+        ("rm -rf \\\n  /", "deny"),
     ]
     failures = []
     for cmd, expected in cases:

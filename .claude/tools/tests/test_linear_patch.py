@@ -121,6 +121,23 @@ class ApplyOpsTests(unittest.TestCase):
                 ],
             )
 
+    def test_an_end_overlapping_the_start_anchor_is_refused(self):
+        # `end` beginning inside `start` would splice away part of the text the
+        # caller anchored on — incoherent, so refused rather than resolved.
+        with self.assertRaises(LinearPatchError) as caught:
+            lp.apply_ops(
+                BODY,
+                [
+                    {
+                        "op": "replace_range",
+                        "start": "Alpha line",
+                        "end": "pha line",
+                        "text": "x",
+                    }
+                ],
+            )
+        self.assertIn("overlaps", str(caught.exception))
+
     def test_end_before_start_is_refused(self):
         with self.assertRaises(LinearPatchError) as caught:
             lp.apply_ops(

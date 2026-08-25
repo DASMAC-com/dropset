@@ -2761,7 +2761,7 @@ already being asked to start the review.
 
    **And run a fast suite at CHECKPOINTS — the lever there is
    frequency, not scope.** One session ran the whole tools
-   suite **32 times** in an edit-one-tool loop, most runs
+   suite dozens of times in an edit-one-tool loop, most runs
    re-buying confidence it already had. Do not read that as a
    reason to narrow the *scope*: step 4's measurement points
    the other way (the per-module discover run cost more **and**

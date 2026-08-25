@@ -39,8 +39,14 @@ pre-approve it.
 ### User challenge — never decide
 
 A decision that would **override something the operator explicitly
-specified**. Not "something we infer they'd want", and not "something a
-convention implies": something they said.
+specified**. Not "something we infer they'd want": something they said.
+
+A convention **counts as something they said** when it codifies a
+standing operator direction — the blocking-edge rule below is written
+as a convention precisely because it was ratified once and applies
+continuously. What does not count is a convention's *implications*:
+extending a rule by analogy to a case it does not name is inference,
+and inference belongs in the tiers above.
 
 Here the rule inverts. The operator's original direction is the
 **default**, and the burden is on the argument for changing it. Fire
