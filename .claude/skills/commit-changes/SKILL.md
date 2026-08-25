@@ -45,6 +45,25 @@ changes here belong to this session.
    `--all-files` still proves nothing about a file
    git has never seen — run `make lint` instead.
 
+   **The full suite runs HERE — the checkpoint — and
+   the module runs while you iterate.** This is the
+   place the granularity rule belongs, because this
+   is where the checkpoint is: a session that runs
+   the whole suite after every single-file edit
+   re-buys established confidence, measured at **32
+   runs of the tools suite** in one edit-one-tool
+   loop. That session's own PR added the rule to the
+   convention doc and then did not follow it, which
+   is the argument for stating it beside the loop
+   rather than only in the doc.
+
+   The one counter-case, so this does not swing too
+   far: a suite that runs in **under a second** is
+   cheaper run whole *through the wrapper* than
+   per-module unwrapped — the wrapping, not the
+   scope, dominates there. Judge by wall-clock, and
+   when in doubt at a checkpoint, run it whole.
+
    **Don't re-derive the diff you already have.**
    If `review_diff.py` has already written slices
    for this range, self-review reads those files —

@@ -86,12 +86,33 @@ returned 12 rows of which **9 were canceled rejections**, and only 3 were
 foldable — so this step could never fire and step 2 was invited to fold
 settled work.
 
-**2. Read only the bodies you are going to fold.** The listing gives you
-each lever's identifier, title and state. Decide from the titles which
-levers this pass folds, then read *those* bodies and no others. A parked
-pool that has grown past what one coherent PR should carry is a reason to
-fold a subset now and leave the rest parked — not a reason to read
-everything.
+**2. Read the bodies you are going to fold — in ONE call.** The listing
+gives you each lever's identifier, title and state. Decide from the
+titles which levers this pass folds, then fetch those bodies through the
+tool rather than one MCP `get_issue` per lever:
+
+```sh
+python3 .claude/tools/trim_levers.py list --fingerprints
+python3 .claude/tools/trim_levers.py list --bodies-out <scratchpad>/levers.md
+```
+
+`--fingerprints` adds each lever's dedup key to the listing — the thing a
+sibling lookup actually needs, and the one field the plain listing omits.
+`--bodies-out` fetches **every** parked body in a single query and writes
+them to a file with one `## <identifier>` heading each, printing only
+sizes; slice it with
+`python3 .claude/tools/read_result.py --section '<identifier>' <file>`.
+
+**The fold's reads had become its larger cost**, which is why this exists:
+the plain listing prints titles only, so a fold ran **one fetch per
+lever** — 21 of them on one pass — and the nearest sweep that did carry
+bodies (a project-wide Todo read) cost **10.6k for 65 issues with every
+description truncated anyway**, so five per-issue follow-ups ran
+regardless. That read cost is what sized one fold down to five levers.
+
+A parked pool that has grown past what one coherent PR should carry is
+still a reason to fold a subset now and leave the rest parked — the
+cheaper read changes what a fold costs, not what a fold should contain.
 
 **3. Group into the fewest coherent PRs.** Per `CLAUDE.md` → "Structured
 filing fields", fold every set of levers that would land as **one PR**

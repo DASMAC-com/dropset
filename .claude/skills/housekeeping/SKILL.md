@@ -351,8 +351,21 @@ already-pre-approved `Bash(gh pr list:*)` read-rule (see
 `docs/conventions/github-mcp.md`):
 
 ```sh
-gh pr list --state merged --json number,headRefName,mergedAt --limit 100
+gh pr list --state merged --json number,headRefName,mergedAt --limit 30
 ```
+
+**Match the window to the question — 100 was a payload for
+nothing.** This step decides about the handful of worktrees
+that exist right now, and worktrees are **days old by
+construction**, so a 100-PR window pays for ~96 rows the
+decision never reads. Field-selecting was already right; the
+*width* was not. Widen it only if a real worktree's branch
+falls off the end.
+
+**Do not select a collection-valued field here** — adding
+`files` or `commits` to the `--json` list reintroduces the
+whole payload this call exists to avoid (measured at ~4.0k
+for a two-line answer across eleven PRs).
 
 **But PR-merged is not the prune criterion — the ISSUE'S
 STATUS TYPE is.** A merged PR whose Linear issue reads
@@ -408,21 +421,32 @@ are not dropped automatically — they land in `skipped` /
 
 **Then mark notifications for merged PRs done.** Merged PRs
 leave GitHub notifications that otherwise pile up with no
-easy bulk clear. List the unread notifications through the
-GitHub MCP and dismiss only the ones whose PR has **merged**
-— a robust catch-all that also covers auto-merged PRs and
-others' PRs the worktree sweep above never touches:
+easy bulk clear. Dismiss only the ones whose PR has
+**merged** — a robust catch-all that also covers auto-merged
+PRs and others' PRs the worktree sweep above never touches.
 
-```txt
-mcp__github__list_notifications(
-  owner: "DASMAC-com",
-  repo: "dropset",
-)
+**Read the sweep field-selected.** Only three fields are
+consumed — the thread id, the subject type, and the subject
+url — and the MCP getter embeds the **complete repository
+object** (every `*_url` template) once per notification,
+which measured **~3.7k for three rows**:
+
+```sh
+gh api /notifications --jq '.[] | {id, url: .subject.url}'
 ```
 
-For each notification whose `subject.type` is
-`PullRequest`, read that PR (its number is the tail of
-`subject.url`) and key on `merged_at` exactly as above:
+**And the merged set you already have IS the merged-at
+check.** For any notification whose PR number appears in the
+`gh pr list --state merged` result fetched moments ago,
+membership in that set *is* the confirmation — a per-PR read
+verifies something the session is already holding. In the
+measured pass all three notifications were already in the
+just-fetched merged set, so all three per-PR reads were
+redundant.
+
+Fall back to a per-PR read **only** for a notification whose
+number is outside that window (an older PR the 30-row list
+did not reach):
 
 ```txt
 mcp__github__pull_request_read(
@@ -433,7 +457,8 @@ mcp__github__pull_request_read(
 )
 ```
 
-- `merged_at` is **non-null** → mark that one notification
+- merged (by set membership, or by a non-null `merged_at`
+  from the fallback read) → mark that one notification
   **done**:
 
   ```txt
@@ -792,6 +817,22 @@ harness-side, outside the checkout, so there is no hook or tool
 here to change — flag an over-long index line in the report and
 trim it while curating, but the durable fix is upstream in that
 instruction.
+
+**Read the memory BEFORE re-verifying the fact it records.**
+The asymmetry is the same one as slice-before-whole-read, and
+it is missed for the same reason — the memory feels like the
+thing being *checked* rather than a source to consult. One
+session paid a **≈4.2k CLI help dump** to establish four flag
+facts, then read the saved memory afterwards and found it had
+recorded all four correctly. Read the entry first; re-verify
+only when it cites a version, path, or location that has since
+moved, and then verify **that** rather than re-deriving the
+whole fact.
+
+This is also the standing recall caveat: a memory reflects
+what was true when written, so a claim about a file, function
+or flag is checked against `HEAD` — but *checked*, not
+rebuilt from scratch.
 
 **Gate the scan on a cadence first.** Reading the whole
 store and repo-verifying every reference is the pass's
