@@ -47,19 +47,34 @@ than the file you edited.
 intra-doc link.** Codama copies the text of a doc comment on an
 `#[account]` struct, a field of an instruction's `Accounts`, or any
 IDL-carried type verbatim into `sdk/rs/src/generated/`, where a path
-that resolves in the program crate resolves to nothing. Write
-`` `NULL_SECTOR` ``, not `` [`NULL_SECTOR`] ``. The gate enforces it,
-but it fails pointing at a generated file you never edited — which is
-exactly why the rule needs stating rather than discovering. This
-applies **only** to items the IDL actually carries: a
-program-internal struct is free to use real links, and should.
+that resolves in the program crate resolves to nothing. The gate
+enforces it, but it fails pointing at a generated file you never
+edited — which is exactly why the rule needs stating rather than
+discovering.
+
+It applies **only** to items the IDL actually carries, and
+`programs/dropset/src/state/market/layout.rs` holds both halves of the
+distinction about 200 lines apart, so copy from there rather than from
+the rule alone. `MarketHeader.head` is IDL-carried, so its doc writes
+`` `NULL_SECTOR` ``. `Vault::next` is not — `Vault` is a bytemuck slab
+struct the IDL never sees — so its doc writes
+`` [`super::NULL_SECTOR`] ``, a working link. Prefer the link wherever
+the item is not IDL-carried: a code span there is a loss, not a
+safeguard.
 
 **Never satisfy the gate by widening an item's visibility.** Making a
-private item `pub` does make a public-docs link to it resolve, but in a
-consensus-critical crate that is a trust-surface change made to settle
-a docs lint. Degrade the link to a code span instead, or re-path it
-(`[`Self::method`]` for a sibling method, `[`super::CONST`]` for a
-parent-module const) when a real path exists.
+private item `pub` does make a public-docs link to it resolve, but
+visibility is API surface in every crate — and in a consensus-critical
+one it is a trust surface as well. Either way it is a real change made
+to settle a docs lint. Degrade the link to a code span instead, or
+re-path it (`[`Self::method`]` for a sibling method,
+`[`super::CONST`]` for a parent-module const) when a real path exists.
+
+The same holds one layer down, in the **generated** SDK: when a copied
+link resolves there but hits a private generated module, widening
+Codama's output is the identical trade and is equally not the answer.
+The fix belongs in the program's doc comment, which is the one place
+that owns the text.
 
 One gap worth knowing: the gate does not pass
 `--document-private-items`, so a broken link inside a **private**
