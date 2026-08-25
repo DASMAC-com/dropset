@@ -21,6 +21,7 @@ use dropset_fair_value::{FairValueConfig, FairValueEngine};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 /// The discovered market and its token metadata — everything the bot needs to
@@ -75,7 +76,20 @@ pub enum ProfileKind {
 /// vault, armed profile, and inventory belief.
 pub struct Context {
     pub client: RpcClient,
-    pub leader: Keypair,
+    /// The leader / quote-authority signer, shared by every market's context
+    /// rather than copied into each.
+    ///
+    /// `Arc` rather than a `Keypair` per market, so the 32-byte secret exists
+    /// **once** in the process for any roster size. The type is what enforces
+    /// that: cloning the handle to build the next context cannot duplicate the
+    /// key material, so the N-copies shape cannot come back by accident.
+    ///
+    /// Deref makes this transparent at the use sites — `&ctx.leader` still
+    /// coerces to the `&Keypair` the `chain` signing helpers take, and
+    /// `ctx.leader.pubkey()` still resolves — which keeps the secret half
+    /// reachable only from those signing calls, the property the key-custody
+    /// audit verified.
+    pub leader: Arc<Keypair>,
     pub vault_idx: u32,
     pub market: MarketAddrs,
     /// The market's feed identity (CoinGecko / CoinMarketCap ids, the FX
@@ -158,7 +172,7 @@ impl Context {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: RpcClient,
-        leader: Keypair,
+        leader: Arc<Keypair>,
         vault_idx: u32,
         market: MarketAddrs,
         cfg: MarketConfig,
