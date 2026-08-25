@@ -948,7 +948,7 @@ silently redirect those references.
   upserted in place.
 
 DDL lives in `db-schema/migrations/0003_maker_telemetry.sql` and
-`0006_fair_price_fusion.sql`, which carry the per-column reasoning; the
+`0007_fair_price_fusion.sql`, which carry the per-column reasoning; the
 single-schema-owner rule (see `docs/data-feeds.md` §8) means the bot
 issues no DDL and never asserts a schema.
 
