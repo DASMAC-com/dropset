@@ -29,16 +29,20 @@
 //! silent-green failure this module exists to remove. Two mechanisms answer
 //! that, and neither is a threshold:
 //!
-//! - an undelivered transition is **retained and retried**, so the next
-//!   transition or [`LivenessReporter::reassert`] carries it (the producer's
-//!   reconnect loop calls that once per cycle, which bounds the staleness of a
-//!   dropped update by one reconnect delay rather than by the process
-//!   lifetime);
-//! - the reporter's [`Drop`] reports `down` if the row would otherwise be left
-//!   reading `up`, so a producer thread that *ends* — including by panicking,
-//!   which unwinds — is as visible as a socket that closed. That path is not
-//!   hypothetical: it is the one case a dropped-sender idle source cannot
-//!   distinguish from a quiet one.
+//! - an undelivered transition is **retained and retried by
+//!   [`LivenessReporter::reassert`]**, which the producer's reconnect loop
+//!   calls once per cycle — bounding a dropped update's staleness by one
+//!   reconnect delay rather than by the process lifetime. Note the retry is
+//!   `reassert`'s job *alone*: a subsequent transition **replaces** the
+//!   retained one rather than carrying it, since the row is last-state-wins.
+//!   The final state is therefore correct either way, but a consumer that
+//!   counts transitions loses one, so a producer must `reassert` before its
+//!   next transition — which is the order the reconnect loop uses;
+//! - the reporter's [`Drop`] flushes any retained transition and then reports
+//!   `down` if the row would otherwise be left reading `up`, so a producer
+//!   thread that *ends* — including by panicking, which unwinds — is as visible
+//!   as a socket that closed. That path is not hypothetical: it is the one case
+//!   a dropped-sender idle source cannot distinguish from a quiet one.
 
 use crate::damped::DampedSender;
 use crate::health::{sanitize_error, MAX_ERROR_CHARS};
@@ -69,6 +73,14 @@ pub enum LinkState {
     /// which is a state and not an error. The two are kept apart because a
     /// consumer must not overwrite a retained diagnosis with a null on the
     /// next clean close.
+    ///
+    /// **Whatever constructs this must sanitize the text first.** A consumer
+    /// persists it, and the one in this workspace writes it to a column a
+    /// read-only dashboard role can `SELECT`. Every route through
+    /// [`LivenessReporter`] does so — [`LivenessReporter::failed`] applies
+    /// [`sanitize_error`] and the [`Drop`] guard uses a fixed constant — but
+    /// the variant is `pub`, so a caller building one directly carries the
+    /// obligation itself.
     Down { reason: Option<String> },
 }
 
@@ -102,6 +114,13 @@ pub struct LivenessUpdate {
 ///
 /// Every method is infallible, deliberately: a liveness report able to fail
 /// its caller would be able to take down the socket it reports on.
+///
+/// The `From<LivenessUpdate>` bound sits on the **struct**, where
+/// [`crate::HealthReporter`] carries its equivalent on the `impl` instead. That
+/// is not a stylistic divergence: this type has a [`Drop`] impl, and Rust
+/// requires a `Drop` impl to repeat the struct's own bounds exactly, so the
+/// bound has to be declared here for the guard to be able to build a record at
+/// all.
 pub struct LivenessReporter<R: From<LivenessUpdate>> {
     sender: DampedSender<R>,
     feed: String,
@@ -177,12 +196,6 @@ impl<R: From<LivenessUpdate>> LivenessReporter<R> {
         self.flush();
     }
 
-    /// Whether the latest state reached the channel. For a producer that wants
-    /// to log its own line about a liveness report it could not deliver.
-    pub fn is_delivered(&self) -> bool {
-        self.delivered
-    }
-
     fn set(&mut self, state: LinkState) {
         self.latest = Some(LivenessUpdate {
             feed: self.feed.clone(),
@@ -207,7 +220,8 @@ impl<R: From<LivenessUpdate>> LivenessReporter<R> {
     }
 }
 
-/// Report `down` if the row would otherwise be left reading `up`.
+/// Retry any undelivered transition, then report `down` if the consumer's row
+/// would otherwise be left reading `up`.
 ///
 /// The producer ending is the failure mode a push source cannot otherwise
 /// signal: when its thread returns or panics (which unwinds, so this runs),
@@ -216,14 +230,34 @@ impl<R: From<LivenessUpdate>> LivenessReporter<R> {
 /// transport that is simply quiet. Without this the last thing said about a
 /// dead subscription is that it was healthy.
 ///
-/// Best-effort by nature: there is no later call to retry a refused offer
-/// from, so a full channel at exactly this moment loses the line. That is
-/// strictly better than the alternative of not reporting at all, and the
-/// window is one process's final instant.
+/// **The flush is not an optimization — it closes the gap this guard would
+/// otherwise open.** Every *other* refused transition is retried by
+/// [`LivenessReporter::reassert`] on the producer's next loop; a producer that
+/// is ending has no next loop, so this is the last moment its retained update
+/// can ever be sent. Deciding without flushing keys the guard on the last state
+/// *set* rather than the last state *delivered*, and then the one sequence that
+/// matters — `up` lands, the socket dies, the `down` is refused by a full
+/// channel, the thread ends — discards that `down` and leaves the row reading
+/// `up` for the life of the process. That is precisely the silent-green failure
+/// this module exists to remove, arrived at through the code meant to prevent
+/// it.
+///
+/// Once the flush has run, `delivered` says whether `latest` is what the
+/// consumer actually holds, so the guard below can ask the question it means to
+/// ask. A still-undelivered state means the channel is full or gone, in which
+/// case synthesizing another update would fail too — so it correctly declines.
+///
+/// Best-effort by nature: there is no later call to retry from, so a channel
+/// that stays full through this instant loses the line. That is strictly better
+/// than not reporting at all, and the window is one process's final moment.
 impl<R: From<LivenessUpdate>> Drop for LivenessReporter<R> {
     fn drop(&mut self) {
-        let reads_up = matches!(self.latest.as_ref().map(|u| &u.state), Some(LinkState::Up));
-        if !reads_up {
+        self.flush();
+        let delivered_up = matches!(
+            (self.delivered, self.latest.as_ref().map(|u| &u.state)),
+            (true, Some(LinkState::Up))
+        );
+        if !delivered_up {
             return;
         }
         self.set(LinkState::Down {
@@ -335,12 +369,12 @@ mod tests {
         // Fill the channel, then transition: the `down` is refused.
         reporter.up();
         reporter.down();
-        assert!(!reporter.is_delivered(), "capacity was 1");
+        assert!(!reporter.delivered, "capacity was 1");
 
         // Drain the `up`, then let the producer's next loop reassert.
         assert_eq!(state(&mut rx), LinkState::Up);
         reporter.reassert();
-        assert!(reporter.is_delivered());
+        assert!(reporter.delivered);
         assert_eq!(state(&mut rx), LinkState::Down { reason: None });
     }
 
@@ -440,6 +474,57 @@ mod tests {
         reporter.down();
         reporter.failed(&anyhow::anyhow!("gone"));
         reporter.reassert();
-        assert!(!reporter.is_delivered());
+        assert!(!reporter.delivered);
+    }
+
+    /// The sequence the `Drop` guard exists for, and the one it used to get
+    /// wrong: the link came up, went down, and the `down` was **refused** by a
+    /// full channel — then the producer ended.
+    ///
+    /// A guard that keys on the last state *set* sees `Down`, concludes there
+    /// is nothing to correct, and discards the retained transition at the last
+    /// moment it could ever be sent, leaving the consumer's row reading `up`
+    /// forever. Flushing first is what makes the outage visible. There is no
+    /// `reassert` to fall back on here — a producer that is ending has no next
+    /// loop, which is exactly why this case is the guard's job.
+    #[tokio::test]
+    async fn dropping_with_an_undelivered_outage_still_reports_it() {
+        let (tx, mut rx) = mpsc::channel::<Record>(1);
+        let mut reporter = LivenessReporter::new(tx, "maker-fills");
+
+        reporter.up();
+        reporter.down();
+        assert!(!reporter.delivered, "the down was refused, capacity is 1");
+
+        // The drain catches up, as it would while a dying thread unwinds.
+        assert_eq!(state(&mut rx), LinkState::Up);
+        drop(reporter);
+
+        assert_eq!(
+            state(&mut rx),
+            LinkState::Down { reason: None },
+            "the retained outage must reach the consumer"
+        );
+        // And no PRODUCER_ENDED on top: the outage was already reported, so
+        // synthesizing another would overwrite a real diagnosis with a generic
+        // one.
+        assert!(rx.try_recv().is_err(), "exactly one report, not two");
+    }
+
+    /// The mirror of the case above: when the retained transition *cannot* be
+    /// delivered either, the guard must not synthesize a second update that
+    /// would fail the same way — and must not claim the link was up.
+    #[tokio::test]
+    async fn dropping_with_a_dead_drain_synthesizes_nothing() {
+        let (tx, rx) = mpsc::channel::<Record>(4);
+        let mut reporter = LivenessReporter::new(tx, "maker-fills");
+
+        reporter.up();
+        drop(rx);
+        reporter.down();
+        assert!(!reporter.delivered);
+
+        // Dropping must simply return rather than looping or panicking.
+        drop(reporter);
     }
 }

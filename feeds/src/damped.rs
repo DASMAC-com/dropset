@@ -31,7 +31,7 @@ use tokio::sync::mpsc;
 /// lifetime total of unrelated blips.
 const DROP_REPORT_EVERY: u64 = 100;
 
-/// The shortest gap between two "records dropped" warnings, in seconds.
+/// The shortest gap between two dropped-record warnings, in seconds.
 ///
 /// The count-based damping above handles a *sustained* outage, but not a
 /// flapping one: the counter resets on every success, so a drain hovering at
@@ -52,7 +52,7 @@ pub(crate) struct DampedSender<R> {
     /// in one place.
     kind: &'static str,
     /// Consecutive drops, reset on the next success.
-    pub(crate) dropped: u64,
+    dropped: u64,
     /// Whether the permanent-closure line has been said.
     ///
     /// Separate from `dropped` on purpose. Latching that line on
@@ -63,13 +63,13 @@ pub(crate) struct DampedSender<R> {
     /// `Closed` arm with a non-zero count and says nothing at all. The
     /// operator's last line then reads "the drain is behind", meaning
     /// transient backlog, while the true state is permanent loss.
-    pub(crate) closed_reported: bool,
+    closed_reported: bool,
     /// Epoch second of the last drop warning, for [`MIN_WARN_INTERVAL_SECS`].
-    pub(crate) last_warn_at: i64,
+    last_warn_at: i64,
     /// Whether the current run of drops was actually warned about, so the
     /// recovery line only speaks when there is something to recover *from*
     /// that the operator was told about.
-    pub(crate) warned: bool,
+    warned: bool,
 }
 
 impl<R> DampedSender<R> {

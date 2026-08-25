@@ -44,6 +44,10 @@
 -- history this table deliberately does not keep, and is left to whoever
 -- decides that a flapping link is worth a row per transition.
 --
+-- For that eyeball reading to mean anything the counters have to count
+-- transitions rather than writes, which is why the upserts increment
+-- conditionally on the stored state; see the column comments below.
+--
 -- INTEGRITY. `last_error` here carries arbitrary text a *producer's client*
 -- produced, and its guard is deliberately **not** the one `feed_health`'s
 -- same-named column relies on. That column trusts the `feeds` HTTP transport's
@@ -100,14 +104,31 @@ CREATE TABLE push_health (
     -- Transition counters, so a flapping link is distinguishable from a
     -- steadily-connected one at a glance — the case `state` alone cannot see,
     -- since a link reconnecting every few seconds samples as 'up' most of the
-    -- time. Cumulative since the *row* was created, not since the process
-    -- started: the row outlives a bot restart, so these keep accumulating and
-    -- are only meaningful over a window (take a delta), never as an absolute.
+    -- time.
+    --
+    -- They count **transitions**, not writes: the upserts increment only when
+    -- the stored `state` actually changes. That conditional is what makes the
+    -- column mean what this comment says, because a producer retrying an
+    -- unreachable endpoint re-writes its row every few seconds for the whole
+    -- outage — so an unconditional increment would render the most thoroughly
+    -- dead link in the table as the flappiest.
+    --
+    -- Cumulative since the *row* was created, not since the process started:
+    -- the row outlives a bot restart, so these keep accumulating. Read the
+    -- absolute value for the flapping question above — a `connects` in the
+    -- thousands on a link reading 'up' is unmistakable — but never read it as a
+    -- *rate* without differencing it over a window yourself, since the origin
+    -- is a row creation nothing records.
     connects        BIGINT  NOT NULL DEFAULT 0,
     disconnects     BIGINT  NOT NULL DEFAULT 0,
-    -- The last time *either* transition was recorded. Not what an alert reads
-    -- — that is `state` — but it answers "is anything still driving this
-    -- source at all", and distinguishes a row left behind by a process that
-    -- died from one a live producer is maintaining.
+    -- When the link last changed state, and nothing more.
+    --
+    -- Deliberately NOT a heartbeat, and it must not be read as one: this row
+    -- is written only on a transition, so a link that has been healthily up
+    -- for a week carries a week-old `updated_at`. It therefore cannot tell a
+    -- live producer from an abandoned row — and the naive reading inverts,
+    -- because a producer that dies runs its reporter's drop guard and stamps a
+    -- *fresh* timestamp on the way out. "Is the bot alive at all" is the
+    -- maker-heartbeat rule's question, answered from `maker_telemetry`.
     updated_at      BIGINT  NOT NULL
 );

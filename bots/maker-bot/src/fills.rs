@@ -1,3 +1,5 @@
+// cspell:word userinfo
+
 //! Real-time fill detection by subscribing to the program's `emit_cpi!`
 //! `FillEvent`s (§3 fill detection — the production-fidelity path, full
 //! fidelity, never dropped).
@@ -135,8 +137,9 @@ pub fn spawn(
         .name("maker-bot-fills".into())
         .spawn(move || {
             let rpc = crate::chain::rpc(&rpc_url);
-            // Bound to a local so the reporter is dropped — and so reports the
-            // link down — when this closure ends, however it ends.
+            // Rebound only to obtain the `mut` that `run`'s `&mut` needs. The
+            // reporter's drop-at-closure-end — and so its down report — comes
+            // from the `move` closure owning it, not from this binding.
             let mut liveness = liveness;
             run(&ws_url, &rpc, &quote_authority, &tx, &mut liveness);
         });
@@ -197,6 +200,46 @@ fn run(
     }
 }
 
+/// Render an endpoint as scheme and host only, for text that gets persisted or
+/// logged.
+///
+/// **The websocket URL must never be rendered whole on this path.** It is
+/// derived from the operator's `rpc_url`, so it carries whatever credential
+/// shape that endpoint uses, and a subscribe failure's text now reaches
+/// `push_health.last_error` — a column the read-only dashboard role can
+/// `SELECT` and an operations panel renders verbatim.
+///
+/// The framework's `sanitize_error` is applied downstream and is *not*
+/// sufficient by itself, which is the reason this exists rather than being
+/// left to it: that helper strips a URL's **query string**, and says so
+/// explicitly — a credential in a path segment (`wss://host/v2/<KEY>`) or in
+/// userinfo (`wss://user:pass@host`) is documented as surviving it. Both shapes
+/// are in use at hosted Solana providers, so on this path the query-axis guard
+/// is the wrong shape and the endpoint is instead reduced to the two components
+/// that are never secret.
+///
+/// Scheme and host are also the whole of the diagnosis here. Unlike a failed
+/// paged backfill — where the query parameters say which symbol and which
+/// window — a subscribe either reached the endpoint or did not, so nothing
+/// diagnostic is lost by dropping the rest.
+///
+/// A string that is not a URL at all yields a placeholder rather than being
+/// passed through, so a malformed endpoint cannot leak by falling out of the
+/// parsing.
+fn endpoint_label(ws_url: &str) -> String {
+    let Some((scheme, rest)) = ws_url.split_once("://") else {
+        return "<endpoint>".to_string();
+    };
+    // The authority ends at the first path, query, or fragment separator;
+    // anything before an `@` inside it is userinfo and is dropped with it.
+    let authority = match rest.find(['/', '?', '#']) {
+        Some(end) => &rest[..end],
+        None => rest,
+    };
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    format!("{scheme}://{host}")
+}
+
 /// Open one logs subscription and forward attributed fills until it closes.
 /// Returns `Ok(true)` if the tick's receiver was dropped (stop), `Ok(false)`
 /// if the websocket closed (reconnect).
@@ -214,8 +257,11 @@ fn subscribe_and_forward(
             commitment: Some(CommitmentConfig::confirmed()),
         },
     )
-    .map_err(|e| anyhow!("logs_subscribe {ws_url}: {e}"))?;
-    println!("[fills] subscribed to {DROPSET_ID} logs at {ws_url}");
+    .map_err(|e| anyhow!("logs_subscribe {}: {e}", endpoint_label(ws_url)))?;
+    println!(
+        "[fills] subscribed to {DROPSET_ID} logs at {}",
+        endpoint_label(ws_url)
+    );
     // Reported here, on the subscribe — deliberately not on the first
     // notification. "Able to deliver" is the health signal; "did deliver"
     // is a market fact, and conflating them is why the poll seam cannot
@@ -466,6 +512,56 @@ mod tests {
     /// The borsh body is exactly the on-chain `repr(C)` size — the explicit
     /// padding fields make the two layouts byte-identical (200 bytes:
     /// 4×32-byte keys + u8 + [u8;7] + 2×u32 + 2×u64 + u32 + [u8;4] + 4×u64).
+    /// The subscribe URL reaches a column the read-only dashboard role can
+    /// read, so every credential shape a hosted endpoint uses has to be gone
+    /// before it gets there. The query case is the one the framework's
+    /// `sanitize_error` already covers; the other two are exactly what it
+    /// documents as surviving it, which is why this reduction exists.
+    #[test]
+    fn endpoint_label_drops_every_credential_bearing_component() {
+        // Query parameter — the shape `sanitize_error` would also have caught.
+        assert_eq!(
+            endpoint_label("wss://rpc.example/v1/?api-key=SECRET"),
+            "wss://rpc.example"
+        );
+        // Path segment — survives a query-only strip, and is the dominant form
+        // at several hosted Solana providers.
+        assert_eq!(
+            endpoint_label("wss://name.solana-mainnet.example.pro/SECRET/"),
+            "wss://name.solana-mainnet.example.pro"
+        );
+        // Userinfo — likewise survives a query-only strip.
+        assert_eq!(
+            endpoint_label("wss://user:pass@rpc.example/path"),
+            "wss://rpc.example"
+        );
+        // Fragment, for completeness.
+        assert_eq!(
+            endpoint_label("wss://rpc.example#SECRET"),
+            "wss://rpc.example"
+        );
+    }
+
+    /// The ordinary localnet endpoint has nothing to strip, so the label is
+    /// still the whole useful address — the reduction costs local debugging
+    /// nothing.
+    #[test]
+    fn endpoint_label_keeps_a_bare_host_and_port_intact() {
+        assert_eq!(endpoint_label("ws://127.0.0.1:8900"), "ws://127.0.0.1:8900");
+        assert_eq!(
+            endpoint_label("ws://127.0.0.1:8900/"),
+            "ws://127.0.0.1:8900"
+        );
+    }
+
+    /// A string that is not a URL must not fall through the parsing and be
+    /// rendered whole — that would reinstate the leak for a malformed endpoint.
+    #[test]
+    fn endpoint_label_refuses_to_pass_through_a_non_url() {
+        assert_eq!(endpoint_label("not-a-url-with-a-SECRET"), "<endpoint>");
+        assert_eq!(endpoint_label(""), "<endpoint>");
+    }
+
     #[test]
     fn body_is_the_fixed_event_size() {
         let body = borsh::to_vec(&sample_event(Pubkey::new_unique())).unwrap();

@@ -10,10 +10,20 @@
 -- error, which has no name-aware redaction of its own, and a subscribe URL
 -- carries a hosted endpoint's credential in its query string. The framework's
 -- `sanitize_error` is what strips it — see the INTEGRITY note in
--- `0007_push_liveness.sql`. This column is readable by the dashboard role.
+-- `0008_push_liveness.sql`. This column is readable by the dashboard role.
 --
 -- `last_up_at` is left untouched: it records when the link was last
 -- established, and a failure to re-establish it must not advance it.
+--
+-- `disconnects` counts **transitions into** 'down', not writes of this
+-- statement, and this is the statement where that distinction is load-bearing.
+-- A producer retrying an unreachable endpoint re-runs this every reconnect
+-- delay for as long as the outage lasts, so an unconditional increment would
+-- turn one sustained outage into hundreds of "disconnects" — presenting the
+-- deadest link in the table as the flappiest, which inverts the exact reading
+-- the counters exist to support. The timestamps and `last_error` *are* still
+-- refreshed on every attempt, deliberately: the newest failure is the most
+-- useful diagnosis, and only the counter claims to be counting transitions.
 INSERT INTO push_health (
     feed,
     state,
@@ -29,5 +39,6 @@ ON CONFLICT (feed) DO UPDATE SET
     last_down_at = EXCLUDED.last_down_at,
     last_error = EXCLUDED.last_error,
     last_error_at = EXCLUDED.last_error_at,
-    disconnects = push_health.disconnects + 1,
+    disconnects = push_health.disconnects
+        + CASE WHEN push_health.state = 'down' THEN 0 ELSE 1 END,
     updated_at = EXCLUDED.updated_at;

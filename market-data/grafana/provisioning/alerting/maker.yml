@@ -233,9 +233,12 @@ groups:
   # condition with no duration in it at all: `state <> 'up'`. Silence is this
   # source's healthy state and is never an alert here at any length.
   #
-  # A source that has never come up has no row, which is covered by
-  # `noDataState` below rather than by a coalesce — unlike the staleness rule,
-  # there is no timestamp to substitute a huge value for.
+  # A source that has never come up has no row at all, and is therefore
+  # deliberately **not** alerted on here: `noDataState: OK` below means an empty
+  # result stays quiet. Unlike the staleness rule there is no timestamp to
+  # coalesce into a huge value, so there is nothing to fire on. The case that
+  # produces it — a subscription thread that never started — takes the whole bot
+  # with it in every realistic form, which is the heartbeat rule's condition.
   - annotations:
       description: >-
         A push feed's transport is not connected. Its records stop arriving
@@ -257,8 +260,8 @@ groups:
         rawSql: |-
           SELECT
           feed,
-          CASE WHEN state = 'up' THEN 0 ELSE 1 END
-          ::double precision AS link_down
+          (CASE WHEN state = 'up' THEN 0 ELSE 1 END)::double precision
+          AS link_down
           FROM push_health
         refId: 'A'
       refId: 'A'

@@ -9,6 +9,13 @@
 -- untouched, so what a now-connected link was last failing with survives its
 -- recovery. Read them together with `state`: a row whose `state` is 'up' and
 -- whose `last_error` is set has reconnected, it has not failed.
+--
+-- `connects` counts **transitions into** 'up', not writes of this statement,
+-- which is why the increment is conditional on the stored state rather than
+-- unconditional. The column's contract is that it distinguishes a flapping
+-- link from a steadily-connected one; a counter that moved on every write
+-- would instead measure how often the producer happened to report, which is a
+-- property of the producer's loop and not of the link.
 INSERT INTO push_health (
     feed,
     state,
@@ -20,5 +27,6 @@ VALUES ($1, 'up', $2, 1, $2)
 ON CONFLICT (feed) DO UPDATE SET
     state = 'up',
     last_up_at = EXCLUDED.last_up_at,
-    connects = push_health.connects + 1,
+    connects = push_health.connects
+        + CASE WHEN push_health.state = 'up' THEN 0 ELSE 1 END,
     updated_at = EXCLUDED.updated_at;

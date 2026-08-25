@@ -1928,7 +1928,7 @@ ______________________________________________________________________
     and a subscribe URL carries a hosted endpoint's credential in its
     query string, so `LivenessReporter::failed` puts its text through
     `sanitize_error`. The two error columns are on deliberately
-    different footings; see `0007_push_liveness.sql`.
+    different footings; see `0008_push_liveness.sql`.
 
   Both reporters share their offer-and-damp mechanics (the full-channel
   and dead-drain handling, and the log damping that keeps a flapping
