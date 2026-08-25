@@ -1,0 +1,99 @@
+# Docker build context for the localnet stack.
+#
+# Every Rust service in infra/localnet/docker-compose.yml builds with
+# `context: '../..'` — this directory — and its Dockerfile does `COPY . .`.
+# So without this file, each build ships the whole checkout to the daemon:
+# ~71 GB measured on the base checkout, and an operator watched one collector
+# build climb past 40 GB before killing it.
+#
+# The Rust builds need the workspace and nothing else: Cargo.toml, Cargo.lock,
+# rust-toolchain.toml, and the 13 workspace members. `cargo chef` reconstructs
+# the dependency cache inside the image, so the host's target/ is not just
+# unnecessary — shipping it is what makes the context enormous.
+#
+# `.claude/tools/docker_context.py` guards this file: it asserts the patterns
+# marked REQUIRED below are still here, and that the effective context stays
+# under an order-of-magnitude ceiling. Run it with `--measure` to see what
+# currently survives, and `make docker-context` to check.
+#
+# One caveat on the pattern syntax, since it is not gitignore's: Docker cleans
+# each pattern with filepath.Clean, so a trailing slash is dropped and there
+# is no directory-only form. A bare `target` therefore anchors at this
+# directory and would miss `bots/maker-bot/target`; `**/target` is what
+# catches a tree wherever it sits.
+
+# === Build output (REQUIRED) ===
+
+# The Rust target tree — 12 GB in the base checkout, and the single thing
+# cargo-chef exists to avoid needing from the host.
+**/target
+
+# === Agent worktrees (REQUIRED) ===
+
+# One full checkout per agent worktree, each with its own target/ and
+# node_modules: 57 GB, the largest tree by far and the one a fresh clone is
+# least likely to notice. It is kept out of git by .git/info/exclude, which is
+# **user-local and uncommitted** — so nothing in a checkout keeps it out of a
+# build context, and no committed ignore file mentioned it before this one.
+# A build must never consume another branch's checkout in any case.
+.claude/worktrees
+
+# === Git metadata (REQUIRED) ===
+
+# 69 MB of object store, and no build script reads it — the one build.rs in
+# the workspace (programs/dropset) only expands sBPF assembly. In a worktree
+# `.git` is a small file rather than a directory; the pattern covers both.
+**/.git
+
+# === Node / pnpm (REQUIRED) ===
+
+# 1.3 GB, hoisted to the repo root by pnpm-workspace.yaml, plus the per-app
+# trees. No root-context build runs pnpm: the frontend and the decks run on
+# the host, and the explorer image builds from its own local context.
+**/node_modules
+
+# Next.js build output, for the frontend and the decks alike.
+**/.next
+
+# Generated in full by the frontend's predev/prebuild hooks — brand assets
+# copied in, flags mirrored out of node_modules, token and wallet icons
+# fetched. Nothing under it is committed (frontend/.gitignore says so).
+frontend/public
+
+# === Node / pnpm (the rest) ===
+
+frontend/out
+decks/out
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/.turbo
+**/.pnpm-store
+
+# === Secrets and machine-local state ===
+
+# Never let a credential reach a build context: an env file baked into a layer
+# stays in the image. The localnet enclave file holds `op://` references
+# rather than values, but it is machine-local either way, and in a worktree it
+# is a symlink into the base checkout that would not resolve in the image.
+**/.env
+**/.env.*
+infra/localnet/secrets.local.env
+
+# Machine-local runtime state (see .gitignore for what each one holds).
+.audit-loop
+.maker-bot
+
+# === Presentation and asset trees ===
+
+# Neither is a Rust build input. The decks tree is 46 MB and the brand assets
+# are consumed by the frontend's copy script on the host, not in an image.
+decks
+brand-assets
+
+# === Editor and OS litter ===
+
+**/.DS_Store
+**/.idea
+**/.vscode
+**/*.swp

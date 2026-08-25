@@ -25,13 +25,23 @@ clean:
 # runtime enforcement — the OS fails-loud when a port is taken — so this
 # comment is the single source of truth; pin each server to its slot and
 # add a row when a new one lands.
-#   3000  frontend (make frontend) AND explorer (make explorer) — these
-#         two collide if run together; keep only one up at a time
-#   3100  (free)
-#   3200  (free)
+#
+# Every row below was re-checked against the compose file's published ports
+# rather than inherited from the previous edit. Three had drifted: the
+# explorer had moved off 3000 (so the collision warning it carried was
+# describing a conflict that no longer exists), and both 3100 and 3200 read
+# "(free)" while the explorer and Grafana were bound to them. Two services
+# were missing outright. A table claiming a bound port is free is worse than
+# no table at all, which is the argument for re-deriving it rather than
+# patching the one row that prompted the look.
+#   3000  frontend (make frontend, make frontend-localnet)
+#   3100  explorer (make explorer) — serves 3000 in-container
+#   3200  Grafana (make grafana, make collectors-up, make demo)
 #   3300  decks (make decks)
+#   5432  Postgres (make indexer-up, make collectors-up)
 #   8080  indexer /v1 API (make indexer-up)
 #   8899  solana-test-validator RPC (validator, not a web port)
+#   8900  solana-test-validator WS (what frontend-localnet subscribes to)
 
 # === Toolchain & prerequisite checks ===
 
@@ -348,14 +358,40 @@ decks-build: check-pnpm
 # `tui` passes `--bootstrap`, so the TUI auto-runs "Bootstrap all" once the
 # localnet is up. Wiping or tearing down does not re-bootstrap on its own —
 # re-run it from the menu.
+#
+# The market-data collectors and Grafana come up too, on the same reasoning
+# that already puts Grafana behind `collectors-up`: a demo that shows the book
+# but not the prices feeding it is showing half the system. Grafana opens on
+# http://localhost:3200 alongside the frontend's own tab.
+#
+# `collectors-up` runs FIRST and synchronously, before the TUI takes the
+# alternate screen — it is the slow, chatty step (it builds the Rust images on
+# a cold tree) and the one that fails when Docker is not running, so both its
+# progress and its errors belong on a plain terminal rather than under a TUI.
+# It is also why this target now needs `check-docker`.
+#
+# On exit the trap tears down what this invocation started, in the same order
+# of ownership as the rest of the file: `collectors-down` stops the four
+# collectors and Grafana and deliberately LEAVES `postgres` — the volume holds
+# recorded candles, and every per-app `down` target here is scoped for exactly
+# that reason. The browser tabs are the operator's to close; the containers
+# are the trap's.
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
+# The background half and its cleanup, hoisted into variables the way `FX_UP`
+# is: the Makefile linter caps a recipe body at 5 lines and counts
+# continuation lines toward it, and the body already sat exactly on that cap
+# before these additions.
+DEMO_FRONTEND = $(MAKE) --no-print-directory frontend-localnet \
+	>$(FRONTEND_LOG) 2>&1 </dev/null
+DEMO_CLEANUP = kill -TERM -$$group 2>/dev/null; \
+	$(MAKE) --no-print-directory collectors-down
 .PHONY: demo
-demo:
+demo: check-docker
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
-	@set -m; $(MAKE) --no-print-directory frontend-localnet \
-		>$(FRONTEND_LOG) 2>&1 </dev/null & \
-	group=$$!; set +m; trap 'kill -TERM -$$group 2>/dev/null' INT TERM EXIT; \
-	$(MAKE) --no-print-directory tui
+	$(MAKE) --no-print-directory collectors-up
+	$(call open-browser,3200)
+	@set -m; $(DEMO_FRONTEND) & group=$$!; set +m; \
+	trap '$(DEMO_CLEANUP)' INT TERM EXIT; $(MAKE) --no-print-directory tui
 
 # === Localnet Docker stacks ===
 
@@ -376,31 +412,55 @@ explorer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf explorer
 
-# Nuke the localnet Docker state for a fully cold start: stop and remove every
-# stack container (explorer, migrate, indexer, collectors, grafana, bots,
-# postgres — the `taker` profile included), drop its volumes and any
-# orphans, remove the untagged images compose built locally (migrate +
-# indexer + collectors + bots), and prune the build cache.
+# Nuke the localnet Docker state for a cold start, KEEPING the recorded market
+# data: stop and remove every stack container (explorer, migrate, indexer,
+# collectors, grafana, bots, postgres — both the `taker` and `fx` profiles
+# included), drop any orphans, remove the untagged images compose built
+# locally (migrate + indexer + collectors + bots), and prune the build cache.
+# The named postgres volume survives; `clean-docker-volume` below is the only
+# target that destroys it.
 #
-# The `-v` DESTROYS the shared database's named volume, and with it every
-# recorded market-data candle. That used to be free — the stack had no named
-# volume, so `-v` was a no-op — and now it is not: a CEX backfill window is
-# finite, so history that has scrolled out of it cannot be re-fetched. This
-# target is the deliberate full reset; use `make indexer-down` /
-# `make collectors-down` / `make explorer-down` to stop one app's own services
-# and keep both the shared database and the data — every per-service target is
-# scoped precisely because `postgres` is now shared. The
-# container removal takes each container's logs with it. `--rmi local` removes
-# only untagged local builds, so the tagged explorer image
+# **Preserving the volume is the default because a reflexive clean must never
+# cost history.** A CEX backfill window is finite — Kraken's keyless OHLC
+# reaches ~720 candles per interval — and the spot tick stream cannot be
+# backfilled at any depth, so a dropped volume is unrecoverable data rather
+# than a rebuild. This target used to pass `-v` and take the volume with it;
+# the split exists so the destructive half has to be named on purpose.
+#
+# Both profiles are named explicitly, and that is a fix rather than a
+# flourish: `down` only reaches services in the profiles it is given, so the
+# previous lone `--profile taker` left the three keyed FX collectors running
+# behind what called itself a full reset.
+#
+# The container removal takes each container's logs with it. `--rmi local`
+# removes only untagged local builds, so the tagged explorer image
 # (dasmac/dropset-localnet-explorer, pulled or built) and pulled base images
 # (e.g. postgres) survive it — `tui-prebuild` then reuses the cached explorer;
 # `docker rmi` it by name (or `docker system prune`) for a fully cold explorer.
 # Note the `docker builder prune -f` is host-wide — it clears every project's
-# build cache on this machine, not only this stack's.
+# build cache on this machine, not only this stack's. It is also what reclaims
+# a transferred build context, which is why it stays on the volume-preserving
+# path rather than moving to the destructive one.
+#
+# To stop one app's own services and leave the rest up, use the per-service
+# targets (`indexer-down` / `collectors-down` / `explorer-down` /
+# `fx-collectors-down`) — each is scoped precisely because `postgres` is
+# shared.
+CLEAN_DOWN = docker compose -f infra/localnet/docker-compose.yml \
+	--profile taker --profile fx down --rmi local --remove-orphans
 .PHONY: clean-docker
 clean-docker: check-docker
-	docker compose -f infra/localnet/docker-compose.yml \
-		--profile taker down --rmi local -v --remove-orphans
+	$(CLEAN_DOWN)
+	docker builder prune -f
+
+# `clean-docker` plus the named postgres volume — every recorded candle and
+# spot tick on this machine. Deliberately unreachable from any other target:
+# what it drops cannot be re-fetched (see above), so destroying it is its own
+# decision, never the tail of a cleanup. Reach for it when starting the schema
+# over is the actual goal.
+.PHONY: clean-docker-volume
+clean-docker-volume: check-docker
+	$(CLEAN_DOWN) -v
 	docker builder prune -f
 
 # Localnet indexer stack: the shared Postgres + the one-shot schema migration
@@ -605,6 +665,17 @@ taker-down: check-docker
 .PHONY: lint
 lint:
 	python3 .claude/tools/lint_paths.py
+
+# Check the root .dockerignore still bounds the Docker build context. Every
+# Rust service in infra/localnet/docker-compose.yml builds with `context:
+# '../..'` and `COPY . .`, so without that file each build ships the whole
+# checkout to the daemon — 90.9 GB across 868k files, measured on the base
+# checkout; 8.2 MB across 726 with it. Run by the `docker-context` pre-commit
+# hook too, so `make lint` covers it; this target is for looking at the number
+# directly. `ARGS=--measure` reports the size and which trees were pruned.
+.PHONY: docker-context
+docker-context:
+	python3 .claude/tools/docker_context.py $(ARGS)
 
 # Report committed guard hooks that no settings file wires. A script under
 # .claude/hooks/ does nothing until a PreToolUse entry points at it, and the
