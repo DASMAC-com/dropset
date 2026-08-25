@@ -175,8 +175,8 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     // emit doomed sends.
     chain::assert_localnet(&client)?;
     // One signing handle for the whole process, shared by every market's
-    // context — the secret is read once here and never copied, so the roster
-    // size doesn't multiply the number of live copies of the key material.
+    // context, so roster size doesn't multiply the number of long-lived
+    // copies of the key material.
     let leader = Arc::new(
         solana_keypair::read_keypair_file(&args.leader_key)
             .map_err(|e| anyhow!("read leader key {}: {e}", args.leader_key))?,

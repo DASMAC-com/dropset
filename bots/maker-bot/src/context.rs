@@ -77,18 +77,20 @@ pub enum ProfileKind {
 pub struct Context {
     pub client: RpcClient,
     /// The leader / quote-authority signer, shared by every market's context
-    /// rather than copied into each.
+    /// rather than copied into each — one long-lived copy of the 32-byte
+    /// secret regardless of roster size.
     ///
-    /// `Arc` rather than a `Keypair` per market, so the 32-byte secret exists
-    /// **once** in the process for any roster size. The type is what enforces
-    /// that: cloning the handle to build the next context cannot duplicate the
-    /// key material, so the N-copies shape cannot come back by accident.
+    /// `Keypair` is deliberately not `Clone` upstream, so `.clone()` here can
+    /// only clone the handle: the type closes the *accidental* path back to a
+    /// copy per market, not the deliberate one (`insecure_clone` stays
+    /// reachable through `Deref`). The narrow signer interface that would
+    /// close that is specified in `docs/key-custody.md` §3.1.
     ///
-    /// Deref makes this transparent at the use sites — `&ctx.leader` still
-    /// coerces to the `&Keypair` the `chain` signing helpers take, and
-    /// `ctx.leader.pubkey()` still resolves — which keeps the secret half
-    /// reachable only from those signing calls, the property the key-custody
-    /// audit verified.
+    /// `Deref` is also what leaves the use sites unchanged — `&ctx.leader`
+    /// coerces to the `&Keypair` the `chain` helpers take, and
+    /// `ctx.leader.pubkey()` resolves — so the secret half stays reachable
+    /// only from those signing calls, the property the recurring key-custody
+    /// audit re-derives.
     pub leader: Arc<Keypair>,
     pub vault_idx: u32,
     pub market: MarketAddrs,

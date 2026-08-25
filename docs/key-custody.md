@@ -112,7 +112,7 @@ crate's call sites, not a general clean bill for key custody.
 
 Three structural facts support it:
 
-- `Context` (`context.rs:77-92`) does **not** derive `Debug`. A derived
+- `Context` (`context.rs:77-94`) does **not** derive `Debug`. A derived
   `Debug` on a struct holding a `Keypair` is the classic
   accidental-disclosure path — a single `{:?}` in an error branch would
   reach for it. It is absent and should stay absent, which is worth a
@@ -147,12 +147,20 @@ single-owner discipline the type is designed around. The context doc
 comment already said the markets "share a leader", which was true of
 the *identity* and false of the *storage*.
 
-The key is now read once into an `Arc<Keypair>` that every context
-shares (`context.rs:92`), and the `insecure_clone` call is gone. The
-secret exists once in the process for any roster size, and the type is
-what holds the line: cloning the handle to build the next context
-cannot duplicate key material, so the N-copies shape cannot return by
-accident.
+The key is now read once (`main.rs:180`) into an `Arc<Keypair>` that
+every context shares (`context.rs:94`), and the `insecure_clone` call
+is gone. One long-lived copy of the secret exists for any roster size.
+
+Be precise about what the type does and does not hold, because a
+security spec that overstates its own guarantee is worse than one that
+records a gap. `Keypair` is deliberately not `Clone` upstream, so
+cloning the handle to build the next context cannot duplicate key
+material: the *accidental* return of the N-copies shape is closed. The
+deliberate one is not — `insecure_clone` stays reachable through the
+same `Deref` that lets `&ctx.leader` reach the signing helpers.
+Foreclosing it is §3.1's signer interface; until that exists, §6's
+re-derivation of the §1.3 producer set is what would catch a
+reintroduction.
 
 This is the storage half of §3.1 and not the whole of it — contexts
 still receive something that *is* a `Keypair` rather than something
