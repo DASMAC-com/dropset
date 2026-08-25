@@ -86,11 +86,12 @@ pub struct Context {
     /// reachable through `Deref`). The narrow signer interface that would
     /// close that is specified in `docs/key-custody.md` §3.1.
     ///
-    /// `Deref` is also what leaves the use sites unchanged — `&ctx.leader`
-    /// coerces to the `&Keypair` the `chain` helpers take, and
-    /// `ctx.leader.pubkey()` resolves — so the secret half stays reachable
-    /// only from those signing calls, the property the recurring key-custody
-    /// audit re-derives.
+    /// That same `Deref` is what leaves the use sites unchanged —
+    /// `&ctx.leader` coerces to the `&Keypair` the `chain` helpers take, and
+    /// `ctx.leader.pubkey()` resolves. The secret half reaches those signing
+    /// calls and nothing else, but that is a property of the call sites
+    /// rather than of this type — which is why the recurring key-custody
+    /// audit re-derives it instead of assuming it.
     pub leader: Arc<Keypair>,
     pub vault_idx: u32,
     pub market: MarketAddrs,

@@ -99,6 +99,7 @@ Every consumer of the leader key in the maker, enumerated:
 | ---------------------- | ------------------------------------------------- | ---------------------------------------------------------- |
 | `&ctx.leader` (secret) | `tasks.rs` 666, 991, 1103, 1127, 1151, 1180       | `chain::` signing calls only                               |
 | `leader.pubkey()`      | `tasks.rs` 622, 848; `main.rs` 187, 192, 195, 287 | balance check, airdrop log, fill subscription, state reads |
+| `Arc::clone(&leader)`  | `main.rs` 252                                     | hands each context a handle — a pointer copy, not bytes    |
 
 The secret half is passed to `chain::` signing calls and to nothing
 else. Public keys are the only form that leaves this set.
@@ -112,7 +113,7 @@ crate's call sites, not a general clean bill for key custody.
 
 Three structural facts support it:
 
-- `Context` (`context.rs:77-94`) does **not** derive `Debug`. A derived
+- `Context` (`context.rs:77-170`) does **not** derive `Debug`. A derived
   `Debug` on a struct holding a `Keypair` is the classic
   accidental-disclosure path — a single `{:?}` in an error branch would
   reach for it. It is absent and should stay absent, which is worth a
@@ -148,7 +149,7 @@ comment already said the markets "share a leader", which was true of
 the *identity* and false of the *storage*.
 
 The key is now read once (`main.rs:180`) into an `Arc<Keypair>` that
-every context shares (`context.rs:94`), and the `insecure_clone` call
+every context shares (`context.rs:95`), and the `insecure_clone` call
 is gone. One long-lived copy of the secret exists for any roster size.
 
 Be precise about what the type does and does not hold, because a
