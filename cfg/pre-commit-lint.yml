@@ -1,7 +1,10 @@
 # cspell:word checkmake
+# cspell:word Dwarnings
 # cspell:word hadolint
 # cspell:word mdformat
 # cspell:word pygrep
+# cspell:word rustdoc
+# cspell:word RUSTDOCFLAGS
 ---
 repos:
 - hooks:
@@ -208,16 +211,35 @@ repos:
     id: 'shellcheck'
   repo: 'https://github.com/shellcheck-py/shellcheck-py'
   rev: 'v0.10.0.1'
-# NO Rust intra-doc-link check runs anywhere — not here, not in the Makefile,
-# not in CI. Recorded so the absence is not re-derived: it has been established
-# by hand twice, and this codebase's docs lean heavily on intra-doc links.
-# `cargo doc` surfaces broken ones, and also surfaces five pre-existing
-# public-links-to-private-item warnings in `feeds` that would have to be fixed
-# or waived before any gate could go green. Adding the gate is filed as its own
-# product-side task ("Add a Rust intra-doc-link gate"): a CI workflow plus Rust
-# doc fixes sits outside the agent-config boundary, so it does not belong in a
-# meta-work batch. Until it lands, broken intra-doc links are DELIBERATELY
-# unchecked.
+# The `rustdoc` hook below is the intra-doc-link gate, and this codebase's
+# docs lean heavily on those links. Notes on its shape, since each part was
+# a decision:
+#
+# `RUSTDOCFLAGS` via `env` rather than a per-lint list, because the rustdoc
+# link lints are three separate ones — `broken_intra_doc_links`,
+# `private_intra_doc_links` and `redundant_explicit_links` — and all three
+# were live in this tree when the gate landed. `-D warnings` also catches a
+# fourth that a toolchain bump might add, which is safe to be strict about
+# because `rust-toolchain.toml` pins the compiler, so a bump is always a
+# deliberate commit rather than a floating upgrade that could red main. The
+# variable rides the hook entry rather than the CI job's `env:` so a local
+# `make lint` gates identically to the workflow.
+#
+# Default features, NOT `--all-features`: the SDK's `anchor` feature does not
+# compile at all (it targets the anchor-next fork — see the SDK publish
+# blocker), so `--all-features` fails the doc build with 19 resolution errors
+# that have nothing to do with links. The accepted cost is that a link
+# reachable only under a non-default feature goes unchecked.
+#
+# One authoring rule the gate enforces that is worth stating outright,
+# because it is invisible from the program side: a doc comment on an
+# IDL-captured item — an `#[account]` struct, a field of an instruction's
+# `Accounts`, a type the IDL carries — must use a plain code span, never an
+# intra-doc link. Codama copies that text verbatim into
+# `sdk/rs/src/generated/`, so a path that resolves in the program crate
+# resolves to nothing in the SDK crate and warns there instead. Twelve of
+# the 43 warnings this gate's first pass cleared were that single mistake,
+# replicated across the generated surface by codegen.
 - hooks:
   - entry: 'cargo fmt --'
     id: 'rustfmt'
@@ -229,6 +251,13 @@ repos:
     id: 'clippy'
     language: 'system'
     name: 'clippy'
+    pass_filenames: false
+    types:
+    - 'rust'
+  - entry: 'env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --workspace'
+    id: 'rustdoc'
+    language: 'system'
+    name: 'rustdoc'
     pass_filenames: false
     types:
     - 'rust'
