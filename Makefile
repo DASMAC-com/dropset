@@ -38,7 +38,7 @@ clean:
 #   3100  explorer (make explorer) — serves 3000 in-container
 #   3200  Grafana (make grafana, make collectors-up, make demo)
 #   3300  decks (make decks)
-#   5432  Postgres (make indexer-up, make collectors-up)
+#   5432  Postgres (make indexer-up, make collectors-up, make demo)
 #   8080  indexer /v1 API (make indexer-up)
 #   8899  solana-test-validator RPC (validator, not a web port)
 #   8900  solana-test-validator WS (what frontend-localnet subscribes to)
@@ -679,8 +679,11 @@ lint:
 # Check the root .dockerignore still bounds the Docker build context. Every
 # Rust service in infra/localnet/docker-compose.yml builds with `context:
 # '../..'` and `COPY . .`, so without that file each build ships the whole
-# checkout to the daemon — 90.9 GB across 868k files, measured on the base
-# checkout; 7.0 MB across 630 with it. Run by the `docker-context` pre-commit
+# checkout to the daemon. Both figures below are the base checkout: 90.9 GB
+# across 868,258 files without this file, 7.0 MB across 630 with it. (A
+# worktree measures a few files more or fewer — it carries different
+# untracked paths — so pin a quoted count to one checkout before comparing.)
+# Run by the `docker-context` pre-commit
 # hook too, so `make lint` covers it; this target is for looking at the number
 # directly. `ARGS=--measure` reports the size and which trees were pruned.
 .PHONY: docker-context

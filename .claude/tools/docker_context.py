@@ -499,6 +499,18 @@ def main(argv: list[str] | None = None) -> int:
                 with open(source, encoding="utf-8") as handle:
                     rules = parse_dockerignore(handle.read())
             except FileNotFoundError:
+                # Falling back to a whole-tree measurement is right for the
+                # DEFAULT path — "no ignore file here" is the baseline this
+                # tool exists to quantify. It is wrong for a path the user
+                # typed: a mistyped --ignore-file would otherwise print a
+                # warning, measure the entire unfiltered tree, and exit 0,
+                # handing back a confident wrong number.
+                if args.ignore_file:
+                    print(
+                        f"docker-context: no such ignore file: {source}",
+                        file=sys.stderr,
+                    )
+                    return 2
                 print(
                     f"docker-context: no {source} — measuring the whole tree.",
                     file=sys.stderr,

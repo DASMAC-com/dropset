@@ -322,15 +322,30 @@ class TestFindRoot(unittest.TestCase):
             with self.assertRaises(dc.NoCheckoutRoot):
                 dc.find_root(root)
 
-    def test_main_translates_it_to_an_exit_code(self) -> None:
+    def test_explicit_root_never_consults_find_root(self) -> None:
         with tempfile.TemporaryDirectory() as root:
-            buffer = io.StringIO()
-            with redirect_stderr(buffer):
+            with redirect_stderr(io.StringIO()):
                 code = dc.main(["--measure", "--root", root, "--no-ignore"])
-            # --root given, so find_root is never consulted: this is the
-            # happy path, and it proves the translation below is about the
-            # no-root case specifically rather than about --root.
             self.assertEqual(code, 0)
+
+    def test_main_translates_no_checkout_root_to_exit_2(self) -> None:
+        # The branch the NoCheckoutRoot refactor exists to enable. Swapped
+        # rather than driven through the filesystem, because reaching it for
+        # real would mean chdir-ing above the checkout mid-suite.
+        original = dc.find_root
+
+        def boom(_start: str) -> str:
+            raise dc.NoCheckoutRoot("no checkout root above /nowhere")
+
+        dc.find_root = boom
+        buffer = io.StringIO()
+        try:
+            with redirect_stderr(buffer):
+                code = dc.main([])
+        finally:
+            dc.find_root = original
+        self.assertEqual(code, 2)
+        self.assertIn("no checkout root", buffer.getvalue())
 
 
 class TestHumanBytes(unittest.TestCase):
@@ -391,6 +406,21 @@ class TestMain(unittest.TestCase):
                 )
             self.assertEqual(code, 0)
             self.assertIn("target", buffer.getvalue())
+
+    def test_a_missing_ignore_file_is_an_error_not_a_fallback(self) -> None:
+        # The default path falls back to a whole-tree measurement, which is
+        # the baseline this tool exists to quantify. A path the USER typed
+        # must not: silently measuring the unfiltered tree and exiting 0
+        # hands back a confident wrong number.
+        with tempfile.TemporaryDirectory() as root:
+            write(root, "keep.rs", "abc")
+            buffer = io.StringIO()
+            with redirect_stderr(buffer):
+                code = dc.main(
+                    ["--measure", "--root", root, "--ignore-file", "nope.txt"]
+                )
+            self.assertEqual(code, 2)
+            self.assertIn("no such ignore file", buffer.getvalue())
 
     def test_ignore_file_without_measure_is_rejected(self) -> None:
         # Silently ignoring it would hand back a confident number computed
