@@ -499,8 +499,8 @@ premise that nothing implements it: **the distinction between "dark
 because closed" and "dark because broken" is already built**, in
 `fair-value/src/engine.rs`. With no live FX leg the crypto reference
 anchors the mid, and the weekend flag is what decides whether that is
-structural or a fault: `Regime::CryptoOnly` when the flag is set,
-`Regime::Degraded(Degrade::FxStale)` when it is not. The engine's own
+structural or a fault: `Regime::CryptoOnly` when the flag is set, and a
+degrade — typically `Degrade::FxStale` — when it is not. The engine's own
 documentation calls a permanent condition reported as a fault "a fault
 the operator learns to ignore."
 
@@ -517,7 +517,7 @@ carries **every source that answered** and is resolved by consensus
 (`market-making.md` §"Leg resolution"); the maker's own tier walk
 shrank to collecting those candidates, so listing order no longer
 decides a leg's value. What survives resolution then qualifies the
-weekend in three ways:
+weekend — in three ways, the last by a different mechanism:
 
 - **A dispersed crypto leg degrades through the weekend.** That leg is
   the one carrying the mid once FX is gone, so sources disagreeing
@@ -531,16 +531,20 @@ weekend in three ways:
   deliberately **not** tightened, because that condition is permanent
   for most of the roster and tightening forever on it is the
   desensitization this whole distinction exists to prevent. This is a
-  fourth health state the earlier text did not have, and §6.5 depends
-  on it.
-- **A pinned market runs `Degraded` for the whole closed window.** A
-  market with no independent basis source is pinned, and having no
-  crypto leg is precisely what makes it pinned — so a shut FX session
-  leaves it with nothing live at all. It falls to its static peg with
-  the switches tightened every weekend, where every other market
-  lands healthy on its crypto reference. Accepted rather than
-  overlooked, but it means "the weekend is the healthy crypto-only
-  state" is a fact about the roster, not about every market in it.
+  health state the earlier text did not have — the axis carries four —
+  and §6.5 depends on it.
+- **A pinned market runs `Degraded` for the whole closed window.**
+  This one is not a consensus consequence — a pinned market's crypto
+  candidates are dropped by config *before* resolution runs — but it
+  belongs here because it is the sharpest limit on the claim above. A
+  market the roster pins has no independent basis source at all, so a
+  shut FX session leaves it with nothing live: it falls to its static
+  peg with the switches tightened, or halts outright where no usable
+  peg is configured, for the entire window. So "the weekend is the
+  healthy crypto-only state" holds only for a market whose crypto leg
+  is both live and corroborated — not for a pinned one, and, per the
+  bullet above, not for the lone-source markets that are most of the
+  roster.
 
 The regime set grew alongside these: a leg publishing garbage
 (`Degrade::FxInvalid`), a leg whose sources disagree
@@ -813,18 +817,26 @@ reopens: a measured 48.08-hour closure (§6.1) against a bound of one
 hour. What that costs depends on which leg returns first.
 
 - **Crypto leg live when FX returns** — the composition lands on the
-  normal arm, observes a basis immediately, folds it, and the age
-  resets on that very tick. Recovery is immediate and the expiry is
-  never observable.
+  normal arm, observes a basis, folds it, and the age resets on that
+  very tick, so recovery is immediate. With one caveat, because the
+  reset is gated on the fold actually happening: if that first print
+  is refused as an outlier the age survives, and the normal arm then
+  finds the carried basis expired and degrades exactly as the next
+  bullet describes.
 - **Crypto leg still down when FX returns** — the composition lands
   on the FX-live-without-a-basis-leg arm, finds the carried basis
   expired, and declines to invent one. It falls to the static peg (or
   pauses, without one) and reports `Degrade::BasisUnusable` rather
-  than the milder `Degrade::NoBasisLeg` the same outage would earn on
-  a weekday.
+  than the `Degrade::NoBasisLeg` the same outage would earn on a
+  weekday — milder because that one keeps anchoring on FX at
+  `fx × basis`, where this one gives up the composed mid entirely.
+  Both report `Health::Degraded`, so the difference is in what gets
+  quoted, not in what the operator is told.
 
-So the bound governs **weekday basis outages and the reopen window**,
-and nothing else. The second bullet is the whole calendar-facing
+So the bound governs **weekday basis outages and the reopen window** —
+a run of refused prints counting as an outage, since it ages the basis
+exactly as an absent leg would. The second bullet is the whole
+calendar-facing
 consequence: a reopen is the one moment at which an hour-scale bound
 is *guaranteed* to have elapsed, so it is where a too-short bound
 surfaces as a harsher degrade than the situation warrants.
@@ -837,8 +849,8 @@ factor of ~48 — one hour against a whole weekend — and only the
 calendar knows which closures are scheduled. Any future bound on
 carried state inherits this: it is a calendar question rather than a
 free tuning constant, and asking "how long may this legitimately be
-absent" without consulting the session model gets the weekend wrong
-every time.
+absent" without consulting the session model will under-bound every
+scheduled closure.
 
 This binds at **calibration time, not at run time**, and the
 distinction matters for the sibling document: the calendar still feeds
@@ -853,9 +865,10 @@ tuning owner. It is openly a placeholder — six times the smoothing
 half-life, chosen to ride through a brief outage without quoting off a
 dead estimate — and the analytics that would calibrate it are the ones
 §5.4 already defers. Deliberately **no separate issue**: the marker
-names the owner, and the reopen behavior above is what it is at any
-bound shorter than a closure, so there is nothing to schedule until
-the drift measurement exists.
+names the owner, and the repair the rule above implies — a bound at
+closure scale, or an age that stops accruing while the session is shut
+— is a design question that measurement should inform rather than
+precede. So there is nothing to schedule yet.
 
 ## 6. Verification
 
@@ -1069,13 +1082,19 @@ three places, and a mis-classification propagates to all of them:
 1. **The kill switches.** A degraded composition tightens the whole
    switch set. So a calendar that reports open-when-closed does not
    merely mislabel a state — it moves the imbalance thresholds and the
-   TVL drawdown floor, every weekend. Two qualifications since §5.1
-   grew a fourth health state: the tightening keys on
-   `Health::Degraded` specifically rather than on "not healthy", so a
-   weekend resting on one uncorroborated source carries the wrong
-   label without the switches moving; and a pinned market is tightened
-   for the whole closed window whatever the calendar says, so for that
-   one market the flag changes the label and not the switches.
+   TVL drawdown floor, every weekend. Two qualifications, and both
+   point the same way. The tightening keys on `Health::Degraded`
+   specifically, not on "not healthy" — `Health::Unverified` quotes at
+   full width by design (§5.1) — which makes the cost *larger* for a
+   market resting on one uncorroborated source, not smaller: flagged
+   correctly it composes `Uncorroborated` and the switches stay put,
+   while open-when-closed sends it to a degraded arm instead, so the
+   mis-classification buys that market real tightening rather than
+   merely a wrong label. A **pinned** market is the opposite end: with
+   FX shut it has no live leg at all and falls to its static peg
+   through the arm that reads no clock, so the flag changes neither
+   its switches nor its label — the calendar buys it nothing either
+   way.
 
 This asymmetry is why the fallback is to the approximation and never
 to "open," and why the promotion path is a cross-check rather than a
