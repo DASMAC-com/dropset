@@ -1,7 +1,7 @@
 //! `set_liquidity_profile` — leader-driven reshape of the bid/ask
 //! ladder.
 //!
-//! Writes the full [`LiquidityProfile`] — each level a `(price_offset,
+//! Writes the full `LiquidityProfile` — each level a `(price_offset,
 //! size_bps, expiry_offset_secs, expiry_offset_slots)` tuple — leaves
 //! the whole `reference_price` untouched (price and both expiry datums),
 //! bumps `market.nonce`,
@@ -19,7 +19,7 @@
 //! `unreachable_unchecked()` stub kept only so IDL / SDK codegen still emit
 //! the instruction. The default (reference) build runs this handler, which
 //! borrows the market's data bytes and calls the shared
-//! [`write_liquidity_profile`] kernel — the same kernel the assembly
+//! `write_liquidity_profile` kernel — the same kernel the assembly
 //! mirrors byte-for-byte.
 
 use anchor_lang_v2::prelude::*;

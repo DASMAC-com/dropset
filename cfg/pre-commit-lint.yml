@@ -3,8 +3,8 @@
 # cspell:word hadolint
 # cspell:word mdformat
 # cspell:word pygrep
-# cspell:word rustdoc
 # cspell:word RUSTDOCFLAGS
+# cspell:word unspaced
 ---
 repos:
 - hooks:
@@ -215,31 +215,68 @@ repos:
 # docs lean heavily on those links. Notes on its shape, since each part was
 # a decision:
 #
-# `RUSTDOCFLAGS` via `env` rather than a per-lint list, because the rustdoc
-# link lints are three separate ones — `broken_intra_doc_links`,
+# `RUSTDOCFLAGS` rides an `env` prefix because pre-commit `language: system`
+# entries are shlex-split and exec'd directly, with no shell — so a bare
+# `RUSTDOCFLAGS=… cargo` prefix would be read as a program name. The same
+# splitting is why the flag is written unspaced as `-Dwarnings` rather than
+# clippy's `-D warnings` two entries down, which is in turn why `Dwarnings`
+# needs a `cspell:word` escape at the top of this file. The variable rides
+# the entry rather than the CI job's `env:` so a local `make lint` gates
+# identically to the workflow.
+#
+# `-D warnings` rather than a per-lint list, because the rustdoc link lints
+# are three separate ones — `broken_intra_doc_links`,
 # `private_intra_doc_links` and `redundant_explicit_links` — and all three
-# were live in this tree when the gate landed. `-D warnings` also catches a
-# fourth that a toolchain bump might add, which is safe to be strict about
-# because `rust-toolchain.toml` pins the compiler, so a bump is always a
-# deliberate commit rather than a floating upgrade that could red main. The
-# variable rides the hook entry rather than the CI job's `env:` so a local
-# `make lint` gates identically to the workflow.
+# were live in this tree when the gate landed. It also catches a fourth that
+# a toolchain bump might add, which is safe to be strict about because
+# `rust-toolchain.toml` pins the compiler, so a bump is always a deliberate
+# commit rather than a floating upgrade that could red main.
 #
 # Default features, NOT `--all-features`: the SDK's `anchor` feature does not
 # compile at all (it targets the anchor-next fork — see the SDK publish
-# blocker), so `--all-features` fails the doc build with 19 resolution errors
-# that have nothing to do with links. The accepted cost is that a link
-# reachable only under a non-default feature goes unchecked.
+# blocker), so `--all-features` fails the doc build on hard resolution errors
+# that have nothing to do with links. Accepted cost: a link reachable only
+# under a non-default feature goes unchecked.
 #
-# One authoring rule the gate enforces that is worth stating outright,
-# because it is invisible from the program side: a doc comment on an
-# IDL-captured item — an `#[account]` struct, a field of an instruction's
-# `Accounts`, a type the IDL carries — must use a plain code span, never an
-# intra-doc link. Codama copies that text verbatim into
-# `sdk/rs/src/generated/`, so a path that resolves in the program crate
-# resolves to nothing in the SDK crate and warns there instead. Twelve of
-# the 43 warnings this gate's first pass cleared were that single mistake,
-# replicated across the generated surface by codegen.
+# Second accepted cost, less obvious: without `--document-private-items`,
+# rustdoc never builds the docs of private items, so a broken link inside a
+# private module's `//!` block cannot warn — verified by planting one. The
+# tree is currently clean at BOTH visibilities and the flag is deliberately
+# not set, because turning it on makes every public-links-to-private-item
+# link resolve and so silences `private_intra_doc_links` — the class that
+# was the majority of this gate's first pass. Published docs are built
+# without the flag, so those links really are broken for readers. Gating
+# both classes needs a second entry and a second full doc build; that cost
+# lands on the merge-queue critical path, which is the throughput metric.
+#
+# On which note: this hook adds roughly one full-workspace doc build to the
+# `lint` job. It is close to pure additive wall-clock — `cargo doc` cannot
+# reuse the `clippy --all-targets` artifacts in the same job, because the
+# two run rustc in different modes. Measure before adding anything else to
+# this entry.
+#
+# This job is also the queue's only reach for this gate: `lint.yml` carries
+# no paths-filter and triggers on `pull_request` AND `merge_group`, which is
+# what makes the hook cover the merge queue. Adding a paths-filter there
+# would silently drop that coverage with nothing going red — the repo has
+# been bitten by a `pull_request`-only filter before.
+#
+# Two authoring rules go with the gate. Neither is fully enforced BY this
+# hook, so they are stated here and in `docs/conventions/docs-and-style.md`,
+# which is where an author will actually meet them:
+#
+# 1. A doc comment on an IDL-captured item — an `#[account]` struct, a field
+#    of an instruction's `Accounts`, a type the IDL carries — takes a plain
+#    code span, never an intra-doc link. Codama copies that text verbatim
+#    into `sdk/rs/src/generated/`, where a path that resolves in the program
+#    crate resolves to nothing. Note the enforcement is a chain, not this
+#    hook alone: `test.yml` regenerates the IDL and diffs it, `sdk.yml`
+#    forces the generated trees to match, and only then does this hook see
+#    the copied text.
+# 2. Never satisfy this gate by widening an item's visibility. Making a
+#    private item `pub` makes `private_intra_doc_links` resolve, which in a
+#    consensus-critical crate is a trust-surface change made to settle a
+#    docs lint. Degrade the link to a code span instead.
 - hooks:
   - entry: 'cargo fmt --'
     id: 'rustfmt'

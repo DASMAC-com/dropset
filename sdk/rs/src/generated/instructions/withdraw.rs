@@ -16,8 +16,8 @@ pub struct Withdraw {
     /// The outside depositor exiting the vault — the PDA seeds bind this
     /// signer to the `VaultDepositor` whose `shares` are burned here. The
     /// leader is rejected (`DropsetError::Unauthorized`) and exits via
-    /// `withdraw_leader`, which burns `leader_shares` directly
-    /// and carries no `VaultDepositor` PDA.
+    /// `withdraw_leader`, which burns `leader_shares` directly and carries
+    /// no `VaultDepositor` PDA.
     pub signer: solana_pubkey::Pubkey,
     /// Market the vault lives on.
     pub market: solana_pubkey::Pubkey,
@@ -221,8 +221,8 @@ impl WithdrawBuilder {
     /// The outside depositor exiting the vault — the PDA seeds bind this
     /// signer to the `VaultDepositor` whose `shares` are burned here. The
     /// leader is rejected (`DropsetError::Unauthorized`) and exits via
-    /// `withdraw_leader`, which burns `leader_shares` directly
-    /// and carries no `VaultDepositor` PDA.
+    /// `withdraw_leader`, which burns `leader_shares` directly and carries
+    /// no `VaultDepositor` PDA.
     #[inline(always)]
     pub fn signer(&mut self, signer: solana_pubkey::Pubkey) -> &mut Self {
         self.signer = Some(signer);
@@ -404,8 +404,8 @@ pub struct WithdrawCpiAccounts<'a, 'b> {
     /// The outside depositor exiting the vault — the PDA seeds bind this
     /// signer to the `VaultDepositor` whose `shares` are burned here. The
     /// leader is rejected (`DropsetError::Unauthorized`) and exits via
-    /// `withdraw_leader`, which burns `leader_shares` directly
-    /// and carries no `VaultDepositor` PDA.
+    /// `withdraw_leader`, which burns `leader_shares` directly and carries
+    /// no `VaultDepositor` PDA.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// Market the vault lives on.
     pub market: &'b solana_account_info::AccountInfo<'a>,
@@ -450,8 +450,8 @@ pub struct WithdrawCpi<'a, 'b> {
     /// The outside depositor exiting the vault — the PDA seeds bind this
     /// signer to the `VaultDepositor` whose `shares` are burned here. The
     /// leader is rejected (`DropsetError::Unauthorized`) and exits via
-    /// `withdraw_leader`, which burns `leader_shares` directly
-    /// and carries no `VaultDepositor` PDA.
+    /// `withdraw_leader`, which burns `leader_shares` directly and carries
+    /// no `VaultDepositor` PDA.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// Market the vault lives on.
     pub market: &'b solana_account_info::AccountInfo<'a>,
@@ -697,8 +697,8 @@ impl<'a, 'b> WithdrawCpiBuilder<'a, 'b> {
     /// The outside depositor exiting the vault — the PDA seeds bind this
     /// signer to the `VaultDepositor` whose `shares` are burned here. The
     /// leader is rejected (`DropsetError::Unauthorized`) and exits via
-    /// `withdraw_leader`, which burns `leader_shares` directly
-    /// and carries no `VaultDepositor` PDA.
+    /// `withdraw_leader`, which burns `leader_shares` directly and carries
+    /// no `VaultDepositor` PDA.
     #[inline(always)]
     pub fn signer(&mut self, signer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.signer = Some(signer);

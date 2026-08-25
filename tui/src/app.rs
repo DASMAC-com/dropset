@@ -627,7 +627,8 @@ impl App {
         self.dirty = true;
     }
 
-    /// Toggle every market's taker bot at once, mirroring [`toggle_all_bots`]:
+    /// Toggle every market's taker bot at once, mirroring
+    /// [`Self::toggle_all_bots`]:
     /// if any taker is running, stop them all; otherwise start one per
     /// discovered market (each scoped to its book by PDA). Opt-in like the
     /// per-market taker — nothing runs a taker until the operator presses `T`.

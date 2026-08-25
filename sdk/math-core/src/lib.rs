@@ -1,9 +1,9 @@
 //! `dropset-math-core` — the canonical, consensus-critical arithmetic
 //! spine of the eCLOB.
 //!
-//! Holds the [`Price`] codec, the pure matcher math in
-//! [`matching_math`] (flush-level pricing, the size-bps fill cap, the
-//! price-time sort key), the share/NAV/PnL accounting kernels in
+//! Holds the [`Price`] codec, the pure matcher math in [`matching_math`]
+//! (flush-level pricing, the size-bps fill cap, the price-time sort key),
+//! the share/NAV/PnL accounting kernels in
 //! [`share`] (the seeding `isqrt`, single-leg deposit sizing, the
 //! pro-rata withdrawal slice, the perf-fee accrual formula, and the
 //! realized-PnL crystallization), and the two expiry clock domains in

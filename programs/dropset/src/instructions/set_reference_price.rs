@@ -20,7 +20,7 @@
 //! so the Rust body here is an `unreachable_unchecked()` stub kept only so
 //! IDL / SDK codegen still emit the instruction. The default (reference)
 //! build runs this handler, which borrows the market's data bytes and
-//! calls the shared [`stamp_reference_price`] kernel — the same kernel the
+//! calls the shared `stamp_reference_price` kernel — the same kernel the
 //! assembly mirrors byte-for-byte.
 
 use anchor_lang_v2::prelude::*;

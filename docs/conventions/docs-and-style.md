@@ -34,6 +34,37 @@ authoring rule: keep an inline code span entirely on one line, and wrap
 before or after it. If that makes the line unavoidably long, shorten the
 prose around the span rather than breaking the span.
 
+## Rust intra-doc links
+
+Intra-doc links are gated: the `rustdoc` hook in
+`cfg/pre-commit-lint.yml` runs the workspace doc build with
+`-D warnings`, so a broken, private, or redundantly-targeted link fails
+`make lint` and CI. Two authoring rules follow, and both exist because
+the failure they prevent is **remote** — it surfaces somewhere other
+than the file you edited.
+
+**A doc comment on an IDL-captured item takes a code span, never an
+intra-doc link.** Codama copies the text of a doc comment on an
+`#[account]` struct, a field of an instruction's `Accounts`, or any
+IDL-carried type verbatim into `sdk/rs/src/generated/`, where a path
+that resolves in the program crate resolves to nothing. Write
+`` `NULL_SECTOR` ``, not `` [`NULL_SECTOR`] ``. The gate enforces it,
+but it fails pointing at a generated file you never edited — which is
+exactly why the rule needs stating rather than discovering. This
+applies **only** to items the IDL actually carries: a
+program-internal struct is free to use real links, and should.
+
+**Never satisfy the gate by widening an item's visibility.** Making a
+private item `pub` does make a public-docs link to it resolve, but in a
+consensus-critical crate that is a trust-surface change made to settle
+a docs lint. Degrade the link to a code span instead, or re-path it
+(`[`Self::method`]` for a sibling method, `[`super::CONST`]` for a
+parent-module const) when a real path exists.
+
+One gap worth knowing: the gate does not pass
+`--document-private-items`, so a broken link inside a **private**
+module's `//!` block is not checked. Keep those correct by hand.
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —

@@ -200,6 +200,7 @@ rollups
 rpaps
 rsplit
 rustc
+rustdoc
 rustflags
 rustup
 samp
@@ -210,6 +211,7 @@ serde
 setext
 shellcheck
 shfmt
+shlex
 significand
 société
 solana

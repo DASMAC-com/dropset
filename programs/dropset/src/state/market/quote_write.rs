@@ -27,7 +27,7 @@ use super::{MarketHeader, ReferencePrice, Vault, FLUSH_BIT};
 /// for the matching [`crate::errors::DropsetError`] variant (its index plus
 /// 6000), so the ASM fast path and the Anchor reference build surface the
 /// *same* code on the same domain failure. The equality is pinned by
-/// `tests::error_codes_match_dropset`.
+/// the `error_codes_match_dropset` test below.
 pub mod err {
     /// Signer is not the target vault's `quote_authority`
     /// (`DropsetError::Unauthorized`).
@@ -109,7 +109,7 @@ const _: () = assert!(RP_STAMP_OFF == 0);
 ///   sector's `reference_price` and its `profile`, never the `next` / `prev`
 ///   links (offsets 0 / 4) that thread the free list, and matching walks
 ///   the active DLL only, so a free sector never enters the book. Pinned by
-///   [`tests::write_to_a_reclaimed_sector_is_inert`].
+///   the `write_to_a_reclaimed_sector_is_inert` test below.
 /// * **`frozen`** — the freeze is enforced at match time (`swap` skips
 ///   frozen vaults), and re-quoting one is inert, so both kernels stay
 ///   minimal by omitting it (see `freeze_vault.rs`).

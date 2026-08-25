@@ -85,7 +85,7 @@ const THIN_DEPTH_SCALE: f64 = 0.3;
 ///
 /// An alias for the wall domain's one named unbounded constant rather
 /// than a second bare `u32::MAX`: the slot domain has always had
-/// [`SlotSpan::UNBOUNDED`], and the two domains disagreeing on how to
+/// `SlotSpan::UNBOUNDED`, and the two domains disagreeing on how to
 /// spell the same idea is what let a raw `u32::MAX` sit here reading as
 /// a magic number.
 const NEVER_EXPIRES: WallSpan = WallSpan::UNBOUNDED;

@@ -39,8 +39,8 @@ export type WithdrawAsyncInput<TAccountSigner extends string = string, TAccountM
  * The outside depositor exiting the vault — the PDA seeds bind this
  * signer to the `VaultDepositor` whose `shares` are burned here. The
  * leader is rejected (`DropsetError::Unauthorized`) and exits via
- * `withdraw_leader`, which burns `leader_shares` directly
- * and carries no `VaultDepositor` PDA.
+ * `withdraw_leader`, which burns `leader_shares` directly and carries
+ * no `VaultDepositor` PDA.
  */
 signer: TransactionSigner<TAccountSigner>;
 /** Market the vault lives on. */
@@ -111,8 +111,8 @@ export type WithdrawInput<TAccountSigner extends string = string, TAccountMarket
  * The outside depositor exiting the vault — the PDA seeds bind this
  * signer to the `VaultDepositor` whose `shares` are burned here. The
  * leader is rejected (`DropsetError::Unauthorized`) and exits via
- * `withdraw_leader`, which burns `leader_shares` directly
- * and carries no `VaultDepositor` PDA.
+ * `withdraw_leader`, which burns `leader_shares` directly and carries
+ * no `VaultDepositor` PDA.
  */
 signer: TransactionSigner<TAccountSigner>;
 /** Market the vault lives on. */
@@ -178,8 +178,8 @@ accounts: {
  * The outside depositor exiting the vault — the PDA seeds bind this
  * signer to the `VaultDepositor` whose `shares` are burned here. The
  * leader is rejected (`DropsetError::Unauthorized`) and exits via
- * `withdraw_leader`, which burns `leader_shares` directly
- * and carries no `VaultDepositor` PDA.
+ * `withdraw_leader`, which burns `leader_shares` directly and carries
+ * no `VaultDepositor` PDA.
  */
 signer: TAccountMetas[0];
 /** Market the vault lives on. */
