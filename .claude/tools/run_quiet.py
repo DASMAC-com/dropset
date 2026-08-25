@@ -342,7 +342,7 @@ def stream_to_log(cmd, log_file):
 LogSummary = collections.namedtuple(
     "LogSummary",
     "lines tail_text failed truncated unknown_words unknown_truncated "
-    "failure_text failure_truncated",
+    "failure_text failure_truncated failure_closed failure_blocks",
 )
 
 
@@ -374,6 +374,8 @@ def read_tail_and_count(path, tail):
     failure_started = False
     failure_done = False
     failure_truncated = False
+    failure_closed = False
+    failure_blocks = 0
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             count += 1
@@ -383,12 +385,13 @@ def read_tail_and_count(path, tail):
             # cargo prints the marker twice — once before the per-test detail and
             # once before the bare name list — and the detail is the half worth
             # having.
-            if (
-                not failure_started
-                and not failure_done
-                and CARGO_FAILURES_RE.match(line)
-            ):
-                failure_started = True
+            if CARGO_FAILURES_RE.match(line):
+                # Counted for EVERY block, so a workspace run where three
+                # crates fail can say so rather than showing the first block as
+                # though it were the whole failure.
+                failure_blocks += 1
+                if not failure_started and not failure_done:
+                    failure_started = True
             if failure_started:
                 if len(failure_lines) < MAX_FAILURE_LINES:
                     failure_lines.append(line)
@@ -399,6 +402,7 @@ def read_tail_and_count(path, tail):
                 if CARGO_RESULT_RE.match(line):
                     failure_started = False
                     failure_done = True
+                    failure_closed = True
             if is_failed_hook_line(line):
                 if len(failed) < MAX_FAILED_LINES:
                     failed.append(line.rstrip("\n"))
@@ -425,6 +429,8 @@ def read_tail_and_count(path, tail):
         unknown_truncated,
         "".join(failure_lines),
         failure_truncated,
+        failure_closed,
+        failure_blocks,
     )
 
 
@@ -492,9 +498,24 @@ def write_failure_region(summary, tail):
     They are alternatives, not both: the whole point is that on a cargo failure
     the tail shows the *passing* lines that precede the failures block, so
     printing both would keep paying for exactly the region this replaces.
+
+    **The window is only preferred when it is genuinely cargo's.** The marker is
+    a bare `failures:` line, which is not cargo-specific — any wrapped log that
+    happens to contain one (a different runner, a build script, a fixture echoed
+    into the output) would otherwise have its tail replaced by 60 lines starting
+    at an irrelevant marker, hiding the real error at end-of-log. Requiring the
+    closing `test result:` line is what makes it cargo's block rather than a
+    coincidence.
     """
-    if summary.failure_text:
+    if summary.failure_text and summary.failure_closed:
         more = " (truncated, more omitted)" if summary.failure_truncated else ""
+        # cargo emits the marker twice per failing binary (detail, then the
+        # bare name list), so >2 means more than one binary failed and this
+        # window shows only the first.
+        if summary.failure_blocks > 2:
+            more += " — %d failure block(s) in the log; only the first is shown" % (
+                summary.failure_blocks
+            )
         sys.stdout.write("--- from cargo's failures block%s ---\n" % more)
         sys.stdout.write(summary.failure_text)
         if not summary.failure_text.endswith("\n"):

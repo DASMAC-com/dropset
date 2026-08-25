@@ -96,6 +96,14 @@ def _git(args: list[str]) -> str:
     return completed.stdout
 
 
+def _toplevel() -> str:
+    """The repo root, so paths and the ledger agree regardless of cwd."""
+    root = _git(["rev-parse", "--show-toplevel"]).strip()
+    if not root:
+        raise TreeFingerprintError("not inside a git repository")
+    return root
+
+
 def tracked_paths() -> list[str]:
     """Tracked files plus untracked-not-ignored ones, sorted.
 
@@ -104,7 +112,27 @@ def tracked_paths() -> list[str]:
     omitting it would let the fingerprint claim a currency it has not got —
     the same reason ``lint_paths.py`` includes them.
     """
-    out = _git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"])
+    # `--full-name` and an explicit repo-root pathspec, because `git ls-files`
+    # is otherwise CWD-SCOPED: run from a subdirectory it lists only that
+    # subtree and emits cwd-relative paths, while `_ledger_path` resolves to the
+    # SAME ledger from anywhere. `record` and `check` run from different
+    # directories would then share an entry computed over different file sets,
+    # and `check` would answer `fresh` on a stale tree — precisely the
+    # "assert a green that was never established" failure this module warns
+    # about. Anchoring it makes the fingerprint a property of the repo rather
+    # than of where the tool happened to be invoked.
+    out = _git(
+        [
+            "ls-files",
+            "--full-name",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            ":(top)",
+        ]
+    )
     paths = sorted(p for p in out.split("\0") if p)
     if len(paths) > MAX_FILES:
         raise TreeFingerprintError(
@@ -126,12 +154,16 @@ def compute(paths: list[str] | None = None) -> str:
     which is exactly the kind of change that should invalidate evidence.
     """
     digest = hashlib.sha256()
+    # `tracked_paths` returns REPO-ROOT-relative names, so they are opened
+    # against the toplevel rather than the process cwd — otherwise the tool
+    # works from the root and silently reads nothing from a subdirectory.
+    root = _toplevel()
     for path in tracked_paths() if paths is None else paths:
         encoded = path.encode("utf-8", errors="surrogateescape")
         digest.update(f"{len(encoded)}:".encode())
         digest.update(encoded)
         try:
-            with open(path, "rb") as handle:
+            with open(os.path.join(root, path), "rb") as handle:
                 data = handle.read()
         except (OSError, IsADirectoryError):
             # A submodule entry, a broken symlink, or a file removed mid-walk.

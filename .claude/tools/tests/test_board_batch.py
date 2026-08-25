@@ -786,6 +786,28 @@ class FieldValueResolutionTests(unittest.TestCase):
             )
         self.assertEqual(len([q for q, _ in calls if "TeamStates" in q]), 1)
 
+    def test_a_SECOND_team_gets_its_own_lookup(self):
+        # With both issues forced onto one team, a cache keyed on nothing at all
+        # passes identically — so the "per team" in the name above was untested.
+        # A globally-keyed cache would write issue 11 a stateId belonging to
+        # team-1, which is the unnamed Argument Validation Error this whole
+        # class exists to prevent.
+        calls = []
+        issue11 = _issue(11)
+        issue11["team"] = {"id": "team-2"}
+        by_number = index_by_number([self.by_number[10], issue11])
+        with mock.patch.object(bb, "_post", side_effect=self._post_factory(calls)):
+            apply_fields(
+                "k",
+                {"10": {"state": "In Review"}, "11": {"state": "In Review"}},
+                by_number,
+            )
+        team_queries = [v for q, v in calls if "TeamStates" in q]
+        self.assertEqual(len(team_queries), 2)
+        self.assertEqual(
+            sorted(v["teamId"] for v in team_queries), ["team-1", "team-2"]
+        )
+
     def test_a_parent_issue_number_resolves_through_the_existing_lookup(self):
         calls = []
         with mock.patch.object(bb, "_post", side_effect=self._post_factory(calls)):

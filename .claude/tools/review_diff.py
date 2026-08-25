@@ -473,9 +473,21 @@ def rust_test_ranges(text: str) -> list[tuple[int, int]]:
 
     Brace matching rather than regex-per-line, because a test module contains
     arbitrary nesting. String and char literals are skipped so a ``"}"`` inside
-    a test fixture cannot close the module early; line and block comments are
-    skipped for the same reason. Raw strings (``r#"..."#``) are handled too —
-    they are common in test fixtures, which is exactly where this runs.
+    a test fixture cannot close the module early; line comments are skipped for
+    the same reason. Raw strings (``r#"..."#``) are handled too — they are
+    common in test fixtures, which is exactly where this runs.
+
+    **A brace-less annotated item ends at its semicolon.** `#[cfg(test)]` also
+    guards declarations with no block at all — `#[cfg(test)] mod test_support;`
+    and `#[cfg(test)] use …;` are both common, and the repo contains the first.
+    Walking forward to "the next `{`" on those swallows whatever braced item
+    happens to follow, which routes **production code into the tests slice**.
+    So the walk stops at a `;` that closes the item before any brace opens.
+
+    Block comments (``/* … */``) are **not** handled — a `{` inside one still
+    counts. Stated rather than claimed otherwise: it needs multi-line state,
+    and an unbalanced brace only ever over-claims a range, which errs toward
+    tests rather than losing them.
     """
     lines = text.splitlines()
     ranges: list[tuple[int, int]] = []
@@ -496,6 +508,10 @@ def rust_test_ranges(text: str) -> list[tuple[int, int]]:
             opened = opened or opened_here
             if opened and depth <= 0:
                 break
+            if not opened and _ends_item_without_block(lines[cursor]):
+                # `#[cfg(test)] mod test_support;` — the item is complete and
+                # no block ever opens. Claim these lines and nothing more.
+                break
             cursor += 1
         if cursor >= len(lines):
             # Unbalanced (a truncated or unparsable file): claim to the end
@@ -505,6 +521,34 @@ def rust_test_ranges(text: str) -> list[tuple[int, int]]:
         ranges.append((start + 1, cursor + 1))
         index = cursor + 1
     return ranges
+
+
+# An item the `#[cfg(test)]` attribute guards that has no block: a `;` closes
+# it. Checked only before any brace has opened, so a `;` inside a test body is
+# irrelevant. Attribute and comment lines are skipped so `#[cfg(test)]` itself
+# (and a doc comment under it) does not end the walk.
+def _ends_item_without_block(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#[") or stripped.startswith("//"):
+        return False
+    return stripped.endswith(";")
+
+
+def _char_literal_end(line: str, start: int) -> int | None:
+    """Index just past a Rust char literal at ``start``, or ``None``.
+
+    ``None`` means the `'` is a lifetime, not a literal. The forms accepted are
+    `'x'` and an escape `'\\n'` / `'\\''` / `'\\u{1F600}'`.
+    """
+    if start + 1 >= len(line):
+        return None
+    if line[start + 1] == "\\":
+        close = line.find("'", start + 2)
+        return close + 1 if close != -1 else None
+    # A plain char literal is exactly one character wide.
+    if start + 2 < len(line) and line[start + 2] == "'":
+        return start + 3
+    return None
 
 
 def _scan_braces(line: str, depth: int) -> tuple[int, bool]:
@@ -529,14 +573,27 @@ def _scan_braces(line: str, depth: int) -> tuple[int, bool]:
                     break  # runs past end of line; the rest cannot hold braces
                 i = end + len(close)
                 continue
-        if ch in "\"'":
-            quote = ch
+        if ch == "'":
+            # A `'` in Rust is a char literal ONLY in `'x'` or `'\n'` form —
+            # otherwise it is a LIFETIME (`&'static str`, `where T: 'a`), which
+            # has no closing quote. Treating a lifetime as an open literal made
+            # the scan run to end-of-line and skip the trailing `{`, so `depth`
+            # never incremented while the matching `}` still decremented it —
+            # ending the test range an item early and routing the rest of the
+            # module back to `source`.
+            end = _char_literal_end(line, i)
+            if end is None:
+                i += 1  # a lifetime: ordinary text, keep scanning this line
+                continue
+            i = end
+            continue
+        if ch == '"':
             j = i + 1
             while j < len(line):
                 if line[j] == "\\":
                     j += 2
                     continue
-                if line[j] == quote:
+                if line[j] == '"':
                     break
                 j += 1
             i = j + 1
@@ -598,27 +655,50 @@ def split_diff(diff_path: Path, out_dir: Path) -> dict:
         # Anything before the first `diff --git` header (there is normally
         # nothing) goes to source, the default slice.
         current = "source"
-        # State for the inline-Rust-tests split. `header` buffers a file's
-        # `diff --git`/`index`/`---`/`+++` preamble so it can be replayed into
-        # whichever slice first receives one of that file's hunks — a hunk
-        # without its file header is not readable as a diff.
+        # State for the inline-Rust-tests split. `header` buffers a file's whole
+        # preamble so it can be replayed into whichever slice first receives one
+        # of that file's hunks — a hunk without its file header is not readable
+        # as a diff.
+        #
+        # Everything before the first `@@` is buffered, rather than only the
+        # line shapes a whitelist happened to name. The whitelist form missed
+        # `new file mode`, `rename from`/`rename to` and `copy from`/`copy to`,
+        # which fell through and were emitted early — so an ADDED .rs file with
+        # inline tests produced a tests slice whose header was `diff --git`
+        # immediately followed by `@@`, with no `---`/`+++` at all. It also
+        # dropped a header-only diff (a mode change) from every slice.
         test_ranges: list[tuple[int, int]] = []
         header: list[str] = []
         header_written: set[str] = set()
+        in_preamble = False
         file_slice = "source"
 
         def emit(name: str, text: str) -> None:
             handles[name].write(text)
             counts[name] += 1
 
+        def flush_header(name: str) -> None:
+            """Replay the buffered preamble into ``name`` at most once."""
+            if name in header_written:
+                return
+            for head_line in header:
+                emit(name, head_line)
+            header_written.add(name)
+
         with open(diff_path, "r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 header_path = _diff_header_path(line)
                 if header_path is not None:
+                    # A preceding file whose diff was header-only (a mode change,
+                    # a pure rename) never reached a hunk, so flush it now rather
+                    # than dropping it.
+                    if header and not header_written:
+                        flush_header(file_slice)
                     file_slice = slice_for(header_path)
                     current = file_slice
                     header = [line]
                     header_written = set()
+                    in_preamble = True
                     # Only a Rust file landing in `source` can hide test hunks.
                     test_ranges = []
                     if file_slice == "source" and header_path.endswith(".rs"):
@@ -627,16 +707,10 @@ def split_diff(diff_path: Path, out_dir: Path) -> dict:
                             test_ranges = rust_test_ranges(text)
                     continue
 
-                if test_ranges and not line.startswith("@@"):
-                    if not header_written and line.startswith(
-                        ("index ", "--- ", "+++ ", "old mode", "new mode", "similarity")
-                    ):
-                        header.append(line)
-                        continue
-
-                if test_ranges:
-                    match = _HUNK_RE.match(line)
-                    if match:
+                match = _HUNK_RE.match(line)
+                if match:
+                    in_preamble = False
+                    if test_ranges:
                         start = int(match.group(1))
                         # A hunk counts as tests when its post-image lines fall
                         # inside a cfg(test) region. Judged on the START line:
@@ -645,30 +719,22 @@ def split_diff(diff_path: Path, out_dir: Path) -> dict:
                         current = (
                             "tests" if _in_any_range(start, test_ranges) else file_slice
                         )
-                        if current not in header_written:
-                            for head_line in header:
-                                emit(current, head_line)
-                            header_written.add(current)
-                        emit(current, line)
-                        continue
-                    if not header_written:
-                        # Content before any hunk on a Rust file (rename-only,
-                        # mode change): flush the header to the file's own slice.
-                        for head_line in header:
-                            emit(file_slice, head_line)
-                        header_written.add(file_slice)
+                    else:
                         current = file_slice
+                    flush_header(current)
                     emit(current, line)
                     continue
 
-                # The plain path: a non-Rust file, or a Rust file with no inline
-                # tests. Its header was buffered, so flush it once.
-                if header and file_slice not in header_written:
-                    for head_line in header:
-                        emit(file_slice, head_line)
-                    header_written.add(file_slice)
-                    current = file_slice
+                if in_preamble:
+                    header.append(line)
+                    continue
+
+                flush_header(file_slice)
                 emit(current, line)
+
+            # And the same flush for the LAST file in the diff.
+            if header and not header_written:
+                flush_header(file_slice)
     except OSError as exc:
         raise ReviewDiffError(f"cannot write diff slices: {exc}") from exc
     finally:

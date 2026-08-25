@@ -65,6 +65,14 @@ REQUEST_TIMEOUT = 15
 _UID_RE = re.compile(r"^\s*(?:-\s+)?uid:\s*['\"]?([A-Za-z0-9_-]+)['\"]?\s*$")
 _TITLE_RE = re.compile(r"^\s*(?:-\s+)?title:\s*(?:'([^']*)'|\"([^\"]*)\"|(\S.*?))\s*$")
 
+# The start of a rule list item, whatever its first key. Used only to count how
+# many rules the file DECLARES, so a rule missing its uid can be reported rather
+# than silently omitted from the parse — a rule is identified by its uid here,
+# so without this it would simply not exist as far as the gate is concerned.
+_RULE_ITEM_RE = re.compile(
+    r"^\s*-\s+(?:uid|title|condition|for|annotations|labels|noDataState):"
+)
+
 # A prose claim about how many rules the file defines, in a comment. Both
 # spellings occur: "three rules" in a sentence, "5 rules" in a note.
 _NUMBER_WORDS = {
@@ -102,18 +110,56 @@ def parse_rules(text: str) -> list[dict]:
     rules: list[dict] = []
     pending_title = None
     for number, line in enumerate(text.splitlines(), start=1):
-        stripped = line.split("#", 1)[0] if line.lstrip().startswith("#") else line
+        # Strip a trailing comment from EVERY line. The inverted form of this —
+        # stripping only on lines that are entirely comments — was a no-op where
+        # it ran and absent where it mattered: both identity regexes are
+        # end-anchored, so `uid: 'x'  # provisioned 8/24` matched neither and the
+        # rule was dropped from the parse entirely. A gate going blind is the
+        # worst direction for it to fail in.
+        stripped = _strip_comment(line)
         title_match = _TITLE_RE.match(stripped)
         if title_match:
-            pending_title = next((g for g in title_match.groups() if g is not None), "")
+            title = next((g for g in title_match.groups() if g is not None), "")
+            if rules and not rules[-1]["title"]:
+                # The title FOLLOWS its uid — the `- uid:`-first ordering the
+                # uid regex deliberately accepts. Carrying it forward instead
+                # reported "no title" here and mis-attached it to the NEXT rule.
+                rules[-1]["title"] = title
+            else:
+                # The title PRECEDES its uid, which is how the committed file
+                # is written.
+                pending_title = title
             continue
         uid_match = _UID_RE.match(stripped)
         if uid_match:
             rules.append(
-                {"uid": uid_match.group(1), "title": pending_title, "line": number}
+                {
+                    "uid": uid_match.group(1),
+                    "title": pending_title or "",
+                    "line": number,
+                }
             )
             pending_title = None
     return rules
+
+
+def _strip_comment(line: str) -> str:
+    """``line`` with any trailing YAML comment removed, quotes respected.
+
+    A ``#`` inside a quoted scalar is part of the value, not a comment — rule
+    titles are quoted, so a naive split would truncate one containing a ``#``.
+    """
+    quote = None
+    for index, char in enumerate(line):
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+        elif char == "#":
+            return line[:index]
+    return line
 
 
 def count_claims(text: str) -> list[dict]:
@@ -145,6 +191,18 @@ def check_static(text: str) -> dict:
 
     if not rules:
         problems.append("no alert rules found — is this a provisioning file?")
+
+    # A rule is IDENTIFIED by its uid here, so a rule block with a title and no
+    # uid never becomes an entry and would be invisible — which is exactly what
+    # Grafana rejects at load. Count the list-item starts independently and
+    # compare, so the docstring's "every rule carries both a uid and a title"
+    # is actually checked rather than half-checked.
+    declared = sum(1 for line in text.splitlines() if _RULE_ITEM_RE.match(line))
+    if declared > len(rules):
+        problems.append(
+            f"{declared} rule item(s) declared but only {len(rules)} carry a uid "
+            f"— a rule without one is rejected by Grafana at load"
+        )
 
     seen: dict[str, int] = {}
     for rule in rules:

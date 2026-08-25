@@ -43,6 +43,11 @@ ENDPOINT = "https://api.linear.app/graphql"
 # Overall per-request timeout, so a hung endpoint can't wedge a run.
 REQUEST_TIMEOUT = 30
 
+# How much of a server error body to quote. Unbounded is the wrong default for a
+# module whose contract is zero-echo: an HTML error page would land verbatim in
+# an exception message a CLI prints.
+MAX_ERROR_DETAIL = 512
+
 
 class LinearApiError(Exception):
     """A user-facing transport or GraphQL failure.
@@ -113,6 +118,22 @@ def post(
     Transport, GraphQL and shape errors all surface as ``error`` so a CLI never
     emits a traceback — a traceback could quote the credential.
     """
+    # Refuse a plaintext endpoint. The redirect refusal defends against a
+    # redirect-driven host change; it does nothing about a caller-driven one,
+    # and an `http://` endpoint would send `Authorization` in cleartext with the
+    # redirect handler looking on. No caller overrides the default today — this
+    # keeps it that way.
+    if not endpoint.startswith("https://"):
+        raise error(f"refusing to send the API key to a non-HTTPS endpoint: {endpoint}")
+
+    # Re-validate here, not only in `env_var`. `http.client.putheader` raises a
+    # ValueError that QUOTES the offending header value, and that exception is
+    # neither HTTPError nor URLError — so it would escape a CLI's handler as a
+    # traceback containing the credential. `env_var` closes this for callers
+    # that use it; this closes it for the seam that actually sends the header.
+    if not (api_key.isascii() and api_key.isprintable()):
+        raise error("the API key is not printable ASCII — refusing to send it")
+
     payload = json.dumps({"query": query, "variables": variables}).encode("utf-8")
     request = urllib.request.Request(
         endpoint,
@@ -122,7 +143,7 @@ def post(
     )
     try:
         with _OPENER.open(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
+            raw = response.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         if 300 <= exc.code < 400:
             # The refusal path. Named explicitly because the generic HTTP
@@ -138,19 +159,37 @@ def post(
                 "Authorization header to that host. Verify the endpoint rather than "
                 "enabling redirects."
             ) from exc
-        detail = exc.read().decode("utf-8", errors="replace")
+        # Truncated: an error body is server-controlled and unbounded (a WAF
+        # interstitial, an HTML 502), and this module's headline contract is
+        # zero-echo. Enough to diagnose, not enough to flood a transcript.
+        detail = exc.read().decode("utf-8", errors="replace")[:MAX_ERROR_DETAIL]
         raise error(f"Linear API returned HTTP {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
         raise error(f"Linear API request failed: {exc.reason}") from exc
+    except (OSError, ValueError) as exc:
+        # The READ phase. urllib wraps failures during `open`, not during
+        # `read`, so a socket timeout, a reset connection, an SSL error or an
+        # IncompleteRead surfaces raw here — and each would escape a CLI as a
+        # traceback, contradicting every caller's "never emits a traceback"
+        # contract. The four tools that delegate here used to catch
+        # `(URLError, OSError, ValueError)` themselves; this restores that.
+        raise error(f"Linear API request failed during read: {exc}") from exc
 
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise error(f"decoding Linear GraphQL response: {exc}") from exc
 
+    if not isinstance(parsed, dict):
+        # A JSON array or scalar — a proxy or captive-portal body that happens
+        # to parse. `.get` on it would raise AttributeError past every handler.
+        raise error(
+            f"Linear GraphQL response was {type(parsed).__name__}, not an object"
+        )
+
     errors = parsed.get("errors")
     if errors:
-        joined = "; ".join(e.get("message", "") for e in errors)
+        joined = "; ".join(e.get("message", "") for e in errors if isinstance(e, dict))
         raise error(f"Linear GraphQL error: {joined}")
     data = parsed.get("data")
     if data is None:

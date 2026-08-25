@@ -861,6 +861,60 @@ class RustTestRangeTests(unittest.TestCase):
     def test_a_file_with_no_tests_yields_nothing(self):
         self.assertEqual(rd.rust_test_ranges("fn a() {}\n"), [])
 
+    def test_a_braceless_cfg_test_item_does_not_swallow_the_next_item(self):
+        # `#[cfg(test)] mod test_support;` has no block at all. Walking to "the
+        # next {" swallowed whatever braced item followed, routing PRODUCTION
+        # code into the tests slice. The repo contains this exact idiom.
+        text = (
+            "#[cfg(test)]\n"
+            "mod test_support;\n"
+            "\n"
+            "pub fn production() {\n"
+            "    real_work();\n"
+            "}\n"
+        )
+        ranges = rd.rust_test_ranges(text)
+        self.assertEqual(ranges, [(1, 2)])
+        self.assertFalse(rd._in_any_range(4, ranges))
+
+    def test_a_braceless_cfg_test_use_does_not_swallow_the_next_item(self):
+        text = "#[cfg(test)]\nuse std::sync::Arc;\n\npub fn production() {\n}\n"
+        ranges = rd.rust_test_ranges(text)
+        self.assertFalse(rd._in_any_range(4, ranges))
+
+    def test_a_lifetime_does_not_close_the_range_early(self):
+        # `&'static str` is a lifetime, not a char literal. Treating it as an
+        # open literal made the scan skip the trailing `{`, so the range ended
+        # an item early and the rest of the module went back to `source`.
+        text = (
+            "#[cfg(test)]\n"
+            "mod tests {\n"
+            "    fn helper() -> &'static str {\n"
+            '        "x"\n'
+            "    }\n"
+            "\n"
+            "    #[test]\n"
+            "    fn later() {}\n"
+            "}\n"
+            "pub fn production() {}\n"
+        )
+        ranges = rd.rust_test_ranges(text)
+        self.assertEqual(ranges, [(1, 9)])
+        self.assertTrue(rd._in_any_range(8, ranges))
+        self.assertFalse(rd._in_any_range(10, ranges))
+
+    def test_a_where_clause_lifetime_bound_is_also_not_a_literal(self):
+        text = "#[cfg(test)]\nmod tests {\n    fn f<T>() where T: 'static {\n    }\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_a_real_char_literal_is_still_skipped(self):
+        text = "#[cfg(test)]\nmod tests {\n    let c = '}';\n    fn t() {}\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
+    def test_an_escaped_char_literal_is_still_skipped(self):
+        text = "#[cfg(test)]\nmod tests {\n    let c = '\\'';\n    fn t() {}\n}\n"
+        self.assertEqual(rd.rust_test_ranges(text), [(1, 5)])
+
     def test_an_unbalanced_region_claims_to_end_of_file_rather_than_vanishing(self):
         # Losing a test region to the source slice is the failure being fixed,
         # so an unparsable tail errs toward `tests`.
@@ -946,6 +1000,67 @@ class InlineRustTestSplitTests(unittest.TestCase):
             text = Path(slices[name]["path"]).read_text(encoding="utf-8")
             self.assertIn("diff --git a/src/lib.rs b/src/lib.rs", text)
             self.assertIn("+++ b/src/lib.rs", text)
+
+    def test_an_ADDED_rust_file_carries_a_complete_header_into_each_slice(self):
+        # `new file mode` is not `index `/`--- `/`+++ `, so a prefix whitelist
+        # let it through early and the tests slice got `diff --git` immediately
+        # followed by `@@` — no ---/+++ at all, i.e. a malformed diff handed to
+        # a lens.
+        d = Path(self.tmp.name)
+        (d / "src").mkdir(parents=True, exist_ok=True)
+        (d / "src" / "added.rs").write_text(self.SOURCE, encoding="utf-8")
+        diff_path = d / "review-diff.txt"
+        diff_path.write_text(
+            "diff --git a/src/added.rs b/src/added.rs\n"
+            "new file mode 100644\n"
+            "index 0000000..111\n"
+            "--- /dev/null\n"
+            "+++ b/src/added.rs\n"
+            "@@ -0,0 +1,3 @@\n"
+            "+pub fn add(a: i32, b: i32) -> i32 {\n"
+            "+    a + b\n"
+            "+}\n"
+            "@@ -0,0 +9,3 @@\n"
+            "+    #[test]\n"
+            "+    fn it_adds() {}\n"
+            "+\n",
+            encoding="utf-8",
+        )
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            slices = rd.split_diff(diff_path, d)
+        finally:
+            os.chdir(cwd)
+        for name in ("source", "tests"):
+            text = Path(slices[name]["path"]).read_text(encoding="utf-8")
+            self.assertIn("diff --git a/src/added.rs", text)
+            self.assertIn("new file mode 100644", text)
+            self.assertIn("+++ b/src/added.rs", text)
+
+    def test_a_header_only_diff_is_not_dropped_from_every_slice(self):
+        # A mode change has no hunk at all, so nothing ever triggered a flush
+        # and the file vanished from the output entirely.
+        d = Path(self.tmp.name)
+        (d / "src").mkdir(parents=True, exist_ok=True)
+        (d / "src" / "lib.rs").write_text(self.SOURCE, encoding="utf-8")
+        diff_path = d / "review-diff.txt"
+        diff_path.write_text(
+            "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\n",
+            encoding="utf-8",
+        )
+        cwd = os.getcwd()
+        try:
+            os.chdir(d)
+            slices = rd.split_diff(diff_path, d)
+        finally:
+            os.chdir(cwd)
+        joined = "".join(
+            Path(slices[name]["path"]).read_text(encoding="utf-8")
+            for name in ("source", "tests", "docs")
+        )
+        self.assertIn("diff --git a/src/lib.rs", joined)
+        self.assertIn("new mode 100755", joined)
 
     def test_a_rust_file_with_no_inline_tests_is_untouched(self):
         d = Path(self.tmp.name)

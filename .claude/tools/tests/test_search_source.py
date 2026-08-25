@@ -999,17 +999,24 @@ class SingleFileContextRefusalTests(unittest.TestCase):
             code = ss.run(["search_source.py"] + argv)
         return code, out.getvalue() + err.getvalue()
 
-    def test_a_single_file_glob_with_wide_context_is_refused(self):
-        with self.assertRaises(ss.SearchSourceError) as caught:
-            ss.run(["search_source.py", "needle", "--glob", "one.rs", "--context", "6"])
-        message = str(caught.exception)
-        self.assertIn("one.rs", message)
-        self.assertIn("offset/limit", message)
+    def test_a_single_file_glob_with_wide_context_is_CLAMPED_not_refused(self):
+        # Clamp, not refuse: the cost is a function of match count, not scope,
+        # so refusing rejected genuinely cheap calls and turned one call into
+        # two. A refusal is also an unanswered question — the caller gets no
+        # result at all.
+        code, printed = self._run(["needle", "--glob", "one.rs", "--context", "6"])
+        self.assertEqual(code, 0)
+        self.assertIn("needle", printed)
 
-    def test_the_refusal_names_the_cheaper_alternatives(self):
-        with self.assertRaises(ss.SearchSourceError) as caught:
-            ss.run(["search_source.py", "needle", "--glob", "one.rs", "--context", "9"])
-        self.assertIn("--files-only", str(caught.exception))
+    def test_the_clamp_says_what_it_did_and_why(self):
+        _, printed = self._run(["needle", "--glob", "one.rs", "--context", "9"])
+        self.assertIn("clamped", printed)
+        self.assertIn("one.rs", printed)
+        self.assertIn("offset/limit", printed)
+
+    def test_the_clamp_actually_narrows_the_output(self):
+        wide, _ = self._run(["needle", "--glob", "one.rs", "--context", "40"])
+        self.assertEqual(wide, 0)
 
     def test_a_narrow_context_on_one_file_is_allowed(self):
         code, _ = self._run(

@@ -123,6 +123,12 @@ from pathlib import Path
 
 DEFAULT_REPO = "DASMAC-com/dropset"
 
+# How many times to re-probe a mergeable value of UNKNOWN, and how long to wait
+# between. GitHub computes mergeability asynchronously; a couple of seconds is
+# usually enough, and concluding from UNKNOWN is the failure being avoided.
+MERGEABLE_RETRIES = 3
+MERGEABLE_RETRY_DELAY = 2
+
 # gh's own refresh cadence under --watch. 30s matches CI's granularity: the
 # shortest job on this repo is several seconds and the longest many minutes, so a
 # tighter interval only produces redraws nobody reads.
@@ -547,7 +553,21 @@ def wait(
     merge_state: dict = {"mergeable": None, "merge_state_status": None, "error": None}
     if conclusion == "none":
         merge_state = mergeability(pr, repo)
-        if (merge_state.get("mergeable") or "").upper() == "CONFLICTING":
+        state = (merge_state.get("mergeable") or "").upper()
+        if state == "UNKNOWN":
+            # GitHub computes mergeability ASYNCHRONOUSLY, and right after a
+            # push — precisely the window this probe runs in — `UNKNOWN` is the
+            # common answer. Taking it as "not conflicting" would report a
+            # genuinely conflicting PR as `none` and reproduce the exact
+            # 20-minute dead wait this probe was added to prevent. So re-probe
+            # rather than concluding from it.
+            for _ in range(MERGEABLE_RETRIES):
+                time.sleep(MERGEABLE_RETRY_DELAY)
+                merge_state = mergeability(pr, repo)
+                state = (merge_state.get("mergeable") or "").upper()
+                if state != "UNKNOWN":
+                    break
+        if state == "CONFLICTING":
             blocked_by_conflict = True
             conclusion = "conflicting"
 
@@ -572,6 +592,11 @@ def wait(
         # Only populated when the conclusion was `none`: the cause probe.
         "mergeable": merge_state["mergeable"],
         "merge_state_status": merge_state["merge_state_status"],
+        # Surfaced rather than dropped: without it, "the probe failed" and "the
+        # PR is not conflicting" both read as `mergeable: null`, so the header's
+        # claim that `none` is disambiguated for you would be false with no
+        # signal that it had not been.
+        "mergeable_error": merge_state["error"],
         "blocked_by_conflict": blocked_by_conflict,
         "log_path": str(log),
     }

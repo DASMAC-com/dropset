@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # cspell:word pgdata
+# cspell:word clickhouse
+# cspell:word refspec
 """PreToolUse guard: stop catastrophic and hard-to-reverse Bash commands.
 
 The three committed guards cover shell **form** (compounds, `git grep`) and
@@ -46,18 +48,36 @@ ESCAPE_HATCH = "#destructive-ok"
 # with no legitimate use from an agent session in this repo.
 # --------------------------------------------------------------------------
 
+# A recursive-force `rm`, in either flag order. `[rR]` is deliberate: BSD/macOS
+# `rm` accepts `-R` as a first-class recursive flag, and this repo runs on
+# macOS — a case-sensitive `r` left `rm -Rf /` unclassified at every tier.
+_RM_RECURSIVE_FORCE = r"\brm\b(?=(?:\s+-\S+)*\s+-\S*[rR])(?=(?:\s+-\S+)*\s+-\S*f)"
+
+# The targets that make a recursive delete catastrophic rather than merely
+# destructive. `~/` and `$HOME/` (with the trailing slash) are included because
+# `rm -rf ~/` is a trivially plausible slip and reads as no less final.
+_CATASTROPHIC_TARGET = (
+    r"(?:/|/\*|~|~/|~/\*|\$HOME|\$HOME/|\$\{HOME\}|\$\{HOME\}/"
+    r"|\"\$HOME\"|'\$HOME'|\"\$HOME/\"|'\$HOME/')"
+)
+
 DENY_PATTERNS = (
     (
         re.compile(
-            r"\brm\b(?=(?:\s+-\S+)*\s+-\S*r)(?=(?:\s+-\S+)*\s+-\S*f)"
-            r"(?:\s+-\S+)*\s+(?:/|/\*|~|~/\*|\$HOME|\"\$HOME\"|'\$HOME')\s*$"
+            _RM_RECURSIVE_FORCE + r"(?:\s+-\S+)*\s+" + _CATASTROPHIC_TARGET + r"\s*$"
         ),
         "a recursive delete of the filesystem root or the home directory",
     ),
     (
+        # Order-independent: the force flag may follow the refname just as
+        # naturally as precede it, and `git push origin main --force` used to
+        # fall through to the marker-liftable ask tier. The `+ref` refspec is a
+        # force push with no flag at all.
         re.compile(
-            r"\bgit\s+push\b.*(?:--force\b|--force-with-lease\b|(?<!\w)-f(?!\w))"
-            r".*\b(?:main|master)\b"
+            r"\bgit\s+push\b"
+            r"(?=.*(?:--force\b|--force-with-lease\b|(?<!\w)-f(?!\w)"
+            r"|\+(?:main|master)\b))"
+            r"(?=.*\b(?:main|master)\b)"
         ),
         "a force-push to the default branch",
     ),
@@ -67,28 +87,45 @@ DENY_PATTERNS = (
 # ASK — overridable with the marker.
 # --------------------------------------------------------------------------
 
+# Destructive SQL is only recognized when a SQL CLIENT is being invoked. Without
+# that gate the patterns match ordinary English and block the commands this repo
+# runs constantly: `git commit -m "Drop table borders in the report"` and
+# `git commit -m "Delete from the dictionary the single-file words"` both tripped
+# the un-gated form. A guard that blocks `git commit` is a guard that gets turned
+# off, which is a worse security outcome than the one it was defending against.
+_SQL_CLIENT = r"\b(?:psql|mysql|sqlite3|sqlx|pg_dump|cockroach|clickhouse)\b"
+
 ASK_PATTERNS = (
     (
-        re.compile(r"\brm\b(?=(?:\s+-\S+)*\s+-\S*r)(?=(?:\s+-\S+)*\s+-\S*f)"),
+        re.compile(_RM_RECURSIVE_FORCE),
         "a recursive force-delete (`rm -rf`)",
     ),
     (
-        re.compile(r"\bgit\s+push\b.*(?:--force\b|(?<!\w)-f(?!\w))"),
+        re.compile(r"\bgit\s+push\b.*(?:--force\b|(?<!\w)-f(?!\w)|\+(?:\w|/)+:)"),
         "a force-push",
     ),
     (re.compile(r"\bgit\s+reset\s+--hard\b"), "a hard reset, which discards changes"),
     (
-        re.compile(r"\bgit\s+clean\b(?:\s+-\S+)*\s+-\S*[fx]"),
+        # `-n` is git clean's DRY RUN. `git clean -ndx` is the recommended
+        # preview and deletes nothing, so blocking it is a pure false positive.
+        re.compile(r"\bgit\s+clean\b(?![^\n]*\s-\S*n)(?:\s+-\S+)*\s+-\S*[fx]"),
         "a `git clean` that deletes untracked files",
     ),
     (
-        re.compile(r"\bdrop\s+(?:table|database|schema)\b", re.IGNORECASE),
+        re.compile(
+            _SQL_CLIENT + r"[^\n]*\bdrop\s+(?:table|database|schema)\b", re.IGNORECASE
+        ),
         "a destructive SQL DROP",
     ),
-    (re.compile(r"\btruncate\s+table\b", re.IGNORECASE), "a SQL TRUNCATE"),
     (
-        # DELETE with no WHERE clause anywhere after it.
-        re.compile(r"\bdelete\s+from\b(?!.*\bwhere\b)", re.IGNORECASE | re.DOTALL),
+        re.compile(_SQL_CLIENT + r"[^\n]*\btruncate\s+table\b", re.IGNORECASE),
+        "a SQL TRUNCATE",
+    ),
+    (
+        # DELETE with no WHERE clause anywhere after it, in a SQL client call.
+        re.compile(
+            _SQL_CLIENT + r"[^\n]*\bdelete\s+from\b(?![^\n]*\bwhere\b)", re.IGNORECASE
+        ),
         "a SQL DELETE with no WHERE clause",
     ),
     (
@@ -102,28 +139,49 @@ ASK_PATTERNS = (
 )
 
 
-def unquoted_comment(cmd):
-    """The unquoted trailing shell comment (from its ``#``), or ``None``.
+def split_comments(cmd):
+    """``(effective, comments)`` — the command with its comments removed.
 
     A ``#`` begins a comment only when unquoted and at a word boundary, so a
-    quoted or embedded occurrence of the marker cannot silently disable the
-    guard. Kept identical in shape to the compound guard's version — two
-    spellings of one rule is how an escape hatch drifts.
+    quoted or embedded occurrence of the escape marker cannot silently disable
+    the guard.
+
+    **A comment ends at the NEWLINE, not at the end of the string**, and that
+    distinction is load-bearing rather than pedantic. An earlier version
+    returned everything from the first ``#`` onward as "the comment", so on a
+    multi-line command every line after a first-line comment was stripped
+    before classification:
+
+        ls # check
+        rm -rf /
+
+    classified as ``ls`` and was **allowed** — defeating even the deny tier,
+    which no marker is supposed to lift. That is the ordinary shape of a
+    commented script block, not an adversarial one.
+
+    Quote state is tracked across the whole string (faithful to a real shell,
+    where a quoted string may span lines); only the comment span is bounded by
+    the newline.
     """
     quote = None
+    out = []
+    comments = []
     i = 0
     n = len(cmd)
     while i < n:
         c = cmd[i]
         if quote == "'":
+            out.append(c)
             if c == "'":
                 quote = None
             i += 1
             continue
         if c == "\\":
+            out.append(cmd[i : i + 2])
             i += 2
             continue
         if quote == '"':
+            out.append(c)
             if c == '"':
                 quote = None
             i += 1
@@ -133,18 +191,34 @@ def unquoted_comment(cmd):
         elif c == '"':
             quote = '"'
         elif c == "#" and (i == 0 or cmd[i - 1].isspace()):
-            return cmd[i:]
+            end = cmd.find("\n", i)
+            if end == -1:
+                comments.append(cmd[i:])
+                break
+            comments.append(cmd[i:end])
+            # Keep the newline so the following line stays its own line.
+            out.append("\n")
+            i = end + 1
+            continue
+        out.append(c)
         i += 1
-    return None
+    return "".join(out), "\n".join(comments)
 
 
 def classify(cmd):
-    """``("deny"|"ask"|None, reason)`` for one command string."""
+    """``("deny"|"ask"|None, reason)`` for one command string.
+
+    Each **line** is classified independently. Newline is a command separator
+    in shell, so a multi-line payload is several commands — and classifying the
+    whole blob as one string would let the deny patterns' end-anchors
+    (``…\\s*$``) be defeated simply by appending another line.
+    """
+    lines = [line for line in cmd.splitlines() if line.strip()]
     for pattern, reason in DENY_PATTERNS:
-        if pattern.search(cmd):
+        if any(pattern.search(line) for line in lines):
             return "deny", reason
     for pattern, reason in ASK_PATTERNS:
-        if pattern.search(cmd):
+        if any(pattern.search(line) for line in lines):
             return "ask", reason
     return None, ""
 
@@ -180,13 +254,12 @@ def evaluate(payload):
     if not isinstance(cmd, str) or not cmd.strip():
         return 0, ""
 
-    # Classify the command with its trailing comment REMOVED. A shell comment
-    # is inert, so this is faithful — and it closes a real bypass the self-test
-    # caught: the deny patterns anchor the target path at end-of-command, so
-    # `rm -rf / #destructive-ok` failed to match deny, fell through to ask, and
-    # was then lifted by the very marker the deny tier must ignore.
-    comment = unquoted_comment(cmd)
-    effective = cmd[: len(cmd) - len(comment)] if comment is not None else cmd
+    # Classify the command with its comments REMOVED. A shell comment is inert,
+    # so this is faithful — and it closes a real bypass: the deny patterns
+    # anchor the target path at end-of-line, so `rm -rf / #destructive-ok`
+    # failed to match deny, fell through to ask, and was then lifted by the very
+    # marker the deny tier must ignore.
+    effective, comments = split_comments(cmd)
 
     tier, reason = classify(effective)
     if tier is None:
@@ -196,7 +269,7 @@ def evaluate(payload):
         # override, and reading the marker first would give it one.
         return 2, DENY_MESSAGE.format(reason=reason, hatch=ESCAPE_HATCH)
 
-    if comment is not None and ESCAPE_HATCH in comment:
+    if ESCAPE_HATCH in comments:
         return 0, ""
     return 2, ASK_MESSAGE.format(reason=reason, hatch=ESCAPE_HATCH)
 
@@ -211,6 +284,14 @@ def _self_test():
         ("rm /tmp/one-file.txt", None),
         ("git push -u origin eng-942", None),
         ("psql -c 'DELETE FROM ticks WHERE ts < now()'", None),
+        # False positives that would get the guard turned off. `-n` is git
+        # clean's DRY RUN, and destructive SQL words occur constantly in this
+        # repo's commit messages.
+        ("git clean -ndx", None),
+        ("git clean -nx", None),
+        ('git commit -m "Drop table borders in the report"', None),
+        ('git commit -m "Delete from the dictionary the single-file words"', None),
+        ('git commit -m "Truncate table headers to two lines"', None),
         # ask tier
         ("rm -rf /tmp/scratch", "ask"),
         ("rm -fr build", "ask"),
@@ -232,6 +313,22 @@ def _self_test():
         ("rm -rf $HOME", "deny"),
         ("git push --force origin main", "deny"),
         ("git push -f origin master", "deny"),
+        # BSD/macOS `rm` takes -R as a recursive flag, and this repo runs on
+        # macOS. A case-sensitive `r` left every one of these unclassified.
+        ("rm -Rf /", "deny"),
+        ("rm -Rf ~", "deny"),
+        ("rm -fR $HOME", "deny"),
+        ("rm -Rf /tmp/scratch", "ask"),
+        # `rm -rf ~/` is as final as `rm -rf ~` and was only `ask`.
+        ("rm -rf ~/", "deny"),
+        ("rm -rf $HOME/", "deny"),
+        ("rm -rf ${HOME}", "deny"),
+        # Flag-last is at least as natural as flag-first, and used to fall
+        # through to the marker-liftable ask tier.
+        ("git push origin main --force", "deny"),
+        ("git push origin master -f", "deny"),
+        # A refspec force-push carries no flag at all.
+        ("git push origin +main:main", "deny"),
     ]
     failures = []
     for cmd, expected in cases:
@@ -259,6 +356,25 @@ def _self_test():
     }
     if evaluate(payload)[0] != 2:
         failures.append("  a quoted marker disabled the guard")
+
+    # A comment ends at the NEWLINE. Treating it as running to end-of-string
+    # let a first-line comment swallow every following line, so an ordinary
+    # commented script block bypassed the guard entirely — deny tier included.
+    multiline = [
+        ("ls # check\nrm -rf /", 2, "a multi-line deny slipped past a comment"),
+        ("ls # check\nrm -rf build", 2, "a multi-line ask slipped past a comment"),
+        ("echo one # note\necho two", 0, "a benign multi-line command was blocked"),
+        # The end-anchored deny target must not be defeated by a trailing line.
+        ("rm -rf /\necho done", 2, "a trailing line defeated the deny anchor"),
+        # And the marker still must not lift a deny on any line.
+        ("rm -rf / #destructive-ok\necho done", 2, "the marker lifted a deny"),
+        # A `#` inside quotes is not a comment, so it must not hide the tail.
+        ("echo '# not a comment'\nrm -rf /", 2, "a quoted '#' was read as a comment"),
+    ]
+    for command, expected, message in multiline:
+        got = evaluate({"tool_name": "Bash", "tool_input": {"command": command}})[0]
+        if got != expected:
+            failures.append(f"  {message}: {command!r} -> {got}")
     # Non-Bash tools are none of this hook's business.
     if evaluate({"tool_name": "Write", "tool_input": {"command": "rm -rf /"}})[0] != 0:
         failures.append("  a non-Bash tool was blocked")

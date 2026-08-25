@@ -344,8 +344,19 @@ before it runs:
 
 Each guard **script** is committed, but its wiring is not — like the
 iTerm color integration, they are user-local configuration the repo
-documents rather than enforces. Every hook is quote-aware and fails
-open. Their behavior and the exact `settings.json` wiring live with the
+documents rather than enforces. Every hook **fails open** — a parse
+problem allows rather than wedging the session.
+
+**On "quote-aware", precisely.** The compound guard's operator scan is
+quote-aware character by character, which is what lets it ignore a `;`
+inside a quoted commit message. The destructive guard's *comment
+handling* is quote-aware too, so a quoted `#destructive-ok` cannot
+disable it — but its **pattern matching is plain regex over the
+command**, and that is why its SQL rules require a SQL client to be
+named rather than matching the words anywhere. Do not read
+"quote-aware" as a property of the destructive matching itself.
+
+Their behavior and the exact `settings.json` wiring live with the
 other local integrations in
 [local-integrations](local-integrations.md).
 

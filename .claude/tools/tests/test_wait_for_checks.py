@@ -657,6 +657,52 @@ class ConflictingPrTests(unittest.TestCase):
         self.assertEqual(verdict["conclusion"], "none")
         self.assertFalse(verdict["blocked_by_conflict"])
 
+    def test_a_failed_probe_SAYS_it_failed(self):
+        # Without this field, "the probe failed" and "not conflicting" both
+        # read as mergeable: null — so the promise that `none` is
+        # disambiguated for you would be false with no signal.
+        self._stub([], code=1)
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertIsNotNone(verdict["mergeable_error"])
+
+    def test_an_UNKNOWN_mergeable_is_re_probed_rather_than_concluded_from(self):
+        # GitHub computes mergeability asynchronously, and right after a push —
+        # this probe's own window — UNKNOWN is common. Reading it as
+        # "not conflicting" reproduces the dead wait the probe exists to stop.
+        payloads = [
+            json.dumps({"mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN"}),
+            json.dumps({"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"}),
+        ]
+        calls = []
+
+        def fake_gh(args):
+            calls.append(args)
+            return (0, payloads[min(len(calls) - 1, len(payloads) - 1)], "")
+
+        real_watch, real_read, real_gh = wfc.watch_checks, wfc.read_checks, wfc._gh
+        real_sleep = wfc.time.sleep
+        wfc.watch_checks = lambda pr, repo, interval, timeout, log: True
+        wfc.read_checks = lambda pr, repo: []
+        wfc._gh = fake_gh
+        wfc.time.sleep = lambda _s: None
+        self.addCleanup(setattr, wfc, "watch_checks", real_watch)
+        self.addCleanup(setattr, wfc, "read_checks", real_read)
+        self.addCleanup(setattr, wfc, "_gh", real_gh)
+        self.addCleanup(setattr, wfc.time, "sleep", real_sleep)
+
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertGreater(len(calls), 1)
+        self.assertEqual(verdict["conclusion"], "conflicting")
+
+    def test_a_persistently_UNKNOWN_mergeable_does_not_claim_conflicting(self):
+        self._stub([], {"mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN"})
+        real_sleep = wfc.time.sleep
+        wfc.time.sleep = lambda _s: None
+        self.addCleanup(setattr, wfc.time, "sleep", real_sleep)
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertEqual(verdict["conclusion"], "none")
+        self.assertFalse(verdict["blocked_by_conflict"])
+
     def test_the_probe_is_field_selected(self):
         seen = {}
         real_watch, real_read, real_gh = wfc.watch_checks, wfc.read_checks, wfc._gh

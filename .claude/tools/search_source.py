@@ -815,7 +815,7 @@ def run(argv: list[str]) -> int:
     if exts and args.all_text:
         raise SearchSourceError("--ext and --all-text are alternatives")
 
-    # Refuse a wide context window once the scope is provably one file. Sweeping
+    # CLAMP a wide context window once the scope is provably one file. Sweeping
     # a named file buys its matched regions at an N-line markup, and on clustered
     # matches the windows overlap toward buying the file outright — at a HIGHER
     # price than reading it. Measured on one session: a context-6 constants probe
@@ -823,16 +823,20 @@ def run(argv: list[str]) -> int:
     # constants actually wanted), a context-12 struct probe, and a context-40
     # single-symbol probe that is a whole-file read with extra steps — ~11.9k
     # together, roughly 60% of that session's entire Bash cost.
+    #
+    # Clamp rather than REFUSE, which is what this did first. A refusal keys on
+    # SCOPE while the cost is a function of MATCH COUNT, so it rejected calls
+    # that were genuinely cheap — a single-file `--context 3` with one hit is
+    # seven lines — and turned one call into two. And a refusal is an unanswered
+    # question: the caller gets no result at all and has to re-ask. Clamping
+    # answers the question, caps the cost, and says on the summary line what it
+    # did, so the next call is narrowed deliberately rather than by a retry.
+    clamped_from = None
     if not args.files_only and args.context > SINGLE_FILE_CONTEXT_LIMIT:
         target = single_file_scope(globs, dirs)
         if target is not None:
-            raise SearchSourceError(
-                f"--context {args.context} over the single file {target} is a "
-                f"whole-file read with extra steps. Once the scope is one file, "
-                f"drop the context and slice-read it: re-run with --files-only "
-                f"(or --context {SINGLE_FILE_CONTEXT_LIMIT} or less) to get the "
-                f"line numbers, then Read {target} with offset/limit."
-            )
+            clamped_from = (args.context, target)
+            args.context = SINGLE_FILE_CONTEXT_LIMIT
 
     if args.all_text:
         extensions = None
@@ -855,6 +859,16 @@ def run(argv: list[str]) -> int:
         globs=globs,
     )
     print_result(result, args.files_only, args.context)
+    if clamped_from is not None:
+        width, target = clamped_from
+        print(
+            f"search-source | NOTE: --context {width} was clamped to "
+            f"{SINGLE_FILE_CONTEXT_LIMIT} because the scope is the single file "
+            f"{target} — a wide sweep of one named file is a whole-file read "
+            f"with extra steps. Slice-read it with Read offset/limit if you "
+            f"need more around a match.",
+            file=sys.stderr,
+        )
     # 0 when something matched, 1 when nothing did — grep's convention, so a
     # caller can branch on it.
     return 0 if result["total"] else 1

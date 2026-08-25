@@ -292,6 +292,29 @@ class ZeroEchoTests(unittest.TestCase):
         self.assertIn("WOULD PATCH", printed)
         self.assertNotIn(self.SECRET, printed)
 
+    def test_a_failing_op_makes_NO_write_at_all(self):
+        # Atomicity where it actually matters. `apply_ops` is a pure string
+        # function and so is atomic by construction — asserting there cannot
+        # fail on a broken implementation of the property that counts, which is
+        # that no issueUpdate is posted when an op fails. One _post in the
+        # side_effect list means a second call raises StopIteration.
+        with tempfile.TemporaryDirectory() as d:
+            ops = os.path.join(d, "ops.json")
+            with open(ops, "w", encoding="utf-8") as handle:
+                json.dump(
+                    [
+                        {"op": "append", "text": "\nfine"},
+                        {"op": "replace", "anchor": "nope", "text": "x"},
+                    ],
+                    handle,
+                )
+            printed = self._run(
+                ["patch", "ENG-942", "--ops", ops],
+                [{"issue": self._issue(self.SECRET)}],
+            )
+        self.assertIn("not found", printed)
+        self.assertNotIn("PATCHED", printed)
+
     def test_an_unresolved_issue_is_an_error_not_a_silent_no_op(self):
         printed = self._run(["state", "ENG-942", "--state", "Done"], [{"issue": None}])
         self.assertIn("did not resolve", printed)

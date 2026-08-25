@@ -2759,18 +2759,14 @@ already being asked to start the review.
    `make lint` belongs to the two checkpoints (once before
    committing, once at the end), never to this loop.
 
-   **And run the test MODULE while iterating, the SUITE at
-   the checkpoint.** The same axis as the lint rule above, and
-   it fails the same way: one session ran the whole tools
+   **And run a fast suite at CHECKPOINTS — the lever there is
+   frequency, not scope.** One session ran the whole tools
    suite **32 times** in an edit-one-tool loop, most runs
-   re-buying confidence it already had. That session's own PR
-   added the suite-granularity rule to the convention doc and
-   then did not follow it — which is the argument for stating
-   it *here*, where the loop actually is, rather than only in
-   the doc. Reserve the whole-suite run for the checkpoint (and
-   note the opposite trap still holds: for a suite that runs in
-   under a second, the wrapped whole-suite run is **cheaper**
-   than an unwrapped per-module one — see step 4).
+   re-buying confidence it already had. Do not read that as a
+   reason to narrow the *scope*: step 4's measurement points
+   the other way (the per-module discover run cost more **and**
+   missed two sibling tests the edits had just broken). Whole
+   suite, through the wrapper, fewer times.
 
 1. **Regenerate committed generated artifacts
    (mirror the IDL / SDK / vectors / WASM CI gates).** CI

@@ -669,9 +669,16 @@ class CargoFailureWindow(unittest.TestCase):
         + ["", "test result: ok. 30 passed; 0 failed; finished in 0.05s"]
     )
 
+    def setUp(self):
+        # A TemporaryDirectory, not the live LOG_DIR: every other new test
+        # module here does the same, and writing fixtures into the operator's
+        # real log directory leaves files behind that a later `inspect` could
+        # pick up.
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
     def _write(self, lines):
-        path = rq.os.path.join(rq.LOG_DIR, "test-cargo-%d.log" % rq.os.getpid())
-        rq.os.makedirs(rq.LOG_DIR, exist_ok=True)
+        path = os.path.join(self.tmp.name, "cargo.log")
         with open(path, "w", encoding="utf-8") as fh:
             for line in lines:
                 fh.write(line + "\n")
@@ -714,6 +721,44 @@ class CargoFailureWindow(unittest.TestCase):
         self.assertIn("first detail", got.failure_text)
         self.assertNotIn("second detail", got.failure_text)
         self.assertNotIn("... ok", got.failure_text)
+
+    def test_an_UNCLOSED_marker_falls_back_to_the_tail(self):
+        # `failures:` is a bare word, not cargo-specific. Any wrapped log that
+        # happens to contain one would otherwise have its tail replaced by 60
+        # lines from an irrelevant marker, hiding the real error at end-of-log.
+        lines = ["failures:", "some unrelated text"] + [
+            "later line %d" % i for i in range(30)
+        ]
+        summary = rq.read_tail_and_count(self._write(lines), 5)
+        self.assertFalse(summary.failure_closed)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rq.write_failure_region(summary, 5)
+        printed = out.getvalue()
+        self.assertIn("--- last ", printed)
+        self.assertNotIn("failures block", printed)
+        self.assertIn("later line 29", printed)
+
+    def test_a_multi_binary_failure_says_only_the_first_is_shown(self):
+        lines = (
+            ["failures:", "first detail", "failures:", "  a", "test result: FAILED. 1"]
+            + ["test ok::case ... ok"]
+            + [
+                "failures:",
+                "second detail",
+                "failures:",
+                "  b",
+                "test result: FAILED. 1",
+            ]
+        )
+        summary = rq.read_tail_and_count(self._write(lines), 5)
+        self.assertGreater(summary.failure_blocks, 2)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rq.write_failure_region(summary, 5)
+        printed = out.getvalue()
+        self.assertIn("only the first is shown", printed)
+        self.assertNotIn("second detail", printed)
 
     def test_a_log_with_no_marker_leaves_the_window_empty(self):
         got = rq.read_tail_and_count(self._write(["a", "b", "c"]), 2)

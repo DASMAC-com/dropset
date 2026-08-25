@@ -2,6 +2,7 @@
 name: architect
 description: Run an architect session — the long-horizon design conversation, in the same seat quality as a planning session but doing a different job. Bootstraps minimally (the Planning document and the track umbrellas, nothing else), holds the conversation at decision altitude with deep code reads allowed and big surveys delegated, and writes NOTHING to the board: it hands its conclusions to the planning session through the Planning document's notes section and a direct message, naming the tracks its decisions likely affect without touching them. Runs in the base repo on the mandated model, launched with `caps <topic>`, never in a worktree.
 user-invocable: true
+model: fable
 ---
 
 # `architect`

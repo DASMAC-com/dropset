@@ -61,7 +61,29 @@ class FingerprintTests(unittest.TestCase):
         self.git("commit", "-q", "--amend", "-m", "reworded")
         self.assertEqual(before, tf.compute())
 
-    def test_a_rebase_touching_nothing_this_branch_touches_does_NOT_change_it(self):
+    def test_a_rebase_that_leaves_the_tree_byte_identical_does_NOT_change_it(self):
+        # THE headline claim: invariance across a history rewrite that changes
+        # no bytes. The sibling test below covers a rebase that legitimately
+        # does change the tree; this one covers the case the tool exists for,
+        # constructed by reverting the base's change on the branch so the
+        # merged result is byte-for-byte what it started as.
+        self.git("checkout", "-q", "-b", "feature")
+        before = tf.compute()
+        base = "master" if self._has_master() else "main"
+        self.git("checkout", "-q", base)
+        (self.repo / "transient.txt").write_text("t\n", encoding="utf-8")
+        self.git("add", "transient.txt")
+        self.git("commit", "-q", "-m", "base adds a file")
+        self.git("checkout", "-q", "feature")
+        self.git("rebase", "-q", base)
+        # The rebase brought transient.txt in; `git rm` (not unlink — that
+        # leaves the path TRACKED and still listed) restores the exact content
+        # the fingerprint was taken over.
+        self.git("rm", "-q", "transient.txt")
+        self.git("commit", "-q", "-m", "revert the base's file")
+        self.assertEqual(before, tf.compute())
+
+    def test_a_rebase_bringing_new_content_changes_it_for_a_CONTENT_reason(self):
         # The expensive case in a real review: the base moves, the content this
         # branch carries does not, and the suites get re-run anyway.
         self.git("checkout", "-q", "-b", "feature")
@@ -124,6 +146,36 @@ class FingerprintTests(unittest.TestCase):
         before = tf.compute()
         (self.repo / "a.txt").unlink()
         self.assertNotEqual(before, tf.compute())
+
+    def test_the_fingerprint_is_the_same_from_a_SUBDIRECTORY(self):
+        # `git ls-files` is cwd-scoped by default, so a run from a subdirectory
+        # fingerprinted only that subtree while the ledger resolved to the same
+        # entry from anywhere — `check` would then answer `fresh` on a stale
+        # tree, the exact failure this module warns about.
+        (self.repo / "sub").mkdir()
+        (self.repo / "sub" / "b.txt").write_text("beta\n", encoding="utf-8")
+        self.git("add", "sub/b.txt")
+        self.git("commit", "-q", "-m", "sub")
+        from_root = tf.compute()
+        os.chdir(self.repo / "sub")
+        try:
+            from_sub = tf.compute()
+        finally:
+            os.chdir(self.repo)
+        self.assertEqual(from_root, from_sub)
+
+    def test_a_change_outside_the_subdirectory_is_still_seen_from_inside_it(self):
+        (self.repo / "sub").mkdir()
+        (self.repo / "sub" / "b.txt").write_text("beta\n", encoding="utf-8")
+        self.git("add", "sub/b.txt")
+        self.git("commit", "-q", "-m", "sub")
+        os.chdir(self.repo / "sub")
+        try:
+            before = tf.compute()
+            (self.repo / "a.txt").write_text("changed\n", encoding="utf-8")
+            self.assertNotEqual(before, tf.compute())
+        finally:
+            os.chdir(self.repo)
 
     def test_content_cannot_impersonate_a_path(self):
         # Both path and bytes are length-prefixed, so no concatenation of one

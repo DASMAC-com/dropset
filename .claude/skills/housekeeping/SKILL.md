@@ -231,10 +231,11 @@ wrong place.
 
 It is safe to run repeatedly and makes **no source
 edits** of its own: its only writes are removing
-merged worktrees, filing / staging Linear issues, and
-annotating the Linear Session Metrics doc with
-recommended dispositions (it never edits a skill
-unattended).
+merged worktrees and filing / staging Linear issues
+(it never edits a skill unattended). Trim levers are
+**parked issues** written through the zero-echo
+writer — the old "Session Metrics" inbox document is
+retired, so nothing here annotates one.
 
 Run it **once when you arrive** for the full morning-driver
 flow (upkeep, then exit), or drive ad-hoc upkeep on a
@@ -251,8 +252,8 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 3–6 file Backlog issues and mine the
-Session Metrics doc, so they use the
+Steps 3–6 file Backlog issues and sweep the
+`Trim levers` milestone, so they use the
 same env-resolved Linear destination as `linear-task`.
 Resolve each variable with its **own**
 bare `printenv` (one `Bash(printenv:*)` allow-rule

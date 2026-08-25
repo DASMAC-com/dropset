@@ -54,6 +54,46 @@ class ParseRulesTests(unittest.TestCase):
     def test_a_file_with_no_rules_yields_nothing(self):
         self.assertEqual(gc.parse_rules("apiVersion: 1\n"), [])
 
+    def test_a_trailing_comment_does_not_hide_a_rule(self):
+        # Both identity regexes are end-anchored, so a trailing comment made the
+        # line match neither and the rule vanished from the parse — taking it
+        # out of the duplicate-uid check too. A gate going blind.
+        text = (
+            "groups:\n  rules:\n"
+            "  - title: 'Kept'  # provisioned 8/24\n"
+            "    uid: 'kept'  # do not rename\n"
+        )
+        rules = gc.parse_rules(text)
+        self.assertEqual([(r["uid"], r["title"]) for r in rules], [("kept", "Kept")])
+
+    def test_a_hash_inside_a_quoted_title_is_not_a_comment(self):
+        text = "groups:\n  rules:\n  - title: 'Rule #3 fired'\n    uid: 'r3'\n"
+        self.assertEqual(gc.parse_rules(text)[0]["title"], "Rule #3 fired")
+
+    def test_a_uid_first_list_item_still_gets_its_title(self):
+        # `- uid:` is the ordering the uid regex was widened to accept, but the
+        # title then comes AFTER — so carrying it only from above reported
+        # "no title" and mis-attached the title to the next rule.
+        text = (
+            "groups:\n  rules:\n"
+            "  - uid: 'first'\n    title: 'First rule'\n"
+            "  - uid: 'second'\n    title: 'Second rule'\n"
+        )
+        rules = gc.parse_rules(text)
+        self.assertEqual(
+            [(r["uid"], r["title"]) for r in rules],
+            [("first", "First rule"), ("second", "Second rule")],
+        )
+
+    def test_a_uid_first_file_reports_no_missing_titles(self):
+        text = (
+            "groups:\n  rules:\n"
+            "  - uid: 'first'\n    title: 'First rule'\n"
+            "  - uid: 'second'\n    title: 'Second rule'\n"
+        )
+        problems = gc.check_static(text)["problems"]
+        self.assertFalse([p for p in problems if "no title" in p])
+
 
 class StaticCheckTests(unittest.TestCase):
     def test_a_clean_file_has_no_problems(self):
@@ -93,6 +133,18 @@ class StaticCheckTests(unittest.TestCase):
         # A number inside a rule expression is data, not a claim about the file.
         text = TWO_RULES + "    expr: 'count(x) > 9 rules'\n"
         self.assertEqual(gc.check_static(text)["problems"], [])
+
+    def test_a_rule_declared_without_a_uid_is_reported_not_ignored(self):
+        # A rule is identified by its uid, so one without it never became an
+        # entry — invisible to the gate, and rejected by Grafana at load. The
+        # docstring claimed both were checked; only the title half was.
+        text = (
+            "groups:\n  rules:\n"
+            "  - title: 'Has a uid'\n    uid: 'ok'\n"
+            "  - title: 'Missing its uid'\n    condition: 'A'\n"
+        )
+        problems = gc.check_static(text)["problems"]
+        self.assertTrue(any("carry a uid" in p for p in problems))
 
     def test_an_empty_provisioning_file_is_a_problem(self):
         problems = gc.check_static("apiVersion: 1\n")["problems"]

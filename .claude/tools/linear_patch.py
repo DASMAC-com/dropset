@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 
@@ -259,7 +260,12 @@ def cmd_read(api_key: str, identifier: str, out: str) -> str:
     issue = _fetch(api_key, identifier)
     body = issue.get("description") or ""
     try:
-        with open(out, "w", encoding="utf-8") as handle:
+        # 0o600, for the same reason `show_at_ref.py` and `tree_fingerprint.py`
+        # do it: this writes an issue body — the very payload this tool exists
+        # to keep out of transcripts — into a shared temp tree, and the default
+        # umask would leave it world-readable.
+        fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(body)
     except OSError as exc:
         raise LinearPatchError(f"cannot write {out}: {exc}") from exc
