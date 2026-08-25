@@ -329,13 +329,27 @@ surfaces in any `{:?}` of the resulting `anyhow` chain, which is exactly
 what a top-level handler logs. It needs no hostile venue, only an
 ordinary request failure. Such an adapter passes its key to
 `HttpClient::with_secret_query_param`, which appends it to every request
-and redacts its value out of every transport error before it is wrapped.
-Carrying the key on the client rather than in the adapter's per-request
-query is the point: the transport then knows which parameter is a
-credential. Passing a key through `get_json`'s `query` instead bypasses
-the mechanism, exactly as plain `with_header` would. Redaction is
-targeted, not blanket — benign parameters stay legible, because a failed
-paged backfill is diagnosed from precisely those.
+and keeps the value out of any `Debug` render of the client. Carrying the
+key there rather than in the adapter's per-request query remains the
+discipline: it is what spares every call site from holding the secret.
+
+**The redaction is default-deny.** A transport error's query values are
+replaced unless the parameter's name sits on an explicit benign
+allow-list — symbol, interval, window bounds and the like. Benign
+parameters stay legible, because a failed paged backfill is diagnosed
+from precisely those; everything else is redacted whether or not it was
+registered.
+
+That inverts the earlier **deny-list**, under which only registered names
+were replaced — so a key hand-passed through `get_json`'s `query` was
+covered by nothing at all. Registration is now a hygiene measure with a
+backstop behind it, rather than the sole defense. Two consequences worth
+stating: adding a venue whose benign parameter is not yet on the
+allow-list costs one round of diagnosis (its value renders as
+`REDACTED`), which is the safe direction to fail in; and
+`0003_maker_telemetry.sql`'s column comments still describe the old
+deny-list and its open residual risk. That migration is checksum-frozen
+and cannot be corrected in place, so this section supersedes it.
 
 **Redirects are refused, which is the third credential boundary.**
 `reqwest`'s default policy follows up to 10 redirects and strips
