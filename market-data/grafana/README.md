@@ -146,11 +146,50 @@ Two deliberate safeguards are already in place, and are worth keeping:
 
 ## Reading the dashboard
 
-Top-down: the two stat tiles across the top answer *is ingestion alive
-right now*, and everything below answers *is it any good*.
+Top-down: the two fair-price panels at the top answer *what does the
+system believe, and why*, the two stat tiles below them answer *is
+ingestion alive right now*, and everything after that answers *is it any
+good*.
 
-The two freshness tiles look redundant and are not, which matters most
-on first contact:
+### The two fair-price panels
+
+These are the estimator's output (`docs/market-making.md` §1
+"Fair-price estimation"), and they read together.
+
+- **Fair price over its sources** draws three lines per market — the
+  composed fair price, the FX leg's fused estimate, and the FX leg's fast
+  consensus median — over every selected source's raw ticks. **Read the
+  gaps**, which is why all three are drawn rather than just the answer.
+  Fused-vs-fast is the estimator's whole contribution: the two sit on top
+  of each other while the sources agree and separate exactly when a
+  source is being ignored or a dislocation is being adopted.
+  Fused-vs-scatter is the estimator declining to chase a stray print.
+- **Fusion weight by source** explains the first panel: when the fused
+  line stops tracking a source, this says by how much and from when.
+
+Two things to know before reading either:
+
+- **A weight series pinned at zero is the interesting case**, not an
+  empty one. Zero means the source answered and was **trimmed** — it sat
+  outside the dispersion band of the fast consensus, so the estimator
+  declined to believe it. That is a sick feed, a mis-mapped product, or a
+  real disagreement between an official reference rate and the tape. A
+  source that simply stopped answering has no row at all and leaves a
+  gap instead, so the two states are distinguishable on sight.
+- **The Market picker and the Product/Source pickers are independent.**
+  A market is keyed by token symbol (`EURC`), a feed product by pair id
+  (`EUR-USD`), and the schema holds no mapping between the two
+  vocabularies — so pairing them is yours to do. A fused line drawn over
+  an empty scatter means the pickers disagree, not that data is missing.
+
+The Market variable reads `maker_legs`, so on a database no maker has run
+against it is empty and both panels are blank. That is correct and
+isolated: the collectors and the maker are independent writers, and every
+ingestion panel below is unaffected.
+
+### The two freshness tiles
+
+They look redundant and are not, which matters most on first contact:
 
 - **Feed cursor age** is wall-clock, from `feed_cursors.updated_at` —
   the only true liveness signal in the schema. It says the process is
@@ -208,25 +247,38 @@ Four things that read wrong on first contact:
   paths that could honestly fill it. An unknown skew and a zero skew are
   different, as are an unread vault and an empty one — so nulls are never
   spanned and gaps are left as gaps.
+
 - **A `best bid`/`best ask` series that stops has gone dark**, not to
   zero: a freeze-side reshape, a halt, or a book killed for staleness.
   The touch is derived from the reference resting **on-chain**, not from
   the candidate the tick computed, because that is what a taker can
   actually hit — the gap between the two is the drift the trigger policy
   is tolerating.
+
 - **Feed staleness is the age the engine aged by**, not
   `now() - sample time`. The FX anchor ages from the publisher's clock,
   so a reading received this tick can legitimately be minutes old, and
   over the FX weekend it ages without bound while the crypto-only regime
   carries the mid. That is the signal, not a fault.
-- **A leg is a candidate set, not one venue**, so there is no per-venue
-  series and no "which feed answered" column. Legs resolve by consensus,
-  and the age shown is the *resolved* reading's. Which sources backed a
-  leg — and, when they disagreed, which one is the suspect — is the
-  **Leg consensus** table. Read `SingleUnverified` there as the *steady
-  state* for a market with no second source rather than as a fault: it
-  is the only signal that a market is quoted off one unchecked feed, and
-  it must never be conflated with `SingleTrusted`.
+
+- **A leg is a candidate set, not one venue**, so there is still no
+  "which feed answered" column. Legs resolve by consensus, and the age
+  shown is the *resolved* reading's. Which sources backed a leg — and,
+  when they disagreed, which one is the suspect — is the **Leg
+  consensus** table. Read `SingleUnverified` there as the *steady state*
+  for a market with no second source rather than as a fault: it is the
+  only signal that a market is quoted off one unchecked feed, and it
+  must never be conflated with `SingleTrusted`.
+
+  Per-source *weights* do now exist, in `maker_leg_contributions`, and
+  are plotted on the market-data dashboard's **Fusion weight by source**
+  panel. That is not the same claim as "which feed answered" and does not
+  reinstate it: the weights describe how the **estimate** was built,
+  while `consensus_state` and `contributor_count` describe the **fast
+  signal**. The two legitimately disagree — a daily reference fix is
+  fused but corroborates nothing, and a trimmed outlier corroborates the
+  count but is fused at zero.
+
 - **A dead heartbeat is ambiguous, inherently.** Telemetry is
   fire-and-forget, so it fires identically when the maker has died and
   when the maker is fine but cannot reach Postgres. Feed health

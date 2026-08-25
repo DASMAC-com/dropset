@@ -214,6 +214,12 @@ async fn migrate_creates_every_expected_table() {
         "maker_telemetry",
         "maker_legs",
         "feed_health",
+        // 0004_spot_ticks
+        "spot_ticks",
+        // 0005_pyth_fx_feeds
+        "pyth_fx_feeds",
+        // 0006_fair_price_fusion
+        "maker_leg_contributions",
     ] {
         let present: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
             .bind(table)
@@ -221,6 +227,30 @@ async fn migrate_creates_every_expected_table() {
             .await
             .expect("probe table");
         assert!(present, "migration did not create `{table}`");
+    }
+
+    // A migration that only *adds columns* creates no table, so the probe above
+    // cannot see it at all — 0006 would pass this test having done nothing.
+    // Additive columns therefore need their own assertion, and this is the
+    // place: the same "add yours here" step, one list along.
+    for (table, column) in [
+        ("maker_legs", "fused_value"),
+        ("maker_legs", "fused_sigma"),
+        ("maker_legs", "fusion_step"),
+        ("maker_legs", "fused_count"),
+    ] {
+        let present: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_name = $1 AND column_name = $2
+             )",
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(&pool)
+        .await
+        .expect("probe column");
+        assert!(present, "migration did not add `{table}.{column}`");
     }
 
     // The singleton watermark is seeded by the migration, not by the indexer,

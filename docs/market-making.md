@@ -302,14 +302,115 @@ prefix rather than on equality. A mismatched join here fails **silently**,
 returning nothing rather than erroring, which is why the rule is stated rather
 than left to be inferred.
 
+#### Publication class: what may be pooled with what
+
+A source is also classed by **how it publishes**, which is a different
+question from how much it is trusted:
+
+- **tape** — publishes at minute-or-better cadence and tracks the live
+  market;
+- **reference** — a fix published on a slow schedule (daily, typically),
+  authoritative for the moment it names rather than for now. Central-bank
+  reference rates and the open exchange-rate services are this class.
+
+The resolution above runs over the **tape** sources only. A daily fix six
+hours old and a minute tape are both "the EUR/USD rate", but only one is a
+claim about *now*, and dropping both into one median lets the stale one drag
+the fast signal — the standing rule against pooling publication conventions.
+So a reference source corroborates nothing about the fast signal, cannot
+disperse a leg, and does not raise the contributor count.
+
+It is **not** discarded: it enters the fair-price estimator below as a
+timestamped, wide-variance measurement, which is what a filter of that family
+is built to accept. Keeping its information without letting it drag the fast
+signal is the whole point of the split.
+
+One exception, and it is load-bearing: **a leg with no tape source at all
+falls back to its reference sources.** Several markets are anchored on a daily
+fix and nothing else, and excluding reference sources unconditionally would
+dark them outright. The hazard is *pooling* two conventions, and a leg with
+only one convention present is not pooling anything.
+
+### Fair-price estimation
+
+The consensus above answers *"do these sources agree?"*. That is the right
+shape for a guard and the wrong shape for an estimate: a median discards every
+source but the middle one, so three sources of very different fidelity count
+the same as three copies of the best, and a source publishing its own
+uncertainty has nowhere to put it.
+
+So each priced leg also carries a **scalar Kalman-family filter** fusing every
+healthy source at once, weighted by how much each is trusted to know. The
+premise is the one the whole feed strategy rests on: none of the free feeds is
+a high-rate FX feed, and that is acceptable *because* many low-fidelity
+sources fuse into one decent estimate. Fusion is what buys the fidelity, not
+any single source. **No production ML** — adaptive weighting and
+regime-switching estimators stay deferred (§5).
+
+A source's measurement variance is its published confidence half-width where
+it has one (Pyth), else its class noise — and either way **inflated by the
+reading's own age**, so a fix published this morning is worth much less by
+evening without anyone deciding when it stops counting.
+
+Three things about the filter are decided rather than incidental:
+
+- **Robustness first, then estimation.** A precision-weighted mean is not
+  robust to an outlier, which is exactly what the median protects against, so
+  the fusion is **trimmed** to the sources within the dispersion band of the
+  fast consensus. Skipping that step is not a small loss: measured on the case
+  the consensus filter was built for — two venues near 1.02 and an aggregate
+  printing 0.53 — the untrimmed fusion lands near 0.86, dragged out of the
+  sane basis band and darking the market, where the median ignored the print
+  entirely. The two mechanisms compose in one order and only one.
+- **A trimmed source is reported, never suppressed.** It is recorded as a
+  contributor carrying its own reading at **weight zero**. An official
+  reference rate that contradicts the tape is signal to surface, not noise to
+  average away, and a fused value with no record of what it declined to
+  believe is unreadable.
+- **N is a growing variable, not a fixed three.** The update is in information
+  form, so each source contributes `1/variance` independently: adding one is
+  addition and removing one is its absence, with no per-count special case and
+  no weight vector to renormalize. The counts that would otherwise be special
+  cases fall out — nothing to fuse carries the estimate and widens it, and a
+  lone source is an explicit pass-through at its own variance rather than a
+  degenerate one-source filter reporting a confidence nothing corroborated.
+
+#### Dislocations
+
+A filter of this family lags a step change, which is precisely the regime
+where a maker gets picked off. So the leg keeps **two** numbers with different
+jobs: the fast consensus median, which moves immediately when the tape agrees
+on a step, and the fused estimate, which is smoother and carries a variance.
+
+The quote is composed from the **fused** estimate, and an **innovation gate**
+reconciles the two: when the fast median sits further from the estimate than
+`reseed_sigma` standard deviations — floored at a fraction of the estimate, or
+a well-fed filter would re-seed on ordinary noise exactly when it was working
+best — the departure reads as a dislocation the tape agrees on, and the filter
+**re-seeds to the median** rather than crawling into it.
+
+Two shapes were considered and rejected, recorded so the choice is not
+silently revisited. Quoting off the median and keeping the fused estimate for
+analytics only leaves the estimator out of the thing it exists to price.
+Emitting both for the kill-switch policy to choose between pushes a *pricing*
+decision into a layer that otherwise only gates width and halts.
+
+The gap between the two series **is** the estimator's contribution, which is
+why both are recorded and both are plotted (§6).
+
 ### Basis estimation
 
 `basis` is a **slow, smoothed multiplicative correction**, not a chased
-price: an EMA over the live basis observations. A Kalman filter is
-warranted only if the bot fuses several basis sources or drives spread
-width from the basis variance — deferred (§5). The smoothing half-life is
+price: an EMA over the live basis observations. The smoothing half-life is
 **TBD — set by the basis-process characterization** over collected
 history (`data-feeds.md` §11); it is not guessed here.
+
+Note this is a *different* axis from the fusion above, not a duplicate of it:
+the fusion combines **across sources** at one instant, and this EMA combines
+**across time**. A basis leg with one source is untouched by the first and
+still smoothed by the second. What the fusion did retire is the older claim
+here that a Kalman filter was warranted "only if the bot fuses several basis
+sources" — it now does, on both priced legs.
 
 Two properties keep that smoothing from being defeated by a single reading,
 both of which matter because the estimate is *multiplied into every quote*:
@@ -728,11 +829,19 @@ ______________________________________________________________________
 
 - Full A-S optimization for finite `Q` ([Guéant 2017][gueant2017]) — the
   shipped ladder is hand-tuned (§2).
-- Weighted multi-oracle fusion — a Kalman filter blending several basis
-  sources (and driving spread width from the basis variance), or fusing
-  many simultaneous venues (Jupiter, Raydium, Orca, Manifest, DFlow, …).
-  The bot smooths **one** source per leg with an EMA (§1) and fails over
-  rather than blending.
+- **Adaptive** weighting and regime-switching estimators, and any
+  production ML over the reference price. Weighted multi-oracle fusion
+  itself is **no longer deferred** — a scalar Kalman-family filter fuses
+  every healthy source on both priced legs, with per-source noise
+  reflecting fidelity (§1 "Fair-price estimation"). What stays out is the
+  filter *learning* its own weights, and fusing many simultaneous on-chain
+  venues (Jupiter, Raydium, Orca, Manifest, DFlow, …), which is a source
+  roster question rather than an estimator one.
+- Driving spread width from the estimator's variance. The filter now
+  publishes a per-leg standard deviation and persists it, so the input
+  exists; consuming it in the ladder is the next piece of work and is not
+  in this spec. The vol/seasonality analytics run on the persisted fair
+  series first.
 - Adversarial taker bot for hardening — separate effort. A *benign*
   stochastic flow taker does ship (a quiet/burst Markov arrival process
   with LogNormal order sizes) to move the book and exercise the maker;
@@ -759,24 +868,71 @@ Numbered §6 rather than slotted before the deferred list because §5 is
 cited as "deferred" from elsewhere in the tree, and renumbering it would
 silently redirect those references.
 
-### Three tables
+### Four tables
 
 - **`maker_telemetry`** — one sample per market per tick: the composed
   fair value, the three references that differ (this tick's candidate,
   what this process last stamped, and what the vault actually carries),
   the implied touch, the valued inventory, the composition regime, and
   the kill-switch decision.
+
+  **This is the persisted fair-price series**, and it needed no new table
+  to become one: `fair` is per market per tick and always was. What
+  changed with the estimator is upstream of the column — `fair` is now
+  composed from the fused leg estimates rather than the bare medians —
+  and nothing about the column's shape, key, or nullability moved.
+
 - **`maker_legs`** — one row per market per leg per tick: the leg's
   resolved value, the age **the engine aged it by**, its confidence
-  half-width where the resolved reading carries one, and the three
-  consensus diagnostics below.
+  half-width where the resolved reading carries one, the three consensus
+  diagnostics below, and the leg's **fused estimate** with its standard
+  deviation, what the filter did this tick, and how many sources it
+  actually fused.
+
+  Both numbers are kept because their gap is the estimator's whole
+  contribution: `value` is the fast consensus that guards dislocations,
+  `fused_value` is what the composition priced off. Note `fused_count`
+  and `contributor_count` are **not** synonyms and differ in both
+  directions — a reference fix is fused but corroborates nothing, and a
+  trimmed outlier corroborates the count but is not fused.
+
+- **`maker_leg_contributions`** — one row per market per leg per **source**
+  per **mechanism** per tick: what that source read, the variance it was
+  fused at, and the weight it was given.
+
+  This is the per-source attribution `maker_legs` deliberately refused
+  while a leg had no exposed contributor set. **There are two such sets,
+  and this table carries the fusion one.** The distinction is not
+  cosmetic and a reader must filter on `mechanism`:
+
+  - the **consensus** attribution names the sources the *fast consensus*
+    is a linear combination of, with exact weights — a median of three
+    credits its middle member `1.0`, an agreeing pair credits each `0.5`;
+  - the **fusion** attribution, here, says how much each source's
+    *precision* moved the estimate the composition actually priced off.
+
+  Neither is derivable from the other and they legitimately disagree on
+  the same tick. The fusion weights land first because they are the ones
+  that explain the price; the consensus rows are a **separate additive
+  follow-up that writes nothing yet**, and the discriminator exists now
+  so they need no primary-key rewrite later.
+
+  **A `weight = 0` row is the point, not noise**: it is a source that
+  answered and was trimmed, carrying the reading it actually printed. A
+  query filtering `weight > 0` discards exactly the disagreements the
+  table exists to surface.
+
+  It is the widest table in the schema by row count — roughly an order of
+  magnitude above `maker_legs` — and the first that will want a retention
+  policy.
+
 - **`feed_health`** — current liveness per registered feed source,
   upserted in place.
 
-DDL lives in `db-schema/migrations/0003_maker_telemetry.sql`, which
-carries the per-column reasoning; the single-schema-owner rule (see
-`docs/data-feeds.md` §8) means the bot issues no DDL and never asserts a
-schema.
+DDL lives in `db-schema/migrations/0003_maker_telemetry.sql` and
+`0006_fair_price_fusion.sql`, which carry the per-column reasoning; the
+single-schema-owner rule (see `docs/data-feeds.md` §8) means the bot
+issues no DDL and never asserts a schema.
 
 ### The tick outcome is recorded on every path
 
@@ -804,7 +960,7 @@ which is not zero — an unknown skew and a zero skew are different
 facts, as are an unread vault and an empty one. The dashboards leave
 gaps rather than plotting zero.
 
-### Per-feed health is generic; per-leg rows carry consensus, not attribution
+### Per-feed health is generic; leg rows now carry attribution too
 
 Feed liveness rides the feeds runner's existing `FeedMetrics` seam
 (`docs/data-feeds.md` §13), so a source that is merely *registered*
@@ -819,15 +975,25 @@ batch. So a `last_value` column on a per-source row would have to pick
 one instrument arbitrarily. Liveness therefore lives in `feed_health`,
 and readings live in `maker_legs`.
 
-**There is deliberately no "which feed supplied this leg" column**, and
-that follows from the resolver rather than being an omission. A leg is
-a *candidate set* resolved by consensus (§1): several sources
-contribute and the value is a summary of them — a median, or a
-designated source that survived contradiction. There is no single
-answering venue to name, and naming one anyway would mean picking
-arbitrarily while presenting the pick as authoritative.
+**There is still no "which feed supplied this leg" column**, and that
+follows from the resolver rather than being an omission. A leg is a
+*candidate set* resolved by consensus (§1): several sources contribute
+and the value is a summary of them — a median, or a designated source
+that survived contradiction. There is no single answering venue to name,
+and naming one anyway would mean picking arbitrarily while presenting
+the pick as authoritative.
 
-What the rows carry instead is what is actually knowable:
+What has changed is that "no single name" no longer means "no
+attribution". The fusion estimator produces a **contributor set with
+weights** by construction, which is a different and honest answer to the
+same question, and it lives one table along in
+`maker_leg_contributions`. Note the two coexist rather than one
+superseding the other: the weights describe the *estimate*, and the
+consensus diagnostics below describe the *fast signal*, which the
+estimate is deliberately not the same as.
+
+What the leg rows carry is what is actually knowable about that fast
+signal:
 
 - **`consensus_state`** — how well corroborated the leg was. Six
   values, and every reader must enumerate all six: `Absent`,
@@ -836,11 +1002,22 @@ What the rows carry instead is what is actually knowable:
   enumerated for completeness but is not written here: a leg that
   resolved to nothing contributes **no row**, so its absence shows up as
   a gap in the series. Look for the missing row, not for the value.
-- **`contributor_count`** — how many healthy sources resolved it.
+- **`contributor_count`** — how many healthy sources resolved it. This
+  counts the **fast** set, so a reference-class fix does not appear in
+  it however much it informed the estimate.
 - **`dispersion_outlier`** — when dispersed, the source *furthest from*
   the consensus. This is the **suspect**, the least representative
   member of the set — emphatically not "the feed that answered", which
   would be exactly backwards.
+- **`fused_value` / `fused_sigma` / `fusion_step` / `fused_count`** — the
+  estimator's side of the same tick. `fusion_step` is the one to watch:
+  a run of `Reseeded` is either a genuinely jumpy market or a re-seed
+  gate set too tight, distinguishable only by reading the innovation
+  size against the `value` series. It is the only step carrying a
+  payload, so match it with `LIKE 'Reseeded%'`, never equality. All four
+  are NULL for the peg leg, which is not fused at all — that leg feeds a
+  band check, and a guard whose job is to fire on any bad reading must
+  not read a smoothed one.
 
 `SingleTrusted` and `SingleUnverified` must never be collapsed.
 `SingleUnverified` is the **steady state** for a market with no second
@@ -890,6 +1067,22 @@ from the repo alongside the market-data dashboards, with alert rules in
 stale feed, and degraded-or-halted. The rules evaluate and reach Firing
 in Grafana's UI; they deliver nowhere, because a real destination needs
 a secret and secrets are not committed.
+
+The estimator's own two panels sit at the **top of the market-data
+dashboard** rather than here, and that placement is deliberate: the
+headline view is the fused fair price drawn over the raw source scatter,
+and the scatter is ingestion data. **Fair price over its sources** draws
+the composed fair, the FX leg's fused estimate, and the FX leg's fast
+median against every selected source's ticks — read the gaps between
+them, which is why all three are plotted. **Fusion weight by source**
+explains it, and a series pinned at zero there is the interesting case,
+not an empty one: that source answered and was trimmed.
+
+Its two pickers, Market and Product/Source, are **independent and not
+auto-correlated**. A market is keyed by token symbol (`EURC`) and a feed
+product by pair id (`EUR-USD`); the schema holds no mapping between the
+two vocabularies, so pairing them is the operator's to do. A fused line
+over an empty scatter is a picker mismatch, not a data gap.
 
 One ambiguity is inherent rather than an oversight: because telemetry is
 fire-and-forget, a dead heartbeat means *either* the maker stopped *or*

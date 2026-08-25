@@ -12,6 +12,235 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
+      "description": "The headline: the number the system believes, drawn over the prints it was built from. Three series per selected market \u2014 the composed fair price, the FX leg's fused estimate, and the FX leg's fast consensus median \u2014 against every selected source's raw ticks.\n\nRead the GAPS, which is why all three are drawn rather than just the fair price. Fused-vs-fast is the estimator's whole contribution: they sit on top of each other while the sources agree, and separate exactly when one source is being ignored or a dislocation is being adopted. Fused-vs-scatter shows the estimator declining to chase a stray print. A fused line that tracks one source exclusively means the others are being trimmed or outweighed, which the weights panel below names.\n\nThe market and source pickers are INDEPENDENT and deliberately not auto-correlated: a market's symbol (EURC) and its FX product id (EUR-USD) are different vocabularies with no join in the schema, so pairing them is the operator's to do. Selecting a market whose sources are not also selected draws the fused line over an empty scatter, which is a picker mismatch and not a data gap.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 5,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*fair \\(fused\\).*"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*fx consensus \\(fast\\).*"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    8,
+                    4
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*tick$"
+            },
+            "properties": [
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 90,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- The estimator's output over its raw inputs. Each arm is a bare\n-- column inside the epoch-filter macro: Grafana captures a macro\n-- argument with a regex that stops at the first closing paren, so a\n-- to_timestamp(...) call inside one truncates the argument and the\n-- query fails to interpolate. The conversion happens in the SELECT\n-- list, never in the macro.\n--\n-- Raw prints: the scatter the fused line is judged against.\nSELECT\n  to_timestamp(observed_at) AS \"time\",\n  source || ' ' || product_id || ' tick' AS metric,\n  price AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source ~ '^${source:regex}$'\n  AND product_id ~ '^${product_id:regex}$'\nUNION ALL\n-- The fair price: the composed mid the maker quotes off, which is now\n-- built from the fused leg estimates rather than the bare medians.\n-- NULL exactly when the composition paused, and left as a gap rather\n-- than zero-filled -- a paused market and a market worth nothing are\n-- different facts.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fair (fused)' AS metric,\n  fair AS value\nFROM maker_telemetry\nWHERE $__unixEpochFilter(ts)\n  AND market ~ '^${market:regex}$'\n  AND fair IS NOT NULL\nUNION ALL\n-- The FX leg's two numbers, which is where the estimator is actually\n-- visible: `fused_value` is what the composition priced off and\n-- `value` is the fast median that guards dislocations.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fx estimate (fused)' AS metric,\n  fused_value AS value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market ~ '^${market:regex}$'\n  AND leg = 'fx'\n  AND fused_value IS NOT NULL\nUNION ALL\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fx consensus (fast)' AS metric,\n  value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market ~ '^${market:regex}$'\n  AND leg = 'fx'\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Fair price over its sources",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Each source's share of its leg's fused estimate, per tick. This is the panel that explains the one above: when the fused line stops tracking a source, this says by how much and from when.\n\nA series pinned at ZERO is the interesting case, not an empty one. Zero means the source answered and was TRIMMED \u2014 it sat outside the dispersion band of the fast consensus, so the estimator declined to believe it. That is a sick feed, a mis-mapped product, or a genuine disagreement between an official reference rate and the tape, and it is exactly what must not be averaged away silently. A source that stopped answering has no row at all and leaves a gap instead.\n\nShares over one leg-tick sum to 1 only when nothing was trimmed and the filter re-seeded; after an ordinary update the shortfall is the prior estimate's own share, which is deliberately not drawn because no feed is accountable for it.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 3,
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "id": 91,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- Per-source fusion weights. Deliberately NOT filtered to weight > 0:\n-- a zero-weight row is a source that answered and was trimmed, which\n-- is the single most useful thing this table records. Filtering it out\n-- would leave a fused estimate with no record of what it refused.\n--\n-- The mechanism filter IS required, though, and for the opposite reason.\n-- The table is keyed by mechanism so the resolver's consensus attribution\n-- can land additively; those weights are exact linear-combination shares\n-- rather than shares of posterior information. Omitting this predicate\n-- would plot two vocabularies on one axis and double every series the\n-- day they arrive.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' ' || leg || ' ' || source AS metric,\n  weight AS value\nFROM maker_leg_contributions\nWHERE $__unixEpochFilter(ts)\n  AND mechanism = 'fusion'\n  AND market ~ '^${market:regex}$'\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Fusion weight by source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
       "description": "Wall-clock seconds since each feed last committed a batch, straight off `feed_cursors.updated_at`. This is the only true wall-clock liveness signal in the schema \u2014 every other panel measures candle-bucket time, which a backfill can advance without the feed being currently healthy. A wall of green is the end-to-end proof that a feeds change works. Deliberately NOT filtered by the Source picker, unlike the candle-age tile beside it: feed_cursors is keyed by the framework's feed id (`cex:coinbase:EURC-USDC`), not by the `source` column, so the picker's values do not apply here.",
       "fieldConfig": {
         "defaults": {
@@ -44,7 +273,7 @@
         "h": 4,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 18
       },
       "id": 1,
       "options": {
@@ -121,7 +350,7 @@
         "h": 4,
         "w": 12,
         "x": 12,
-        "y": 0
+        "y": 18
       },
       "id": 2,
       "options": {
@@ -201,7 +430,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 22
       },
       "id": 3,
       "options": {
@@ -294,7 +523,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 14
+        "y": 32
       },
       "id": 4,
       "options": {
@@ -382,7 +611,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 14
+        "y": 32
       },
       "id": 5,
       "options": {
@@ -487,7 +716,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 40
       },
       "id": 6,
       "options": {
@@ -590,7 +819,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 48
       },
       "id": 7,
       "options": {
@@ -682,6 +911,35 @@
         "name": "source",
         "options": [],
         "query": "SELECT DISTINCT source FROM cex_prices UNION SELECT DISTINCT source FROM spot_ticks ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT market FROM maker_legs ORDER BY 1",
+        "description": "Markets the maker has written a leg row for. A separate vocabulary from the Product picker and not joinable to it: a market is keyed by its token symbol (EURC) while a feed product is a pair id (EUR-USD), and the schema holds no mapping between them. Empty on a database no maker has run against, which blanks the two fused panels and leaves the ingestion panels below unaffected - the collectors and the maker are independent writers.",
+        "includeAll": true,
+        "label": "Market",
+        "multi": true,
+        "name": "market",
+        "options": [],
+        "query": "SELECT DISTINCT market FROM maker_legs ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,

@@ -696,9 +696,11 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
             Some(conf) => Reading::with_confidence(p.value, now, conf),
             None => Reading::new(p.value, now),
         });
+        // Reference class, matching `FeedHub::legs` — the two collections must
+        // agree or a dry run stops predicting the live mid.
         let fx_q = Candidates::none()
             .push_trusted(SOURCE_PYTH, fx_pyth)
-            .push(SOURCE_FRANKFURTER, q(fx.get(m.currency).copied()));
+            .push_reference(SOURCE_FRANKFURTER, q(fx.get(m.currency).copied()));
         // Basis leg: Coinbase token/USDC, Kraken token/USD, then the reflexive
         // CoinGecko / CMC index. Kraken's USD quote is converted with the peg
         // leg's consensus, exactly as `FeedHub::legs` does — the two collections

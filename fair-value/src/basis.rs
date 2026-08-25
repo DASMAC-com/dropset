@@ -2,9 +2,19 @@
 //!
 //! `basis` is a **slow, smoothed multiplicative correction** near 1 — an EMA
 //! over the live `(token/fiat) ÷ (USDC/USD)` observations, *not* a chased
-//! price. The half-life sets how slowly it tracks. A Kalman filter (fusing
-//! several basis sources, or driving spread width from the basis variance) is
-//! warranted only later and is **deferred to §5**.
+//! price. The half-life sets how slowly it tracks.
+//!
+//! This smooths **across time**, and is a different axis from
+//! [`crate::Fusion`], which fuses a leg's sources **across one instant**. The
+//! two compose rather than duplicating: the basis leg's sources are fused into
+//! one reading, and the quotient that reading forms with the FX anchor is what
+//! this EMA then smooths. A leg with a single source is untouched by the fusion
+//! and still smoothed here.
+//!
+//! (This module's header used to say a Kalman filter was warranted "only if the
+//! bot fuses several basis sources" and deferred it to §5. It now does fuse
+//! them — see [`crate::Fusion`]. What remains deferred is the filter learning
+//! its own weights, and driving spread width from the estimator's variance.)
 //!
 //! The decay is derived from the half-life and the *actual* elapsed time
 //! between updates, so an irregular tick cadence smooths identically to a

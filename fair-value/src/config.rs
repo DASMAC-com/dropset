@@ -21,6 +21,8 @@
 
 use std::time::Duration;
 
+use crate::fusion::FusionConfig;
+
 /// Every constant the fair-value engine reads. See the module header: the
 /// defaults are demo-safe placeholders, not calibrated values.
 #[derive(Clone, Copy, Debug)]
@@ -130,6 +132,11 @@ pub struct FairValueConfig {
     /// the anchor is *fresh-but-uncertain* — quote, but widen the spread — as
     /// opposed to stale (§1 fm6). TBD(analytics).
     pub fx_max_confidence_frac: f64,
+
+    /// Tuning for the per-leg fusion estimator — the filter that turns a leg's
+    /// healthy sources into the number the composition prices off (§1
+    /// fair-price estimation). See [`FusionConfig`].
+    pub fusion: FusionConfig,
 }
 
 /// Why a [`FairValueConfig`] is not usable. Each variant names the invariant
@@ -211,6 +218,7 @@ impl FairValueConfig {
         if !is_fraction(self.leg_dispersion_frac) {
             return Err(ConfigError::NotAFraction("leg_dispersion_frac"));
         }
+        self.fusion.validate()?;
         Ok(())
     }
 
@@ -276,6 +284,8 @@ impl Default for FairValueConfig {
             leg_dispersion_frac: 0.02,
             // Placeholder: 1% confidence half-width. TBD(analytics).
             fx_max_confidence_frac: 0.01,
+            // Every fusion constant is a placeholder too — see FusionConfig.
+            fusion: FusionConfig::default(),
         }
     }
 }

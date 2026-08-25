@@ -1,7 +1,7 @@
--- One resolved leg reading for one market for one tick, with the consensus
--- diagnostics that replace per-source attribution (see the migration for why
--- there is no answering-feed column). Idempotent on `(market, leg, ts)` for
--- the same reason as the sample insert.
+-- One resolved leg reading for one market for one tick: the fast consensus and
+-- its diagnostics, plus the fused estimate the composition actually priced off.
+-- Per-source attribution now exists and lives in `maker_leg_contributions`.
+-- Idempotent on `(market, leg, ts)` for the same reason as the sample insert.
 INSERT INTO maker_legs (
     ts,
     market,
@@ -12,7 +12,11 @@ INSERT INTO maker_legs (
     fresh,
     consensus_state,
     contributor_count,
-    dispersion_outlier
+    dispersion_outlier,
+    fused_value,
+    fused_sigma,
+    fusion_step,
+    fused_count
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 ON CONFLICT DO NOTHING;

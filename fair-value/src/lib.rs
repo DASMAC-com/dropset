@@ -75,14 +75,21 @@ mod basis;
 mod config;
 mod consensus;
 mod engine;
+mod fusion;
 mod reading;
 
 pub use config::{ConfigError, FairValueConfig};
 pub use consensus::{
-    Candidate, Candidates, Consensus, ConsensusState, Contributor, Contributors, MAX_CANDIDATES,
+    Candidate, Candidates, Consensus, ConsensusState, Contributor, Contributors, SourceClass,
+    MAX_CANDIDATES,
 };
 pub use engine::{
     observed_basis, Anchor, ClockCtx, Degrade, FairValue, FairValueEngine, Health, LegReport, Legs,
     Regime,
 };
+// `FusedContribution`, not `Contribution`, so it cannot be mistaken for
+// `Contributor` above. The two are different mechanisms' attribution and the
+// names have to say so: `Contributor` weights describe how the **fast
+// consensus** was composed, and these describe how the **estimate** was.
+pub use fusion::{FusedContribution, Fusion, FusionConfig, FusionReport, FusionStep};
 pub use reading::Reading;

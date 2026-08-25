@@ -64,6 +64,44 @@ const LONGEST_REAL_LEG: usize = 4;
 // candidate placed before a live one could evict it.
 const _: () = assert!(MAX_CANDIDATES > LONGEST_REAL_LEG);
 
+/// How a source publishes — the property that decides whether its reading may
+/// be pooled with another's.
+///
+/// Not a quality ranking, and not interchangeable with [`Candidate::trusted`]:
+/// this says how *often* a source speaks and what its number is a statement
+/// about, while `trusted` says whether it may be believed alone. A daily
+/// central-bank fix scores high on the second and low on the first.
+///
+/// The distinction exists because pooling sources with different publication
+/// conventions is a standing hazard: a daily fix six hours old and a minute tape
+/// are both "the EUR/USD rate", but only one of them is a claim about now.
+/// Dropping both into one median lets the stale one drag the fast signal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SourceClass {
+    /// A tape: publishes at minute-or-better cadence and tracks the live market.
+    /// The default, because every source predating this distinction is one.
+    #[default]
+    Tape,
+    /// A reference fix: published on a slow schedule (daily, typically), and
+    /// authoritative for the moment it names rather than for now. Central-bank
+    /// reference rates and the open exchange-rate services are this class.
+    ///
+    /// Kept **out of the fast consensus median** that guards dislocations, and
+    /// **in the fusion estimator**, where it enters as a timestamped
+    /// wide-variance measurement (see [`crate::Fusion`]). That split is what
+    /// keeps the fix's information content without letting it drag the fast
+    /// signal.
+    Reference,
+}
+
+impl SourceClass {
+    /// Whether a source of this class may contribute to the fast consensus
+    /// median.
+    pub fn is_fast(self) -> bool {
+        matches!(self, Self::Tape)
+    }
+}
+
 /// One source's reading for a leg, tagged so a disagreement can name who
 /// diverged.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -73,6 +111,8 @@ pub struct Candidate {
     pub source: &'static str,
     /// What the source published.
     pub reading: Reading,
+    /// How this source publishes — see [`SourceClass`].
+    pub class: SourceClass,
     /// Whether this source may be believed with nothing corroborating it.
     ///
     /// A designation, not a quality score: it says the operator has accepted
@@ -83,22 +123,43 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    /// A candidate that needs corroboration.
+    /// A tape candidate that needs corroboration.
     pub fn new(source: &'static str, reading: Reading) -> Self {
         Self {
             source,
             reading,
             trusted: false,
+            class: SourceClass::Tape,
         }
     }
 
-    /// A candidate believable on its own — see [`Candidate::trusted`].
+    /// A tape candidate believable on its own — see [`Candidate::trusted`].
     pub fn trusted(source: &'static str, reading: Reading) -> Self {
         Self {
             source,
             reading,
-            trusted: true,
+            trusted: false,
+            class: SourceClass::Tape,
         }
+        .believed_alone()
+    }
+
+    /// A [`SourceClass::Reference`] candidate — a slow reference fix, fused but
+    /// kept out of the fast median.
+    pub fn reference(source: &'static str, reading: Reading) -> Self {
+        Self {
+            source,
+            reading,
+            trusted: false,
+            class: SourceClass::Reference,
+        }
+    }
+
+    /// This candidate, designated believable with nothing corroborating it.
+    #[must_use]
+    pub fn believed_alone(mut self) -> Self {
+        self.trusted = true;
+        self
     }
 }
 
@@ -147,6 +208,18 @@ impl Candidates {
         self.with(reading.map(|r| Candidate::trusted(source, r)))
     }
 
+    /// Add a reading from a slow [`SourceClass::Reference`] source — a daily
+    /// central-bank fix or an open exchange-rate service.
+    ///
+    /// The reading is fused but kept out of the fast median, so offering one
+    /// alongside a live tape strengthens the estimate without slowing the
+    /// dislocation guard. On a leg where it is the *only* source it still
+    /// resolves the leg — see [`Candidates::resolve`].
+    #[must_use]
+    pub fn push_reference(self, source: &'static str, reading: Option<Reading>) -> Self {
+        self.with(reading.map(|r| Candidate::reference(source, r)))
+    }
+
     /// Every candidate offered, healthy or not.
     pub fn iter(&self) -> impl Iterator<Item = &Candidate> {
         self.slots.iter().flatten()
@@ -177,17 +250,56 @@ impl Candidates {
             .map(|c| c.reading.value)
     }
 
-    /// Resolve the healthy candidates into one reading for the leg.
+    /// Resolve the healthy candidates into one **fast** reading for the leg.
     ///
     /// `dispersion_frac` is the fraction of the consensus value the healthy
     /// set's spread may span before the leg is flagged as dispersed.
+    ///
+    /// # Which candidates decide the value
+    ///
+    /// The resolution below runs over the **tape-class** healthy candidates
+    /// only, so a slow reference fix never drags the fast signal the dislocation
+    /// guard depends on. Reference-class candidates are still returned in
+    /// [`Consensus::healthy`], which is what the fusion estimator consumes — the
+    /// split is between the two *uses*, not between which sources are collected.
+    ///
+    /// **A leg with no tape source at all falls back to its reference
+    /// candidates**, and that fallback is load-bearing rather than a
+    /// convenience. Several markets are anchored on a daily fix and nothing
+    /// else; excluding reference sources unconditionally would resolve those
+    /// legs to `Absent` and dark them outright. The hazard the exclusion exists
+    /// to prevent is *pooling* two publication conventions in one median, and a
+    /// leg with only one convention present is not pooling anything.
+    ///
+    /// Every count below — the median, the pair band, the single-source states,
+    /// the dispersion gate — is therefore a statement about the fast set. That
+    /// is the honest reading: `n` is how many sources corroborate the fast
+    /// signal, and a reference fix does not corroborate it.
     pub fn resolve(&self, stale: Duration, dispersion_frac: f64) -> Consensus {
-        let mut healthy = [None; MAX_CANDIDATES];
-        let mut n = 0;
-        for c in self.iter().filter(|c| c.reading.fresh(stale)) {
-            healthy[n] = Some(*c);
-            n += 1;
+        // Both fills zip against the destination array, so a set larger than
+        // `MAX_CANDIDATES` drops its trailing candidates rather than panicking
+        // on an index — the documented overflow behavior, and the only thing
+        // offer order is still entitled to decide.
+        let mut all = [None; MAX_CANDIDATES];
+        for (slot, c) in all
+            .iter_mut()
+            .zip(self.iter().filter(|c| c.reading.fresh(stale)))
+        {
+            *slot = Some(*c);
         }
+
+        // The fast set: tape class where any answered, else the whole healthy
+        // set — see the note above on why the fallback is not optional.
+        let any_fast = all.iter().flatten().any(|c| c.class.is_fast());
+        let mut healthy = [None; MAX_CANDIDATES];
+        for (slot, c) in healthy.iter_mut().zip(
+            all.iter()
+                .flatten()
+                .filter(|c| !any_fast || c.class.is_fast()),
+        ) {
+            *slot = Some(*c);
+        }
+        let n = healthy.iter().flatten().count();
 
         let Some(first) = healthy[0] else {
             return Consensus {
@@ -196,6 +308,7 @@ impl Candidates {
                 contributors: Contributors::none(),
                 outlier: None,
                 n: 0,
+                healthy: all,
             };
         };
 
@@ -216,6 +329,7 @@ impl Candidates {
                 contributors: Contributors::one(first),
                 outlier: None,
                 n: 1,
+                healthy: all,
             };
         }
 
@@ -267,6 +381,7 @@ impl Candidates {
                 contributors: Contributors::none(),
                 outlier: Some(furthest_from(&healthy[..n], values[0])),
                 n,
+                healthy: all,
             };
         }
 
@@ -337,6 +452,7 @@ impl Candidates {
             },
             outlier,
             n,
+            healthy: all,
         }
     }
 }
@@ -534,7 +650,19 @@ impl Consensus {
             contributors: Contributors::none(),
             outlier: None,
             n: 0,
+            healthy: [None; MAX_CANDIDATES],
         }
+    }
+
+    /// Every healthy candidate, tape and reference class alike — what the
+    /// fusion estimator consumes.
+    ///
+    /// Returned as the backing slice rather than an iterator so the fusion can
+    /// take it without collecting: a fixed array is what keeps this crate
+    /// allocation-free, and handing out an iterator would push every consumer
+    /// into a `Vec` to get a slice back.
+    pub fn healthy(&self) -> &[Option<Candidate>] {
+        &self.healthy
     }
 }
 
@@ -587,10 +715,23 @@ pub struct Consensus {
     pub contributors: Contributors,
     /// The source furthest from the consensus, when the set is dispersed.
     pub outlier: Option<&'static str>,
-    /// How many healthy sources were **judged** — not the number credited in
-    /// [`Consensus::contributors`]. A median's outer members are counted here
-    /// and carry no weight there, so the two legitimately differ.
+    /// How many healthy sources were **judged** by the fast consensus.
+    ///
+    /// It is bounded on both sides by things it is not, and both bounds are
+    /// load-bearing:
+    ///
+    /// - It is **not** the number credited in [`Consensus::contributors`]. A
+    ///   median's outer members are counted here and carry no weight there, so
+    ///   the two legitimately differ.
+    /// - It is **not** the size of [`Consensus::healthy`] below. Only the
+    ///   tape-class set is judged (or the whole healthy set on a leg with no
+    ///   tape source), so a reference fix that was fused but kept out of the
+    ///   median did not corroborate the fast signal, and counting it here would
+    ///   say it did.
     pub n: usize,
+    /// Every healthy candidate offered for the leg, of either class, in offer
+    /// order. The fusion estimator's input — see [`Consensus::healthy`].
+    healthy: [Option<Candidate>; MAX_CANDIDATES],
 }
 
 /// The median of a sorted slice; the mean of the two middle values when even.
@@ -720,6 +861,110 @@ mod tests {
         assert_eq!(c.state, ConsensusState::Absent);
         assert!(c.reading.is_none());
         assert_eq!(c.n, 0);
+        assert_eq!(c.healthy().iter().flatten().count(), 0);
+    }
+
+    /// The operator ruling, as a test: a slow reference fix stays out of the
+    /// fast median that guards dislocations, and stays in the healthy set the
+    /// fusion estimator consumes.
+    #[test]
+    fn a_reference_fix_is_fused_but_never_drags_the_fast_median() {
+        let c = Candidates::none()
+            .push("oanda", Some(r(1.140)))
+            .push("twelvedata", Some(r(1.142)))
+            // Hours stale in substance, though still inside the freshness bound:
+            // the case the exclusion exists for.
+            .push_reference("frankfurter", Some(r(1.100)))
+            .resolve(STALE, BAND);
+
+        // The median is of the two tape sources alone — 1.141, not 1.140.
+        assert!((c.reading.unwrap().value - 1.141).abs() < 1e-12);
+        assert_eq!(c.n, 2, "the fix corroborates nothing about the fast signal");
+        assert_eq!(c.state, ConsensusState::Agreed);
+        assert!(
+            !c.state.is_dispersed(),
+            "and it cannot disperse a leg it is not in"
+        );
+
+        // But it is offered to the estimator, which is the other half of the
+        // ruling — its information content is kept, not discarded.
+        assert_eq!(c.healthy().iter().flatten().count(), 3);
+        assert!(c
+            .healthy()
+            .iter()
+            .flatten()
+            .any(|k| k.source == "frankfurter"));
+
+        // The two attributions of this one leg-tick disagree, and that is the
+        // contract rather than a defect. The consensus contributor set describes
+        // the fast combination, so a reference fix cannot appear in it — it was
+        // never in the set that was combined. The fusion's own attribution does
+        // credit it, at a weight its age discounts.
+        assert!(
+            !c.contributors.iter().any(|k| k.source == "frankfurter"),
+            "a fix contributes nothing to a combination it was not part of"
+        );
+        assert!(
+            c.contributors.iter().count() <= 2,
+            "only the tape sources composed the median"
+        );
+    }
+
+    /// The fallback that keeps reference-anchored markets alive: with no tape
+    /// source at all, the reference candidates resolve the leg rather than
+    /// darking it. Excluding a convention is about refusing to *pool* two of
+    /// them, and a leg with only one present is not pooling anything.
+    #[test]
+    fn a_leg_with_only_reference_sources_still_resolves() {
+        let c = Candidates::none()
+            .push_reference("frankfurter", Some(r(1.14)))
+            .resolve(STALE, BAND);
+
+        assert_eq!(c.state, ConsensusState::SingleUnverified);
+        assert_eq!(c.reading.unwrap().value, 1.14);
+        assert_eq!(c.n, 1);
+    }
+
+    /// Two reference sources with no tape between them resolve against each
+    /// other normally — the fallback is the whole reference set, not just the
+    /// first of them.
+    #[test]
+    fn reference_only_legs_corroborate_each_other() {
+        let c = Candidates::none()
+            .push_reference("frankfurter", Some(r(1.140)))
+            .push_reference("er-api", Some(r(1.142)))
+            .resolve(STALE, BAND);
+
+        assert_eq!(c.state, ConsensusState::Agreed);
+        assert_eq!(c.n, 2);
+    }
+
+    /// A stale reference candidate drops out of the healthy set like any other,
+    /// so the fusion never sees a reading the freshness bound rejected.
+    #[test]
+    fn an_expired_reference_is_not_offered_to_the_fusion() {
+        let c = Candidates::none()
+            .push("oanda", Some(r(1.140)))
+            .push_reference("frankfurter", Some(Reading::new(1.100, secs(9_000))))
+            .resolve(STALE, BAND);
+
+        assert_eq!(c.healthy().iter().flatten().count(), 1);
+        assert_eq!(c.n, 1);
+    }
+
+    /// Class and trust are independent axes: a reference source may still be
+    /// designated believable alone, and doing so must not smuggle it into the
+    /// fast median.
+    #[test]
+    fn a_trusted_reference_still_stays_out_of_the_fast_median() {
+        let c = Candidates::none()
+            .push("oanda", Some(r(1.140)))
+            .push("twelvedata", Some(r(1.142)))
+            .with(Some(Candidate::reference("ecb", r(1.100)).believed_alone()))
+            .resolve(STALE, BAND);
+
+        assert_eq!(c.n, 2);
+        assert!((c.reading.unwrap().value - 1.141).abs() < 1e-12);
     }
 
     #[test]
