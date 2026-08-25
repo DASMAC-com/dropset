@@ -314,12 +314,12 @@ impl HttpClient {
     ///
     /// Carrying the key *here* rather than in the caller's per-request query is
     /// what closes it: the transport appends the credential itself, and
-    /// [`SecretParam`]'s `Debug` keeps the value out of any render of the
+    /// `SecretParam`'s `Debug` keeps the value out of any render of the
     /// client.
     ///
     /// An adapter that hand-passes a key through `get_json`'s `query` under a
     /// name registered nowhere here **no longer bypasses the redaction** —
-    /// [`HttpClient::redact_query`] is default-deny, so an unregistered name is
+    /// `HttpClient::redact_query` is default-deny, so an unregistered name is
     /// redacted like any other non-benign parameter. That is a backstop, not a
     /// license: register the credential here anyway, because only registration
     /// keeps it out of a `Debug` render of the client and off every call site.
