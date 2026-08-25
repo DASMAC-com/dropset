@@ -348,6 +348,47 @@ already being asked to start the review.
    session. The gate still runs every round; what changes is
    only what an empty answer entitles you to skip.
 
+   **Bind the assertion to a content fingerprint, so it is
+   checkable rather than remembered.** "The prior result still
+   stands" is a claim about *content*, and a commit SHA is the
+   wrong key for it — a commit, an amend, a squash and a
+   no-overlap rebase all change the SHA while changing no
+   bytes, which is exactly why re-runs keep firing. Record the
+   result against the tree's content instead:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- make lint
+   ```
+
+   ```sh
+   python3 .claude/tools/tree_fingerprint.py record --check lint
+   ```
+
+   and before any later stage that would re-run it:
+
+   ```sh
+   python3 .claude/tools/tree_fingerprint.py check --check lint
+   ```
+
+   It grades three ways and exits 0 only on the first:
+
+   - **`fresh`** — recorded against this exact content. Assert
+     it, note the assertion, skip the re-run.
+   - **`stale`** — the content moved. Re-run.
+   - **`missing`** — never recorded. Run it, and record it.
+
+   The three-way answer is why this is not a boolean: a
+   binary check would have to call "never recorded" stale and
+   re-run, which is the behavior being replaced. Do the same
+   for `tools-tests` and the artifact gates — any check whose
+   answer is a function of the tree's content and nothing
+   else.
+
+   **What it does not cover:** anything depending on state
+   outside the tree — CI, the merge queue, a live service. A
+   green fingerprint says the content is unchanged, not that
+   the world is.
+
    **If the base delta touched `programs/**`, run
    `make program` before any suite.** The rebase just pulled
    new program source into this worktree, and a scoped

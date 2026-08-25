@@ -184,6 +184,7 @@ recommendation in **three** sources:
   results that dominated *this* session. A repeated full-PR
   read, a whole-file Read where a slice would do, a verbose
   build-log Bash, an inlined-diff fan-out across sub-agents.
+
 - **The hardening candidates** from step 2 — the repeated,
   `deterministic` command shapes. A shape that recurs across
   runs and is string/path/env logic is a candidate to port
@@ -198,6 +199,25 @@ recommendation in **three** sources:
   restatement of all: it is already wrapped, so proposing that
   it be routed through the quiet runner is a no-op — the lever
   is whatever made it fail repeatedly.
+
+  **There is a consumer for these now: `/harden`.** This list
+  was the producer half of a loop with nothing on the other
+  end — it went into a report and stayed there unless a human
+  chose to act. When a candidate is strong enough to build
+  today, say so and name the verb, so the fold does not
+  re-propose building a tool that a session could simply
+  build. `/harden` demands the provenance this step already
+  has (the count, the sessions, the cost label), so hand it
+  over rather than restating it.
+
+  It **refuses** a shape with no measured recurrence, which is
+  the right default — a single occurrence is a lever to file,
+  not a tool to write. The one exception is a shape
+  expressible only in **forbidden** forms (an inline
+  interpreter one-liner, a stopgap grant, a compound): every
+  repetition of those is a prompt that can never be firmed, so
+  one occurrence is enough.
+
 - **The observations you kept during the session** — per
   `CLAUDE.md`'s "track consumption ideas as you go" habit,
   the running notes on what felt wasteful. The sinks say
