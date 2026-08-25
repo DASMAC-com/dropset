@@ -275,10 +275,13 @@ impl Candidates {
     /// is the honest reading: `n` is how many sources corroborate the fast
     /// signal, and a reference fix does not corroborate it.
     pub fn resolve(&self, stale: Duration, dispersion_frac: f64) -> Consensus {
-        // Both fills zip against the destination array, so a set larger than
-        // `MAX_CANDIDATES` drops its trailing candidates rather than panicking
-        // on an index — the documented overflow behavior, and the only thing
-        // offer order is still entitled to decide.
+        // Both fills zip against the destination array. Note this is *not*
+        // guarding an overflow here: `iter()` walks a fixed
+        // `[Option<Candidate>; MAX_CANDIDATES]`, so it can never yield more than
+        // the destination holds and the counter form could not have overrun
+        // either. The zip is for the class split below, which needs two passes
+        // over the same fixed width. (`Fusion::update` takes an arbitrary public
+        // slice and does need the guard — see the comment there.)
         let mut all = [None; MAX_CANDIDATES];
         for (slot, c) in all
             .iter_mut()

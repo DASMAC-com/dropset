@@ -75,6 +75,30 @@
 //!   there is nothing to fuse *with*, and pretending otherwise would report a
 //!   confidence the single reading does not carry.
 //! - **N ≥ 2** — the ordinary batch update.
+//!
+//! # Known limitation: a slow source is re-absorbed every tick
+//!
+//! The filter keeps no record of *which* measurements it has already taken in,
+//! so a source that has not republished contributes its precision again on
+//! every tick. For a tape polled at roughly its own cadence that is close
+//! enough to true — each poll really is a fresh observation. For a **daily
+//! reference fix** on a 5 s tick it is not: the same observation is counted
+//! thousands of times, and a standard Kalman update treats each count as
+//! independent evidence.
+//!
+//! The consequence is confined to the **variance**, not the value — the
+//! estimate converges to the fix either way — but it is the variance that
+//! [`FusionReport::sigma`] advertises as a spread-width input. On a
+//! reference-only leg the steady state is roughly `sqrt(q * R)` rather than
+//! `R`, so the reported sigma can sit several times tighter than a single daily
+//! observation justifies. Only the drift term bounds it.
+//!
+//! This is **accepted for now and must be closed before anything prices off
+//! the sigma.** Closing it needs the filter to detect a repeated
+//! observation — the reading's own publication instant, rather than its age
+//! relative to the tick — which is new state and a design decision, not a
+//! calibration change. Until then treat `fused_sigma` on a slow-source leg as
+//! a lower bound on the true uncertainty.
 
 use std::time::Duration;
 
@@ -960,25 +984,38 @@ mod tests {
     /// the only thing holding it, so this test fails if the floor is zeroed.
     #[test]
     fn the_reseed_floor_holds_where_the_sigma_gate_would_not() {
+        let cfg = FusionConfig::default();
+        let level = 1.1400;
         let mut f = fusion();
-        // Six very confident sources: the posterior sigma collapses, so
-        // 4 * sigma lands far below the 20 bp floor.
+
+        // Six very confident sources, so the posterior variance collapses and
+        // the sigma gate has a chance of landing under the floor.
         let tight: Vec<Candidate> = ["a", "b", "c", "d", "e", "f"]
             .iter()
-            .map(|s| Candidate::new(s, Reading::with_confidence(1.1400, Duration::ZERO, 1e-6)))
+            .map(|s| Candidate::new(s, Reading::with_confidence(level, Duration::ZERO, 1e-6)))
             .collect();
-        f.update(&set(&tight), Some(1.1400), BAND, secs(5));
+        f.update(&set(&tight), Some(level), BAND, secs(5));
 
-        let sigma_gate = FusionConfig::default().reseed_sigma * f.variance.sqrt();
-        let floor = FusionConfig::default().reseed_floor_frac * 1.1400;
+        // The gate is evaluated AFTER `predict`, so the variance that matters is
+        // the seeded one plus one tick of drift — not the one standing now.
+        // Reading it before the next update understates the gate by ~600x and
+        // was how the first version of this test came to pass for the wrong
+        // reason: its nudge sat three orders of magnitude inside both bounds, so
+        // neutering the floor changed nothing.
+        let drift = cfg.drift_frac_per_sec * level;
+        let predicted = f.variance + drift * drift * 5.0;
+        let sigma_gate = cfg.reseed_sigma * predicted.sqrt();
+        let floor = cfg.reseed_floor_frac * level;
         assert!(
             sigma_gate < floor,
-            "precondition: the sigma gate must be the smaller one ({sigma_gate} vs {floor})"
+            "precondition: the sigma gate must be the smaller bound ({sigma_gate} vs {floor})"
         );
 
-        // A move larger than the sigma gate but inside the floor must NOT
-        // re-seed. Without the floor this is a re-seed on ordinary noise.
-        let nudge = 1.1400 + sigma_gate * 2.0;
+        // Land the move strictly between the two bounds. The floor is then the
+        // only thing refusing it, so zeroing `reseed_floor_frac` flips this
+        // assertion — which is what makes the constant's "load-bearing" claim
+        // mean something.
+        let nudge = level + (sigma_gate + floor) / 2.0;
         let r = f.update(&set(&tight), Some(nudge), BAND, secs(5));
         assert_eq!(
             r.step,

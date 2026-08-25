@@ -40,9 +40,16 @@
 --   * `value`       — the fast consensus median over the tape-class sources.
 --                     Moves immediately when they agree on a step, which is
 --                     what makes it the dislocation guard.
---   * `fused_value` — the estimate the composition priced off: every healthy
---                     source combined by precision, including the slow
---                     reference fixes the median deliberately excludes.
+--   * `fused_value` — the fused estimate: every healthy source combined by
+--                     precision, including the slow reference fixes the median
+--                     deliberately excludes.
+--
+-- **Which of the two the composition priced off depends on `fusion_step`.**
+-- Normally it is `fused_value`. On a `Carried` tick nothing was fused, so that
+-- column holds an estimate from an EARLIER tick and the composition falls back
+-- to `value` — deliberately, since pairing a stale estimate with this tick's
+-- age would report it as freshly observed. So a query reconstructing "what was
+-- quoted" must read `fusion_step` alongside, never `fused_value` alone.
 --
 -- A panel plotting only one of them cannot show the estimator lagging or
 -- leading, which is the thing an operator most needs to watch while the
@@ -61,8 +68,17 @@ ALTER TABLE maker_legs
     -- Standard deviation, not variance — the form a spread-width model
     -- consumes, and the one that is in the leg's own units so it can be plotted
     -- as a band around `fused_value` without the reader taking a square root in
-    -- SQL. The writer drops a non-finite sigma to NULL rather than storing an
-    -- infinity, which no plotting layer renders usefully.
+    -- SQL.
+    --
+    -- **Read it as a LOWER BOUND on a leg fed by a slow source, not as the
+    -- uncertainty.** The filter keeps no record of which measurements it has
+    -- already absorbed, so a daily reference fix that has not republished
+    -- contributes its precision again on every 5 s tick — thousands of counts
+    -- of one observation, each treated as independent evidence. The estimate
+    -- converges correctly either way; it is this column that comes out too
+    -- tight, by several times on a reference-only leg. Documented in
+    -- `fair-value/src/fusion.rs`, and to be closed before anything prices off
+    -- it.
     ADD COLUMN fused_sigma DOUBLE PRECISION,
     -- What the filter did, as the Rust variant's `Debug` name — the same
     -- convention every other enum-ish column in this schema uses, for the same
@@ -106,19 +122,30 @@ ALTER TABLE maker_legs
 
 -- One row per market per leg per source per tick: the per-source attribution.
 --
--- **Volume.** This is the widest table in the schema by row count — sources per
--- leg times legs times markets times ticks, against `maker_legs`' legs times
--- markets times ticks. At the 5 s tick and today's rosters that is about six
--- rows per tick per market (two FX sources plus up to four on the basis leg)
--- against `maker_legs`' three, so roughly **2x**, or ~100k rows/day/market
--- against ~52k. It is the first table here that will want a retention policy,
--- and that is recorded at creation rather than discovered later.
+-- **Volume.** Sources per leg times legs times markets times ticks, against
+-- `maker_legs`' legs times markets times ticks. At the 5 s tick and today's
+-- rosters that is about six rows per tick per market (two FX sources plus up to
+-- four on the basis leg) against `maker_legs`' three, so roughly **2x**, or
+-- ~100k rows/day/market against ~52k. It is the fastest-growing of the maker's
+-- tables and the first of them that will want a retention policy, recorded at
+-- creation rather than discovered later.
+--
+-- Deliberately not claimed: that it is the widest table in the schema. The
+-- comparison above is against `maker_legs` only, and `spot_ticks` grows per
+-- venue per product per print, which is plausibly the same order or more. Sizing
+-- this table against the collectors' would need its own measurement.
 --
 -- Note the row count does **not** fall to zero when a leg goes dark. A leg
 -- whose sources all get trimmed still writes a full set of zero-weight rows
 -- every tick — deliberately, since that is the disagreement worth seeing — so
 -- the steady-state rate is the same sick or healthy. Only a leg with no
 -- candidates at all stops writing.
+--
+-- **Rows here can outlive their `maker_legs` parent, in both directions.** A
+-- leg whose fast consensus resolved to nothing writes no `maker_legs` row at
+-- all, while the fusion may still have measured its candidates — so an inner
+-- join from this table to `maker_legs` silently drops those leg-ticks, which are
+-- exactly the dispersed ones. Join outward, or read this table on its own.
 --
 -- **Disclosure.** `0002` grants the read-only `dropset_ro` role `SELECT` on
 -- every table in `public`, present and future, so this table is readable by

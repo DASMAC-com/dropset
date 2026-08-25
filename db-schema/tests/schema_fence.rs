@@ -231,9 +231,13 @@ async fn migrate_creates_every_expected_table() {
     }
 
     // A migration that only *adds columns* creates no table, so the probe above
-    // cannot see it at all — 0006 would pass this test having done nothing.
-    // Additive columns therefore need their own assertion, and this is the
-    // place: the same "add yours here" step, one list along.
+    // cannot see it at all — 0007's `maker_legs` half would pass this test
+    // having done nothing. Additive columns therefore need their own assertion,
+    // and this is the place: the same "add yours here" step, one list along.
+    //
+    // Note neither probe covers a migration that only inserts ROWS (0006 widens
+    // a seeded roster that way); that one is pinned by
+    // market-data/tests/pyth_roster_agreement.rs instead.
     for (table, column) in [
         ("maker_legs", "fused_value"),
         ("maker_legs", "fused_sigma"),

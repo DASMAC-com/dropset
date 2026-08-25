@@ -167,10 +167,14 @@ pub struct LegSample {
     /// operator should distrust, so that reading is exactly backwards. `None`
     /// whenever the leg was not dispersed, which is the normal case.
     pub dispersion_outlier: Option<String>,
-    /// The leg's **fused** estimate — what the composition actually priced off,
-    /// as opposed to `value`, which is the fast consensus that guards
-    /// dislocations. The two are different numbers with different jobs and both
-    /// are recorded, because their gap is the estimator's whole contribution.
+    /// The leg's **fused** estimate, which the composition prices off — with one
+    /// exception: on a `Carried` tick nothing was fused, so this is an estimate
+    /// from an *earlier* tick and the composition falls back to `value` instead.
+    /// Read the two together with `fusion_step`, never `fused_value` alone.
+    ///
+    /// `value` is the fast consensus that guards dislocations. The two are
+    /// different numbers with different jobs and both are recorded, because
+    /// their gap is the estimator's whole contribution.
     ///
     /// `None` for the USDC peg leg, which is not fused: it feeds a band check
     /// rather than a price, and a guard that must fire on any bad reading has
@@ -179,10 +183,13 @@ pub struct LegSample {
     /// Standard deviation of the fused estimate, in the leg's own units — the
     /// quantity a spread-width model wants.
     ///
-    /// `None` wherever `fused_value` is, **and independently** when the sigma
-    /// itself is non-finite — so a consumer drawing a ±sigma band must tolerate
-    /// a NULL sigma beside a present `fused_value` rather than assuming the two
-    /// travel together.
+    /// `None` wherever `fused_value` is. The writer also filters a non-finite
+    /// sigma, which no path currently produces — kept as a cheap guard on a
+    /// column a dashboard plots, not as a state a consumer must handle.
+    ///
+    /// **A lower bound, not the uncertainty, on a leg fed by a slow source** —
+    /// the filter re-absorbs an unchanged reading every tick, so a daily fix's
+    /// precision is counted repeatedly. See `fair-value/src/fusion.rs`.
     pub fused_sigma: Option<f64>,
     /// What the fusion did this tick, as the Rust variant's `Debug` name, in
     /// the same convention every other enum-ish column uses. Four values:

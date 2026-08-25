@@ -1759,31 +1759,53 @@ mod tests {
     /// leave every other test in this file green.
     #[test]
     fn fusing_substitutes_the_value_and_leaves_age_and_confidence_alone() {
-        let stale_and_wide = Reading::with_confidence(1.1400, secs(120), 0.004);
-        let fresh_and_tight = Reading::with_confidence(1.1402, secs(1), 0.0001);
+        // The confidence half-width is observable through exactly one channel —
+        // `uncertain`, the §1 fm6 widen-the-spread signal — so that is what this
+        // asserts. Re-resolving the candidate set here instead would test
+        // `Candidates::resolve` and never reach `fused_into` at all, which is
+        // how the first version of this test came to assert nothing about the
+        // substitution it is named for.
+        //
+        // The wide source's 2% half-width trips the 1% bound, so `uncertain`
+        // must be set. The fused estimate's own sigma is ~4 orders of magnitude
+        // tighter, so if a later edit wrote it into `confidence`, `uncertain`
+        // would silently go false — and this assertion catches that.
+        let wide = Reading::with_confidence(1.1400, secs(120), 0.0228);
+        let tight = Reading::with_confidence(1.1402, secs(1), 0.0001);
         let legs = Legs {
             fx: Candidates::none()
-                .push("oanda", Some(stale_and_wide))
-                .push("twelvedata", Some(fresh_and_tight)),
-            crypto_usdc: src(fresh(1.0)),
+                .push("oanda", Some(wide))
+                .push("twelvedata", Some(tight)),
+            // Near the FX level, so the implied basis sits at ~1.0 and inside
+            // the sane band — otherwise the composition pauses and every field
+            // this test reads is the paused default rather than the composed one.
+            crypto_usdc: src(fresh(1.1401)),
             ..Legs::default()
         };
 
         let mut e = engine();
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
+        assert_eq!(r.regime, Regime::Normal, "precondition: it composed");
 
-        // The fused estimate moved the level off the plain midpoint...
+        // The fused estimate did move the level off the plain midpoint — the
+        // tight source dominates by precision.
         let fused = r.fx_fusion.value.expect("the fx leg fused");
         assert!(
             (fused - 1.1402).abs() < 1e-4,
             "the tight source dominates the estimate: {fused}"
         );
-        // ...while the leg still reports the OLDEST age and the WIDEST
-        // half-width of its contributors, not the winner's.
-        let leg = legs.fx.resolve(e.leg_bounds().0, e.leg_bounds().1);
-        let reading = leg.reading.unwrap();
-        assert_eq!(reading.age, secs(120), "the oldest contributing age");
-        assert_eq!(reading.confidence, Some(0.004), "the widest half-width");
+        assert!(
+            r.fx_fusion.variance.sqrt() < 0.001,
+            "precondition: the fused sigma is far tighter than the widest \
+             half-width, so substituting it would be observable"
+        );
+
+        // ...and the composition still reports the *set's* widest half-width,
+        // not the estimate's.
+        assert!(
+            r.uncertain,
+            "the widest contributing half-width must still drive the fm6 signal"
+        );
     }
 
     #[test]
