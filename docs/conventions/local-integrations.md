@@ -169,7 +169,8 @@ The last of those is worth calling out, because the resolution rule
 above does **not** cover it. The secrets enclave's operator file is a
 plain per-checkout path — nothing resolves it back to the main checkout
 — so a fresh worktree has none, and `make collectors-up` there brings
-up the keyless feeds and skips the keyed venues. `init-pr`
+up the keyless feeds and warns that it is skipping the keyed venues.
+`init-pr`
 symlinks it from the base repo (`init_pr_branch.py --link-env`,
 reported as `secrets_env_link`), which is what gives that file the
 resolution `settings.local.json` gets for free. Do not generalize from

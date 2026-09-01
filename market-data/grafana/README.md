@@ -14,7 +14,7 @@ they still work when nobody is watching a terminal.
 
 ```sh
 make grafana        # Grafana alone, against whatever history is on the volume
-make collectors-up  # the Coinbase feed + Grafana together
+make collectors-up  # every collector + Grafana together
 make grafana-down   # stop it; leaves postgres and the data alone
 ```
 

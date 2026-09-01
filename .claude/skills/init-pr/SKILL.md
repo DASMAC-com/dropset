@@ -628,7 +628,8 @@ per-directory *content* — `frontend/node_modules`,
      enclave's one operator file (the vault name plus one
      `op://` reference per credential). Without it,
      `make collectors-up` in this worktree brings up the
-     keyless feeds and skips the keyed venues. Unlike
+     keyless feeds and warns that it is skipping the keyed
+     venues. Unlike
      `settings.local.json`, this path is **not** resolved
      through a worktree to the main checkout, so the symlink
      is what gives it that resolution.

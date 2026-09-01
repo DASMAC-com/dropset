@@ -390,9 +390,10 @@ decks-build: check-pnpm
 # `restart: unless-stopped` already says they are meant to outlive whatever
 # started them. Quitting the demo should cost the demo, not the data.
 #
-# So there is exactly one way to stop collecting, and it is explicit: `make
-# collectors-down`. The browser tabs are the operator's to close, and so is
-# the decision to stop recording.
+# So stopping the collectors is always an explicit act: `make
+# collectors-down` for the collectors alone, or `make clean-docker` when
+# tearing the whole localnet down. The browser tabs are the operator's to
+# close, and so is the decision to stop recording.
 #
 # This is why the target does not try to stop only what it started. It has no
 # way to tell — `collectors-up` is idempotent, so a demo cannot distinguish
@@ -544,8 +545,9 @@ indexer-down: check-docker
 # at all: the keyless four come up regardless, and a keyed half that cannot
 # start warns loudly without failing the run (see `KEYED_WARN` below for why
 # it is loud and why it is non-fatal). A machine holding its keys as plain
-# exported environment variables rather than in the enclave runs `$(FX_UP)`
-# directly; the gate deliberately does not guess.
+# exported environment variables rather than in the enclave has no target
+# for them any more — it runs the `--profile fx` compose invocation by
+# hand. The gate deliberately does not guess.
 #
 # Grafana comes up with them, because a collector you cannot see is a
 # collector you cannot verify: the point of starting a feed is watching what
@@ -668,20 +670,34 @@ FX_UP = docker compose -f infra/localnet/docker-compose.yml \
 # `make demo` fail on a credential problem that has nothing to do with the
 # demo.
 #
-# Both failure modes route through the same banner: no enclave file at all,
-# and an `op run` that cannot resolve (not signed in, bad reference, wrong
-# account). `op run` resolves eagerly, so the second is caught here rather
-# than by a collector that 401s a minute later.
+# Two failure modes route through the banner: no enclave file at all, and a
+# keyed bring-up that exits non-zero — `op` missing or signed out, a bad
+# reference, a wrong account, or the compose build itself failing. `op run`
+# exits with its CHILD's status, so the reason names the symptom rather than
+# diagnosing a cause it cannot actually distinguish; the underlying error
+# prints immediately above the banner.
+#
+# A third mode is deliberately NOT covered, and the gap is recorded here
+# rather than papered over. `docker compose up -d` returns as soon as the
+# containers start, and the compose file passes each credential as
+# `${VAR:-}` rather than the required form — so an enclave that resolves
+# but is MISSING one of the three references starts a collector that names
+# its variable and dies. That exits 0 and prints no banner. Closing it needs
+# a post-`up` liveness probe on the three services; `--wait` is not the fix,
+# because this same invocation carries the one-shot `migrate`.
+#
+# `KEYED_WARN` is not self-contained: it reads a `reason` shell variable its
+# caller must set in the same shell. `KEYED_UP` below is that caller.
 KEYED_WARN = printf '\n%s\n%s\n%s\n%s\n%s\n\n' \
 	'=====================================================================' \
 	'  WARNING — the keyed venues are NOT running.' \
 	"  Reason: $$reason" \
 	'  OANDA, Twelve Data and Alpha Vantage will record nothing.' \
 	'====================================================================='
-KEYED_UP = if [ ! -f $(FX_ENV) ]; then \
+KEYED_UP = if [ ! -f "$(FX_ENV)" ]; then \
 	reason='no $(FX_ENV) (cp its .example)'; $(KEYED_WARN); \
 	elif ! op run $(OP_ACCT) --env-file=$(FX_ENV) -- $(FX_UP); then \
-	reason='op run could not resolve the credentials'; $(KEYED_WARN); fi
+	reason='the keyed bring-up failed (see the error above)'; $(KEYED_WARN); fi
 
 # Localnet bot stack: the maker bot (infra/localnet). It signs with the repo
 # keys/ keypairs and reaches the host-run validator at
