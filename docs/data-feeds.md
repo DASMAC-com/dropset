@@ -1785,7 +1785,7 @@ them:
 1. **The process environment**, always first — the override path, and
    what CI uses. No `op`, no vault, no 1Password dependency in CI.
 
-1. **The containers**: `make fx-collectors-up` wraps the compose
+1. **The containers**: `make collectors-up` wraps the keyed half of the compose
    invocation in `op run`, which resolves the references and exports
    them under the derived variable names. A container never reaches a
    secret store itself — it has no `op` and no session, and is handed

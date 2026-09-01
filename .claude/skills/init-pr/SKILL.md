@@ -627,8 +627,8 @@ per-directory *content* — `frontend/node_modules`,
      `infra/localnet/secrets.local.env`, the local secrets
      enclave's one operator file (the vault name plus one
      `op://` reference per credential). Without it,
-     `make fx-collectors-up` in this worktree silently falls
-     back to whatever keys happen to be exported. Unlike
+     `make collectors-up` in this worktree brings up the
+     keyless feeds and skips the keyed venues. Unlike
      `settings.local.json`, this path is **not** resolved
      through a worktree to the main checkout, so the symlink
      is what gives it that resolution.
