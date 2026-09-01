@@ -78,7 +78,8 @@ pub enum LinkState {
     /// persists it, and the one in this workspace writes it to a column a
     /// read-only dashboard role can `SELECT`. Every route through
     /// [`LivenessReporter`] does so — [`LivenessReporter::failed`] applies
-    /// [`sanitize_error`] and the [`Drop`] guard uses a fixed constant — but
+    /// [`crate::sanitize_error`] and the [`Drop`] guard uses a fixed constant
+    /// — but
     /// the variant is `pub`, so a caller building one directly carries the
     /// obligation itself.
     Down { reason: Option<String> },
@@ -167,7 +168,8 @@ impl<R: From<LivenessUpdate>> LivenessReporter<R> {
     /// The error text is put through [`redact_to_origin`], which reduces every
     /// URL it contains to scheme and host.
     ///
-    /// **Not [`sanitize_error`], and the difference is the point.** That helper
+    /// **Not [`crate::sanitize_error`], and the difference is the point.** That
+    /// helper
     /// strips a *query string*, which is the right instrument for an HTTP
     /// venue and the wrong one here. A push producer's error comes from its own
     /// client (the Solana `PubsubClient`, a raw WebSocket), none of which
