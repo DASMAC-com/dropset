@@ -374,8 +374,17 @@ decks-build: check-pnpm
 # progress and its errors belong on a plain terminal rather than under a TUI.
 # It is also why this target now needs `check-docker`.
 #
-# On exit the trap stops the background frontend and NOTHING ELSE. The
-# collectors and Grafana are deliberately left running: they are a standing
+# On exit the trap stops the background frontend and nothing else, because
+# nothing else is this recipe's to stop. Everything the TUI owns tears itself
+# down when the TUI quits: `Drop for Validator` kills the validator child and
+# its temp ledger, `Drop for BotManager` kills and reaps every maker/taker
+# child, and `Drop for App` stops the explorer container. That holds for
+# Ctrl-C as well as `q` — the TUI runs in raw mode, so crossterm delivers
+# Ctrl-C as a key event rather than a signal, and it routes to the same clean
+# quit that runs those destructors instead of bypassing them.
+#
+# What is left when the demo ends is therefore the collectors and Grafana, and
+# they are deliberately left running: they are a standing
 # recording service, not a demo fixture. Every minute they are down is a hole
 # in the stored history that no later run can backfill at tick resolution, and
 # `restart: unless-stopped` already says they are meant to outlive whatever
