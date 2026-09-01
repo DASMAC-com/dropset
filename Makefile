@@ -610,9 +610,11 @@ grafana-down: check-docker
 # the hosted deploy has with Secrets Manager.
 #
 # The enclave is optional, hence the fallback branch rather than a hard
-# dependency: a machine with the three keys exported by hand still works, and
-# so does CI. `op run` resolves eagerly, so a bad reference stops the stack
-# here instead of starting a collector that 401s a minute later.
+# dependency: a machine with the three keys exported by hand still works. (No
+# CI workflow runs any collector target, so CI is not a consumer of that
+# fallback — it is there for a checkout without 1Password access.) `op run`
+# resolves eagerly, so a bad reference stops the stack here instead of
+# starting a collector that 401s a minute later.
 #
 # The enclave file is `include`d as well as passed to `op run`, because the
 # two need different things from it. `op run` injects it into the *child*
