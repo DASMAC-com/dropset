@@ -187,6 +187,17 @@ argument was *not* the reason — see that step for why.)
   slices at ~413 lines were not obviously worse in raw tokens. The
   stronger case is fewer round trips.
 
+  **An identifier that names something on both sides of the chain
+  boundary spans two domains.** At least `leader`, `market` and `vault`
+  each name a host-side Rust binding *and* an on-chain account or field
+  — `leader` worst of all, being a `Keypair` in the bot, a `Pubkey` on
+  vault state, and a parameter name in the chain helpers. A host-side
+  sweep for the maker bot's leader keypair returned **92 matches across
+  36 files**, mostly on-chain state unrelated to the signing key; the
+  next call, anchored to the host-side use, answered it in one file.
+  Anchor to the use (`ctx.leader`) or scope with `--dir` to the crate.
+  This is pattern precision, a separate axis from output width.
+
   **A whole-issue read is for an issue's CONTENT; a decision that turns
   on a field is a field-selected `list_issues`.** Reading an issue whole
   to learn one enum cost ~6.0k in one measured case, and a second

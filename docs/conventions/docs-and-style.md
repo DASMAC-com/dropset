@@ -84,6 +84,39 @@ One gap worth knowing: the gate does not pass
 `--document-private-items`, so a broken link inside a **private**
 module's `//!` block is not checked. Keep those correct by hand.
 
+## `file:line` citations are derived LAST
+
+When a change edits a source file **and** a doc that cites `file:line`
+inside it, derive every citation **once, after all source edits have
+landed** — never interleaved. Treat a citation written before a later
+edit to the same file as presumed stale, and re-derive it.
+
+**Do not arithmetic it forward.** Computing a new line number from hunk
+offsets is a plausible-looking way to be wrong: one adversarial
+cross-check did exactly that and got **255** where the real value was
+**252**, caught only because it was then re-derived with a search.
+
+This is filed for correctness rather than tokens — the token cost is
+about 1k. One session derived its citations **three times**: after the
+initial change (`context.rs:92`); after a review fix rewrote a doc
+comment above that field, moving it to 94 and silently invalidating the
+written citation; and after a cross-check nit added one more line,
+moving it to 95 and the struct's closing brace from 169 to 170. Both
+citations written in the second pass were wrong again. The branch had
+already found pre-existing citations stale by 7 lines on one file and 3
+on another, and its own spec instructed a future auditor to re-derive
+rather than trust — so shipping a freshly stale citation in the commit
+that fixes stale citations would have been self-refuting.
+
+It is structurally likely to recur, which is why it is a rule and not a
+note: `review-pr` applies fixes after the lens fan-out **and** again
+after the cross-check, so any branch touching both code and a
+line-citing doc gets at least two shift opportunities.
+
+(A lint hook parsing `path:line` out of `docs/**` is worth considering
+if this recurs; it is not proposed now — the prose rule is cheap, and
+untested tooling here would need its own accuracy story.)
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —

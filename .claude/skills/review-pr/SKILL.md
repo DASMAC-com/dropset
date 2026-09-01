@@ -2410,6 +2410,26 @@ already being asked to start the review.
      the question cannot be asked. See
      `docs/conventions/shell-commands.md`.
 
+     **Some identifiers name a thing on BOTH sides of the
+     chain boundary, so a bare pattern spans two unrelated
+     domains.** At least `leader`, `market` and `vault` each
+     name a host-side Rust binding *and* an on-chain account
+     or field. `leader` is worst: a `Keypair` in the bot, a
+     `Pubkey` field on vault state, and a parameter name
+     inside the chain helpers — three meanings, one word.
+     Measured: a host-side question (find every consumer of
+     the maker bot's leader **keypair**) swept the identifier
+     plus a `.leader` word-boundary alternation and got **92
+     matches across 36 files**, the great majority on-chain
+     state entirely unrelated to the host process's signing
+     key. The call was correctly `--files-only`, so this was a
+     wasted round trip rather than a token sink — and the next
+     call answered the real question in one file. Anchor to
+     the host-side use (`ctx.leader`, `&ctx.leader`) or scope
+     with `--dir` to the crate, and expect a bare sweep to be
+     mostly noise. This is pattern precision, independent of
+     the output-width rule above.
+
      **Hoist for the files the lens will *predictably* need,
      not only the ones the main loop happened to read.** As
      written, the excerpt rule is "inline what you already
@@ -3300,6 +3320,54 @@ already being asked to start the review.
    run once, then revert once. Only a mutation whose effect
    another mutation would mask needs its own cycle.
 
+   **When the FIX is a new test, mutation-verify it — a test
+   is the one fix whose success is invisible to running the
+   suite.** A green suite is exactly what a worthless test
+   produces, so when a finding is "no test covers X" and the
+   fix is a new test, reintroduce X and confirm the new test
+   fails **on its behavioral assertion**, not on a
+   precondition. Failing on a precondition is not evidence.
+
+   **This lever deliberately adds cost** and must not be
+   folded into a saving: budget two extra suite runs per
+   mutation and say so, so a later metrics pass does not read
+   them as churn. One session's top hardening candidate was a
+   test binary at 5.7k over 20 calls, labelled
+   `context (failures)`, a meaningful share of which were
+   these verifications — and they are why it did not ship
+   three defects. That review found "no test would fail if X
+   were removed" three times, and under mutation **two of the
+   three fixes were worthless as written**: neutering one
+   config field left the new test green, because it read the
+   filter's variance before the next update's prediction step
+   and so computed a gate ~600x too small; another test
+   re-resolved its candidate set and never reached the
+   function it was named for, staying green until rewritten to
+   assert through the one observable channel. Tests that pass
+   whether or not the thing they name is present are worse
+   than no test, because they read as coverage. Nothing else
+   in that review would have caught it — the cross-check found
+   them only because the mutation results were in the findings
+   catalogue.
+
+   The technique above generalizes to this: batch the test
+   mutations the same way, one build and one run where they
+   are independent.
+
+   **If the diff edits both a source file and a doc citing
+   `file:line` in it, citations are a FINAL step.** Apply
+   every source edit first, then derive and write all
+   citations in one pass. A citation written before a later
+   edit to the same file is presumed stale — re-derive it, and
+   **do not arithmetic it forward**: one cross-check computed
+   a line number from hunk offsets and got 255 where the real
+   value was 252. This step is where it bites, because fixes
+   are applied after the fan-out *and* again after the
+   cross-check, so any such branch gets at least two shift
+   opportunities. One session derived its citations three
+   times and the second pass was wrong again. See
+   `docs/conventions/docs-and-style.md`.
+
    **Mirror CI's path filter, including when it skips.**
    `test.yml` gates its Tests jobs on a `code` filter that
    **excludes** the doc / frontend / decks / `.claude` / config
@@ -4164,13 +4232,41 @@ already being asked to start the review.
    **sweep** that follows should harvest them, so metrics comes
    first and firm-perms is the **last interactive step**.
 
-   **Ask first, via `AskUserQuestion`.** This is a
-   skill-to-skill handoff, so gate it on the same TUI
-   selector the merge-queue prompt uses (per `CLAUDE.md` →
-   "The PR workflow and skill handoffs"):
-   ask whether to capture session metrics now, offering
-   "yes, run /session-metrics" (**first**, the recommended
-   default) and "skip".
+   **Ask first, via `AskUserQuestion` — and ask for BOTH
+   closing gates in that one call.** This is a skill-to-skill
+   handoff, so gate it on the same TUI selector the
+   merge-queue prompt uses (per `CLAUDE.md` → "The PR workflow
+   and skill handoffs"): one call carrying two questions —
+   whether to capture session metrics now, offering "yes, run
+   /session-metrics" (**first**, the recommended default) and
+   "skip"; and the `firm-perms` question the next step
+   describes, with its own options.
+
+   This is the same argument the entry gate already makes for
+   asking tier and spawn together, and it applies more
+   strongly here: both gates are unconditional, both are pure
+   run-this-closing-step authorizations, neither answer
+   changes what the other does, and by this point the user has
+   already been prompted twice.
+
+   **The ordering objection does not apply.** The next step
+   requires `firm-perms` to run *after* `/session-metrics` so
+   its sweep harvests that run's approvals — but that
+   constrains **execution** order, not **question** order.
+   Asking both up front and then running them in the
+   prescribed sequence preserves the property exactly, which
+   one session confirmed in practice: one interaction, both
+   approved, the sweep still ran last and still saw the
+   metrics run's approvals, for ≈60 tokens.
+
+   The real saving is one fewer blocking round trip at the
+   point the user is most likely to have walked away — the
+   merge resolves asynchronously and actively invites other
+   work, and a prompt firing into an absent user is the
+   failure the next step warns about. Halving the tail prompts
+   halves that exposure. Keep both decline paths and both
+   reporting requirements exactly as they are; only the prompt
+   is merged.
 
    - On **decline**, skip this step and note in the report
      that session metrics were **not** captured this run.
@@ -4213,13 +4309,16 @@ already being asked to start the review.
    and a propose-then-confirm gate firing then would prompt
    an absent user.
 
-   **Ask first, via `AskUserQuestion`.** This is a
-   skill-to-skill handoff, so gate it on the same TUI
-   selector the merge-queue and `session-metrics` prompts use
-   (per `CLAUDE.md` → "The PR workflow and skill handoffs"):
-   ask whether to firm permissions now, offering
-   "yes, run /firm-perms sweep" (**first**, the recommended
-   default) and "skip".
+   **This step's question was already asked** — it rides the
+   previous step's batched `AskUserQuestion` as its second
+   question ("yes, run /firm-perms sweep", **first** and
+   recommended, versus "skip"), because both closing gates are
+   unconditional and independent and the user has been
+   prompted twice already. Do **not** prompt again here; act
+   on the answer already given. Only the prompt was merged —
+   the execution order is unchanged, and this step still runs
+   **after** `/session-metrics` so the sweep harvests that
+   run's approvals.
 
    - On **decline**, skip this step and note in the
      report that permissions were **not** firmed this run.
