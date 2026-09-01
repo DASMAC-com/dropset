@@ -889,6 +889,28 @@ already being asked to start the review.
      that session's 3.6k / 10 scoped-lint and 900 / 5
      `make lint` totals.
 
+     **To SEE what a formatter changed, read the slice
+     files — never `git diff` the file.** A formatter that
+     rewrote a file has already had its output captured in
+     `review-diff-docs.txt` / `-source.txt`. The general
+     "don't re-derive a diff" rule is stated twice already —
+     in `commit-changes` and in step 5's prose — but both sit
+     where the diff is *produced*, thousands of lines before
+     the point where you actually want to look at a reflow,
+     and by then the operative question feels like "what did
+     `mdformat` change?", which does not read as re-deriving
+     anything. Measured: `git diff` appears in one session's
+     hardening table at ≈1.0k over 2 calls, flagged
+     `cost: context` and the only `context`-labelled shape in
+     it — both calls made **after** the slices existed. One
+     was `git diff --stat` to size the change, which the
+     tool's verdict already reported as a per-file `changes`
+     count; the other was `git diff docs/market-making.md` to
+     see a reflow that `review-diff-docs.txt` already
+     contained in 67 lines. Small in absolute terms, and worth
+     naming because it is a documented anti-pattern being
+     reproduced by the skill that owns the tool.
+
    - A hook that fails because its binary isn't
      installed is **not** a diff problem. The
      frontend hooks — `biome`, `tsc` — report
@@ -2537,8 +2559,14 @@ already being asked to start the review.
      that call is already settled.
 
      **Name the hook that actually covers this diff's
-     languages** — clippy is **Rust only**. `ruff check` owns
-     the Python surface, `biome` and `tsc` the TS/JS one. A
+     languages** — clippy is **Rust only**, and Rust now has a
+     **second** gate beside it: the `rustdoc` hook runs a
+     full-workspace `cargo doc` under `-D warnings`, which
+     settles **intra-doc link resolution** in the program crate
+     and in its generated SDK copy. So for Rust the gate is
+     `cargo clippy --all-targets -- -D warnings` **plus**
+     `rustdoc`. `ruff check` owns the Python surface, `biome`
+     and `tsc` the TS/JS one. A
      green `make lint` on a TS-only diff proves nothing if
      `biome` / `tsc` were the hooks that couldn't run (they
      need frontend deps, and a fresh worktree has none — see
@@ -2830,8 +2858,10 @@ already being asked to start the review.
    Give the cross-check the block above verbatim:
    unused-import / does-it-resolve / does-it-compile /
    unused-symbol are settled by the green step-4 gate — for
-   Rust that's `cargo clippy --all-targets -- -D warnings`,
-   for Python `ruff check`, for TS/JS `biome` / `tsc`. Name
+   Rust that's `cargo clippy --all-targets -- -D warnings`
+   **plus** `rustdoc`, which settles intra-doc-link
+   resolution; for Python `ruff check`, for TS/JS
+   `biome` / `tsc`. Name
    the hook that covers **this** diff, and say so plainly when
    it's one that couldn't run. Where the gate does hold, the
    cross-check must not cold-read a transitive dependency to
