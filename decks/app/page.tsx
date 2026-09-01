@@ -5,38 +5,23 @@ import { useState } from "react";
 import { decks } from "@/lib/decks.mjs";
 
 /**
- * How a deck opens, offered as a choice ahead of the deck list.
+ * The query string that opens a deck alongside its speaker notes.
  *
  * Spectacle reads its mode from the query string at mount — `useModes` parses
- * `window.location.search` before anything renders — so the choice only has to
- * decide which href the cards point at. That keeps them real links: a
- * middle-click, a copied URL, or a bookmark all carry the choice with them,
- * which a click handler calling `router.push` would have thrown away.
+ * `window.location.search` before anything renders — so the switch below only
+ * has to decide which href the deck cards point at. That keeps them real
+ * links: a middle-click, a copied URL, or a bookmark all carry the choice with
+ * them, which a click handler calling `router.push` would have thrown away.
  *
- * The labels describe what the reader *gets* rather than naming the mode.
- * "Presenter mode" is accurate and actively misleading here: a visitor who
- * isn't presenting reads it as somebody else's setting and switches it off,
- * losing the talk track — which is the most valuable thing on the page for
- * exactly that reader.
+ * It is Spectacle's own parameter, the one its ⌘⇧P shortcut sets — the same
+ * door as the shortcut, with a handle a visitor will actually pull. The label
+ * on that handle says what the reader *gets* rather than naming the mode:
+ * "presenter mode" is accurate and actively misleading at once, since a
+ * visitor who isn't presenting reads it as somebody else's setting and
+ * switches it off, losing the talk track — the most valuable thing on the page
+ * for exactly that reader.
  */
-const DECK_MODES = [
-  {
-    id: "notes",
-    label: "Show presenter notes",
-    description: "The talk track that goes with each slide, alongside it.",
-    // Spectacle's own parameter, the one its ⌘⇧P shortcut sets — the same
-    // door as the shortcut, with a handle a visitor will actually pull.
-    search: "?presenterMode=true",
-  },
-  {
-    id: "slides",
-    label: "Slides only",
-    description: "The deck full-screen, the way an audience sees it.",
-    search: "",
-  },
-] as const;
-
-type DeckModeId = (typeof DECK_MODES)[number]["id"];
+const NOTES_SEARCH = "?presenterMode=true";
 
 /**
  * The deck index.
@@ -48,11 +33,10 @@ type DeckModeId = (typeof DECK_MODES)[number]["id"];
  * decks themselves below a wall of text.
  */
 export default function Home() {
-  // Notes are on by default, and re-default on every visit rather than being
-  // remembered: the talk track is the reason these decks are published at all,
-  // so each arrival should land on it regardless of what the last one chose.
-  const [modeId, setModeId] = useState<DeckModeId>(DECK_MODES[0].id);
-  const activeMode = DECK_MODES.find((m) => m.id === modeId) ?? DECK_MODES[0];
+  // On by default, and re-defaulted on every visit rather than remembered: the
+  // talk track is the reason these decks are published at all, so each arrival
+  // should land on it regardless of what the last one chose.
+  const [showNotes, setShowNotes] = useState(true);
 
   return (
     <main className="mx-auto flex min-h-full max-w-3xl flex-col px-6 py-20 sm:py-28">
@@ -75,40 +59,34 @@ export default function Home() {
         </p>
       </header>
 
-      <fieldset className="mb-8">
-        <legend className="mb-3 font-mono text-xs tracking-widest text-muted-fg uppercase">
-          Opening a deck
-        </legend>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          {DECK_MODES.map((mode) => (
-            <label
-              key={mode.id}
-              className={`flex flex-1 cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 transition-colors ${
-                mode.id === modeId
-                  ? "border-accent bg-muted/50"
-                  : "border-border bg-muted/20 hover:border-accent/50"
+      <section className="mb-8">
+        <h2 className="mb-3 font-mono text-xs tracking-widest text-muted-fg uppercase">
+          Options
+        </h2>
+        {/* Same switch the frontend's route-mode setting uses: a `role="switch"`
+            button with a track and a knob that translates across it. */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showNotes}
+          onClick={() => setShowNotes((on) => !on)}
+          title="Open a deck with its talk track alongside the slide"
+          className="flex cursor-pointer items-center gap-3 text-muted-fg transition-colors hover:text-foreground"
+        >
+          <span className="text-sm">Show presenter notes</span>
+          <span
+            className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+              showNotes ? "bg-accent" : "bg-border"
+            }`}
+          >
+            <span
+              className={`absolute top-[3px] left-[3px] h-3.5 w-3.5 rounded-full bg-foreground transition-transform ${
+                showNotes ? "translate-x-4" : "translate-x-0"
               }`}
-            >
-              <input
-                type="radio"
-                name="deck-mode"
-                value={mode.id}
-                checked={mode.id === modeId}
-                onChange={() => setModeId(mode.id)}
-                className="mt-1 accent-accent"
-              />
-              <span>
-                <span className="block text-sm text-foreground">
-                  {mode.label}
-                </span>
-                <span className="mt-0.5 block text-xs text-muted-fg">
-                  {mode.description}
-                </span>
-              </span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
+            />
+          </span>
+        </button>
+      </section>
 
       <ul className="flex flex-col gap-4">
         {decks.map((deck) => (
@@ -117,7 +95,7 @@ export default function Home() {
             className="rounded-xl border border-border bg-muted/40 transition-colors hover:border-accent"
           >
             <Link
-              href={`${deck.route}${activeMode.search}`}
+              href={`${deck.route}${showNotes ? NOTES_SEARCH : ""}`}
               className="group block p-6 transition-colors hover:bg-muted/60"
             >
               <div className="flex items-baseline justify-between gap-4">
