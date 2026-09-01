@@ -81,21 +81,29 @@ CREATE TABLE currency_kinds (
         CHECK (kind IN ('fiat', 'stablecoin', 'crypto'))
 );
 
--- Every currency that appears as a leg of a product any collector is
--- configured to poll, as of this migration: the three FX vendors' default
--- roster (AUD-USD, EUR-USD, GBP-USD), Kraken's (USDC-USD, EURC-USD, EURC-EUR),
--- Coinbase's (EURC-USDC), and every leg of the Pyth roster seeded by `0005`
--- and widened by `0006`.
+-- The seed, taken from the canonical currency roster in
+-- `frontend/lib/data/currencies.json`: its fifteen top-level fiat keys, and
+-- every stablecoin listed under them. That file is the intake roster, so it is
+-- the honest source for "what currencies does this system know about" — wider
+-- than any single collector's product list, which is the right direction, since
+-- a currency has to be classifiable before the first product using it is
+-- polled.
 --
--- MYR and NGN are included though they have no live Pyth feed — `0006` records
--- that they are roster currencies served by other vendors, so a product using
--- them would otherwise land unclassified.
+-- Symbols are upper-cased to match the canonical product id: the roster spells
+-- two of them in mixed case (`MXNe`, `cNGN`) and `parse_roster` normalizes, so
+-- they are `MXNE` and `CNGN` here. Getting that wrong is a silent miss — the
+-- join simply finds nothing.
 --
--- AUDD and MXNE are included though neither currently has a market: AUDD is
--- the prospective first customer's token and appears in the FX collectors'
--- history, and MXNE is in a roster with no aggregator coverage. Both are
--- cheap to state now and would otherwise show up as an unclassified product
--- the first time one is polled.
+-- **THIS SEED IS COUPLED TO THAT FILE AND NOTHING CHECKS IT.** A currency added
+-- to the roster and not added here classifies as 'unclassified' — visible in
+-- the dimension rather than silently dropped, which is the whole reason the
+-- view left-joins, but still wrong. That coupling bit during this very change:
+-- EUROP was added to the roster while this migration was being written, and
+-- the first draft of this seed carried five stablecoins where the roster had
+-- twenty-five. A mechanical coverage check is worth having and is deliberately
+-- left to follow-up work rather than bolted on here.
+--
+-- Fifteen fiats and twenty-five stablecoins, as of this migration.
 INSERT INTO currency_kinds (currency, kind) VALUES
     -- Fiat, ISO 4217.
     ('AUD', 'fiat'),
@@ -113,14 +121,36 @@ INSERT INTO currency_kinds (currency, kind) VALUES
     ('TRY', 'fiat'),
     ('USD', 'fiat'),
     ('ZAR', 'fiat'),
-    -- Stablecoins. Each tracks the fiat of the same name, which is what makes
-    -- a stablecoin-against-its-own-fiat pair a peg measurement rather than a
-    -- rate — see the class derivation below.
-    ('AUDD', 'stablecoin'),
-    ('EURC', 'stablecoin'),
-    ('MXNE', 'stablecoin'),
-    ('USDC', 'stablecoin'),
-    ('USDT', 'stablecoin');
+    -- Stablecoins, with the fiat each one tracks. That peg is what makes a
+    -- stablecoin-against-its-own-fiat pair a peg measurement rather than a
+    -- rate — see the class derivation below. The peg is not stored: it is not
+    -- needed to classify a pair (both legs' kinds suffice) and storing it
+    -- would be a second fact to keep in step with the roster.
+    ('AUDD', 'stablecoin'),   -- AUD
+    ('AUDM', 'stablecoin'),   -- AUD
+    ('BRZ', 'stablecoin'),    -- BRL
+    ('CADC', 'stablecoin'),   -- CAD
+    ('CNGN', 'stablecoin'),   -- NGN, spelled `cNGN` in the roster
+    ('EURAU', 'stablecoin'),  -- EUR
+    ('EURC', 'stablecoin'),   -- EUR
+    ('EURCV', 'stablecoin'),  -- EUR
+    ('EUROP', 'stablecoin'),  -- EUR
+    ('GYEN', 'stablecoin'),   -- JPY
+    ('IDRX', 'stablecoin'),   -- IDR
+    ('MXNE', 'stablecoin'),   -- MXN, spelled `MXNe` in the roster
+    ('MYRC', 'stablecoin'),   -- MYR
+    ('PYUSD', 'stablecoin'),  -- USD
+    ('TGBP', 'stablecoin'),   -- GBP
+    ('TRYB', 'stablecoin'),   -- TRY
+    ('USD1', 'stablecoin'),   -- USD
+    ('USDC', 'stablecoin'),   -- USD
+    ('USDG', 'stablecoin'),   -- USD
+    ('USDT', 'stablecoin'),   -- USD
+    ('VCHF', 'stablecoin'),   -- CHF
+    ('VGBP', 'stablecoin'),   -- GBP
+    ('XSGD', 'stablecoin'),   -- SGD
+    ('ZARP', 'stablecoin'),   -- ZAR
+    ('ZARU', 'stablecoin');   -- ZAR
 
 -- No 'crypto' row is seeded. Nothing in any collector's roster is an unpegged
 -- token today, and a seeded currency with no product would be reference data
