@@ -200,6 +200,48 @@ def highest_part_number(body: str) -> int:
     return max(numbers) if numbers else 0
 
 
+_FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
+_HEADING_RE = re.compile(r"^(#{1,5})(\s)")
+
+#: Markdown's deepest heading. A body already at `######` cannot be demoted, so
+#: it is left alone rather than silently growing a seventh `#` that renders as
+#: literal text.
+_MAX_HEADING_DEPTH = 6
+
+
+def demote_headings(body: str) -> str:
+    """Push every heading in ``body`` one level deeper.
+
+    A folded body is appended **under** an outer ``# Part N`` heading, so any
+    top-level heading it carries of its own collides with the outer numbering.
+    A trim-lever fold always has that shape — each folded issue is itself a
+    ``# Part 1``…``# Part 5`` document — and the result is two interleaved sets
+    of the same section names in one issue. The 2026-08-25 housekeeping pass
+    renumbered them by hand.
+
+    Fenced blocks are skipped, because a `#` at the start of a line inside one
+    is a shell comment, not a heading — demoting it would edit the code sample.
+    """
+    out: list[str] = []
+    fence: str | None = None
+    for line in body.split("\n"):
+        match = _FENCE_RE.match(line)
+        if match:
+            marker = match.group(1)
+            if fence is None:
+                fence = marker[0]
+            elif marker[0] == fence:
+                fence = None
+            out.append(line)
+            continue
+        if fence is None:
+            heading = _HEADING_RE.match(line)
+            if heading and len(heading.group(1)) < _MAX_HEADING_DEPTH:
+                line = "#" + line
+        out.append(line)
+    return "\n".join(out)
+
+
 def extract_touches(body: str) -> tuple[str, list[str]]:
     """Split a body into (body with its ``**Touches**:`` line(s) removed, the
     globs those lines carried). ``**Fingerprint**:`` and every other line stay.
@@ -383,7 +425,11 @@ def assemble(data: dict) -> dict:
         heading = (
             f"# Part {n} — {strip_claude_prefix(other.get('title') or other['id'])}"
         )
-        part_sections.append(f"---\n\n{heading}\n\n{body.rstrip()}")
+        # Demote the folded body's own headings, so its `# Part 1` becomes a
+        # `## Part 1` nested under this section rather than a second top-level
+        # series colliding with the outer numbering.
+        nested = demote_headings(body.rstrip())
+        part_sections.append(f"---\n\n{heading}\n\n{nested}")
 
     description = "\n\n".join([survivor_body.rstrip(), *part_sections])
     if union_globs:

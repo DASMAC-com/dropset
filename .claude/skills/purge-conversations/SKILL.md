@@ -135,14 +135,32 @@ session id if known — a single bare command reducing to the
 python3 .claude/tools/prune_conversations.py \
   --dropset-repo <path> \
   --protected-branch <b1> --protected-branch <b2> \
+  --completed-slug <s1> \
   --current-session <uuid>
 ```
 
 It prints the grouped manifest — per-group and total MB, and
-the protected count — and deletes **nothing**. (Omit
-`--current-session` if the id isn't to hand; the active
-session's dirs are protected by their slug and their fresh
-mtime regardless.)
+the kept count **broken out by reason** — and deletes
+**nothing**. (Omit `--current-session` if the id isn't to
+hand; the active session's dirs are protected by their slug
+and their fresh mtime regardless.)
+
+**Pass `--completed-slug` for finished work.** A slug whose
+worktree no longer exists **and** whose branch's PR is merged
+or closed is done, so the age grace period protects nothing —
+this flag deletes it without waiting. Step 2 already computes
+exactly that set one step earlier; it simply was not being
+handed to the tool. An open PR still wins over a completed
+marking, so a mistake in the set arithmetic costs disk rather
+than data.
+
+**Read the breakout, not the total.** One dry run reported
+"41 protected", which read as open-PR protection — but only
+**four** records were actually open-PR-protected and the rest
+were the blunt two-day age rule across three roots. Those are
+different facts: one is work in flight, the other is a grace
+period, and only the first is a reason not to reclaim the
+space.
 
 **4. Approve, then apply.** Show the manifest and ask via
 **`AskUserQuestion`** whether to hard-delete it (recommended
