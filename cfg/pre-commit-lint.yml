@@ -189,6 +189,47 @@ repos:
     id: 'sqlfluff-lint'
   repo: 'https://github.com/sqlfluff/sqlfluff'
   rev: '4.2.2'
+# The Grafana dashboards' SQL, mirrored into market-data/grafana/sql/ so a
+# panel's query is reviewable as a diff rather than as a one-character edit
+# inside a 1,500-character JSON string. This hook asserts the mirror is current
+# and enforces two guards Grafana itself fails SILENTLY on: a nested paren in a
+# macro argument (truncated at the first closing paren, so the query never
+# interpolates) and a `:regex` template variable inside a single-quoted literal
+# (the regex formatter does not escape quotes).
+#
+# `always_run` with `pass_filenames: false`, for the same reason as
+# `docker-context` above: pre-commit does not hand a hook the files a commit
+# DELETES, so a `files` regex would go quiet in exactly the commit that removes
+# a dashboard and orphans its mirror.
+- hooks:
+  - always_run: true
+    entry: 'python3 .claude/tools/dashboard_sql.py check'
+    id: 'dashboard-sql-check'
+    language: 'system'
+    name: 'Grafana dashboard SQL mirror is current'
+    pass_filenames: false
+  repo: 'local'
+# And lint that mirror as Postgres, after substituting the macros and template
+# variables for typed stand-ins. A `local` python hook rather than the sqlfluff
+# repo hook above, because the substitution has to happen first and the rule set
+# has to be different — cfg/sqlfluff-dashboards.cfg explains why the full set is
+# not merely noisy here but unsafe (it objects to the quoted `"time"` and OHLC
+# aliases Grafana binds panels to by name).
+#
+# The version is pinned as a PyPI release while the hook above pins a git tag of
+# the same project; `4.2.2` is a tag that has no PyPI counterpart, so the two
+# pins are necessarily expressed in different vocabularies rather than kept
+# byte-identical.
+- hooks:
+  - additional_dependencies:
+    - 'sqlfluff==4.1.0'
+    always_run: true
+    entry: 'python .claude/tools/dashboard_sql.py lint'
+    id: 'dashboard-sql-lint'
+    language: 'python'
+    name: 'Grafana dashboard SQL lints as Postgres'
+    pass_filenames: false
+  repo: 'local'
 # shfmt formats and shellcheck lints the committed shell-integration scripts
 # under `.claude/scripts/`. Both hooks pip-install a prebuilt binary, so neither
 # needs Go nor Docker (matching the taplo / hadolint-py pattern). They are
