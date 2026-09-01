@@ -32,6 +32,22 @@
   --font-mono: var(--font-space-mono);
 }
 
+/* Spectacle's presenter view opens with "Open a second browser tab at … to use
+ * as the audience deck" — instructions for someone presenting, in the first
+ * place a reader looks. The deck index now sends most readers here on purpose,
+ * to read the talk track alone, so that slot carries the control they actually
+ * need (`PresenterNotesExit`) instead. What the banner was actually for — how
+ * to open the audience window — is written up on the index under "Presenting",
+ * alongside the two-window setup, and in the package README. Moving it there
+ * rather than simply dropping it is the condition on hiding this at all.
+ *
+ * Keyed to Spectacle's own test id, which is the only stable handle its
+ * bundled markup offers; if a future version drops it the banner simply
+ * returns, which is why the overlay is placed to clear the logo either way. */
+[data-testid="use-browser-tab-text"] {
+  display: none;
+}
+
 html,
 body {
   height: 100%;

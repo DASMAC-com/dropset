@@ -18,7 +18,13 @@ deps, and theme don't fight the product build.
 
 ## Layout
 
-- `app/page.tsx` — landing page; indexes the decks in `lib/decks.ts`.
+- `app/page.tsx` — landing page; indexes the decks in `lib/decks.mjs`. Its
+  Options switch decides whether a deck card's link carries the
+  presenter-notes query string.
+
+- `lib/presenterMode.ts` — the one owner of how presenter mode is spelled in
+  a URL: the string the index writes, and the test the in-deck exit button
+  reads it back with.
 
 - `app/<route>/` — one deck per route. The deck itself is a client-only
   Spectacle `<Deck>` (`page.tsx` dynamic-imports it with `ssr: false`).
@@ -122,6 +128,10 @@ as presenter mode being broken when it isn't. Every mode also has a query
 string (`?exportMode=true`, `?presenterMode=true`, …), which is worth
 knowing because `⌘⇧R` collides with the browser's own hard-reload.
 
+Clicking a deck from the index opens it with its notes showing, by
+default; the Options switch there turns that off. A hand-typed route
+with no query string still opens the slides on their own.
+
 ## Presenting
 
 Present from **decks.dropset.io** or from `make decks` — they behave
@@ -132,7 +142,11 @@ Presenter mode syncs to the audience window over the browser's
 `BroadcastChannel`, which is scoped to **one origin in one browser on one
 machine**. So the working setup is two windows on the presenting laptop —
 notes on your screen, the deck on the projector — and **a second machine
-cannot remote-control the first**. Opening presenter mode elsewhere just
+cannot remote-control the first**. Open that second window on the deck's
+plain route (`/demo-v1`, no query string); Spectacle used to print this
+hint inside the presenter view, and that slot now carries the button
+that leaves it, so this is where it is written down instead.
+Opening presenter mode elsewhere just
 gives that machine its own independent copy of the deck. Nothing about
 deploying changes this, and nothing about running locally fixes it; for
 remote control you'd need a shared backend the package doesn't have.
