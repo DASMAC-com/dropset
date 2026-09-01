@@ -226,7 +226,10 @@ if (!CHECK_ONLY) {
     );
   }
 }
-const owner = signer ? signer.address : EXPECTED_FEE_WALLET;
+// Not a ternary on `signer`: in create mode the guard above has already
+// established that the key we hold IS the configured wallet, so both arms
+// would yield the same value. One name, one source.
+const owner = EXPECTED_FEE_WALLET;
 const rpc = createSolanaRpc(RPC_URL);
 
 console.log(`Mode:           ${CHECK_ONLY ? "check (read-only)" : "create"}`);
@@ -285,7 +288,19 @@ try {
   process.exit(2);
 }
 
-const missing = plan.filter((_, i) => accountInfos[i] === null);
+// Ownership, not mere existence. An ATA address that has received a stray
+// transfer of lamports is a live System-owned account with no token data:
+// non-null, but DFlow still rejects it as a feeAccount. `=== null` would call
+// that a good vault and pass the gate — the exact silent leak this exists to
+// catch. Since an ATA is a PDA over (owner, tokenProgram, mint), the address
+// already pins two of the three, so program-ownership is the rest of validity.
+//
+// It also fails closed on a short RPC response: a missing entry yields
+// `undefined?.owner`, which never equals a program address, so the mint counts
+// as missing and the gate goes red rather than green.
+const missing = plan.filter(
+  (p, i) => accountInfos[i]?.owner !== p.programAddress,
+);
 const existing = plan.length - missing.length;
 
 console.log(`Already exist:  ${existing}`);
