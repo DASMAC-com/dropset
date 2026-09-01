@@ -1784,8 +1784,11 @@ them:
 
 1. **The process environment**, always first — the override path, for a
    machine that exports the three keys directly instead of keeping them
-   in the enclave. No make target reaches this path any more, and no CI
-   workflow runs a collector at all, so CI is not a consumer of it.
+   in the enclave. No make target targets it *exclusively* any more, but
+   `op run` inherits the environment rather than clearing it, so a key
+   the enclave does not set still falls through to whatever was
+   exported. No CI workflow runs a collector at all, so CI is not a
+   consumer of it.
 
 1. **The containers**: `make collectors-up` wraps the keyed half of the
    compose invocation in `op run`, which resolves the references and

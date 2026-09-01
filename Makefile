@@ -383,8 +383,9 @@ decks-build: check-pnpm
 # Ctrl-C as a key event rather than a signal, and it routes to the same clean
 # quit that runs those destructors instead of bypassing them.
 #
-# What is left when the demo ends is therefore the collectors and Grafana, and
-# they are deliberately left running: they are a standing
+# What is left when the demo ends is therefore the collectors it started —
+# every one, or the keyless four if the enclave gate declined — plus
+# Grafana. They are deliberately left running: they are a standing
 # recording service, not a demo fixture. Every minute they are down is a hole
 # in the stored history that no later run can backfill at tick resolution, and
 # `restart: unless-stopped` already says they are meant to outlive whatever
@@ -677,14 +678,24 @@ FX_UP = docker compose -f infra/localnet/docker-compose.yml \
 # diagnosing a cause it cannot actually distinguish; the underlying error
 # prints immediately above the banner.
 #
-# A third mode is deliberately NOT covered, and the gap is recorded here
-# rather than papered over. `docker compose up -d` returns as soon as the
-# containers start, and the compose file passes each credential as
-# `${VAR:-}` rather than the required form — so an enclave that resolves
-# but is MISSING one of the three references starts a collector that names
-# its variable and dies. That exits 0 and prints no banner. Closing it needs
-# a post-`up` liveness probe on the three services; `--wait` is not the fix,
-# because this same invocation carries the one-shot `migrate`.
+# A third mode is NOT covered, and the gap is recorded here rather than
+# papered over. `docker compose up -d` returns as soon as the containers
+# start, and the compose file passes each credential as `${VAR:-}` rather
+# than the required form — so an enclave that resolves but is MISSING one of
+# the three references starts a collector that names its variable and dies.
+# That exits 0 and prints no banner.
+#
+# That `${VAR:-}` is not an unforced choice: the explorer-image workflow runs
+# `docker compose config` over this file with no environment at all, and the
+# required form fails that parse for every service (docker-compose.yml, the
+# alphavantage comment). So the fix is not to tighten it.
+#
+# `--wait` is the candidate — it was measured to exit 0 here despite the
+# one-shot `migrate`, which `depends_on: service_completed_successfully`
+# covers — but it is not adopted yet: these services are
+# `restart: unless-stopped`, so a crash-looping container can read as
+# running, and an unbounded `--wait` would hang `make demo` rather than warn
+# it. Adopting it wants a `--wait-timeout` and its own verification.
 #
 # `KEYED_WARN` is not self-contained: it reads a `reason` shell variable its
 # caller must set in the same shell. `KEYED_UP` below is that caller.
