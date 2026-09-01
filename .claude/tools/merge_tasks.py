@@ -201,7 +201,11 @@ def highest_part_number(body: str) -> int:
 
 
 _FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
-_HEADING_RE = re.compile(r"^(#{1,5})(\s)")
+#: Matches every heading depth markdown has, `######` included, so the depth
+#: cap below is what actually enforces the bound. An earlier `{1,5}` here made
+#: the guard unreachable — `len(group(1)) < 6` could not be false — leaving two
+#: sources of truth for one rule, of which only the silent one was live.
+_HEADING_RE = re.compile(r"^(#{1,6})(\s)")
 
 #: Markdown's deepest heading. A body already at `######` cannot be demoted, so
 #: it is left alone rather than silently growing a seventh `#` that renders as

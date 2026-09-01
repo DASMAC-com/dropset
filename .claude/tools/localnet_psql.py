@@ -115,16 +115,20 @@ def _url_user(db_url: str) -> str | None:
     """The username in a ``postgres://user:pass@host/db`` URL, or ``None``.
 
     Parsed rather than pattern-matched so a password containing ``@`` cannot
-    shift which side of the split the username lands on.
+    shift which side of the split the username lands on, and percent-decoded
+    because the client library decodes URI components — without that, a
+    percent-escaped spelling of the owner role reads as a different string here
+    and connects as the owner there.
     """
-    from urllib.parse import urlsplit
+    from urllib.parse import unquote, urlsplit
 
     try:
-        return urlsplit(db_url).username
+        user = urlsplit(db_url).username
     except ValueError:
         # A malformed URL is psql's problem to report, not this guard's — it
         # must not turn an unparseable string into a refusal.
         return None
+    return unquote(user) if user is not None else None
 
 
 def build_argv(
@@ -157,14 +161,25 @@ def build_argv(
         raise LocalnetPsqlError(
             "--direct needs DROPSET_DB_URL set to a connection string"
         )
-    elif _url_user(db_url) == OWNER_USER:
-        # `--direct` is the one path that could smuggle the owner back in, so
-        # the refusal lives here rather than only in the default above.
+    elif _url_user(db_url) != DEFAULT_USER:
+        # An ALLOWLIST, not a denylist of one — `--direct` is the path that
+        # could otherwise smuggle the owner back in, and naming the single role
+        # to reject left two ways through. A URL with **no** userinfo
+        # (`postgres://127.0.0.1:5432/dropset`) is a legitimate libpq string, and
+        # psql is exec'd with the inherited environment, so libpq resolves the
+        # role from PGUSER or the OS account — which on the localnet container is
+        # the superuser. Requiring the reader role by name closes that, and the
+        # percent-decode above closes the other.
+        #
+        # It fails CLOSED: an unusual-but-harmless URL is refused rather than
+        # quietly connecting as something this tool does not vouch for.
+        named = _url_user(db_url)
+        saw = f"as {named!r}" if named else "with no username"
         raise LocalnetPsqlError(
-            f"DROPSET_DB_URL connects as the {OWNER_USER!r} owner role; this "
-            f"tool is a verification reader and refuses it. Point it at "
-            f"{DEFAULT_USER!r} instead — a write belongs to the service that "
-            f"owns the table."
+            f"DROPSET_DB_URL connects {saw}; this tool is a verification reader "
+            f"and connects only as {DEFAULT_USER!r}. Name that role in the URL "
+            f"— a write belongs to the service that owns the table, and an "
+            f"unnamed user falls back to PGUSER or the OS account."
         )
 
     # The caller's own `--var` pairs go FIRST, so the fixed flags below win.

@@ -142,8 +142,27 @@ class DemoteHeadingsTests(unittest.TestCase):
         self.assertEqual(got, "## a\n### b\n#### c")
 
     def test_the_deepest_level_is_left_alone(self):
-        # A seventh `#` is not a heading in markdown, it renders as text.
+        # A seventh `#` is not a heading in markdown, it renders as text. The
+        # regex now matches `######`, so this is enforced by the depth guard
+        # rather than by the regex bound — mutate _MAX_HEADING_DEPTH to 7 and
+        # this test goes red, which it could not do before.
         self.assertEqual(mt.demote_headings("###### deep"), "###### deep")
+
+    def test_an_unterminated_fence_leaves_later_headings_alone(self):
+        # Documents a real edge, and the direction is deliberate. `fence` is
+        # sticky, so an odd number of fence lines means everything after it is
+        # treated as still inside the block. That under-demotes — reproducing
+        # the `# Part N` collision this function exists to prevent — but the
+        # alternative over-demotes and silently edits a code sample.
+        #
+        # Under-demotion is chosen because it fails VISIBLY: a fold with two
+        # `# Part 1` sections is obvious to the human who reviews it, whereas a
+        # mutated shell comment inside a fence is not. Asserted so the choice is
+        # a decision on record rather than an accident of the loop.
+        got = mt.demote_headings("# before\n\n```sh\nunclosed\n\n# after")
+        self.assertIn("## before", got)
+        self.assertIn("\n# after", got)
+        self.assertNotIn("## after", got)
 
     def test_a_hash_inside_a_fence_is_a_comment_not_a_heading(self):
         # The load-bearing case: demoting it would edit the code sample.

@@ -153,10 +153,13 @@ def find(
     if state:
         issue_filter["state"] = {"name": {"eq": state}}
 
+    # Floored as well as capped. `--limit 0` sent `first: 0` and a negative sent
+    # a negative, both of which come back as a raw GraphQL error rather than the
+    # single clean stderr line this module promises.
     data = _post(
         api_key,
         _FIND_QUERY,
-        {"filter": issue_filter, "first": min(limit, MAX_FIND)},
+        {"filter": issue_filter, "first": max(1, min(limit, MAX_FIND))},
     )
     nodes = ((data.get("issues") or {}).get("nodes")) or []
     return [f"{n.get('identifier')}  {n.get('title')}" for n in nodes]
@@ -170,19 +173,42 @@ def _read_file(path: str) -> str:
         raise LinearIssueError(f"could not read {path}: {exc}") from exc
 
 
+def _add_dry_run(parser: argparse.ArgumentParser, *, top_level: bool) -> None:
+    """``--dry-run``, registered on the top level *and* on the write subcommand
+    so it is accepted in either position.
+
+    Registered only on the top-level parser, ``append --id X --text y
+    --dry-run`` — the form this module's own Usage block teaches — exits 2 with
+    "unrecognized arguments". For the one flag whose entire job is to rehearse a
+    write safely, failing on the natural spelling is the wrong default.
+
+    The subcommand copies default to ``SUPPRESS`` rather than ``False``: a
+    subparser writes its defaults into the SAME namespace after the top-level
+    parse, so a plain ``False`` there would silently overwrite
+    ``--dry-run append …`` back into a live write — turning the rehearsal flag
+    into a no-op exactly when it was passed correctly.
+
+    This mirrors ``board_batch.py`` deliberately. The two tools disagreeing on
+    where a flag of the same name and meaning may sit is its own defect.
+    """
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False if top_level else argparse.SUPPRESS,
+        help="report what would happen and write nothing",
+    )
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="linear_issue.py",
         description="Zero-echo Linear issue body append and title-only search.",
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="report what would happen and write nothing",
-    )
+    _add_dry_run(parser, top_level=True)
     subs = parser.add_subparsers(dest="command", required=True)
 
     append = subs.add_parser("append", help="append to an issue body")
+    _add_dry_run(append, top_level=False)
     append.add_argument("--id", required=True, help="ENG-### identifier")
     source = append.add_mutually_exclusive_group(required=True)
     source.add_argument("--file", help="read the addition from this file")

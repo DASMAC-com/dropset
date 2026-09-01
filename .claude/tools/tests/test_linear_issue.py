@@ -122,12 +122,45 @@ class Find(_Stubbed):
         got = li.find("k", query="reference", project_id=None, state=None, limit=5)
         self.assertEqual(got, ["ENG-7  Reference price guard"])
 
+    def test_the_title_predicate_is_sent(self):
+        # The one clause that is never optional, and the entire reason the
+        # subcommand exists. Without this assertion the base filter could be
+        # replaced with `{}` — a search returning every issue in the workspace,
+        # truncated to `first` — and every other Find test would stay green.
+        recorder = self.install([self.rows([])])
+        li.find("k", query="reference price", project_id=None, state=None, limit=5)
+        sent = recorder.calls[-1][1]["filter"]
+        self.assertEqual(sent["title"], {"containsIgnoreCase": "reference price"})
+
     def test_the_filters_are_sent_when_given(self):
         recorder = self.install([self.rows([])])
         li.find("k", query="q", project_id="p1", state="Backlog", limit=5)
         sent = recorder.calls[-1][1]["filter"]
         self.assertEqual(sent["project"], {"id": {"eq": "p1"}})
         self.assertEqual(sent["state"], {"name": {"eq": "Backlog"}})
+
+    def test_the_limit_is_floored_as_well_as_capped(self):
+        # `first: 0` or a negative returns a raw GraphQL error rather than the
+        # one clean stderr line this module promises.
+        recorder = self.install([self.rows([])])
+        li.find("k", query="q", project_id=None, state=None, limit=0)
+        self.assertEqual(recorder.calls[-1][1]["first"], 1)
+
+    def test_the_cli_accepts_dry_run_after_the_subcommand(self):
+        # The form the module's own Usage block teaches. Registered only on the
+        # parent parser it exited 2 with "unrecognized arguments" — and this
+        # tool's only write guard was unreachable in its documented spelling.
+        args = li._parse_args(
+            ["linear_issue.py", "append", "--id", "ENG-1", "--text", "x", "--dry-run"]
+        )
+        self.assertTrue(args.dry_run)
+
+    def test_the_cli_accepts_dry_run_before_the_subcommand(self):
+        # And the subparser's default must not overwrite it back to False.
+        args = li._parse_args(
+            ["linear_issue.py", "--dry-run", "append", "--id", "ENG-1", "--text", "x"]
+        )
+        self.assertTrue(args.dry_run)
 
     def test_absent_filters_are_omitted_rather_than_sent_as_null(self):
         recorder = self.install([self.rows([])])

@@ -689,14 +689,43 @@ class GateTests(unittest.TestCase):
         v = rd.gate("main", self.out, fetch=False)
         self.assertNotIn("slices", v)
 
-    def test_an_out_colliding_with_a_slice_name_is_refused(self):
-        """The slice handles open O_TRUNC before the diff is read, so a colliding
-        --out would truncate its own input and every slice would come out empty
-        with no error."""
+    def test_slice_paths_are_namespaced_off_the_out_stem(self):
+        """Two --out paths must not share slice files.
+
+        Fixed slice names made two runs in one scratchpad destroy each other's
+        output silently: a scoped run with no docs hunks wrote an empty
+        `review-diff-docs.txt` over an unscoped run's populated one, and the
+        affected lens then correctly reported nothing to review. The stem
+        derivation is what makes the skill's "hand each lens its own --out path"
+        instruction actually true.
+        """
+        self.commit("docs/a.md", "# a\n", "Docs")
+        first = rd.gate("main", self.out, fetch=False, split=True)
+        other = self.out.parent / "review-diff-tools.txt"
+        second = rd.gate("main", other, fetch=False, split=True)
+
+        first_paths = {s["path"] for s in first["slices"].values()}
+        second_paths = {s["path"] for s in second["slices"].values()}
+        self.assertEqual(first_paths & second_paths, set())
+
+    def test_the_default_out_keeps_its_documented_slice_names(self):
+        """`--out review-diff.txt` must still yield review-diff-<name>.txt, which
+        is what the skill prose and the lens-standing brief both name."""
+        self.commit("docs/a.md", "# a\n", "Docs")
+        v = rd.gate(
+            "main", self.out.parent / "review-diff.txt", fetch=False, split=True
+        )
+        self.assertTrue(v["slices"]["docs"]["path"].endswith("review-diff-docs.txt"))
+
+    def test_an_out_that_would_have_collided_now_just_works(self):
+        """The old guard refused this; the stem derivation makes it impossible,
+        so it is no longer an error case."""
         self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
-        colliding = self.out.parent / "review-diff-source.txt"
-        with self.assertRaises(rd.ReviewDiffError):
-            rd.gate("main", colliding, fetch=False, split=True)
+        formerly_colliding = self.out.parent / "review-diff-source.txt"
+        v = rd.gate("main", formerly_colliding, fetch=False, split=True)
+        self.assertTrue(
+            v["slices"]["source"]["path"].endswith("review-diff-source-source.txt")
+        )
 
     def test_split_rewrites_slices_each_run(self):
         """Same rationale as the full diff: a stale slice is the hazard."""

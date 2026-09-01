@@ -135,6 +135,40 @@ class SubAgentLine:
         return self.input + self.cache_creation + self.cache_read
 
 
+def _load_allowlist() -> list[str]:
+    """The shared allowlist's rules, or ``[]`` when it cannot be read.
+
+    Best-effort by design. This only ever *downgrades* a churn claim, so an
+    unreadable allowlist reports exactly what this table reported before the
+    coverage check existed — the safe direction, and the reason no failure here
+    is worth surfacing to the caller.
+    """
+    try:
+        import allowlist
+
+        return allowlist.load_allow(allowlist.resolve_settings_path(None))
+    except Exception:
+        return []
+
+
+def _is_allowlisted(signature: str, allow: list[str]) -> bool:
+    """Whether the shared allowlist already covers this command shape.
+
+    A false negative is harmless — the shape reports `prompt-churn`, which is
+    what it reported before — and `allowlist.covers` is known to miss some
+    mid-token globs, so this deliberately fails toward the old behavior rather
+    than asserting coverage it cannot prove.
+    """
+    if not allow or not signature:
+        return False
+    try:
+        import allowlist
+
+        return bool(allowlist.covers(f"Bash({signature}:*)", allow).get("covered"))
+    except Exception:
+        return False
+
+
 @dataclass
 class HardeningCandidate:
     """A repeated Bash command shape worth porting to a tool.
@@ -425,6 +459,7 @@ class SessionAggregator:
         ]
         subagents.sort(key=lambda a: (-a.total_input(), a.agent))
 
+        allow = _load_allowlist()
         candidates = [
             HardeningCandidate(
                 signature=sig,
@@ -432,6 +467,7 @@ class SessionAggregator:
                 deterministic=is_deterministic_shape(sig),
                 result_bytes=shape.result_bytes,
                 via_run_quiet=shape.via_run_quiet,
+                allowlisted=_is_allowlisted(sig, allow),
             )
             for sig, shape in self._bash_shapes.items()
             if shape.count >= HARDENING_MIN_COUNT

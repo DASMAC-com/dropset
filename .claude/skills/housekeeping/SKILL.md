@@ -372,10 +372,10 @@ for a two-line answer across eleven PRs).
 STATUS TYPE is.** A merged PR whose Linear issue reads
 **In Review** is a session with outstanding follow-up — the
 team's Git workflow automation makes no transition on merge,
-so that state survives the merge precisely so this is visible
-— and pruning its worktree would recreate the worktree-loss
-incident in a third variant. So intersect the merged set with
-the board:
+so that state survives the merge and stays visible — and
+pruning its worktree would recreate the worktree-loss incident
+in a third variant. So intersect the merged set with the
+board:
 
 - resolve each merged branch's `ENG-###` from its branch name,
   then read the status type with **one field-selected

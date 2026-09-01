@@ -55,6 +55,7 @@ class FormatRows(unittest.TestCase):
             "content_type": "text/csv",
             "final_url": "https://example.invalid/x",
             "error": "",
+            "truncated": False,
         }
         base.update(over)
         return base
@@ -89,6 +90,40 @@ class FormatRows(unittest.TestCase):
         (line,) = pe.format_rows([self.row(content_type="")])
         self.assertIn(" - ", line)
 
+    def test_a_query_string_is_redacted_from_the_reported_url(self):
+        # This repo's own feed venues authenticate BY query parameter (Twelve
+        # Data, Alpha Vantage), so a keyed URL is an intended usage shape and
+        # the reported row is the one place it would reach the transcript.
+        (line,) = pe.format_rows(
+            [self.row(final_url="https://api.invalid/q?symbol=EUR&apikey=SECRET")]
+        )
+        self.assertNotIn("SECRET", line)
+        self.assertNotIn("apikey", line)
+        self.assertIn("https://api.invalid/q?…", line)
+
+    def test_a_url_without_a_query_is_left_intact(self):
+        (line,) = pe.format_rows([self.row(final_url="https://api.invalid/rates.csv")])
+        self.assertIn("https://api.invalid/rates.csv", line)
+        self.assertNotIn("?…", line)
+
+    def test_an_error_row_is_redacted_too(self):
+        # urllib puts the full URL in its exception text.
+        (line,) = pe.format_rows(
+            [self.row(error="failed: https://a.invalid/?k=SECRET")]
+        )
+        self.assertNotIn("SECRET", line)
+
+    def test_truncation_is_flagged_inline(self):
+        # Same reasoning as the redirect flag: a partial body on disk is
+        # indistinguishable from a complete one, and the downstream step parses
+        # the file rather than reading the row.
+        (line,) = pe.format_rows([self.row(truncated=True, bytes=pe.MAX_BODY_BYTES)])
+        self.assertIn("TRUNCATED", line)
+
+    def test_an_untruncated_row_carries_no_flag(self):
+        (line,) = pe.format_rows([self.row()])
+        self.assertNotIn("TRUNCATED", line)
+
 
 class RunGuards(unittest.TestCase):
     def setUp(self):
@@ -115,6 +150,42 @@ class RunGuards(unittest.TestCase):
                 ]
             )
         self.assertIn("unique", str(caught.exception))
+
+    def test_labels_differing_only_in_case_are_refused(self):
+        # The filesystem this guard protects is case-INSENSITIVE by default on
+        # macOS, so `ecb` and `ECB` name one file and one body would silently
+        # overwrite the other — while both table rows still printed correctly.
+        with self.assertRaises(pe.ProbeError):
+            pe.run(
+                [
+                    "probe_endpoints.py",
+                    "--out-dir",
+                    self.out,
+                    "--url",
+                    "ecb=https://example.invalid/1",
+                    "--url",
+                    "ECB=https://example.invalid/2",
+                ]
+            )
+
+    def test_url_file_entries_are_merged_and_guarded_with_inline_urls(self):
+        # Exercises `run`'s merge of --url-file into --url, and confirms the
+        # duplicate guard sees labels arriving from both sources. It raises
+        # before any fetch, so this needs no network.
+        path = Path(self._tmp.name) / "urls.txt"
+        path.write_text("a=https://example.invalid/2\n", encoding="utf-8")
+        with self.assertRaises(pe.ProbeError):
+            pe.run(
+                [
+                    "probe_endpoints.py",
+                    "--out-dir",
+                    self.out,
+                    "--url",
+                    "a=https://example.invalid/1",
+                    "--url-file",
+                    str(path),
+                ]
+            )
 
     def test_a_url_file_skips_blanks_and_comments(self):
         path = Path(self._tmp.name) / "urls.txt"

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # cspell:word justaname
+# cspell:word dropse
 """Unit tests for localnet_psql.py.
 
 The argv assembly is pure, so it is tested directly — no container, no database.
@@ -88,17 +89,17 @@ class BuildArgvTests(unittest.TestCase):
         self.assertIn("name=value", str(caught.exception))
 
     def test_direct_mode_uses_the_url_and_no_docker(self):
-        got = _argv(direct=True, db_url="postgres://x/y")
+        got = _argv(direct=True, db_url="postgres://dropset_ro@x/y")
         self.assertEqual(got[0], "psql")
-        self.assertIn("postgres://x/y", got)
+        self.assertIn("postgres://dropset_ro@x/y", got)
         self.assertNotIn("docker", got)
 
     def test_the_connection_string_goes_last_after_every_flag(self):
         # As a LEADING positional this relied on getopt argument permutation,
         # which POSIXLY_CORRECT disables — psql would then read the flags as
         # connection parameters. Trailing is unconditionally correct.
-        got = _argv(direct=True, db_url="postgres://x/y", sql="select 1")
-        self.assertEqual(got[-1], "postgres://x/y")
+        got = _argv(direct=True, db_url="postgres://dropset_ro@x/y", sql="select 1")
+        self.assertEqual(got[-1], "postgres://dropset_ro@x/y")
 
     def test_the_fixed_error_stop_guard_cannot_be_overridden_by_a_var(self):
         # psql honors the LAST -v for a name, so the tool's own guard must come
@@ -139,7 +140,7 @@ class BuildArgvTests(unittest.TestCase):
         # --direct is the one path that could smuggle the owner back in.
         with self.assertRaises(LocalnetPsqlError) as caught:
             _argv(direct=True, db_url="postgres://dropset:pw@127.0.0.1:5432/dropset")
-        self.assertIn("owner", str(caught.exception))
+        self.assertIn("dropset_ro", str(caught.exception))
 
     def test_a_direct_url_naming_the_reader_is_allowed(self):
         got = _argv(
@@ -155,11 +156,24 @@ class BuildArgvTests(unittest.TestCase):
         )
         self.assertEqual(got[0], "psql")
 
-    def test_an_unparseable_url_is_left_to_psql_not_refused_here(self):
-        # The guard must not turn a malformed string into a role refusal, which
-        # would misdiagnose the failure.
-        got = _argv(direct=True, db_url="not a url")
-        self.assertIn("not a url", got)
+    def test_a_url_with_no_username_is_refused_rather_than_falling_back(self):
+        # The load-bearing case, and the one a denylist of one let through:
+        # psql is exec'd with the INHERITED environment, so libpq would resolve
+        # the role from PGUSER or the OS account — the superuser on the localnet
+        # container. The allowlist fails closed instead.
+        with self.assertRaises(LocalnetPsqlError) as caught:
+            _argv(direct=True, db_url="postgres://127.0.0.1:5432/dropset")
+        self.assertIn("no username", str(caught.exception))
+
+    def test_a_percent_encoded_owner_does_not_evade_the_guard(self):
+        # urlsplit does not decode, but libpq does — so without the unquote,
+        # `dropse%74` compares unequal here and connects as `dropset` there.
+        with self.assertRaises(LocalnetPsqlError):
+            _argv(direct=True, db_url="postgres://dropse%74:pw@127.0.0.1/dropset")
+
+    def test_a_percent_encoded_reader_is_still_allowed(self):
+        got = _argv(direct=True, db_url="postgres://dropset%5Fro:pw@127.0.0.1/dropset")
+        self.assertEqual(got[0], "psql")
 
 
 class CapTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 AUDUSD
 CFLAGS
 EURCUSD
+PGUSER
 POSIXLY
 USDTZUSD
 addrs
@@ -120,6 +121,7 @@ ldxdw
 ldxw
 letterspaced
 libc
+libpq
 linkified
 linkifier
 linkifies

@@ -51,10 +51,13 @@ trim lever as its own small **parked issue** — state `Todo` plus the
 a fingerprint hit it **appends that session's evidence** to the lever
 that already exists rather than filing a duplicate, so recurrence
 becomes an accumulating fact on one issue. `trim-context` is the
-**consumer**: it sweeps the milestone, folds the parked levers into the
-fewest coherent propose-only `Claude:` Backlog tasks — one section per
-lever, each keeping its own `**Fingerprint**:` line — and closes the
-parked originals. A lever judged not
+**consumer**: it sweeps the milestone, folds the parked levers into
+**one** propose-only `Claude:` Backlog task — always one, whatever the
+lever count or surface spread, with one section per lever, each keeping
+its own `**Fingerprint**:` line — and closes the parked originals. The
+coherence floor still governs audit findings and product filings; the
+meta-work fold is the named exemption (operator ruling, 2026-08-25).
+A lever judged not
 worth acting on is **closed with its reason**, which suppresses
 refiling permanently. `housekeeping` drives `trim-context` as its
 Session Metrics step; both skills also run standalone.
@@ -848,12 +851,17 @@ anything the repo could edit, which was true of the MCP path and false
 of the API, and would have left this section asserting two incompatible
 things once the tools landed.
 
-**Two is the floor for an issue with no checklist**, and the folding
-advice above quietly assumes one exists. `review-pr` folds the
-In-Progress move into the box-tick write — but an issue with no
-checkboxes has nothing to fold it into, and the In-Review move is gated
-on CI going green at a different point in the flow, so it cannot fold
-backwards at all. Do not re-derive that pair as fixable waste.
+**Two is the floor WITHIN `review-pr` for an issue with no checklist.**
+Note the scope, because it is a different quantity from the three-write
+budget above: that one counts the whole session including `init-pr`'s
+bootstrap write, this one counts only `review-pr`'s own pair. They are
+not in tension and neither supersedes the other.
+
+The folding advice above quietly assumes a checklist exists. `review-pr`
+folds the In-Progress move into the box-tick write — but an issue with
+no checkboxes has nothing to fold it into, and the In-Review move is
+gated on CI going green at a different point in the flow, so it cannot
+fold backwards at all. Do not re-derive that pair as fixable waste.
 
 Two techniques worth keeping, both measured working:
 

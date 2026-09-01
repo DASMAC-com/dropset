@@ -171,6 +171,15 @@ def decide_slug(
     in both is kept. They are mutually exclusive by construction (open versus
     merged/closed), and ordering it this way means a bug in the caller's set
     arithmetic costs disk rather than data.
+
+    **One deliberate widening, called out because it is easy to miss in the
+    diff:** the open-PR check now sits ABOVE the dropset-slug branch rather
+    than inside it, so a protected slug that is not in ``dropset_slugs`` is now
+    kept instead of falling through to the age rule. In practice the caller
+    builds ``protected_slugs`` as a subset of ``dropset_slugs``, so this is a
+    no-op today; it is written this way so the guarantee is "an open PR is
+    never pruned" rather than "an open PR is never pruned *if* we also
+    recognized its worktree". The direction is keep-more.
     """
     completed = completed_slugs or set()
     if current_slug is not None and slug == current_slug:

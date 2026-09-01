@@ -38,6 +38,7 @@ Cargo workspace member. Tests live in ``tests/test_probe_endpoints.py``.
 # `newurl` is urllib's own parameter name in `redirect_request`, so overriding
 # that method has to spell it exactly.
 # cspell:word newurl
+# cspell:word APFS
 
 from __future__ import annotations
 
@@ -108,23 +109,33 @@ def probe_one(label: str, url: str, out_dir: str, timeout: int) -> dict:
         "content_type": "",
         "final_url": "",
         "error": "",
+        "truncated": False,
     }
+    # Read ONE byte past the cap so truncation is detectable rather than
+    # inferred from a suspiciously round byte count. A partial file on disk is
+    # indistinguishable from a complete one, and the downstream step parses the
+    # file rather than reading the row — so a silent cap is the more dangerous
+    # of the two facts this tool reports. `localnet_psql.py` states the house
+    # position outright: a cap that is not announced reads as a complete answer.
     try:
         with opener.open(url, timeout=timeout) as response:
-            body = response.read(MAX_BODY_BYTES)
+            body = response.read(MAX_BODY_BYTES + 1)
             row["status"] = response.status
             row["content_type"] = response.headers.get("Content-Type", "") or ""
             row["final_url"] = response.geturl()
     except urllib.error.HTTPError as exc:
         # An HTTP error is a RESULT, not a failure to probe: a 404 or a 451 is
         # exactly the fact the caller is asking for, so it gets a row.
-        body = exc.read(MAX_BODY_BYTES) if exc.fp else b""
+        body = exc.read(MAX_BODY_BYTES + 1) if exc.fp else b""
         row["status"] = exc.code
         row["content_type"] = exc.headers.get("Content-Type", "") if exc.headers else ""
         row["final_url"] = url
     except (urllib.error.URLError, OSError, ValueError) as exc:
         body = b""
         row["error"] = str(exc)
+    if len(body) > MAX_BODY_BYTES:
+        body = body[:MAX_BODY_BYTES]
+        row["truncated"] = True
     row["redirects"] = handler.count
     row["bytes"] = len(body)
 
@@ -135,21 +146,39 @@ def probe_one(label: str, url: str, out_dir: str, timeout: int) -> dict:
     return row
 
 
+def redact_query(url: str) -> str:
+    """``url`` with any query string replaced by ``?…``.
+
+    The reported URL is the one place a probe can leak a credential into the
+    transcript, and this repo's own feed venues authenticate **by query
+    parameter** (Twelve Data and Alpha Vantage both take `apikey=`), so
+    `--url av=https://…/query?…&apikey=SECRET` is an intended usage shape
+    rather than a hypothetical. The tool has no notion of which parameter is a
+    secret, so it reports none of them — the host and path are what a
+    reachability probe is actually about.
+    """
+    head, sep, _ = url.partition("?")
+    return f"{head}?…" if sep else head
+
+
 def format_rows(rows: list[dict]) -> list[str]:
     """The compact table, one line per endpoint.
 
-    A redirected endpoint is flagged inline rather than left to be inferred from
-    a count column the reader may skim past.
+    A redirected or truncated endpoint is flagged **inline** rather than left to
+    be inferred from a column the reader may skim past — the same reasoning in
+    both cases: a fact the caller needs must be structural, not lucky.
     """
     lines = []
     for row in rows:
         if row["error"]:
-            lines.append(f"{row['label']}  ERROR  {row['error']}")
+            lines.append(f"{row['label']}  ERROR  {redact_query(row['error'])}")
             continue
         flag = f" REDIRECTED({row['redirects']})" if row["redirects"] else ""
+        if row.get("truncated"):
+            flag += f" TRUNCATED(at {MAX_BODY_BYTES}B)"
         lines.append(
             f"{row['label']}  {row['status']}  {row['bytes']}B  "
-            f"{row['content_type'] or '-'}  {row['final_url']}{flag}"
+            f"{row['content_type'] or '-'}  {redact_query(row['final_url'])}{flag}"
         )
     return lines
 
@@ -189,9 +218,15 @@ def run(argv: list[str]) -> int:
 
     pairs = [parse_label_url(item) for item in raw]
     labels = [label for label, _ in pairs]
-    if len(set(labels)) != len(labels):
-        # Duplicates would silently overwrite one another's body file.
-        raise ProbeError("labels must be unique — they name the body files")
+    # Case-INSENSITIVE, because the filesystem this protects usually is. On the
+    # default macOS APFS/HFS+ volume `ecb` and `ECB` name the same file, so a
+    # case-sensitive check passes and then one body silently overwrites the
+    # other — precisely the failure this guard exists to prevent, and invisible
+    # because both table rows still print correctly.
+    if len({label.lower() for label in labels}) != len(labels):
+        raise ProbeError(
+            "labels must be unique (case-insensitively) — they name the body files"
+        )
 
     os.makedirs(args.out_dir, exist_ok=True)
     rows = [probe_one(label, url, args.out_dir, args.timeout) for label, url in pairs]

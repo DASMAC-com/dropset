@@ -1207,6 +1207,21 @@ already being asked to start the review.
    Run it once per sub-slice, and hand each lens its own
    `--out` path.
 
+   **The slices are namespaced off that `--out` stem** —
+   `--out review-diff-tools.txt --split` writes
+   `review-diff-tools-source.txt` and siblings, while the plain
+   `--out review-diff.txt` still writes the documented
+   `review-diff-source.txt` set. That is what makes "its own
+   `--out` path" true rather than aspirational: the slice names
+   were once **fixed**, so a scoped `--only` run silently
+   overwrote the unscoped run's slices — and because a
+   tools-only run has no docs hunks, it left
+   `review-diff-docs.txt` **empty**. The lens handed that slice
+   then correctly reports nothing to review, which is a silent
+   and total failure of that lens, in the same class as the
+   missing-preamble case above. Caught in one review by a
+   `wc -l` before spawning; do not rely on catching it.
+
    **Rust inline tests are already extracted for you.** Rust
    keeps unit tests inside the source file, so the category
    split used to produce a **zero-line** tests slice on a diff

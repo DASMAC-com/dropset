@@ -158,6 +158,15 @@ class DecideSlugTests(unittest.TestCase):
         self.assertFalse(d.delete)
         self.assertEqual(d.reason, "open PR")
 
+    def test_an_open_pr_protects_a_slug_even_outside_the_dropset_set(self):
+        # The open-PR check sits above the dropset branch, so the guarantee is
+        # "an open PR is never pruned" rather than "…if we also recognized its
+        # worktree". A no-op with today's caller, asserted so the widening is
+        # deliberate rather than an accident of the reordering.
+        d = self._decide("x", OLD, set(), {"x"}, None)
+        self.assertFalse(d.delete)
+        self.assertEqual(d.reason, "open PR")
+
     def test_the_current_session_beats_a_completed_marking(self):
         d = decide_slug(
             "cur",

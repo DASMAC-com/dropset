@@ -933,9 +933,13 @@ def run(argv: list[str]) -> int:
     # projected — merge the windows and count the lines they would emit.
     files_only = args.files_only
     if args.context and not files_only and result["total"]:
-        printed = sum(
-            len(lines) for _, _, lines in merge_context_blocks(result["matches"])
-        )
+        # Count the block SEPARATORS too. `print_result`'s context branch emits
+        # one `--` after each merged block, so summing only the content lines
+        # falls short by the block count and the threshold fires marginally
+        # late. Cheap to get exactly right, and "would have printed N lines"
+        # should be the number the caller would actually have received.
+        blocks = merge_context_blocks(result["matches"])
+        printed = sum(len(lines) for _, _, lines in blocks) + len(blocks)
         if printed > CONTEXT_DEGRADE_LINES and not args.force_context:
             files_only = True
             notes.append(

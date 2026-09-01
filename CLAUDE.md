@@ -216,8 +216,11 @@ under the `Trim levers` milestone, keyed by a
 MCP `patch` path, because that path echoes the whole stored body
 on every write and the cost compounds on an accumulator.
 `trim-context` is the periodic **fold**: sweep the milestone,
-fold into the fewest coherent `Claude:` tasks, close the
-originals. A rejected lever is **closed with its reason**, and
+fold into **one** `Claude:` task — always one, whatever the lever
+count or surface spread — and close the originals. (The
+coherence floor above still governs audit findings and product
+filings; the meta-work fold is the named exemption.) A rejected
+lever is **closed with its reason**, and
 dedup-against-resolved makes that permanent. The old inbox
 document is retired — it outgrew the tool-result cap between
 mining passes. Detail: `docs/conventions/linear-automation.md`
