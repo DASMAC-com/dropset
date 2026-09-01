@@ -21,8 +21,8 @@
 //!
 //! The 8-byte discriminators are `sha256("event:<StructName>")[..8]` (the
 //! anchor scheme) and mirror the `events` list in the generated IDL
-//! (`sdk/idl/dropset.json`), pinned by [`tests`] below. They are kept as
-//! constants here for the same reason the account discriminators are
+//! (`sdk/idl/dropset.json`), pinned by the `tests` module below. They are
+//! kept as constants here for the same reason the account discriminators are
 //! (e.g. [`crate::accounts::MARKET_HEADER_DISCRIMINATOR`]) — a decoder
 //! shouldn't hash at runtime.
 

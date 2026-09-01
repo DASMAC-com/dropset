@@ -402,7 +402,14 @@ scope but never loosen the shell rules.
 ## Docs and skills prose
 
 Refer to users in the abstract, never by name, in any committed doc or
-skill. **Spelling (cspell):** `cfg/dictionary.txt` is for terms in
+skill. **Rust intra-doc links are gated** by the `rustdoc` hook
+(workspace doc build, `-D warnings`). Two authoring rules follow, both
+because the failure surfaces somewhere other than the file you edit: a
+doc comment on an **IDL-captured** item takes a code span, never a
+link (Codama copies it verbatim into `sdk/rs/src/generated/`, where the
+path resolves to nothing), and **never widen an item's visibility** to
+make a link resolve — degrade it to a code span, or re-path it.
+**Spelling (cspell):** `cfg/dictionary.txt` is for terms in
 **≥ 2 files**; a word in just one file gets a top-of-file inline
 `cspell:word` escape (one word per directive). The dictionary carries a
 `merge=union` attribute, so **never hand-resolve a conflict in it** —

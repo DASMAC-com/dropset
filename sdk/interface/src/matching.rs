@@ -494,7 +494,7 @@ fn flush_side_sum_exceeds_bps(v: &Vault, is_buy: bool) -> bool {
 /// `remaining` state.
 ///
 /// The two reference datums are no longer parameters. They are read from
-/// `v.reference_price` through [`Level::deadlines`], which takes the
+/// `v.reference_price` through `Level::deadlines`, which takes the
 /// whole record — so the two same-width `u32`s a caller used to pass
 /// positionally, and could transpose without the suite noticing, are
 /// gone from this signature entirely. What it returns is domain-typed

@@ -43,7 +43,7 @@ pub struct VaultDepositorHeader {
     /// Shares-weighted average reference price across deposits.
     pub entry_ref_price: Price,
     /// Shares-weighted average VPS (`L / total_shares`) across deposits,
-    /// Q32.32. Same encoding and practical bound as [`crate::Vault::hwm`].
+    /// Q32.32. Same encoding and practical bound as `Vault::hwm`.
     pub entry_vps: PodU64,
     /// Slot of the first deposit. Captured once at PDA init.
     pub opened_at: PodU64,

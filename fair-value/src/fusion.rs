@@ -366,7 +366,7 @@ impl FusionReport {
 /// copy-on-assign would fork its history and leave two filters diverging under
 /// one market's name.
 ///
-/// Note this diverges from [`crate::basis::BasisEma`], which *is* `Copy`
+/// Note this diverges from `basis::BasisEma`, which *is* `Copy`
 /// despite being an accumulator too — so the two are inconsistent, and this is
 /// the side that is right. `FairValueEngine` is itself not `Copy` for exactly
 /// this reason, which is what has kept the EMA's `Copy` from causing trouble:

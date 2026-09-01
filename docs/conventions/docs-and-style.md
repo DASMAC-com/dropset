@@ -34,6 +34,52 @@ authoring rule: keep an inline code span entirely on one line, and wrap
 before or after it. If that makes the line unavoidably long, shorten the
 prose around the span rather than breaking the span.
 
+## Rust intra-doc links
+
+Intra-doc links are gated: the `rustdoc` hook in
+`cfg/pre-commit-lint.yml` runs the workspace doc build with
+`-D warnings`, so a broken, private, or redundantly-targeted link fails
+`make lint` and CI. Two authoring rules follow, and both exist because
+the failure they prevent is **remote** — it surfaces somewhere other
+than the file you edited.
+
+**A doc comment on an IDL-captured item takes a code span, never an
+intra-doc link.** Codama copies the text of a doc comment on an
+`#[account]` struct, a field of an instruction's `Accounts`, or any
+IDL-carried type verbatim into `sdk/rs/src/generated/`, where a path
+that resolves in the program crate resolves to nothing. The gate
+enforces it, but it fails pointing at a generated file you never
+edited — which is exactly why the rule needs stating rather than
+discovering.
+
+It applies **only** to items the IDL actually carries, and
+`programs/dropset/src/state/market/layout.rs` holds both halves of the
+distinction about 200 lines apart, so copy from there rather than from
+the rule alone. `MarketHeader.head` is IDL-carried, so its doc writes
+`` `NULL_SECTOR` ``. `Vault::next` is not — `Vault` is a bytemuck slab
+struct the IDL never sees — so its doc writes
+`` [`super::NULL_SECTOR`] ``, a working link. Prefer the link wherever
+the item is not IDL-carried: a code span there is a loss, not a
+safeguard.
+
+**Never satisfy the gate by widening an item's visibility.** Making a
+private item `pub` does make a public-docs link to it resolve, but
+visibility is API surface in every crate — and in a consensus-critical
+one it is a trust surface as well. Either way it is a real change made
+to settle a docs lint. Degrade the link to a code span instead, or
+re-path it (`[`Self::method`]` for a sibling method,
+`[`super::CONST`]` for a parent-module const) when a real path exists.
+
+The same holds one layer down, in the **generated** SDK: when a copied
+link resolves there but hits a private generated module, widening
+Codama's output is the identical trade and is equally not the answer.
+The fix belongs in the program's doc comment, which is the one place
+that owns the text.
+
+One gap worth knowing: the gate does not pass
+`--document-private-items`, so a broken link inside a **private**
+module's `//!` block is not checked. Keep those correct by hand.
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —

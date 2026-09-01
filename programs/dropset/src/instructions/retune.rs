@@ -15,12 +15,12 @@
 //!   the registry's fee ATA for the new mint (`init_if_needed`, admin
 //!   pays rent) so the fee destination provably exists the moment the
 //!   config is set — `CreateVault` loads that ATA but never creates it.
-//! * `set_taker_fee` — rewrite a market's taker fee (ppm, [`Ppm16`]),
+//! * `set_taker_fee` — rewrite a market's taker fee (ppm, `Ppm16`),
 //!   read on the swap hot path. A market-wide knob, not per-vault, so it
 //!   takes no `vault_idx`. `Ppm16` is a `u16`, so the spec's "~6.55%"
 //!   cap is the type bound — no value can exceed it and no range check
 //!   is needed.
-//! * `set_max_platform_fee` — rewrite a market's ceiling (bps, [`Bps16`])
+//! * `set_max_platform_fee` — rewrite a market's ceiling (bps, `Bps16`)
 //!   on the caller-declared platform fee, also read on the swap hot path.
 //!   Unlike `set_taker_fee` this one *does* range-check: a `u16` reaches
 //!   past `BPS`, so the type is not the bound.

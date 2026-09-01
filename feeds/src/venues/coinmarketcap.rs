@@ -11,7 +11,7 @@
 //! The keyless public route (`/public-api/…`) publishes **no monthly quota** —
 //! the documented contract is per-IP rate pooling, answered with a 429. Rate is
 //! the kind of constraint a floor can hold at all, where a monthly quota is not
-//! (see [`MIN_REQUEST_INTERVAL`]), so taking the route that prices access as a
+//! (see `MIN_REQUEST_INTERVAL`), so taking the route that prices access as a
 //! rate is what makes the cadence question go away rather than merely managed.
 //!
 //! **Two limits of that reasoning, since it is load-bearing.** First, the

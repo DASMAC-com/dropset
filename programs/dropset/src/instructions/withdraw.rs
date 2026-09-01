@@ -44,8 +44,8 @@ pub struct Withdraw {
     /// The outside depositor exiting the vault — the PDA seeds bind this
     /// signer to the `VaultDepositor` whose `shares` are burned here. The
     /// leader is rejected (`DropsetError::Unauthorized`) and exits via
-    /// [`super::withdraw_leader`], which burns `leader_shares` directly
-    /// and carries no `VaultDepositor` PDA.
+    /// `withdraw_leader`, which burns `leader_shares` directly and carries
+    /// no `VaultDepositor` PDA.
     #[account(mut)]
     pub signer: Signer,
     /// Market the vault lives on.

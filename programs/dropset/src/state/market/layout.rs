@@ -163,7 +163,7 @@ pub struct Remaining {
 ///
 /// The pointer fields ([`Vault::next`] / [`Vault::prev`]) are sector
 /// indices: a position within the slab tail, **not** a byte offset.
-/// [`NULL_SECTOR`] marks the end of a list.
+/// [`super::NULL_SECTOR`] marks the end of a list.
 ///
 /// [`Vault::leader`] doubles as the emptiness marker per the spec — a
 /// sector with `leader == Address::default()` is on the free list.
@@ -172,10 +172,10 @@ pub struct Remaining {
 #[bytemuck(crate = "anchor_lang_v2::bytemuck")]
 pub struct Vault {
     /// Next sector in the current DLL (active / tombstone / free), or
-    /// [`NULL_SECTOR`] at the tail.
+    /// [`super::NULL_SECTOR`] at the tail.
     pub next: PodU32,
-    /// Previous sector in the current DLL, or [`NULL_SECTOR`] at the
-    /// head. Free-list sectors leave this unused.
+    /// Previous sector in the current DLL, or [`super::NULL_SECTOR`] at
+    /// the head. Free-list sectors leave this unused.
     pub prev: PodU32,
     /// Leader pubkey. `Address::default()` means "on the free list".
     pub leader: Address,
@@ -377,7 +377,7 @@ impl Vault {
 pub struct MarketHeader {
     /// Per-fill / per-quote monotonic counter.
     pub nonce: PodU64,
-    /// Head of the active DLL: sector index or [`NULL_SECTOR`]. Walked
+    /// Head of the active DLL: sector index or `NULL_SECTOR`. Walked
     /// by the matching engine on every taker.
     pub head: PodU32,
     /// Head of the tombstone DLL: sectors that have been `CloseVault`'d

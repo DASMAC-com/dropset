@@ -320,7 +320,7 @@ pub struct LadderLevel {
 /// the slot conjunct would kill a level the wall conjunct was still
 /// holding open, taking the 40%-of-leg top tier dark on arrival. So the
 /// bound has to clear this bot's own re-stamp cadence, which is what
-/// [`tests::slot_bound_clears_the_heartbeat`] pins.
+/// the `slot_bound_clears_the_heartbeat` test pins.
 ///
 /// These values are the shape of the policy, not a calibration — the
 /// vol-ladder retune owns the tuning.

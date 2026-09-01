@@ -4,14 +4,14 @@
 //! and **Vault** sections.
 //!
 //! The module is split by concern, each in its own submodule:
-//! - [`layout`] — the byte-exact `#[repr(C)]` / `#[account]` types plus the
+//! - `layout` — the byte-exact `#[repr(C)]` / `#[account]` types plus the
 //!   size / offset const-asserts that pin their on-chain layout.
-//! - [`access`] — [`VaultAccess`]: bounds-checked sector borrows.
-//! - [`dll`] — [`VaultDll`] / [`DllList`]: the doubly-linked-list surgery
+//! - `access` — [`VaultAccess`]: bounds-checked sector borrows.
+//! - `dll` — [`VaultDll`] / [`DllList`]: the doubly-linked-list surgery
 //!   over the active / tombstone / free sector lists.
-//! - [`accrual`] — perf-fee realization ([`realize_in_place`]) and
+//! - `accrual` — perf-fee realization ([`realize_in_place`]) and
 //!   single-leg subsequent-deposit sizing ([`single_leg_basket`]).
-//! - [`quote_write`] / [`reference_price`] / [`liquidity_profile`] — the two
+//! - `quote_write` / `reference_price` / `liquidity_profile` — the two
 //!   solana-free quote-write kernels the hand-written sBPF entrypoint
 //!   mirrors ([`stamp_reference_price`], [`write_liquidity_profile`]), over
 //!   the preamble and byte accessors they share.

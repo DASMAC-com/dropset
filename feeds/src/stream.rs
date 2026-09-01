@@ -19,7 +19,7 @@ const DRAIN_CAP: usize = 256;
 /// that pushes into the returned [`mpsc::Sender`].
 ///
 /// `next` awaits the next record, then drains any already-queued ones into the
-/// same batch (up to [`DRAIN_CAP`]), and returns it with no cursor — a live
+/// same batch (up to `DRAIN_CAP`), and returns it with no cursor — a live
 /// stream has nothing to resume. A non-empty batch reports `caught_up = false`
 /// so the runner loops straight back for the next batch instead of sleeping
 /// `poll_interval` — the following `recv().await` blocks until a record

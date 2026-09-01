@@ -77,11 +77,11 @@ pub struct RegistryHeader {
     /// to verify by enumeration. See the architecture spec, **Account
     /// lifecycle and rent reclamation**.
     pub market_count: PodU32,
-    /// Default skin-in-the-game floor (ppm, [`Ppm32`]) stamped into markets.
+    /// Default skin-in-the-game floor (ppm, `Ppm32`) stamped into markets.
     pub default_min_leader_share: PodU32,
-    /// Default taker fee (ppm, [`Ppm16`]) stamped into markets.
+    /// Default taker fee (ppm, `Ppm16`) stamped into markets.
     pub default_taker_fee: PodU16,
-    /// Default platform-fee ceiling (bps, [`Bps16`]) stamped into
+    /// Default platform-fee ceiling (bps, `Bps16`) stamped into
     /// `MarketHeader.max_platform_fee` at creation. Bounds the
     /// caller-declared `platform_fee_bps` a `swap` may skim off the taker's
     /// output; retunable per market afterwards via `SetMaxPlatformFee`.

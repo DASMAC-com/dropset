@@ -36,7 +36,7 @@ const _: () = assert!(RP_QUOTE_UNIX_OFF == 16);
 /// (per the architecture spec's **SetReferencePrice**, price / slot /
 /// wall-clock values are stored raw — matching skips an invalid price,
 /// so no write-time validation is needed). See
-/// [`authorize_quote_write`] for the guards both quote-write kernels
+/// `authorize_quote_write` for the guards both quote-write kernels
 /// deliberately omit.
 ///
 /// `quote_unix` is leader-supplied rather than read from the `Clock`

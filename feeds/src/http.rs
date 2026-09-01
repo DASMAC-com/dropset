@@ -314,12 +314,12 @@ impl HttpClient {
     ///
     /// Carrying the key *here* rather than in the caller's per-request query is
     /// what closes it: the transport appends the credential itself, and
-    /// [`SecretParam`]'s `Debug` keeps the value out of any render of the
+    /// `SecretParam`'s `Debug` keeps the value out of any render of the
     /// client.
     ///
     /// An adapter that hand-passes a key through `get_json`'s `query` under a
     /// name registered nowhere here **no longer bypasses the redaction** —
-    /// [`HttpClient::redact_query`] is default-deny, so an unregistered name is
+    /// `HttpClient::redact_query` is default-deny, so an unregistered name is
     /// redacted like any other non-benign parameter. That is a backstop, not a
     /// license: register the credential here anyway, because only registration
     /// keeps it out of a `Debug` render of the client and off every call site.
@@ -410,7 +410,7 @@ impl HttpClient {
         err
     }
 
-    /// Raise this source's minimum interval above [`DEFAULT_MIN_INTERVAL`] —
+    /// Raise this source's minimum interval above `DEFAULT_MIN_INTERVAL` —
     /// the seam for a venue whose keyless tier is stricter than the default
     /// floor. Most venues need it; docs/data-feeds.md §10 tabulates every
     /// venue's documented limit and the floor derived from it.
@@ -443,7 +443,7 @@ impl HttpClient {
     }
 
     /// Change this source's response-body cap from
-    /// [`DEFAULT_MAX_RESPONSE_BYTES`] — for a venue whose legitimate payload is
+    /// `DEFAULT_MAX_RESPONSE_BYTES` — for a venue whose legitimate payload is
     /// larger (a wide batched fetch, a long candle page).
     pub fn with_max_response_bytes(mut self, max: usize) -> Self {
         self.max_response_bytes = max;

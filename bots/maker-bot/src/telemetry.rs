@@ -253,7 +253,7 @@ pub struct ContributionSample {
 /// `Sample` is boxed because it is an order of magnitude wider than the other
 /// two variants, and an unboxed enum is sized for its largest: every queued
 /// record — including a one-word health update — would otherwise reserve the
-/// full sample's footprint, across a channel [`CHANNEL_CAP`] deep.
+/// full sample's footprint, across a channel `CHANNEL_CAP` deep.
 #[derive(Debug)]
 pub enum Record {
     Sample(Box<Sample>),

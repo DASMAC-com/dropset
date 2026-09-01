@@ -2960,8 +2960,8 @@
             "The outside depositor exiting the vault — the PDA seeds bind this",
             "signer to the `VaultDepositor` whose `shares` are burned here. The",
             "leader is rejected (`DropsetError::Unauthorized`) and exits via",
-            "[`super::withdraw_leader`], which burns `leader_shares` directly",
-            "and carries no `VaultDepositor` PDA."
+            "`withdraw_leader`, which burns `leader_shares` directly and carries",
+            "no `VaultDepositor` PDA."
           ],
           "writable": true,
           "signer": true
@@ -4227,7 +4227,7 @@
           {
             "name": "head",
             "docs": [
-              "Head of the active DLL: sector index or [`NULL_SECTOR`]. Walked",
+              "Head of the active DLL: sector index or `NULL_SECTOR`. Walked",
               "by the matching engine on every taker."
             ],
             "type": "u32"
@@ -4458,8 +4458,8 @@
         "      = significand × 10^(unbiased_exponent − 7)",
         "```",
         "",
-        "Two sentinel encodings: [`Price::ZERO`] (`0x0000_0000`, market sell)",
-        "and [`Price::INFINITY`] (`0xFFFF_FFFF`, market buy). All other valid",
+        "Two sentinel encodings: `Price::ZERO` (`0x0000_0000`, market sell)",
+        "and `Price::INFINITY` (`0xFFFF_FFFF`, market buy). All other valid",
         "bit patterns represent regular prices.",
         "",
         "**Integer order is price order.** With the exponent in the high bits",
@@ -4559,21 +4559,21 @@
           {
             "name": "default_min_leader_share",
             "docs": [
-              "Default skin-in-the-game floor (ppm, [`Ppm32`]) stamped into markets."
+              "Default skin-in-the-game floor (ppm, `Ppm32`) stamped into markets."
             ],
             "type": "u32"
           },
           {
             "name": "default_taker_fee",
             "docs": [
-              "Default taker fee (ppm, [`Ppm16`]) stamped into markets."
+              "Default taker fee (ppm, `Ppm16`) stamped into markets."
             ],
             "type": "u16"
           },
           {
             "name": "default_max_platform_fee",
             "docs": [
-              "Default platform-fee ceiling (bps, [`Bps16`]) stamped into",
+              "Default platform-fee ceiling (bps, `Bps16`) stamped into",
               "`MarketHeader.max_platform_fee` at creation. Bounds the",
               "caller-declared `platform_fee_bps` a `swap` may skim off the taker's",
               "output; retunable per market afterwards via `SetMaxPlatformFee`."
@@ -4910,7 +4910,7 @@
             "name": "entry_vps",
             "docs": [
               "Shares-weighted average VPS (`L / total_shares`) across deposits,",
-              "Q32.32. Same encoding and practical bound as [`crate::Vault::hwm`]."
+              "Q32.32. Same encoding and practical bound as `Vault::hwm`."
             ],
             "type": "u64"
           },
