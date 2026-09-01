@@ -374,27 +374,26 @@ decks-build: check-pnpm
 # progress and its errors belong on a plain terminal rather than under a TUI.
 # It is also why this target now needs `check-docker`.
 #
-# On exit the trap runs `collectors-down`, which stops all seven collectors and
-# Grafana and deliberately LEAVES `postgres` — the volume holds recorded
-# candles, and every per-app `down` target here is scoped for exactly that
-# reason. The browser tabs are the operator's to close.
+# On exit the trap stops the background frontend and NOTHING ELSE. The
+# collectors and Grafana are deliberately left running: they are a standing
+# recording service, not a demo fixture. Every minute they are down is a hole
+# in the stored history that no later run can backfill at tick resolution, and
+# `restart: unless-stopped` already says they are meant to outlive whatever
+# started them. Quitting the demo should cost the demo, not the data.
 #
-# That teardown reaches the keyed venues whether or not this run started them,
-# which is the point: they are `restart: unless-stopped`, so one left running
-# survives the demo, survives the terminal, and comes back when the Docker
-# daemon does.
+# So there is exactly one way to stop collecting, and it is explicit: `make
+# collectors-down`. The browser tabs are the operator's to close, and so is
+# the decision to stop recording.
 #
-# Two honest limits on that teardown, since "tears down what it started" would
-# overstate it. `collectors-up` is idempotent, so collectors the operator had
-# already started are stopped too on exit; and it runs BEFORE the trap is
-# installed, so a Ctrl-C during the image build leaves them up (`make
-# collectors-down` recovers). Both are recoverable and neither touches data.
+# This is why the target does not try to stop only what it started. It has no
+# way to tell — `collectors-up` is idempotent, so a demo cannot distinguish
+# the collectors it launched from the ones already running — and under the
+# rule above it does not need to: the answer is the same either way.
 #
-# `DEMO_CLEANUP` disarms the trap (`trap -`) as its first act. INT and EXIT
-# are both trapped and the shell runs the EXIT handler after the INT one, so
-# without that the whole teardown ran twice on Ctrl-C. That was free when the
-# handler was a bare `kill`; it is not free now that it also runs an
-# eight-service `docker compose rm -sf`.
+# `DEMO_CLEANUP` still disarms the trap (`trap -`) as its first act. INT and
+# EXIT are both trapped and the shell runs the EXIT handler after the INT one,
+# so without it the handler runs twice on Ctrl-C. That is harmless for a bare
+# `kill` and it is correct hygiene regardless.
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
 # The background half and its cleanup, hoisted into variables the way `FX_UP`
 # is: the Makefile linter caps a recipe body at 5 lines and counts
@@ -402,8 +401,7 @@ FRONTEND_LOG ?= /tmp/dropset-frontend.log
 # before these additions.
 DEMO_FRONTEND = $(MAKE) --no-print-directory frontend-localnet \
 	>$(FRONTEND_LOG) 2>&1 </dev/null
-DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null; \
-	$(MAKE) --no-print-directory collectors-down
+DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null
 .PHONY: demo
 demo: check-docker
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
@@ -534,12 +532,11 @@ indexer-down: check-docker
 # aged badly the first time a keyed venue published something other than FX.
 #
 # The gate is what keeps this target working on a machine with no credentials
-# at all: no enclave, no keyed step, one line saying so and the keyless four
-# come up regardless. Saying it out loud is deliberate — silence would let an
-# operator read a keyed-venue-less Grafana as healthy, which is the same
-# no-data-reads-as-fine trap the dashboards already have. A machine holding its
-# keys as plain exported environment variables rather than in the enclave runs
-# `$(FX_UP)` directly; the gate deliberately does not guess.
+# at all: the keyless four come up regardless, and a keyed half that cannot
+# start warns loudly without failing the run (see `KEYED_WARN` below for why
+# it is loud and why it is non-fatal). A machine holding its keys as plain
+# exported environment variables rather than in the enclave runs `$(FX_UP)`
+# directly; the gate deliberately does not guess.
 #
 # Grafana comes up with them, because a collector you cannot see is a
 # collector you cannot verify: the point of starting a feed is watching what
@@ -646,9 +643,36 @@ OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account '$(DROPSET_OP_ACCOUNT)',)
 FX_UP = docker compose -f infra/localnet/docker-compose.yml \
 	--profile fx up -d --build --quiet-pull postgres migrate oanda \
 	twelvedata alphavantage
-KEYED_UP = if [ -f $(FX_ENV) ]; then \
-	op run $(OP_ACCT) --env-file=$(FX_ENV) -- $(FX_UP); \
-	else echo 'No $(FX_ENV) (cp its .example) — keyed venues skipped.'; fi
+# A keyed bring-up that does not happen is LOUD, and it does not abort the
+# run. Loud because the failure is otherwise invisible in exactly the way that
+# matters: the keyless feeds are up, Grafana is green, and the three keyed
+# venues quietly record nothing — the same no-data-reads-as-healthy trap the
+# dashboards have. A one-line notice scrolls past under a compose build; a
+# banner does not.
+#
+# Non-fatal because this is now the default bring-up and sits on the `demo`
+# path: a 1Password hiccup should cost the keyed venues, not the whole stack.
+# The keyless four are unaffected by anything that goes wrong here, so the
+# useful thing to do is start them, say plainly what is missing, and continue.
+# The alternative — exit non-zero on a bad `op://` reference, treating it as
+# the config bug it usually is — was the road not taken; it would have made
+# `make demo` fail on a credential problem that has nothing to do with the
+# demo.
+#
+# Both failure modes route through the same banner: no enclave file at all,
+# and an `op run` that cannot resolve (not signed in, bad reference, wrong
+# account). `op run` resolves eagerly, so the second is caught here rather
+# than by a collector that 401s a minute later.
+KEYED_WARN = printf '\n%s\n%s\n%s\n%s\n%s\n\n' \
+	'=====================================================================' \
+	'  WARNING — the keyed venues are NOT running.' \
+	"  Reason: $$reason" \
+	'  OANDA, Twelve Data and Alpha Vantage will record nothing.' \
+	'====================================================================='
+KEYED_UP = if [ ! -f $(FX_ENV) ]; then \
+	reason='no $(FX_ENV) (cp its .example)'; $(KEYED_WARN); \
+	elif ! op run $(OP_ACCT) --env-file=$(FX_ENV) -- $(FX_UP); then \
+	reason='op run could not resolve the credentials'; $(KEYED_WARN); fi
 
 # Localnet bot stack: the maker bot (infra/localnet). It signs with the repo
 # keys/ keypairs and reaches the host-run validator at
