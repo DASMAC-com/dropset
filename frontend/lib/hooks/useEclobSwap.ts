@@ -121,9 +121,10 @@ export function useEclobSwap(): UseDflowSwap {
       // untouched and the natural next action is to retry, so keeping the
       // amount saves the user re-typing it.
       if (treatAsFilled) setAmount("");
-      // Emitted either way: a no-fill still creates the taker's output ATA
-      // (a separate instruction, outside the swap's rollback) and spends the
-      // network fee, so the balances on screen are stale in both cases.
+      // Emitted either way: a no-fill still spends the network fee, and on a
+      // first-time swap into the output token the rent for that ATA as well
+      // (a separate instruction, outside the swap's rollback). So the balances
+      // on screen are stale in both cases.
       emit("swapSucceeded");
     } catch (e) {
       const err =

@@ -14,43 +14,47 @@ const OWNER = address("11111111111111111111111111111112");
  * A route carrying only the fields `settlementFor` reads. Cast because the
  * full `EclobRoute` also carries the market bytes and price encoding, none of
  * which this derivation touches.
+ *
+ * `outputMint` is a deliberate SENTINEL rather than the realistic base-on-buy
+ * / quote-on-sell value. `settlementFor` returns that field verbatim, so
+ * supplying the realistic value and then asserting it would only test this
+ * fixture's own arithmetic; a third address proves the field is passed through
+ * rather than re-derived. The one thing the function actually computes is
+ * `inputMint`, which is what the two side tests below pin.
  */
+const OUTPUT_SENTINEL = address("EURCeThrvC3KKDyZEvKSXBgx5aBQBZWkozH3F45CH4rU");
+
 const routeFor = (side: "buy" | "sell"): EclobRoute =>
   ({
     side,
     baseMint: BASE,
     quoteMint: QUOTE,
-    // The SDK derives this from `side` the same way: the leg the taker
-    // receives is base on a buy, quote on a sell.
-    outputMint: side === "buy" ? BASE : QUOTE,
+    outputMint: OUTPUT_SENTINEL,
   }) as unknown as EclobRoute;
 
 describe("settlementFor", () => {
-  // A transposition here is silent and user-visible: both mints belong to the
-  // taker, so the balance reader finds both, measures each in the wrong
-  // direction, and its coherence check then withholds the amounts on a swap
-  // that really filled.
-  it("spends quote and receives base on a buy", () => {
-    expect(settlementFor(routeFor("buy"), OWNER)).toEqual({
-      owner: OWNER,
-      inputMint: QUOTE,
-      outputMint: BASE,
-    });
+  // The derivation that matters. A transposition here is silent and
+  // user-visible: both mints belong to the taker, so the balance reader finds
+  // both, measures each in the wrong direction, and its coherence check then
+  // withholds the amounts on a swap that really filled.
+  it("spends the quote leg on a buy", () => {
+    expect(settlementFor(routeFor("buy"), OWNER).inputMint).toBe(QUOTE);
   });
 
-  it("spends base and receives quote on a sell", () => {
-    expect(settlementFor(routeFor("sell"), OWNER)).toEqual({
-      owner: OWNER,
-      inputMint: BASE,
-      outputMint: QUOTE,
-    });
+  it("spends the base leg on a sell", () => {
+    expect(settlementFor(routeFor("sell"), OWNER).inputMint).toBe(BASE);
   });
 
-  it("never reports the same mint on both legs", () => {
+  it("passes the route's output mint through untouched", () => {
     for (const side of ["buy", "sell"] as const) {
-      const ref = settlementFor(routeFor(side), OWNER);
-      expect(ref.inputMint).not.toBe(ref.outputMint);
+      expect(settlementFor(routeFor(side), OWNER).outputMint).toBe(
+        OUTPUT_SENTINEL,
+      );
     }
+  });
+
+  it("carries the owner through", () => {
+    expect(settlementFor(routeFor("buy"), OWNER).owner).toBe(OWNER);
   });
 });
 

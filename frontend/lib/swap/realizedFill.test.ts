@@ -293,6 +293,30 @@ describe("readRealizedFill", () => {
     expect(realized).toBe(null);
   });
 
+  // The gate must read BOTH legs. A malformed output entry clears `seen` for
+  // that mint only, so a one-sided gate would skip here and assert "did not
+  // fill" while the input leg still showed the taker spending 600.
+  it("declines on a spend the events deny, even with the output leg poisoned", async () => {
+    const realized = await readRealizedFill(
+      rpcReturning(
+        tx([], {
+          pre: [
+            balance(IN_MINT, OWNER, "1000"),
+            balance(OUT_MINT, OWNER, "50"),
+          ],
+          post: [
+            balance(IN_MINT, OWNER, "400"),
+            balance(OUT_MINT, OWNER, "not-a-number"),
+          ],
+        }),
+      ),
+      SIGNATURE,
+      REF,
+    );
+
+    expect(realized).toBe(null);
+  });
+
   // A movement in the wrong direction is a contradiction, not a small number:
   // withhold the amounts so the caller falls back to its quote rather than
   // displacing it with a plausible zero.

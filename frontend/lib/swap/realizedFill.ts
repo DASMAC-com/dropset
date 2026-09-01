@@ -259,12 +259,22 @@ export async function readRealizedFill(
     (event) => String(event.taker) === ref.owner,
   );
 
-  // Positive proof of receipt outranks an absent event. If the taker's output
-  // balance demonstrably rose, the swap filled whatever the event list says,
-  // and the disagreement means this receipt is not describing what this reader
-  // thinks it is — so decline rather than emit a confident "did not fill"
-  // against evidence of funds moving.
-  if (!filled && out.seen && out.delta > 0n) return null;
+  // Positive proof of movement outranks an absent event. If the taker's output
+  // balance demonstrably rose, or their input balance demonstrably fell, the
+  // swap moved funds whatever the event list says — and the disagreement means
+  // this receipt is not describing what this reader thinks it is. Decline,
+  // rather than emit a confident "did not fill" against evidence to the
+  // contrary.
+  //
+  // Both legs are checked, not just the output. Each is spoiled
+  // independently — one unparseable entry clears `seen` for its own mint only
+  // — so reading a single leg would let a malformed output entry skip this
+  // gate entirely while the input leg still showed the spend, reaching the
+  // very assertion this guard exists to prevent through the side it was not
+  // looking at.
+  const movedOut = out.seen && out.delta > 0n;
+  const movedIn = inp.seen && inp.delta < 0n;
+  if (!filled && (movedOut || movedIn)) return null;
 
   // The input delta is negative when the taker spent, so flip it. A movement
   // in the wrong direction (a negative output, or a positive input) is a
