@@ -65,6 +65,18 @@ const currencies = JSON.parse(
   readFileSync(resolve(here, "../lib/data/currencies.json"), "utf8"),
 );
 
+// Pick up frontend/.env.local, the same file `next dev` reads, so a local run
+// need not restate the fee wallet on the command line. Best-effort: the file
+// is absent in CI, where the address arrives as a repository secret. Node
+// leaves already-set variables alone, so a value passed explicitly on the
+// command line still wins over a stale file — which matters here, because a
+// silently overridden owner would send real transactions to the wrong wallet.
+try {
+  process.loadEnvFile(resolve(here, "../.env.local"));
+} catch {
+  // No .env.local — fall through to the real environment.
+}
+
 const CHECK_ONLY = process.argv.includes("--check");
 
 // The fee wallet's public address. Deliberately NOT committed — it is
@@ -243,17 +255,34 @@ const plan = await Promise.all(
   }),
 );
 
+// A transport failure here is an inconclusive run, not a missing vault, and
+// the two must never look alike: reporting "vault missing" because an RPC
+// refused us would send someone to spend rent on an account that already
+// exists. Exit 2 to keep it distinguishable from the exit 1 that means a
+// vault is genuinely absent, and report it without a stack — this runs as a
+// merge gate, where the actionable line is which endpoint failed.
 const accountInfos = [];
-for (const batch of chunk(plan, ACCOUNTS_PER_QUERY)) {
-  const { value } = await withRetry("getMultipleAccounts", () =>
-    rpc
-      .getMultipleAccounts(
-        batch.map((p) => p.ata),
-        { commitment: "confirmed" },
-      )
-      .send(),
+try {
+  for (const batch of chunk(plan, ACCOUNTS_PER_QUERY)) {
+    const { value } = await withRetry("getMultipleAccounts", () =>
+      rpc
+        .getMultipleAccounts(
+          batch.map((p) => p.ata),
+          { commitment: "confirmed" },
+        )
+        .send(),
+    );
+    accountInfos.push(...value);
+  }
+} catch (err) {
+  console.error(
+    `\nERROR: could not read account state from ${RPC_URL} after ` +
+      `${RPC_ATTEMPTS} attempts: ${err.message}\n` +
+      `This is inconclusive, not a verdict — no vault has been shown ` +
+      `missing. Set RPC_URL to an endpoint that serves getMultipleAccounts ` +
+      `and re-run.`,
   );
-  accountInfos.push(...value);
+  process.exit(2);
 }
 
 const missing = plan.filter((_, i) => accountInfos[i] === null);
