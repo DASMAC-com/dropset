@@ -416,7 +416,7 @@ DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null
 .PHONY: demo
 demo: check-docker
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
-	$(MAKE) --no-print-directory collectors-up
+	$(MAKE) --no-print-directory collectors-up KEYED_PAUSE=1
 	$(call open-browser,3200)
 	@set -m; $(DEMO_FRONTEND) & group=$$!; set +m; \
 	trap '$(DEMO_CLEANUP)' INT TERM EXIT; $(MAKE) --no-print-directory tui
@@ -699,12 +699,25 @@ FX_UP = docker compose -f infra/localnet/docker-compose.yml \
 #
 # `KEYED_WARN` is not self-contained: it reads a `reason` shell variable its
 # caller must set in the same shell. `KEYED_UP` below is that caller.
+# `demo` passes `KEYED_PAUSE=1`, which holds the terminal after the banner
+# until the operator acknowledges it. That target is the whole reason the
+# banner has to be loud and the only place it is not: `demo` opens a Grafana
+# tab on the next line — taking window focus — and the TUI takes the
+# alternate screen on the line after, so the warning is behind a green
+# dashboard within a second of printing and does not resurface until quit.
+# Every other caller prints and carries on.
+#
+# Gated on stdin being a tty as well, so a script, a CI job or a backgrounded
+# run never blocks on a prompt nobody is there to answer.
+KEYED_PAUSE =
 KEYED_WARN = printf '\n%s\n%s\n%s\n%s\n%s\n\n' \
 	'=====================================================================' \
 	'  WARNING — the keyed venues are NOT running.' \
 	"  Reason: $$reason" \
 	'  OANDA, Twelve Data and Alpha Vantage will record nothing.' \
-	'====================================================================='
+	'====================================================================='; \
+	if [ -n '$(KEYED_PAUSE)' ] && [ -t 0 ]; then \
+	printf '  press enter to continue… '; read -r _; printf '\n'; fi
 KEYED_UP = if [ ! -f "$(FX_ENV)" ]; then \
 	reason='no $(FX_ENV) (cp its .example)'; $(KEYED_WARN); \
 	elif ! op run $(OP_ACCT) --env-file=$(FX_ENV) -- $(FX_UP); then \
