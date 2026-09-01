@@ -1,5 +1,6 @@
-// The wall-clock half of the dual-domain expiry gate, checked against the
-// chain rather than taken on trust from the visitor's device.
+// The client-side corrections behind the dual-domain expiry gate: the
+// wall-clock half, checked against the chain rather than taken on trust from
+// the visitor's device, and the slot half's forward margin.
 //
 // A resting level is live only inside *both* of its deadlines — a slot
 // deadline and a wall-clock one — and the engine measures the second against
@@ -7,9 +8,13 @@
 // page. Feeding the book mirror a raw `Date.now()` therefore predicts the
 // engine's ruling with an unbounded consumer clock: a browser a minute slow
 // renders levels the engine has already dropped (the swap then soft-reverts on
-// `min_out`, and the taker still pays fees and any ATA rent), and one a minute
-// fast hides live depth so the book reads thin. Tens of seconds of skew is
-// ordinary on consumer machines.
+// `min_out` — moving no funds, but still spending the network fee and any
+// first-time ATA rent), and one a minute fast hides live depth so the book
+// reads thin. Tens of seconds of skew is ordinary on consumer machines.
+//
+// The slot half needs no chain check — the slot *is* a chain read — but it
+// needs the same forward nudge for a different reason: it is read at
+// `confirmed`, which is already behind head. See {@link gateNowSlot}.
 //
 // Every poll tick already reads the current slot, so cluster time is one
 // `getBlockTime(slot)` away — a skew detector and a fallback for the price of
@@ -42,8 +47,9 @@
 // noise — but it leaves the gate permanently ~5 s behind cluster time at
 // *every* skew, including the tens-of-seconds case the module exists for.
 // That residue points the expensive way: a gate behind cluster time shows
-// levels the engine has already dropped, costing the taker a soft revert
-// plus fees, where a gate ahead of it merely hides a sliver of depth. The
+// levels the engine has already dropped, costing the taker a soft revert —
+// no funds moved, the network fee spent — where a gate ahead of it merely
+// hides a sliver of depth. The
 // ramp instead pays a bounded, temporary version of that error inside the
 // band — where the stakes are smallest, because the skew is small — and is
 // exact once past it.
@@ -74,7 +80,7 @@
 // the engine re-derives its own `now_unix` regardless, so this gate can
 // never authorize a fill the engine would refuse.
 
-import { type WallTime, wallTime } from "@dropset/sdk";
+import { type SlotTime, slotTime, type WallTime, wallTime } from "@dropset/sdk";
 
 import {
   CLOCK_PLAUSIBLE_MAX_UNIX,
@@ -83,6 +89,7 @@ import {
   CLOCK_SAFETY_MARGIN_SECS,
   CLOCK_SKEW_FULL_CORRECTION_SECS,
   CLOCK_SKEW_TOLERANCE_SECS,
+  SLOT_SAFETY_MARGIN_SLOTS,
 } from "../data/timings";
 
 /**
@@ -281,3 +288,31 @@ export const gateNowUnix = (): WallTime => {
     offsetSecs === null ? device : device + skewCorrectionSecs(offsetSecs);
   return wallTime(corrected + CLOCK_SAFETY_MARGIN_SECS);
 };
+
+/**
+ * The slot to gate resting levels against, given the `confirmed` slot the
+ * caller has already read: that slot nudged forward by
+ * {@link SLOT_SAFETY_MARGIN_SLOTS}.
+ *
+ * The slot half of the gate needs no chain check — it *is* a chain read — but
+ * it does need the same forward margin {@link gateNowUnix} applies, and for a
+ * sharper reason. A `confirmed` slot is behind head when it is read and
+ * further behind by the time the transaction lands, so passing it raw reports
+ * levels as more alive than the engine will find them. That is precisely the
+ * over-showing the wall margin exists to prevent, arriving through the other
+ * conjunct.
+ *
+ * Takes the slot rather than reading one so the gate and the account fetch
+ * stay pinned to the same commitment (see `useOrderBook`), and so a caller
+ * pays one `getSlot` for both this and {@link syncChainClock}.
+ *
+ * Pass the **raw** slot to {@link syncChainClock} and the margined one only
+ * here: `getBlockTime` is asking for the production time of a block that
+ * exists, and a slot nudged past head has none.
+ *
+ * Returns a `SlotTime`, the SDK's slot-domain brand — the counterpart to
+ * `gateNowUnix`'s `WallTime`, so the two halves of the gate cannot be passed
+ * to each other's parameter.
+ */
+export const gateNowSlot = (confirmedSlot: bigint | number): SlotTime =>
+  slotTime(Number(confirmedSlot) + SLOT_SAFETY_MARGIN_SLOTS);

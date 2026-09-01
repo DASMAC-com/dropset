@@ -2,6 +2,7 @@
 
 import {
   type EclobRoute,
+  type EclobRouteInput,
   platformFeeBpsFor,
   resolveEclobRoute as sdkResolveEclobRoute,
 } from "@dropset/sdk";
@@ -50,6 +51,36 @@ const dedupKey = (fromMint: string, toMint: string): string =>
 export type { EclobRoute };
 export { platformFeeBpsFor };
 
+// The app-side half of route resolution, on its own: the supported-stablecoin
+// gate plus the display-mint → on-chain-mint and token-program translation,
+// stopping short of the SDK lookup.
+//
+// Extracted because two callers need it and only one of them wants a resolved
+// route. `resolveEclobRoute` below goes on to do the market search; the router
+// quote hook needs exactly this shape *unresolved*, to hand the SDK's router
+// as one leg among several — so it cannot simply call the resolver, and before
+// this it restated the gate and all four translations inline. Two copies of
+// "which pairs are routable, and under which mints" is the kind of duplication
+// that goes wrong quietly: a new mint kind or a changed localnet substitution
+// has to land in both, or the two callers disagree about what is tradable.
+//
+// Returns null on exactly the conditions that rule a pair out before any chain
+// read — a missing or degenerate pair, or either side not being a supported
+// stablecoin.
+export function eclobRouteInput(
+  fromMint: string,
+  toMint: string,
+): EclobRouteInput | null {
+  if (!fromMint || !toMint || fromMint === toMint) return null;
+  if (!stablecoinByMint(fromMint) || !stablecoinByMint(toMint)) return null;
+  return {
+    inputMint: address(onchainMint(fromMint)),
+    outputMint: address(onchainMint(toMint)),
+    inputTokenProgram: PROGRAM_FOR_KIND[onchainTokenProgram(fromMint)],
+    outputTokenProgram: PROGRAM_FOR_KIND[onchainTokenProgram(toMint)],
+  };
+}
+
 // Resolve the eCLOB route for a from→to pair. The market-orientation search
 // itself lives in the SDK (`@dropset/sdk` → resolveEclobRoute); what stays here
 // is the app-specific part the SDK can't know: the supported-stablecoin gate,
@@ -70,23 +101,16 @@ export async function resolveEclobRoute(
   fromMint: string,
   toMint: string,
 ): Promise<EclobRoute | null> {
-  if (!fromMint || !toMint || fromMint === toMint) return null;
-  if (!stablecoinByMint(fromMint) || !stablecoinByMint(toMint)) return null;
+  const routeInput = eclobRouteInput(fromMint, toMint);
+  if (!routeInput) return null;
 
   const key = dedupKey(fromMint, toMint);
   const pending = inFlight.get(key);
   if (pending) return pending;
 
-  const promise = sdkResolveEclobRoute(
-    rpc,
-    {
-      inputMint: address(onchainMint(fromMint)),
-      outputMint: address(onchainMint(toMint)),
-      inputTokenProgram: PROGRAM_FOR_KIND[onchainTokenProgram(fromMint)],
-      outputTokenProgram: PROGRAM_FOR_KIND[onchainTokenProgram(toMint)],
-    },
-    { commitment: "confirmed" },
-  )
+  const promise = sdkResolveEclobRoute(rpc, routeInput, {
+    commitment: "confirmed",
+  })
     // A rejection propagates to every caller sharing this lookup — callers that
     // treat a failure as "not yet" (the availability probe) keep doing so — but
     // it must not leave a poisoned entry behind, hence the unconditional drop.

@@ -68,6 +68,10 @@ tempfile = "3"
 # `decode_event_payload` owns the decode.
 [dev-dependencies]
 borsh = "1"
+# Read the frontend's currency data to pin each localnet mint's decimals
+# against the mainnet figure the app scales by (market.rs tests). Test-only:
+# the bootstrap itself never parses that file.
+serde_json = "1"
 
 [lib]
 name = "dropset_tui"

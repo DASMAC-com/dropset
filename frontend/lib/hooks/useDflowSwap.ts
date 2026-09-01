@@ -18,6 +18,16 @@ export type SwapStatus =
   | "signing" // tx handed to wallet for signing + submission
   | "confirming" // signature received, polling RPC for on-chain confirmation
   | "success"
+  // Confirmed on-chain, but nothing moved: the eCLOB program soft-reverts a
+  // fill below `min_out` and still returns a successful transaction, so this
+  // is neither a success nor an error. Its own outcome rather than a flag on
+  // `result` because the two need different chrome and different follow-up —
+  // the user's funds are untouched and the swap is worth retrying.
+  //
+  // Only the eCLOB path can produce it; the aggregator route reverts in the
+  // ordinary way and lands on "error". Shared here because both hooks return
+  // one `UseDflowSwap`, so the panel switches on one union either way.
+  | "no-fill"
   | "error";
 
 // Augment the bare DFlow result with the from/to symbols captured at the

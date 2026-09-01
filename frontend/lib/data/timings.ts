@@ -95,7 +95,10 @@ export const CLOCK_SKEW_FULL_CORRECTION_SECS = 10;
 // read that follows it; on the 2 s quote paths it is the tick alone, which is
 // why it is a nudge rather than a guarantee. The two directions are not
 // symmetric — briefly under-showing a dying level costs a sliver of displayed
-// depth, while over-showing one costs the taker a soft revert plus fees.
+// depth, while over-showing one costs the taker a swap that soft-reverts: it
+// moves no funds but still spends the network fee, and the rent for a
+// first-time output ATA (created by a separate instruction that the swap's
+// own rollback does not reach).
 export const CLOCK_SAFETY_MARGIN_SECS = 2;
 
 // How long one chain reading serves before another is taken. Skew drifts at
@@ -118,6 +121,32 @@ export const CLOCK_RESYNC_INTERVAL_SECS = 30;
 // shown was produced earlier — and the ceiling 2100-01-01.
 export const CLOCK_PLAUSIBLE_MIN_UNIX = 1_735_689_600;
 export const CLOCK_PLAUSIBLE_MAX_UNIX = 4_102_444_800;
+
+// ───────────── Expiry gate slot ─────────────
+
+// The slot domain's counterpart to CLOCK_SAFETY_MARGIN_SECS, and it exists for
+// the same asymmetry: expiry is dual-domain, so a gate that corrects only the
+// wall half still over-shows depth through the slot half.
+//
+// The slot the gate is handed is read at `confirmed` commitment, which is
+// already behind the head the engine will judge against, and the transaction
+// then takes further slots to land. Left uncorrected the slot conjunct
+// systematically reports levels as more alive than they are — hiding exactly
+// the dying depth the wall margin was added to hide, and on the swap path
+// sizing the `minOut` that the same stale reading then makes unreachable.
+//
+// Two slots of commitment lag plus two of landing. Deliberately sized *in
+// slots* rather than derived from the seconds margin by a slot-duration
+// conversion: SIMD-0525 stages slots 400 → 200 ms without touching
+// `unix_timestamp` (docs/architecture.md), so any such conversion would
+// silently re-scale this margin at the switch — and the two domains are meant
+// to answer different failure modes, not to be two spellings of one.
+//
+// Small enough that it cannot blank a healthy book: the tightest slot TIF the
+// maker ladder writes is 120 slots (bots/maker-bot's DEFAULT_LADDER), so this
+// spends ~3% of it, and that ladder is itself held to "the slot conjunct must
+// never govern a healthy book" by a test in the same file.
+export const SLOT_SAFETY_MARGIN_SLOTS = 4;
 
 // ───────────── Recent fills ─────────────
 

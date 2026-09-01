@@ -812,6 +812,82 @@ mod tests {
         }
     }
 
+    /// The localnet mint decimals declared here and the frontend's *mainnet*
+    /// `decimals` must agree for every demo market, and nothing but this test
+    /// makes them.
+    ///
+    /// The frontend's localnet overlay (`currencies.localnet.json`) carries a
+    /// mint and a token program but no decimals, so the app keeps scaling both
+    /// displayed prices and the submitted swap amount by the mainnet figure
+    /// while transacting against the mock mint these decimals create. Let the
+    /// two drift and localnet silently mis-scales — a wrong number in front of
+    /// a prospect on the demo path — and nothing downstream can catch it: the
+    /// program hands the mint's own decimals to the checked transfer, so the
+    /// CPI is consistent with itself either way. Note a six-versus-six pair
+    /// hides a drift entirely, which is most of this roster.
+    ///
+    /// Reads the frontend's data rather than restating it; a copy here would
+    /// just be one more list to keep in step.
+    #[test]
+    fn base_decimals_match_the_frontend_currency_data() {
+        use std::collections::HashMap;
+
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../frontend/lib/data");
+        let read = |name: &str| -> serde_json::Value {
+            let path = format!("{dir}/{name}");
+            let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {path}: {e}"))
+        };
+        let currencies = read("currencies.json");
+        let localnet = read("currencies.localnet.json");
+
+        // symbol -> mainnet decimals, flattened across every listed currency.
+        let mut mainnet_decimals: HashMap<String, u64> = HashMap::new();
+        for entry in currencies
+            .as_object()
+            .expect("currencies.json is a currency-keyed object")
+            .values()
+        {
+            for coin in entry["stablecoins"]
+                .as_array()
+                .expect("each currency carries a stablecoins array")
+            {
+                mainnet_decimals.insert(
+                    coin["symbol"]
+                        .as_str()
+                        .expect("symbol is a string")
+                        .to_owned(),
+                    coin["decimals"].as_u64().expect("decimals is a number"),
+                );
+            }
+        }
+
+        let check = |symbol: &str, decimals: u8| {
+            let listed = mainnet_decimals.get(symbol).copied().unwrap_or_else(|| {
+                panic!("{symbol} is not listed in the frontend's currencies.json")
+            });
+            assert_eq!(
+                listed,
+                u64::from(decimals),
+                "{symbol}: frontend scales by {listed} decimals, localnet mint is \
+                 created with {decimals}"
+            );
+            assert!(
+                localnet.get(symbol).is_some(),
+                "{symbol} has no entry in currencies.localnet.json, so the \
+                 frontend would address its mainnet mint on localnet"
+            );
+        };
+
+        for m in MARKETS {
+            check(m.symbol, m.base_decimals);
+        }
+        // The shared quote leg is scaled by exactly the same path. Its symbol
+        // is spelled out because the roster only carries it as a keypair
+        // filename (`QUOTE_KEYPAIR_FILE`), not as a symbol.
+        check("USDC", QUOTE_DECIMALS);
+    }
+
     /// Every market names a Pyth FX feed, and each id is a distinct 32-byte
     /// hex string. A duplicated id would silently anchor two currencies on one
     /// cross — the copy-paste failure this roster is most exposed to.
