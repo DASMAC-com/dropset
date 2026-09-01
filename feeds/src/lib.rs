@@ -28,6 +28,17 @@
 //! onto a channel, so a consumer gets a per-feed status row for an adapter it
 //! never named.
 //!
+//! **A push source needs the other one.** Observability splits on how a source
+//! drives, because the runner's seam can only report what the transport
+//! delivered — which for a subscription is the last *record*, not the last
+//! healthy socket, so a quiet market and a dead one look identical there. So a
+//! poll source reports through [`HealthReporter`] and a push source reports its
+//! transport state through [`LivenessReporter`], from the producer's own thread
+//! rather than the drive loop. The two are separate seams on purpose, not one
+//! seam with a mode: they are measured by different code, mean different
+//! things, and are alerted on differently — silence is a failure for one and
+//! the healthy state for the other.
+//!
 //! One wrapper sits across the sink axis rather than on it:
 //! [`BestEffortSink`] absorbs its inner sink's failures instead of
 //! propagating them, trading the runner's crash-and-resume contract for
@@ -42,8 +53,10 @@
 mod backfill;
 mod best_effort;
 mod cursor;
+mod damped;
 mod forward;
 mod health;
+mod liveness;
 mod record;
 mod runner;
 pub mod secrets;
@@ -55,7 +68,14 @@ pub use backfill::{Backfill, BackfillStep};
 pub use best_effort::BestEffortSink;
 pub use cursor::{Cursor, CursorStore};
 pub use forward::{forward_channel, ForwardSink};
-pub use health::{sanitize_error, HealthOutcome, HealthReporter, HealthUpdate, MAX_ERROR_CHARS};
+pub use health::{
+    redact_to_origin, sanitize_error, HealthOutcome, HealthReporter, HealthUpdate, MAX_ERROR_CHARS,
+};
+// Not gated behind `stream`, on purpose: these are the vocabulary a push
+// producer reports in, and a producer need not funnel through
+// [`ChannelSource`] to have a socket worth reporting on. Gating would make a
+// consumer enable a transport feature to name a state.
+pub use liveness::{LinkState, LivenessReporter, LivenessUpdate};
 pub use record::Batch;
 pub use runner::{
     run, run_until, run_until_with_metrics, run_with_metrics, BatchStats, FeedMetrics, NoopMetrics,

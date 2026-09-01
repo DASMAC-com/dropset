@@ -54,7 +54,8 @@ use dropset_fair_value::{Candidates, FairValue, FusionReport, Legs};
 // apart — see its own doc there for why the bound is a character count.
 use dropset_feeds::{
     connect_lazy, run_until, sanitize_error, BestEffortSink, ChannelSource, HealthOutcome,
-    HealthReporter, HealthUpdate, RunConfig, Sink, StoreSink, StoreWriter, MAX_ERROR_CHARS,
+    HealthReporter, HealthUpdate, LinkState, LivenessReporter, LivenessUpdate, RunConfig, Sink,
+    StoreSink, StoreWriter, MAX_ERROR_CHARS,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -246,12 +247,12 @@ pub struct ContributionSample {
 
 /// What the telemetry channel carries.
 ///
-/// One channel for all three kinds, so a tick's sample, its legs, and any feed
-/// liveness that landed alongside are written in **one transaction** by one
-/// [`StoreWriter`] — rather than three runners racing three connections to
-/// describe the same instant.
+/// One channel for all five kinds, so a tick's sample, its legs, its per-source
+/// contributions, and any feed liveness that landed alongside are written in
+/// **one transaction** by one [`StoreWriter`] — rather than five runners racing
+/// five connections to describe the same instant.
 /// `Sample` is boxed because it is an order of magnitude wider than the other
-/// two variants, and an unboxed enum is sized for its largest: every queued
+/// variants, and an unboxed enum is sized for its largest: every queued
 /// record — including a one-word health update — would otherwise reserve the
 /// full sample's footprint, across a channel `CHANNEL_CAP` deep.
 #[derive(Debug)]
@@ -259,12 +260,24 @@ pub enum Record {
     Sample(Box<Sample>),
     Legs(Vec<LegSample>),
     Contributions(Vec<ContributionSample>),
+    /// A **polled** source's turn, from the framework runner's metrics seam.
     Health(HealthUpdate),
+    /// A **push** source's transport transition, from the producer's own
+    /// thread. A separate variant rather than another `HealthUpdate` shape
+    /// because it lands in a separate table for reasons the migration spells
+    /// out — the short version being that silence means the opposite thing.
+    Liveness(LivenessUpdate),
 }
 
 impl From<HealthUpdate> for Record {
     fn from(update: HealthUpdate) -> Self {
         Record::Health(update)
+    }
+}
+
+impl From<LivenessUpdate> for Record {
+    fn from(update: LivenessUpdate) -> Self {
+        Record::Liveness(update)
     }
 }
 
@@ -305,6 +318,24 @@ impl Telemetry {
     /// source without metrics.
     pub fn health_reporter(&self) -> Option<HealthReporter<Record>> {
         self.tx.clone().map(HealthReporter::new)
+    }
+
+    /// A [`LivenessReporter`] onto this channel for one **push** source, named
+    /// `feed`.
+    ///
+    /// Takes the feed name where [`Self::health_reporter`] does not, and the
+    /// asymmetry is the two seams': the runner drives many sources through one
+    /// health recorder and supplies each name per turn, while a push
+    /// transport's state is only observable to the one producer that owns it.
+    /// So there is no auto-registration to be had here — a push source appears
+    /// in `push_health` because its producer was handed one of these, which is
+    /// why the wiring at the call site says so explicitly.
+    ///
+    /// A disabled handle yields `None`, and the producer then runs unreported.
+    pub fn liveness_reporter(&self, feed: &str) -> Option<LivenessReporter<Record>> {
+        self.tx
+            .clone()
+            .map(|tx| LivenessReporter::new(tx, feed.to_string()))
     }
 
     /// Offer one record, dropping it if the channel is full or the drain is
@@ -435,6 +466,7 @@ impl StoreWriter for TelemetryWriter {
                     n
                 }
                 Record::Health(update) => write_health(tx, update).await?,
+                Record::Liveness(update) => write_liveness(tx, update).await?,
             };
         }
         Ok(written)
@@ -544,6 +576,55 @@ async fn write_health(
                 .bind(&update.feed)
                 .bind(update.at)
                 .bind(error)
+                .execute(&mut **tx)
+                .await?
+        }
+    };
+    Ok(res.rows_affected())
+}
+
+/// Upsert one push source's transport state.
+///
+/// Three statements rather than one with NULLs, on the same reasoning as
+/// [`write_health`]: coming up must not touch the retained diagnosis, and a
+/// clean close must not null it out — a socket the venue closed has nothing to
+/// say about *why*, and binding a NULL there would erase the last thing an
+/// operator had to go on. The queries carry the per-column detail.
+///
+/// The error text arrives already redacted: [`LivenessReporter::failed`] puts
+/// the whole rendered cause chain through the framework's `redact_to_origin`,
+/// reducing every URL in it to scheme and host. That is the guard this column
+/// needs rather than the transport-level redaction `feed_health` relies on — a
+/// push producer's error never passes through the HTTP client that applies it
+/// — and it is deliberately stronger than the query-only `sanitize_error` used
+/// for [`Sample::tick_error`], because a subscribe URL can carry its
+/// credential in a path segment or in userinfo as readily as in a query.
+async fn write_liveness(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    update: &LivenessUpdate,
+) -> Result<u64> {
+    let res = match &update.state {
+        LinkState::Up => {
+            sqlx::query(include_str!("../queries/push_health_up.sql"))
+                .bind(&update.feed)
+                .bind(update.at)
+                .execute(&mut **tx)
+                .await?
+        }
+        LinkState::Down { reason: None } => {
+            sqlx::query(include_str!("../queries/push_health_down.sql"))
+                .bind(&update.feed)
+                .bind(update.at)
+                .execute(&mut **tx)
+                .await?
+        }
+        LinkState::Down {
+            reason: Some(reason),
+        } => {
+            sqlx::query(include_str!("../queries/push_health_failed.sql"))
+                .bind(&update.feed)
+                .bind(update.at)
+                .bind(reason)
                 .execute(&mut **tx)
                 .await?
         }

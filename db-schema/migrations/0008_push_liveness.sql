@@ -1,0 +1,151 @@
+-- Transport liveness for **push** feed sources: whether a subscription's
+-- socket is currently connected (docs/data-feeds.md §4, §7).
+--
+-- WHY THIS IS NOT A COLUMN ON `feed_health`.
+--
+-- `feed_health` (0003) is explicit that it covers *polled* sources only, and
+-- that a push source "needs its own liveness signal, and this table is not
+-- it". This is that signal, and the boundary is not tidiness — the two tables
+-- answer questions that are measured by different code and alerted on in
+-- opposite directions:
+--
+--   * `feed_health` is written by the framework **runner**, once per turn of a
+--     source's drive loop, and its staleness rule reads `last_ok_at`. Silence
+--     there is a failure.
+--   * this table is written by the **producer** — the thread that opened the
+--     socket, watched it close, and slept before re-opening it — once per
+--     transport transition. Silence here is the healthy state, and duration
+--     of silence is never an alert.
+--
+-- Folding the two into one table would put a row's meaning at the mercy of
+-- which writer last touched it, and would invite exactly the alert the
+-- separation exists to prevent: a `last_ok_at`-style rule firing on a market
+-- that simply had no fills for half an hour. The maker's fill subscription is
+-- the first consumer; a `feed` value here is a `feeds` `Source::name()`, so a
+-- row joins to `feed_health` by equality when a source somehow has both.
+--
+-- WHY A STATE AND TWO COUNTERS RATHER THAN A TIMESTAMP TO COMPARE.
+--
+-- The whole point is that no message-recency bound is defined for a push
+-- source, so the fact to alert on has to be the state itself: `state <> 'up'`.
+-- That is a level an operator can page on directly with no threshold to tune
+-- and no false positive on a quiet market. The counters exist because a link
+-- that is flapping — reconnecting every few seconds — reads `up` at almost any
+-- instant an alert rule samples it, so the state alone cannot see the one
+-- pathology that most resembles a working feed.
+--
+-- Be precise about what the counters can and cannot do, because "alert on the
+-- rate" does not follow from them. This table is last-state-only, so a query
+-- returns the current cumulative count and nothing to difference it against:
+-- no threshold rule can compute a delta from stored history here. What they
+-- give is a number an operator can read twice — on the panel, or across two
+-- looks at the row — and a `connects` that has climbed into the thousands on a
+-- link reading `up` is unmistakable. Paging on a flap rate would need a
+-- history this table deliberately does not keep, and is left to whoever
+-- decides that a flapping link is worth a row per transition.
+--
+-- For that eyeball reading to mean anything the counters have to count
+-- transitions rather than writes, which is why the upserts increment
+-- conditionally on the stored state; see the column comments below.
+--
+-- INTEGRITY. `last_error` here carries arbitrary text a *producer's client*
+-- produced, and its guard is deliberately **not** the one `feed_health`'s
+-- same-named column relies on. That column trusts the `feeds` HTTP transport's
+-- `HttpClient::redact_query`, which rewrites every query value that is not on
+-- an explicit benign allow-list before the error is wrapped. A push producer
+-- never reaches that pass at all — it is a method on the HTTP client, and the
+-- maker's fill subscription errors come from the Solana `PubsubClient`, which
+-- has no redaction of its own.
+--
+-- So this column's writer reduces every URL in the text to **scheme and host**
+-- (the framework's `redact_to_origin`), applied to the whole rendered cause
+-- chain rather than to an endpoint a caller formats in. Two things make that
+-- the right shape rather than the query strip used elsewhere:
+--
+--   * The subscribe URL is derived from the operator's RPC endpoint, and
+--     hosted providers authenticate by **path segment** (`/v2/<key>`) or by
+--     userinfo at least as often as by `?api-key=`. A query-only strip is
+--     documented as leaving both in clear, so it is the wrong axis here.
+--   * A wrapped transport error's own `Display` re-embeds the URL it failed to
+--     reach, so redacting only the prefix a caller interpolates looks complete
+--     and is not.
+--
+-- Nothing diagnostic is lost: a subscribe either reached the endpoint or did
+-- not, which is the opposite of the paged backfill `feed_health.last_error` is
+-- careful to keep legible.
+--
+-- Note this is a **stronger** guard than `maker_telemetry.tick_error`, which
+-- takes the query-only `sanitize_error`. The two are not on the same footing,
+-- and that is worth knowing rather than assuming: `tick_error` carries Solana
+-- RPC client text derived from the same `rpc_url`, so the path-segment shape
+-- described above reaches it. Narrowing that gap is separate work and is not
+-- attempted here.
+--
+-- No key, seed, or signer material appears in any column here, and none may be
+-- added.
+--
+-- Deliberately last-state rather than a history, matching `feed_health`: the
+-- question is "is this link up right now", and a row per transition would grow
+-- with a flapping socket — the case the counters already summarize — to serve
+-- a question nothing asks.
+CREATE TABLE push_health (
+    -- The `feeds` `Source::name()` of the push source, e.g. `maker-fills`.
+    -- One row per source, upserted; never a history.
+    feed            TEXT    PRIMARY KEY,
+    -- 'up' or 'down' — the transport's state as of `updated_at`.
+    --
+    -- Two states, not three: a failed subscribe and a dropped socket are the
+    -- same answer to "is this link carrying traffic", and why it is down is a
+    -- diagnosis rather than a state (see `last_error`). Constrained because
+    -- the values are closed and a writer's typo would otherwise read as a
+    -- third state that no alert rule matches — failing open, silently.
+    state           TEXT    NOT NULL CHECK (state IN ('up', 'down')),
+    -- When the link was last established. Emphatically **not** "when a record
+    -- last arrived": a source whose `last_up_at` is a week old and whose
+    -- `state` is 'up' has been connected for a week, which is healthy. Nothing
+    -- should ever measure staleness from this column.
+    last_up_at      BIGINT,
+    -- When the link last went down, whether it closed cleanly or failed.
+    last_down_at    BIGINT,
+    -- The most recent outage's diagnosis, when the producer had one — see the
+    -- INTEGRITY note above for what sanitizes it. Retained after recovery so
+    -- an operator can see what a now-connected link was failing with, and
+    -- deliberately **not** cleared by a later clean close: a socket the venue
+    -- closed is a state, not an error, so it has nothing to say here and must
+    -- not null out the last thing there was to go on.
+    last_error      TEXT,
+    -- When `last_error` was recorded. Read together with it: without this, a
+    -- retained diagnosis from an outage two days ago is indistinguishable from
+    -- the reason for the outage happening now.
+    last_error_at   BIGINT,
+    -- Transition counters, so a flapping link is distinguishable from a
+    -- steadily-connected one at a glance — the case `state` alone cannot see,
+    -- since a link reconnecting every few seconds samples as 'up' most of the
+    -- time.
+    --
+    -- They count **transitions**, not writes: the upserts increment only when
+    -- the stored `state` actually changes. That conditional is what makes the
+    -- column mean what this comment says, because a producer retrying an
+    -- unreachable endpoint re-writes its row every few seconds for the whole
+    -- outage — so an unconditional increment would render the most thoroughly
+    -- dead link in the table as the flappiest.
+    --
+    -- Cumulative since the *row* was created, not since the process started:
+    -- the row outlives a bot restart, so these keep accumulating. Read the
+    -- absolute value for the flapping question above — a `connects` in the
+    -- thousands on a link reading 'up' is unmistakable — but never read it as a
+    -- *rate* without differencing it over a window yourself, since the origin
+    -- is a row creation nothing records.
+    connects        BIGINT  NOT NULL DEFAULT 0,
+    disconnects     BIGINT  NOT NULL DEFAULT 0,
+    -- When the link last changed state, and nothing more.
+    --
+    -- Deliberately NOT a heartbeat, and it must not be read as one: this row
+    -- is written only on a transition, so a link that has been healthily up
+    -- for a week carries a week-old `updated_at`. It therefore cannot tell a
+    -- live producer from an abandoned row — and the naive reading inverts,
+    -- because a producer that dies runs its reporter's drop guard and stamps a
+    -- *fresh* timestamp on the way out. "Is the bot alive at all" is the
+    -- maker-heartbeat rule's question, answered from `maker_telemetry`.
+    updated_at      BIGINT  NOT NULL
+);

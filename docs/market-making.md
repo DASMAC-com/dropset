@@ -944,11 +944,17 @@ silently redirect those references.
   goes sick: a leg whose sources are all trimmed still writes a full
   zero-weight set every tick, deliberately.
 
-- **`feed_health`** — current liveness per registered feed source,
-  upserted in place.
+- **`feed_health`** — current liveness per registered **polled** feed
+  source, upserted in place.
 
-DDL lives in `db-schema/migrations/0003_maker_telemetry.sql` and
-`0007_fair_price_fusion.sql`, which carry the per-column reasoning; the
+- **`push_health`** — current transport state per **push** source,
+  upserted in place. Separate from `feed_health` because the two are
+  measured by different code and alerted on in opposite directions; see
+  "Push sources report a link, not a recency" below.
+
+DDL lives in `db-schema/migrations/0003_maker_telemetry.sql`,
+`0007_fair_price_fusion.sql` and
+`0008_push_liveness.sql`, which carry the per-column reasoning; the
 single-schema-owner rule (see `docs/data-feeds.md` §8) means the bot
 issues no DDL and never asserts a schema.
 
@@ -992,6 +998,51 @@ never the records — and the maker's price sources are **venue**-level
 batch. So a `last_value` column on a per-source row would have to pick
 one instrument arbitrarily. Liveness therefore lives in `feed_health`,
 and readings live in `maker_legs`.
+
+### Push sources report a link, not a recency
+
+The generic coverage above holds for **polled** sources and stops at
+push ones, and the stopping point is a property of the seam rather than
+a gap in the wiring. The runner reports a batch when the source yields
+one; a subscription yields only when its venue sends something. So a
+health row for the fill subscription would record the last **fill**,
+and on a market with no fills for half an hour it would age out and the
+stale-feed rule would page about a price feed that is fine. No
+threshold repairs that: silence is a push source's healthy state, so
+nothing in the record stream separates a quiet market from a dead
+socket.
+
+What separates them is the transport, which only the producer can see —
+it opened the socket, watched it close, and slept before re-opening it.
+So the fill subscription reports its own connection state through the
+framework's `LivenessReporter` into `push_health`: up on a successful
+subscribe (**not** on the first record — "able to deliver" is the health
+signal, "did deliver" is a market fact), down when the socket closes,
+and down-with-a-reason when a subscribe fails or the thread ends. The
+alert is `state <> 'up'` held briefly, with no data cadence in it.
+
+Two consequences worth stating, because both invert a habit the polled
+table teaches:
+
+- **No column here is a staleness input, and none should be added.** A
+  link reading `up` whose `last_up_at` is a week old has been connected
+  for a week. Reading an age off this row is the exact error the split
+  exists to prevent.
+- **A flapping link is the residual risk.** One reconnecting every few
+  seconds samples as `up` most of the time, so the state alone will not
+  catch it. `connects` climbing on a link that reads `up` is the tell,
+  and it is a number an operator reads rather than one a rule pages on:
+  the table keeps last state only, so there is no stored history to
+  difference. Paging on a flap rate would need a row per transition,
+  which is a cost nothing has yet asked for.
+
+Two further gaps are known and accepted. A transition dropped because
+the telemetry channel was full is retained and retried — bounded by the
+subscription's reassert interval rather than by the process lifetime —
+but a drain that is *gone* loses it, which is the same exposure every
+telemetry path here has. And a producer killed by `SIGKILL` runs no
+destructor, so its row stays `up`; a process that dies that way stops
+its heartbeat too, which is the rule that covers it.
 
 **There is still no "which feed supplied this leg" column**, and that
 follows from the resolver rather than being an omission. A leg is a

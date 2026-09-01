@@ -4,7 +4,7 @@
 # hosted stack alert on identical conditions, the same way the dashboards
 # beside them are committed rather than click-configured.
 #
-# Five rules. Three cover the failures this issue names — the bot stopped, a
+# Six rules. Three cover the failures this issue names — the bot stopped, a
 # feed stopped, a market stopped quoting normally — and two cover ways a
 # market can stop quoting while all three of those read healthy: its ticks
 # failing, and its composition paused. Both were added after tracing what an
@@ -12,6 +12,12 @@
 # arriving, so the heartbeat is alive; the feeds answer, so staleness is
 # quiet; and the kill-switch policy is never reached, so nothing is degraded
 # or halted. A market can be dark and matchless with every signal green.
+#
+# The sixth covers a gap of the same shape one layer down, in the feeds
+# themselves: a **push** source's records arrive only when its venue sends
+# something, so an age-based rule cannot tell a quiet market from a dead
+# socket and the staleness rule above deliberately does not cover it. It
+# alerts on a transport state instead, with no data cadence in its condition.
 #
 # WHAT PROVISIONING BUYS AND WHAT IT DOES NOT. These rules evaluate and
 # reach Firing in Grafana's Alerting UI with no further setup, which is what
@@ -221,6 +227,99 @@ groups:
     noDataState: 'OK'
     title: 'Feed stale'
     uid: 'maker-feed-stale'
+  # Per-push-source transport liveness, one series per source. The companion to
+  # the staleness rule above, and deliberately NOT the same shape: the rule
+  # above reads an age against a threshold, and this one reads a state.
+  #
+  # A push source has no defined staleness. Its records arrive only when the
+  # venue has something to send, so a last-record age measures the market and
+  # not the feed — on a market with no fills for half an hour an age-based rule
+  # would page about a dead price feed that is perfectly healthy. Hence
+  # `push_health`, written by the producer that owns the socket, and hence a
+  # condition with no duration in it at all: `state <> 'up'`. Silence is this
+  # source's healthy state and is never an alert here at any length.
+  #
+  # A source that has never come up has no row at all, and is therefore
+  # deliberately **not** alerted on here: `noDataState: OK` below means an empty
+  # result stays quiet. Unlike the staleness rule there is no timestamp to
+  # coalesce into a huge value, so there is nothing to fire on. The case that
+  # produces it — a subscription thread that never started — takes the whole bot
+  # with it in every realistic form, which is the heartbeat rule's condition.
+  - annotations:
+      description: >-
+        A push feed's transport is not connected. Its records stop arriving
+        silently — nothing about a quiet market distinguishes itself from a
+        dead socket — so the consumer is running on its fallback path: for
+        the maker's fill subscription that is the per-tick vault reconcile,
+        which keeps the position correct but loses per-fill attribution.
+        Check this feed's last_error and the validator's websocket endpoint.
+      summary: 'A push feed transport is down'
+    condition: 'C'
+    data:
+    - datasourceUid: 'dropset-postgres'
+      model:
+        editorMode: 'code'
+        format: 'table'
+        intervalMs: 60000
+        maxDataPoints: 1
+        rawQuery: true
+        rawSql: |-
+          SELECT
+          feed,
+          (CASE WHEN state = 'up' THEN 0 ELSE 1 END)::double precision
+          AS link_down
+          FROM push_health
+        refId: 'A'
+      refId: 'A'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        expression: 'A'
+        reducer: 'last'
+        refId: 'B'
+        type: 'reduce'
+      refId: 'B'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    - datasourceUid: '__expr__'
+      model:
+        conditions:
+        - evaluator:
+            params:
+            - 0
+            type: 'gt'
+          operator:
+            type: 'and'
+          query:
+            params:
+            - 'B'
+          reducer:
+            type: 'last'
+          type: 'query'
+        expression: 'B'
+        refId: 'C'
+        type: 'threshold'
+      refId: 'C'
+      relativeTimeRange:
+        from: 600
+        to: 0
+    execErrState: 'Error'
+    # An ordinary reconnect is a few seconds — the producer's delay is 5 s —
+    # so this rides out roughly two dozen failed attempts before paging. That
+    # is the whole tuning story, and it is about the *reconnect* cadence rather
+    # than about any data cadence, which is what makes it safe on a quiet
+    # market where an age-based bound is not.
+    for: '2m'
+    # `OK`, not `NoData`, for the same reason as the staleness rule: zero rows
+    # means no push source has reported yet — an empty table on a fresh
+    # database — and a bot that is not running at all is the heartbeat rule's
+    # condition, not this one's.
+    noDataState: 'OK'
+    title: 'Push feed transport down'
+    uid: 'maker-push-link-down'
   # Degraded or halted, per market. Counts the samples in the last five
   # minutes that were either running degraded or halted by a kill switch;
   # any at all is the condition.
@@ -316,12 +415,13 @@ groups:
     noDataState: 'OK'
     title: 'Market degraded or halted'
     uid: 'maker-degraded-or-halt'
-  # Ticks failing, per market. The gap the three rules above leave open: a
+  # Ticks failing, per market. The gap the four rules above leave open: a
   # market whose vault read times out on every tick still writes a row every
-  # tick, so the heartbeat is alive; its feeds are healthy, so the feed-stale
-  # rule is quiet; and it never reaches the kill-switch policy, so `degraded`
-  # is false and `action` is never `Halt`. It quotes nothing and pages
-  # nobody, which is the worst shape an operations view can have.
+  # tick, so the heartbeat is alive; its feeds are healthy and its fill
+  # transport is connected, so the feed-stale and push-link rules are quiet;
+  # and it never reaches the kill-switch policy, so `degraded` is false and
+  # `action` is never `Halt`. It quotes nothing and pages nobody, which is
+  # the worst shape an operations view can have.
   #
   # Keyed on `tick_error IS NOT NULL` rather than on `action = 'TickError'`,
   # deliberately: a tick that decided and *then* failed keeps its decision in

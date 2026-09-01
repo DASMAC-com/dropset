@@ -1123,6 +1123,96 @@
       ],
       "title": "Recent tick errors (all markets)",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Transport state for push sources, which the feed-health table above deliberately does not cover. A push source's records arrive only when its venue has something to send, so no age on this row means anything: a link that has been up for a week with no fills is healthy, and there is intentionally no staleness column here to read otherwise. What to look at is `state`, and then `connects` \u2014 a count that has climbed while the state reads `up` is a link that keeps dropping and re-establishing, which is the failure that most resembles a working one. `last_error` is retained across a recovery, so read it with `last_error_at`.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "state"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "down": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "up": {
+                        "color": "green",
+                        "index": 1
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
+      "id": 12,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  feed,\n  state,\n  to_timestamp(last_up_at) AS last_up,\n  to_timestamp(last_down_at) AS last_down,\n  connects,\n  disconnects,\n  to_timestamp(last_error_at) AS last_error_at,\n  last_error\nFROM push_health\nORDER BY state ASC, feed",
+          "refId": "A"
+        }
+      ],
+      "title": "Push feed transport liveness",
+      "type": "table"
     }
   ],
   "preload": false,

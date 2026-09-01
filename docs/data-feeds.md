@@ -584,7 +584,8 @@ without buying isolation.
 | `fill_events`, `events`, `takes`, `market_stats`, `indexer_cursor` | indexer             | On-chain event capture and its rollups                                                         |
 | `maker_telemetry`, `maker_legs`                                    | maker bot           | Per-tick quoting state (incl. the fair series), and each feed leg's reading and fused estimate |
 | `maker_leg_contributions`                                          | maker bot           | Per-source fusion weights behind each leg's fused estimate                                     |
-| `feed_health`                                                      | maker bot *(today)* | Per-source feed liveness, upserted in place                                                    |
+| `feed_health`                                                      | maker bot *(today)* | Polled-source feed liveness, upserted in place                                                 |
+| `push_health`                                                      | maker bot *(today)* | Push-source transport state, upserted in place                                                 |
 | Maker parameter tables *(planned)*                                 | maker go-between    | Slow parameters published to the bot                                                           |
 
 Adding a table means naming its writer here. A table with two writers is
@@ -598,6 +599,20 @@ second writer. At that point it should become a carve-out on the
 `feed_cursors` pattern below (framework-owned shape, partitioned by feed
 name) rather than quietly acquiring two app writers. The upsert SQL
 moving out of `bots/maker-bot/queries/` is the signal that has happened.
+
+`push_health` sits under the same watch for the same reason — a
+framework recorder (`LivenessReporter`), keyed by source name, with the
+upsert SQL in the maker's `queries/` for now. It is a **separate table
+rather than columns on `feed_health`**, and that is not tidiness: the
+two are written by different code at different times and alerted on in
+opposite directions. `feed_health` is the runner's, once per poll turn,
+and pages when it goes quiet. `push_health` is the *producer's*, once
+per transport transition, and quiet is its healthy state — so it pages
+on a state (`state <> 'up'`) with no duration in the condition at all.
+Folding them together would put a row's meaning at the mercy of which
+writer touched it last, and would invite exactly the false page the
+split prevents. §13 has the seam; `docs/market-making.md` has the
+operational reading.
 
 The one carve-out today is `feed_cursors`, which the **framework** owns
 rather than any single app: every store-sink process writes its own row,
@@ -1871,6 +1886,70 @@ ______________________________________________________________________
     yields many instruments per batch, so no single value on a
     per-source row could be more than an arbitrary pick. Values belong
     to whoever resolved the instrument.
+
+  **And it covers polled sources only.** The limit follows from the same
+  place the two properties above do — the runner reports what the
+  transport delivered — and it is why a push source has a *second* seam
+  rather than a mode of this one. `ChannelSource::next` blocks until a
+  record arrives, so a subscription's health row would record its last
+  **record**: for the maker's fill subscription, the last trade rather
+  than the last healthy socket, ageing out on any market that simply had
+  no fills. No threshold repairs it, because silence is a push source's
+  healthy state, so the record stream cannot distinguish a quiet market
+  from a dead socket at any duration.
+
+  `LivenessReporter` is that second seam. It reports a **connection
+  state** (`up` / `down`, with a reason where the producer has one) from
+  the *producer's* own thread rather than the drive loop, because the
+  transport is only observable to the code that owns the socket. Three
+  differences from the health seam are load-bearing:
+
+  - **It is not auto-registering.** The runner drives many sources
+    through one health recorder and names each per turn; a socket has
+    exactly one owner, so a push source appears in `push_health` because
+    its producer was handed a reporter, named explicitly at the call
+    site.
+
+  - **A dropped update is not self-healing.** A health update is
+    level-triggered, so the next poll restates it — which is what makes
+    dropping one under a full channel sound. A transition is
+    edge-triggered, so a dropped `down` leaves a row reading `up` for
+    the life of the process. Hence a refused transition is retained and
+    retried (`reassert`, called once per producer loop), and hence the
+    reporter's `Drop` reports `down` when a producer thread ends —
+    including by unwinding, which is the one death a dropped record
+    sender cannot express, since the stream seam renders it as an *idle*
+    source.
+
+  - **Its error text is reduced to scheme and host.** The health path
+    deliberately does *not* strip query strings, because the crate's
+    HTTP transport has already redacted every non-allow-listed query
+    value and the remaining parameters are the diagnosis. A push
+    producer never reaches that pass — it is a method on the HTTP
+    client, and the maker's error comes from the Solana `PubsubClient` —
+    so `LivenessReporter::failed` applies `redact_to_origin` instead.
+
+    Two details are what make it that rather than the query-only
+    `sanitize_error`, and both are easy to get wrong. A subscribe URL is
+    derived from the operator's RPC endpoint, where hosted providers
+    authenticate by **path segment** or userinfo at least as often as by
+    `?api-key=` — axes a query strip is documented as not reaching. And
+    it is applied to the **whole rendered cause chain**, because a
+    wrapped transport error re-embeds the URL it could not reach, so
+    redacting only the endpoint a caller interpolates leaves the
+    credential in the part nobody looked at. Nothing diagnostic is lost:
+    a subscribe either reached the endpoint or did not.
+
+    The three error columns are therefore on deliberately different
+    footings — `feed_health.last_error` on the transport's allow-list
+    redaction, `push_health.last_error` on the origin reduction, and
+    `maker_telemetry.tick_error` on the query-only strip. See
+    `0008_push_liveness.sql`.
+
+  Both reporters share their offer-and-damp mechanics (the full-channel
+  and dead-drain handling, and the log damping that keeps a flapping
+  drain to a readable number of lines), which is one private module
+  rather than two near-copies.
 
   Two smaller framework pieces landed with it, both for consumers whose
   database is a **soft** dependency rather than their product:
