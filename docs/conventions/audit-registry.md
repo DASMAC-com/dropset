@@ -279,6 +279,32 @@ util <-> frontend: the human-price / atoms-ratio decimal-gap conversion
   sizes the ratio is TS-only: humanPrice measures at 10^18 base atoms
   before scaling, and atoms_ratio_to_human takes an already-computed
   ratio, so that half of the frontend helper has no Rust counterpart.
+push liveness (feeds <-> maker-bot <-> db-schema <-> grafana): a FOUR
+  party contract on one closed vocabulary, and the only seam here whose
+  parties cannot each be checked against the next by a compiler or a
+  test. feeds/src/liveness.rs defines LinkState (Up / Down{reason});
+  bots/maker-bot/src/telemetry.rs write_liveness dispatches it onto three
+  statements in bots/maker-bot/queries/push_health_*.sql;
+  db-schema/migrations/0008_push_liveness.sql constrains the stored
+  values with CHECK (state IN ('up','down')); and the alert rule in
+  market-data/grafana/provisioning/alerting/maker.yml keys on
+  state <> 'up'. Adding a third link state means editing all four, and
+  the failure is asymmetric: the CHECK rejects an unknown value loudly,
+  but an alert whose predicate stops matching a renamed state fails
+  OPEN — a dead link reads green, which is the exact condition the table
+  exists to surface. Note bots/maker-bot has no test harness at all and
+  nothing in the repo semantically validates a Grafana rule, so the last
+  two hops are held by review alone.
+  Two adjacent invariants ride the same seam. The counters are
+  transition counters, enforced only by the conditional increments
+  inside those upserts (CASE WHEN push_health.state = …), so a rewritten
+  upsert silently converts them to write counters and a sustained outage
+  starts reading as a flap. And push_health.last_error is fed producer
+  client text through feeds' redact_to_origin — a STRONGER guard than
+  the query-only sanitize_error used for maker_telemetry.tick_error, and
+  deliberately so, because a subscribe URL carries credentials in a path
+  segment or userinfo as readily as in a query; the column is readable
+  by dropset_ro, so weakening that call site is a disclosure.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit
