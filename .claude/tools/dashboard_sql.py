@@ -68,8 +68,15 @@ BANNER = (
 MACRO_CALL = re.compile(r"\$__([A-Za-z_]+)\s*\(")
 
 # Template variable references: `$name`, `${name}`, `${name:format}`.
+#
+# The format part allows several colon-separated segments, because Grafana's
+# built-ins use them — `${__from:date:iso}`. Matching only one segment left that
+# form unmatched by BOTH alternatives (the bare branch cannot start at `{`), so
+# it survived substitution verbatim and reached sqlfluff as a parse error
+# attributed to the panel's SQL rather than to this shim.
 VAR_REF = re.compile(
-    r"\$(?:\{(?P<braced>[A-Za-z0-9_]+)(?::(?P<fmt>[a-z]+))?\}|(?P<bare>[A-Za-z0-9_]+))"
+    r"\$(?:\{(?P<braced>[A-Za-z0-9_]+)(?::(?P<fmt>[a-z][a-z:]*))?\}"
+    r"|(?P<bare>[A-Za-z0-9_]+))"
 )
 
 # Deterministic stand-ins for the macros, chosen so the substituted text is valid
@@ -88,6 +95,12 @@ MACRO_SUBSTITUTIONS = {
 }
 
 # Macros taking no argument, substituted verbatim.
+#
+# Applied LONGEST KEY FIRST, which is required rather than cosmetic:
+# `$__interval` is a prefix of `$__interval_ms`, so replacing the short one
+# first turns the long one into `'1 minute'_ms` silently. The substitution loop
+# sorts by length, so this dict's own order does not matter and a future
+# alphabetizing edit cannot reintroduce the bug.
 BARE_MACRO_SUBSTITUTIONS = {
     "$__timeFrom()": "'2024-01-01T00:00:00Z'",
     "$__timeTo()": "'2024-01-02T00:00:00Z'",
@@ -107,39 +120,85 @@ def slug(text: str | None, fallback: str) -> str:
     return s[:60] or fallback
 
 
-def string_literal_spans(sql: str) -> list[tuple[int, int]]:
-    """The (start, end) spans of every single-quoted literal in `sql`.
+def lexical_scan(sql: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Split `sql` into (string-literal spans, non-code spans).
 
-    Postgres escapes a quote by doubling it, which this honours: `'it''s'` is one
-    literal rather than two.
+    One scanner for both guards, because they need the same lexical facts and
+    had drifted apart: the regex guard skipped comments while the macro guard
+    read the raw text, so a macro named in a comment was refused as if it were
+    code.
 
-    **Comments are skipped, and that is load-bearing rather than tidiness.** An
-    apostrophe in ordinary prose inside a `--` comment — "the estimator's
-    output", "Grafana's macro parser" — would otherwise open a phantom literal
-    that never closes, shifting every span after it and INVERTING the
-    inside/outside verdict for the rest of the query. These dashboard queries
-    carry long explanatory comments, so this is the common case, not an edge
-    one: it was found by two identical `~ '^${v:regex}$'` constructs being
-    classified differently, one before such a comment and one after. A guard
-    that silently mis-classifies is worse than no guard.
+    **Every lexical state here is load-bearing, and each one was a live
+    inversion bug.** The scanner recognizes four things, and getting any of them
+    wrong shifts every span after it and INVERTS the inside/outside verdict for
+    the rest of the query:
 
-    Dollar-quoted strings and `E''` escape strings are NOT handled; no dashboard
-    query uses either. If one ever does, this function is what silently weakens,
-    so it is named here rather than left to be rediscovered.
+    - **`--` line comments.** An apostrophe in ordinary prose — "the estimator's
+      output", "Grafana's macro parser" — otherwise opens a phantom literal that
+      never closes. This one actually shipped: it made the regex guard detect 6
+      of 14 real sites while reporting green, and was found only because two
+      identical `~ '^${v:regex}$'` constructs were classified differently either
+      side of such a comment.
+    - **`/* */` block comments, counted for DEPTH.** Postgres nests them, per
+      the SQL standard, so `/* a /* b */ Grafana's parser */` ends at the second
+      `*/`, not the first. A non-nesting scan resumes inside the outer comment
+      and the apostrophe in "Grafana's" opens a phantom literal.
+    - **`"` quoted identifiers.** These dashboards use them heavily and by
+      necessity — Grafana binds a time series on `AS "time"` and the candlestick
+      panel on `"open"`/`"high"`/`"low"`/`"close"` — so this is not an exotic
+      case. `"it's"` would open a phantom literal, and worse, `"col--name"`
+      would start a line comment that swallows the rest of the line INCLUDING
+      any real literal on it. That direction is the dangerous one: a missed
+      literal means the regex guard reports green on a genuine site.
+    - **`'` literals**, with a doubled quote as an escape: `'it''s'` is one
+      literal, not two.
+
+    Dollar-quoted strings and `E''` escape strings are still NOT handled; no
+    dashboard query uses either. If one ever does, this function is what
+    silently weakens, so it is named here rather than left to be rediscovered.
+    An unterminated literal yields a span to end-of-input — over-detection,
+    which is the safe direction. An unterminated block comment swallows the
+    rest, which is the unsafe direction, but an unterminated block comment is
+    itself a Postgres syntax error and the lint gate's parse check covers it.
     """
-    spans: list[tuple[int, int]] = []
+    literals: list[tuple[int, int]] = []
+    non_code: list[tuple[int, int]] = []
     i, n = 0, len(sql)
     while i < n:
-        c = sql[i]
-        if c == "-" and sql.startswith("--", i):
+        if sql.startswith("--", i):
+            start = i
             nl = sql.find("\n", i)
             i = n if nl == -1 else nl + 1
+            non_code.append((start, i))
             continue
-        if c == "/" and sql.startswith("/*", i):
-            end = sql.find("*/", i + 2)
-            i = n if end == -1 else end + 2
+        if sql.startswith("/*", i):
+            start = i
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if sql.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif sql.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            non_code.append((start, i))
             continue
-        if c != "'":
+        if sql[i] == '"':
+            start = i
+            i += 1
+            while i < n:
+                if sql[i] == '"':
+                    if i + 1 < n and sql[i + 1] == '"':
+                        i += 2
+                        continue
+                    break
+                i += 1
+            i = min(i + 1, n)
+            non_code.append((start, i))
+            continue
+        if sql[i] != "'":
             i += 1
             continue
         start = i
@@ -151,9 +210,16 @@ def string_literal_spans(sql: str) -> list[tuple[int, int]]:
                     continue
                 break
             i += 1
-        spans.append((start, min(i + 1, n)))
-        i += 1
-    return spans
+        end = min(i + 1, n)
+        literals.append((start, end))
+        non_code.append((start, end))
+        i = end
+    return literals, non_code
+
+
+def string_literal_spans(sql: str) -> list[tuple[int, int]]:
+    """The string-literal spans of `sql`. See `lexical_scan` for the details."""
+    return lexical_scan(sql)[0]
 
 
 def in_literal(pos: int, spans: list[tuple[int, int]]) -> bool:
@@ -183,7 +249,17 @@ def check_macro_args(sql: str, where: str) -> None:
     panel fails to interpolate — with no error naming the cause. Refusing it here
     is the whole reason this guard exists.
     """
+    _, non_code = lexical_scan(sql)
     for m in MACRO_CALL.finditer(sql):
+        # Skip a macro NAMED in a comment or a quoted identifier. Its sibling
+        # guard has always done this and this one did not, which made the two
+        # disagree about the same text: three dashboard queries carry comments
+        # explaining they were written around this very limitation, and the
+        # natural way to write one is to quote the broken form — which this
+        # guard would then refuse, with a message naming nothing the author can
+        # act on.
+        if in_literal(m.start(), non_code):
+            continue
         try:
             arg, _ = macro_argument(sql, m)
         except ExtractionError as e:
@@ -215,12 +291,21 @@ def check_regex_in_literal(sql: str, where: str) -> None:
     for m in VAR_REF.finditer(sql):
         if m.group("fmt") == "regex" and in_literal(m.start(), spans):
             name = m.group("braced")
+            # The recommendation is `= ANY (ARRAY[...]::text[])`, NOT
+            # `IN (...)`. Both use the quote-escaping `:sqlstring` formatter,
+            # but `IN ()` is a SYNTAX ERROR when the variable has no selected
+            # options, whereas `ARRAY[]::text[]` is valid and matches nothing.
+            # An author who followed an `IN (...)` recommendation would get a
+            # query that errors on the empty case, and the natural next move is
+            # to revert to the unsafe form this guard exists to stop.
             raise ExtractionError(
                 f"{where}: `{m.group(0)}` is a regex-formatted variable inside "
                 f"a single-quoted literal, and the regex formatter does not "
-                f"escape quotes. Use `IN (${{{name}:sqlstring}})`, which quotes "
-                f"and escapes every value, rather than a `~` match against an "
-                f"interpolated pattern."
+                f"escape quotes. Use "
+                f"`= ANY (ARRAY[${{{name}:sqlstring}}]::text[])` — the "
+                f"sqlstring formatter quotes and escapes every value, and the "
+                f"ARRAY form stays valid SQL when nothing is selected, unlike "
+                f"`IN ()`. Do not match `~` against an interpolated pattern."
             )
 
 
@@ -233,8 +318,8 @@ def substitute(sql: str) -> str:
     that formatter's own output is already quoted. Guessing wrong does not
     produce a wrong lint — it produces a parse error, loudly.
     """
-    for macro, replacement in BARE_MACRO_SUBSTITUTIONS.items():
-        sql = sql.replace(macro, replacement)
+    for macro in sorted(BARE_MACRO_SUBSTITUTIONS, key=len, reverse=True):
+        sql = sql.replace(macro, BARE_MACRO_SUBSTITUTIONS[macro])
 
     while True:
         m = MACRO_CALL.search(sql)
@@ -283,8 +368,22 @@ def queries(dashboard: pathlib.Path) -> list[tuple[str, str]]:
 
     for panel in panels(doc):
         pid = panel.get("id")
-        title = slug(panel.get("title"), f"panel-{pid}")
         targets = panel.get("targets", []) or []
+        # A panel carrying SQL but no `id` would reach the f-string below as
+        # `f"{None:02d}"` and raise a bare TypeError straight out of a
+        # pre-commit hook, bypassing the ExtractionError handler entirely.
+        # Grafana assigns an id to every panel it saves, so this means a
+        # hand-edited dashboard — say that instead.
+        if pid is None and any(
+            isinstance(t.get("rawSql"), str) and t.get("rawSql").strip()
+            for t in targets
+        ):
+            raise ExtractionError(
+                f"{dashboard.name}: a panel titled {panel.get('title')!r} "
+                f"carries SQL but has no `id`. The mirror filename is keyed on "
+                f"the id, which is the only stable handle a panel has."
+            )
+        title = slug(panel.get("title"), f"panel-{pid}")
         for idx, target in enumerate(targets):
             sql = target.get("rawSql")
             if not isinstance(sql, str) or not sql.strip():
@@ -366,6 +465,15 @@ def cmd_extract(args: argparse.Namespace) -> int:
         if str(path.relative_to(args.mirror)) not in wanted:
             path.unlink()
             removed += 1
+
+    # And the now-empty per-dashboard directories. A deleted or renamed
+    # dashboard otherwise leaves one behind forever, and `check` cannot see it:
+    # its drift comparison walks `rglob("*.sql")`, so an empty directory is
+    # invisible to the very gate that would report it. Deepest-first, so a
+    # nested directory is removed before its parent is tested.
+    for path in sorted(args.mirror.rglob("*"), reverse=True):
+        if path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
 
     print(f"dashboard-sql: {len(wanted)} queries, {written} written, {removed} pruned")
     return 0

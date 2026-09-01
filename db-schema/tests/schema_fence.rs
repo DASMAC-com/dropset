@@ -411,20 +411,53 @@ async fn the_instruments_view_derives_a_class_from_the_legs() {
     let (_pg, pool) = start_pg().await;
     migrate(&pool).await.expect("apply migrations");
 
-    // `SOL` is deliberately not in `currency_kinds` — no collector polls an
-    // unpegged token yet — which makes it the honest fixture for the
-    // unclassified path rather than a currency invented for this test.
-    for product in ["EUR-USD", "EURC-USDC", "EURC-EUR", "SOL-USDC"] {
+    // The seed carries no 'crypto' row, because no collector polls an unpegged
+    // token yet — so the crypto arm is unreachable from the seed alone. Seed one
+    // here, because that arm is the ORDERING-sensitive one: it must win over
+    // both the fiat and stablecoin arms, and nothing else tests that.
+    sqlx::query("INSERT INTO currency_kinds (currency, kind) VALUES ('SOL', 'crypto')")
+        .execute(&pool)
+        .await
+        .expect("seed a crypto currency");
+
+    // `ZZZ` is the unseeded leg — a symbol the roster does not contain, which is
+    // what an unclassified product actually looks like. It has to be distinct
+    // from the crypto fixture now that SOL is seeded.
+    for (source, product) in [
+        ("probe", "EUR-USD"),
+        ("probe", "EURC-USDC"),
+        ("probe", "EURC-EUR"),
+        ("probe", "SOL-USDC"),
+        ("probe", "ZZZ-USDC"),
+        // The same product under a SECOND source. The dimension must still
+        // report exactly one row for it: the view groups by product_id, and
+        // that collapse is what stops four collectors polling EUR-USD from
+        // duplicating every entry in the dashboard's product picker. Note
+        // `fetch_one` below would happily return the first of several rows
+        // without erring, so the row count needs its own assertion.
+        ("second-src", "EUR-USD"),
+    ] {
         sqlx::query(
             "INSERT INTO instrument_registry
                  (source, product_id, first_registered_at, last_registered_at)
-             VALUES ('probe', $1, 1, 1)",
+             VALUES ($1, $2, 1, 1)",
         )
+        .bind(source)
         .bind(product)
         .execute(&pool)
         .await
-        .unwrap_or_else(|e| panic!("register `{product}`: {e}"));
+        .unwrap_or_else(|e| panic!("register `{product}` under `{source}`: {e}"));
     }
+
+    let (rows, sources): (i64, i32) = sqlx::query_as(
+        "SELECT count(*), max(source_count)::int FROM instruments
+             WHERE product_id = 'EUR-USD'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count EUR-USD rows in the dimension");
+    assert_eq!(rows, 1, "two sources must collapse to one dimension row");
+    assert_eq!(sources, 2, "both sources must be counted");
 
     for (product, base, quote, class) in [
         ("EUR-USD", "EUR", "USD", "fx-pair"),
@@ -434,12 +467,15 @@ async fn the_instruments_view_derives_a_class_from_the_legs() {
         // the deviation, so folding the two together would hide exactly what
         // this pair exists to measure.
         ("EURC-EUR", "EURC", "EUR", "peg-pair"),
+        // Any unpegged leg makes the pair crypto whatever the other leg is, so
+        // this arm has to beat the stablecoin one. Ordering-sensitive.
+        ("SOL-USDC", "SOL", "USDC", "crypto"),
         // An unseeded leg must leave the product PRESENT and labelled, never
         // drop it. An inner join here would make a class filter hide the
         // series outright while the panel carried on rendering — the same
         // silent-failure shape as a candle field map that fails to a flat
         // line.
-        ("SOL-USDC", "SOL", "USDC", "unclassified"),
+        ("ZZZ-USDC", "ZZZ", "USDC", "unclassified"),
     ] {
         let row: (String, String, String) = sqlx::query_as(
             "SELECT base, quote, asset_class FROM instruments WHERE product_id = $1",
@@ -472,47 +508,74 @@ async fn liveness_picks_its_staleness_bound_by_asset_class() {
     let (_pg, pool) = start_pg().await;
     migrate(&pool).await.expect("apply migrations");
 
-    // Inside the 72-hour FX bound, outside the 48-hour always-open one, so one
-    // number exercises both sides of the split.
-    const SILENT_SECS: i64 = 60 * 3600;
+    // (source, product, hours silent) — `None` meaning registered but never
+    // collected.
+    //
+    // The hour values pin BOTH constants from BOTH sides, which one value
+    // cannot. A single 60h fixture catches the two mutations that matter most
+    // — swapping 72/48, and collapsing them to one number — but `48 -> 24` and
+    // `72 -> 96` both survive it. The first of those matters: 24h sits inside
+    // the 24-27h publication gap this view explicitly budgets for, so a
+    // tightening regression there would be silent.
+    let fixtures: [(&str, &str, Option<i64>); 7] = [
+        // fx-pair quiet 60h: inside the 72h session bound, so live. This is the
+        // weekend case a flat 48h bound gets wrong for every FX pair.
+        ("probe", "EUR-USD", Some(60)),
+        // fx-pair quiet 80h: past 72h, so stale. Pins 72 from above.
+        ("probe", "AUD-USD", Some(80)),
+        // stablecoin-pair quiet 60h: past 48h, so stale. The same silence as
+        // EUR-USD, opposite verdict — that contrast IS the two-tier design.
+        ("probe", "EURC-USDC", Some(60)),
+        // stablecoin-pair quiet 30h: inside 48h, so live. Pins 48 from below,
+        // at a duration a daily-bar source legitimately reaches.
+        ("probe", "USDT-USDC", Some(30)),
+        // One product under TWO sources, one long-stale and one fresh. The
+        // aggregate must take the freshest: otherwise a single parked collector
+        // would drag a live pair out of the default selection. Nothing
+        // exercised the cross-source collapse before.
+        ("stale-src", "CAD-USD", Some(80)),
+        ("fresh-src", "CAD-USD", Some(30)),
+        // Registered, never collected.
+        ("probe", "GBP-USD", None),
+    ];
 
-    for product in ["EUR-USD", "EURC-USDC", "GBP-USD"] {
+    for (source, product, silent_hours) in fixtures {
         sqlx::query(
             "INSERT INTO instrument_registry
                  (source, product_id, first_registered_at, last_registered_at)
-             VALUES ('probe', $1, 1, 1)",
+             VALUES ($1, $2, 1, 1)",
         )
+        .bind(source)
         .bind(product)
         .execute(&pool)
         .await
-        .unwrap_or_else(|e| panic!("register `{product}`: {e}"));
-    }
+        .unwrap_or_else(|e| panic!("register `{product}` under `{source}`: {e}"));
 
-    // GBP-USD deliberately gets no bar at all — the registered-but-never-
-    // collected case.
-    for product in ["EUR-USD", "EURC-USDC"] {
-        sqlx::query(
-            "INSERT INTO cex_prices
-                 (source, product_id, granularity_secs, bucket_start,
-                  low, high, open, close, volume)
-             VALUES ('probe', $1, 60,
-                     EXTRACT(EPOCH FROM now())::BIGINT - $2, 1, 1, 1, 1, 0)",
-        )
-        .bind(product)
-        .bind(SILENT_SECS)
-        .execute(&pool)
-        .await
-        .unwrap_or_else(|e| panic!("insert a bar for `{product}`: {e}"));
+        if let Some(hours) = silent_hours {
+            sqlx::query(
+                "INSERT INTO cex_prices
+                     (source, product_id, granularity_secs, bucket_start,
+                      low, high, open, close, volume)
+                 VALUES ($1, $2, 60,
+                         EXTRACT(EPOCH FROM now())::BIGINT - $3, 1, 1, 1, 1, 0)",
+            )
+            .bind(source)
+            .bind(product)
+            .bind(hours * 3600)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("insert a bar for `{product}`: {e}"));
+        }
     }
 
     for (product, class, live, has_data) in [
-        // Quiet for 60 hours and still live: an FX pair is allowed to be silent
-        // across a weekend, which runs 47-49 hours.
         ("EUR-USD", "fx-pair", true, true),
-        // The identical silence on a venue that never closes is stale.
+        ("AUD-USD", "fx-pair", false, true),
         ("EURC-USDC", "stablecoin-pair", false, true),
-        // Registered, never collected: not live, and carrying no timestamp
-        // rather than a zero that would render as 1970.
+        ("USDT-USDC", "stablecoin-pair", true, true),
+        ("CAD-USD", "fx-pair", true, true),
+        // Not live, and carrying no timestamp rather than a zero that would
+        // render as 1970 on any panel formatting it as a time.
         ("GBP-USD", "fx-pair", false, false),
     ] {
         let (asset_class, is_live, last_data_at): (String, bool, Option<i64>) = sqlx::query_as(

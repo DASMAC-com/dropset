@@ -18,8 +18,17 @@
 -- $1 — the value this collector writes to `cex_prices` / `spot_ticks`.`source`
 -- $2 — the canonical product ids (TEXT[])
 -- $3 — the epoch second of this registration (BIGINT)
+-- `DISTINCT` is defensive, not decorative: `ON CONFLICT DO UPDATE` raises
+-- `cannot affect row a second time` if the array repeats a product id, and
+-- registration is fatal by design — so a duplicate would abort collector
+-- startup with an opaque Postgres error. No current caller can produce one
+-- (`parse_roster` rejects a duplicate canonical id, and the Pyth roster comes
+-- from a table keyed on `product_id`), but the Rust side explicitly guards the
+-- shape of a future caller "assembling ids some other way", and this is the
+-- other half of that guard. It costs the same single round trip.
 INSERT INTO instrument_registry
     (source, product_id, first_registered_at, last_registered_at)
-SELECT $1, unnest($2::TEXT[]), $3, $3
+SELECT DISTINCT $1, product_id, $3, $3
+FROM unnest($2::TEXT[]) AS product_id
 ON CONFLICT (source, product_id) DO UPDATE
     SET last_registered_at = EXCLUDED.last_registered_at;

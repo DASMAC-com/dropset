@@ -85,6 +85,8 @@ async fn main() -> anyhow::Result<()> {
 
     let venue_pairs: Vec<String> = pairs.iter().map(|p| p.venue_symbol.clone()).collect();
     let canonical: Vec<String> = pairs.iter().map(|p| p.product_id.clone()).collect();
+    // The canonical ids, not the venue spellings beside them — `venue_pairs`
+    // above is the same type and in scope.
     register_instruments(&pool, SOURCE, &canonical).await?;
     // Kraken answers under the name it was asked with, so this maps its keys
     // back onto the canonical ids the rows are stored under. `resolve_venue`

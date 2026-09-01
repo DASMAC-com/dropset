@@ -167,13 +167,32 @@ INSERT INTO currency_kinds (currency, kind) VALUES
 -- consumer of the dimension sees the source at all. The source is in the key
 -- for two other reasons, both of which need it:
 --
--- 1. It makes "when did this product last produce data" a PRIMARY KEY PREFIX
---    lookup. `cex_prices` and `spot_ticks` key on `(source, product_id, …)`, so
---    `max(bucket_start) WHERE source = ? AND product_id = ?` is an index range
---    scan of one series — while the same question asked with `product_id`
---    alone is a full scan, because `product_id` leads no index. Holding the
---    source here is therefore what lets `instrument_liveness` below be cheap
---    without adding a secondary index to the two hottest tables in the store.
+-- 1. It bounds "when did this product last produce data" to ONE SERIES rather
+--    than the whole table. Both measurement tables key on
+--    `(source, product_id, …)`, so with the source in hand the lookup is an
+--    index scan confined to that `(source, product)` prefix; asked with
+--    `product_id` alone it is a full scan, because `product_id` leads no index.
+--
+--    **The two tables are NOT equally cheap, and an earlier version of this
+--    comment claimed they were.** `spot_ticks` keys on
+--    `(source, product_id, observed_at)`, so `max(observed_at)` under equality
+--    on the full leading prefix gets Postgres's MIN/MAX index transform — a
+--    backward `Limit 1` seek. `cex_prices` keys on
+--    `(source, product_id, granularity_secs, bucket_start)`, and
+--    `granularity_secs` is left unconstrained, sitting between the
+--    equality-qualified prefix and the aggregated column. That transform needs
+--    the aggregated column to follow the equality prefix immediately, so it
+--    cannot apply: the bars side degrades to a range scan over every row of
+--    that series, all granularities and all history, with an aggregate on top.
+--
+--    So this is a large constant-factor win over the full scan, not the O(1)
+--    seek the first draft of this comment asserted. It is sound for the
+--    dimension query, which reads only this table. Anything wiring
+--    `instrument_liveness` into a per-load dashboard query should MEASURE it
+--    first (`EXPLAIN (ANALYZE, BUFFERS)`) against a populated store, and if the
+--    bars side dominates, constrain `granularity_secs` or reconsider the
+--    no-secondary-index decision on `cex_prices` deliberately rather than by
+--    accident.
 -- 2. It records WHICH collector polls WHICH product, which is the coverage
 --    question directly: every source writing to the store should be reachable
 --    on the ingestion dashboard, and that is now a query rather than a list
@@ -213,6 +232,29 @@ CREATE TABLE instrument_registry (
     CONSTRAINT source_is_not_blank
         CHECK (source <> '')
 );
+
+-- Kept beside the table they describe rather than at the end of the file, so
+-- someone editing the DDL sees them. Both timestamps carry the same hazard, so
+-- both get the warning — one commented and one not would read as a meaningful
+-- distinction.
+COMMENT ON TABLE currency_kinds IS
+    'What kind of thing each currency symbol names. Seeded reference data with '
+    'no runtime writer; coupled to the currency roster and not mechanically '
+    'checked against it.';
+
+COMMENT ON TABLE instrument_registry IS
+    'The products each collector is configured to poll, written by the '
+    'collectors at startup. Read the instruments view rather than this table.';
+
+COMMENT ON COLUMN instrument_registry.first_registered_at IS
+    'Epoch second this source was first seen polling this product. A collector '
+    'PROCESS-start signal, never a data-freshness one — read '
+    'instrument_liveness.last_data_at for freshness.';
+
+COMMENT ON COLUMN instrument_registry.last_registered_at IS
+    'Epoch second a collector last confirmed this product is in its roster. A '
+    'collector PROCESS-start signal, never a data-freshness one — read '
+    'instrument_liveness.last_data_at for freshness.';
 
 -- The dimension as its consumers read it: a product, its two legs, and the
 -- class the legs imply.
@@ -293,17 +335,18 @@ COMMENT ON VIEW instruments IS
     'asset class derived from the legs'' currency kinds. Read this rather '
     'than instrument_registry, which carries no class.';
 
-COMMENT ON COLUMN instrument_registry.last_registered_at IS
-    'Epoch second a collector last confirmed this product is in its roster. A '
-    'collector PROCESS-start signal, never a data-freshness one — read '
-    'feed_health.last_ok_at for freshness.';
 
 -- Which products are actually collecting, and which have gone quiet.
 --
--- This is what the currency selector's default reads: the dashboard opens on
--- the pairs with data flowing now, and every other pair is opt-in. The point
--- is that it opens showing real data rather than empty panels for a pair whose
--- collector is parked.
+-- This is what the currency selector's default WILL read: the dashboard is to
+-- open on the pairs with data flowing now, with every other pair opt-in, so it
+-- opens showing real data rather than empty panels for a pair whose collector
+-- is parked.
+--
+-- Future tense deliberately: no dashboard reads this view yet. The variable
+-- queries in this change point at `instruments`, not at this view, and the
+-- selector that consumes it is separate follow-up work. A reader looking for
+-- that selector will not find one.
 --
 -- WHY THERE ARE TWO THRESHOLDS, AND WHY THE CLASS PICKS BETWEEN THEM.
 --
@@ -328,21 +371,30 @@ WITH thresholds AS (
     -- The two constants, side by side and defined nowhere else. Change them
     -- here and every consumer follows.
     SELECT
-        -- Clears a ~49-hour weekend with slack.
-        72 * 3600 AS fx_pair_stale_secs,
-        -- Still roomy enough for a daily-bar source (er-api, Alpha Vantage)
-        -- that legitimately gaps 24-27 hours between publications.
+        -- For a class whose venues CLOSE. Clears a ~49-hour weekend with slack.
+        -- Also the bound an UNKNOWN class gets — see the CASE below.
+        72 * 3600 AS session_bound_stale_secs,
+        -- For a class whose venues never close. Still roomy enough for a
+        -- daily-bar source (er-api, Alpha Vantage) that legitimately gaps
+        -- 24-27 hours between publications.
         48 * 3600 AS always_open_stale_secs
 ),
 last_seen AS (
-    -- One index range scan per (source, product): a primary key PREFIX on both
-    -- measurement tables, which is the whole reason the registry carries the
-    -- source. A given source writes bars or ticks and never both, so one side
-    -- of each pair below is NULL by construction rather than by accident.
+    -- One index scan per (source, product), confined to that series by the
+    -- primary key prefix — which is the whole reason the registry carries the
+    -- source. The ticks side gets a `Limit 1` backward seek; the bars side does
+    -- NOT, and range-scans the series. See the registry's note above for why,
+    -- and measure before putting this view on a per-load path.
+    --
+    -- A given source writes bars or ticks and never both, so one side of each
+    -- pair below is NULL by construction rather than by accident. `GREATEST`
+    -- ignores NULL arguments and returns NULL only when every argument is NULL,
+    -- so a never-collected product yields NULL here directly — no 0 sentinel to
+    -- manufacture and then undo downstream, and no sentinel that could swallow
+    -- a genuine pre-1970 timestamp.
     SELECT
         r.product_id,
-        max(GREATEST(COALESCE(bars.last_at, 0), COALESCE(ticks.last_at, 0)))
-            AS last_at
+        max(GREATEST(bars.last_at, ticks.last_at)) AS last_at
     FROM instrument_registry r
     LEFT JOIN LATERAL (
         SELECT max(c.bucket_start) AS last_at
@@ -360,14 +412,29 @@ bounded AS (
     SELECT
         i.product_id,
         i.asset_class,
-        -- NULL rather than 0 for a product that has never produced a row. A
-        -- registered pair whose venue has never answered is a genuinely
-        -- different state from one that answered and stopped, and a 0 would
-        -- render as 1970 on any panel that formatted it as a time.
-        NULLIF(l.last_at, 0) AS last_data_at,
+        -- NULL for a product that has never produced a row, straight out of
+        -- `GREATEST` above. A registered pair whose venue has never answered is
+        -- a genuinely different state from one that answered and stopped, and a
+        -- 0 sentinel would render as 1970 on any panel formatting it as a time.
+        l.last_at            AS last_data_at,
+        -- **The always-open classes are named explicitly, and the ELSE carries
+        -- the LOOSE bound.** Written the other way round — `WHEN 'fx-pair'
+        -- THEN loose ELSE tight` — the ELSE also catches 'unclassified', so a
+        -- genuine fiat cross whose leg is not yet seeded would take the
+        -- 48-hour bound and read quiet across every weekend. That is precisely
+        -- the false alarm this view exists not to raise, and it drops the pair
+        -- out of the default selection silently.
+        --
+        -- The direction matters because the two errors are not symmetric: a
+        -- spurious "quiet" HIDES data, while a slow "still live" costs nothing
+        -- but a stale row on a panel. So an unknown class errs loose, which is
+        -- the same err-toward-visible choice the LEFT JOIN above is justified
+        -- by. Note the seed's coupling to the currency roster is documented as
+        -- unchecked, so 'unclassified' is a state that will occur.
         CASE
-            WHEN i.asset_class = 'fx-pair' THEN t.fx_pair_stale_secs
-            ELSE t.always_open_stale_secs
+            WHEN i.asset_class IN ('stablecoin-pair', 'peg-pair', 'crypto')
+                THEN t.always_open_stale_secs
+            ELSE t.session_bound_stale_secs
         END                  AS stale_after_secs
     FROM instruments i
     JOIN last_seen l ON l.product_id = i.product_id

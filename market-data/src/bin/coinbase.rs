@@ -21,11 +21,6 @@ use dropset_market_data::{
 use std::time::Duration;
 
 /// The value written to `cex_prices.source`.
-///
-/// Named rather than inlined at the writer, as every sibling collector already
-/// does: the instruments dimension has to be registered under the same string
-/// the rows are written with, and two literals that must agree are one edit
-/// away from disagreeing.
 const SOURCE: &str = "coinbase";
 
 #[tokio::main]

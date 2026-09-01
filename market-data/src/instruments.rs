@@ -6,16 +6,12 @@
 //! reason — a process whose effective roster is fixed at start can state it in
 //! one log line.
 //!
-//! **Why the collectors write this at all.** The dimension has to answer "what
-//! instrument is `EURC-USDC`" for a dashboard, and the alternative was deriving
-//! the product set from the measurement tables with `SELECT DISTINCT
-//! product_id`. That is a full scan of an unbounded table: `cex_prices` and
-//! `spot_ticks` both key on `(source, product_id, …)`, so `product_id` leads no
-//! index, and both tables deliberately carry no secondary index because their
-//! dominant read is a time-ordered scan of one series. Paying write overhead on
-//! the two hottest tables in the store to answer a question about a set that
-//! changes a few times a year is the wrong trade, so the collectors state the
-//! set instead — which they already know, for free, before they connect.
+//! **Why the collectors write this rather than a view deriving it from the
+//! measurement tables.** Because `product_id` leads no index on either of them,
+//! so deriving the product set would be a full scan of an unbounded table. The
+//! full argument, including what the resulting lookup does and does not cost,
+//! is stated once in `0009_instruments.sql` — read it there rather than having
+//! two copies to keep in step.
 //!
 //! **This records the configured roster, not the observed data.** A product
 //! appears here as soon as a collector that polls it starts, whether or not the
@@ -39,16 +35,14 @@ use sqlx::PgPool;
 /// one statement and changes nothing else.
 ///
 /// **`source` must be the exact string this collector writes to
-/// `cex_prices.source` / `spot_ticks.source`.** It is not a label: the liveness
-/// view looks a series up by `(source, product_id)`, which is a primary key
-/// prefix on both measurement tables and the reason that lookup is a range scan
-/// rather than a full one. A source string that does not match what the writer
-/// uses finds no series, and reports a perfectly healthy pair as silent.
+/// `cex_prices.source` / `spot_ticks.source`.** It is a join key, not a label:
+/// the liveness view looks a series up by `(source, product_id)`, so a source
+/// that does not match what the writer uses finds no series and reports a
+/// perfectly healthy pair as silent. That failure is invisible from here.
 ///
 /// The registry is therefore per-`(source, product)` while the *dimension* is
 /// per-product — the view aggregates it, because "what instrument is this" has
-/// the same answer whoever measured it. Holding the source buys the liveness
-/// lookup and the coverage question; neither is answerable without it.
+/// the same answer whoever measured it.
 ///
 /// **Neither timestamp is a data-freshness signal, and no caller may read one
 /// as one.** Both track process starts: a collector whose venue has answered

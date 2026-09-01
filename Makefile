@@ -741,8 +741,11 @@ dashboard-sql-check:
 # Lint the extracted SQL as Postgres, after substituting the Grafana macros and
 # template variables for typed stand-ins. Deliberately narrow — see
 # cfg/sqlfluff-dashboards.cfg for why the full rule set is wrong (and unsafe)
-# for SQL whose column names Grafana dictates. Needs sqlfluff on PATH; the
-# pre-commit hook supplies it, so prefer `make lint` locally.
+# for SQL whose column names Grafana dictates. Needs sqlfluff IMPORTABLE by the
+# invoking interpreter (the tool runs `sys.executable -m sqlfluff`), not merely
+# an executable on PATH — without it the run fails with "No module named
+# sqlfluff", which reads like a lint finding. The pre-commit hook installs it
+# into its own env, so prefer `make lint` locally.
 .PHONY: dashboard-sql-lint
 dashboard-sql-lint:
 	python3 .claude/tools/dashboard_sql.py lint

@@ -75,6 +75,41 @@ class LiteralSpans(unittest.TestCase):
         # Degenerate but must not crash or mis-span.
         self.assertEqual(ds.string_literal_spans("/* unterminated 'x'"), [])
 
+    def test_a_quoted_identifier_holding_an_apostrophe_opens_no_literal(self):
+        # These dashboards use quoted identifiers by NECESSITY — Grafana binds a
+        # time series on `AS "time"` and the candlestick panel on the OHLC
+        # names — so this is not exotic. `"it's"` would otherwise open a phantom
+        # literal exactly like the comment case.
+        sql = "SELECT a AS \"it's\", 'x'"
+        spans = ds.string_literal_spans(sql)
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(sql[spans[0][0] : spans[0][1]], "'x'")
+
+    def test_a_quoted_identifier_holding_a_double_dash_opens_no_comment(self):
+        # The DANGEROUS direction: read as a line comment, `"col--name"` would
+        # swallow the rest of the line including the real literal, so a genuine
+        # regex-in-literal site would go undetected and the guard would report
+        # green.
+        sql = "SELECT a AS \"col--name\", b = 'x'"
+        spans = ds.string_literal_spans(sql)
+        self.assertEqual(len(spans), 1, "the identifier must not start a comment")
+        self.assertEqual(sql[spans[0][0] : spans[0][1]], "'x'")
+
+    def test_block_comments_nest(self):
+        # Postgres nests block comments per the SQL standard. Ending at the
+        # first `*/` resumes scanning inside the outer comment, where the
+        # apostrophe in "Grafana's" opens a phantom literal.
+        sql = "/* a /* b */ Grafana's parser */ SELECT 'x'"
+        spans = ds.string_literal_spans(sql)
+        self.assertEqual(len(spans), 1, "the outer comment must not end early")
+        self.assertEqual(sql[spans[0][0] : spans[0][1]], "'x'")
+
+    def test_a_doubled_quote_inside_an_identifier_is_an_escape(self):
+        sql = 'SELECT a AS "he""llo", \'x\''
+        spans = ds.string_literal_spans(sql)
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(sql[spans[0][0] : spans[0][1]], "'x'")
+
 
 class RegexGuard(unittest.TestCase):
     def test_rejects_a_regex_formatter_inside_a_literal(self):
@@ -114,6 +149,22 @@ class MacroGuard(unittest.TestCase):
         with self.assertRaises(ds.ExtractionError):
             ds.check_macro_args("SELECT $__timeFilter(ts", "where")
 
+    def test_ignores_a_macro_named_inside_a_comment(self):
+        # The guard's own docstring notes that three dashboard queries carry
+        # comments explaining they were written around this limitation — and the
+        # natural way to write one is to quote the broken form. Refusing that is
+        # a false positive its sibling guard never had.
+        sql = (
+            "-- do NOT write $__timeGroup(to_timestamp(t), '1m') here\n"
+            "SELECT $__timeGroup(ts, '1m')"
+        )
+        ds.check_macro_args(sql, "where")
+
+    def test_ignores_an_unclosed_macro_inside_a_comment(self):
+        # This one produced an error message naming nothing the author could
+        # act on.
+        ds.check_macro_args("-- see $__timeFilter( for why\nSELECT 1", "where")
+
 
 class Substitution(unittest.TestCase):
     def test_leaves_no_variable_or_macro_behind(self):
@@ -148,6 +199,21 @@ class Substitution(unittest.TestCase):
         # A new Grafana macro must not break the lint gate; correctness is the
         # guards' job, not the shim's.
         self.assertEqual(ds.substitute("SELECT $__brandNew(ts)"), "SELECT ts")
+
+    def test_the_longer_bare_macro_wins_over_its_own_prefix(self):
+        # `$__interval` is a prefix of `$__interval_ms`. Shortest-first leaves
+        # `'1 minute'_ms`, silently. The loop sorts by length for this reason,
+        # so the dict's own order cannot reintroduce it.
+        out = ds.substitute("SELECT $__interval_ms, $__interval")
+        self.assertEqual(out, "SELECT 60000, '1 minute'")
+
+    def test_a_multi_segment_formatter_is_still_substituted(self):
+        # Grafana's built-ins use several colon-separated segments
+        # (`${__from:date:iso}`). Matching only one left the whole reference
+        # unmatched, so it survived verbatim and reached sqlfluff as a parse
+        # error blamed on the panel rather than on this shim.
+        out = ds.substitute("SELECT ${__from:date:iso}")
+        self.assertNotIn("$", out, out)
 
 
 class Extraction(unittest.TestCase):
@@ -298,15 +364,30 @@ class CheckAndExtract(unittest.TestCase):
 class RealDashboards(unittest.TestCase):
     """The committed dashboards must satisfy both guards.
 
-    This is the assertion that would have caught Part 7's defect, and it keeps
-    the mirror honest without needing sqlfluff installed.
+    This is the assertion that would have caught the regex-formatter defect, so
+    it must not be able to go quiet. It previously skipped whenever the cwd was
+    not the repo root and then asserted only non-emptiness — a test that both
+    disappears silently and passes vacuously. The directory is now resolved from
+    `__file__` (as the import above already does) so there is no skip, and the
+    count has a floor.
     """
 
+    #: `.claude/tools/tests/` -> repo root.
+    REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+
     def test_the_committed_dashboards_extract_cleanly(self):
-        if not ds.DASHBOARD_DIR.is_dir():
-            self.skipTest("run from the repo root")
-        found = ds.collect(ds.DASHBOARD_DIR)
-        self.assertTrue(found, "no dashboard queries found at all")
+        dashboards = self.REPO_ROOT / ds.DASHBOARD_DIR
+        self.assertTrue(
+            dashboards.is_dir(),
+            f"{dashboards} is missing — this test cannot be allowed to skip",
+        )
+        found = ds.collect(dashboards)
+        # A floor rather than an exact count: exact would churn on every panel
+        # added, while non-emptiness would pass if the panel walk silently
+        # found one query out of dozens.
+        self.assertGreaterEqual(
+            len(found), 20, f"only {len(found)} queries extracted — walk broken?"
+        )
 
 
 if __name__ == "__main__":
