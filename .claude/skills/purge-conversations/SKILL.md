@@ -71,8 +71,9 @@ the age rule applies to them.
 - **Hard `rm`, no trash retention.** Move-to-trash was
   rejected (it doesn't free space until emptied). Instead:
   print a **dry-run manifest** grouped by category
-  (dropset-old / non-dropset / file-history / CLI-cache)
-  with per-group and total MB plus the protected count, get
+  (completed / dropset-old / non-dropset / file-history /
+  CLI-cache) with per-group and total MB plus the kept count
+  **broken out by reason**, get
   **one** approval via `AskUserQuestion`, then hard-delete
   and **report bytes freed**.
 - **Age threshold default 2 days** (the tool's
