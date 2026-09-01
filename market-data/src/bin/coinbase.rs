@@ -15,7 +15,8 @@ use dropset_feeds::{
     CursorStore, HttpClient, PgCursorStore, RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
-    config::Config, roster::canonical_only, store::CexWriter, supervise::run_all,
+    config::Config, instruments::register as register_instruments, roster::canonical_only,
+    store::CexWriter, supervise::run_all,
 };
 use std::time::Duration;
 
@@ -48,6 +49,9 @@ async fn main() -> anyhow::Result<()> {
     // derived here — which is exactly why a pinned venue spelling has to be
     // rejected rather than quietly ignored.
     let products = canonical_only(&cfg.products)?;
+    // Publish the roster as the instruments dimension, so a dashboard can ask
+    // what kind of thing each product is without a hardcoded product list.
+    register_instruments(&pool, &products).await?;
     tracing::info!(
         products = %products.join(","),
         granularity = cfg.granularity_secs,

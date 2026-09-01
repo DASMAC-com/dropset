@@ -28,6 +28,7 @@ use dropset_feeds::{
 };
 use dropset_market_data::{
     fx::{quota_floor_secs, secret, split_canonical, FxConfig, FxDefaults},
+    instruments::register as register_instruments,
     roster::canonical_only,
     store::CexWriter,
     supervise::run_all,
@@ -78,6 +79,9 @@ async fn main() -> anyhow::Result<()> {
     }
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;
+    // The canonical id leads each resolved tuple — see the loop above.
+    let products: Vec<String> = pairs.iter().map(|(id, _, _)| id.clone()).collect();
+    register_instruments(&pool, &products).await?;
     let cursors = PgCursorStore::new(pool.clone());
 
     // One transport for the process, cloned per feed. On a 25-request account

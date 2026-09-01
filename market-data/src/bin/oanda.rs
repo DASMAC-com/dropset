@@ -19,6 +19,7 @@ use dropset_feeds::{
 };
 use dropset_market_data::{
     fx::{oanda_instrument, secret, FxConfig, FxDefaults},
+    instruments::register as register_instruments,
     roster::resolve_venue,
     store::CexWriter,
     supervise::run_all,
@@ -49,6 +50,10 @@ async fn main() -> anyhow::Result<()> {
     let instruments = resolve_venue(&cfg.products, oanda_instrument)?;
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;
+    // The canonical ids, not the venue spellings beside them: the dimension
+    // keys on what the rows are stored under.
+    let products: Vec<String> = instruments.iter().map(|i| i.product_id.clone()).collect();
+    register_instruments(&pool, &products).await?;
     let cursors = PgCursorStore::new(pool.clone());
 
     // One transport for the process, cloned per feed, so the roster draws on a

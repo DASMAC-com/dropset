@@ -2,6 +2,7 @@
 // cspell:word schemaname
 // cspell:word tablename
 // cspell:word unprovisioned
+// cspell:word viewname
 //! End-to-end tests for the startup fence against a real Postgres in a
 //! throwaway container.
 //!
@@ -223,6 +224,14 @@ async fn migrate_creates_every_expected_table() {
         "maker_leg_contributions",
         // 0008_push_liveness
         "push_health",
+        // 0009_instruments. `instruments` is a VIEW rather than a table, but
+        // `to_regclass` resolves any relation, so the existence probe below
+        // covers it unchanged — and its derivation is pinned separately by
+        // `the_instruments_view_derives_a_class_from_the_legs`, because a view
+        // that exists while classifying wrongly is the failure that matters.
+        "currency_kinds",
+        "instrument_registry",
+        "instruments",
     ] {
         let present: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
             .bind(table)
@@ -326,6 +335,28 @@ async fn reader_role_can_read_everything_and_write_nothing() {
             .unwrap_or_else(|e| panic!("reader cannot SELECT from `{table}`: {e}"));
     }
 
+    // Views are absent from `pg_tables`, so the loop above cannot see one — and
+    // the instruments dimension is read through a view. `ALTER DEFAULT
+    // PRIVILEGES ... ON TABLES` does extend to views, but that is precisely the
+    // kind of fact worth asserting rather than assuming: were it false, every
+    // class-filtered panel would render empty, with no error anywhere.
+    let views: Vec<String> =
+        sqlx::query_scalar("SELECT viewname FROM pg_views WHERE schemaname = 'public'")
+            .fetch_all(&pool)
+            .await
+            .expect("list public views");
+    assert!(
+        !views.is_empty(),
+        "no views in `public` — the probe below would vacuously pass"
+    );
+
+    for view in &views {
+        sqlx::query(&format!("SELECT count(*) FROM {view}"))
+            .fetch_one(&reader)
+            .await
+            .unwrap_or_else(|e| panic!("reader cannot SELECT from view `{view}`: {e}"));
+    }
+
     // The `ALTER DEFAULT PRIVILEGES` clause is the one grant nothing above
     // exercises: every table that exists was already covered by the blanket
     // `GRANT SELECT ON ALL TABLES`, so a migration that dropped the default
@@ -359,6 +390,70 @@ async fn reader_role_can_read_everything_and_write_nothing() {
         Some("42501"),
         "expected a privilege rejection, got: {err}"
     );
+}
+
+/// The instruments view derives a pair's class from its two legs' kinds.
+///
+/// The existence probe above cannot see this: a view with a typo in its `CASE`
+/// is created exactly as happily as a correct one, and every consequence of
+/// getting it wrong is silent — a mislabelled pair lands in the wrong class
+/// filter, and a *dropped* pair vanishes from the dashboard while the panel
+/// still renders. So the derivation is asserted directly, one product per class
+/// the `CASE` can produce.
+///
+/// This also pins the seeded `currency_kinds` rows the derivation reads: were
+/// `EURC` seeded as `fiat`, or `EUR` omitted, the expectations below would move
+/// even though the view itself was untouched.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn the_instruments_view_derives_a_class_from_the_legs() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    // `SOL` is deliberately not in `currency_kinds` — no collector polls an
+    // unpegged token yet — which makes it the honest fixture for the
+    // unclassified path rather than a currency invented for this test.
+    for product in ["EUR-USD", "EURC-USDC", "EURC-EUR", "SOL-USDC"] {
+        sqlx::query(
+            "INSERT INTO instrument_registry
+                 (product_id, first_registered_at, last_registered_at)
+             VALUES ($1, 1, 1)",
+        )
+        .bind(product)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("register `{product}`: {e}"));
+    }
+
+    for (product, base, quote, class) in [
+        ("EUR-USD", "EUR", "USD", "fx-pair"),
+        ("EURC-USDC", "EURC", "USDC", "stablecoin-pair"),
+        // The peg pair, and why it is its own class rather than a stablecoin
+        // pair: it trades at ~1.0 and the only interesting thing about it is
+        // the deviation, so folding the two together would hide exactly what
+        // this pair exists to measure.
+        ("EURC-EUR", "EURC", "EUR", "peg-pair"),
+        // An unseeded leg must leave the product PRESENT and labelled, never
+        // drop it. An inner join here would make a class filter hide the
+        // series outright while the panel carried on rendering — the same
+        // silent-failure shape as a candle field map that fails to a flat
+        // line.
+        ("SOL-USDC", "SOL", "USDC", "unclassified"),
+    ] {
+        let row: (String, String, String) = sqlx::query_as(
+            "SELECT base, quote, asset_class FROM instruments WHERE product_id = $1",
+        )
+        .bind(product)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("`{product}` missing from the instruments view: {e}"));
+
+        assert_eq!(
+            (row.0.as_str(), row.1.as_str(), row.2.as_str()),
+            (base, quote, class),
+            "wrong derivation for `{product}`"
+        );
+    }
 }
 
 #[tokio::test]

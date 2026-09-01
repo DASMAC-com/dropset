@@ -21,6 +21,7 @@
 
 use dropset_feeds::{connect, run, venues::CoinbaseTicker, HttpClient, RunConfig, Sink, StoreSink};
 use dropset_market_data::{
+    instruments::register as register_instruments,
     roster::{canonical_only, roster_from_env},
     supervise::run_all,
     ticks::{Tick, TickConfig, TickDefaults, TickSource, TickWriter},
@@ -61,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
     // Canonical ids reach this venue unchanged, so a pin has nowhere to go and
     // is rejected rather than silently dropped.
     let ids = canonical_only(&products)?;
+    register_instruments(&pool, &ids).await?;
     tracing::info!(
         products = %ids.join(","),
         poll_secs = cfg.poll_interval_secs,
