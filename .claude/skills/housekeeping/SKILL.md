@@ -370,11 +370,12 @@ for a two-line answer across eleven PRs).
 
 **But PR-merged is not the prune criterion — the ISSUE'S
 STATUS TYPE is.** A merged PR whose Linear issue reads
-**In Review** is a session with outstanding follow-up (see
-`review-pr`'s outcome-watch step, which writes the issue back
-to In Review on merge precisely so this is visible), and
-pruning its worktree would recreate the worktree-loss incident
-in a third variant. So intersect the merged set with the board:
+**In Review** is a session with outstanding follow-up — the
+team's Git workflow automation makes no transition on merge,
+so that state survives the merge precisely so this is visible
+— and pruning its worktree would recreate the worktree-loss
+incident in a third variant. So intersect the merged set with
+the board:
 
 - resolve each merged branch's `ENG-###` from its branch name,
   read that issue's **status type**, and prune only when the

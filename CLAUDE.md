@@ -109,9 +109,13 @@ The Linear state is the state machine of the **agentic programming
 session**; the PR's own merged/open state tracks the code. So **In
 Review** covers both PR-under-review *and*
 merged-with-follow-up-outstanding, and **Done** means operator-ratified
-complete — never merely merged. Linear's GitHub integration
-auto-transitions to Done on merge, so `review-pr` writes the issue
-**back** to In Review and only an explicit approval moves it to Done.
+complete — never merely merged. Linear's GitHub integration makes **no
+state transition on merge** — a team setting — so the In Review state
+`review-pr` writes at the enqueue handoff simply persists, and only an
+explicit approval moves it to Done. (The integration used to
+auto-transition to Done, which `review-pr` undid with a post-merge
+write-back; the setting states the convention natively now and that
+write was retired.)
 Two consequences elsewhere: `housekeeping` prunes a worktree on the
 issue's **status type** (completed / canceled), never on PR-merged; and
 the fleet-resume launcher resumes In Progress **or** In Review. Detail:

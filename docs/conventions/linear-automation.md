@@ -289,12 +289,12 @@ So:
   reads Done.
 - **Done means operator-ratified complete.** Never merely merged.
 
-Linear's GitHub integration auto-transitions an issue to Done on merge,
-which is exactly wrong under this reading: it hides the sessions that
-still owe something. So `review-pr`'s outcome-watch step **writes the
-issue back to In Review** once it observes that auto-Done, runs its
-follow-up tail, and moves to Done only on an explicit `AskUserQuestion`
-approval. Two consequences elsewhere:
+**The team's Git workflow automation makes no state transition on
+merge**, which states this reading natively: the **In Review** written
+at `review-pr`'s enqueue handoff is simply the state the issue keeps
+through the merge and after it. `review-pr`'s outcome-watch step runs
+its follow-up tail and moves to Done only on an explicit
+`AskUserQuestion` approval. Two consequences elsewhere:
 
 - **`housekeeping` prunes on the issue's status TYPE, not on
   PR-merged** — only `completed` or `canceled`. A merged PR whose issue
@@ -303,10 +303,14 @@ approval. Two consequences elsewhere:
 - **The fleet-resume launcher resumes In Progress *or* In Review**, so a
   merged-but-unfinished session reopens on machine start.
 
-Accepted gap: a session that dies before its outcome watch runs leaves
-the issue auto-Done with nobody to re-mark it. The common case — the
-operator closing sessions at day end after merge confirmation — is
-covered, and no detection machinery is built for the crash case.
+This replaced a **write-back**. The integration used to auto-transition
+to Done on merge, and `review-pr` observed that and wrote the issue back
+to In Review. Moving the rule into the team setting retired that write,
+which cost a full-body Linear echo in every implementation session to
+restore a state nothing should have moved. It also closed the gap the
+write-back carried: a session dying before its outcome watch ran used to
+leave the issue auto-Done with nobody to re-mark it. Nothing sets Done
+now except an explicit approval.
 
 ## An audit is a board issue, not a directive
 

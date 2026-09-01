@@ -4125,43 +4125,33 @@ already being asked to start the review.
    printed after `firm-perms` and after the review summary
    above — the summary couldn't know this outcome yet.
 
-   **Treat the Linear status as not-yet-settled until this
-   probe returns the terminal merge.** After enqueue the PR
-   sits in the queue asynchronously
+   **The Linear status is settled at enqueue.** After enqueue
+   the PR sits in the queue asynchronously
    (`mergeQueueEntry.state: AWAITING_CHECKS`), and the
-   Linear/GitHub integration auto-transitions the issue to
-   **Done on merge** — no manual move, and effectively no lag
-   once the merge lands. So while the PR is still queued, do
-   **not** read, report, or act on the issue's Linear status:
-   polled mid-queue it reads a
-   stale **In Review** and invites a premature hand-move. Only
-   after the probe returns `merged: true` / `state: "MERGED"`
-   should you (re-)report the Linear status. The **In Review**
-   transition made at the enqueue handoff stays as-is; this
-   governs only what's reported/acted on *after* enqueue,
-   while the merge resolves.
+   Linear/GitHub integration makes **no state transition on
+   merge** — that is a team setting, not a skill behavior. So
+   the **In Review** state written at the enqueue handoff is
+   the state the issue holds through the merge and after it,
+   and it is accurate to read or report at any point.
 
-   **On a confirmed merge, write the issue BACK to In Review.**
-   Merge and completion are different events. The integration
-   sets the issue **Done** on merge, which hides exactly the
-   sessions that still owe follow-up — session metrics, perms
-   firming, post-merge tidy, and feedback that has to reach a
-   planning session or be filed. The operator closes sessions
-   at end of day and reopens the machine later with **no Linear
-   signal** that a merged issue's session still needs
-   attention. So the issue stays effectively in review while
-   the operator is still following up with its session.
+   **There is deliberately no post-merge write here.** An
+   earlier revision of this step observed the integration's
+   auto-**Done** and wrote the issue *back* to In Review,
+   because merge and completion are different events and an
+   auto-Done hides exactly the sessions that still owe
+   follow-up — session metrics, perms firming, post-merge
+   tidy, and feedback that has to reach a planning session.
+   The team setting now states that convention natively, so
+   the write-back was retired: it spent a full-body Linear
+   echo in every implementation session to restore a state
+   that nothing had moved.
 
-   Order matters, because the auto-transition and this write
-   can race: **wait until Done is actually observed**, then
-   write In Review, then **re-check** the state:
-
-   ```txt
-   mcp__claude_ai_Linear__save_issue(
-     id: "<ENG-###>",
-     state: "In Review"
-   )
-   ```
+   Two consequences follow, and both remove machinery rather
+   than add it. Nothing races this step, so no ordering
+   against an auto-transition is needed. And the residual gap
+   that revision accepted — a session dying before the
+   write-back ran, leaving the issue auto-Done with nobody to
+   re-mark it — is gone, because nothing sets Done at all now.
 
    Then run the existing tail — post-merge tidy, session
    metrics, `firm-perms` — and close with an explicit
@@ -4173,12 +4163,6 @@ already being asked to start the review.
    step is an `AskUserQuestion` — *"all follow-up complete:
    metrics filed, perms firmed, feedback forwarded — mark
    Done?"* — and nothing else sets that state.
-
-   **One residual gap, accepted:** a session that dies *before*
-   this step runs leaves the issue auto-Done with nobody to
-   re-mark it. The common case — the operator closing sessions
-   at day end after merge confirmation — is fully covered. Do
-   **not** build detection machinery for the crash case.
 
    Watch whether the PR lands or gets kicked back out with a
    **single** probe per check: the `gh api graphql` dequeue
