@@ -91,8 +91,11 @@ pub(super) const RP_STAMP_OFF: usize = offset_of!(ReferencePrice, stamp);
 // directly against what the assembly stores through — one hand-written
 // source, and a mismatch fails the build on whichever side moved. See
 // `src/asm_offsets.rs`.
-const _: () = assert!(NONCE_OFF as u64 == equ::MARKET_NONCE_OFF - equ::MARKET_DATA_OFF);
-const _: () = assert!(LEN_OFF as u64 == equ::MARKET_LEN_OFF - equ::MARKET_DATA_OFF);
+// Stated as additions rather than subtractions: the operands cannot
+// underflow either way, but a const-eval overflow would surface as an
+// arithmetic error instead of the assertion's own message.
+const _: () = assert!(NONCE_OFF as u64 + equ::MARKET_DATA_OFF == equ::MARKET_NONCE_OFF);
+const _: () = assert!(LEN_OFF as u64 + equ::MARKET_DATA_OFF == equ::MARKET_LEN_OFF);
 const _: () = assert!(ITEMS_OFF as u64 == equ::SLAB_ITEMS_OFF);
 // Authoritative pin: `Slab::space_for(0)` *is* the slab's `ITEMS_OFFSET`,
 // so this guarantees the kernels' sector base can never drift from the
@@ -102,6 +105,15 @@ const _: () = assert!(ITEMS_OFF == crate::state::Market::space_for(0));
 const _: () = assert!(VAULT_SIZE as u64 == equ::VAULT_SIZE);
 const _: () = assert!(VAULT_QUOTE_AUTHORITY_OFF as u64 == equ::VAULT_QUOTE_AUTHORITY_OFF);
 const _: () = assert!((VAULT_REFERENCE_PRICE_OFF + RP_STAMP_OFF) as u64 == equ::RP_STAMP_OFF);
+
+// The assembly's domain error codes, held against the kernels' own copies.
+// These are pinned by behavior too — the parity suite pushes a failing call
+// through both builds and compares the surfaced `Custom(…)` — but that check
+// only runs when the reference oracle was built, whereas this one is
+// unconditional. Same argument the offsets get: the literal an author would
+// edit has exactly one home, the `.s`.
+const _: () = assert!(equ::E_UNAUTHORIZED == err::UNAUTHORIZED as u64);
+const _: () = assert!(equ::E_INVALID_SECTOR == err::INVALID_SECTOR_INDEX as u64);
 
 /// Bounds-check `vault_idx` and authorize the write, returning the target
 /// sector's byte offset within `data` on success.

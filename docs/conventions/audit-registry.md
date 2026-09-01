@@ -37,7 +37,8 @@ somebody tried to wire it up. Treat a hedge in place of a check ("adjust
 this to whatever form your CLI supports") as the finding itself.
 
 ```txt
-program (solana-program, high): programs/dropset/src/**
+program (solana-program, high): programs/dropset/src/**,
+  programs/dropset/build.rs, programs/dropset/tests/**
 sdk-math (rust-lib, high): sdk/math-core/src/**, sdk/interface/src/**
 sdk-clients (gen-client, med): sdk/rs/src/**, sdk/ts/src/**, sdk/codama/**
 frontend (web-app, med): frontend/**

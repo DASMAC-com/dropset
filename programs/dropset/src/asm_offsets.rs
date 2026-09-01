@@ -57,29 +57,51 @@ pub mod equ {
 //   [RuntimeAccount header(88) | data | MAX_PERMITTED_DATA_INCREASE(10240)
 //    | pad-to-8 | rent_epoch(8)]
 // preceded by an 8-byte account count. These are the runtime's ABI, not
-// this crate's layout — a genuinely separate truth, so they are named
-// here once and shared with the parity suite rather than copied into it.
+// this crate's layout — a genuinely separate truth, which is why they are
+// literals here rather than derived from anything.
+//
+// They are private: only the assertions below consume them. The parity
+// suite used to carry its own copies, and no longer needs any — the
+// offsets they were used to re-derive are checked here at compile time
+// instead, so the suite imports only `equ`.
 
 /// The 8-byte account count the input buffer opens with.
-pub const NUM_ACCOUNTS_SIZE: u64 = 8;
+const NUM_ACCOUNTS_SIZE: u64 = 8;
 /// Size of one serialized `RuntimeAccount` header.
-pub const ACCT_HEADER_SIZE: u64 = 88;
+const ACCT_HEADER_SIZE: u64 = 88;
 /// Realloc headroom the runtime leaves after every account's data.
-pub const MAX_PERMITTED_DATA_INCREASE: u64 = 10240;
+const MAX_PERMITTED_DATA_INCREASE: u64 = 10240;
 /// The `rent_epoch` tail on each account record.
-pub const RENT_EPOCH_SIZE: u64 = 8;
+const RENT_EPOCH_SIZE: u64 = 8;
 /// `is_signer`, within the account header.
-pub const HDR_IS_SIGNER: u64 = 1;
+const HDR_IS_SIGNER: u64 = 1;
 /// `is_writable`, within the account header.
-pub const HDR_IS_WRITABLE: u64 = 2;
+const HDR_IS_WRITABLE: u64 = 2;
 /// `pubkey`, within the account header.
-pub const HDR_PUBKEY: u64 = 8;
+const HDR_PUBKEY: u64 = 8;
 /// `data_len`, within the account header.
-pub const HDR_DATA_LEN: u64 = 80;
+const HDR_DATA_LEN: u64 = 80;
 /// Start of the account's data, within the account header.
-pub const HDR_DATA: u64 = 88;
+const HDR_DATA: u64 = 88;
 /// The anchor account discriminator that precedes `MarketHeader`.
-pub const DISC_SIZE: u64 = 8;
+///
+/// `quote_write.rs` names this width too, for its own `usize` framing
+/// arithmetic. The duplication is deliberate: both copies are private, the
+/// value is anchor's fixed 8, and sharing one would mean widening
+/// `market`'s private `mod quote_write` purely to export a constant.
+const DISC_SIZE: u64 = 8;
+
+// ── coverage of the lifted table ────────────────────────────────────────
+//
+// Pin how many symbols the assembly defines. Every assertion below names
+// its symbol explicitly, so an offset that drifts is caught — but a symbol
+// *added* to the assembly would be lifted, asserted by nothing, and
+// silently reintroduce the unchecked-copy class this module exists to
+// close. Failing here on a count change forces that decision to be made
+// out loud: either add an assertion, or bump the count with a note saying
+// why the new symbol needs none (the `E_*` and `DISCRIM_*` families are
+// pinned by behavior instead — see the module header).
+const _: () = assert!(equ::COUNT == 32);
 
 // ── account 0: signer ───────────────────────────────────────────────────
 const _: () = assert!(equ::SIGNER_IS_SIGNER_OFF == NUM_ACCOUNTS_SIZE + HDR_IS_SIGNER);

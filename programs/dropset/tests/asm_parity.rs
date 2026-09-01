@@ -66,7 +66,7 @@ use solana_pubkey::Pubkey;
 
 /// Narrow an assembly offset for indexing. The lifted `.equ` table is `u64`
 /// — the assembly's word — and every offset in it is tiny.
-fn at(offset: u64) -> usize {
+fn wire_off(offset: u64) -> usize {
     usize::try_from(offset).expect("assembly offset fits a usize")
 }
 
@@ -93,13 +93,17 @@ fn asm_offsets_match_wire_format() {
         equ::DISCRIM_SET_LIQUIDITY_PROFILE,
         "discriminator"
     );
-    let idx = at(equ::IX_VAULT_IDX_OFF);
+    let idx = wire_off(equ::IX_VAULT_IDX_OFF);
     assert_eq!(
         &wire[idx..idx + 4],
         &0x0403_0201u32.to_le_bytes(),
         "IX_VAULT_IDX_OFF"
     );
-    assert_eq!(&wire[at(equ::IX_PROFILE_OFF)..], &probe, "IX_PROFILE_OFF");
+    assert_eq!(
+        &wire[wire_off(equ::IX_PROFILE_OFF)..],
+        &probe,
+        "IX_PROFILE_OFF"
+    );
     assert_eq!(
         PROFILE_BYTES as u64,
         equ::PROFILE_SIZE,
@@ -129,7 +133,7 @@ fn asm_offsets_match_wire_format() {
         (equ::IX_QUOTE_SLOT_OFF, 0x0C0B_0A09, "IX_QUOTE_SLOT_OFF"),
         (equ::IX_QUOTE_UNIX_OFF, 0x100F_0E0D, "IX_QUOTE_UNIX_OFF"),
     ] {
-        let off = at(offset);
+        let off = wire_off(offset);
         assert_eq!(&wire[off..off + 4], &expected.to_le_bytes(), "{label}");
     }
 
@@ -145,7 +149,7 @@ fn asm_offsets_match_wire_format() {
     // the assembly actually stores through, including the bound past which
     // `base_atoms` begins. What no const can see is the *wire* side's byte
     // order, which is what this asserts.
-    let pair = at(equ::IX_QUOTE_SLOT_OFF);
+    let pair = wire_off(equ::IX_QUOTE_SLOT_OFF);
     assert_eq!(
         &wire[pair..pair + 8],
         &0x100F_0E0D_0C0B_0A09u64.to_le_bytes(),
@@ -168,9 +172,9 @@ fn valid_price() -> u32 {
 ///
 /// It exists because nextest and the default harness alike score an early
 /// `return` as **passed**: without this gate, a build or cache mishap that
-/// left `dropset_ref.so` missing would take all ten comparison tests below
-/// with it and still report a green required check. The value is never
-/// read, only its presence.
+/// left `dropset_ref.so` missing would take all eleven comparison tests
+/// below with it and still report a green required check. The value is
+/// never read, only its presence.
 const REQUIRE_ORACLE_ENV: &str = "DROPSET_REQUIRE_PARITY_ORACLE";
 
 /// Whether the reference oracle `.so` is on disk — the guard every
@@ -323,6 +327,34 @@ fn oob_err(mut f: Fixture) -> String {
 /// shows up in the diff.
 const SEEDED_BASE_ATOMS: u64 = 0x1234_5678_9ABC_DEF0;
 
+/// The neighboring sector's `base_atoms`, likewise recognizable and
+/// distinct from [`SEEDED_BASE_ATOMS`], so a store that lands one sector low
+/// overwrites bytes that were neither zero nor the target's.
+const NEIGHBOR_BASE_ATOMS: u64 = 0x0BAD_0BAD_0BAD_0BAD;
+
+/// The target sector's stamp, and the neighboring sector's. Explicit for
+/// the same reason as [`PROFILE_QUOTE_UNIX`] — the two builds' clocks cannot
+/// be compared — and **pairwise distinct in every field**, which is what
+/// makes a mis-targeted store visible: a store landing one sector low, or
+/// reading the wrong payload word, changes a byte rather than rewriting the
+/// value already there.
+const STAMP_TARGET: (u32, u32) = (7, 1_700_000_000);
+/// See [`STAMP_TARGET`]. Distinct slot, distinct datum, distinct price.
+const STAMP_NEIGHBOR: (u32, u32) = (3, 1_600_000_000);
+
+/// A valid price distinct from [`valid_price`], for the neighboring sector.
+///
+/// Without this the two sectors shared a price word, and a mis-targeted
+/// store that wrote only `price` one sector low would write the value
+/// already there — invisible to a byte diff, which can only see a change.
+///
+/// The significand must carry exactly 8 digits (`Price` normalizes to
+/// `[10_000_000, 99_999_999]`), so this is not a free choice of any
+/// smaller-looking number.
+fn neighbor_price() -> u32 {
+    Price::encode(12_500_000, 0).unwrap().as_u32()
+}
+
 /// Open two vaults, seed the neighboring sector's reference price and both
 /// sectors' `base_atoms`, then stamp a price onto the *second* sector.
 ///
@@ -336,17 +368,24 @@ fn stamp_write_footprint(mut f: Fixture) -> (Vec<(usize, u8)>, u64) {
         .expect("create_vault 1");
     let signer = f.authority.insecure_clone();
     // Seed sector 0's reference price, so a store that lands one sector low
-    // overwrites recognizable bytes rather than zeros.
-    f.set_reference_price_at(&signer, 0, valid_price(), 3, 1_600_000_000)
-        .expect("seed vault 0's reference price");
+    // overwrites recognizable bytes rather than zeros. Every field differs
+    // from the target write below, price included.
+    f.set_reference_price_at(
+        &signer,
+        0,
+        neighbor_price(),
+        STAMP_NEIGHBOR.0,
+        STAMP_NEIGHBOR.1,
+    )
+    .expect("seed vault 0's reference price");
     // Both sectors' `base_atoms` non-zero — see `poke_base_atoms`. This is
     // the field the fused store's upper bound abuts, and a fresh vault
     // leaves it at zero, where a clobber-to-zero would be invisible.
-    f.poke_base_atoms(0, 0x0BAD_0BAD_0BAD_0BAD);
+    f.poke_base_atoms(0, NEIGHBOR_BASE_ATOMS);
     f.poke_base_atoms(1, SEEDED_BASE_ATOMS);
 
     let before = f.market_data();
-    f.set_reference_price_at(&signer, 1, valid_price(), 7, 1_700_000_000)
+    f.set_reference_price_at(&signer, 1, valid_price(), STAMP_TARGET.0, STAMP_TARGET.1)
         .expect("set_reference_price");
     let after = f.market_data();
 

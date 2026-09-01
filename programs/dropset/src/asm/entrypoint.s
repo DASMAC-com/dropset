@@ -37,12 +37,18 @@
 # The `.equ` block below is the ONE hand-written copy of these offsets.
 # `build.rs` parses it into `$OUT_DIR/asm_equ.rs`, and `src/asm_offsets.rs`
 # asserts every layout symbol against the offset derived from the real Rust
-# `#[repr(C)]` types — at COMPILE time. So this assembly and the layout
-# cannot drift: changing either without the other fails the build instead of
-# silently mis-stamping on-chain. The instruction-data offsets, the
-# discriminators and the error codes are pinned by behavior instead, in
-# tests/asm_parity.rs, which checks them against the real serialization and
-# the real VM rather than against a second copy of the numbers.
+# `#[repr(C)]` types — at COMPILE time. So no `.equ` offset can drift from
+# the layout: changing one without the other fails the build instead of
+# silently mis-stamping on-chain. The instruction-data offsets and the
+# discriminators are pinned against the real serialization in
+# tests/asm_parity.rs; the error codes are held against the kernels' own
+# copies in quote_write.rs.
+#
+# Note precisely what that does NOT cover: it pins the `.equ` TABLE, not the
+# instruction stream. An instruction that stored through a bare literal
+# instead of a symbol would be invisible to it. Every layout-dependent
+# access below therefore goes through a symbol — keep it that way, and treat
+# a raw offset literal in an instruction as a bug.
 #
 # Register discipline through the shared preamble: r1 = accounts region,
 # r2 = instruction data, r6 = the discriminator (held for the payload
@@ -301,10 +307,10 @@ quote_write:
 write_profile:
     # One `sol_memcpy_` of the whole PROFILE_SIZE blob: the syscall is
     # metered at max(10, len / 250) CU, so ~10 CU against ~56 for the 28
-    # hand-rolled ldxdw/stxdw pairs a chunked copy of 224 bytes would
-    # need. dst is the program-owned
-    # writable market data, src the readable instruction-data region — the
-    # two never overlap (dst precedes src in the input buffer).
+    # hand-rolled ldxdw/stxdw pairs a chunked copy of that width would need.
+    # dst is the program-owned writable market data, src the readable
+    # instruction-data region — the two never overlap (dst precedes src in
+    # the input buffer).
     #
     # The source length is NOT bounded against the instruction-data length —
     # see the note under the error codes above for why that is safe and
