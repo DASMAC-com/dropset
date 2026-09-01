@@ -30,6 +30,15 @@ export const NOTES_SEARCH = `?${PARAM}=true`;
  * measured opening the presenter view with no exit button rendered — the one
  * state where that button is the whole point. Matching the semantics here is
  * what keeps the affordance and the mode in step.
+ *
+ * The match is exact for a single-valued parameter, which is the only shape
+ * anything in this package produces. A *repeated* key is the one divergence
+ * left: Spectacle's parser yields an array, which is truthy whatever it holds,
+ * while `get` returns only the first value — so `?presenterMode=false&
+ * presenterMode=true` opens the presenter view with the button hidden, the
+ * same direction of failure as the bug above. Reaching it needs a
+ * hand-written URL with a deliberately duplicated key, which is why this is
+ * documented rather than handled.
  */
 export function isPresenterMode(search: string): boolean {
   const value = new URLSearchParams(search).get(PARAM);

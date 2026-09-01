@@ -134,7 +134,12 @@ export default function Home() {
             Presenter mode syncs over{" "}
             <span className="font-mono">BroadcastChannel</span>: same machine,
             same browser, two windows. It can&apos;t drive someone else&apos;s
-            screen.
+            screen. Open the second one — the audience window, the one that
+            goes on the projector — with{" "}
+            <span className="font-mono text-foreground">
+              Show presenter notes
+            </span>{" "}
+            switched off, or you get two presenter views and no deck.
           </li>
           <li>
             A PowerPoint file for Google Slides&apos;{" "}
