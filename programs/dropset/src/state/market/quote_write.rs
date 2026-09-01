@@ -21,6 +21,7 @@
 use core::mem::{offset_of, size_of};
 
 use super::{MarketHeader, ReferencePrice, Vault, FLUSH_BIT};
+use crate::asm_offsets::equ;
 
 /// Domain error codes returned by the quote-write kernels. Each equals the
 /// `ProgramError::Custom` value anchor-lang-v2's `#[error_code]` produces
@@ -77,20 +78,30 @@ pub(super) const RP_STAMP_OFF: usize = offset_of!(ReferencePrice, stamp);
 // pins the struct internals (`Vault` size / field offsets); these pin the
 // Slab framing the kernels and the ASM both hardcode, so a header-size or
 // alignment change breaks the build here rather than silently
-// mis-stamping. Kept as concrete literals (not just the derivations
-// above) so a change to either side is caught.
-const _: () = assert!(NONCE_OFF == 8);
-const _: () = assert!(LEN_OFF == 261);
-const _: () = assert!(ITEMS_OFF == 268);
+// mis-stamping.
+//
+// They compare against the **assembly's own `.equ` table** rather than
+// against concrete literals, which is what they used to carry. Those
+// literals were a third hand-typed copy of numbers `entrypoint.s`
+// hardcodes and `tests/asm_parity.rs` re-typed again, with no mechanical
+// link between the three: a layout change failed the copies one at a time,
+// and updating each in turn restored a green build while leaving the
+// assembly aimed at the old offset. `build.rs` now lifts the assembly's
+// table into `crate::asm_offsets::equ`, so the comparison below is
+// directly against what the assembly stores through — one hand-written
+// source, and a mismatch fails the build on whichever side moved. See
+// `src/asm_offsets.rs`.
+const _: () = assert!(NONCE_OFF as u64 == equ::MARKET_NONCE_OFF - equ::MARKET_DATA_OFF);
+const _: () = assert!(LEN_OFF as u64 == equ::MARKET_LEN_OFF - equ::MARKET_DATA_OFF);
+const _: () = assert!(ITEMS_OFF as u64 == equ::SLAB_ITEMS_OFF);
 // Authoritative pin: `Slab::space_for(0)` *is* the slab's `ITEMS_OFFSET`,
 // so this guarantees the kernels' sector base can never drift from the
 // real on-chain layout (a header-size or `Vault`-alignment change breaks
 // the build here).
 const _: () = assert!(ITEMS_OFF == crate::state::Market::space_for(0));
-const _: () = assert!(VAULT_SIZE == 692);
-const _: () = assert!(VAULT_QUOTE_AUTHORITY_OFF == 40);
-const _: () = assert!(VAULT_REFERENCE_PRICE_OFF == 72);
-const _: () = assert!(RP_STAMP_OFF == 0);
+const _: () = assert!(VAULT_SIZE as u64 == equ::VAULT_SIZE);
+const _: () = assert!(VAULT_QUOTE_AUTHORITY_OFF as u64 == equ::VAULT_QUOTE_AUTHORITY_OFF);
+const _: () = assert!((VAULT_REFERENCE_PRICE_OFF + RP_STAMP_OFF) as u64 == equ::RP_STAMP_OFF);
 
 /// Bounds-check `vault_idx` and authorize the write, returning the target
 /// sector's byte offset within `data` on success.

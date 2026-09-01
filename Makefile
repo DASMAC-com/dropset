@@ -150,9 +150,19 @@ test-no-teardown: program-no-teardown
 # Rust↔ASM parity: deploy both artifacts and assert the assembly fast path
 # (the default `dropset.so`) matches the reference kernel — identical stamp
 # bytes and domain error codes.
+#
+# Mirrors the required `Tests (asm parity)` CI job in both respects that
+# can hide a false green. The runner is `nextest`, the one CI uses, so a
+# local pass and a CI pass mean the same thing. And
+# `DROPSET_REQUIRE_PARITY_ORACLE` makes the suite refuse to *skip*: the
+# `program-parity` prerequisite just built the oracle, so if the tests
+# still cannot find it, that is a real failure and this target is where it
+# should surface. A bare `cargo test --test asm_parity` leaves the
+# variable unset and still skips, which is what makes an asm-only local
+# run cheap.
 .PHONY: test-parity
 test-parity: program-parity
-	cargo test --test asm_parity
+	DROPSET_REQUIRE_PARITY_ORACLE=1 cargo nextest run --test asm_parity
 
 # === SDK & codegen ===
 

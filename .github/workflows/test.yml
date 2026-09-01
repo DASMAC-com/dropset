@@ -418,10 +418,25 @@ jobs:
         && steps.sbf-cache.outputs.cache-hit != 'true'
       name: 'Build both program artifacts (.so)'
       run: 'make program-parity'
+    # Fail fast if either artifact is missing, BEFORE the suite runs. The
+    # comparison tests skip when the reference oracle is absent and a skip
+    # scores as a pass, so without a guard the whole Rust<->ASM guarantee
+    # can evaporate into a green required check. Two halves, deliberately:
+    # this one names the missing file and also covers the asm `.so` (which
+    # no test inspects), while `DROPSET_REQUIRE_PARITY_ORACLE` below makes
+    # the suite itself refuse to skip. Under `bash -e` a failing `test`
+    # fails the step.
+    - if: |
+        needs.changes.outputs.code == 'true'
+      name: 'Assert both parity artifacts exist'
+      run: |
+        test -s target/deploy/dropset.so
+        test -s target/deploy/dropset_ref.so
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'taiki-e/install-action@nextest'
     - env:
+        DROPSET_REQUIRE_PARITY_ORACLE: '1'
         RUSTC_WRAPPER: 'sccache'
       if: |
         needs.changes.outputs.code == 'true'

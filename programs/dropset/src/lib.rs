@@ -1,4 +1,3 @@
-// cspell:word discrim
 #![cfg_attr(
     all(target_os = "solana", feature = "asm-entrypoint"),
     feature(asm_experimental_arch)
@@ -6,6 +5,7 @@
 
 use anchor_lang_v2::prelude::*;
 
+pub mod asm_offsets;
 mod errors;
 mod events;
 mod instructions;

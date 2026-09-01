@@ -1513,14 +1513,14 @@ and current inventory.
 handled in the hand-written sBPF entrypoint (`src/asm/entrypoint.s`) in
 the default `asm-entrypoint` build, sharing that file's preamble with
 its sibling and diverging only at the payload: one `sol_memcpy_` of the
-160-byte profile blob from the instruction data into `Vault.profile`,
-metered at `max(10, len / 250)` compute units versus roughly 40 for a
+224-byte profile blob from the instruction data into `Vault.profile`,
+metered at `max(10, len / 250)` compute units versus roughly 56 for a
 hand-rolled chunked copy. It mirrors the solana-free
 `write_liquidity_profile` kernel
 (`state/market/liquidity_profile.rs`) byte-for-byte, over the shared
 `quote_write` half. On litesvm the fast path costs ~59 CU versus ~324
 for the Rust entrypoint — a ~82% saving, and only 12 CU more than the
-two-store `SetReferencePrice` path despite writing 160 bytes.
+two-store `SetReferencePrice` path despite writing 224 bytes.
 `tests/asm_parity.rs` deploys the reference build beside it and asserts
 both write the same bytes to the same offsets — including that the write
 moves *nothing* outside `market.nonce`, the target sector's
@@ -1530,14 +1530,14 @@ The fast path does **not** bound the instruction-data length before the
 copy — a settled decision, not an outstanding gap, since these paths
 trust the market maker to call them correctly. Surplus bytes are a
 non-event: every read is a fixed width at a fixed offset — `vault_idx` at
-`+1`, then the 160-byte blob at `+5`, a maximum extent of
-`ix_data + 165` — so nothing scans and bytes past that are never read. A
+`+1`, then the 224-byte blob at `+5`, a maximum extent of
+`ix_data + 229` — so nothing scans and bytes past that are never read. A
 truncated call does diverge from the reference
 build (which rejects it at deserialization), but only ever harms its own
-caller: under 133 bytes it faults and the caller's own transaction fails;
-at 133–164 it copies the trailing program-id bytes — public data — into
+caller: under 197 bytes it faults and the caller's own transaction fails;
+at 197–228 it copies the trailing program-id bytes — public data — into
 the caller's own ladder and succeeds silently. Every SDK builder emits
-the full 165 bytes.
+the full 229 bytes.
 
 Neither case can be turned into an injection. The copy length is a
 constant, never payload-derived, and the destination is the fixed
@@ -1654,8 +1654,11 @@ Anchor entrypoint and serves as the parity oracle (`tests/asm_parity.rs`
 deploys both and asserts identical stamps and domain error codes). On
 litesvm the fast path costs ~47 CU versus ~260 for the Rust entrypoint —
 a ~82% saving. The offsets the assembly hardcodes are pinned against the
-live layout by an `offset_of!` test, so a `layout.rs` change breaks the
-build rather than silently mis-stamping.
+live layout at **compile time**: `build.rs` lifts the assembly's `.equ`
+table and `src/asm_offsets.rs` asserts each symbol against the
+`offset_of!`-derived value, so a `layout.rs` change breaks the build
+rather than silently mis-stamping. The assembly is the single
+hand-written copy of those numbers — nothing restates them.
 
 **Minimize copies: fuse adjacent 32-bit fields into one 64-bit move.**
 Registers are 64-bit, so a word-at-a-time copy of two adjacent `u32`s
@@ -1672,19 +1675,20 @@ This is a general rule for the hot path, not a one-off: **when new
 fields land here, place same-width ones adjacently and move them
 together.** The rest of the entrypoint already obeys it — the
 `quote_authority` compare reads 32 bytes as 4×`u64`, and the profile
-write is one `sol_memcpy_` rather than 20 hand-rolled pairs — and the
+write is one `sol_memcpy_` rather than 28 hand-rolled pairs — and the
 remaining single-word accesses (the discriminator byte, `vault_idx`,
 `price`) have no adjacent same-domain partner to pair with, so they are
 already minimal.
 
 The adjacency the fusion depends on is **pinned, not conventional**.
 `layout.rs` const-asserts `quote_unix == quote_slot + 4` (and the same
-for the `Level` and `Position` domain pairs), while `asm_parity.rs`
-asserts the **absolute** offsets the assembly hardcodes (84 / 88, plus
-`base_atoms` at 92 as the fused store's upper bound) and that the
-instruction-data side reads as one little-endian `u64` — the wire half,
-which no const-assert can see. Both are needed: the const-assert pins
-adjacency but would stay green if the whole record moved. A
+for the `Level` and `Position` domain pairs), while `asm_offsets.rs`
+asserts the **absolute** offsets the assembly hardcodes — read out of
+the `.s` itself rather than re-typed, `base_atoms` included as the fused
+store's upper bound. `asm_parity.rs` covers the remaining half at
+runtime: that the instruction-data side reads as one little-endian
+`u64`, which no const-assert can see. Both are needed: the const-assert
+pins adjacency but would stay green if the whole record moved. A
 field reorder that split a pair would leave every size assert green and
 Rust correct while silently turning the fused store into one that writes
 the wall datum into the slot field — so it breaks the build instead.
