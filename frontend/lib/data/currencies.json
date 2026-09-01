@@ -116,6 +116,20 @@
           "url": "https://allunity.com/eurau/",
           "socials": { "x": "AllUnityStable" }
         }
+      },
+      {
+        "symbol": "EUROP",
+        "name": "EURØP",
+        "mint": "euro5sNHrZC2wu2RoLvy6xxoVMc3Qnd1vjxoWf4MftA",
+        "mintSourceUrl": "https://schuman.io/smart-contracts/",
+        "decimals": 6,
+        "tokenProgram": "token2022",
+        "icon": "https://bafkreihgdtkjdpuck4mquass2qz5ty4qjizehoacxcg3g42oohmejdk45q.ipfs.dweb.link",
+        "issuer": {
+          "name": ["Schuman Financial"],
+          "url": "https://schuman.io",
+          "socials": { "x": "Schuman_io" }
+        }
       }
     ]
   },
