@@ -491,6 +491,30 @@ class HardeningRanking(unittest.TestCase):
         self.assertFalse(candidate.via_run_quiet)
         self.assertEqual(candidate.cost_kind(), "prompt-churn")
 
+    def test_an_allowlisted_cheap_repeat_is_not_called_churn(self):
+        """The heuristic cannot see a prompt: many cheap, slightly-varying calls
+        look identical whether they re-prompted or not. One filed lever argued
+        for a whole new tool on that basis before its own author checked
+        coverage and withdrew the reasoning."""
+        report = self._run([("printenv LINEAR_TEAM_ID", "abc\n")] * 4)
+        candidate = report["hardening_candidates"][0]
+        candidate.allowlisted = True
+        self.assertEqual(candidate.cost_kind(), "covered (no churn)")
+
+    def test_coverage_never_masks_a_real_token_sink(self):
+        """Coverage is checked last, so it can only downgrade a churn claim. A
+        covered shape returning large results is still `context`, because the
+        cost there is the bytes and has nothing to do with prompting."""
+        report = self._run([("make lint", "x" * 4000)] * 2)
+        candidate = report["hardening_candidates"][0]
+        candidate.allowlisted = True
+        self.assertEqual(candidate.cost_kind(), "context")
+
+    def test_the_default_reports_what_it_reported_before(self):
+        """An unresolved allowlist must not silently re-label everything."""
+        report = self._run([("printenv LINEAR_TEAM_ID", "abc\n")] * 4)
+        self.assertFalse(report["hardening_candidates"][0].allowlisted)
+
     def test_run_quiet_flag_is_sticky_across_a_shape(self):
         """One unwrapped call among wrapped ones is a slip, not a
         re-classification — the bytes check still catches a real payload.

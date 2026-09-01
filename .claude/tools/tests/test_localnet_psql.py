@@ -127,6 +127,40 @@ class BuildArgvTests(unittest.TestCase):
     def test_the_container_is_overridable(self):
         self.assertIn("other-pg", _argv(container="other-pg"))
 
+    def test_it_connects_as_the_read_only_role(self):
+        # Migration 0002 creates dropset_ro and grants it SELECT on every table
+        # in public, so this is safe on any migrated database. Defaulting to the
+        # owner left one-writer-per-table an honor system on the read path.
+        got = _argv()
+        self.assertIn("dropset_ro", got)
+        self.assertLess(got.index("-U"), got.index("dropset_ro"))
+
+    def test_a_direct_url_naming_the_owner_is_refused(self):
+        # --direct is the one path that could smuggle the owner back in.
+        with self.assertRaises(LocalnetPsqlError) as caught:
+            _argv(direct=True, db_url="postgres://dropset:pw@127.0.0.1:5432/dropset")
+        self.assertIn("owner", str(caught.exception))
+
+    def test_a_direct_url_naming_the_reader_is_allowed(self):
+        got = _argv(
+            direct=True, db_url="postgres://dropset_ro:pw@127.0.0.1:5432/dropset"
+        )
+        self.assertEqual(got[0], "psql")
+
+    def test_an_at_sign_in_the_password_does_not_confuse_the_guard(self):
+        # Parsed rather than split, so a password containing @ cannot shift
+        # which side of the split the username lands on.
+        got = _argv(
+            direct=True, db_url="postgres://dropset_ro:p%40ss@127.0.0.1:5432/dropset"
+        )
+        self.assertEqual(got[0], "psql")
+
+    def test_an_unparseable_url_is_left_to_psql_not_refused_here(self):
+        # The guard must not turn a malformed string into a role refusal, which
+        # would misdiagnose the failure.
+        got = _argv(direct=True, db_url="not a url")
+        self.assertIn("not a url", got)
+
 
 class CapTests(unittest.TestCase):
     def test_output_within_the_cap_is_untouched(self):
