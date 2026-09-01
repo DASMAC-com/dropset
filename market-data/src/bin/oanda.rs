@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     // The canonical ids, not the venue spellings beside them: the dimension
     // keys on what the rows are stored under.
     let products: Vec<String> = instruments.iter().map(|i| i.product_id.clone()).collect();
-    register_instruments(&pool, &products).await?;
+    register_instruments(&pool, SOURCE, &products).await?;
     let cursors = PgCursorStore::new(pool.clone());
 
     // One transport for the process, cloned per feed, so the roster draws on a

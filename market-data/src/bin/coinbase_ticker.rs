@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
     // Canonical ids reach this venue unchanged, so a pin has nowhere to go and
     // is rejected rather than silently dropped.
     let ids = canonical_only(&products)?;
-    register_instruments(&pool, &ids).await?;
+    register_instruments(&pool, SOURCE, &ids).await?;
     tracing::info!(
         products = %ids.join(","),
         poll_secs = cfg.poll_interval_secs,

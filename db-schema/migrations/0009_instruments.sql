@@ -128,19 +128,38 @@ INSERT INTO currency_kinds (currency, kind) VALUES
 -- is total when one arrives.
 
 -- The products the collectors are configured to poll, written by them at
--- startup.
+-- startup — one row per (source, product), not per product.
 --
--- Registration is an upsert keyed on the canonical id, so a restart is
--- idempotent and several collectors polling the same pair — EUR-USD is on
--- OANDA, Twelve Data, Alpha Vantage and Pyth — converge on one row rather than
--- one row per source. The dimension is deliberately per-PRODUCT, not per
--- (source, product): "what instrument is this" has the same answer whoever
--- measured it, and a per-source dimension would make every class filter fan
--- out across sources for no gain.
+-- WHY THE SOURCE IS IN THE KEY, THOUGH THE DIMENSION IS PER-PRODUCT.
+--
+-- "What instrument is `EURC-USDC`" has the same answer whoever measured it, so
+-- the dimension view below aggregates this table to one row per product and no
+-- consumer of the dimension sees the source at all. The source is in the key
+-- for two other reasons, both of which need it:
+--
+-- 1. It makes "when did this product last produce data" a PRIMARY KEY PREFIX
+--    lookup. `cex_prices` and `spot_ticks` key on `(source, product_id, …)`, so
+--    `max(bucket_start) WHERE source = ? AND product_id = ?` is an index range
+--    scan of one series — while the same question asked with `product_id`
+--    alone is a full scan, because `product_id` leads no index. Holding the
+--    source here is therefore what lets `instrument_liveness` below be cheap
+--    without adding a secondary index to the two hottest tables in the store.
+-- 2. It records WHICH collector polls WHICH product, which is the coverage
+--    question directly: every source writing to the store should be reachable
+--    on the ingestion dashboard, and that is now a query rather than a list
+--    somebody maintains.
+--
+-- Registration is an upsert on `(source, product_id)`, so a restart is
+-- idempotent, and the four collectors that poll EUR-USD — OANDA, Twelve Data,
+-- Alpha Vantage and Pyth — get a row each rather than racing over one.
 CREATE TABLE instrument_registry (
+    -- The value this collector writes to `cex_prices.source` /
+    -- `spot_ticks.source`. It must match exactly, or the liveness lookup finds
+    -- no series and reports a live pair as silent.
+    source              TEXT   NOT NULL,
     -- The canonical `BASE-QUOTE` id, matching `cex_prices.product_id` and
     -- `spot_ticks.product_id`. This is the join key for the whole dimension.
-    product_id          TEXT   PRIMARY KEY,
+    product_id          TEXT   NOT NULL,
     -- When this product was first registered, and when a collector last
     -- confirmed it is still in its roster. The pair answers "is this pair
     -- still configured, or is its row a leftover from a roster it was dropped
@@ -154,12 +173,15 @@ CREATE TABLE instrument_registry (
     -- measurement tables' own timestamps.
     first_registered_at BIGINT NOT NULL,
     last_registered_at  BIGINT NOT NULL,
+    PRIMARY KEY (source, product_id),
     -- The same shape rule `parse_roster` enforces before a row can be written
     -- under this id: exactly one hyphen, non-empty upper-case legs. Stricter
     -- than `pyth_fx_feeds`' `^[A-Z]{3}-[A-Z]{3}$`, which is right for a table
     -- of fiat crosses and would reject EURC-USDC here.
     CONSTRAINT product_id_is_canonical
-        CHECK (product_id ~ '^[A-Z0-9]{2,10}-[A-Z0-9]{2,10}$')
+        CHECK (product_id ~ '^[A-Z0-9]{2,10}-[A-Z0-9]{2,10}$'),
+    CONSTRAINT source_is_not_blank
+        CHECK (source <> '')
 );
 
 -- The dimension as its consumers read it: a product, its two legs, and the
@@ -184,10 +206,25 @@ CREATE TABLE instrument_registry (
 -- an operator can see, and keeps the product's series reachable while the seed
 -- is fixed.
 CREATE VIEW instruments AS
+WITH product AS (
+    -- One row per product, however many sources poll it — the source is in the
+    -- registry's key for liveness and coverage, and no consumer of the
+    -- dimension itself wants it. `min` and `max` rather than either alone: the
+    -- earliest first sighting across sources, and the most recent confirmation
+    -- from any of them.
+    SELECT
+        product_id,
+        min(first_registered_at)          AS first_registered_at,
+        max(last_registered_at)           AS last_registered_at,
+        count(*)                          AS source_count,
+        array_agg(source ORDER BY source) AS sources
+    FROM instrument_registry
+    GROUP BY product_id
+)
 SELECT
-    r.product_id,
-    split_part(r.product_id, '-', 1) AS base,
-    split_part(r.product_id, '-', 2) AS quote,
+    p.product_id,
+    split_part(p.product_id, '-', 1) AS base,
+    split_part(p.product_id, '-', 2) AS quote,
     b.kind                           AS base_kind,
     q.kind                           AS quote_kind,
     CASE
@@ -209,11 +246,17 @@ SELECT
         -- what the peg pair exists to measure, so it gets its own class.
         ELSE 'peg-pair'
     END                              AS asset_class,
-    r.first_registered_at,
-    r.last_registered_at
-FROM instrument_registry r
-LEFT JOIN currency_kinds b ON b.currency = split_part(r.product_id, '-', 1)
-LEFT JOIN currency_kinds q ON q.currency = split_part(r.product_id, '-', 2);
+    -- Which collectors poll this product, and how many. This puts the coverage
+    -- question in the dimension itself: a product nothing polls has no row at
+    -- all, and one polled by a single source is visible as such rather than
+    -- having to be inferred from a panel that happens to be empty.
+    p.source_count,
+    p.sources,
+    p.first_registered_at,
+    p.last_registered_at
+FROM product p
+LEFT JOIN currency_kinds b ON b.currency = split_part(p.product_id, '-', 1)
+LEFT JOIN currency_kinds q ON q.currency = split_part(p.product_id, '-', 2);
 
 COMMENT ON VIEW instruments IS
     'The instruments dimension: product_id, its base and quote legs, and the '
@@ -224,3 +267,97 @@ COMMENT ON COLUMN instrument_registry.last_registered_at IS
     'Epoch second a collector last confirmed this product is in its roster. A '
     'collector PROCESS-start signal, never a data-freshness one — read '
     'feed_health.last_ok_at for freshness.';
+
+-- Which products are actually collecting, and which have gone quiet.
+--
+-- This is what the currency selector's default reads: the dashboard opens on
+-- the pairs with data flowing now, and every other pair is opt-in. The point
+-- is that it opens showing real data rather than empty panels for a pair whose
+-- collector is parked.
+--
+-- WHY THERE ARE TWO THRESHOLDS, AND WHY THE CLASS PICKS BETWEEN THEM.
+--
+-- FX venues close for the weekend: a measured 48.1-hour gap, Friday 16:59 to
+-- Sunday 17:04 New York, running 47 to 49 hours depending on the
+-- daylight-saving transition. Any threshold under roughly 50 hours would
+-- therefore mark every FX pair frozen every weekend — the precise false alarm
+-- this view exists not to raise. Crypto and stablecoin venues never close, so
+-- they take a tighter bound, and the loose one is reserved for the pairs that
+-- legitimately go quiet.
+--
+-- `asset_class` already sorts one from the other at no extra cost: a
+-- fiat-by-fiat pair trades only on FX venues, so session-bound *is* `fx-pair`.
+--
+-- **This is not a market calendar and must not grow into one.** It does not
+-- know when a session is *expected* to be closed, only how long a silence has
+-- to run before it stops being ordinary — which is all a default selection
+-- needs. Calendar-aware liveness, with real session windows, is separate later
+-- work.
+CREATE VIEW instrument_liveness AS
+WITH thresholds AS (
+    -- The two constants, side by side and defined nowhere else. Change them
+    -- here and every consumer follows.
+    SELECT
+        -- Clears a ~49-hour weekend with slack.
+        72 * 3600 AS fx_pair_stale_secs,
+        -- Still roomy enough for a daily-bar source (er-api, Alpha Vantage)
+        -- that legitimately gaps 24-27 hours between publications.
+        48 * 3600 AS always_open_stale_secs
+),
+last_seen AS (
+    -- One index range scan per (source, product): a primary key PREFIX on both
+    -- measurement tables, which is the whole reason the registry carries the
+    -- source. A given source writes bars or ticks and never both, so one side
+    -- of each pair below is NULL by construction rather than by accident.
+    SELECT
+        r.product_id,
+        max(GREATEST(COALESCE(bars.last_at, 0), COALESCE(ticks.last_at, 0)))
+            AS last_at
+    FROM instrument_registry r
+    LEFT JOIN LATERAL (
+        SELECT max(c.bucket_start) AS last_at
+        FROM cex_prices c
+        WHERE c.source = r.source AND c.product_id = r.product_id
+    ) bars ON true
+    LEFT JOIN LATERAL (
+        SELECT max(s.observed_at) AS last_at
+        FROM spot_ticks s
+        WHERE s.source = r.source AND s.product_id = r.product_id
+    ) ticks ON true
+    GROUP BY r.product_id
+),
+bounded AS (
+    SELECT
+        i.product_id,
+        i.asset_class,
+        -- NULL rather than 0 for a product that has never produced a row. A
+        -- registered pair whose venue has never answered is a genuinely
+        -- different state from one that answered and stopped, and a 0 would
+        -- render as 1970 on any panel that formatted it as a time.
+        NULLIF(l.last_at, 0) AS last_data_at,
+        CASE
+            WHEN i.asset_class = 'fx-pair' THEN t.fx_pair_stale_secs
+            ELSE t.always_open_stale_secs
+        END                  AS stale_after_secs
+    FROM instruments i
+    JOIN last_seen l ON l.product_id = i.product_id
+    CROSS JOIN thresholds t
+)
+SELECT
+    product_id,
+    asset_class,
+    last_data_at,
+    stale_after_secs,
+    -- A pair that has never produced data is not live. Spelled out, because
+    -- without the NULL guard the comparison would answer the question by
+    -- accident rather than on purpose.
+    last_data_at IS NOT NULL
+        AND last_data_at > EXTRACT(EPOCH FROM now())::BIGINT - stale_after_secs
+        AS is_live
+FROM bounded;
+
+COMMENT ON VIEW instrument_liveness IS
+    'Per-product data freshness and a live/quiet verdict, with the staleness '
+    'bound chosen by asset class so an FX weekend is not mistaken for a dead '
+    'collector. Not a market calendar: it knows how long silence has run, not '
+    'when a session is expected to be closed.';

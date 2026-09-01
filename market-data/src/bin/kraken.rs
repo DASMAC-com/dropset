@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
 
     let venue_pairs: Vec<String> = pairs.iter().map(|p| p.venue_symbol.clone()).collect();
     let canonical: Vec<String> = pairs.iter().map(|p| p.product_id.clone()).collect();
-    register_instruments(&pool, &canonical).await?;
+    register_instruments(&pool, SOURCE, &canonical).await?;
     // Kraken answers under the name it was asked with, so this maps its keys
     // back onto the canonical ids the rows are stored under. `resolve_venue`
     // has already rejected a duplicate venue symbol, so no entry is lost here.

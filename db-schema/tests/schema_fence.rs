@@ -232,6 +232,7 @@ async fn migrate_creates_every_expected_table() {
         "currency_kinds",
         "instrument_registry",
         "instruments",
+        "instrument_liveness",
     ] {
         let present: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
             .bind(table)
@@ -416,8 +417,8 @@ async fn the_instruments_view_derives_a_class_from_the_legs() {
     for product in ["EUR-USD", "EURC-USDC", "EURC-EUR", "SOL-USDC"] {
         sqlx::query(
             "INSERT INTO instrument_registry
-                 (product_id, first_registered_at, last_registered_at)
-             VALUES ($1, 1, 1)",
+                 (source, product_id, first_registered_at, last_registered_at)
+             VALUES ('probe', $1, 1, 1)",
         )
         .bind(product)
         .execute(&pool)
@@ -452,6 +453,83 @@ async fn the_instruments_view_derives_a_class_from_the_legs() {
             (row.0.as_str(), row.1.as_str(), row.2.as_str()),
             (base, quote, class),
             "wrong derivation for `{product}`"
+        );
+    }
+}
+
+/// The liveness view picks its staleness bound by asset class, so an FX
+/// weekend is not read as a dead collector.
+///
+/// This is the assertion that stops the two thresholds quietly collapsing into
+/// one. A single 60-hour silence is required to read as LIVE for an `fx-pair`
+/// and STALE for a stablecoin pair — and the FX half is exactly what a flat
+/// 48-hour bound would get wrong, every weekend, for every FX pair on the
+/// dashboard. Getting it wrong is silent: the pair simply drops out of the
+/// default selection.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn liveness_picks_its_staleness_bound_by_asset_class() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    // Inside the 72-hour FX bound, outside the 48-hour always-open one, so one
+    // number exercises both sides of the split.
+    const SILENT_SECS: i64 = 60 * 3600;
+
+    for product in ["EUR-USD", "EURC-USDC", "GBP-USD"] {
+        sqlx::query(
+            "INSERT INTO instrument_registry
+                 (source, product_id, first_registered_at, last_registered_at)
+             VALUES ('probe', $1, 1, 1)",
+        )
+        .bind(product)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("register `{product}`: {e}"));
+    }
+
+    // GBP-USD deliberately gets no bar at all — the registered-but-never-
+    // collected case.
+    for product in ["EUR-USD", "EURC-USDC"] {
+        sqlx::query(
+            "INSERT INTO cex_prices
+                 (source, product_id, granularity_secs, bucket_start,
+                  low, high, open, close, volume)
+             VALUES ('probe', $1, 60,
+                     EXTRACT(EPOCH FROM now())::BIGINT - $2, 1, 1, 1, 1, 0)",
+        )
+        .bind(product)
+        .bind(SILENT_SECS)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("insert a bar for `{product}`: {e}"));
+    }
+
+    for (product, class, live, has_data) in [
+        // Quiet for 60 hours and still live: an FX pair is allowed to be silent
+        // across a weekend, which runs 47-49 hours.
+        ("EUR-USD", "fx-pair", true, true),
+        // The identical silence on a venue that never closes is stale.
+        ("EURC-USDC", "stablecoin-pair", false, true),
+        // Registered, never collected: not live, and carrying no timestamp
+        // rather than a zero that would render as 1970.
+        ("GBP-USD", "fx-pair", false, false),
+    ] {
+        let (asset_class, is_live, last_data_at): (String, bool, Option<i64>) = sqlx::query_as(
+            "SELECT asset_class, is_live, last_data_at
+                 FROM instrument_liveness WHERE product_id = $1",
+        )
+        .bind(product)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("`{product}` missing from instrument_liveness: {e}"));
+
+        assert_eq!(asset_class, class, "wrong class for `{product}`");
+        assert_eq!(is_live, live, "wrong liveness verdict for `{product}`");
+        assert_eq!(
+            last_data_at.is_some(),
+            has_data,
+            "`{product}` last_data_at presence is wrong (got {last_data_at:?})"
         );
     }
 }

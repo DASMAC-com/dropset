@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
     dropset_db_schema::require_schema(&pool).await?;
     // The canonical id leads each resolved tuple — see the loop above.
     let products: Vec<String> = pairs.iter().map(|(id, _, _)| id.clone()).collect();
-    register_instruments(&pool, &products).await?;
+    register_instruments(&pool, SOURCE, &products).await?;
     let cursors = PgCursorStore::new(pool.clone());
 
     // One transport for the process, cloned per feed. On a 25-request account

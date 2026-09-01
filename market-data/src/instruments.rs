@@ -31,15 +31,24 @@ use anyhow::{Context, Result};
 use dropset_feeds::now_secs;
 use sqlx::PgPool;
 
-/// Register every canonical product id in this collector's roster.
+/// Register every canonical product id in this collector's roster, under the
+/// `source` this collector writes its rows with.
 ///
 /// Idempotent: the upsert keeps `first_registered_at` from the first
 /// registration and moves `last_registered_at` every time, so a restart costs
-/// one statement and changes nothing else. Several collectors polling the same
-/// pair — `EUR-USD` is on OANDA, Twelve Data, Alpha Vantage and Pyth —
-/// converge on one row, because the dimension is per-product rather than per
-/// `(source, product)`: "what instrument is this" has the same answer whoever
-/// measured it.
+/// one statement and changes nothing else.
+///
+/// **`source` must be the exact string this collector writes to
+/// `cex_prices.source` / `spot_ticks.source`.** It is not a label: the liveness
+/// view looks a series up by `(source, product_id)`, which is a primary key
+/// prefix on both measurement tables and the reason that lookup is a range scan
+/// rather than a full one. A source string that does not match what the writer
+/// uses finds no series, and reports a perfectly healthy pair as silent.
+///
+/// The registry is therefore per-`(source, product)` while the *dimension* is
+/// per-product — the view aggregates it, because "what instrument is this" has
+/// the same answer whoever measured it. Holding the source buys the liveness
+/// lookup and the coverage question; neither is answerable without it.
 ///
 /// **Neither timestamp is a data-freshness signal, and no caller may read one
 /// as one.** Both track process starts: a collector whose venue has answered
@@ -56,7 +65,7 @@ use sqlx::PgPool;
 /// problem far better than a dimension that is quietly missing a pair.
 /// (Contrast the maker bot, where Postgres is deliberately a *soft* dependency
 /// and an unreachable store degrades quoting rather than preventing a start.)
-pub async fn register(pool: &PgPool, product_ids: &[String]) -> Result<()> {
+pub async fn register(pool: &PgPool, source: &str, product_ids: &[String]) -> Result<()> {
     // An empty roster never reaches here — `parse_roster` rejects one, because a
     // collector with nothing to poll looks perfectly healthy while writing
     // nothing. Guarded anyway so a future caller assembling ids some other way
@@ -65,15 +74,16 @@ pub async fn register(pool: &PgPool, product_ids: &[String]) -> Result<()> {
         return Ok(());
     }
     sqlx::query(include_str!("../queries/instrument_register.sql"))
+        .bind(source)
         .bind(product_ids)
         .bind(now_secs())
         .execute(pool)
         .await
         .with_context(|| {
             format!(
-                "registering {} product(s) in the instruments dimension \
-                 (`instrument_registry`); a database predating \
-                 `0009_instruments.sql` is the likely cause",
+                "registering {} product(s) for source {source:?} in the \
+                 instruments dimension (`instrument_registry`); a database \
+                 predating `0009_instruments.sql` is the likely cause",
                 product_ids.len()
             )
         })?;

@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
     // the round trip is store-to-store — but the dimension is about what is
     // being polled, not where the instruction came from, and Pyth's crosses
     // belong in it like any other.
-    register_instruments(&pool, &products).await?;
+    register_instruments(&pool, SOURCE, &products).await?;
 
     // Name every loaded row, so the effective roster of a running process is
     // legible without querying the database it came from. This is the log line

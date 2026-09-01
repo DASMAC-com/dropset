@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     dropset_db_schema::require_schema(&pool).await?;
     // The canonical ids, not the venue spellings beside them.
     let products: Vec<String> = symbols.iter().map(|s| s.product_id.clone()).collect();
-    register_instruments(&pool, &products).await?;
+    register_instruments(&pool, SOURCE, &products).await?;
     let cursors = PgCursorStore::new(pool.clone());
 
     // One transport for the process, cloned per feed: on a metered tier a
