@@ -1100,6 +1100,54 @@ already being asked to start the review.
      changes behavior tests pin).
    - **docs** — the doc-freshness lens.
 
+   **Each brief must NAME the slice it is handed**, and a
+   lens scoped to one tree gets that tree's `--only` diff
+   rather than the branch diff: a tools-correctness lens
+   receives `--only '.claude/tools/**'`, a
+   conventions-freshness lens receives `docs/conventions/**`
+   plus `CLAUDE.md`. The step already computes the split and
+   the failure is simply not routing it. Measured: seven
+   sub-agents summing **≈2.28M** of per-turn input —
+   cross-check 504.8k/6, test adequacy 502.8k/6, conventions
+   freshness 357.7k/5, correctness-modified 304.6k/4, skill
+   prose 289.4k/4, correctness-new 207.8k/3, security 110.0k/2
+   — with four of the seven at 1.7–2.8× the top of the
+   exemplar band. The diagnosis is **scope, not depth**: a
+   lens's context is re-sent every turn, so input scales with
+   (material handed in) × (turns taken), and the lenses that
+   ran longest were the ones handed the broadest material.
+   Some of that diff was irreducibly large (60 files,
+   +8656/−532), but the two correctness lenses are precisely
+   what `--only` exists to narrow and neither got a narrowed
+   slice. Print each lens's handed-in byte count alongside the
+   brief, so an over-broad one is visible at fan-out time
+   rather than in the next session's metrics.
+
+   **The docs lens gets a claim→excerpt table, not the source
+   slices.** This step routes the docs slice to it and says
+   nothing about what it needs to check a doc claim *against
+   the code*, so the natural move is to hand it the source too
+   — which is the whole diff by another name, defeating the
+   split. Measured: a doc-accuracy lens handed the docs slice
+   **plus both full source sub-slices** as "ground truth" came
+   in at **504.4k over 6 turns**, the second most expensive
+   agent of its session and 2.5× the cheapest substantive lens
+   on the same diff (249.6k / 4 turns).
+
+   A doc-accuracy lens adjudicates a bounded list of
+   **claims**, not a codebase — and the main loop wrote those
+   docs, so it already knows which code each claim rests on.
+   Every finding that lens returned turned on a handful of
+   lines already in the main loop's context; none needed
+   either source slice in full. So hand it the docs slice plus
+   a short table of *the assertion* and *the five to fifteen
+   lines that settle it*, cold-reading only where no excerpt
+   covers. Add the docs lens to the list whose comparison
+   material must be **inlined rather than named** — the same
+   excerpt-not-filenames discipline this step already
+   prescribes for the style lens, measurably its cheapest,
+   and simply never stated for docs.
+
    **When a slice is still huge, split the slice — do not
    tighten the prompt again.** This is the sharpened form of
    the point above, and it names the lever precisely. One
@@ -2018,25 +2066,68 @@ already being asked to start the review.
      lens measured here (85.8k / 2 turns / 1 tool call). One
      session noted its own exemplar figures may be
      *understated*.
+
    - **A reduced-tier fan-out staying inside its cap.** 190.6k
      over 4 turns, and 217.2k over 5 — both under cap, on a
      reduced tier, with the per-lens discipline held tighter
      rather than looser.
+
    - **The cross-check earning an overrun.** The adversarial
      pass overran its cap and caught **two blocking data-loss
      bugs** that every cheaper tier would have missed. It is
      the pass that overruns most often *and* returns the most
      value per turn — which is why its cap is deliberately
      higher than the primary lenses', not lower.
+
    - **The two-write Linear floor.** Sessions that hit the
      documented per-issue write floor recorded it as compliant
      but still non-trivial — the floor is real, and the cost
      that remains under it is not a lapse.
+
    - **Whole-file Reads that were correct.** One session's
      whole-file Reads were *sanctioned*, not a slip: it both
      edited those files and pasted their excerpts into five
      lens briefs, so the read was paid once and amortized five
      times. That is the documented exception, and it held.
+
+   - **A four-lens fan-out, every lens under cap.** Zero
+     overruns, measured as per-turn input (the
+     `session-metrics` rollup figure — *not* the Agent tool's
+     `subagent_tokens`, which reads about an order of
+     magnitude lower):
+
+     | lens                    | turns | cap | ≈input |
+     | ----------------------- | ----- | --- | ------ |
+     | Correctness             | 5     | 5   | 265.3k |
+     | Security                | 4     | 5   | 210.6k |
+     | Adversarial cross-check | 3     | 6   | 152.9k |
+     | Completeness            | 3     | 5   | 144.8k |
+
+     What produced it: an established-facts block composed for
+     the run and passed via `lens_preamble.py --facts-file` —
+     **92 facts**, carrying exact code excerpts, the consumer
+     map with line numbers, the CI path inventory, and (the
+     part that appears to do the work) the explicit
+     **negatives and limits**, closing with a section naming
+     what the main loop had *not* verified and leaving those
+     open. The completeness lens opened its report with
+     "adjudicating from the diff plus the established facts;
+     no code re-derivation needed" and made **zero cold
+     reads**.
+
+     Read the priciest lens correctly: Correctness at 265.3k
+     was the only one that cold-read source, and it did so
+     because its brief asked two questions the facts
+     deliberately did not answer — and it returned the
+     review's blocking finding. It was priced by its
+     *unanswered questions*, not by brief slippage, and a
+     future trim pass would otherwise misread that as an
+     overrun to cap harder. One honest caveat: the diff was
+     docs-only and 301 lines, so the absolute figures do not
+     transfer to a large source diff. What generalizes is the
+     **ratio** — lenses given complete facts made no cold
+     reads at all, and the one given genuine open questions
+     spent its turns on exactly those.
 
    When proposing a trim against any of these, say which
    figure you expect to move and by how much.
@@ -2171,6 +2262,35 @@ already being asked to start the review.
      a source-only diff means the lens never opens
      `CLAUDE.md`, `docs/conventions/**`, or `.claude/**` at
      all.
+
+     **Say who locates it: the MAIN LOOP, before spawning.**
+     You cannot inline "the implicated block" without first
+     finding it, and leaving that unsaid is what makes this
+     rule aspirational — so it becomes a **pre-step**. Run
+     one `search_source.py` over `audit-registry.md` for the
+     subsystem-roots block, paste those lines into the brief,
+     and only then spawn.
+
+     Then state the scope as a **restriction**, not an
+     allowance: *"adjudicate from the inlined block; open a
+     convention file only to resolve a named dispute."* What
+     was actually written into one freshness brief was a
+     **permission** — "you may open at most TWO of the named
+     convention files" — which is the grant-shaped positive
+     scope this step warns against two paragraphs earlier.
+
+     Measured on one review, same model and diff: correctness
+     with excerpts inlined 106.7k / 2 turns, style with
+     excerpts inlined 106.7k / 2 turns, and the **freshness
+     lens given file names 336.2k / 6 turns, at cap** — 3.2x
+     the lenses that got their material, spent grepping the
+     registry and slice-reading two regions to find one
+     `ci-infra` root line the main loop could have grepped
+     once for a few hundred tokens. Its verdict was correct
+     and its finding real (`.dockerignore` falls outside
+     every subsystem root), so this is a scoping lever, not
+     an argument to drop the lens. It is also the same hoist
+     this step already mandates for repo-wide greps.
 
    - **Assert the known negatives, not just the positives.**
      The inlining rule above covers what you *have* read;
@@ -2787,9 +2907,10 @@ already being asked to start the review.
    committing, once at the end), never to this loop.
 
    **And run a fast suite at CHECKPOINTS — the lever there is
-   frequency, not scope.** One session ran the whole tools
-   suite dozens of times in an edit-one-tool loop, most runs
-   re-buying confidence it already had. Do not read that as a
+   frequency, not scope.** Measured: one session ran the whole
+   tools suite **53 times** (≈12.0k of result bytes) in an
+   edit-one-tool loop, most runs re-buying confidence the
+   previous run had already established. Do not read that as a
    reason to narrow the *scope*: step 4's measurement points
    the other way (the per-module discover run cost more **and**
    missed two sibling tests the edits had just broken). Whole
