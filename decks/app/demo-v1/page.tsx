@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { PresenterNotesExit } from "../PresenterNotesExit";
+import { PresenterNotesExit } from "@/app/PresenterNotesExit";
 
 // Spectacle owns the DOM, keyboard nav, and (via styled-components) client
 // styling — render it client-only so we skip styled-components' SSR registry

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { isPresenterMode } from "@/lib/presenterMode";
 
 /**
  * A way out of the presenter view, rendered over Spectacle's own chrome.
@@ -29,8 +30,7 @@ export function PresenterNotesExit() {
   // in an effect keeps the first paint identical either way rather than
   // resting on that.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setInPresenterMode(params.get("presenterMode") === "true");
+    setInPresenterMode(isPresenterMode(window.location.search));
   }, []);
 
   if (!inPresenterMode) return null;

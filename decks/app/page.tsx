@@ -3,25 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { decks } from "@/lib/decks.mjs";
-
-/**
- * The query string that opens a deck alongside its speaker notes.
- *
- * Spectacle reads its mode from the query string at mount — `useModes` parses
- * `window.location.search` before anything renders — so the switch below only
- * has to decide which href the deck cards point at. That keeps them real
- * links: a middle-click, a copied URL, or a bookmark all carry the choice with
- * them, which a click handler calling `router.push` would have thrown away.
- *
- * It is Spectacle's own parameter, the one its ⌘⇧P shortcut sets — the same
- * door as the shortcut, with a handle a visitor will actually pull. The label
- * on that handle says what the reader *gets* rather than naming the mode:
- * "presenter mode" is accurate and actively misleading at once, since a
- * visitor who isn't presenting reads it as somebody else's setting and
- * switches it off, losing the talk track — the most valuable thing on the page
- * for exactly that reader.
- */
-const NOTES_SEARCH = "?presenterMode=true";
+import { NOTES_SEARCH } from "@/lib/presenterMode";
 
 /**
  * The deck index.
@@ -59,6 +41,17 @@ export default function Home() {
         </p>
       </header>
 
+      {/* The switch decides which href the deck cards point at, nothing more —
+          Spectacle reads its mode from the query string at mount, so the cards
+          stay real links and a middle-click, a copied URL or a bookmark all
+          carry the choice with them. A click handler calling `router.push`
+          would have thrown that away.
+
+          The label says what the reader *gets* rather than naming the mode.
+          "Presenter mode" is accurate and actively misleading at once: a
+          visitor who isn't presenting reads it as somebody else's setting and
+          switches it off, losing the talk track — the most valuable thing on
+          the page for exactly that reader. */}
       <section className="mb-8">
         <h2 className="mb-3 font-mono text-xs tracking-widest text-muted-fg uppercase">
           Options
