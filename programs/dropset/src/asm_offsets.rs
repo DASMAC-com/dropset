@@ -1,7 +1,10 @@
 //! Compile-time tie between the assembly's offset table and the Rust layout.
 //!
 //! `src/asm/entrypoint.s` stores through hardcoded byte offsets. Those
-//! `.equ` literals are the **only** hand-written copy of the layout:
+//! `.equ` literals are the **only** hand-written copy of the offsets the
+//! assembly stores through — `layout.rs`'s own `size_of` assertions are a
+//! separate wire-compatibility pin on the structs, not a second copy of
+//! these:
 //! `build.rs` lifts the whole symbol table into `$OUT_DIR/asm_equ.rs`
 //! (re-exported as [`equ`]), and the assertions below compare each parsed
 //! value against the offset derived from the real `#[repr(C)]` types. A

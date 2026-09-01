@@ -1657,8 +1657,10 @@ a ~82% saving. The offsets the assembly hardcodes are pinned against the
 live layout at **compile time**: `build.rs` lifts the assembly's `.equ`
 table and `src/asm_offsets.rs` asserts each symbol against the
 `offset_of!`-derived value, so a `layout.rs` change breaks the build
-rather than silently mis-stamping. The assembly is the single
-hand-written copy of those numbers — nothing restates them.
+rather than silently mis-stamping. The `.equ` block is now the only place
+those offsets are written by hand for the assembly's use; `layout.rs`'s
+own size assertions are a separate wire-compatibility pin on the structs,
+not a second copy of the assembly's offsets.
 
 **Minimize copies: fuse adjacent 32-bit fields into one 64-bit move.**
 Registers are 64-bit, so a word-at-a-time copy of two adjacent `u32`s
