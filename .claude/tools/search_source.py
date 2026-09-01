@@ -625,6 +625,28 @@ CONTEXT_DENSITY_NUDGE = 10
 # the file, and a slice `Read` buys it once at a known price.
 SINGLE_FILE_CONTEXT_LIMIT = 2
 
+# How many merged context lines a `--context` sweep may print before it DEGRADES
+# to `--files-only` on its own. `--force-context` overrides.
+#
+# This is the enforcement half of the two advisories above, and it exists because
+# advice cannot fire before the call is made. Four consecutive sessions read the
+# density rule, were warned by this tool at the moment it happened, and took the
+# expensive form anyway — twice each in two of them. The note arrives *with* the
+# payload, so it teaches the next call while the current one is already paid for.
+#
+# Keyed on PRINTED LINES rather than on scope or match count, because that is
+# what the caller actually pays and the other two keys each miss a real case.
+# The landed single-file clamp keys on scope, so it never fired for the worst
+# measured run: a `--context 2` sweep across one crate DIRECTORY returning 71
+# matches in 9 files, ~5.6k, roughly 40% of that session's entire Bash cost, and
+# fired to answer a pure location question. A match-count key is closer but still
+# wrong at the edges, since merged windows collapse clustered matches.
+#
+# Calibrated from the measured failures, which run 1.9k-5.6k: at ~12 tokens a
+# line, 100 lines is ~1.2k, comfortably under the cheapest of them while leaving
+# a genuine adjudication read — a handful of regions — untouched.
+CONTEXT_DEGRADE_LINES = 100
+
 
 def single_file_scope(globs, dirs) -> str | None:
     """The one file this invocation can possibly search, or ``None``.
@@ -647,8 +669,25 @@ def single_file_scope(globs, dirs) -> str | None:
     return only if Path(only).is_file() else None
 
 
-def print_result(result: dict, files_only: bool, context: int) -> None:
-    """Emit ``grep -n``-shaped lines on stdout and one summary line on stderr."""
+def print_result(
+    result: dict,
+    files_only: bool,
+    context: int,
+    notes: list[str] | None = None,
+) -> None:
+    """Emit ``grep -n``-shaped lines on stdout and one summary line on stderr.
+
+    ``notes`` are folded into the summary line rather than written after it.
+    They carry the scope decisions this tool made on the caller's behalf — the
+    single-file clamp and the degrade below — and where they are printed is
+    load-bearing. Emitting them as a trailing write put them *after* the
+    results, so a result truncated at the harness's tool-result cap kept the
+    narrowed output and lost the explanation, which is exactly backwards: the
+    explanation is what says the narrowing was deliberate rather than a thin
+    match set. Everything else this tool reports about scope already lives on
+    the summary line, so a caller who has learned to read that line finds them
+    where the rest of the metadata is.
+    """
     if files_only:
         for path in result["files"]:
             print(path)
@@ -664,6 +703,12 @@ def print_result(result: dict, files_only: bool, context: int) -> None:
     summary = (
         f"search-source | {result['total']} match(es) in {len(result['files'])} file(s)"
     )
+    # Immediately after the counts, ahead of every other field. A summary line
+    # can itself be clipped, and what gets lost is the tail — so the note saying
+    # this tool changed the output form has to sit at the head, not behind the
+    # oversized-file list.
+    for note in notes or ():
+        summary += f" | {note}"
     if result["truncated"]:
         # Say it out loud: a silent cap reads as "searched everything".
         summary += (
@@ -783,6 +828,13 @@ def run(argv: list[str]) -> int:
     )
     parser.add_argument("--context", type=int, default=0, help="context lines")
     parser.add_argument("--files-only", action="store_true", help="print paths only")
+    parser.add_argument(
+        "--force-context",
+        action="store_true",
+        help="print the context windows even when they would degrade to "
+        "--files-only for size — the escape hatch for an adjudication read "
+        "where the surrounding lines ARE the question",
+    )
     parser.add_argument("--fixed", action="store_true", help="literal, not regex")
     parser.add_argument("--ignore-case", action="store_true")
     parser.add_argument(
@@ -831,6 +883,13 @@ def run(argv: list[str]) -> int:
     # question: the caller gets no result at all and has to re-ask. Clamping
     # answers the question, caps the cost, and says on the summary line what it
     # did, so the next call is narrowed deliberately rather than by a retry.
+    #
+    # `--force-context` does NOT lift this one, deliberately, and the asymmetry
+    # with the size degrade below is the point. This clamp fires when the caller
+    # has already named a single file, and for that case a slice `Read` is
+    # strictly better at the same question — so an override would buy nothing
+    # but a way to pay more. The degrade fires on size alone, where the
+    # surrounding lines may genuinely be the question and nothing substitutes.
     clamped_from = None
     if not args.files_only and args.context > SINGLE_FILE_CONTEXT_LIMIT:
         target = single_file_scope(globs, dirs)
@@ -858,17 +917,36 @@ def run(argv: list[str]) -> int:
         limit=args.max,
         globs=globs,
     )
-    print_result(result, args.files_only, args.context)
+    notes: list[str] = []
     if clamped_from is not None:
         width, target = clamped_from
-        print(
-            f"search-source | NOTE: --context {width} was clamped to "
-            f"{SINGLE_FILE_CONTEXT_LIMIT} because the scope is the single file "
-            f"{target} — a wide sweep of one named file is a whole-file read "
-            f"with extra steps. Slice-read it with Read offset/limit if you "
-            f"need more around a match.",
-            file=sys.stderr,
+        notes.append(
+            f"NOTE: --context {width} was clamped to {SINGLE_FILE_CONTEXT_LIMIT} "
+            f"because the scope is the single file {target} — a wide sweep of "
+            f"one named file is a whole-file read with extra steps. Slice-read "
+            f"it with Read offset/limit if you need more around a match."
         )
+
+    # DEGRADE to --files-only when the windows would be large. The search itself
+    # has already run; what is being decided here is only what gets *printed*,
+    # which is the entire cost the caller pays. So the check is exact rather than
+    # projected — merge the windows and count the lines they would emit.
+    files_only = args.files_only
+    if args.context and not files_only and result["total"]:
+        printed = sum(
+            len(lines) for _, _, lines in merge_context_blocks(result["matches"])
+        )
+        if printed > CONTEXT_DEGRADE_LINES and not args.force_context:
+            files_only = True
+            notes.append(
+                f"NOTE: --context {args.context} would have printed {printed} "
+                f"lines across {len(result['files'])} file(s), so this DEGRADED "
+                f"to --files-only — the files below are the complete answer to "
+                f"WHERE. To read what the code does, slice-read the region with "
+                f"Read offset/limit, or re-run with --force-context."
+            )
+
+    print_result(result, files_only, args.context, notes)
     # 0 when something matched, 1 when nothing did — grep's convention, so a
     # caller can branch on it.
     return 0 if result["total"] else 1

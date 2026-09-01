@@ -2246,10 +2246,18 @@ already being asked to start the review.
      do not use the result. Re-issue with `--files-only` (or
      add a `--glob`), then slice-read the region it names.
 
-     Once the scope is a **single named file**, the helper no
-     longer advises — it **refuses** a wide `--context`
-     outright, because that shape is a whole-file read with
-     extra steps. Take `--files-only` and slice.
+     Two cases no longer depend on that obedience, because the
+     helper acts rather than advising. Once the scope is a
+     **single named file** it **clamps** a wide `--context` to
+     a line or two, that shape being a whole-file read with
+     extra steps. And past a size threshold, at **any** scope,
+     it **degrades** to `--files-only` — which is what catches
+     the sweep a scope rule cannot, such as a `--context 2`
+     across one crate directory returning 71 matches in 9
+     files to answer a location question. Both say so on the
+     summary line. `--force-context` overrides the degrade and
+     is for adjudication, not for buying a location answer
+     back at full price.
 
      **This rule is phase-neutral, and that is why it keeps
      getting missed.** Seven separate sessions answered a

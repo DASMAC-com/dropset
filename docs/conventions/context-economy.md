@@ -94,18 +94,32 @@ argument was *not* the reason — see that step for why.)
   the discipline fails at the moment of typing, not the moment of
   reading this doc, so the reminder is attached to the result.
 
-  **Once the scope is a single named file, the tool refuses a wide
-  `--context` outright.** A sweep over one file buys its matched regions
-  at an N-line markup and, on clustered matches, at a *higher* price than
+  **Once the scope is a single named file, the tool CLAMPS a wide
+  `--context`.** A sweep over one file buys its matched regions at an
+  N-line markup and, on clustered matches, at a *higher* price than
   reading the file. Measured: the three largest single results of one
   session were exactly this shape — a `--context 6` constants probe over
   one file (39 matches, overflowed the result cap, spilled 32KB to disk,
   three constants actually wanted), a `--context 12` struct probe, and a
   `--context 40` single-symbol probe that is a whole-file read with extra
   steps — ~11.9k together, roughly **60% of that session's entire Bash
-  cost**. `search_source.py` now detects a wildcard-free single-file
-  scope from the *arguments* and refuses before doing the work; take
-  `--files-only` and slice-read the region it names.
+  cost**. `search_source.py` detects a wildcard-free single-file scope
+  from the *arguments* and narrows the window, saying so on its summary
+  line; take `--files-only` and slice-read the region it names. It
+  clamps rather than refusing because a refusal keys on **scope** while
+  the cost is a function of **match count** — it rejected genuinely cheap
+  calls, and an unanswered question just costs a second one.
+
+  **Past a size threshold, any `--context` sweep degrades to
+  `--files-only` by itself**, whatever its scope, printing the file list
+  plus a note saying that it degraded and how to override. This covers
+  what the single-file clamp structurally cannot, since the clamp keys on
+  scope: the worst measured run was a `--context 2` sweep over one crate
+  *directory* — 71 matches across 9 files, ~5.6k, roughly **40% of that
+  session's entire Bash cost** — fired to answer a pure location
+  question, and no scope rule would have caught it. `--force-context` is
+  the escape hatch, for an adjudication read where the surrounding lines
+  genuinely are the question.
 
   **Treat the helper's advisory line as a DIRECTIVE, not a note.** When
   the summary reports clustering or a many-file spread, do not consume
@@ -113,8 +127,24 @@ argument was *not* the reason — see that step for why.)
   the named region. The detection already works — one session got the
   correct advisory on its top two sinks (~3.1k, 39% of its Bash cost) and
   consumed both results anyway. Obedience is the missing half, which is
-  also why the single-file case above was promoted from an advisory to a
-  refusal.
+  why both cases above were promoted out of advice and into the tool: the
+  single-file case into a clamp, the size case into a degrade. What
+  remains advisory is the shape neither threshold catches, and there the
+  NOTE is a finding about the call you just made — not boilerplate, and
+  not something to re-run in the same shape.
+
+  **Enumeration is a third case, beside existence and adjudication.**
+  The split above is location (`--files-only`) versus reading what code
+  does (`--context`), and a real third shape fits neither: *retrieving
+  several known blocks from one file*. That is a slice-read — one read
+  spanning them, or a bounded read per block — never a grep, however
+  tempting the single call looks. Measured: a `--context 3` sweep for
+  this answered at ~2.0k, the run's largest single result, and **still**
+  needed four separate slice reads afterwards, because the context width
+  truncated the very bullets the sweep was meant to retrieve. It bought
+  overlapping windows *and* the reads that replaced them. This is also
+  the case the tool's own thresholds cannot save you from: they fire once
+  the call is made, and here the right move is not to make it.
 
   **A pattern you have not searched before starts `--files-only`.** The
   advisory is post-hoc by construction — it can only arrive with a

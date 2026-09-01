@@ -451,8 +451,25 @@ not only to the sub-agents you brief:
   two sinks** (≈3.1k, 39% of its whole Bash cost) and used
   both results anyway. When you see it, re-issue with
   `--files-only` (or add a `--glob`) and slice-read the region
-  it names. Once the scope narrows to one named file the tool
-  stops advising and **refuses** a wide `--context` outright.
+  it names.
+
+  **Two cases no longer rely on you obeying it, because the
+  tool now acts.** Once the scope narrows to one named file it
+  **clamps** a wide `--context` to a line or two; and past a
+  size threshold, at any scope, it **degrades** to
+  `--files-only` and says so. Both announce themselves on the
+  summary line. `--force-context` overrides the second — take
+  it when the surrounding lines genuinely are the question, not
+  to get a location answer back in its expensive form.
+
+  **Enumerating several known blocks from one file is a
+  slice-read, not a grep.** It is a third shape beside
+  existence and adjudication, and the thresholds above cannot
+  save you from it, because they fire once the call is made.
+  One `--context 3` sweep for this cost ≈2.0k — its run's
+  largest single result — and *still* needed four slice reads
+  afterwards, since the context width truncated the very
+  bullets it was meant to retrieve.
 
   **A pattern you have not searched before starts
   `--files-only`.** The advisory can only arrive *with* a
