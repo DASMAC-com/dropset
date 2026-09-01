@@ -165,6 +165,43 @@ class LinkEnv(unittest.TestCase):
         )
 
 
+class NodeModulesState(unittest.TestCase):
+    """A cold worktree is measured, not predicted.
+
+    The field exists because the conditional it replaces — install "when the
+    surfaced task touches ``frontend/**``" — loses reliably to "this diff
+    doesn't touch the frontend". The ``biome`` and ``tsc`` hooks then fail on
+    the first full lint whatever the branch changed, with an error that says
+    nothing about the diff.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def test_a_cold_worktree_reports_absent(self):
+        (self.root / "frontend").mkdir()
+        self.assertEqual(ipb.node_modules_state(str(self.root)), "absent")
+
+    def test_an_installed_worktree_reports_present(self):
+        (self.root / "frontend" / "node_modules").mkdir(parents=True)
+        self.assertEqual(ipb.node_modules_state(str(self.root)), "present")
+
+    def test_no_frontend_is_distinguished_from_a_cold_worktree(self):
+        # Distinct from `absent` on purpose: there is nothing to install, so a
+        # skill must not report this as a missing prerequisite to go fix.
+        self.assertEqual(ipb.node_modules_state(str(self.root)), "no-frontend")
+
+    def test_a_file_named_node_modules_is_not_an_install(self):
+        # `isdir`, not `exists` — a stray file of that name would otherwise
+        # report `present` and send the session into the lint failure the
+        # field exists to prevent.
+        (self.root / "frontend").mkdir()
+        (self.root / "frontend" / "node_modules").write_text("", encoding="utf-8")
+        self.assertEqual(ipb.node_modules_state(str(self.root)), "absent")
+
+
 class MainCli(unittest.TestCase):
     """Drive ``main()`` through its ``--porcelain-file`` / ``--branch``
     overrides so no real git is invoked.

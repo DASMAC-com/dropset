@@ -545,7 +545,8 @@ python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
   "normalized_branch": "eng-603",
   "rename_needed": true,     // true iff a `worktree-` prefix is stripped
   "env_link": "created",     // frontend/.env.local
-  "secrets_env_link": "exists"  // infra/localnet/secrets.local.env
+  "secrets_env_link": "exists",  // infra/localnet/secrets.local.env
+  "frontend_node_modules": "absent"  // present / absent / no-frontend
 }
 ```
 
@@ -709,13 +710,34 @@ per-directory *content* — `frontend/node_modules`,
    typed on `ts` / `tsx` / `js` / `css` — which the repo has
    plenty of regardless of what *this* branch touches. So the
    first full `make lint` in a cold worktree fails on them
-   whatever the task is. Install when the surfaced task
-   touches `frontend/**`, or before the first full lint;
-   either way it is one command paid once per worktree, and
-   the alternative is a wasted lint round-trip plus a
-   diagnosis of an error that says nothing about the diff.
-   (`review-pr`'s lint step covers the recovery, but
-   recovering is the expensive path.)
+   whatever the task is.
+
+   **So read `frontend_node_modules` from the same JSON and
+   act on it — do not predict from the diff.** On `"absent"`,
+   run the install now, as part of the bootstrap. On
+   `"present"` or `"no-frontend"` there is nothing to do.
+
+   This used to say "install when the surfaced task touches
+   `frontend/**`, or before the first full lint", and the
+   conditional lost reliably to *this diff doesn't touch the
+   frontend*. Measured: a **docs-only** diff whose first
+   `make lint` failed on exactly two hooks:
+   `Command "biome" not found` and
+   `Command "tsc" not found`, with every other hook passing.
+   The failing hooks covered nothing in the diff, which is
+   precisely why the install had been skipped and precisely
+   why the failure carried no information. Recovery cost the
+   failed sweep, an install, and two scoped re-runs.
+
+   The asymmetry is one-directional: installing unnecessarily
+   costs one quiet command; not installing when it was needed
+   costs a failed full lint, a diagnosis of an error that says
+   nothing about the diff, an install anyway, and
+   re-verification. Reporting it as a field rather than
+   hard-coding an unconditional install keeps the skill acting
+   on a measured fact, the same design the two symlink
+   outcomes already use. (`review-pr`'s lint step covers the
+   recovery, but recovering is the expensive path.)
 
 1. Normalize the branch name to the bare Linear tag.
    The `aps` shell helper starts worktree sessions with

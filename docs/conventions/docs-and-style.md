@@ -1,3 +1,7 @@
+<!-- cspell:word empts -->
+
+<!-- cspell:word EMPTS -->
+
 # Docs, prose, and spelling
 
 ## Docs and skills prose
@@ -94,6 +98,25 @@ comment style:
 
 The lone exception is a file that can't carry a comment (e.g.
 `.json`), where the dictionary is the only option.
+
+**cspell splits on hyphens and checks each part**, so a hyphenated
+coinage is only as safe as its halves — `pre-empts` is checked as `pre`
+plus `empts`, and fails on the second. Prefer an unhyphenated synonym
+(`overrides`, `takes precedence over`) to adding a fragment to the
+dictionary: a fragment is not a word, it would be a permanent entry
+blessing a misspelling repo-wide, and the `--unique` sorter would keep
+it alive.
+
+The failure is invisible until a full lint round-trip spends itself on
+it, which is why this is worth stating rather than discovering. One run
+wrote "it pre-empts every median and pair row below" into a Rust doc
+comment and the matching sentence in a doc; `make lint` then failed on
+two unknown words that appear nowhere in the source — `empts` and
+`EMPTS`. The split survives case, and neither reported word can be
+found by searching for the word actually typed: a reader diagnosing the
+failure searches for `empts` and finds nothing. The same split hits any
+`re-`, `pre-`, `non-` or `co-` coinage, and this repo's prose carries a
+lot of them.
 
 **Placement: one block at the top of the file, one word per line.**
 All of a file's inline escapes go together in a single block at the

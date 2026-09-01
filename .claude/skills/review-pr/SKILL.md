@@ -2271,6 +2271,25 @@ already being asked to start the review.
      `docs/conventions/context-economy.md` → "The levers" is
      the canonical statement.
 
+     **A refused or blocked sweep leaves its question
+     UNANSWERED — never read it as a negative.** This is where
+     the abandonment happened. Two `search_source.py` calls
+     were refused in one session; the second was retried in a
+     simpler form and answered, and the first never was. It had
+     been hunting a summing time-budget clause, which turned
+     out to be that review's most consequential finding — a
+     page's time budget contradicting the ledger by four
+     seconds. A lens found it instead, at its tool-call cap,
+     and called it the one item it could not settle. Retry in a
+     simpler form, or carry the question into the findings
+     catalogue as explicitly unverified. Note too that the
+     refusal text can misdiagnose itself: "too complex to
+     verify that it stays inside the worktree" often means
+     pattern complexity, not paths — it is the harness's
+     message, not this repo's, so rephrase rather than conclude
+     the question cannot be asked. See
+     `docs/conventions/shell-commands.md`.
+
      **Hoist for the files the lens will *predictably* need,
      not only the ones the main loop happened to read.** As
      written, the excerpt rule is "inline what you already
@@ -4043,10 +4062,11 @@ already being asked to start the review.
    **Ground the recommendations in this run.** As the review
    progressed you may have noticed wasteful payloads (a
    whole-file Read, a verbose build log, a repeated full PR
-   read, an inlined-diff fan-out). Per `CLAUDE.md`'s "track
-   consumption ideas as you go" habit, carry those
-   observations into `/session-metrics` so its prose names
-   concrete levers, not just the tool's raw sink ranking.
+   read, an inlined-diff fan-out). Per
+   `docs/conventions/context-economy.md` → "Track consumption
+   ideas as you go", carry those observations into
+   `/session-metrics` so its prose names concrete levers, not
+   just the tool's raw sink ranking.
 
 1. **Firm up the permission allowlist** — the **last
    interactive step**, so it sees the whole run's approvals.

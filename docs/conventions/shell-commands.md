@@ -313,6 +313,30 @@ don't write them, in ad-hoc shell or in committed skills/scripts:
   URL (`-o /dev/null` once for each), or use a head-only request (`-I`)
   so there is no body to dump in the first place.
 
+**A refused or blocked call leaves its question UNANSWERED.** That is
+the shared failure mode behind every entry above, and it is silent: the
+call returns no result, and no-result reads exactly like "nothing
+found". Retry it in a simpler form, or record the question explicitly
+as unverified — never let a refusal stand as a negative finding.
+
+Measured: two `search_source.py` calls were refused in one session. The
+second was retried in a simpler form and answered; **the first never
+was**. It had been looking for a summing time-budget clause, which
+turned out to be that review's most consequential finding — a page's
+time budget contradicting the ledger by four seconds. A sub-agent found
+it instead, and reported it as "the one item I could not settle" after
+hitting its tool-call cap. One notch down the fan-out tiers and a stale
+figure ships.
+
+Read the refusal text with suspicion, because it can misdiagnose its
+own cause. A pattern rejected as "too complex to verify that it stays
+inside the worktree" may name no path and touch no git at all — the
+real trigger being pattern complexity, such as an alternation, a `+`
+quantifier, or an unusual character. That message comes from the
+**harness**, not from anything this repo commits, so it cannot be
+reworded here; treat it as "rephrase and retry", never as "this
+question is structurally unanswerable".
+
 If a one-off like these still gets approved during a session, do
 **not** allow-list it (a `*` can't generalize a compound): the
 `firm-perms` skill flags it and points back here so the source stops

@@ -68,6 +68,7 @@ _WORKTREE_PREFIX = "worktree-"
 # env is a dev convenience, the enclave file is credential resolution.
 _ENV_REL = os.path.join("frontend", ".env.local")
 _SECRETS_ENV_REL = os.path.join("infra", "localnet", "secrets.local.env")
+_NODE_MODULES_REL = os.path.join("frontend", "node_modules")
 
 
 def parse_base_repo(porcelain: str) -> str | None:
@@ -166,6 +167,29 @@ def link_env(base_repo: str | None, worktree_root: str, rel: str = _ENV_REL) -> 
     return "created"
 
 
+def node_modules_state(worktree_root: str) -> str:
+    """Whether this worktree has ``frontend/node_modules``.
+
+    Reported so the skill acts on a measured fact rather than on a prediction
+    about which hooks the diff will trip. A cold worktree has no
+    ``node_modules``, and the ``biome`` and ``tsc`` hooks shell out to
+    ``pnpm --dir frontend exec …`` — so the first full ``make lint`` fails on
+    both, *whatever* the branch touches, with an error that says nothing about
+    the diff. The conditional phrasing it replaces ("install when the task
+    touches ``frontend/**``") loses reliably to "this diff doesn't touch the
+    frontend", and the deferral is then paid at lint time as a failed sweep,
+    an install, and a re-verify.
+
+    Unlike the two symlink fields this mutates nothing, so it is reported on
+    every run rather than riding ``--link-env``.
+    """
+    if not os.path.isdir(os.path.join(worktree_root, "frontend")):
+        return "no-frontend"
+    if os.path.isdir(os.path.join(worktree_root, _NODE_MODULES_REL)):
+        return "present"
+    return "absent"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="init_pr_branch.py",
@@ -246,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
         "secrets_env_link": link_env(base_repo, args.worktree_root, _SECRETS_ENV_REL)
         if args.link_env and tag is not None
         else None,
+        # Read-only, so unconditional: `present` / `absent` / `no-frontend`.
+        "frontend_node_modules": node_modules_state(args.worktree_root),
     }
     print(json.dumps(result, indent=2))
     # Exit non-zero on an invalid tag so the skill can stop and ask, without
