@@ -946,6 +946,7 @@ silently redirect those references.
 
 - **`feed_health`** — current liveness per registered **polled** feed
   source, upserted in place.
+
 - **`push_health`** — current transport state per **push** source,
   upserted in place. Separate from `feed_health` because the two are
   measured by different code and alerted on in opposite directions; see
