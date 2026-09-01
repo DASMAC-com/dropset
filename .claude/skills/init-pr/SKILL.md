@@ -933,9 +933,19 @@ per-directory *content* — `frontend/node_modules`,
    been bought. Re-`get_issue`ing it there pays for the
    same body twice: two ≈1.1k echoes for one payload in
    one measured run, and far worse on a consolidated spec.
-   The echo is a fixed cost per call and `patch` does not
-   shrink it, so fewer calls is the only lever (see
-   `docs/conventions/linear-automation.md`).
+
+   **This one write deliberately stays on the MCP, and it is
+   the exception rather than the rule.** A state-only
+   transition otherwise belongs on the zero-echo path
+   (`board_batch.py state`), which is what `review-pr` uses at
+   its handoff — the echo there transmits one enum and buys
+   nothing, because that session already holds the body. Here
+   the echo does **double duty**: it is also how this session
+   obtains the spec it is about to surface, so routing this
+   write through the zero-echo path would not save the body,
+   it would just move it to a `get_issue` on the next step.
+   Do not "optimize" it. See
+   `docs/conventions/linear-automation.md`.
 
 1. Print the new PR URL and confirm the Linear issue was
    moved to In Progress.

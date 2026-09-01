@@ -3950,12 +3950,21 @@ already being asked to start the review.
    with, or just before, the prompt — not earlier. Skip
    only if no tag was resolvable:
 
-   ```txt
-   mcp__claude_ai_Linear__save_issue(
-     id: "<ENG-###>",
-     state: "In Review"
-   )
+   This is a **state-only** write, so it goes through the
+   zero-echo path rather than the MCP:
+
+   ```sh
+   python3 .claude/tools/board_batch.py state \
+     --id <ENG-###> --state "In Review"
    ```
+
+   It prints one line. The MCP equivalent echoes the entire
+   stored body back to transmit one enum — measured at ≈3.6k
+   on a consolidated issue, and this is the write that pays it
+   at its worst, since the body is at its largest by the
+   handoff. Unlike `init-pr`'s bootstrap write, nothing here
+   needs the body: the session has held it since step 3, so
+   the echo buys nothing at all.
 
    **One write, no retry loop.** If the response echo comes
    back still showing In Progress, do **not** re-issue the

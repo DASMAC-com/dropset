@@ -154,10 +154,18 @@ applied in order and atomically — so adding or amending part of a body
 **never** requires re-sending it, and a pure `append` needs no prior
 read at all. Passing `description` / `content` does replace wholesale;
 `patch` is the **update-only** alternative, never passed alongside it
-(and capped at 50 ops). It does **not** shrink the response echo
-(that's a fixed cost per call — fewer calls is the only lever there).
-Anchors must match the **stored** text exactly once, and Linear rewrites
-an `ENG-###` into a mention node, so never anchor on one. Detail:
+(and capped at 50 ops). Each op takes its **own** argument names —
+`append` / `prepend` take `text`, `replace` takes
+`old_string` / `new_string` — and guessing wrong costs a full-body echo
+for a rejected call; the table is in the convention doc. `patch` does
+**not** shrink that echo (a fixed cost per call), so for a body
+**append** — which has no anchor and so nothing for an ambiguity abort
+to protect — the zero-echo path is
+`.claude/tools/linear_issue.py append`; **anchored** edits stay on
+`patch`, where that abort is worth the echo. Non-body field writes go
+through `board_batch.py` (`state` is a single-issue alias). Anchors must
+match the **stored** text exactly once, and Linear rewrites an
+`ENG-###` into a mention node, so never anchor on one. Detail:
 `docs/conventions/linear-automation.md`.
 
 ### Parked findings sit in Todo, never Backlog

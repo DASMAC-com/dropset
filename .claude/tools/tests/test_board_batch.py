@@ -61,6 +61,34 @@ class PriorityTests(unittest.TestCase):
                 normalize_priority(bad)
 
 
+class StateAliasTests(unittest.TestCase):
+    """The single-issue `state` alias over `fields`.
+
+    It exists so the per-session lifecycle transitions are one command rather
+    than a JSON file composed to carry one enum — those writes cost ~3.6k each
+    through the MCP, which echoes the whole stored body back.
+    """
+
+    def test_it_widens_to_the_fields_shape(self):
+        self.assertEqual(
+            bb._normalize_state_update("ENG-123", "In Review"),
+            {"ENG-123": {"state": "In Review"}},
+        )
+
+    def test_the_identifier_is_kept_whole_rather_than_parsed(self):
+        # Passed through so `_as_ref` can validate the team prefix. Parsing to
+        # an int here would let FIN-123 silently mutate ENG-123.
+        self.assertIn("FIN-123", bb._normalize_state_update("FIN-123", "Done"))
+
+    def test_the_parser_accepts_the_subcommand(self):
+        args = bb._parse_args(
+            ["board_batch.py", "state", "--id", "ENG-9", "--state", "In Review"]
+        )
+        self.assertEqual(args.cmd, "state")
+        self.assertEqual(args.id, "ENG-9")
+        self.assertEqual(args.state, "In Review")
+
+
 class UpdateInputTests(unittest.TestCase):
     def test_maps_field_names_to_mutation_arguments(self):
         got = build_update_input({"priority": "high", "parent": "uuid-1"})
