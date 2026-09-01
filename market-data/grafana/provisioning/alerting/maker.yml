@@ -4,7 +4,7 @@
 # hosted stack alert on identical conditions, the same way the dashboards
 # beside them are committed rather than click-configured.
 #
-# Five rules. Three cover the failures this issue names — the bot stopped, a
+# Six rules. Three cover the failures this issue names — the bot stopped, a
 # feed stopped, a market stopped quoting normally — and two cover ways a
 # market can stop quoting while all three of those read healthy: its ticks
 # failing, and its composition paused. Both were added after tracing what an
@@ -12,6 +12,12 @@
 # arriving, so the heartbeat is alive; the feeds answer, so staleness is
 # quiet; and the kill-switch policy is never reached, so nothing is degraded
 # or halted. A market can be dark and matchless with every signal green.
+#
+# The sixth covers a gap of the same shape one layer down, in the feeds
+# themselves: a **push** source's records arrive only when its venue sends
+# something, so an age-based rule cannot tell a quiet market from a dead
+# socket and the staleness rule above deliberately does not cover it. It
+# alerts on a transport state instead, with no data cadence in its condition.
 #
 # WHAT PROVISIONING BUYS AND WHAT IT DOES NOT. These rules evaluate and
 # reach Firing in Grafana's Alerting UI with no further setup, which is what
@@ -409,12 +415,13 @@ groups:
     noDataState: 'OK'
     title: 'Market degraded or halted'
     uid: 'maker-degraded-or-halt'
-  # Ticks failing, per market. The gap the three rules above leave open: a
+  # Ticks failing, per market. The gap the four rules above leave open: a
   # market whose vault read times out on every tick still writes a row every
-  # tick, so the heartbeat is alive; its feeds are healthy, so the feed-stale
-  # rule is quiet; and it never reaches the kill-switch policy, so `degraded`
-  # is false and `action` is never `Halt`. It quotes nothing and pages
-  # nobody, which is the worst shape an operations view can have.
+  # tick, so the heartbeat is alive; its feeds are healthy and its fill
+  # transport is connected, so the feed-stale and push-link rules are quiet;
+  # and it never reaches the kill-switch policy, so `degraded` is false and
+  # `action` is never `Halt`. It quotes nothing and pages nobody, which is
+  # the worst shape an operations view can have.
   #
   # Keyed on `tick_error IS NOT NULL` rather than on `action = 'TickError'`,
   # deliberately: a tick that decided and *then* failed keeps its decision in
