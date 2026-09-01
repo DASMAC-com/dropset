@@ -17,9 +17,12 @@
 //   * **Did it fill?** — from the fill events. The program emits one per leg
 //     via event CPI on a real fill and *none* at all when it soft-reverts, so
 //     their absence is the signal, and it is a property of our own program
-//     rather than of how a node chooses to report balances. `collectFillEvents`
-//     verifies each event's emitting program, so this cannot be spoofed by an
-//     unrelated instruction in the same transaction.
+//     rather than of how a node chooses to report balances.
+//     `collectFillEvents` authenticates each event's *emitting program*, which
+//     is what stops an unrelated program forging one; it says nothing about
+//     the event's *subject*, so this module filters by taker itself. And an
+//     empty event list is only read as a soft revert once the receipt is known
+//     to carry the fields the extraction needs — see `canJudgeFills`.
 //   * **How much?** — from the taker's own token-balance delta, which is the
 //     quantity `min_out` is itself expressed in: the floor is sized on what
 //     lands in the taker's account after both fees (see `eclobSwap`'s quote),
@@ -36,9 +39,16 @@
 // specific to our program, which is also the only route that soft-reverts —
 // the aggregator route reverts in the ordinary way and never reaches here.
 
-import { collectFillEvents, type EventTransaction } from "@dropset/sdk";
+import {
+  collectFillEvents,
+  type EventTransaction,
+  eventAccountKeys,
+} from "@dropset/sdk";
 import type { Signature } from "@solana/kit";
-import { SWAP_CONFIRMATION_POLL_MS } from "../data/timings";
+import {
+  REALIZED_FILL_MAX_ATTEMPTS,
+  SWAP_CONFIRMATION_POLL_MS,
+} from "../data/timings";
 
 /**
  * Minimal structural shape of the one RPC method this needs, declared here
@@ -95,21 +105,43 @@ export type RealizedFill = {
   amounts: { inAmount: bigint; outAmount: bigint } | null;
 };
 
-// A transaction is readable by signature status a beat before `getTransaction`
-// will return it, so a first null is ordinary rather than an answer. Bounded
-// tightly: the point is to ride out that beat, not to wait out a node that
-// has genuinely lost the transaction.
-const MAX_ATTEMPTS = 4;
-
-const amountOf = (entry: TokenBalanceEntry): bigint => {
+/**
+ * One entry's amount, or `null` when it cannot be parsed.
+ *
+ * `null` rather than `0n` on purpose: a zero would be indistinguishable from a
+ * genuinely empty account and would quietly become part of a delta, so a
+ * malformed `post` entry beside a well-formed `pre` one would manufacture a
+ * negative movement. The caller escalates a `null` to "this reading is not
+ * interpretable" instead.
+ */
+const amountOf = (entry: TokenBalanceEntry): bigint | null => {
   const raw = entry.uiTokenAmount?.amount;
-  if (typeof raw !== "string") return 0n;
+  if (typeof raw !== "string") return null;
   try {
     return BigInt(raw);
   } catch {
-    return 0n;
+    return null;
   }
 };
+
+/**
+ * Whether this receipt carries the fields {@link collectFillEvents} needs to
+ * reach a verdict at all.
+ *
+ * This gate is the difference between "the program emitted no fills" and "this
+ * reader cannot see whether it did", which `collectFillEvents` itself cannot
+ * express — it returns an empty array for both. Its three non-soft-revert
+ * empty returns are a failed transaction, absent `meta.innerInstructions`, and
+ * an unresolvable account-key list (which is also how it fails closed under
+ * `jsonParsed` encoding, where the keys arrive as objects that never match a
+ * program address).
+ *
+ * Without this check an RPC that merely omits inner instructions would make
+ * every swap read as a soft revert — telling a user their funds did not move
+ * when they did, which is the one error that invites them to swap twice.
+ */
+const canJudgeFills = (tx: RealizedFillTransaction): boolean =>
+  tx.meta?.innerInstructions != null && eventAccountKeys(tx) !== null;
 
 /**
  * Net movement of `mint` across `owner`'s token accounts, and whether the
@@ -128,19 +160,29 @@ const netDelta = (
 ): { delta: bigint; seen: boolean } => {
   let delta = 0n;
   let seen = false;
+  let bad = false;
   const walk = (
     entries: readonly TokenBalanceEntry[] | null | undefined,
     sign: bigint,
   ) => {
     for (const entry of entries ?? []) {
       if (entry.mint !== mint || entry.owner !== owner) continue;
+      const amount = amountOf(entry);
+      // An entry we cannot parse poisons the whole pairing rather than
+      // contributing nothing: `seen` is what tells the caller the metadata was
+      // interpretable, so setting it while silently dropping a term is exactly
+      // the fabrication this function exists to avoid.
+      if (amount === null) {
+        bad = true;
+        continue;
+      }
       seen = true;
-      delta += sign * amountOf(entry);
+      delta += sign * amount;
     }
   };
   walk(tx.meta?.postTokenBalances, 1n);
   walk(tx.meta?.preTokenBalances, -1n);
-  return { delta, seen };
+  return { delta, seen: seen && !bad };
 };
 
 /**
@@ -161,7 +203,7 @@ export async function readRealizedFill(
   ref: SettlementRef,
 ): Promise<RealizedFill | null> {
   let tx: RealizedFillTransaction | null = null;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < REALIZED_FILL_MAX_ATTEMPTS; attempt++) {
     try {
       // `json` rather than `jsonParsed`: the token-balance metadata is the
       // same either way, and the parsed encoding reshapes account keys in a
@@ -183,7 +225,7 @@ export async function readRealizedFill(
       tx = null;
     }
     if (tx) break;
-    if (attempt < MAX_ATTEMPTS - 1) {
+    if (attempt < REALIZED_FILL_MAX_ATTEMPTS - 1) {
       await new Promise((r) => setTimeout(r, SWAP_CONFIRMATION_POLL_MS));
     }
   }
@@ -194,25 +236,49 @@ export async function readRealizedFill(
   // fill for a swap that failed outright.
   if (tx.meta?.err != null) return null;
 
-  // The verdict. No fill events means the handler took its below-floor branch
-  // and returned before the transfer section — the soft revert. This is read
-  // off our own program's emissions rather than off the balances, so it does
-  // not depend on whether a node lists token accounts whose balance is
-  // unchanged (a soft revert changes none of them).
-  const filled = collectFillEvents(tx).length > 0;
+  // Refuse to judge a receipt whose event fields are missing. Without this,
+  // "the metadata does not carry inner instructions" and "the handler emitted
+  // no fills" are the same empty array — see {@link canJudgeFills}.
+  if (!canJudgeFills(tx)) return null;
 
   const out = netDelta(tx, ref.owner, ref.outputMint);
   const inp = netDelta(tx, ref.owner, ref.inputMint);
-  // The input delta is negative when the taker spent, so flip it. Both are
-  // clamped at zero: a negative output (or a positive input) would mean the
-  // transaction moved the taker's balance the wrong way, which this reader
-  // has no vocabulary for and must not report as a fill size.
+
+  // The verdict. No fill events for THIS taker means the handler took its
+  // below-floor branch and returned before the transfer section — the soft
+  // revert. Read off our own program's emissions rather than off the balances,
+  // so it does not depend on whether a node lists token accounts whose balance
+  // is unchanged (a soft revert changes none of them).
+  //
+  // Filtered by taker because the events are transaction-scoped while this
+  // reader answers a question about one party: a soft-reverted swap bundled
+  // with someone else's real fill must not read as a success. The program-id
+  // check inside `collectFillEvents` authenticates the *emitter*, not the
+  // subject, so that filtering is this module's job.
+  const filled = collectFillEvents(tx).some(
+    (event) => String(event.taker) === ref.owner,
+  );
+
+  // Positive proof of receipt outranks an absent event. If the taker's output
+  // balance demonstrably rose, the swap filled whatever the event list says,
+  // and the disagreement means this receipt is not describing what this reader
+  // thinks it is — so decline rather than emit a confident "did not fill"
+  // against evidence of funds moving.
+  if (!filled && out.seen && out.delta > 0n) return null;
+
+  // The input delta is negative when the taker spent, so flip it. A movement
+  // in the wrong direction (a negative output, or a positive input) is a
+  // contradiction rather than a small number: withhold the amounts entirely so
+  // the caller falls back to its quote, instead of reporting a plausible zero
+  // that would displace it.
+  const directionsCoherent =
+    out.seen && inp.seen && out.delta >= 0n && inp.delta <= 0n;
+  // A fill that received nothing contradicts the event list just as squarely,
+  // so the amounts are untrustworthy even when their directions are fine.
+  const agreesWithVerdict = !filled || out.delta > 0n;
   const amounts =
-    out.seen && inp.seen
-      ? {
-          inAmount: inp.delta < 0n ? -inp.delta : 0n,
-          outAmount: out.delta > 0n ? out.delta : 0n,
-        }
+    directionsCoherent && agreesWithVerdict
+      ? { inAmount: -inp.delta, outAmount: out.delta }
       : null;
 
   return { filled, amounts };

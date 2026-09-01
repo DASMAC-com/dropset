@@ -8,6 +8,7 @@ import {
 } from "@dropset/sdk";
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
 import {
+  type Address,
   address,
   appendTransactionMessageInstructions,
   compileTransaction,
@@ -30,7 +31,7 @@ import { getErrorMessage } from "../guards";
 import type { SettlementRef } from "../swap/realizedFill";
 import { CANCEL_PATTERN, SwapError, type SwapOutcome } from "../swap/types";
 import { gateNowSlot, gateNowUnix, syncChainClock } from "./chainClock";
-import { platformFeeBpsFor, resolveEclobRoute } from "./route";
+import { type EclobRoute, platformFeeBpsFor, resolveEclobRoute } from "./route";
 
 type Rpc = SolanaClientRuntime["rpc"];
 
@@ -49,6 +50,25 @@ type Rpc = SolanaClientRuntime["rpc"];
 export type EclobSwapOutcome = SwapOutcome & {
   settlement: SettlementRef;
 };
+
+/**
+ * Which mints the taker spends and receives on this route, for `owner`.
+ *
+ * A pure function of the route, and exported so the base/quote mapping can be
+ * pinned: it mirrors the SDK's own derivation of `outputMint` (base on a buy,
+ * quote on a sell) and a transposition here would be silent and user-visible.
+ * Both mints still belong to the taker, so the balance reader would find both,
+ * measure each in the wrong direction, and — after its coherence check —
+ * withhold the amounts on a swap that really filled.
+ */
+export const settlementFor = (
+  route: EclobRoute,
+  owner: Address,
+): SettlementRef => ({
+  owner,
+  inputMint: route.side === "sell" ? route.baseMint : route.quoteMint,
+  outputMint: route.outputMint,
+});
 
 export type EclobSwapInput = {
   inputMint: string;
@@ -77,11 +97,11 @@ const MAX_SLIPPAGE_BPS = 9_999;
 // returns is loose by at most one atom rather than tight. An output of 1001 at
 // 50 bps has an exact floor of 995.995 and this yields 995, so a fill at 995
 // clears a floor the taker sized at 995.995. One atom is far below any
-// meaningful slippage, and rounding the other way would reject fills that sit
-// exactly on a floor the taker did ask for, so the direction is kept — but it
-// is stated as it is, because the previous claim here was that the floor was
-// "never looser than requested", which is the reverse, and would license a
-// later edit that treated the safe direction as already guaranteed.
+// meaningful slippage, and rounding the other way would reject fills sitting
+// exactly on a floor the taker did ask for, so the direction is deliberate.
+// It is spelled out because the looseness is not self-evident from the
+// expression, and a reader who assumed the safe direction was guaranteed
+// could build on it.
 //
 // A non-finite `bps` is clamped before it reaches `BigInt`: `Math.trunc(NaN)`
 // is `NaN`, and `Math.min`/`Math.max` propagate it, so without the guard
@@ -92,7 +112,11 @@ const MAX_SLIPPAGE_BPS = 9_999;
 // that arrived as NaN is an upstream bug, and on a money path the safe
 // failure is one that risks no funds. The swap then soft-reverts on any
 // adverse move, which the caller now reports as a swap that did not happen.
-const applySlippage = (out: bigint, bps: number): bigint => {
+//
+// Exported only so the rounding direction and the non-finite guard can be
+// pinned directly — both are one-line properties whose failure is silent, and
+// neither is reachable through `executeEclobSwap` without a wallet and an RPC.
+export const applySlippage = (out: bigint, bps: number): bigint => {
   const finite = Number.isFinite(bps) ? Math.trunc(bps) : 0;
   const clamped = BigInt(Math.min(Math.max(finite, 0), MAX_SLIPPAGE_BPS));
   return (out * (BPS_DENOMINATOR - clamped)) / BPS_DENOMINATOR;
@@ -327,13 +351,6 @@ export async function executeEclobSwap(
     signature,
     inAmount: quote.inAmount,
     outAmount: quote.outAmount,
-    // The taker receives `route.outputMint` and spends the other leg — base on
-    // a sell, quote on a buy, the mirror of how the route derives `outputMint`
-    // from the same side.
-    settlement: {
-      owner: taker.address,
-      inputMint: route.side === "sell" ? route.baseMint : route.quoteMint,
-      outputMint: route.outputMint,
-    },
+    settlement: settlementFor(route, taker.address),
   };
 }

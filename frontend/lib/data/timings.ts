@@ -30,6 +30,15 @@ export const SWAP_CONFIRMATION_POLL_MS = 500;
 // declaring the tx dropped instead of polling to timeout.
 export const SWAP_CONFIRM_MAX_UNKNOWN_POLLS = 10;
 
+// Attempts to fetch a confirmed swap's transaction metadata before giving up
+// and reporting its realized fill as unreadable. A transaction is readable by
+// signature status a beat before `getTransaction` will return it, so a first
+// null is ordinary rather than an answer; this rides out that beat without
+// waiting out a node that has genuinely lost the transaction. It reuses
+// SWAP_CONFIRMATION_POLL_MS above as its cadence — the two are deliberately
+// the same interval, though they answer different questions.
+export const REALIZED_FILL_MAX_ATTEMPTS = 4;
+
 // Outer-edge timeout for the /order fetch. Long enough to absorb a slow
 // quote-time route build, short enough that a hung endpoint surfaces as a
 // retryable error rather than sticking the UI in "Preparing swap…".
