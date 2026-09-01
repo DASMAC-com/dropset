@@ -364,41 +364,66 @@ decks-build: check-pnpm
 # but not the prices feeding it is showing half the system. Grafana opens on
 # http://localhost:3200 alongside the frontend's own tab.
 #
+# The keyed FX venues come up as well, but only when the secrets enclave is
+# present — `DEMO_FX` gates on $(FX_ENV) existing rather than calling
+# `fx-collectors-up` outright, because that target's own fallback branch
+# starts the services against whatever keys happen to be exported. That is the
+# right behavior when an operator asks for it by name and the wrong behavior
+# here: `make demo` must keep working on a machine with no credentials at all,
+# so the gate belongs on this side of the call. A machine without the enclave
+# prints one line saying the keyed venues were skipped and carries on. Saying
+# it out loud is deliberate — silence would let an operator read an FX-less
+# Grafana as healthy, which is the same trap the dashboards already have.
+#
 # `collectors-up` runs FIRST and synchronously, before the TUI takes the
 # alternate screen — it is the slow, chatty step (it builds the Rust images on
 # a cold tree) and the one that fails when Docker is not running, so both its
 # progress and its errors belong on a plain terminal rather than under a TUI.
 # It is also why this target now needs `check-docker`.
 #
-# On exit the trap runs `collectors-down`, which stops the four collectors and
-# Grafana and deliberately LEAVES `postgres` — the volume holds recorded
-# candles, and every per-app `down` target here is scoped for exactly that
-# reason. The browser tabs are the operator's to close.
+# On exit the trap runs `collectors-down` AND `fx-collectors-down`, which stop
+# all seven collectors and Grafana and deliberately LEAVE `postgres` — the
+# volume holds recorded candles, and every per-app `down` target here is scoped
+# for exactly that reason. The browser tabs are the operator's to close.
+#
+# The FX half of that teardown is unconditional, unlike the bring-up. It costs
+# nothing on a machine that never started those services (`rm -sf` on absent
+# containers is a no-op) and it is what makes the demo symmetric: the keyed
+# services are `restart: unless-stopped`, so one left running survives the
+# demo, survives the terminal, and comes back when the Docker daemon does.
 #
 # Two honest limits on that teardown, since "tears down what it started" would
-# overstate it. `collectors-up` is idempotent, so collectors the operator had
-# already started are stopped too on exit; and it runs BEFORE the trap is
+# overstate it. Both `up` targets are idempotent, so collectors the operator had
+# already started are stopped too on exit; and they run BEFORE the trap is
 # installed, so a Ctrl-C during the image build leaves them up (`make
-# collectors-down` recovers). Both are recoverable and neither touches data.
+# collectors-down` and `make fx-collectors-down` recover). Both are recoverable
+# and neither touches data.
 #
 # `DEMO_CLEANUP` disarms the trap (`trap -`) as its first act. INT and EXIT
 # are both trapped and the shell runs the EXIT handler after the INT one, so
 # without that the whole teardown ran twice on Ctrl-C. That was free when the
-# handler was a bare `kill`; it is not free now that it also runs a
-# five-service `docker compose rm -sf`.
+# handler was a bare `kill`; it is not free now that it also runs two
+# `docker compose rm -sf` invocations over eight services.
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
-# The background half and its cleanup, hoisted into variables the way `FX_UP`
-# is: the Makefile linter caps a recipe body at 5 lines and counts
+# The background half, the FX gate and the cleanup, hoisted into variables the
+# way `FX_UP` is: the Makefile linter caps a recipe body at 5 lines and counts
 # continuation lines toward it, and the body already sat exactly on that cap
-# before these additions.
+# before these additions. That cap is also why `DEMO_FX` rides the
+# `collectors-up` recipe line behind `&&` rather than taking a line of its
+# own: same shell, so a failed bring-up still stops the demo before the
+# gate runs.
 DEMO_FRONTEND = $(MAKE) --no-print-directory frontend-localnet \
 	>$(FRONTEND_LOG) 2>&1 </dev/null
+DEMO_FX = if [ -f $(FX_ENV) ]; then \
+	$(MAKE) --no-print-directory fx-collectors-up; \
+	else echo 'No $(FX_ENV) — keyed FX collectors skipped.'; fi
 DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null; \
-	$(MAKE) --no-print-directory collectors-down
+	$(MAKE) --no-print-directory collectors-down; \
+	$(MAKE) --no-print-directory fx-collectors-down
 .PHONY: demo
 demo: check-docker
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
-	$(MAKE) --no-print-directory collectors-up
+	@$(MAKE) --no-print-directory collectors-up && $(DEMO_FX)
 	$(call open-browser,3200)
 	@set -m; $(DEMO_FRONTEND) & group=$$!; set +m; \
 	trap '$(DEMO_CLEANUP)' INT TERM EXIT; $(MAKE) --no-print-directory tui
