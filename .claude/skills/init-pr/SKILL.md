@@ -1088,6 +1088,42 @@ per-directory *content* — `frontend/node_modules`,
    reliable, but a part filed *before* an unrelated change
    may describe code that no longer exists.
 
+1. **Claim the migration number NOW if the task adds one —
+   at branch time, not at rebase.** When the surfaced task
+   will add a `db-schema/migrations/` file, resolve its
+   number here, before any work:
+
+   ```sh
+   gh pr list --state open --json number,files --limit 30
+   ```
+
+   ```sh
+   python3 .claude/tools/migration_collisions.py \
+     --others <scratchpad>/others.json
+   ```
+
+   Write the listing to the scratchpad file the tool reads;
+   it makes no network call of its own and compares
+   **numbers, not filenames**, so `0003_telemetry.sql` and
+   `0003_roster.sql` collide.
+
+   **Why here rather than at review.** `review-pr` already
+   runs this probe, and that is too late by construction: the
+   in-tree ascend guard only fires once both files coexist in
+   one tree, which first happens at **rebase** — after the
+   branch is written, reviewed and CI-green. Two branches took
+   the same number twice in one week. Cost per occurrence is a
+   rebase, a renumber and a full re-verify — and the expensive
+   half is one no guard can catch, because an applied
+   migration is **immutable**: renumbering the wrong side
+   against the shared dev database wedges it, and recovery is
+   manual surgery or a data-destroying wipe.
+
+   The probe is proven and cheap — one call, run by hand
+   before an enqueue and answered immediately. If it reports a
+   collision, take the free number now, while nothing has been
+   written and nothing has been applied.
+
 1. **Hand off to `/review-pr` when the work is ready.**
    This is the closing step of the bracketed session.
    Once the surfaced task's work is complete and every
