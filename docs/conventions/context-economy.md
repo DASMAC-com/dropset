@@ -146,6 +146,58 @@ argument was *not* the reason — see that step for why.)
   the case the tool's own thresholds cannot save you from: they fire once
   the call is made, and here the right move is not to make it.
 
+  **If an earlier call this session already named the file, pass
+  `--glob`.** Narrowing the SCOPE is a separate axis from narrowing the
+  output, and this one has a concrete trigger: you already know where it
+  is. Measured in one session, two of its three largest Bash results were
+  unscoped sweeps fired when the target was already known — ~3.7k for a
+  context sweep over four alternated identifiers to settle a *one-bit*
+  question, returning 31 matches across 4 files that were mostly test
+  assertions when two regions were wanted; and ~1.8k sweeping a whole
+  crate for one config field, when a section map earlier in the same
+  session had already named the file. The same tool scoped to one file
+  cost ~200–500 tokens per call elsewhere in that run.
+
+  **A structure map matches TOP-LEVEL declarations only.** Anchor at
+  column zero and never add a leading-space alternative (`^ *fn`,
+  `^ *pub fn`): in Rust that turns the map into a dump of the
+  `#[cfg(test)]` module, which is routinely more than half the file. One
+  correctly-`--glob`-scoped map over a ~2140-line file returned **97
+  matches at ~1.9k** — roughly 80 of them test-module functions from a
+  block spanning lines ~810–2140 — to choose which regions of a ~17-line
+  type surface to read. `^pub enum|^pub struct|^impl` alone would have
+  cost about a fifth. The scope was right and the output width was wrong,
+  which is exactly why `--glob` did not save it. This is the same failure
+  as the comment-alternation case below, but that one names comment lines
+  specifically, so it does not fire here.
+
+  **Before the third slice of one file, sum what you have already
+  read.** Past roughly half the file, take one bounded read covering the
+  remaining regions instead of continuing to slice. The accumulating case
+  looks compliant at every individual step, which is why it needs its own
+  trigger: one session ran the prescribed declaration map over a ~650-line
+  `Makefile` and then sliced it **five** times off that map — 225 lines,
+  98, 50, 26, 14, about 413 lines in total, the first slice alone its
+  largest single result at ~3.3k. Both adjacent rules were followed and
+  neither applies: "a planned multi-region read is ONE bounded read"
+  governs regions planned up front, and these were discovered
+  incrementally; "if you already ran the map, slice from it" fires when a
+  map is followed by a *whole-file* read, not by many slices. Be honest
+  about the size of the win — a whole read of that file is ~6k, so five
+  slices at ~413 lines were not obviously worse in raw tokens. The
+  stronger case is fewer round trips.
+
+  **A whole-issue read is for an issue's CONTENT; a decision that turns
+  on a field is a field-selected `list_issues`.** Reading an issue whole
+  to learn one enum cost ~6.0k in one measured case, and a second
+  **overflowed the tool-result cap** (64.3KB, spilled to disk) so the
+  field was not even readable — then a recovery `list_issues` with
+  `fields: ["title", "status", "statusType"]` answered it for ~2.5k. That
+  is ~8.5k plus a disk spill to classify two issues, and the failure
+  scales the wrong way: the longer an issue's decision history, the
+  likelier a whole read overflows, and long-running issues are exactly
+  the ones that reach a merged PR.
+
   **A pattern you have not searched before starts `--files-only`.** The
   advisory is post-hoc by construction — it can only arrive with a
   payload already paid for — so the first call needs a rule of its own,
@@ -245,9 +297,11 @@ argument was *not* the reason — see that step for why.)
     largest sink of one session (top five, ~15k). The crate was small,
     so no per-file budget felt warranted — yet `model.rs` is ~40%
     `#[cfg(test)]` and only two signatures were needed. Before any
-    `Read` over ~300 lines, Grep for the structure
-    (`^fn |^impl |^pub`, or the language's equivalent); the map tells
-    you which slice you actually want.
+    `Read` over ~300 lines, Grep for the structure — the language's
+    **top-level declaration** shape (`^pub enum|^pub struct|^impl`, or
+    its equivalent), anchored at column zero and never with a
+    leading-space alternative; the map tells you which slice you
+    actually want.
 
     **Scope that structure-map grep to the file(s) you are about to
     read.** The instruction names a pattern but no scope, and aimed at

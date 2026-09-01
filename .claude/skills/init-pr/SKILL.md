@@ -208,10 +208,23 @@ not only to the sub-agents you brief:
 
 - **Map the structure before any Read over ~300 lines —
   scoped to the file(s) you are about to read.** One Grep for
-  `^fn |^impl |^pub` (or the language's equivalent) gives you
-  the section map, and the map tells you which slice you
-  actually want. A dispatcher whole-file Read (≈4.4k) to find
-  **one** append point is the recurring shape this prevents.
+  the language's **top-level declaration** shape
+  (`^pub enum|^pub struct|^impl`, say) gives you the section
+  map, and the map tells you which slice you actually want. A
+  dispatcher whole-file Read (≈4.4k) to find **one** append
+  point is the recurring shape this prevents.
+
+  **Anchor at column zero; never add a leading-space
+  alternative.** This bullet used to offer `^fn |^impl |^pub`,
+  and that example was itself the bug — a bare `^pub` matches
+  `pub fn` at top level only by luck of Rust formatting, and
+  any `^ *fn` variant turns the map into a dump of the
+  `#[cfg(test)]` module, routinely more than half a Rust file.
+  Measured: a correctly-`--glob`-scoped map over one ~2140-line
+  file returned **97 matches at ≈1.9k**, about 80 of them
+  test-module functions, to choose regions of a ~17-line type
+  surface. The scope was right and the width was wrong, which
+  is why `--glob` did not save it.
 
   **Pass `--glob <the file>`.** This instruction used to name
   a pattern and no scope, and aimed at the whole source set it
@@ -250,6 +263,30 @@ not only to the sub-agents you brief:
   own.** If any branch would match ordinary content rather
   than a declaration, the map is no longer smaller than the
   file, and the map was the whole point.
+
+- **If an earlier call this session already named the file,
+  pass `--glob` on it.** Scope and output width are separate
+  axes, and this one has a concrete trigger: you already know
+  where it is. Two of one session's three largest Bash results
+  were unscoped sweeps fired when the target was already
+  known — ≈3.7k to settle a *one-bit* question, and ≈1.8k
+  sweeping a whole crate for one config field a section map
+  had already located. Scoped to one file, the same tool cost
+  ≈200–500 tokens per call in that same run.
+
+- **Before the third slice of one file, sum what you have
+  already read.** Past roughly half the file, take one bounded
+  read over the remaining regions instead of slicing again.
+  This is the accumulating case, and it needs its own trigger
+  because it looks compliant at every step: one session mapped
+  a ~650-line `Makefile` correctly and then sliced it **five**
+  times off that map — 225 lines, 98, 50, 26, 14 — about 413
+  lines, the first slice alone its largest result at ≈3.3k.
+  Neither adjacent rule fires, since the regions were
+  discovered incrementally rather than planned, and the map
+  was followed by slices rather than a whole read. The saving
+  is modest in raw tokens; the stronger case is fewer round
+  trips.
 
 - **If you already ran the map, slice from it.** A map
   followed by a whole-file Read means the map was wasted —
@@ -996,6 +1033,40 @@ per-directory *content* — `frontend/node_modules`,
    task. If the user provided their own instructions,
    those win; don't override them with the issue.
 
+   **If the tag is AMBIGUOUS, ask — don't fetch candidates to
+   find out.** An `AskUserQuestion` costs on the order of a
+   hundred tokens; a whole-issue read on a mature body costs
+   thousands, and bodies here grow large by design. Measured:
+   a single speculative read was the largest result of its
+   session (≈4.5k), fetched to disambiguate an operator
+   reference transcribed as "8.5.9" that could plausibly have
+   named three issues — and it did not settle it. The planning
+   session could not disambiguate it either, the operator
+   resolved it directly, and the session asked anyway. So
+   ≈4.5k bought a guess that was neither confirmed nor used.
+   The conventions bound *repeat* fetches; nothing bounds the
+   first one, which is exactly where a speculative read lands.
+
+   **Wanting board or sequencing state? Ask a live planning
+   session before reading the Planning document.** `ListAgents`
+   is the liveness check, and messaging a planning session is
+   already the documented channel in the other direction. The
+   document getter returns the entire content with no slice
+   accessor, and the document only grows between close-out
+   rewrites, so the cost rises over time: one worktree
+   session's whole-document read was its largest result by a
+   wide margin (≈9.6k, about 2.4x the next largest and more
+   than every file Read in that session combined) to answer a
+   question that turned on roughly six lines. The same session
+   then messaged the live planning session and got a strictly
+   better answer for a fraction — the state of both blockers,
+   the operator's posture, a ruling on the actual question,
+   and an unprompted correction to a measured fact in the
+   document that had gone stale. The read surfaced none of
+   that, because a stale line reads exactly like a current
+   one. Read the document only when no planning session is
+   live.
+
    **Treat the issue's `file:line` citations as a snapshot
    of its discovery commit.** A filed issue records where
    something was when it was *found*, which may be months
@@ -1035,12 +1106,34 @@ per-directory *content* — `frontend/node_modules`,
    contract).
 
    So compute the signals first, from a real diff rather
-   than an impression:
+   than an impression — **and rebase before you do**:
 
    ```sh
+   git fetch origin main
+   git rebase origin/main
    python3 .claude/tools/review_diff.py --base main \
      --out <scratchpad>/review-diff.txt
    ```
+
+   **A stale base makes the tier signals meaningless as well
+   as expensive**, and you learn it only after paying. Run
+   against a base that moved during the implement phase, the
+   verdict returns *main's* file list: one session whose
+   `origin/main` had gained 3 commits got back **85 files**,
+   every one from main's own commits, at ≈2.0k — its
+   third-largest result — when the branch's actual diff was 6
+   files. The tool did its job, reporting `ready: false` with
+   the stale-base blocker and exiting non-zero, but the
+   `files` array had already been serialized into the result.
+   And `files` is precisely what the tier decision reads, so
+   on a stale base it describes the wrong diff.
+
+   Rebasing is preferred over the cheap alternative because it
+   removes the failure rather than pricing it — and `review-pr`
+   step 2 rebases regardless, so nothing is lost. If you would
+   rather not rebase here, call `--gate-only` first (it emits
+   the verdict fields and omits the `files` array) and take the
+   full verdict only once `base_fresh` holds.
 
    Read `files` and the per-file `changes` for size, and
    whether any path is program code, the SDK surface, a
