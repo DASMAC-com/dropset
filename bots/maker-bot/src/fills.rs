@@ -1,5 +1,3 @@
-// cspell:word userinfo
-
 //! Real-time fill detection by subscribing to the program's `emit_cpi!`
 //! `FillEvent`s (§3 fill detection — the production-fidelity path, full
 //! fidelity, never dropped).
@@ -46,7 +44,7 @@
 
 use crate::telemetry::Record;
 use anyhow::{anyhow, Context as _, Result};
-use dropset_feeds::{ChannelSource, LivenessReporter};
+use dropset_feeds::{redact_to_origin, ChannelSource, LivenessReporter, MAX_ERROR_CHARS};
 use dropset_sdk::events::{decode_event_payload, strip_event_tag, DropsetEvent};
 use dropset_sdk::types::FillEvent;
 use dropset_sdk::DROPSET_ID;
@@ -209,35 +207,21 @@ fn run(
 /// `push_health.last_error` — a column the read-only dashboard role can
 /// `SELECT` and an operations panel renders verbatim.
 ///
-/// The framework's `sanitize_error` is applied downstream and is *not*
-/// sufficient by itself, which is the reason this exists rather than being
-/// left to it: that helper strips a URL's **query string**, and says so
-/// explicitly — a credential in a path segment (`wss://host/v2/<KEY>`) or in
-/// userinfo (`wss://user:pass@host`) is documented as surviving it. Both shapes
-/// are in use at hosted Solana providers, so on this path the query-axis guard
-/// is the wrong shape and the endpoint is instead reduced to the two components
-/// that are never secret.
+/// The reduction itself is the framework's [`redact_to_origin`], which is also
+/// what `LivenessReporter::failed` applies to the **whole** rendered error —
+/// including the wrapped client's own `Display`, which is where a transport
+/// error re-embeds the URL it could not reach. This wrapper exists only to add
+/// the stricter behavior a bare endpoint deserves: a string that is not a URL
+/// at all yields a placeholder rather than being passed through, so a malformed
+/// endpoint cannot leak by falling out of the parsing.
 ///
-/// Scheme and host are also the whole of the diagnosis here. Unlike a failed
-/// paged backfill — where the query parameters say which symbol and which
-/// window — a subscribe either reached the endpoint or did not, so nothing
-/// diagnostic is lost by dropping the rest.
-///
-/// A string that is not a URL at all yields a placeholder rather than being
-/// passed through, so a malformed endpoint cannot leak by falling out of the
-/// parsing.
+/// Keeping one parser matters more than the two lines it saves — a second copy
+/// is how the two paths drift into disagreeing about what an authority is.
 fn endpoint_label(ws_url: &str) -> String {
-    let Some((scheme, rest)) = ws_url.split_once("://") else {
+    if !ws_url.contains("://") {
         return "<endpoint>".to_string();
-    };
-    // The authority ends at the first path, query, or fragment separator;
-    // anything before an `@` inside it is userinfo and is dropped with it.
-    let authority = match rest.find(['/', '?', '#']) {
-        Some(end) => &rest[..end],
-        None => rest,
-    };
-    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    format!("{scheme}://{host}")
+    }
+    redact_to_origin(ws_url, MAX_ERROR_CHARS)
 }
 
 /// Open one logs subscription and forward attributed fills until it closes.

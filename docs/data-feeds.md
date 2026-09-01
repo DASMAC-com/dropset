@@ -1909,6 +1909,7 @@ ______________________________________________________________________
     exactly one owner, so a push source appears in `push_health` because
     its producer was handed a reporter, named explicitly at the call
     site.
+
   - **A dropped update is not self-healing.** A health update is
     level-triggered, so the next poll restates it — which is what makes
     dropping one under a full channel sound. A transition is
@@ -1919,16 +1920,31 @@ ______________________________________________________________________
     including by unwinding, which is the one death a dropped record
     sender cannot express, since the stream seam renders it as an *idle*
     source.
-  - **Its error text takes the blunt redaction.** The health path
+
+  - **Its error text is reduced to scheme and host.** The health path
     deliberately does *not* strip query strings, because the crate's
     HTTP transport has already redacted every non-allow-listed query
     value and the remaining parameters are the diagnosis. A push
     producer never reaches that pass — it is a method on the HTTP
     client, and the maker's error comes from the Solana `PubsubClient` —
-    and a subscribe URL carries a hosted endpoint's credential in its
-    query string, so `LivenessReporter::failed` puts its text through
-    `sanitize_error`. The two error columns are on deliberately
-    different footings; see `0008_push_liveness.sql`.
+    so `LivenessReporter::failed` applies `redact_to_origin` instead.
+
+    Two details are what make it that rather than the query-only
+    `sanitize_error`, and both are easy to get wrong. A subscribe URL is
+    derived from the operator's RPC endpoint, where hosted providers
+    authenticate by **path segment** or userinfo at least as often as by
+    `?api-key=` — axes a query strip is documented as not reaching. And
+    it is applied to the **whole rendered cause chain**, because a
+    wrapped transport error re-embeds the URL it could not reach, so
+    redacting only the endpoint a caller interpolates leaves the
+    credential in the part nobody looked at. Nothing diagnostic is lost:
+    a subscribe either reached the endpoint or did not.
+
+    The three error columns are therefore on deliberately different
+    footings — `feed_health.last_error` on the transport's allow-list
+    redaction, `push_health.last_error` on the origin reduction, and
+    `maker_telemetry.tick_error` on the query-only strip. See
+    `0008_push_liveness.sql`.
 
   Both reporters share their offer-and-damp mechanics (the full-channel
   and dead-drain handling, and the log damping that keeps a flapping

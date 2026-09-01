@@ -6,11 +6,14 @@
 -- the difference between them is this row's `last_error`, not its state. That
 -- keeps the alert rule a single `state <> 'up'` with nothing to enumerate.
 --
--- `$3` must already be sanitized by the caller: it is a producer's client
--- error, which has no name-aware redaction of its own, and a subscribe URL
--- carries a hosted endpoint's credential in its query string. The framework's
--- `sanitize_error` is what strips it — see the INTEGRITY note in
--- `0008_push_liveness.sql`. This column is readable by the dashboard role.
+-- `$3` must already be redacted by the caller: it is a producer's client
+-- error, which has no redaction of its own, and a subscribe URL can carry a
+-- hosted endpoint's credential in its query string, in a path segment, or in
+-- userinfo. The framework's `redact_to_origin` reduces every URL in the text
+-- to scheme and host — a query-only strip is the wrong axis here — and it is
+-- applied to the whole rendered cause chain, not just to the endpoint the
+-- caller formats in. See the INTEGRITY note in `0008_push_liveness.sql`. This
+-- column is readable by the dashboard role.
 --
 -- `last_up_at` is left untouched: it records when the link was last
 -- established, and a failure to re-establish it must not advance it.

@@ -55,14 +55,31 @@
 -- an explicit benign allow-list before the error is wrapped. A push producer
 -- never reaches that pass at all — it is a method on the HTTP client, and the
 -- maker's fill subscription errors come from the Solana `PubsubClient`, which
--- has no redaction of its own — and a hosted endpoint carries its credential
--- in the subscribe URL as `?api-key=…` exactly as a price venue does. So this
--- column's writer sanitizes its text through the framework's
--- `sanitize_error`, the blunt strip that removes the whole query string —
--- the same footing as `maker_telemetry.tick_error`, and for the same reason.
--- Losing the benign query parameters costs nothing here: a subscribe URL's
--- query string carries no diagnosis, which is precisely the opposite of the
--- paged backfill `feed_health.last_error` is careful to keep legible.
+-- has no redaction of its own.
+--
+-- So this column's writer reduces every URL in the text to **scheme and host**
+-- (the framework's `redact_to_origin`), applied to the whole rendered cause
+-- chain rather than to an endpoint a caller formats in. Two things make that
+-- the right shape rather than the query strip used elsewhere:
+--
+--   * The subscribe URL is derived from the operator's RPC endpoint, and
+--     hosted providers authenticate by **path segment** (`/v2/<key>`) or by
+--     userinfo at least as often as by `?api-key=`. A query-only strip is
+--     documented as leaving both in clear, so it is the wrong axis here.
+--   * A wrapped transport error's own `Display` re-embeds the URL it failed to
+--     reach, so redacting only the prefix a caller interpolates looks complete
+--     and is not.
+--
+-- Nothing diagnostic is lost: a subscribe either reached the endpoint or did
+-- not, which is the opposite of the paged backfill `feed_health.last_error` is
+-- careful to keep legible.
+--
+-- Note this is a **stronger** guard than `maker_telemetry.tick_error`, which
+-- takes the query-only `sanitize_error`. The two are not on the same footing,
+-- and that is worth knowing rather than assuming: `tick_error` carries Solana
+-- RPC client text derived from the same `rpc_url`, so the path-segment shape
+-- described above reaches it. Narrowing that gap is separate work and is not
+-- attempted here.
 --
 -- No key, seed, or signer material appears in any column here, and none may be
 -- added.

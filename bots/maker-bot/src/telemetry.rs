@@ -591,12 +591,14 @@ async fn write_health(
 /// say about *why*, and binding a NULL there would erase the last thing an
 /// operator had to go on. The queries carry the per-column detail.
 ///
-/// The error text arrives already sanitized: [`LivenessReporter::failed`] puts
-/// it through the framework's [`sanitize_error`], which is the guard this
-/// column needs rather than the transport-level redaction `feed_health`
-/// relies on — a push producer's error never passes through the HTTP client
-/// that applies it, and a subscribe URL carries a hosted endpoint's credential
-/// in its query string.
+/// The error text arrives already redacted: [`LivenessReporter::failed`] puts
+/// the whole rendered cause chain through the framework's `redact_to_origin`,
+/// reducing every URL in it to scheme and host. That is the guard this column
+/// needs rather than the transport-level redaction `feed_health` relies on — a
+/// push producer's error never passes through the HTTP client that applies it
+/// — and it is deliberately stronger than the query-only `sanitize_error` used
+/// for [`Sample::tick_error`], because a subscribe URL can carry its
+/// credential in a path segment or in userinfo as readily as in a query.
 async fn write_liveness(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     update: &LivenessUpdate,

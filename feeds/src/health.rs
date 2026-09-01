@@ -202,6 +202,52 @@ pub fn sanitize_error(text: &str, max: usize) -> String {
     truncate(&redacted, max)
 }
 
+/// Reduce every URL in `text` to its scheme and host, then bound its length.
+///
+/// The strict counterpart to [`sanitize_error`], for text whose URLs may carry
+/// a credential **outside** the query string. `sanitize_error` removes a query
+/// and says so precisely: a token in a path segment or in userinfo survives it.
+/// That limit is right where it is written — an HTTP venue's path is
+/// `/v1/candles` and is the diagnosis — and wrong for a **subscribe** URL,
+/// which is derived from an operator's RPC endpoint and where hosted providers
+/// authenticate by path (`/v2/<key>`) or userinfo as readily as by query.
+///
+/// So this keeps only the two components that are never secret. Nothing
+/// diagnostic is lost on that path: a subscribe either reached the endpoint or
+/// did not, unlike a paged backfill whose parameters say which symbol and which
+/// window.
+///
+/// Applied to the **whole rendered error**, not to a URL the caller formats in.
+/// That distinction is the entire point: reducing only the endpoint a caller
+/// interpolates leaves the wrapped client error's own `Display` untouched, and
+/// a transport error routinely re-embeds the URL it failed to reach. Redacting
+/// the prefix while the cause chain carries the same credential is a fix that
+/// looks complete and is not.
+///
+/// A token with no `://` is left alone, so ordinary prose is unaffected. Port
+/// survives (it is part of the authority); userinfo, path, query and fragment
+/// do not. Truncation is on a **character** boundary, as elsewhere here.
+pub fn redact_to_origin(text: &str, max: usize) -> String {
+    let reduced = text
+        .split_whitespace()
+        .map(|token| match token.split_once("://") {
+            Some((scheme, rest)) => {
+                // The authority ends at the first path, query, or fragment
+                // separator; anything before an `@` within it is userinfo.
+                let authority = match rest.find(['/', '?', '#']) {
+                    Some(end) => &rest[..end],
+                    None => rest,
+                };
+                let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+                format!("{scheme}://{host}")
+            }
+            None => token.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    truncate(&reduced, max)
+}
+
 /// Truncate on a **character** boundary, so a multi-byte error message cannot
 /// panic a slice at `max`.
 fn truncate(text: &str, max: usize) -> String {
@@ -282,9 +328,11 @@ mod tests {
     }
 
     /// The drop damping itself is [`crate::damped`]'s, and is tested there
-    /// against `DampedSender` directly. What stays here is the one property of
-    /// it this seam depends on: a drive loop must not be stalled or failed by
-    /// a drain that has gone away.
+    /// against `DampedSender` directly. What stays here are the two properties
+    /// of the wiring this seam owns.
+    ///
+    /// First: a drive loop must not be stalled or failed by a drain that has
+    /// gone away.
     #[tokio::test]
     async fn a_dead_drain_cannot_fail_or_stall_a_feed() {
         let (tx, rx) = mpsc::channel::<Record>(1);
@@ -296,6 +344,27 @@ mod tests {
         // poll it reports on.
         reporter.on_batch("frankfurter", &stats(1, true));
         reporter.on_error("frankfurter", &anyhow::anyhow!("gone"));
+    }
+
+    /// Second: the reporter passes the runner's feed name through to the
+    /// sender unchanged. That is what makes the consumer's row key correct for
+    /// an adapter this crate never named, and moving the damping tests out
+    /// left it asserted nowhere — the sender is generic over its record type
+    /// and cannot check it.
+    #[tokio::test]
+    async fn the_runners_feed_name_reaches_the_consumer_unchanged() {
+        let (tx, mut rx) = mpsc::channel::<Record>(4);
+        let mut reporter = HealthReporter::new(tx);
+
+        reporter.on_batch("coinbase:EURC-USDC", &stats(1, true));
+        let Record::Health(update) = rx.try_recv().unwrap();
+        // Per-product source names are real in this workspace, so the name is
+        // carried verbatim rather than normalized.
+        assert_eq!(update.feed, "coinbase:EURC-USDC");
+
+        reporter.on_error("coinbase:EURC-USDC", &anyhow::anyhow!("451"));
+        let Record::Health(update) = rx.try_recv().unwrap();
+        assert_eq!(update.feed, "coinbase:EURC-USDC");
     }
 
     /// The health path must NOT blanket-strip query strings, because the
@@ -355,6 +424,44 @@ mod tests {
         let got = sanitize_error(&long, MAX_ERROR_CHARS);
         assert!(!got.contains('x'), "the query string went first: {got}");
         assert!(got.chars().count() <= MAX_ERROR_CHARS + 1);
+    }
+
+    /// The three credential shapes `sanitize_error` is documented as *not*
+    /// reaching. Pinned together because the liveness path's whole reason for
+    /// preferring this function is that the query axis is the wrong one there.
+    #[test]
+    fn redact_to_origin_reaches_past_the_query_axis() {
+        // Path segment — the dominant form at several hosted Solana providers.
+        let got = redact_to_origin("logs_subscribe wss://h.example/v2/SECRET/", MAX_ERROR_CHARS);
+        assert!(!got.contains("SECRET"), "got: {got}");
+        assert_eq!(got, "logs_subscribe wss://h.example");
+
+        // Userinfo.
+        let got = redact_to_origin("connect wss://user:pw@h.example/x", MAX_ERROR_CHARS);
+        assert!(!got.contains("pw@"), "got: {got}");
+        assert_eq!(got, "connect wss://h.example");
+
+        // Query, which `sanitize_error` also covers.
+        let got = redact_to_origin("GET https://h.example/v1?api-key=SECRET", MAX_ERROR_CHARS);
+        assert!(!got.contains("SECRET"), "got: {got}");
+        assert_eq!(got, "GET https://h.example");
+    }
+
+    /// A port is part of the authority and must survive — the localnet
+    /// endpoint is nothing but scheme, host and port, so losing it would make
+    /// every local diagnosis useless.
+    #[test]
+    fn redact_to_origin_keeps_the_port_and_ordinary_prose() {
+        assert_eq!(
+            redact_to_origin(
+                "subscribed at ws://127.0.0.1:8900/ then failed",
+                MAX_ERROR_CHARS
+            ),
+            "subscribed at ws://127.0.0.1:8900 then failed"
+        );
+        // No `://` anywhere: untouched.
+        let prose = "the venue returned nothing at all";
+        assert_eq!(redact_to_origin(prose, MAX_ERROR_CHARS), prose);
     }
 
     #[test]

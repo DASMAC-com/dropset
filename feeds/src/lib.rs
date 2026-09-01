@@ -68,7 +68,9 @@ pub use backfill::{Backfill, BackfillStep};
 pub use best_effort::BestEffortSink;
 pub use cursor::{Cursor, CursorStore};
 pub use forward::{forward_channel, ForwardSink};
-pub use health::{sanitize_error, HealthOutcome, HealthReporter, HealthUpdate, MAX_ERROR_CHARS};
+pub use health::{
+    redact_to_origin, sanitize_error, HealthOutcome, HealthReporter, HealthUpdate, MAX_ERROR_CHARS,
+};
 // Not gated behind `stream`, on purpose: these are the vocabulary a push
 // producer reports in, and a producer need not funnel through
 // [`ChannelSource`] to have a socket worth reporting on. Gating would make a

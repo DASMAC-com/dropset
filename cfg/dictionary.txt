@@ -272,6 +272,7 @@ upserts
 ureq
 usdcusd
 usdg
+userinfo
 usize
 vchf
 vertible

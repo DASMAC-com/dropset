@@ -45,7 +45,7 @@
 //!   a dropped-sender idle source cannot distinguish from a quiet one.
 
 use crate::damped::DampedSender;
-use crate::health::{sanitize_error, MAX_ERROR_CHARS};
+use crate::health::{redact_to_origin, MAX_ERROR_CHARS};
 use crate::time::now_secs;
 use tokio::sync::mpsc;
 
@@ -164,23 +164,31 @@ impl<R: From<LivenessUpdate>> LivenessReporter<R> {
 
     /// The transport could not be established, or failed while up.
     ///
-    /// The error text is put through [`sanitize_error`], which strips URL
-    /// query strings wholesale — and unlike the health path, that **is** the
-    /// right instrument here. A push producer's error comes from its own
+    /// The error text is put through [`redact_to_origin`], which reduces every
+    /// URL it contains to scheme and host.
+    ///
+    /// **Not [`sanitize_error`], and the difference is the point.** That helper
+    /// strips a *query string*, which is the right instrument for an HTTP
+    /// venue and the wrong one here. A push producer's error comes from its own
     /// client (the Solana `PubsubClient`, a raw WebSocket), none of which
-    /// passes through [`crate::HttpClient`] and so none of which reaches its
-    /// [`redact_query`](crate::HttpClient) pass at all, and a hosted endpoint
-    /// carries its credential as `?api-key=…` exactly as a price venue does.
-    /// That text lands in a column the read-only dashboard
-    /// role can `SELECT`, so without the blunt strip an error message is an
-    /// exfiltration path for the credential. Losing the benign query
-    /// parameters with it costs nothing here: a subscribe URL's query string
-    /// carries no diagnosis worth the risk, which is the opposite of the paged
-    /// backfill the health path is careful about.
+    /// passes through [`crate::HttpClient`] or reaches its `redact_query` pass
+    /// — and the endpoint is derived from an operator's RPC URL, where hosted
+    /// providers authenticate by **path segment** (`/v2/<key>`) or userinfo at
+    /// least as often as by query. A query-only strip leaves those in clear.
+    ///
+    /// It is applied to the **whole rendered chain**, which is the half that is
+    /// easy to get wrong: reducing only an endpoint the caller interpolates
+    /// leaves the wrapped client error's own `Display` untouched, and a
+    /// transport error routinely re-embeds the URL it could not reach.
+    ///
+    /// This matters because the text lands in a column the read-only dashboard
+    /// role can `SELECT` and an operations panel renders verbatim. Nothing
+    /// diagnostic is lost: a subscribe either reached the endpoint or did not.
     pub fn failed(&mut self, error: &anyhow::Error) {
         // `{:#}` renders the cause chain, not just the outermost message —
         // otherwise the layer that noticed is named rather than what failed.
-        let reason = sanitize_error(&format!("{error:#}"), MAX_ERROR_CHARS);
+        // Redaction runs over that whole rendering, cause chain included.
+        let reason = redact_to_origin(&format!("{error:#}"), MAX_ERROR_CHARS);
         self.set(LinkState::Down {
             reason: Some(reason),
         });
@@ -339,24 +347,55 @@ mod tests {
     }
 
     /// The security property of this seam: a producer's client has no
-    /// name-aware redaction hook, so a keyed subscribe URL in the error text
+    /// redaction hook of its own, so a keyed subscribe URL in the error text
     /// would otherwise reach a column the dashboard role can read.
+    ///
+    /// Every credential axis is asserted, not only the query one. Pinning just
+    /// `?api-key=` is what made an earlier version of this seam look protected
+    /// while a path-segment key — the dominant form at several hosted Solana
+    /// providers — passed through in clear.
     #[tokio::test]
-    async fn a_failure_strips_a_credential_bearing_url() {
+    async fn a_failure_strips_a_credential_on_every_axis() {
+        for embedded in [
+            "wss://rpc.example/v1?api-key=SECRET",
+            "wss://rpc.example/v2/SECRET/",
+            "wss://user:SECRET@rpc.example/v1",
+        ] {
+            let (tx, mut rx) = mpsc::channel::<Record>(4);
+            let mut reporter = LivenessReporter::new(tx, "maker-fills");
+
+            reporter.failed(&anyhow::anyhow!(
+                "logs_subscribe {embedded}: connection refused"
+            ));
+
+            let LinkState::Down { reason: Some(text) } = state(&mut rx) else {
+                panic!("expected a diagnosed outage");
+            };
+            assert!(!text.contains("SECRET"), "{embedded} leaked: {text}");
+            assert!(text.contains("wss://rpc.example"), "got: {text}");
+            // The failure itself survives — that is the diagnosis.
+            assert!(text.contains("connection refused"), "got: {text}");
+        }
+    }
+
+    /// The half the first fix missed: a credential arriving inside the wrapped
+    /// client's own `Display` rather than in the endpoint the caller formats
+    /// in. Reducing only the caller's prefix leaves this in clear, and a
+    /// transport error routinely re-embeds the URL it could not reach.
+    #[tokio::test]
+    async fn a_failure_strips_a_url_carried_by_the_cause_chain() {
         let (tx, mut rx) = mpsc::channel::<Record>(4);
         let mut reporter = LivenessReporter::new(tx, "maker-fills");
 
-        reporter.failed(&anyhow::anyhow!(
-            "logs_subscribe wss://rpc.example/v1?api-key=SECRET: connection refused"
-        ));
+        // The prefix is already reduced by the caller; the cause is not.
+        let cause = anyhow::anyhow!("unable to connect to wss://rpc.example/v2/SECRET/");
+        reporter.failed(&cause.context("logs_subscribe wss://rpc.example"));
 
         let LinkState::Down { reason: Some(text) } = state(&mut rx) else {
             panic!("expected a diagnosed outage");
         };
-        assert!(!text.contains("SECRET"), "got: {text}");
-        assert!(text.contains("wss://rpc.example/v1?<redacted>"));
-        // The host and path survive, which is what makes it diagnosable.
-        assert!(text.contains("connection refused"));
+        assert!(!text.contains("SECRET"), "the cause chain leaked: {text}");
+        assert!(text.contains("unable to connect"), "got: {text}");
     }
 
     /// The edge-triggered property: a refused transition must not be lost, or
