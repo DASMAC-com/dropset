@@ -105,9 +105,14 @@ _ds_pull() {
   local stamp="$_DS_REPO/.git/.ds-last-pull"
   local now last
   now="$(date +%s)"
+  # `== <->` (all-digits), not `-n`. zsh math context RE-EVALUATES a non-numeric
+  # parameter value as an arithmetic expression, which can assign and can index
+  # arrays — so a garbage stamp is not merely wrong, it is evaluated. Nothing
+  # but this function writes the file, so the risk is theoretical; the guard
+  # costs one token and removes the class.
   if [[ -f "$stamp" ]]; then
     last="$(cat "$stamp" 2>/dev/null)"
-    if [[ -n "$last" ]] && (( now - last < _DS_PULL_THROTTLE_SECONDS )); then
+    if [[ "$last" == <-> ]] && (( now - last < _DS_PULL_THROTTLE_SECONDS )); then
       return 0
     fi
   fi
@@ -116,14 +121,21 @@ _ds_pull() {
   local branch
   branch="$(git -C "$_DS_REPO" symbolic-ref --quiet --short HEAD 2>/dev/null)"
 
+  # GIT_TERMINAL_PROMPT=0 is what makes "fatal never" true. The low-speed knobs
+  # bound a stalled TRANSFER, but not an interactive credential prompt: an
+  # expired keychain entry makes git block on /dev/tty asking for a username,
+  # and with stderr silenced that reads as a hang. Since every session verb now
+  # runs this, that would hang session startup itself — the one outcome this
+  # helper must never produce. With it set, a missing credential fails fast and
+  # takes the warning path below.
   if [[ "$branch" != "main" ]]; then
-    git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
+    GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
       -C "$_DS_REPO" fetch --quiet origin main 2>/dev/null ||
       print -u2 "dropset: could not fetch origin/main (offline?) — continuing"
     return 0
   fi
 
-  git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
+  GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
     -C "$_DS_REPO" pull --ff-only --quiet 2>/dev/null ||
     print -u2 "dropset: could not fast-forward main — diverged, dirty or" \
       "offline. Continuing on the current checkout."
@@ -405,7 +417,12 @@ raps() {
   } <<< "$(python3 "$_DS_REPO/.claude/tools/resolve_session.py" \
     --tag "$tag" --repo "$_DS_REPO" --format lines 2>/dev/null)"
 
-  cd "${run_from:-$_DS_REPO}" || return 1
+  # Fall back to the base repo rather than returning: `${...:-}` guards an EMPTY
+  # run_from, not a STALE one. A transcript's cwd stamps outlive the worktree
+  # they name, so a pruned worktree yields a path that no longer exists — and a
+  # bare `|| return 1` would make `raps` exit silently with no session and no
+  # picker, which is worse than every pre-change failure path.
+  cd "${run_from:-$_DS_REPO}" || cd "$_DS_REPO" || return 1
   _ds_pull
   _ds_secrets
 

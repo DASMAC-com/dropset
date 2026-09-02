@@ -236,14 +236,28 @@ _CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
 # it and the `r` in a later `--dir` flag to satisfy both lookaheads of
 # `_RM_RECURSIVE_FORCE`. The command deletes nothing and touches nothing.
 #
-# Scoped to an allowlist rather than applied to all quoted spans, and the
-# distinction is the whole safety argument. Suppressing every quoted match would
-# let `bash -c "rm -rf /"` and `sh -c '…'` straight through, since there the
-# quoted text IS shell. It would also break the deny tier outright: the
-# catastrophic targets are deliberately matched in their quoted forms
-# (`_CATASTROPHIC_TARGET` carries `"$HOME"` and `'$HOME'`), so `rm -rf "$HOME"`
-# depends on quoted content being scanned. What is never legitimate is a
-# destructive command NAME appearing inside an argument to `grep`.
+# Scoped three ways, and each narrowing is load-bearing.
+#
+# **By program**, to this allowlist. Suppressing every quoted match would let
+# `bash -c "rm -rf /"` and `sh -c '…'` straight through, since there the quoted
+# text IS shell.
+#
+# **By tier** — the ASK tier only; see `classify`. The measured false positive
+# was an ask-tier `rm -rf` match, so suppression buys nothing on the deny tier,
+# and the deny tier is where being wrong is unrecoverable. It would also break
+# outright there: the catastrophic targets are deliberately matched in their
+# quoted forms (`_CATASTROPHIC_TARGET` carries `"$HOME"` and `'$HOME'`), so
+# `rm -rf "$HOME"` depends on quoted content being scanned.
+#
+# **By quote kind** — see `inert_spans`. A DOUBLE-quoted argument is not inert:
+# `$(…)`, a backtick and `${x:-$(…)}` all execute inside one. Treating it as
+# data made `grep "$(git push --force origin main)" f` — which really does run
+# the push — classify clean, and that string had previously been a deny. Caught
+# in adversarial review of this very change, which is why the comment now
+# describes what the code holds rather than the stronger property it read as.
+#
+# What is never legitimate is a destructive command NAME appearing inside a
+# literal pattern argument to `grep`.
 READ_ONLY_PROGRAMS = frozenset(
     {
         "ack",
@@ -259,13 +273,21 @@ READ_ONLY_PROGRAMS = frozenset(
 )
 
 
+# Text that makes a DOUBLE-quoted span executable rather than literal: command
+# substitution in both spellings, and parameter expansion (which can carry a
+# substitution in a default, as in `${x:-$(…)}`). A bare `$` is included because
+# it is the cheap over-approximation and the failure direction is safe — an
+# excluded span is simply scanned as before.
+_LIVE_IN_DOUBLE_QUOTES = ("$", "`")
+
+
 def quoted_spans(line):
-    """``[(start, end)]`` index ranges of ``line`` that sit inside quotes.
+    """``[(start, end, quote)]`` index ranges of ``line`` that sit inside quotes.
 
     An UNTERMINATED quote contributes no span, deliberately. This function only
-    ever suppresses a match, so the conservative direction is to report less
-    quoting rather than more: a stray quote must not be a way to hide a real
-    command behind it.
+    ever leads to suppressing a match, so the conservative direction is to
+    report less quoting rather than more: a stray quote must not be a way to
+    hide a real command behind it.
     """
     spans = []
     quote = None
@@ -286,17 +308,38 @@ def quoted_spans(line):
                 i += 2
                 continue
             if c == quote:
-                spans.append((start, i))
+                spans.append((start, i, quote))
                 quote = None
         i += 1
     return spans
+
+
+def inert_spans(line):
+    """The quoted spans of ``line`` whose contents the shell will NOT execute.
+
+    A single-quoted span is literal, always. A double-quoted span is literal
+    only if it carries no command substitution or expansion — `$(…)`, a
+    backtick and `${x:-$(…)}` all RUN inside double quotes, so treating such a
+    span as data is what turned `grep "$(git push --force origin main)" f` from
+    a deny into a clean verdict. That was a real, reproducible bypass found by
+    adversarial review of this guard's own change; the seven variants of it are
+    pinned in the self-test below.
+    """
+    return [
+        (lo, hi)
+        for lo, hi, quote in quoted_spans(line)
+        if quote == "'" or not any(t in line[lo:hi] for t in _LIVE_IN_DOUBLE_QUOTES)
+    ]
 
 
 def program_of(line):
     """The program a line invokes, for the read-only check.
 
     ``python3 .claude/tools/search_source.py`` reports ``search_source.py``: the
-    interpreter is not the interesting name, the script it runs is.
+    interpreter is not the interesting name, the script it runs is. But `-m`
+    names a MODULE rather than a path, so `python3 -m grep` is not this repo's
+    `grep` and must not reach the allowlist — the interpreter is reported
+    instead, which is not allowlisted.
     """
     tokens = line.strip().split()
     if not tokens:
@@ -304,17 +347,24 @@ def program_of(line):
     program = tokens[0].rpartition("/")[2]
     if program in ("python", "python3"):
         for token in tokens[1:]:
+            if token == "-m":
+                return program
             if not token.startswith("-"):
                 return token.rpartition("/")[2]
     return program
 
 
-def _matches(pattern, line):
-    """Whether ``pattern`` fires on ``line``, ignoring quoted-argument text for
-    the read-only programs above."""
-    if program_of(line) not in READ_ONLY_PROGRAMS:
+def _matches(pattern, line, allow_quoted=True):
+    """Whether ``pattern`` fires on ``line``.
+
+    ``allow_quoted`` is False on the DENY tier, so no catastrophic match is ever
+    suppressed: the measured false positive was an ask-tier match, so the
+    carve-out buys nothing there, and the deny tier is the one place being wrong
+    cannot be walked back with a marker.
+    """
+    if not allow_quoted or program_of(line) not in READ_ONLY_PROGRAMS:
         return bool(pattern.search(line))
-    spans = quoted_spans(line)
+    spans = inert_spans(line)
     for match in pattern.finditer(line):
         if not any(lo <= match.start() < hi for lo, hi in spans):
             return True
@@ -344,7 +394,8 @@ def classify(cmd):
     cmd = _CONTINUATION_RE.sub(" ", cmd)
     lines = [line for line in cmd.splitlines() if line.strip()]
     for pattern, reason in DENY_PATTERNS:
-        if any(_matches(pattern, line) for line in lines):
+        # allow_quoted=False: the read-only carve-out does not apply here.
+        if any(_matches(pattern, line, allow_quoted=False) for line in lines):
             return "deny", reason
     for pattern, reason in ASK_PATTERNS:
         if any(_matches(pattern, line) for line in lines):
@@ -464,8 +515,27 @@ def _self_test():
         ("grep 'unclosed rm -rf /", "deny"),
         # A quoted CATASTROPHIC TARGET is still a real deny — the patterns match
         # `"$HOME"` deliberately, so the fix must not blank quoted content.
+        # (These pin pre-existing behavior only: `rm` is not an allowlisted
+        # program, so `_matches` short-circuits and the span scan never runs.
+        # The cases that actually exercise suppression are the `grep`/`rg` ones.)
         ('rm -rf "$HOME"', "deny"),
         ("rm -rf '$HOME'", "deny"),
+        # COMMAND SUBSTITUTION inside a double-quoted argument EXECUTES. Treating
+        # such a span as inert data was a real bypass — `grep "$(git push
+        # --force origin main)" f` really does run the push, and it had
+        # previously been an un-overridable deny. Every variant is pinned.
+        ('grep "$(git push --force origin main)" f', "deny"),
+        ('grep "$(rm -rf ~)" file', "ask"),
+        ('grep "`rm -rf ~`" file', "ask"),
+        ('grep "${x:-$(rm -rf ~)}" file', "ask"),
+        ('rg "$(rm -rf ~)" .', "ask"),
+        ('python3 .claude/tools/search_source.py "$(rm -rf ~)"', "ask"),
+        # `-m` names a module, not this repo's tool, so it must not reach the
+        # allowlist.
+        ('python3 -m grep "$(rm -rf ~)"', "ask"),
+        # A DOUBLE-quoted pattern with no substitution is still inert, so the
+        # carve-out keeps working for the ordinary case.
+        ('grep "rm -rf /" /tmp/log.txt', None),
         # deny tier
         ("rm -rf /", "deny"),
         ("rm -rf ~", "deny"),

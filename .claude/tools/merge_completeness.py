@@ -275,10 +275,38 @@ def run(argv: list[str]) -> int:
     except OSError as e:
         raise MergeCompletenessError(f"cannot read {resolution_path}: {e}") from e
 
+    # An UNRESOLVED file trivially contains every line from both parents, so it
+    # would score COMPLETE and exit 0 — the strongest possible green at the
+    # exact moment nothing has been resolved. Refuse instead. This matters
+    # because the primary documented invocation runs against the working-tree
+    # copy mid-conflict, which is precisely when markers are present.
+    for marker in ("<<<<<<< ", "=======", ">>>>>>> "):
+        if any(line.startswith(marker) for line in resolution.splitlines()):
+            raise MergeCompletenessError(
+                f"{resolution_path} still contains conflict markers — resolve it "
+                f"first; an unresolved file contains both sides by construction "
+                f"and would report COMPLETE"
+            )
+
+    base_text = git_show(base, args.path, repo)
+    ours_text = git_show(args.ours, args.path, repo)
+    theirs_text = git_show(theirs, args.path, repo)
+
+    # `git_show` returns "" for any non-zero git exit, which is right for a file
+    # that legitimately does not exist on one side — but all three empty means
+    # the revisions or the path are wrong, and the audit would then be
+    # vacuously complete. A typo must not read as a pass.
+    if not (base_text or ours_text or theirs_text):
+        raise MergeCompletenessError(
+            f"none of {base}, {args.ours}, {theirs} contains '{args.path}' — "
+            f"check the revisions and the path; an all-empty comparison would "
+            f"report COMPLETE having examined nothing"
+        )
+
     verdict = audit(
-        git_show(base, args.path, repo),
-        git_show(args.ours, args.path, repo),
-        git_show(theirs, args.path, repo),
+        base_text,
+        ours_text,
+        theirs_text,
         resolution,
         tuple(args.acknowledge or ()),
     )
