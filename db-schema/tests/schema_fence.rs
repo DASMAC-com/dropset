@@ -979,6 +979,335 @@ async fn liveness_picks_its_staleness_bound_by_asset_class() {
     }
 }
 
+/// The per-source view answers what the per-product one aggregates away: which
+/// COLLECTOR went dark on a pair, rather than whether the pair still has data
+/// from somebody.
+///
+/// The contrast in the `CAD-USD` rows is the whole point, and it is the same
+/// fixture shape the test above uses for the opposite purpose. Two sources poll
+/// it, one silent 80 hours and one fresh, so `instrument_liveness` reads the
+/// PRODUCT live — correctly, and unhelpfully: an operator reading only that
+/// view cannot see that half its collectors are dark. Both halves are asserted
+/// together here, because either alone is satisfiable by the wrong
+/// implementation.
+///
+/// **What this pins is a regression TOWARD the old shape.** A future edit
+/// re-adding a `GROUP BY product_id` to the per-source view would still satisfy
+/// every assertion in the test above, and every per-product consumer, while
+/// silently restoring the masking this view was added to remove. The row-count
+/// assertion is what catches that directly.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn source_liveness_separates_a_dark_collector_from_a_live_pair() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    // (source, product, hours silent, which table) — `None` hours meaning
+    // registered but never collected.
+    //
+    // The classes exercise both staleness bounds from both sides on the
+    // per-source view, so a copy that dropped the class-aware `CASE` for one
+    // flat bound fails here rather than only in the per-product test: flat-72
+    // fails `EURC-USDC`, flat-48 fails `EUR-USD`.
+    //
+    // **The table column is load-bearing, not decoration.** `last_seen` reads
+    // `cex_prices` and `spot_ticks` through two separate correlated LATERAL
+    // joins, and before this fixture set no test in this file inserted a
+    // `spot_ticks` row at all — so the ticks join was exercised by nothing and
+    // dropping it, or dropping its `s.source = r.source` predicate, passed a
+    // green suite. Both `EUR-USD` and `EURC-EUR` below arrive via ticks.
+    let fixtures: [(&str, &str, Option<i64>, &str); 6] = [
+        // One product, two collectors, opposite verdicts. The pair the whole
+        // view exists for.
+        // The fresh one arrives via TICKS while the dark one has only a stale
+        // bar, and that asymmetry is deliberate: it is what makes a dropped
+        // `s.source = r.source` on the ticks LATERAL detectable. Without it,
+        // that predicate could be deleted and every assertion here would still
+        // pass, because no product would have ticks under one source while
+        // being registered under another.
+        ("stale-src", "CAD-USD", Some(80), "bars"),
+        ("fresh-src", "CAD-USD", Some(30), "ticks"),
+        // fx-pair silent 60h: inside the 72h session bound, so live per-source
+        // as well — the weekend case must not read as a dark collector. Via
+        // ticks, which is what covers that LATERAL and its source predicate.
+        ("probe", "EUR-USD", Some(60), "ticks"),
+        // stablecoin-pair silent 60h: past its 48h bound, so stale. Same
+        // silence as EUR-USD, opposite verdict, on the per-source view.
+        ("probe", "EURC-USDC", Some(60), "bars"),
+        // peg-pair silent 30h: an ALWAYS-OPEN class that must read LIVE. Every
+        // other live row here is `fx-pair`, so without this a class predicate
+        // injected into the per-source `is_live` — darkening every
+        // stablecoin/peg/crypto collector while leaving `stale_after_secs`
+        // correct — would pass. Also the pair ENG-1074 leads with.
+        ("probe", "EURC-EUR", Some(30), "ticks"),
+        // Registered, never collected: not live, and carrying no timestamp.
+        ("probe", "GBP-USD", None, "bars"),
+    ];
+
+    for (source, product, silent_hours, table) in fixtures {
+        sqlx::query(
+            "INSERT INTO instrument_registry
+                 (source, product_id, first_registered_at, last_registered_at)
+             VALUES ($1, $2, 1, 1)",
+        )
+        .bind(source)
+        .bind(product)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("register `{product}` under `{source}`: {e}"));
+
+        let Some(hours) = silent_hours else { continue };
+        let statement = match table {
+            "bars" => {
+                "INSERT INTO cex_prices
+                     (source, product_id, granularity_secs, bucket_start,
+                      low, high, open, close, volume)
+                 VALUES ($1, $2, 60,
+                         EXTRACT(EPOCH FROM now())::BIGINT - $3, 1, 1, 1, 1, 0)"
+            }
+            "ticks" => {
+                "INSERT INTO spot_ticks (source, product_id, observed_at, price)
+                 VALUES ($1, $2, EXTRACT(EPOCH FROM now())::BIGINT - $3, 1)"
+            }
+            other => panic!("unknown fixture table `{other}`"),
+        };
+        sqlx::query(statement)
+            .bind(source)
+            .bind(product)
+            .bind(hours * 3600)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("insert a {table} row for `{product}`: {e}"));
+    }
+
+    // `bound_hours` sits between the two booleans deliberately: adjacent
+    // `bool`s can only be read by counting positions against the pattern.
+    let expected: [(&str, &str, &str, bool, i32, bool); 6] = [
+        ("stale-src", "CAD-USD", "fx-pair", false, 72, true),
+        ("fresh-src", "CAD-USD", "fx-pair", true, 72, true),
+        ("probe", "EUR-USD", "fx-pair", true, 72, true),
+        ("probe", "EURC-USDC", "stablecoin-pair", false, 48, true),
+        ("probe", "EURC-EUR", "peg-pair", true, 48, true),
+        ("probe", "GBP-USD", "fx-pair", false, 72, false),
+    ];
+
+    for (source, product, class, live, bound_hours, has_data) in expected {
+        let (asset_class, is_live, last_data_at, stale_after_secs): (
+            String,
+            bool,
+            Option<i64>,
+            i32,
+        ) = sqlx::query_as(
+            "SELECT asset_class, is_live, last_data_at, stale_after_secs
+             FROM instrument_source_liveness
+             WHERE source = $1 AND product_id = $2",
+        )
+        .bind(source)
+        .bind(product)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| {
+            panic!("`{source}`/`{product}` missing from instrument_source_liveness: {e}")
+        });
+
+        assert_eq!(asset_class, class, "wrong class for `{source}`/`{product}`");
+        assert_eq!(
+            is_live, live,
+            "wrong liveness verdict for `{source}`/`{product}`"
+        );
+        assert_eq!(
+            last_data_at.is_some(),
+            has_data,
+            "`{source}`/`{product}` last_data_at presence is wrong \
+             (got {last_data_at:?})"
+        );
+        assert_eq!(
+            stale_after_secs,
+            bound_hours * 3600,
+            "wrong staleness bound for `{source}`/`{product}`"
+        );
+    }
+
+    // The masking, asserted directly: the product reads live off the aggregate
+    // while one of its two collectors is 80 hours dark. Without this pair of
+    // assertions standing together, a view that simply reported the product's
+    // verdict under each source would pass everything above.
+    let (product_is_live,): (bool,) =
+        sqlx::query_as("SELECT is_live FROM instrument_liveness WHERE product_id = 'CAD-USD'")
+            .fetch_one(&pool)
+            .await
+            .expect("`CAD-USD` missing from instrument_liveness");
+    assert!(
+        product_is_live,
+        "the per-product aggregate must still read CAD-USD live — if this \
+         fails, the re-derivation changed per-product semantics rather than \
+         only adding the per-source axis"
+    );
+
+    // One row per registry row, not one per product. This is the assertion a
+    // re-introduced `GROUP BY product_id` fails.
+    let (rows,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM instrument_source_liveness WHERE product_id = 'CAD-USD'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count CAD-USD rows in instrument_source_liveness");
+    assert_eq!(
+        rows, 2,
+        "expected one row per collector for CAD-USD, got {rows} — the view is \
+         aggregating across sources"
+    );
+
+    // And the symmetric assertion on the aggregate, which guards the
+    // consumer-visible half. `fetch_one` above returns the FIRST row and does
+    // not reject extras, so an edit that added `source` to `per_product`'s
+    // `GROUP BY` — emitting one row per collector from a view every consumer
+    // reads as one row per product — would return `true` and `false` rows in
+    // an undefined order and merely FLAKE. Counting is what makes it fail.
+    let (product_rows,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM instrument_liveness WHERE product_id = 'CAD-USD'")
+            .fetch_one(&pool)
+            .await
+            .expect("count CAD-USD rows in instrument_liveness");
+    assert_eq!(
+        product_rows, 1,
+        "expected exactly one aggregate row for CAD-USD, got {product_rows} — \
+         instrument_liveness is no longer one row per product"
+    );
+}
+
+/// The candle widths `instrument_source_liveness` probes, read out of the
+/// migration's `VALUES` list.
+///
+/// Parsed rather than restated so this test cannot cover a subset of what the
+/// view actually probes. `granularity_agreement` in market-data's tests pins
+/// that list against every width a collector can write; this reads the same
+/// list to check each entry works.
+fn view_granularities() -> Vec<i64> {
+    let sql = include_str!("../migrations/0010_source_liveness.sql");
+    let lines: Vec<&str> = sql.lines().collect();
+    let anchor = lines
+        .iter()
+        .position(|l| l.contains("AS gran (secs)"))
+        .expect("the `AS gran (secs)` anchor in 0010_source_liveness.sql");
+    let opens_at = lines[..=anchor]
+        .iter()
+        .rposition(|l| l.contains("(VALUES"))
+        .expect("the `(VALUES` opening the granularity list");
+    let mut secs: Vec<i64> = lines[opens_at..=anchor]
+        .iter()
+        .flat_map(|l| {
+            let mut out = Vec::new();
+            let mut current = String::new();
+            for ch in l.chars() {
+                if ch.is_ascii_digit() {
+                    current.push(ch);
+                } else if !current.is_empty() {
+                    out.push(current.parse::<i64>().expect("a digit run"));
+                    current.clear();
+                }
+            }
+            if !current.is_empty() {
+                out.push(current.parse::<i64>().expect("a digit run"));
+            }
+            out
+        })
+        .collect();
+    secs.sort_unstable();
+    secs.dedup();
+    secs
+}
+
+/// Every granularity in the view's vocabulary is actually seen by it.
+///
+/// The `bars` lateral iterates a literal granularity list so each probe gets a
+/// full equality prefix on `cex_prices`' primary key — without it Postgres
+/// cannot apply its MIN/MAX index transform and scans the whole
+/// `(source, product_id)` prefix (measured: 76.9 ms and 7,335 buffers against
+/// the running store, versus 0.8 ms and 884 buffers with it).
+///
+/// `granularity_agreement` in market-data's tests pins that list against the
+/// dashboard's granularity variable, but agreement between two lists says
+/// nothing about whether either one WORKS. This is the behavioral half: a bar
+/// at each listed granularity must make its pair read live. A granularity
+/// dropped from the `VALUES` list contributes no rows to that series' `max`, so
+/// the pair reads never-collected — a false `quiet`, which `0009_instruments`
+/// singles out as the worse error direction because it hides data rather than
+/// reporting it.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn liveness_sees_a_bar_at_every_granularity_in_its_vocabulary() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    // PARSED from the migration rather than restated, so this cannot drift
+    // into covering fewer probes than the view has. A hardcoded copy here
+    // would leave the test green while silently exercising a subset — the
+    // failure it exists to catch, one level up.
+    let granularities = view_granularities();
+    assert!(
+        granularities.len() >= 6,
+        "parsed only {} granularities from 0010_source_liveness.sql — the \
+         `VALUES` list moved or changed shape",
+        granularities.len()
+    );
+
+    // One product per granularity, so a single missing probe isolates to a
+    // single failing row rather than being masked by a sibling that shares the
+    // series. The ids only have to satisfy `instrument_registry`'s canonical
+    // shape; the class they resolve to is irrelevant here, because one hour of
+    // silence is inside every bound.
+    for &secs in &granularities {
+        let product = format!("G{secs}-USD");
+        sqlx::query(
+            "INSERT INTO instrument_registry
+                 (source, product_id, first_registered_at, last_registered_at)
+             VALUES ('granularity-probe', $1, 1, 1)",
+        )
+        .bind(&product)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("register `{product}`: {e}"));
+
+        sqlx::query(
+            "INSERT INTO cex_prices
+                 (source, product_id, granularity_secs, bucket_start,
+                  low, high, open, close, volume)
+             VALUES ('granularity-probe', $1, $2,
+                     EXTRACT(EPOCH FROM now())::BIGINT - 3600, 1, 1, 1, 1, 0)",
+        )
+        .bind(&product)
+        .bind(secs)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("insert a {secs}s bar for `{product}`: {e}"));
+    }
+
+    for &secs in &granularities {
+        let product = format!("G{secs}-USD");
+        let (is_live, last_data_at): (bool, Option<i64>) = sqlx::query_as(
+            "SELECT is_live, last_data_at
+             FROM instrument_source_liveness
+             WHERE source = 'granularity-probe' AND product_id = $1",
+        )
+        .bind(&product)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("`{product}` missing from the view: {e}"));
+
+        assert!(
+            last_data_at.is_some(),
+            "the {secs}s bar for `{product}` was not seen at all — that \
+             granularity is missing from the view's `VALUES` list"
+        );
+        assert!(
+            is_live,
+            "`{product}` has a bar one hour old at {secs}s and still reads \
+             quiet"
+        );
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn migrate_is_idempotent() {

@@ -1,0 +1,10 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# `instrument_liveness` is deliberately absent: 0010 replaces its body with
+# `CREATE OR REPLACE VIEW`, which leaves it a view, so `0009_instruments.fence`'s
+# declaration of it stays valid and covers it. Re-declaring it here would claim
+# this migration creates it, which it does not.
+#
+# The `COMMENT ON TABLE` statements on `feed_health` and `push_health` create no
+# relation and so declare nothing.
+view instrument_source_liveness

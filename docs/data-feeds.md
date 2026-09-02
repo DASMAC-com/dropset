@@ -671,6 +671,74 @@ restart, while operator-tunable runtime parameters want neither. See §12
 for why this particular configuration lives in the database rather than in
 the environment or a constant.
 
+**Health is per-feed; freshness is per-pair.** These are different
+questions answered by different tables, and conflating them is a
+silent-green failure rather than a wrong number. `feed_health` and
+`push_health` are keyed by **source name**, and a source name is
+venue-level for a *batched* venue: Kraken, Pyth, er-api, CoinGecko, CMC
+and Frankfurter each price a whole roster in one request and report one
+constant name for all of it, while the per-product collectors (Coinbase,
+OANDA, Twelve Data, Alpha Vantage) name themselves per product. So a
+batched venue's health row stays fresh while one pair on it is dead, and
+a per-pair alert built on `last_ok_at` is wrong for exactly those
+venues. `feeds/src/health.rs` states the framework half — the runner
+hands a recorder a feed name and batch statistics, never the records, so
+a health row cannot report what the feed *said* — and both tables now
+carry it as a `COMMENT ON TABLE` as well, because the readers most
+likely to get this wrong work from the catalog and the query files
+rather than from Rust module docs.
+
+The per-pair question has two views, and which one you want depends on
+the axis. `instrument_liveness` is **per product**: it scans each
+`(source, product_id)` prefix on the measurement tables, then
+aggregates across a product's collectors, so it answers
+"is this pair collecting from anybody". `instrument_source_liveness` is
+**per `(source, product)`** and does not aggregate, so it answers "did
+*this* collector stop delivering *this* pair" — which the per-product
+view necessarily discards. EUR-USD is polled by four collectors, so it
+reads live in the first view while three of them are dark; only the
+second shows that. Both take their staleness bound from `asset_class`
+so an FX weekend is not read as a dead collector, and both take it from
+one definition, in whichever migration currently defines the views
+(today `0010_source_liveness.sql`). (0009 introduced the two constants
+with a note that they are defined nowhere else. That note predates the
+re-derivation, and an applied migration cannot be corrected in place —
+sqlx hashes the migration text, so editing even a comment breaks every
+database that already ran it.)
+
+One join to make deliberately rather than by reflex: a health row's
+`feed` and a liveness row's `source` are **different vocabularies**. The
+former is the framework `Source::name` (`cex:coinbase:EURC-USDC` for a
+per-product collector, a venue constant for a batched one); the latter
+is the bare venue token the collector registers. They coincide only
+where the framework name is itself a bare token, so a panel variable
+populated from one will silently match nothing in the other.
+
+**Both views measure delivery, never price age.** `observed_at` is the
+venue's own publish time only where the venue sends one — Pyth Hermes
+does — and otherwise the collector's poll second, which is the honest
+attribution for *arrival* and says nothing about how old the quote was
+when it arrived. Three blind spots follow. A venue answering `200 OK`
+with a frozen quote reads perfectly live, and no arrangement of receipt
+stamps catches it: that needs a publish timestamp the venue does not
+send. A pegged pair legitimately sits still, so "price unchanged" is
+not a fault signal either — `USDC-USD`, the peg leg the Kraken
+collector exists to capture, is the case in point. And two collector
+*processes* that share one source label collapse into a single row:
+Coinbase's candle and ticker binaries both register as `coinbase`
+deliberately, so if the candle collector goes dark while the ticker
+runs, that row still reads live. Closing the last one needs a distinct
+source per collector, which is a change to the collectors.
+
+Two things a panel author needs before building on any of this. The
+four fusion-input venues with no tick collector — er-api, CoinGecko,
+CMC, Frankfurter — have **no rows at all** in either liveness view,
+because only the market-data collector binaries write the registry
+those views read; a filter on one of them returns nothing, and nothing
+looks exactly like healthy. And adding a migration advances the schema
+version the fence checks, so the shared database has to be migrated
+*before* any binary built from that change will start.
+
 ______________________________________________________________________
 
 ## 9. Sources and venue policy

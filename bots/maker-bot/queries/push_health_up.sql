@@ -16,6 +16,14 @@
 -- link from a steadily-connected one; a counter that moved on every write
 -- would instead measure how often the producer happened to report, which is a
 -- property of the producer's loop and not of the link.
+--
+-- `feed` keys a CONNECTION, not a product. One subscription carries many
+-- instruments, so nothing in this table can say whether a particular pair is
+-- still arriving — and since silence is a push source's healthy state, no
+-- duration of it is evidence either way. That is not a gap to close here (see
+-- `feeds/src/liveness.rs`); the per-pair question belongs to
+-- `instrument_source_liveness`, whose `source` is a bare venue token and so
+-- does not join this column.
 INSERT INTO push_health (
     feed,
     state,
