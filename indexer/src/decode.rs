@@ -11,7 +11,9 @@
 
 use crate::model::{DecodedEvent, EventCoords};
 use dropset_feeds::RawTx;
-use dropset_sdk::events::{decode_event_payload, emitted_by, full_account_keys, strip_event_tag};
+use dropset_sdk::events::{
+    emitted_by, full_account_keys, strip_event_tag, try_decode_event_payload,
+};
 use solana_pubkey::Pubkey;
 
 /// Decode every event-CPI that `program_id` emitted in this transaction,
@@ -79,7 +81,21 @@ pub fn decode_tx(tx: &RawTx, program_id: &Pubkey) -> Vec<DecodedEvent> {
                 );
                 return None;
             }
-            decode_event_payload(payload).map(|event| (ordinal, event))
+            // Tagged as ours, emitted by us, and still undecodable is a
+            // drift signal — the program emitted something this build does
+            // not read — so it is logged rather than dropped in silence.
+            match try_decode_event_payload(payload) {
+                Ok(event) => Some((ordinal, event)),
+                Err(reason) => {
+                    tracing::warn!(
+                        signature = %tx.signature,
+                        ordinal,
+                        ?reason,
+                        "our own event-CPI did not decode; dropped"
+                    );
+                    None
+                }
+            }
         })
         .map(|(ordinal, event)| DecodedEvent {
             coords: EventCoords {
@@ -98,7 +114,7 @@ pub fn decode_tx(tx: &RawTx, program_id: &Pubkey) -> Vec<DecodedEvent> {
 mod tests {
     use super::*;
     use dropset_feeds::InnerIx;
-    use dropset_sdk::events::{DropsetEvent, EVENT_IX_TAG_LE};
+    use dropset_sdk::events::{DropsetEvent, EVENT_IX_TAG_LE, FILL_EVENT_DISCRIMINATOR};
     use dropset_sdk::types::FillEvent;
 
     /// The program these tests index, at account-key index 0.
@@ -155,7 +171,7 @@ mod tests {
         };
         // [tag][discriminator][borsh body]
         let mut data = EVENT_IX_TAG_LE.to_vec();
-        data.extend_from_slice(&[13, 89, 41, 228, 105, 178, 45, 112]);
+        data.extend_from_slice(&FILL_EVENT_DISCRIMINATOR);
         borsh::to_writer(&mut data, &fill).unwrap();
         data
     }

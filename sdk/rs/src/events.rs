@@ -20,16 +20,26 @@
 //! dispatch.
 //!
 //! The 8-byte discriminators are `sha256("event:<StructName>")[..8]` (the
-//! anchor scheme) and mirror the `events` list in the generated IDL
-//! (`sdk/idl/dropset.json`), pinned by the `tests` module below. They are
-//! kept as constants here for the same reason the account discriminators are
-//! (e.g. [`crate::accounts::MARKET_HEADER_DISCRIMINATOR`]) — a decoder
-//! shouldn't hash at runtime.
+//! anchor scheme) and cover every entry in the `events` list of the
+//! generated IDL (`sdk/idl/dropset.json`). The `tests` module pins that
+//! both ways: `discriminators_match_anchor_scheme` derives each constant
+//! from its struct name, and `every_idl_event_is_decoded` reads the IDL
+//! itself and fails when an event is added that this codec does not
+//! handle — the drift a name list alone cannot catch, since a list only
+//! checks the names already on it. They are kept as constants here for the
+//! same reason the account discriminators are (e.g.
+//! [`crate::accounts::MARKET_HEADER_DISCRIMINATOR`]) — a decoder shouldn't
+//! hash at runtime — and are `pub` so a consumer names them rather than
+//! hand-copying the bytes.
+
+// cspell:word undecoded
 
 use crate::types::{
-    CloseVaultEvent, CreateVaultEvent, DepositEvent, FillEvent, FreezeVaultEvent, RealizeEvent,
-    SetDefaultFeeConfigEvent, SetMarketFeeConfigEvent, SetMinLeaderShareEvent,
-    SetRegistryDefaultsEvent, SetTakerFeeEvent, WithdrawEvent,
+    CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
+    DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent, RealizeEvent,
+    SetDefaultFeeConfigEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
+    SetMinLeaderShareEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent, SweepResidualEvent,
+    WithdrawEvent,
 };
 use borsh::BorshDeserialize;
 use solana_pubkey::Pubkey;
@@ -52,25 +62,37 @@ pub const EVENT_IX_TAG_LE: [u8; 8] = EVENT_IX_TAG.to_le_bytes();
 /// Length of the discriminator that follows the tag.
 pub const DISCRIMINATOR_LEN: usize = 8;
 
-// Event discriminators (sha256("event:<Name>")[..8]) — mirror of the IDL
-// `events` list, pinned by the test module.
-const CLOSE_VAULT: [u8; 8] = [35, 37, 158, 74, 115, 93, 175, 136];
-const CREATE_VAULT: [u8; 8] = [42, 221, 241, 92, 177, 139, 118, 240];
-const DEPOSIT: [u8; 8] = [120, 248, 61, 83, 31, 142, 107, 144];
-const FILL: [u8; 8] = [13, 89, 41, 228, 105, 178, 45, 112];
-const FREEZE_VAULT: [u8; 8] = [9, 180, 143, 223, 189, 20, 1, 74];
-const REALIZE: [u8; 8] = [255, 60, 160, 248, 4, 188, 32, 33];
-const SET_DEFAULT_FEE_CONFIG: [u8; 8] = [173, 121, 245, 191, 189, 52, 211, 216];
-const SET_MARKET_FEE_CONFIG: [u8; 8] = [29, 171, 38, 30, 62, 131, 204, 214];
-const SET_MIN_LEADER_SHARE: [u8; 8] = [159, 194, 164, 181, 227, 131, 179, 105];
-const SET_REGISTRY_DEFAULTS: [u8; 8] = [138, 35, 107, 189, 236, 175, 31, 9];
-const SET_TAKER_FEE: [u8; 8] = [175, 232, 242, 29, 241, 48, 172, 41];
-const WITHDRAW: [u8; 8] = [22, 9, 133, 26, 160, 44, 71, 192];
+// Event discriminators (sha256("event:<Name>")[..8]), one per entry in the
+// IDL `events` list, pinned both ways by the test module.
+pub const CLOSE_MARKET_TREASURY_EVENT_DISCRIMINATOR: [u8; 8] =
+    [234, 64, 141, 172, 128, 178, 239, 232];
+pub const CLOSE_REGISTRY_FEE_VAULT_EVENT_DISCRIMINATOR: [u8; 8] =
+    [82, 31, 124, 13, 220, 141, 65, 50];
+pub const CLOSE_VAULT_EVENT_DISCRIMINATOR: [u8; 8] = [35, 37, 158, 74, 115, 93, 175, 136];
+pub const CREATE_VAULT_EVENT_DISCRIMINATOR: [u8; 8] = [42, 221, 241, 92, 177, 139, 118, 240];
+pub const DEPOSIT_EVENT_DISCRIMINATOR: [u8; 8] = [120, 248, 61, 83, 31, 142, 107, 144];
+pub const FILL_EVENT_DISCRIMINATOR: [u8; 8] = [13, 89, 41, 228, 105, 178, 45, 112];
+pub const FREEZE_VAULT_EVENT_DISCRIMINATOR: [u8; 8] = [9, 180, 143, 223, 189, 20, 1, 74];
+pub const PLATFORM_FEE_EVENT_DISCRIMINATOR: [u8; 8] = [188, 157, 159, 156, 113, 199, 229, 159];
+pub const REALIZE_EVENT_DISCRIMINATOR: [u8; 8] = [255, 60, 160, 248, 4, 188, 32, 33];
+pub const SET_DEFAULT_FEE_CONFIG_EVENT_DISCRIMINATOR: [u8; 8] =
+    [173, 121, 245, 191, 189, 52, 211, 216];
+pub const SET_MARKET_FEE_CONFIG_EVENT_DISCRIMINATOR: [u8; 8] = [29, 171, 38, 30, 62, 131, 204, 214];
+pub const SET_MAX_PLATFORM_FEE_EVENT_DISCRIMINATOR: [u8; 8] = [45, 40, 179, 93, 26, 27, 196, 209];
+pub const SET_MIN_LEADER_SHARE_EVENT_DISCRIMINATOR: [u8; 8] =
+    [159, 194, 164, 181, 227, 131, 179, 105];
+pub const SET_REGISTRY_DEFAULTS_EVENT_DISCRIMINATOR: [u8; 8] = [138, 35, 107, 189, 236, 175, 31, 9];
+pub const SET_TAKER_FEE_EVENT_DISCRIMINATOR: [u8; 8] = [175, 232, 242, 29, 241, 48, 172, 41];
+pub const SWEEP_RESIDUAL_EVENT_DISCRIMINATOR: [u8; 8] = [10, 97, 22, 134, 106, 210, 95, 7];
+pub const WITHDRAW_EVENT_DISCRIMINATOR: [u8; 8] = [22, 9, 133, 26, 160, 44, 71, 192];
 
 /// Every event the program emits via `emit_cpi!`, decoded into its
-/// generated struct. Variants the indexer rolls up (fills, the
-/// liquidity-flow events) and the admin retuning events the teardown path
-/// reconstructs from history (see `interface.md` §1).
+/// generated struct: the ones the indexer rolls up (fills, the
+/// liquidity-flow events), the admin retuning events the teardown path
+/// reconstructs from history (see `interface.md` §1), and the
+/// custody-and-payout records — `PlatformFee` is an integrator's only
+/// on-chain receipt, and the two `Close*` events are the only on-chain
+/// statement of where a closed treasury's atoms went.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DropsetEvent {
     Fill(FillEvent),
@@ -85,6 +107,11 @@ pub enum DropsetEvent {
     SetTakerFee(SetTakerFeeEvent),
     SetDefaultFeeConfig(SetDefaultFeeConfigEvent),
     SetRegistryDefaults(SetRegistryDefaultsEvent),
+    SetMaxPlatformFee(SetMaxPlatformFeeEvent),
+    PlatformFee(PlatformFeeEvent),
+    SweepResidual(SweepResidualEvent),
+    CloseMarketTreasury(CloseMarketTreasuryEvent),
+    CloseRegistryFeeVault(CloseRegistryFeeVaultEvent),
 }
 
 impl DropsetEvent {
@@ -104,45 +131,117 @@ impl DropsetEvent {
             Self::SetTakerFee(_) => "SetTakerFeeEvent",
             Self::SetDefaultFeeConfig(_) => "SetDefaultFeeConfigEvent",
             Self::SetRegistryDefaults(_) => "SetRegistryDefaultsEvent",
+            Self::SetMaxPlatformFee(_) => "SetMaxPlatformFeeEvent",
+            Self::PlatformFee(_) => "PlatformFeeEvent",
+            Self::SweepResidual(_) => "SweepResidualEvent",
+            Self::CloseMarketTreasury(_) => "CloseMarketTreasuryEvent",
+            Self::CloseRegistryFeeVault(_) => "CloseRegistryFeeVaultEvent",
         }
     }
 }
 
-/// Decode one tag-stripped event payload (`[discriminator(8)][body]`).
+/// Why a tag-stripped event payload could not be decoded.
 ///
-/// Returns `None` if the payload is too short, the discriminator matches
-/// no known event, or the body fails to deserialize. The body decodes via
-/// borsh against the generated struct; for the bytemuck `FillEvent` the
-/// generated struct's explicit padding fields make the borsh read
-/// byte-identical to the on-chain `repr(C)` bytes.
-pub fn decode_event_payload(payload: &[u8]) -> Option<DropsetEvent> {
+/// These were once one bare `None`, which made three very different
+/// conditions indistinguishable — and the interesting two are both *drift*
+/// signals, invisible by construction while they collapsed together.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DecodeError {
+    /// Shorter than a discriminator, so it names no event.
+    TooShort,
+    /// Well-formed, but no variant claims this discriminator: the program
+    /// emitted an event this build does not know. Carries the bytes so a
+    /// consumer can log which one.
+    UnknownDiscriminator([u8; 8]),
+    /// The discriminator matched and the body failed borsh.
+    BodyDecode,
+    /// The body decoded but left bytes unread — the shape on chain is
+    /// wider than the shape this build reads, which is what appending a
+    /// field to an existing event looks like from here.
+    ///
+    /// A plain `deserialize` reads a prefix and never checks the
+    /// remainder, so without this the added field is silently discarded
+    /// and the event still decodes as the old shape. In-repo that drift is
+    /// caught by the IDL and client-diff gates; what those cannot reach is
+    /// a **running binary against an already-upgraded on-chain program**,
+    /// which is the case this variant exists for.
+    TrailingBytes {
+        /// How many bytes the body carried beyond the decoded struct.
+        unread: usize,
+    },
+}
+
+/// Decode one tag-stripped event payload (`[discriminator(8)][body]`),
+/// reporting *why* it failed.
+///
+/// The body decodes via borsh against the generated struct; for the
+/// bytemuck `FillEvent` the generated struct's explicit padding fields make
+/// the borsh read byte-identical to the on-chain `repr(C)` bytes. The
+/// decode also requires the body to be fully consumed, matching the
+/// program's own test decoder — which asserts the same thing, with the
+/// comment that it "catches a wire-format drift (an added / reordered /
+/// wrong-width field) that a field-by-field read would otherwise mask".
+pub fn try_decode_event_payload(payload: &[u8]) -> Result<DropsetEvent, DecodeError> {
     if payload.len() < DISCRIMINATOR_LEN {
-        return None;
+        return Err(DecodeError::TooShort);
     }
     let (disc, mut body) = payload.split_at(DISCRIMINATOR_LEN);
-    let disc: [u8; 8] = disc.try_into().ok()?;
+    let disc: [u8; 8] = disc.try_into().map_err(|_| DecodeError::TooShort)?;
     macro_rules! decode {
-        ($variant:ident, $ty:ty) => {
-            <$ty>::deserialize(&mut body)
-                .ok()
-                .map(DropsetEvent::$variant)
-        };
+        ($variant:ident, $ty:ty) => {{
+            let decoded = <$ty>::deserialize(&mut body).map_err(|_| DecodeError::BodyDecode)?;
+            if !body.is_empty() {
+                return Err(DecodeError::TrailingBytes { unread: body.len() });
+            }
+            DropsetEvent::$variant(decoded)
+        }};
     }
-    match disc {
-        FILL => decode!(Fill, FillEvent),
-        DEPOSIT => decode!(Deposit, DepositEvent),
-        WITHDRAW => decode!(Withdraw, WithdrawEvent),
-        CREATE_VAULT => decode!(CreateVault, CreateVaultEvent),
-        CLOSE_VAULT => decode!(CloseVault, CloseVaultEvent),
-        FREEZE_VAULT => decode!(FreezeVault, FreezeVaultEvent),
-        REALIZE => decode!(Realize, RealizeEvent),
-        SET_MIN_LEADER_SHARE => decode!(SetMinLeaderShare, SetMinLeaderShareEvent),
-        SET_MARKET_FEE_CONFIG => decode!(SetMarketFeeConfig, SetMarketFeeConfigEvent),
-        SET_TAKER_FEE => decode!(SetTakerFee, SetTakerFeeEvent),
-        SET_DEFAULT_FEE_CONFIG => decode!(SetDefaultFeeConfig, SetDefaultFeeConfigEvent),
-        SET_REGISTRY_DEFAULTS => decode!(SetRegistryDefaults, SetRegistryDefaultsEvent),
-        _ => None,
-    }
+    let event = match disc {
+        FILL_EVENT_DISCRIMINATOR => decode!(Fill, FillEvent),
+        DEPOSIT_EVENT_DISCRIMINATOR => decode!(Deposit, DepositEvent),
+        WITHDRAW_EVENT_DISCRIMINATOR => decode!(Withdraw, WithdrawEvent),
+        CREATE_VAULT_EVENT_DISCRIMINATOR => decode!(CreateVault, CreateVaultEvent),
+        CLOSE_VAULT_EVENT_DISCRIMINATOR => decode!(CloseVault, CloseVaultEvent),
+        FREEZE_VAULT_EVENT_DISCRIMINATOR => decode!(FreezeVault, FreezeVaultEvent),
+        REALIZE_EVENT_DISCRIMINATOR => decode!(Realize, RealizeEvent),
+        SET_MIN_LEADER_SHARE_EVENT_DISCRIMINATOR => {
+            decode!(SetMinLeaderShare, SetMinLeaderShareEvent)
+        }
+        SET_MARKET_FEE_CONFIG_EVENT_DISCRIMINATOR => {
+            decode!(SetMarketFeeConfig, SetMarketFeeConfigEvent)
+        }
+        SET_TAKER_FEE_EVENT_DISCRIMINATOR => decode!(SetTakerFee, SetTakerFeeEvent),
+        SET_DEFAULT_FEE_CONFIG_EVENT_DISCRIMINATOR => {
+            decode!(SetDefaultFeeConfig, SetDefaultFeeConfigEvent)
+        }
+        SET_REGISTRY_DEFAULTS_EVENT_DISCRIMINATOR => {
+            decode!(SetRegistryDefaults, SetRegistryDefaultsEvent)
+        }
+        SET_MAX_PLATFORM_FEE_EVENT_DISCRIMINATOR => {
+            decode!(SetMaxPlatformFee, SetMaxPlatformFeeEvent)
+        }
+        PLATFORM_FEE_EVENT_DISCRIMINATOR => decode!(PlatformFee, PlatformFeeEvent),
+        SWEEP_RESIDUAL_EVENT_DISCRIMINATOR => decode!(SweepResidual, SweepResidualEvent),
+        CLOSE_MARKET_TREASURY_EVENT_DISCRIMINATOR => {
+            decode!(CloseMarketTreasury, CloseMarketTreasuryEvent)
+        }
+        CLOSE_REGISTRY_FEE_VAULT_EVENT_DISCRIMINATOR => {
+            decode!(CloseRegistryFeeVault, CloseRegistryFeeVaultEvent)
+        }
+        unknown => return Err(DecodeError::UnknownDiscriminator(unknown)),
+    };
+    Ok(event)
+}
+
+/// [`try_decode_event_payload`], discarding the reason.
+///
+/// Kept for callers that genuinely have nothing to do with a failure. A
+/// caller that walks a transaction's inner instructions should prefer the
+/// `try_` form: most blobs it sees are not Dropset events at all, but a
+/// blob that *is* tagged as ours and still won't decode is a drift signal
+/// worth logging rather than dropping.
+pub fn decode_event_payload(payload: &[u8]) -> Option<DropsetEvent> {
+    try_decode_event_payload(payload).ok()
 }
 
 /// Strip the `EVENT_IX_TAG_LE` prefix from one inner-instruction `data`,
@@ -223,32 +322,120 @@ mod tests {
         digest[..8].try_into().unwrap()
     }
 
+    /// Every discriminator this codec decodes, paired with the event name
+    /// it claims to be. The single list both name-scheme and IDL-coverage
+    /// tests read, so a variant added to one is checked by both.
+    const DECODED: &[([u8; 8], &str)] = &[
+        (
+            CLOSE_MARKET_TREASURY_EVENT_DISCRIMINATOR,
+            "CloseMarketTreasuryEvent",
+        ),
+        (
+            CLOSE_REGISTRY_FEE_VAULT_EVENT_DISCRIMINATOR,
+            "CloseRegistryFeeVaultEvent",
+        ),
+        (CLOSE_VAULT_EVENT_DISCRIMINATOR, "CloseVaultEvent"),
+        (CREATE_VAULT_EVENT_DISCRIMINATOR, "CreateVaultEvent"),
+        (DEPOSIT_EVENT_DISCRIMINATOR, "DepositEvent"),
+        (FILL_EVENT_DISCRIMINATOR, "FillEvent"),
+        (FREEZE_VAULT_EVENT_DISCRIMINATOR, "FreezeVaultEvent"),
+        (PLATFORM_FEE_EVENT_DISCRIMINATOR, "PlatformFeeEvent"),
+        (REALIZE_EVENT_DISCRIMINATOR, "RealizeEvent"),
+        (
+            SET_DEFAULT_FEE_CONFIG_EVENT_DISCRIMINATOR,
+            "SetDefaultFeeConfigEvent",
+        ),
+        (
+            SET_MARKET_FEE_CONFIG_EVENT_DISCRIMINATOR,
+            "SetMarketFeeConfigEvent",
+        ),
+        (
+            SET_MAX_PLATFORM_FEE_EVENT_DISCRIMINATOR,
+            "SetMaxPlatformFeeEvent",
+        ),
+        (
+            SET_MIN_LEADER_SHARE_EVENT_DISCRIMINATOR,
+            "SetMinLeaderShareEvent",
+        ),
+        (
+            SET_REGISTRY_DEFAULTS_EVENT_DISCRIMINATOR,
+            "SetRegistryDefaultsEvent",
+        ),
+        (SET_TAKER_FEE_EVENT_DISCRIMINATOR, "SetTakerFeeEvent"),
+        (SWEEP_RESIDUAL_EVENT_DISCRIMINATOR, "SweepResidualEvent"),
+        (WITHDRAW_EVENT_DISCRIMINATOR, "WithdrawEvent"),
+    ];
+
     #[test]
     fn discriminators_match_anchor_scheme() {
-        let cases = [
-            (CLOSE_VAULT, "CloseVaultEvent"),
-            (CREATE_VAULT, "CreateVaultEvent"),
-            (DEPOSIT, "DepositEvent"),
-            (FILL, "FillEvent"),
-            (FREEZE_VAULT, "FreezeVaultEvent"),
-            (REALIZE, "RealizeEvent"),
-            (SET_DEFAULT_FEE_CONFIG, "SetDefaultFeeConfigEvent"),
-            (SET_MARKET_FEE_CONFIG, "SetMarketFeeConfigEvent"),
-            (SET_MIN_LEADER_SHARE, "SetMinLeaderShareEvent"),
-            (SET_REGISTRY_DEFAULTS, "SetRegistryDefaultsEvent"),
-            (SET_TAKER_FEE, "SetTakerFeeEvent"),
-            (WITHDRAW, "WithdrawEvent"),
-        ];
-        for (constant, name) in cases {
-            assert_eq!(constant, anchor_event_discriminator(name), "{name}");
+        for (constant, name) in DECODED {
+            assert_eq!(*constant, anchor_event_discriminator(name), "{name}");
         }
+    }
+
+    /// **The structural pin.** Read the IDL's own `events` list and require
+    /// every entry to be decoded here, with the discriminator the IDL
+    /// records.
+    ///
+    /// This is the test whose absence let the codec fall five events behind
+    /// the program. `discriminators_match_anchor_scheme` cannot catch that:
+    /// it iterates a hand-written list, so an event missing from the list is
+    /// missing from the check too. Two of the five were added in a single
+    /// commit that regenerated every other client surface — IDL, Rust
+    /// types, TS twins — and touched neither this codec nor the indexer,
+    /// with nothing to fail.
+    ///
+    /// To deliberately leave an event undecoded, add it to `EXEMPT` with a
+    /// written reason. An unexplained gap is the failure this guards.
+    #[test]
+    fn every_idl_event_is_decoded() {
+        /// Events the codec deliberately does not decode, each with why.
+        const EXEMPT: &[(&str, &str)] = &[];
+
+        let idl: serde_json::Value = serde_json::from_str(include_str!("../../idl/dropset.json"))
+            .expect("the generated IDL parses");
+        let events = idl["events"]
+            .as_array()
+            .expect("the IDL carries an events array");
+        assert!(!events.is_empty(), "no events read — is the path right?");
+
+        for event in events {
+            let name = event["name"].as_str().expect("every event has a name");
+            if let Some((_, reason)) = EXEMPT.iter().find(|(exempt, _)| *exempt == name) {
+                assert!(!reason.is_empty(), "{name} is exempt with no reason");
+                continue;
+            }
+            let expected: Vec<u8> = event["discriminator"]
+                .as_array()
+                .expect("every event has a discriminator")
+                .iter()
+                .map(|b| b.as_u64().expect("a discriminator byte") as u8)
+                .collect();
+
+            let found = DECODED
+                .iter()
+                .find(|(_, decoded)| *decoded == name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the IDL declares {name} but this codec does not decode it — \
+                         add a DropsetEvent variant, or an EXEMPT entry saying why not"
+                    )
+                });
+            assert_eq!(found.0.to_vec(), expected, "{name} discriminator");
+        }
+
+        assert_eq!(
+            DECODED.len() + EXEMPT.len(),
+            events.len(),
+            "the codec decodes an event the IDL does not declare"
+        );
     }
 
     #[test]
     fn strip_rejects_non_event_data() {
         assert!(strip_event_tag(&[1, 2, 3]).is_none());
         let mut tagged = EVENT_IX_TAG_LE.to_vec();
-        tagged.extend_from_slice(&FILL);
+        tagged.extend_from_slice(&FILL_EVENT_DISCRIMINATOR);
         // tag present, payload is exactly a discriminator (== DISCRIMINATOR_LEN)
         assert!(strip_event_tag(&tagged).is_some());
     }
@@ -258,6 +445,86 @@ mod tests {
         let mut payload = [9u8; 8].to_vec();
         payload.extend_from_slice(&[0u8; 16]);
         assert!(decode_event_payload(&payload).is_none());
+        // The reason is now recoverable, and carries which discriminator —
+        // this is the drift signal that used to collapse into a bare None.
+        assert_eq!(
+            try_decode_event_payload(&payload),
+            Err(DecodeError::UnknownDiscriminator([9u8; 8]))
+        );
+    }
+
+    /// The three failure conditions are distinguishable, not one `None`.
+    #[test]
+    fn each_failure_reports_its_own_reason() {
+        assert_eq!(
+            try_decode_event_payload(&[1, 2, 3]),
+            Err(DecodeError::TooShort)
+        );
+        // Right discriminator, body too short to be a FillEvent.
+        let mut truncated = FILL_EVENT_DISCRIMINATOR.to_vec();
+        truncated.extend_from_slice(&[0u8; 4]);
+        assert_eq!(
+            try_decode_event_payload(&truncated),
+            Err(DecodeError::BodyDecode)
+        );
+    }
+
+    /// A field appended on chain leaves bytes unread. A plain `deserialize`
+    /// reads the prefix and silently discards the addition, so the event
+    /// would decode as the old shape and look perfectly healthy; requiring
+    /// the body to be consumed is what turns that into a signal.
+    #[test]
+    fn a_wider_body_than_this_build_reads_is_rejected() {
+        let event = SetTakerFeeEvent {
+            market: Pubkey::new_unique(),
+            taker_fee: 7,
+        };
+        let mut payload = SET_TAKER_FEE_EVENT_DISCRIMINATOR.to_vec();
+        borsh::to_writer(&mut payload, &event).unwrap();
+        // Exact body still decodes.
+        assert!(try_decode_event_payload(&payload).is_ok());
+
+        // The same event with two extra bytes appended, as a program that
+        // grew the struct would emit it.
+        payload.extend_from_slice(&[0xab, 0xcd]);
+        assert_eq!(
+            try_decode_event_payload(&payload),
+            Err(DecodeError::TrailingBytes { unread: 2 })
+        );
+    }
+
+    /// The five events the codec used to drop decode now, including the
+    /// two whose absence meant protocol revenue leaving custody and every
+    /// integrator payout were recorded as nothing at all.
+    #[test]
+    fn the_custody_and_payout_events_decode() {
+        let fee = PlatformFeeEvent {
+            market: Pubkey::new_unique(),
+            taker: Pubkey::new_unique(),
+            fee_authority: Pubkey::new_unique(),
+            mint: Pubkey::new_unique(),
+            atoms: 1_234,
+            platform_fee_bps: 25,
+        };
+        let mut payload = PLATFORM_FEE_EVENT_DISCRIMINATOR.to_vec();
+        borsh::to_writer(&mut payload, &fee).unwrap();
+        assert_eq!(
+            try_decode_event_payload(&payload),
+            Ok(DropsetEvent::PlatformFee(fee))
+        );
+
+        let closed = CloseRegistryFeeVaultEvent {
+            fee_mint: Pubkey::new_unique(),
+            token_recipient: Pubkey::new_unique(),
+            rent_recipient: Pubkey::new_unique(),
+            collected: 9_999,
+        };
+        let mut payload = CLOSE_REGISTRY_FEE_VAULT_EVENT_DISCRIMINATOR.to_vec();
+        borsh::to_writer(&mut payload, &closed).unwrap();
+        assert_eq!(
+            try_decode_event_payload(&payload),
+            Ok(DropsetEvent::CloseRegistryFeeVault(closed))
+        );
     }
 
     #[test]
@@ -280,7 +547,7 @@ mod tests {
             nonce_after: 13,
             taker_fee_atoms: 5,
         };
-        let mut payload = FILL.to_vec();
+        let mut payload = FILL_EVENT_DISCRIMINATOR.to_vec();
         borsh::to_writer(&mut payload, &fill).unwrap();
         assert_eq!(
             decode_event_payload(&payload),

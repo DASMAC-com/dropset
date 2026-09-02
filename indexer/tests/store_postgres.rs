@@ -25,7 +25,7 @@ use dropset_feeds::{
 };
 use dropset_indexer::aggregate::AggregateSink;
 use dropset_indexer::store::{EventWriter, Store};
-use dropset_sdk::events::EVENT_IX_TAG_LE;
+use dropset_sdk::events::{DEPOSIT_EVENT_DISCRIMINATOR, EVENT_IX_TAG_LE, FILL_EVENT_DISCRIMINATOR};
 use dropset_sdk::types::{DepositEvent, FillEvent};
 use dropset_sdk::DROPSET_ID;
 use rust_decimal::Decimal;
@@ -33,12 +33,6 @@ use solana_pubkey::Pubkey;
 use sqlx::PgPool;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync};
-
-/// The anchor event discriminators for the two events these tests build.
-/// Hard-coded for the same reason the SDK's are, and pinned there against
-/// the anchor scheme by `discriminators_match_anchor_scheme`.
-const FILL_DISCRIMINATOR: [u8; 8] = [13, 89, 41, 228, 105, 178, 45, 112];
-const DEPOSIT_DISCRIMINATOR: [u8; 8] = [120, 248, 61, 83, 31, 142, 107, 144];
 
 /// Start a throwaway Postgres, migrate it, and connect both the indexer's
 /// store and a framework pool over it.
@@ -74,7 +68,7 @@ fn tagged(discriminator: [u8; 8], body: &impl borsh::BorshSerialize) -> Vec<u8> 
 /// One fill leg on `market`, priced so the take totals are easy to read.
 fn fill(market: Pubkey, base: u64, quote: u64, fee: u64) -> Vec<u8> {
     tagged(
-        FILL_DISCRIMINATOR,
+        FILL_EVENT_DISCRIMINATOR,
         &FillEvent {
             market,
             taker: Pubkey::new_unique(),
@@ -100,7 +94,7 @@ fn fill(market: Pubkey, base: u64, quote: u64, fee: u64) -> Vec<u8> {
 /// typed fills table.
 fn deposit(market: Pubkey) -> Vec<u8> {
     tagged(
-        DEPOSIT_DISCRIMINATOR,
+        DEPOSIT_EVENT_DISCRIMINATOR,
         &DepositEvent {
             market,
             sector_idx: 1,
