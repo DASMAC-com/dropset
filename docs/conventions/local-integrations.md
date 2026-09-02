@@ -304,12 +304,33 @@ over-read:**
   heredoc or a piped `echo … | psql` puts the keyword on a different
   line from the client and is not seen; two of those three shapes are
   already barred by the compound guard.
+
 - **`git clean` is exempted only by a real dry-run flag** — a short
   cluster containing `n`, or `--dry-run`. A looser test read any flag
   containing an `n` as a preview, so an ordinary
   `--exclude=node_modules` made a real `git clean -fdx` look like a dry
   run and go unclassified. This is the failure mode to watch for across
   this whole file: **a false-positive fix opening a real hole.**
+
+- **A quoted argument is treated as data only for a small allowlist of
+  read-only search programs** (`grep`, `rg`, `search_source.py` and
+  friends). A read-only search whose *pattern* contained `rm -f` was
+  denied as a recursive force-delete: the `rm` inside the quoted pattern
+  paired with the `-f` in it and the `r` in a later `--dir` flag to
+  satisfy both lookaheads. The command deleted nothing.
+
+  The allowlist is the whole safety argument, and the scope is why this
+  is not the hole the bullet above warns about. Suppressing *every*
+  quoted match would pass `bash -c "rm -rf /"` and `sh -c '…'`
+  straight through, because there the quoted text genuinely *is* shell;
+  it would also break the deny tier, whose catastrophic targets are
+  matched in their quoted forms (`"$HOME"`, `'$HOME'`) on purpose. Only
+  the command **name** inside an argument to a search tool is ignored,
+  and only the match's start position is tested — so an unquoted
+  destructive command sharing a line with a search still classifies. An
+  unterminated quote contributes no quoted span, deliberately: this
+  filter can only ever suppress, so a stray quote must not become a way
+  to hide a command behind it.
 
 Two implementation notes worth keeping, because both were found by the
 script's own self-test rather than in review:
@@ -495,6 +516,28 @@ notification repaint yellow mid-wait). The sentinel is cleared on any
 other paint, and a stale one from a crashed session is dropped at session
 start, so a genuine permission prompt that follows unrelated work still
 turns the tab yellow.
+
+**A permission yellow also self-heals, because nothing on the denial path
+repaints.** The painter's only neutral-painting events are `PostToolUse`,
+`UserPromptSubmit` and a non-permission `PreToolUse` — and a tool that a
+`PreToolUse` guard blocks *after* the operator has already approved it
+runs none of them. The measured wedge is exactly that: approve, a guard
+denies, the tool errors red, and the tab stays yellow over a session that
+wants nothing. So painting a `permission_prompt` yellow also refreshes a
+per-tty `.permwait` sentinel, and the monitor clears the tint once that
+sentinel goes stale.
+
+The heal keys on the same re-fire behavior the sticky-green guard relies
+on: the harness re-fires `permission_prompt` while a prompt waits, so a
+prompt that still wants an answer keeps refreshing the sentinel and never
+goes stale, while a resolved one — approved *or* denied — stops being
+re-fired and heals. The threshold
+(`ITERM_PERM_WAIT_STALE_SECONDS`, default 120s) is deliberately generous
+because the two errors are not symmetric: healing too eagerly drops the
+yellow on a prompt that really is waiting, and a missed prompt stalls the
+session, which is worse than the lingering tint being fixed. An
+edit-tool yellow carries no sentinel and is never healed — its lifetime
+is not governed by permission re-fires.
 
 ### FIFO attention ordering
 

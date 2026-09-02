@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # cspell:word pgdata
+# cspell:word fgrep
 """PreToolUse guard: stop catastrophic and hard-to-reverse Bash commands.
 
 The three committed guards cover shell **form** (compounds, `git grep`) and
@@ -225,6 +226,100 @@ def split_comments(cmd):
 
 _CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
 
+# Programs whose quoted arguments are DATA — a search pattern, a regex, a format
+# string — rather than shell to be run. For these, and ONLY these, a
+# destructive-looking match that begins inside a quoted argument is ignored.
+#
+# The motivating false positive was a read-only search: a `search_source.py`
+# call whose pattern happened to contain `rm -f` was denied as a recursive
+# force-delete, because `rm` inside the quoted pattern paired with the `-f'` in
+# it and the `r` in a later `--dir` flag to satisfy both lookaheads of
+# `_RM_RECURSIVE_FORCE`. The command deletes nothing and touches nothing.
+#
+# Scoped to an allowlist rather than applied to all quoted spans, and the
+# distinction is the whole safety argument. Suppressing every quoted match would
+# let `bash -c "rm -rf /"` and `sh -c '…'` straight through, since there the
+# quoted text IS shell. It would also break the deny tier outright: the
+# catastrophic targets are deliberately matched in their quoted forms
+# (`_CATASTROPHIC_TARGET` carries `"$HOME"` and `'$HOME'`), so `rm -rf "$HOME"`
+# depends on quoted content being scanned. What is never legitimate is a
+# destructive command NAME appearing inside an argument to `grep`.
+READ_ONLY_PROGRAMS = frozenset(
+    {
+        "ack",
+        "ag",
+        "egrep",
+        "fgrep",
+        "grep",
+        "read_result.py",
+        "rg",
+        "search_source.py",
+        "show_at_ref.py",
+    }
+)
+
+
+def quoted_spans(line):
+    """``[(start, end)]`` index ranges of ``line`` that sit inside quotes.
+
+    An UNTERMINATED quote contributes no span, deliberately. This function only
+    ever suppresses a match, so the conservative direction is to report less
+    quoting rather than more: a stray quote must not be a way to hide a real
+    command behind it.
+    """
+    spans = []
+    quote = None
+    start = 0
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if quote is None:
+            if c == "\\":
+                i += 2
+                continue
+            if c in "'\"":
+                quote = c
+                start = i + 1
+        else:
+            if quote == '"' and c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                spans.append((start, i))
+                quote = None
+        i += 1
+    return spans
+
+
+def program_of(line):
+    """The program a line invokes, for the read-only check.
+
+    ``python3 .claude/tools/search_source.py`` reports ``search_source.py``: the
+    interpreter is not the interesting name, the script it runs is.
+    """
+    tokens = line.strip().split()
+    if not tokens:
+        return ""
+    program = tokens[0].rpartition("/")[2]
+    if program in ("python", "python3"):
+        for token in tokens[1:]:
+            if not token.startswith("-"):
+                return token.rpartition("/")[2]
+    return program
+
+
+def _matches(pattern, line):
+    """Whether ``pattern`` fires on ``line``, ignoring quoted-argument text for
+    the read-only programs above."""
+    if program_of(line) not in READ_ONLY_PROGRAMS:
+        return bool(pattern.search(line))
+    spans = quoted_spans(line)
+    for match in pattern.finditer(line):
+        if not any(lo <= match.start() < hi for lo, hi in spans):
+            return True
+    return False
+
 
 def classify(cmd):
     """``("deny"|"ask"|None, reason)`` for one command string.
@@ -249,10 +344,10 @@ def classify(cmd):
     cmd = _CONTINUATION_RE.sub(" ", cmd)
     lines = [line for line in cmd.splitlines() if line.strip()]
     for pattern, reason in DENY_PATTERNS:
-        if any(pattern.search(line) for line in lines):
+        if any(_matches(pattern, line) for line in lines):
             return "deny", reason
     for pattern, reason in ASK_PATTERNS:
-        if any(pattern.search(line) for line in lines):
+        if any(_matches(pattern, line) for line in lines):
             return "ask", reason
     return None, ""
 
@@ -341,6 +436,36 @@ def _self_test():
         ("docker system prune -af", "ask"),
         ("docker volume rm dropset_pgdata", "ask"),
         ("git branch -D eng-900", "ask"),
+        # A read-only SEARCH whose quoted pattern merely CONTAINS destructive
+        # text. The measured false positive: `rm` inside the pattern paired
+        # with the `-f'` in it and the `r` in a later `--dir` to satisfy both
+        # lookaheads of _RM_RECURSIVE_FORCE, denying a command that deletes
+        # nothing.
+        ("python3 .claude/tools/search_source.py 'askq|rm -f' --dir .claude", None),
+        ("grep -e 'rm -rf /' -e trap /tmp/log.txt", None),
+        ('grep -rn "git push --force" docs', None),
+        ("rg 'git reset --hard' .claude", None),
+        # ...but the allowlist must not become a bypass. The quoted text of a
+        # SHELL is shell, and an unquoted destructive command on a read-only
+        # program's line is still that command.
+        #
+        # These two land on `ask` rather than `deny` for a PRE-EXISTING reason
+        # unrelated to quoted-argument scanning: the deny pattern anchors the
+        # catastrophic target at end-of-line, and the closing quote sits after
+        # it. Pinned at `ask` here so the case still proves the point that
+        # matters — a shell's quoted payload is never suppressed — and so a
+        # later change to that anchor is noticed here rather than silently.
+        ('bash -c "rm -rf /"', "ask"),
+        ("sh -c 'rm -rf $HOME'", "ask"),
+        ('bash -c "git push --force origin main"', "deny"),
+        ("grep pattern file; rm -rf /", "deny"),
+        # An unterminated quote must not hide a real command behind it: the
+        # span scan reports no quoting rather than swallowing the remainder.
+        ("grep 'unclosed rm -rf /", "deny"),
+        # A quoted CATASTROPHIC TARGET is still a real deny — the patterns match
+        # `"$HOME"` deliberately, so the fix must not blank quoted content.
+        ('rm -rf "$HOME"', "deny"),
+        ("rm -rf '$HOME'", "deny"),
         # deny tier
         ("rm -rf /", "deny"),
         ("rm -rf ~", "deny"),

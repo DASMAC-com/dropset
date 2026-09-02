@@ -108,5 +108,17 @@ else
   rm -f "$(askq_sentinel_path "$TTY_BASE")"
 fi
 
+# Maintain the permission-wait sentinel. Refresh it on every permission_prompt
+# yellow — the harness re-fires that notification while the prompt waits, so its
+# mtime tracks "still waiting" — and clear it on any other paint. The monitor
+# heals a STALE one back to neutral, which is what stops a guard-denied tool
+# from leaving the tab yellow forever; see PERM_WAIT_STALE_SECONDS in
+# iterm-colors.sh for why that safety net is needed and why it is generous.
+if [ "$EVENT" = "Notification" ] && [ "$COLOR" = "$STATE_PERMISSION" ]; then
+  : >"$(perm_wait_path "$TTY_BASE")"
+else
+  rm -f "$(perm_wait_path "$TTY_BASE")"
+fi
+
 echo "$COLOR" >"$STATE_PREFIX$TTY_BASE"
 emit_set_colors "$COLOR" >"$TTY_PATH"

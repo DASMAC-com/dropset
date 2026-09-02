@@ -129,6 +129,8 @@ linkifies
 litesvm
 localnet
 localtime
+lookahead
+lookaheads
 lpad
 macropod
 memcpy
@@ -167,6 +169,7 @@ permissioned
 permissioning
 permissionless
 permissionlessly
+permwait
 pgrep
 pkill
 poppler

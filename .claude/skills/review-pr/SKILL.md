@@ -4679,8 +4679,33 @@ already being asked to start the review.
      registered and the PR that was registered and kicked out
      read *identically* on this probe.
 
-     **Resolve that ambiguity with one `gh run list` — before
-     concluding anything.** The queue branch is the evidence:
+     **First rule out that it already MERGED, because this
+     probe cannot be trusted to notice.** GraphQL lags the
+     merge. A measured run got an open, unmerged, all-null
+     answer from GraphQL while a `gh pr view` state read *at
+     the same moment* returned `MERGED`.
+
+     Every all-null test below — the `gh run list`
+     evidence, the earlier-non-null rule, the two-consecutive
+     rule — reads that as a removal, so following them
+     literally concludes "kicked out of the queue" on a PR
+     that merged, and sends the next session diagnosing a CI
+     failure that does not exist.
+
+     One read settles it, and it is already inside the `gh`
+     carve-out for polled PR-state reads
+     (`docs/conventions/github-mcp.md`):
+
+     ```sh
+     gh pr view <number> --json state,mergedAt
+     ```
+
+     `state: "MERGED"` (or a non-null `mergedAt`) → it
+     merged; take the merged path and stop. Only once this
+     says otherwise do the removal tests below mean anything.
+
+     **Resolve the remaining ambiguity with one `gh run list`
+     — before concluding anything.** The queue branch is the evidence:
      if a run set for `pr-<number>-` exists, the entry
      demonstrably existed, so an all-null probe now means it
      **left**. If no such run set exists, the PR was never

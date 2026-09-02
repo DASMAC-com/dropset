@@ -33,6 +33,33 @@ MONITOR_PID_PREFIX="/tmp/iterm-monitor-"
 # local-integrations convention doc); read by the attend toggle.
 SESSION_TTY_PREFIX="/tmp/iterm-session-tty-"
 
+# How long a permission-prompt yellow may sit UNREFRESHED before the monitor
+# heals it back to neutral.
+#
+# This exists because nothing on the denial path clears yellow. The painter's
+# only neutral-painting events are PostToolUse, UserPromptSubmit and a
+# non-permission PreToolUse — and a tool that a PreToolUse guard blocks *after*
+# the operator has already approved it runs none of them. The tab then stays
+# yellow over a session that needs nothing, which is the measured wedge: approve,
+# a guard denies, the tool errors red, and the tint never clears.
+#
+# The heal keys on a fact the painter already relies on elsewhere: the harness
+# RE-FIRES permission_prompt periodically while a prompt waits. So a prompt that
+# genuinely still wants an answer keeps refreshing this sentinel and never goes
+# stale, while a resolved one — approved or denied — stops being re-fired and
+# heals.
+#
+# The default is deliberately GENEROUS, because the two errors are not
+# symmetric. Healing too eagerly drops the yellow on a prompt that really is
+# waiting, and a missed prompt stalls the session — strictly worse than a
+# lingering tint, which is merely the annoyance being fixed. Two minutes bounds
+# the wedge without racing a re-fire interval this integration does not control.
+# Raise it with ITERM_PERM_WAIT_STALE_SECONDS if that interval proves longer.
+PERM_WAIT_STALE_SECONDS="${ITERM_PERM_WAIT_STALE_SECONDS:-120}"
+
+# Per-tty sentinel recording when a permission-prompt yellow was last refreshed.
+perm_wait_path() { printf '%s%s.permwait' "$STATE_PREFIX" "$1"; } # $1 = tty base
+
 # Map a state hex to the *tab* tint hex (or the literal "default" for no tint).
 bg_to_tab() {
   case "$1" in
