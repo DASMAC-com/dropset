@@ -204,6 +204,7 @@ rnaps
 rollup
 rollups
 rpaps
+rposition
 rsplit
 rustc
 rustdoc

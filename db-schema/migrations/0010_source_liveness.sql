@@ -119,7 +119,17 @@ last_seen AS (
         --
         -- Iterating the granularity vocabulary gives each probe a full
         -- equality prefix, so the transform applies and each becomes one
-        -- backward seek: 0.8 ms and 884 buffers, flat with history.
+        -- backward seek: measured at 0.8 ms and 884 buffers, and — the
+        -- property that actually matters — FLAT with history rather than
+        -- linear in it.
+        --
+        -- That measurement was taken with a six-value list; the list below is
+        -- the wider writable superset the correctness note explains, so the
+        -- constant is larger than 884 buffers and has not been re-measured.
+        -- Each added entry is still a single seek that finds nothing, so the
+        -- flatness is unchanged and the cost stays a small multiple of the
+        -- measured figure rather than a return to the scan. Re-measure before
+        -- quoting a number.
         --
         -- Filtering the view the way a dashboard variable would does not help
         -- on its own, because Postgres does not push that filter into the
@@ -131,18 +141,37 @@ last_seen AS (
         -- the open range: a granularity holding no rows contributes NULL, and
         -- both `max` and the outer `GREATEST` ignore NULLs.
         --
-        -- **THE VOCABULARY IS DUPLICATED, AND A TEST PINS IT.** A granularity
-        -- missing from this list makes its series read as never-collected — a
-        -- false "quiet", which 0009 explicitly identifies as the worse of the
-        -- two error directions because it HIDES data. So
-        -- `market-data/tests/granularity_agreement.rs` parses this list and
-        -- the dashboard's granularity variable and fails if they diverge. Add
-        -- a granularity in both places, or CI stops you. Do not "simplify"
-        -- this back to an open range to avoid the duplication; that trades a
-        -- caught divergence for an uncaught 78x regression.
+        -- **THE LIST MUST BE A SUPERSET OF EVERY WIDTH A COLLECTOR CAN
+        -- WRITE, AND A TEST PINS THAT.** Partitioned `max` equals global
+        -- `max` only when the partitions cover every row, so a granularity
+        -- present in `cex_prices` but missing here makes its series read as
+        -- never-collected — a false "quiet", which 0009 identifies as the
+        -- worse of the two error directions because it HIDES data. The open
+        -- range this replaced could not have that fault, so the list is the
+        -- price of the seek and it has to be paid in full.
+        --
+        -- Six values would NOT be enough, which is the trap: the bucket width
+        -- is operator-configurable per collector (`GRANULARITY_SECS`), so no
+        -- code change is needed to write a width outside a short list. The
+        -- entries below are the union of every width an adapter can emit —
+        -- OANDA's and Twelve Data's explicit allowlists, Alpha Vantage's
+        -- fixed daily, and Coinbase's set (which has no allowlist in our
+        -- code at all: the width is passed through and the venue is the
+        -- validator, so its supported set bounds it). A width appearing in
+        -- one of those tables and not here is caught by
+        -- `market-data/tests/granularity_agreement.rs`, which parses all of
+        -- them plus the dashboard variable and fails on any that this list
+        -- does not cover.
+        --
+        -- Do not "simplify" this back to an open range to avoid the
+        -- duplication; that trades a caught divergence for an uncaught
+        -- regression to the scan above.
         SELECT max(g.last_at) AS last_at
-        FROM (VALUES (60), (300), (900), (3600), (21600), (86400))
-            AS gran (secs)
+        FROM (VALUES
+            (5), (10), (15), (30), (60), (120), (240), (300), (600), (900),
+            (1800), (2700), (3600), (7200), (10800), (14400), (21600),
+            (28800), (43200), (86400), (604800)
+        ) AS gran (secs)
         CROSS JOIN LATERAL (
             SELECT max(c.bucket_start) AS last_at
             FROM cex_prices c

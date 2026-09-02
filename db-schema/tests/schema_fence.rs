@@ -1176,6 +1176,48 @@ async fn source_liveness_separates_a_dark_collector_from_a_live_pair() {
     );
 }
 
+/// The candle widths `instrument_source_liveness` probes, read out of the
+/// migration's `VALUES` list.
+///
+/// Parsed rather than restated so this test cannot cover a subset of what the
+/// view actually probes. `granularity_agreement` in market-data's tests pins
+/// that list against every width a collector can write; this reads the same
+/// list to check each entry works.
+fn view_granularities() -> Vec<i64> {
+    let sql = include_str!("../migrations/0010_source_liveness.sql");
+    let lines: Vec<&str> = sql.lines().collect();
+    let anchor = lines
+        .iter()
+        .position(|l| l.contains("AS gran (secs)"))
+        .expect("the `AS gran (secs)` anchor in 0010_source_liveness.sql");
+    let opens_at = lines[..=anchor]
+        .iter()
+        .rposition(|l| l.contains("(VALUES"))
+        .expect("the `(VALUES` opening the granularity list");
+    let mut secs: Vec<i64> = lines[opens_at..=anchor]
+        .iter()
+        .flat_map(|l| {
+            let mut out = Vec::new();
+            let mut current = String::new();
+            for ch in l.chars() {
+                if ch.is_ascii_digit() {
+                    current.push(ch);
+                } else if !current.is_empty() {
+                    out.push(current.parse::<i64>().expect("a digit run"));
+                    current.clear();
+                }
+            }
+            if !current.is_empty() {
+                out.push(current.parse::<i64>().expect("a digit run"));
+            }
+            out
+        })
+        .collect();
+    secs.sort_unstable();
+    secs.dedup();
+    secs
+}
+
 /// Every granularity in the view's vocabulary is actually seen by it.
 ///
 /// The `bars` lateral iterates a literal granularity list so each probe gets a
@@ -1198,19 +1240,24 @@ async fn liveness_sees_a_bar_at_every_granularity_in_its_vocabulary() {
     let (_pg, pool) = start_pg().await;
     migrate(&pool).await.expect("apply migrations");
 
-    // Kept in step with the `VALUES` list in `0010_source_liveness.sql` by
-    // `granularity_agreement`, which fails if the view and the dashboard
-    // diverge. A granularity added there and not here would leave this test
-    // passing while covering one fewer probe, so if you add one, add it in all
-    // three places.
-    let granularities: [i64; 6] = [60, 300, 900, 3600, 21600, 86400];
+    // PARSED from the migration rather than restated, so this cannot drift
+    // into covering fewer probes than the view has. A hardcoded copy here
+    // would leave the test green while silently exercising a subset — the
+    // failure it exists to catch, one level up.
+    let granularities = view_granularities();
+    assert!(
+        granularities.len() >= 6,
+        "parsed only {} granularities from 0010_source_liveness.sql — the \
+         `VALUES` list moved or changed shape",
+        granularities.len()
+    );
 
     // One product per granularity, so a single missing probe isolates to a
     // single failing row rather than being masked by a sibling that shares the
     // series. The ids only have to satisfy `instrument_registry`'s canonical
     // shape; the class they resolve to is irrelevant here, because one hour of
     // silence is inside every bound.
-    for secs in granularities {
+    for &secs in &granularities {
         let product = format!("G{secs}-USD");
         sqlx::query(
             "INSERT INTO instrument_registry
@@ -1236,7 +1283,7 @@ async fn liveness_sees_a_bar_at_every_granularity_in_its_vocabulary() {
         .unwrap_or_else(|e| panic!("insert a {secs}s bar for `{product}`: {e}"));
     }
 
-    for secs in granularities {
+    for &secs in &granularities {
         let product = format!("G{secs}-USD");
         let (is_live, last_data_at): (bool, Option<i64>) = sqlx::query_as(
             "SELECT is_live, last_data_at
