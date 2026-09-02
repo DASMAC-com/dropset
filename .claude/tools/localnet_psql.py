@@ -125,8 +125,15 @@ def _url_user(db_url: str) -> str | None:
     try:
         user = urlsplit(db_url).username
     except ValueError:
-        # A malformed URL is psql's problem to report, not this guard's — it
-        # must not turn an unparseable string into a refusal.
+        # Unparseable: report it as "no username", which is what the caller's
+        # allowlist then refuses. This used to say the opposite — that a
+        # malformed URL must never become a refusal — and that was true under
+        # the old denylist, where `None` meant "not the owner, pass it through".
+        # Inverting to an allowlist inverted this too: `None` is now refused.
+        # That is the right direction (fail closed), but the refusal message
+        # will say "no username" for a string that is simply malformed, so read
+        # it as "this guard could not identify a role" rather than as a precise
+        # diagnosis.
         return None
     return unquote(user) if user is not None else None
 

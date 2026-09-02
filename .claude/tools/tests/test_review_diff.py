@@ -717,15 +717,23 @@ class GateTests(unittest.TestCase):
         )
         self.assertTrue(v["slices"]["docs"]["path"].endswith("review-diff-docs.txt"))
 
-    def test_an_out_that_would_have_collided_now_just_works(self):
-        """The old guard refused this; the stem derivation makes it impossible,
-        so it is no longer an error case."""
+    def test_an_out_spelled_like_a_slice_is_still_refused(self):
+        """The stem derivation stops slice-vs-slice clobber, not out-vs-slice.
+
+        `--out review-diff-docs.txt` would write the WHOLE diff over a previous
+        run's docs slice — the same silent overwrite by a different route — so
+        that spelling stays refused deliberately rather than as a side effect of
+        the old guard.
+        """
         self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
-        formerly_colliding = self.out.parent / "review-diff-source.txt"
-        v = rd.gate("main", formerly_colliding, fetch=False, split=True)
-        self.assertTrue(
-            v["slices"]["source"]["path"].endswith("review-diff-source-source.txt")
-        )
+        for name in ("source", "tests", "docs"):
+            with self.assertRaises(rd.ReviewDiffError):
+                rd.gate(
+                    "main",
+                    self.out.parent / f"review-diff-{name}.txt",
+                    fetch=False,
+                    split=True,
+                )
 
     def test_split_rewrites_slices_each_run(self):
         """Same rationale as the full diff: a stale slice is the hazard."""

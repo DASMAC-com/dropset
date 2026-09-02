@@ -113,6 +113,28 @@ class FormatRows(unittest.TestCase):
         )
         self.assertNotIn("SECRET", line)
 
+    def test_redaction_keeps_the_text_after_the_url(self):
+        # An exception reads "<reason>: <url> (<detail>)". Truncating at the
+        # first `?` would redact the key AND throw away the detail that makes
+        # it a diagnosis, so the query is substituted rather than cut at.
+        (line,) = pe.format_rows(
+            [self.row(error="failed: https://a.invalid/?k=SECRET (conn reset)")]
+        )
+        self.assertNotIn("SECRET", line)
+        self.assertIn("(conn reset)", line)
+
+    def test_a_malformed_pair_does_not_echo_its_query(self):
+        # Fires on a typo — a dropped `=` — which is exactly when a keyed venue
+        # URL is still on the command line.
+        with self.assertRaises(pe.ProbeError) as caught:
+            pe.parse_label_url("https://a.invalid/q?apikey=SECRET")
+        self.assertNotIn("SECRET", str(caught.exception))
+
+    def test_a_bad_scheme_does_not_echo_its_query(self):
+        with self.assertRaises(pe.ProbeError) as caught:
+            pe.parse_label_url("av=htp://a.invalid/q?apikey=SECRET")
+        self.assertNotIn("SECRET", str(caught.exception))
+
     def test_truncation_is_flagged_inline(self):
         # Same reasoning as the redirect flag: a partial body on disk is
         # indistinguishable from a complete one, and the downstream step parses

@@ -138,6 +138,14 @@ class SubAgentLine:
 def _load_allowlist() -> list[str]:
     """The shared allowlist's rules, or ``[]`` when it cannot be read.
 
+    **This makes the report machine-dependent, deliberately.** Two operators
+    mining the same transcript can get different `cost_kind` labels, because
+    coverage is a fact about *this* machine's `settings.local.json` and churn is
+    a fact about what actually prompted here — which is the question the label
+    is answering. Worth knowing when comparing two runs' tables, and worth
+    pinning in tests: `test_session_metrics.py` replaces this function so the
+    suite never reads operator config.
+
     Best-effort by design. This only ever *downgrades* a churn claim, so an
     unreadable allowlist reports exactly what this table reported before the
     coverage check existed — the safe direction, and the reason no failure here

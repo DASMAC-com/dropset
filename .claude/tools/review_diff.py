@@ -660,6 +660,17 @@ def split_diff(diff_path: Path, out_dir: Path) -> dict:
     # as a second, unreachable source of truth.
     stem = diff_path.stem
     paths = {name: out_dir / f"{stem}-{name}.txt" for name in SLICE_NAMES}
+    # One hazard the stem derivation does NOT close: an `--out` that is itself
+    # spelled like a slice (`--out review-diff-docs.txt`) writes the whole diff
+    # over a previous run's docs slice. The old guard refused that filename as a
+    # side effect; keep refusing it deliberately, since it is the same
+    # silent-overwrite failure by a different route.
+    if any(stem.endswith(f"-{name}") for name in SLICE_NAMES):
+        raise ReviewDiffError(
+            f"--out {diff_path.name} is spelled like a --split slice, so it "
+            f"would overwrite one; choose a name not ending in "
+            f"-{'/-'.join(SLICE_NAMES)}"
+        )
     handles = {}
     counts = dict.fromkeys(SLICE_NAMES, 0)
     try:

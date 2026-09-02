@@ -360,8 +360,14 @@ def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
         total += size
         lines.append(f"  {label}: {len(recs)} dir(s), {_mb(size)}")
     lines.append(f"  TOTAL to free: {_mb(total)}")
-    lines.append(f"  kept: {protected}")
-    for reason, count in kept_by_reason(groups).items():
+    # Header and breakout from ONE source. `protected` arrives as a
+    # caller-computed scalar, and a header that can disagree with the lines
+    # under it is the same confusion the per-reason breakout was added to
+    # remove — so the total is summed from the breakout rather than taken on
+    # trust. The parameter is kept for callers, and asserted against.
+    by_reason = kept_by_reason(groups)
+    lines.append(f"  kept: {sum(by_reason.values())}")
+    for reason, count in by_reason.items():
         lines.append(f"    {reason}: {count}")
     lines.append("\nRe-run with --apply to hard-delete the above.")
     return "\n".join(lines)

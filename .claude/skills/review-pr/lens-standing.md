@@ -18,7 +18,9 @@ or run the full test suite instead of reviewing the diff, and the redo is
 expensive. Stay on your dimension.
 
 **Read your slice by path.** Your prompt names a diff slice in the scratchpad
-(`review-diff-source.txt`, `-tests.txt`, or `-docs.txt`). Read that file; do not
+(named `<out-stem>-source.txt`, `-tests.txt`, or `-docs.txt` — so the default
+run yields `review-diff-source.txt` and a scoped one its own set). Read that
+file; do not
 re-derive the diff by shelling out to `git`.
 
 ## Budget

@@ -753,6 +753,12 @@ compliant, which is exactly how ≈20k went unremarked. `review-pr`
 reports the count in its summary, so a fourth write is visible rather
 than merely regrettable.
 
+**Count writes and ECHOES separately — they are no longer the same
+number.** Of those three, only the first two echo: the In-Review
+transition goes through `board_batch.py state`. So the nominal profile
+is three writes and **two** echoes, dropping to one echo on an issue
+with no checklist (nothing to tick, so nothing to write at step 3).
+
 One fourth write is **sanctioned**: an issue rewritten mid-run by an
 operator scope reframe. That recurs whenever direction changes during
 implementation, and naming it here is what stops a legitimate reframe
@@ -851,17 +857,21 @@ anything the repo could edit, which was true of the MCP path and false
 of the API, and would have left this section asserting two incompatible
 things once the tools landed.
 
-**Two is the floor WITHIN `review-pr` for an issue with no checklist.**
-Note the scope, because it is a different quantity from the three-write
-budget above: that one counts the whole session including `init-pr`'s
-bootstrap write, this one counts only `review-pr`'s own pair. They are
-not in tension and neither supersedes the other.
+**The old two-echo floor within `review-pr` is now ZERO, and that is a
+correction rather than a nuance.** The reasoning that produced it still
+holds — `review-pr` folds the In-Progress move into the box-tick write,
+an issue with no checkboxes has nothing to fold it into, and the
+In-Review move is gated on CI going green at a different point in the
+flow so it cannot fold backwards — but it counted **writes**, and what
+this section is about is **echoes**. The In-Review transition now goes
+through `board_batch.py state`, which echoes nothing. So on a
+checklist-free issue `review-pr` makes no echoing write at all, and on
+one with a checklist it makes exactly one.
 
-The folding advice above quietly assumes a checklist exists. `review-pr`
-folds the In-Progress move into the box-tick write — but an issue with
-no checkboxes has nothing to fold it into, and the In-Review move is
-gated on CI going green at a different point in the flow, so it cannot
-fold backwards at all. Do not re-derive that pair as fixable waste.
+Do not re-derive the old pair as fixable waste; it was fixed. What
+remains for the whole session is `init-pr`'s bootstrap write, and that
+one is deliberate — see the three-write budget above, where the echo
+does double duty as the spec the session is about to surface.
 
 Two techniques worth keeping, both measured working:
 

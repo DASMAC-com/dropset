@@ -20,7 +20,13 @@ that structural instead of lucky.
 Bodies go to ``--out-dir`` and **never to stdout**, one file per endpoint named
 after its label. Stdout carries one table row per endpoint:
 
-    label  status  redirects  bytes  content-type  final-url
+    label  status  bytes  content-type  final-url  [REDIRECTED(n)] [TRUNCATED(…)]
+
+Redirection and truncation are **inline flags rather than columns**, because a
+column is something a reader skims past and both of these are facts the caller
+has to act on. The reported URL has its query string replaced by ``?…``: this
+repo's feed venues authenticate by query parameter, so the URL is the one place
+a probe could put a credential in the transcript.
 
 Usage::
 
@@ -43,7 +49,9 @@ Cargo workspace member. Tests live in ``tests/test_probe_endpoints.py``.
 from __future__ import annotations
 
 import argparse
+import http.client
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -83,8 +91,12 @@ class _CountingRedirectHandler(urllib.request.HTTPRedirectHandler):
 def parse_label_url(raw: str) -> tuple[str, str]:
     """Split a ``label=url`` pair, validating the label as filename-safe."""
     label, sep, url = raw.partition("=")
+    # Redacted on the ARGV path too, not only in the result rows. These fire on
+    # a typo — a mistyped scheme, a dropped `=` — which is exactly when a keyed
+    # venue URL is still on the command line, and echoing it whole would put the
+    # key in stderr.
     if not sep or not label or not url:
-        raise ProbeError(f"expected label=url, got {raw!r}")
+        raise ProbeError(f"expected label=url, got {redact_query(raw)!r}")
     bad = set(label) - _SAFE_LABEL
     if bad:
         raise ProbeError(
@@ -92,7 +104,9 @@ def parse_label_url(raw: str) -> tuple[str, str]:
             f"{''.join(sorted(bad))}"
         )
     if not url.startswith(("http://", "https://")):
-        raise ProbeError(f"{label}: only http(s) URLs are probed, got {url!r}")
+        raise ProbeError(
+            f"{label}: only http(s) URLs are probed, got {redact_query(url)!r}"
+        )
     return label, url
 
 
@@ -130,7 +144,15 @@ def probe_one(label: str, url: str, out_dir: str, timeout: int) -> dict:
         row["status"] = exc.code
         row["content_type"] = exc.headers.get("Content-Type", "") if exc.headers else ""
         row["final_url"] = url
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (
+        urllib.error.URLError,
+        # `IncompleteRead` / `BadStatusLine` are raised during `.read()` and are
+        # HTTPException, NOT OSError — without this they escape as a traceback
+        # rather than the one clean stderr line this module promises.
+        http.client.HTTPException,
+        OSError,
+        ValueError,
+    ) as exc:
         body = b""
         row["error"] = str(exc)
     if len(body) > MAX_BODY_BYTES:
@@ -146,8 +168,15 @@ def probe_one(label: str, url: str, out_dir: str, timeout: int) -> dict:
     return row
 
 
-def redact_query(url: str) -> str:
-    """``url`` with any query string replaced by ``?…``.
+#: A query string: `?` up to the next whitespace. Substituted rather than
+#: truncated-at, so text AFTER the URL survives — an exception message is
+#: usually "<reason>: <url> (<detail>)", and cutting at the first `?` would
+#: throw away the detail that makes it a diagnosis.
+_QUERY_RE = re.compile(r"\?\S*")
+
+
+def redact_query(text: str) -> str:
+    """``text`` with every query string in it replaced by ``?…``.
 
     The reported URL is the one place a probe can leak a credential into the
     transcript, and this repo's own feed venues authenticate **by query
@@ -156,9 +185,11 @@ def redact_query(url: str) -> str:
     rather than a hypothetical. The tool has no notion of which parameter is a
     secret, so it reports none of them — the host and path are what a
     reachability probe is actually about.
+
+    Takes arbitrary text, not just a URL, because the paths that need it
+    include exception strings and argv echoes.
     """
-    head, sep, _ = url.partition("?")
-    return f"{head}?…" if sep else head
+    return _QUERY_RE.sub("?…", text)
 
 
 def format_rows(rows: list[dict]) -> list[str]:
