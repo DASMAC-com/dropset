@@ -63,27 +63,47 @@ pub const EVENT_IX_TAG_LE: [u8; 8] = EVENT_IX_TAG.to_le_bytes();
 pub const DISCRIMINATOR_LEN: usize = 8;
 
 // Event discriminators (sha256("event:<Name>")[..8]), one per entry in the
-// IDL `events` list, pinned both ways by the test module.
+// IDL `events` list, pinned both ways by the test module. Each carries a
+// doc comment because they are `pub`: the module doc justifies exporting
+// them so a consumer names one rather than hand-copying the bytes, and a
+// consumer reading rustdoc should see what each one identifies.
+/// Discriminator for `CloseMarketTreasuryEvent`.
 pub const CLOSE_MARKET_TREASURY_EVENT_DISCRIMINATOR: [u8; 8] =
     [234, 64, 141, 172, 128, 178, 239, 232];
+/// Discriminator for `CloseRegistryFeeVaultEvent`.
 pub const CLOSE_REGISTRY_FEE_VAULT_EVENT_DISCRIMINATOR: [u8; 8] =
     [82, 31, 124, 13, 220, 141, 65, 50];
+/// Discriminator for `CloseVaultEvent`.
 pub const CLOSE_VAULT_EVENT_DISCRIMINATOR: [u8; 8] = [35, 37, 158, 74, 115, 93, 175, 136];
+/// Discriminator for `CreateVaultEvent`.
 pub const CREATE_VAULT_EVENT_DISCRIMINATOR: [u8; 8] = [42, 221, 241, 92, 177, 139, 118, 240];
+/// Discriminator for `DepositEvent`.
 pub const DEPOSIT_EVENT_DISCRIMINATOR: [u8; 8] = [120, 248, 61, 83, 31, 142, 107, 144];
+/// Discriminator for `FillEvent`.
 pub const FILL_EVENT_DISCRIMINATOR: [u8; 8] = [13, 89, 41, 228, 105, 178, 45, 112];
+/// Discriminator for `FreezeVaultEvent`.
 pub const FREEZE_VAULT_EVENT_DISCRIMINATOR: [u8; 8] = [9, 180, 143, 223, 189, 20, 1, 74];
+/// Discriminator for `PlatformFeeEvent`.
 pub const PLATFORM_FEE_EVENT_DISCRIMINATOR: [u8; 8] = [188, 157, 159, 156, 113, 199, 229, 159];
+/// Discriminator for `RealizeEvent`.
 pub const REALIZE_EVENT_DISCRIMINATOR: [u8; 8] = [255, 60, 160, 248, 4, 188, 32, 33];
+/// Discriminator for `SetDefaultFeeConfigEvent`.
 pub const SET_DEFAULT_FEE_CONFIG_EVENT_DISCRIMINATOR: [u8; 8] =
     [173, 121, 245, 191, 189, 52, 211, 216];
+/// Discriminator for `SetMarketFeeConfigEvent`.
 pub const SET_MARKET_FEE_CONFIG_EVENT_DISCRIMINATOR: [u8; 8] = [29, 171, 38, 30, 62, 131, 204, 214];
+/// Discriminator for `SetMaxPlatformFeeEvent`.
 pub const SET_MAX_PLATFORM_FEE_EVENT_DISCRIMINATOR: [u8; 8] = [45, 40, 179, 93, 26, 27, 196, 209];
+/// Discriminator for `SetMinLeaderShareEvent`.
 pub const SET_MIN_LEADER_SHARE_EVENT_DISCRIMINATOR: [u8; 8] =
     [159, 194, 164, 181, 227, 131, 179, 105];
+/// Discriminator for `SetRegistryDefaultsEvent`.
 pub const SET_REGISTRY_DEFAULTS_EVENT_DISCRIMINATOR: [u8; 8] = [138, 35, 107, 189, 236, 175, 31, 9];
+/// Discriminator for `SetTakerFeeEvent`.
 pub const SET_TAKER_FEE_EVENT_DISCRIMINATOR: [u8; 8] = [175, 232, 242, 29, 241, 48, 172, 41];
+/// Discriminator for `SweepResidualEvent`.
 pub const SWEEP_RESIDUAL_EVENT_DISCRIMINATOR: [u8; 8] = [10, 97, 22, 134, 106, 210, 95, 7];
+/// Discriminator for `WithdrawEvent`.
 pub const WITHDRAW_EVENT_DISCRIMINATOR: [u8; 8] = [22, 9, 133, 26, 160, 44, 71, 192];
 
 /// Every event the program emits via `emit_cpi!`, decoded into its
@@ -171,6 +191,25 @@ pub enum DecodeError {
     },
 }
 
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooShort => write!(f, "payload shorter than an event discriminator"),
+            Self::UnknownDiscriminator(disc) => {
+                write!(f, "no event claims discriminator {disc:?}")
+            }
+            Self::BodyDecode => write!(f, "event body failed to deserialize"),
+            Self::TrailingBytes { unread } => write!(
+                f,
+                "event body left {unread} byte(s) unread — the on-chain shape is \
+                 wider than this build reads"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
+
 /// Decode one tag-stripped event payload (`[discriminator(8)][body]`),
 /// reporting *why* it failed.
 ///
@@ -186,7 +225,9 @@ pub fn try_decode_event_payload(payload: &[u8]) -> Result<DropsetEvent, DecodeEr
         return Err(DecodeError::TooShort);
     }
     let (disc, mut body) = payload.split_at(DISCRIMINATOR_LEN);
-    let disc: [u8; 8] = disc.try_into().map_err(|_| DecodeError::TooShort)?;
+    // Not a second `TooShort` origin: the length guard above already
+    // returned, so `split_at(DISCRIMINATOR_LEN)` provably yields 8 bytes.
+    let disc: [u8; 8] = disc.try_into().expect("split_at guarantees 8 bytes");
     macro_rules! decode {
         ($variant:ident, $ty:ty) => {{
             let decoded = <$ty>::deserialize(&mut body).map_err(|_| DecodeError::BodyDecode)?;
@@ -235,11 +276,23 @@ pub fn try_decode_event_payload(payload: &[u8]) -> Result<DropsetEvent, DecodeEr
 
 /// [`try_decode_event_payload`], discarding the reason.
 ///
-/// Kept for callers that genuinely have nothing to do with a failure. A
-/// caller that walks a transaction's inner instructions should prefer the
-/// `try_` form: most blobs it sees are not Dropset events at all, but a
-/// blob that *is* tagged as ours and still won't decode is a drift signal
-/// worth logging rather than dropping.
+/// The right form for a caller that wants **one** event variant and has a
+/// fallback when it gets nothing — the maker-bot and the TUI both walk
+/// inner instructions looking only for `Fill`, so "this blob is not the
+/// event I want" is their ordinary case rather than a signal, and both
+/// reconstruct from inventory when a walk yields nothing.
+///
+/// Prefer the `try_` form when a failure is *actionable*: an indexer
+/// persisting every event has nothing to fall back on, so a blob that is
+/// tagged as ours and still will not decode is drift worth logging rather
+/// than dropping silently.
+///
+/// **Note for either caller:** [`try_decode_event_payload`] now requires
+/// the body to be fully consumed, so a trailing field appended on chain
+/// makes an event stop decoding here instead of silently decoding as its
+/// old, narrower shape. That is the intended direction — a truncated fill
+/// is worse than no fill — but it is a behavior change, and `.ok()`
+/// discards the [`DecodeError::TrailingBytes`] that would explain it.
 pub fn decode_event_payload(payload: &[u8]) -> Option<DropsetEvent> {
     try_decode_event_payload(payload).ok()
 }
@@ -374,8 +427,20 @@ mod tests {
     }
 
     /// **The structural pin.** Read the IDL's own `events` list and require
-    /// every entry to be decoded here, with the discriminator the IDL
-    /// records.
+    /// every entry to have a constant here carrying the discriminator the
+    /// IDL records.
+    ///
+    /// Note what this does and does not pin. It compares the IDL against
+    /// [`DECODED`], a hand-written list — so it catches an event *added*
+    /// to the IDL and never given a constant, which is the gap that let
+    /// this codec fall five events behind the program. It does **not** by
+    /// itself prove `try_decode_event_payload` dispatches on those
+    /// constants; deleting a `match disc` arm leaves this test green.
+    /// That mutation is caught, but downstream, by the indexer's
+    /// `every_event_payload_carries_every_field_the_idl_declares`, which
+    /// drives the decoder over all 17 events — so `cargo test -p
+    /// dropset-sdk` alone does not pin dispatch, and this crate is
+    /// publishable on its own.
     ///
     /// This is the test whose absence let the codec fall five events behind
     /// the program. `discriminators_match_anchor_scheme` cannot catch that:

@@ -372,6 +372,43 @@ mod tests {
                     "{name}.{field} is decoded but dropped from the JSON payload"
                 );
             }
+
+            // Value TYPE, not just key presence. Key presence alone leaves
+            // the precision rule pinned on whichever field happens to have
+            // a hand-written assertion — reverting `wide()` at any other
+            // call site would keep this test green. Driving it off the
+            // IDL's own widths pins every variant at once, and catches a
+            // FUTURE wide field added without `wide()`, which is the exact
+            // bug class this rule exists for.
+            //
+            // The body is zero-filled, so every wide value serializes as
+            // "0" and `is_string()` holds without special-casing.
+            for field in fields {
+                let field_name = field["name"].as_str().expect("field name");
+                if field_name.starts_with('_') {
+                    continue;
+                }
+                let Some(width) = field["type"].as_str() else {
+                    continue; // arrays and defined types carry no width rule
+                };
+                let value = &object[field_name];
+                match width {
+                    "u64" | "i64" => assert!(
+                        value.is_string(),
+                        "{name}.{field_name} is a {width} and must cross as a JSON \
+                         string — a bare number rounds above 2^53 in any JavaScript \
+                         consumer of /v1"
+                    ),
+                    "u8" | "u16" | "u32" | "i8" | "i16" | "i32" => assert!(
+                        value.is_u64() || value.is_i64(),
+                        "{name}.{field_name} is a bounded {width}; quoting it only \
+                         makes a client parse what it could have read"
+                    ),
+                    "bool" => assert!(value.is_boolean(), "{name}.{field_name}"),
+                    "pubkey" => assert!(value.is_string(), "{name}.{field_name}"),
+                    other => panic!("unhandled IDL width {other} on {name}.{field_name}"),
+                }
+            }
             assert_eq!(
                 object.len(),
                 expected.len(),

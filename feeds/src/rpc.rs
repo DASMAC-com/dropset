@@ -190,6 +190,8 @@ pub struct InnerIx {
     /// program that emitted this inner instruction. Assemble that list
     /// from the `*_account_keys` fields on [`RawTx`].
     pub program_id_index: u8,
+    /// The inner instruction's `data`, base58-decoded. Opaque here — the
+    /// framework does not decode it.
     pub data: Vec<u8>,
 }
 
@@ -448,9 +450,9 @@ impl<T: RpcTransport> Source for RpcPollSource<T> {
 /// program that emitted it, alongside the account-key material a consumer
 /// needs to resolve those indices.
 ///
-/// An undecodable transaction body yields no static keys, which leaves
-/// every index unresolvable — the fail-closed outcome, since attributing
-/// an event without the emitter is exactly what must not happen.
+/// An undecodable transaction body clears **all three** key fields, which
+/// leaves every index out of range — the fail-closed outcome, since
+/// attributing an event without the emitter is exactly what must not happen.
 fn to_raw_tx(signature: &str, tx: EncodedConfirmedTransactionWithStatusMeta) -> Option<RawTx> {
     let slot = tx.slot as i64;
     let block_time = tx.block_time;
@@ -459,13 +461,34 @@ fn to_raw_tx(signature: &str, tx: EncodedConfirmedTransactionWithStatusMeta) -> 
     } = tx.transaction;
     let meta = meta?;
 
-    let static_account_keys = transaction
-        .decode()
-        .map(|decoded| decoded.message.static_account_keys().to_vec())
-        .unwrap_or_default();
-    let (loaded_writable, loaded_readonly) = match &meta.loaded_addresses {
-        OptionSerializer::Some(loaded) => (loaded.writable.clone(), loaded.readonly.clone()),
-        _ => (Vec::new(), Vec::new()),
+    // The three key fields travel together, and a body that will not decode
+    // has to clear every one of them.
+    //
+    // `transaction.decode()` and `meta.loaded_addresses` share no failure
+    // path, so reading them independently lets a decode failure empty the
+    // static keys while leaving the ALT lists populated. The assembled list
+    // would then be non-empty and **shifted**: index 0 resolves to the first
+    // ALT address instead of static key 0, so every `program_id_index`
+    // resolves — to the wrong key. ALT contents are author-chosen and
+    // permissionless, which makes that a forged blob's best case rather than
+    // a harmless degradation. Clearing all three instead makes every index
+    // out of range, which is what the doc comment above can then honestly
+    // claim.
+    let (static_account_keys, loaded_writable, loaded_readonly) = match transaction.decode() {
+        Some(decoded) => {
+            let (writable, readonly) = match &meta.loaded_addresses {
+                OptionSerializer::Some(loaded) => {
+                    (loaded.writable.clone(), loaded.readonly.clone())
+                }
+                _ => (Vec::new(), Vec::new()),
+            };
+            (
+                decoded.message.static_account_keys().to_vec(),
+                writable,
+                readonly,
+            )
+        }
+        None => (Vec::new(), Vec::new(), Vec::new()),
     };
 
     let mut inner_ix_blobs = Vec::new();
@@ -645,6 +668,70 @@ mod tests {
         assert!(raw.loaded_writable.is_empty());
         assert!(raw.loaded_readonly.is_empty());
         assert_eq!(raw.inner_ix_blobs.len(), 1);
+    }
+
+    /// **The shifted-key-list case.** The test above cannot establish the
+    /// claim its name makes, because its fixture supplies no
+    /// `loadedAddresses` at all — so it passes whether or not the two
+    /// sources are handled together. This one supplies them.
+    ///
+    /// `transaction.decode()` and `meta.loaded_addresses` share no failure
+    /// path. Handled independently, a decode failure would leave the ALT
+    /// lists populated beside empty static keys, and the assembled list
+    /// would be non-empty with index 0 pointing at an ALT address rather
+    /// than static key 0 — so every `program_id_index` would resolve, to
+    /// the wrong key. Since ALT contents are author-chosen, that is
+    /// precisely how a forged blob would get itself attributed.
+    #[test]
+    fn an_undecodable_body_clears_the_loaded_addresses_too() {
+        let alt_writable = Pubkey::new_from_array([21; 32]);
+        let alt_readonly = Pubkey::new_from_array([22; 32]);
+        let meta: UiTransactionStatusMeta = serde_json::from_value(json!({
+            "err": null,
+            "status": { "Ok": null },
+            "fee": 5000,
+            "preBalances": [],
+            "postBalances": [],
+            "innerInstructions": [
+                { "index": 0, "instructions": [compiled_ix_from(0, &[1])] },
+            ],
+            "logMessages": [],
+            "preTokenBalances": [],
+            "postTokenBalances": [],
+            "rewards": [],
+            "loadedAddresses": {
+                "writable": [alt_writable.to_string()],
+                "readonly": [alt_readonly.to_string()],
+            },
+        }))
+        .expect("fixture matches the transaction-meta wire shape");
+
+        // `with_meta` builds an `EncodedTransaction::LegacyBinary("")`, whose
+        // `decode()` is `None` — the condition under test.
+        let raw = to_raw_tx("sig-shifted", with_meta(42, None, Some(meta))).expect("meta present");
+
+        assert!(
+            raw.loaded_writable.is_empty() && raw.loaded_readonly.is_empty(),
+            "ALT addresses must be cleared alongside the static keys, or index \
+             0 resolves to an attacker-chosen address"
+        );
+        // The decisive property: nothing is attributable at all.
+        assert_eq!(
+            dropset_sdk_events_full_account_keys(&raw),
+            Some(Vec::new()),
+            "the assembled key list must be empty, leaving every index out of range"
+        );
+    }
+
+    /// Assemble `raw`'s key material the way a consumer does. Spelled out
+    /// here rather than importing the SDK, because `feeds` deliberately does
+    /// not depend on it.
+    fn dropset_sdk_events_full_account_keys(raw: &RawTx) -> Option<Vec<Pubkey>> {
+        let mut keys = raw.static_account_keys.clone();
+        for encoded in raw.loaded_writable.iter().chain(raw.loaded_readonly.iter()) {
+            keys.push(Pubkey::from_str(encoded).ok()?);
+        }
+        Some(keys)
     }
 
     #[test]

@@ -52,14 +52,9 @@ pub fn decode_tx(tx: &RawTx, program_id: &Pubkey) -> Vec<DecodedEvent> {
         &tx.loaded_writable,
         &tx.loaded_readonly,
     );
-    if account_keys.is_none() {
-        tracing::warn!(
-            signature = %tx.signature,
-            "unresolvable account keys; dropping this transaction's events"
-        );
-    }
 
-    tx.inner_ix_blobs
+    let decoded: Vec<DecodedEvent> = tx
+        .inner_ix_blobs
         .iter()
         .filter_map(|ix| strip_event_tag(&ix.data).map(|payload| (ix, payload)))
         .enumerate()
@@ -107,7 +102,35 @@ pub fn decode_tx(tx: &RawTx, program_id: &Pubkey) -> Vec<DecodedEvent> {
             },
             event,
         })
-        .collect()
+        .collect();
+
+    // Report on what actually happened, not on what might have. The
+    // unresolvable-key warning used to fire eagerly before the walk, so it
+    // claimed to be "dropping this transaction's events" for the many
+    // polled transactions that carry none — while the condition that
+    // silently discards a whole transaction's worth of real events sat at
+    // `debug!`, a level below the one an operator watches.
+    //
+    // This is the only failure mode in the ingest path with no recovery
+    // story: the batch commits and the cursor advances past the
+    // transaction, so nothing durable records which slots were skipped.
+    // Making it loud is the least that is owed until that is addressed.
+    let tagged = tx
+        .inner_ix_blobs
+        .iter()
+        .filter(|ix| strip_event_tag(&ix.data).is_some())
+        .count();
+    if tagged > 0 && decoded.is_empty() {
+        tracing::warn!(
+            signature = %tx.signature,
+            tagged,
+            keys_resolved = account_keys.is_some(),
+            "every tagged event-CPI in this transaction was dropped; \
+             if keys_resolved is false the account-key list would not parse"
+        );
+    }
+
+    decoded
 }
 
 #[cfg(test)]
