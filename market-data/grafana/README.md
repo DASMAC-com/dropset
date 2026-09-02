@@ -124,10 +124,20 @@ is not optional — and it fires on deletes too, which is why it is an
 It earns the extra file three ways: a one-character edit inside a
 1,500-character JSON string becomes a one-line diff; `make lint` runs
 sqlfluff over every query as Postgres, the only mechanical check this SQL
-has; and two silent-in-Grafana failure modes are refused outright (a
-nested paren in a macro argument, which Grafana truncates, and a
+has; and three silent-in-Grafana failure modes are refused outright — a
+nested paren in a macro argument, which Grafana truncates; a
 `:regex`-formatted variable inside a quoted literal, which does not
-escape quotes).
+escape quotes; and **any unformatted variable inside a quoted literal**,
+which carries the same exposure for the same reason.
+
+That third guard is why a template variable is written
+`${name:sqlstring}` with **no surrounding quotes** rather than
+`'$name'` — the formatter quotes and escapes the value itself. For a
+multi-select use `= ANY (ARRAY[${name:sqlstring}]::text[])`, which also
+stays valid SQL when nothing is selected, where `IN ()` is a syntax
+error. A variable reaching an integer column takes
+`${name:sqlstring}::bigint`: the cast keeps the type and turns an
+injected value into a cast error rather than a predicate.
 
 **The alert rules are covered, and the reader is deliberately not
 PyYAML.** The `dashboard-sql-lint` hook runs in an environment holding

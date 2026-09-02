@@ -82,7 +82,11 @@ impl<S> BestEffortSink<S> {
         }
     }
 
-    /// Total `(batches, records)` dropped since this sink was constructed.
+    /// Batches dropped since construction, and the records they contained.
+    ///
+    /// Records-in-dropped-batches is an UPPER bound on records lost, not a
+    /// count of them: a non-atomic inner sink may have persisted some of a
+    /// batch before failing, and this wrapper cannot see how far it got.
     ///
     /// **This is the only record that anything was lost.** The wrapper's whole
     /// job is to return `Ok` when the inner sink fails, so the runner sees a

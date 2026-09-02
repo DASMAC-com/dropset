@@ -10,6 +10,6 @@ SELECT
   to_timestamp(max(bucket_start)) AS latest_bucket,
   (extract(epoch FROM now()) - max(bucket_start))::bigint AS age_secs
 FROM cex_prices
-WHERE bucket_start >= extract(epoch FROM now()) - ($coverage_mins * 60)
+WHERE bucket_start >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)
 GROUP BY 1, 2, 3
 ORDER BY 1, 2, 3

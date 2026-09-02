@@ -377,7 +377,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  source || ' ' || product_id AS feed,\n  extract(epoch FROM now()) - max(bucket_start) AS age_secs\nFROM cex_prices\nWHERE source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n  AND granularity_secs = $granularity\nGROUP BY 1\nORDER BY 1",
+          "rawSql": "SELECT\n  source || ' ' || product_id AS feed,\n  extract(epoch FROM now()) - max(bucket_start) AS age_secs\nFROM cex_prices\nWHERE source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n  AND granularity_secs = ${granularity:sqlstring}::bigint\nGROUP BY 1\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -462,7 +462,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  \"open\",\n  \"high\",\n  \"low\",\n  \"close\",\n  \"volume\"\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = ${candle_source:sqlstring}\n  AND product_id = ${product_id:sqlstring}\n  AND granularity_secs = $granularity\nORDER BY bucket_start",
+          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  \"open\",\n  \"high\",\n  \"low\",\n  \"close\",\n  \"volume\"\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = ${candle_source:sqlstring}\n  AND product_id = ${product_id:sqlstring}\n  AND granularity_secs = ${granularity:sqlstring}::bigint\nORDER BY bucket_start",
           "refId": "A"
         }
       ],
@@ -549,7 +549,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- Candle closes and spot ticks in one series set. The tick half is\n-- what makes this panel move BETWEEN candle closes: 60s is the finest\n-- bucket any candle endpoint offers, so the candle half cannot show\n-- intra-minute movement however often it is polled.\n--\n-- Tick series are suffixed so the legend distinguishes them from the\n-- same venue's candle series, and they carry no granularity filter\n-- because a tick has no bucket width.\nSELECT\n  to_timestamp(bucket_start) AS \"time\",\n  source || ' ' || product_id AS metric,\n  \"close\" AS value\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n  AND granularity_secs = $granularity\nUNION ALL\nSELECT\n  to_timestamp(observed_at) AS \"time\",\n  source || ' ' || product_id || ' tick' AS metric,\n  price AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\nORDER BY 1",
+          "rawSql": "-- Candle closes and spot ticks in one series set. The tick half is\n-- what makes this panel move BETWEEN candle closes: 60s is the finest\n-- bucket any candle endpoint offers, so the candle half cannot show\n-- intra-minute movement however often it is polled.\n--\n-- Tick series are suffixed so the legend distinguishes them from the\n-- same venue's candle series, and they carry no granularity filter\n-- because a tick has no bucket width.\nSELECT\n  to_timestamp(bucket_start) AS \"time\",\n  source || ' ' || product_id AS metric,\n  \"close\" AS value\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n  AND granularity_secs = ${granularity:sqlstring}::bigint\nUNION ALL\nSELECT\n  to_timestamp(observed_at) AS \"time\",\n  source || ' ' || product_id || ' tick' AS metric,\n  price AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -637,7 +637,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- The CTE is load-bearing, not style. Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so\n-- wrapping the epoch column in a to_timestamp call inside the\n-- time-group macro leaves it one truncated argument and the query\n-- fails to interpolate. Converting the column in a CTE first hands\n-- the macro a bare column name, which is all it can parse. For the\n-- same reason, do not name a macro in a comment here: the scanner\n-- does not skip comments and will try to interpolate the example.\nWITH bucketed AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    source\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n    AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n    AND granularity_secs = $granularity\n)\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  count(*) AS value\nFROM bucketed\nGROUP BY 1, 2\nORDER BY 1",
+          "rawSql": "-- The CTE is load-bearing, not style. Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so\n-- wrapping the epoch column in a to_timestamp call inside the\n-- time-group macro leaves it one truncated argument and the query\n-- fails to interpolate. Converting the column in a CTE first hands\n-- the macro a bare column name, which is all it can parse. For the\n-- same reason, do not name a macro in a comment here: the scanner\n-- does not skip comments and will try to interpolate the example.\nWITH bucketed AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    source\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n    AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n    AND granularity_secs = ${granularity:sqlstring}::bigint\n)\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  count(*) AS value\nFROM bucketed\nGROUP BY 1, 2\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -740,7 +740,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  source,\n  product_id,\n  granularity_secs,\n  count(*) AS buckets,\n  to_timestamp(max(bucket_start)) AS latest_bucket,\n  (extract(epoch FROM now()) - max(bucket_start))::bigint AS age_secs\nFROM cex_prices\nWHERE bucket_start >= extract(epoch FROM now()) - ($coverage_mins * 60)\nGROUP BY 1, 2, 3\nORDER BY 1, 2, 3",
+          "rawSql": "SELECT\n  source,\n  product_id,\n  granularity_secs,\n  count(*) AS buckets,\n  to_timestamp(max(bucket_start)) AS latest_bucket,\n  (extract(epoch FROM now()) - max(bucket_start))::bigint AS age_secs\nFROM cex_prices\nWHERE bucket_start >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)\nGROUP BY 1, 2, 3\nORDER BY 1, 2, 3",
           "refId": "A"
         }
       ],
@@ -843,7 +843,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "-- Age thresholds are tighter than the candle panel's on purpose: a tick\n-- feed polling every 15s that has printed nothing for a minute is behind\n-- in a way a 60s candle series would not be.\nSELECT\n  source,\n  product_id,\n  count(*) AS prints,\n  count(confidence) AS with_confidence,\n  to_timestamp(max(observed_at)) AS latest_print,\n  (extract(epoch FROM now()) - max(observed_at))::bigint AS age_secs\nFROM spot_ticks\nWHERE observed_at >= extract(epoch FROM now()) - ($coverage_mins * 60)\nGROUP BY 1, 2\nORDER BY 1, 2",
+          "rawSql": "-- Age thresholds are tighter than the candle panel's on purpose: a tick\n-- feed polling every 15s that has printed nothing for a minute is behind\n-- in a way a 60s candle series would not be.\nSELECT\n  source,\n  product_id,\n  count(*) AS prints,\n  count(confidence) AS with_confidence,\n  to_timestamp(max(observed_at)) AS latest_print,\n  (extract(epoch FROM now()) - max(observed_at))::bigint AS age_secs\nFROM spot_ticks\nWHERE observed_at >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)\nGROUP BY 1, 2\nORDER BY 1, 2",
           "refId": "A"
         }
       ],
@@ -855,7 +855,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Every source the collectors registered, contributing or not - the completeness guarantee the two panels above cannot give. Both of those group over a measurement table, so a source that wrote nothing has no rows to group and is simply absent, which on a panel is indistinguishable from never having been configured. This one drives from instrument_registry instead, so a dark collector is a row reading 0 that sorts to the top. Read it when the question is 'is this source contributing anywhere' - Pyth included, whose ticks reach only the panel above and only while it is actually printing. Three columns, and the distinction between them is the point: 'products' is what the collector registered, 'ever_produced' how many of those have ever written a row, and 'live' how many are inside their staleness bound. ever_produced = 0 is a collector that has never worked; ever_produced = products with live = 0 is one that worked and died, and 'latest' says when. live < products is a partial outage. The bound is class-aware rather than a fixed window, so a daily-cadence source is not reported dead every load and an FX pair clears its weekend. Deliberately NOT filtered by the Source or Product variables: a panel answering 'what is missing' must not be narrowed by a picker populated from the same registry.",
+      "description": "Every source the collectors registered, contributing or not - the completeness guarantee the two panels above cannot give. Both of those group over a measurement table, so a source that wrote nothing has no rows to group and is simply absent, which on a panel is indistinguishable from never having been configured. This one drives from instrument_registry instead, so a dark collector is a row reading 0 that sorts to the top. Read it when the question is 'is this source contributing anywhere' - Pyth included, whose ticks reach only the panel above and only while it is actually printing. Three columns, and the distinction between them is the point: 'products' is what the collector registered, 'ever_produced' how many of those have ever written a row, and 'live' how many are inside their staleness bound. ever_produced = 0 is a collector that has never worked; ever_produced = products with live = 0 is one that worked and died, and 'latest' says when. live < products is a partial outage. The bound is class-aware rather than a fixed window, so a daily-cadence source is not reported dead every load and an FX pair clears its weekend. TWO THINGS TO KNOW BEFORE TREATING A DARK ROW AS A FAULT. First, a source may be deliberately PARKED - pyth is, pending a credential, so it reads ever_produced=27 live=0 indefinitely and that is correct; expected-dark sources are recorded on their Linear issue, and any OTHER dark source is a fault. Second, the bars leg measures bucket_start, not write time, so a daily source is already ~1-2 days stale while healthy; across a weekend that can reach the 72h fx-pair bound and read quiet on a Monday. Both thresholds are deliberately the ones instrument_liveness defines rather than new ones, so widening for the daily case belongs in that view, not here. Deliberately NOT filtered by the Source or Product variables: a panel answering 'what is missing' must not be narrowed by a picker populated from the same registry.",
       "fieldConfig": {
         "defaults": {
           "custom": {

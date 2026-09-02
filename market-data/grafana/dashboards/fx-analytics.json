@@ -508,7 +508,7 @@
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
-            "axisLabel": "index (window start = 100)",
+            "axisLabel": "index (each series' first bar = 100)",
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
@@ -575,7 +575,7 @@
           "refId": "A"
         }
       ],
-      "title": "Cross-pair index \u2014 $currency pairs on $venue_source (window start = 100)",
+      "title": "Cross-pair index \u2014 $currency pairs on $venue_source (first bar = 100)",
       "type": "timeseries"
     }
   ],

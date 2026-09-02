@@ -437,6 +437,39 @@ class BlockScalar(unittest.TestCase):
         self.assertEqual(ds.block_scalar(lines, 0)[1], 3)
         self.assertEqual(lines[3].strip(), "other: 1")
 
+    def test_keep_chomping_retains_every_trailing_newline(self):
+        # The only non-trivial arithmetic in the function, and the committed
+        # rules all use `|-`, so neither the mirror gate nor the PyYAML
+        # equivalence test reaches it. A wrong count here means `check`
+        # reports a permanently stale mirror that `extract` cannot settle.
+        self.assertEqual(self.read("k: |+\n  a\n\n\n"), "a\n\n\n")
+
+    def test_keep_chomping_with_no_trailing_blanks_matches_clip(self):
+        self.assertEqual(self.read("k: |+\n  a\n"), "a\n")
+
+    def test_an_empty_block_is_empty_but_keep_still_keeps(self):
+        self.assertEqual(self.read("  k: |-\n  other: 1\n"), "")
+        self.assertEqual(self.read("k: |+\n\n\n"), "\n\n")
+
+    def test_dedents_from_the_first_NON_BLANK_line(self):
+        # A leading blank line is not popped (only trailing ones are), so
+        # measuring `body[0]` gives indent 0 and emits the value still carrying
+        # its YAML indentation. PyYAML dedents it, so this is a silent
+        # divergence in a value compared byte-for-byte.
+        self.assertEqual(self.read("  k: |-\n\n    a\n"), "\na")
+
+    def test_refuses_a_line_indented_less_than_the_block(self):
+        # Slicing it would walk past the whitespace and delete a real
+        # character — wrong SQL in the mirror rather than an error.
+        with self.assertRaises(ds.ExtractionError) as cm:
+            self.read("        k: |-\n          SELECT 1\n         FROM t\n")
+        self.assertIn("indented less", str(cm.exception))
+
+    def test_refuses_a_tab_in_the_indentation(self):
+        with self.assertRaises(ds.ExtractionError) as cm:
+            self.read("  k: |-\n    a\n\tb\n")
+        self.assertIn("tab", str(cm.exception))
+
 
 class AlertExtraction(unittest.TestCase):
     RULES = """apiVersion: 1
@@ -538,6 +571,76 @@ groups:
             ],
         )
 
+    def test_refuses_a_rawSql_that_is_not_a_literal_block(self):
+        # THE SILENT-HOLE CASE. A quoted single-line scalar was skipped with no
+        # error and no mirror file, so `check` stayed green and the query was
+        # never linted — the exact shape the module docstring argues against.
+        for form in ("'SELECT 1'", "|2-", "|- # inline comment"):
+            with self.subTest(form=form):
+                text = self.RULES.replace(
+                    "rawSql: |-\n          SELECT 1", f"rawSql: {form}", 1
+                )
+                with self.assertRaises(ds.ExtractionError) as cm:
+                    self.parse(text)
+                self.assertIn("literal block", str(cm.exception))
+
+    def test_a_query_containing_rules_does_not_fabricate_a_boundary(self):
+        # The boundary scan must treat a block-scalar BODY as opaque. A line
+        # inside the SQL reading `rules:` or a `- ` at the list's own column
+        # would otherwise open or close a rule, silently pairing the wrong uid
+        # with the SQL rather than failing.
+        text = self.RULES.replace(
+            "          SELECT 1\n          FROM t",
+            "          SELECT 1\n"
+            "          -- rules:\n"
+            "          -- - not a rule\n"
+            "          FROM t",
+        )
+        out = self.parse(text)
+        self.assertEqual(
+            [rel for rel, _ in out], ["alerting/rule-one.sql", "alerting/rule-two.sql"]
+        )
+        self.assertIn("-- rules:", out[0][1])
+
+    def test_a_sibling_sequence_at_the_rule_indent_closes_the_list(self):
+        # Pins the reset branch, which nothing else reaches. A following GROUP
+        # cannot pin it — that dash sits at indent 0, so it is skipped whether
+        # or not the list was closed — and a sibling sequence whose items carry
+        # no query cannot either, because a spurious rule with no SQL is
+        # silently dropped rather than surfacing. So the items here carry a
+        # `rawSql` AND a `uid`: without the reset they are read as rules and
+        # their SQL is extracted under their uid, which is the wrong pairing
+        # the branch exists to prevent.
+        #
+        # Deliberately contrived — the real provisioning format has no such
+        # sequence at group level — because the branch is defensive. Verified
+        # by mutation: replacing `rules_indent = None` with a no-op makes this
+        # fail and leaves every other test green.
+        text = (
+            self.RULES
+            + """  notifications:
+  - uid: 'not-a-rule'
+    data:
+    - model:
+        rawSql: |-
+          SELECT 99
+"""
+        )
+        self.assertEqual(
+            [rel for rel, _ in self.parse(text)],
+            ["alerting/rule-one.sql", "alerting/rule-two.sql"],
+        )
+
+    def test_reads_a_double_quoted_and_an_unquoted_uid(self):
+        for spelling, want in (
+            ('"rule-one"', "alerting/rule-one.sql"),
+            ("rule-one", "alerting/rule-one.sql"),
+            ("rule-one # legacy", "alerting/rule-one.sql"),
+        ):
+            with self.subTest(spelling=spelling):
+                text = self.RULES.replace("uid: 'rule-one'", f"uid: {spelling}", 1)
+                self.assertEqual(self.parse(text)[0][0], want)
+
     def test_refuses_a_folded_scalar(self):
         with self.assertRaises(ds.ExtractionError) as cm:
             self.parse(self.RULES.replace("rawSql: |-", "rawSql: >-", 1))
@@ -556,6 +659,102 @@ groups:
     uid: 'rule-none'
 """
         self.assertEqual(self.parse(text), [])
+
+
+class BareVarGuard(unittest.TestCase):
+    """The guard that keeps the 25th bare variable from landing.
+
+    24 sites were converted by hand; a one-time sweep is not a gate.
+    """
+
+    def test_rejects_a_bare_variable_inside_a_literal(self):
+        with self.assertRaises(ds.ExtractionError) as cm:
+            ds.check_bare_var_in_literal("SELECT 1 WHERE s = '$venue_source'", "where")
+        self.assertIn("sqlstring", str(cm.exception))
+
+    def test_rejects_the_braced_form_too(self):
+        with self.assertRaises(ds.ExtractionError):
+            ds.check_bare_var_in_literal("SELECT 1 WHERE s = '${granularity}'", "where")
+
+    def test_allows_the_sqlstring_form_the_message_recommends(self):
+        # The gate must not block its own remedy.
+        ds.check_bare_var_in_literal(
+            "SELECT 1 WHERE s = ${venue_source:sqlstring}", "w"
+        )
+        ds.check_bare_var_in_literal(
+            "SELECT 1 WHERE s = ANY (ARRAY[${pairs:sqlstring}]::text[])", "w"
+        )
+
+    def test_allows_a_bare_variable_outside_a_literal(self):
+        # The six deliberately-unquoted numeric sites must keep passing.
+        ds.check_bare_var_in_literal(
+            "SELECT 1 WHERE granularity_secs = $granularity", "w"
+        )
+
+    def test_ignores_a_grafana_macro_in_a_literal(self):
+        # `$__`-prefixed macros are datasource-substituted, not user values.
+        ds.check_bare_var_in_literal("SELECT '$__timeFrom()'", "where")
+
+    def test_ignores_a_variable_named_in_a_comment(self):
+        ds.check_bare_var_in_literal(
+            "-- do not write '$source' here\nSELECT 1", "where"
+        )
+
+    def test_the_committed_dashboards_pass_the_new_guard(self):
+        # The whole point: the tree is clean today, so the guard is a floor
+        # rather than a wish. This would have failed before the conversion.
+        root = pathlib.Path(__file__).resolve().parents[3]
+        ds.collect(root / ds.DASHBOARD_DIR, root / ds.ALERTING_DIR)
+
+
+class DuplicateUid(unittest.TestCase):
+    """`ALERTING_DIR`'s comment claims the duplicate guard enforces uniqueness.
+
+    It was claim-only: nothing constructed two rules sharing a uid, so the one
+    guard standing between a copy-pasted uid and one rule's SQL silently
+    overwriting another's mirror file was untested.
+    """
+
+    #: `rules:` sits on its own line, never on the group's dash line. The scan
+    #: keys on a line whose whole content is `rules:`, and the house yamllint
+    #: rule sorts group keys alphabetically — `folder`, `interval`, `name`,
+    #: `orgId` all precede `rules` — so `rules` can never lead a group item.
+    RULE = """apiVersion: 1
+groups:
+- name: 'g'
+  rules:
+  - data:
+    - model:
+        rawSql: |-
+          SELECT {n}
+    uid: 'same-uid'
+"""
+
+    def test_two_rules_sharing_a_uid_are_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = pathlib.Path(tmp)
+            body = (
+                self.RULE.format(n=1)
+                + """  - data:
+    - model:
+        rawSql: |-
+          SELECT 2
+    uid: 'same-uid'
+"""
+            )
+            (d / "maker.yml").write_text(body)
+            with self.assertRaises(ds.ExtractionError) as cm:
+                ds.collect(d / "no-dashboards", d)
+            self.assertIn("same-uid", str(cm.exception))
+
+    def test_a_uid_reused_across_two_files_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = pathlib.Path(tmp)
+            (d / "a.yml").write_text(self.RULE.format(n=1))
+            (d / "b.yml").write_text(self.RULE.format(n=2))
+            with self.assertRaises(ds.ExtractionError) as cm:
+                ds.collect(d / "no-dashboards", d)
+            self.assertIn("same-uid", str(cm.exception))
 
 
 class RealAlerting(unittest.TestCase):
@@ -581,7 +780,18 @@ class RealAlerting(unittest.TestCase):
         return found
 
     def test_agrees_with_pyyaml_on_every_committed_rule(self):
-        yaml = __import__("yaml")
+        try:
+            yaml = __import__("yaml")
+        except ImportError as e:  # pragma: no cover - depends on the environment
+            # Deliberately NOT skipped: this test is what licenses reading YAML
+            # without a YAML library, so it must not go quiet. But name the
+            # requirement, or the failure reads as the stdlib-only TOOL having
+            # a dependency it does not have.
+            raise AssertionError(
+                "this SUITE needs PyYAML to cross-validate the stdlib YAML "
+                "reader against a real parser; the TOOL itself does not import "
+                "it, and must not. Install PyYAML to run this check."
+            ) from e
 
         for path in self.files():
             doc = yaml.safe_load(path.read_text())
@@ -600,6 +810,12 @@ class RealAlerting(unittest.TestCase):
                             (f"alerting/{ds.slug(rule['uid'], 'rule')}{suffix}.sql", q)
                         )
 
+            # Without this, a file whose top-level shape changed such that
+            # `groups` went falsy yields `expected == []`, and a reader
+            # returning [] compares equal — the test that licenses the whole
+            # design passing while extracting nothing.
+            self.assertTrue(expected, f"{path.name}: PyYAML found no rules")
+
             self.assertEqual(
                 ds.parse_alerting(path),
                 expected,
@@ -612,10 +828,12 @@ class RealAlerting(unittest.TestCase):
         )
         alerts = [r for r in found if r.startswith("alerting/")]
         # A floor rather than an exact count, matching `RealDashboards`: exact
-        # churns on every rule added, non-emptiness passes if the walk finds one
-        # rule out of six.
+        # churns on every rule added, non-emptiness passes if the walk finds
+        # one rule out of six. Six, not five — the committed set is exactly six
+        # rules with one query each, so a floor of five passes with a rule
+        # silently missing, and six stays monotone as rules are added.
         self.assertGreaterEqual(
-            len(alerts), 5, f"only {len(alerts)} alert queries extracted — walk broken?"
+            len(alerts), 6, f"only {len(alerts)} alert queries extracted — walk broken?"
         )
 
 

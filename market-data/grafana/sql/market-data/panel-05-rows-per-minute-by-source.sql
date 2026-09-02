@@ -18,7 +18,7 @@ WITH bucketed AS (
   WHERE $__unixEpochFilter(bucket_start)
     AND source = ANY (ARRAY[${source:sqlstring}]::text[])
     AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])
-    AND granularity_secs = $granularity
+    AND granularity_secs = ${granularity:sqlstring}::bigint
 )
 SELECT
   $__timeGroupAlias(bucket_ts, '1m', 0),
