@@ -1935,11 +1935,17 @@ mod tests {
         let legs = hub.legs(&m, &tick);
         let fx = resolved(&legs, |l| l.fx, &tick);
         // The daily references carry it, and now there are two of them, so the
-        // handover lands on their agreed midpoint rather than on one fix.
-        assert_eq!(
-            fx.reading.unwrap().value,
-            1.1410,
-            "the daily references should carry it"
+        // handover lands on a combination of the pair rather than on one fix.
+        //
+        // Asserted as a strict range rather than the exact midpoint: the two
+        // references only average evenly because they currently share a receipt
+        // instant and so an identical variance. Per-leg staleness work will
+        // change that weighting deliberately, and a value assertion would then
+        // fail as though the price were wrong.
+        let v = fx.reading.unwrap().value;
+        assert!(
+            v > 1.1400 && v < 1.1420,
+            "the daily references should carry it, combined: {v}"
         );
         assert_eq!(fx.n, 2, "both references, and not the stale Pyth reading");
         // The point of the test, stated directly rather than inferred from the
@@ -2161,10 +2167,15 @@ mod tests {
         let legs = hub.legs(&m, &tick);
         let fx = resolved(&legs, |l| l.fx, &tick);
         assert_eq!(fx.n, 2, "both daily references");
-        assert_eq!(
-            fx.reading.unwrap().value,
-            1.1410,
-            "the midpoint of 1.1400 and 1.1420, not whichever came first"
+        // Strictly between the two, which is the claim that matters: the pair is
+        // combined rather than one of them being picked. Both endpoints are
+        // excluded, so this fails if either fix wins outright — and it survives
+        // the weighting change per-leg staleness work will introduce, where an
+        // exact-midpoint assertion would not.
+        let v = fx.reading.unwrap().value;
+        assert!(
+            v > 1.1400 && v < 1.1420,
+            "combined, not whichever came first: {v}"
         );
         assert!(
             !fx.state.is_uncorroborated(),
@@ -2174,12 +2185,12 @@ mod tests {
     }
 
     #[test]
-    fn erapi_carries_a_currency_frankfurter_does_not_price() {
-        // The whole reason this tier is wired. With no Pyth reading and no ECB
-        // reference — the NGN situation, where Hermes catalogues the currency but
-        // has never published a price and the ECB set omits it — er-api is the
-        // only source that answers, and the leg still resolves off it rather
-        // than darking.
+    fn a_sole_er_api_reference_resolves_the_leg_uncorroborated() {
+        // The shape the NGN markets run in, simulated on the EUR fixture: with
+        // no Pyth reading and no ECB reference, er-api is the only source that
+        // answers and the leg still resolves off it rather than darking. The
+        // currency here is incidental — EUR is one Frankfurter *does* price — so
+        // what this pins is the sole-reference resolution path, not coverage.
         let (now, now_unix) = (Instant::now(), 1_786_579_250);
         let tick = tick_at(now, now_unix);
         let m = eurc();
@@ -2216,11 +2227,10 @@ mod tests {
         );
         let tick = tick_at(now, now_unix);
         let legs = hub.legs(&m, &tick);
-        assert_eq!(
-            resolved(&legs, |l| l.fx, &tick).reading.unwrap().value,
-            1.1410,
-            "the two daily references, agreed"
-        );
+        // Between the two fixes, not equal to either — see the strict-range note
+        // in `a_stale_pyth_reading_hands_the_anchor_over_instead_of_masking_it`.
+        let v = resolved(&legs, |l| l.fx, &tick).reading.unwrap().value;
+        assert!(v > 1.1400 && v < 1.1420, "the two daily references: {v}");
     }
 
     #[test]

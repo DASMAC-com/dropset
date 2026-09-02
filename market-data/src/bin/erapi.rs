@@ -99,17 +99,36 @@ const SILENCE_THRESHOLD: u32 = 3;
 /// product's freshness forever, and — because the insert is
 /// `ON CONFLICT … DO NOTHING` — the correct later snapshot, whose instant is
 /// smaller, could never supersede it. Writing such a row is not recoverable in
-/// place; refusing it is one comparison.
+/// place; rejecting the stamp is one comparison.
+///
+/// **Only the stamp is rejected, not the reading** — the row is still written,
+/// at the poll second. So this bounds the damage rather than eliminating it: the
+/// maker-bot's stall guard *drops the tier* on the same input, while this half
+/// keeps recording. That divergence is deliberate (a collector's job is to
+/// record what the venue said, a quoting path's is to refuse what it cannot
+/// trust) and it is why the substitution is logged where it happens.
 const MAX_CLOCK_SKEW_SECS: i64 = 60;
 
 /// The instant a reading is attributed to: the provider's own refresh instant
 /// where it is plausible, else the poll second.
 ///
+/// **The two directions are not bounded symmetrically, deliberately.** Forward
+/// is bounded tightly (`MAX_CLOCK_SKEW_SECS`); backward is bounded only at
+/// zero, so a stamp of `1` — 1970 — is accepted and stored. That asymmetry
+/// follows the threat: an ancient stamp is self-evidently ancient to every
+/// reader and cannot pin `max(observed_at)`, whereas a far-future one both
+/// looks current and can never be superseded. The maker-bot carries a backward
+/// bound as well (`MAX_ERAPI_SNAPSHOT_AGE`) because it must decide whether to
+/// *quote* off the reading, which is a different question from whether to
+/// record it.
+///
 /// Both rejections degrade to the poll second rather than to the epoch or to a
 /// far-future date. That costs the idempotency the ordinary path enjoys — a
 /// poll-stamped row is new on every poll — which is the honest trade: a snapshot
 /// whose own timestamp is nonsense has no instant to dedup on, and duplicate
-/// rows are recoverable where a permanently-pinned bogus one is not.
+/// rows are recoverable where a permanently-pinned bogus one is not. The
+/// substitution is logged by the caller, since nothing in the stored row records
+/// that it happened.
 fn observation_instant(last_update: i64, poll_secs: i64) -> i64 {
     if last_update <= 0 || last_update.saturating_sub(poll_secs) > MAX_CLOCK_SKEW_SECS {
         poll_secs
@@ -178,6 +197,24 @@ async fn main() -> anyhow::Result<()> {
 
     let source = ErApiSource::new(&cfg.base_url, currencies)?;
     let source = TickSource::new(source, move |snap: &ErApiSnapshot, poll_secs| {
+        // Resolved once per poll, not per currency: the instant is a property of
+        // the snapshot, and so is the warning below.
+        let observed_at = observation_instant(snap.last_update, poll_secs);
+        if observed_at != snap.last_update {
+            // Say so, because the substitution is otherwise invisible and its
+            // consequence is the opposite of obvious: the rows still look like
+            // ordinary hourly observations, so `max(observed_at)` tracks the
+            // poll second and the store reports this feed as perfectly FRESH
+            // under exactly the condition the maker-bot's stall guard drops the
+            // tier for. Nothing downstream can tell a substituted instant from
+            // a real one, so this log line is the only signal.
+            tracing::warn!(
+                provider_instant = snap.last_update,
+                attributed_to = observed_at,
+                "er-api snapshot instant is implausible; attributing this poll to \
+                 the poll second, which forfeits the idempotent insert"
+            );
+        }
         snap.rates
             .iter()
             .filter_map(|(currency, rate)| {
@@ -189,9 +226,9 @@ async fn main() -> anyhow::Result<()> {
                 let product_id = by_currency.get(currency)?;
                 Some(Tick {
                     product_id: product_id.clone(),
-                    // Prefer the provider's refresh instant, bounded in both
-                    // directions — see `observation_instant`.
-                    observed_at: observation_instant(snap.last_update, poll_secs),
+                    // The provider's refresh instant where it is plausible —
+                    // see `observation_instant`, resolved above.
+                    observed_at,
                     price: *rate,
                     // This venue publishes no uncertainty. `None` records that
                     // it has no confidence notion, which a zero would misread as
@@ -231,6 +268,11 @@ mod tests {
         // Sub-minute skew ahead of us is tolerated rather than discarded.
         assert_eq!(observation_instant(poll + 30, poll), poll + 30);
         assert_eq!(observation_instant(poll, poll), poll);
+        // The boundary itself, both sides of it. Asserted because the maker-bot
+        // half admits exactly 60 s too (`delta < -60` is strict), and the two
+        // guards agreeing at the edge is the property worth pinning.
+        assert_eq!(observation_instant(poll + 60, poll), poll + 60);
+        assert_eq!(observation_instant(poll + 61, poll), poll);
     }
 
     #[test]
@@ -246,8 +288,11 @@ mod tests {
         // the feed's last-seen instant permanently and could never be
         // superseded by the correct later snapshot.
         assert_eq!(observation_instant(poll + 10_000_000, poll), poll);
+        // `i64::MAX` is the case the saturating subtraction exists for: a plain
+        // `-` would overflow here.
         assert_eq!(observation_instant(i64::MAX, poll), poll);
-        // Saturating arithmetic: no wrap, no panic, at either extreme.
+        // `i64::MIN` is caught by the `<= 0` arm, which short-circuits before
+        // the subtraction runs — so this pins the extreme, not the arithmetic.
         assert_eq!(observation_instant(i64::MIN, poll), poll);
     }
 }
