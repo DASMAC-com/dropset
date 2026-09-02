@@ -45,7 +45,7 @@
 use crate::telemetry::Record;
 use anyhow::{anyhow, Context as _, Result};
 use dropset_feeds::{redact_to_origin, ChannelSource, LivenessReporter, MAX_ERROR_CHARS};
-use dropset_sdk::events::{decode_event_payload, strip_event_tag, DropsetEvent};
+use dropset_sdk::events::{decode_event_payload, emitted_by, strip_event_tag, DropsetEvent};
 use dropset_sdk::types::FillEvent;
 use dropset_sdk::DROPSET_ID;
 use solana_client::pubsub_client::PubsubClient;
@@ -393,7 +393,7 @@ fn attribute_fills(
             // Only events emitted by our own program count — the tag and
             // discriminator are public, so anyone can forge the bytes, but the
             // emitting program id is what `emit_cpi!`'s self-CPI authenticates.
-            if account_keys.get(compiled.program_id_index as usize) != Some(&DROPSET_ID) {
+            if !emitted_by(account_keys, compiled.program_id_index, &DROPSET_ID) {
                 continue;
             }
             // Inner-instruction data is base58 even under base64 tx encoding.
@@ -415,22 +415,23 @@ fn attribute_fills(
 }
 
 /// Assemble the transaction's full account-key list in the order an
-/// instruction's `program_id_index` addresses: the message's static keys
-/// first, then the address-lookup-table loaded addresses (writable, then
-/// readonly). Returns `None` if a loaded address won't parse — the caller then
-/// can't safely attribute and drops to the inventory-diff fallback rather than
+/// instruction's `program_id_index` addresses, unwrapping the RPC's
+/// `OptionSerializer` and delegating the assembly to the shared SDK codec
+/// ([`dropset_sdk::events::full_account_keys`]) — one tested
+/// implementation for every consumer that has to attribute an event-CPI.
+///
+/// Returns `None` if a loaded address won't parse — the caller then can't
+/// safely attribute and drops to the inventory-diff fallback rather than
 /// trust an unverified emitter.
 fn full_account_keys(
     static_keys: &[Pubkey],
     loaded: &OptionSerializer<UiLoadedAddresses>,
 ) -> Option<Vec<Pubkey>> {
-    let mut keys = static_keys.to_vec();
-    if let OptionSerializer::Some(loaded) = loaded {
-        for encoded in loaded.writable.iter().chain(loaded.readonly.iter()) {
-            keys.push(Pubkey::from_str(encoded).ok()?);
-        }
-    }
-    Some(keys)
+    let (writable, readonly) = match loaded {
+        OptionSerializer::Some(loaded) => (loaded.writable.as_slice(), loaded.readonly.as_slice()),
+        _ => (&[][..], &[][..]),
+    };
+    dropset_sdk::events::full_account_keys(static_keys, writable, readonly)
 }
 
 /// Decode one inner-instruction blob as a [`FillEvent`], or `None` if it is a

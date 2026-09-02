@@ -20,22 +20,19 @@
 //! cargo test -p dropset-indexer -- --ignored
 //! ```
 
-use dropset_feeds::{connect, Batch, Cursor, CursorStore, PgCursorStore, RawTx, Sink, StoreSink};
+use dropset_feeds::{
+    connect, Batch, Cursor, CursorStore, InnerIx, PgCursorStore, RawTx, Sink, StoreSink,
+};
 use dropset_indexer::aggregate::AggregateSink;
 use dropset_indexer::store::{EventWriter, Store};
-use dropset_sdk::events::EVENT_IX_TAG_LE;
+use dropset_sdk::events::{DEPOSIT_EVENT_DISCRIMINATOR, EVENT_IX_TAG_LE, FILL_EVENT_DISCRIMINATOR};
 use dropset_sdk::types::{DepositEvent, FillEvent};
+use dropset_sdk::DROPSET_ID;
 use rust_decimal::Decimal;
 use solana_pubkey::Pubkey;
 use sqlx::PgPool;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync};
-
-/// The anchor event discriminators for the two events these tests build.
-/// Hard-coded for the same reason the SDK's are, and pinned there against
-/// the anchor scheme by `discriminators_match_anchor_scheme`.
-const FILL_DISCRIMINATOR: [u8; 8] = [13, 89, 41, 228, 105, 178, 45, 112];
-const DEPOSIT_DISCRIMINATOR: [u8; 8] = [120, 248, 61, 83, 31, 142, 107, 144];
 
 /// Start a throwaway Postgres, migrate it, and connect both the indexer's
 /// store and a framework pool over it.
@@ -71,7 +68,7 @@ fn tagged(discriminator: [u8; 8], body: &impl borsh::BorshSerialize) -> Vec<u8> 
 /// One fill leg on `market`, priced so the take totals are easy to read.
 fn fill(market: Pubkey, base: u64, quote: u64, fee: u64) -> Vec<u8> {
     tagged(
-        FILL_DISCRIMINATOR,
+        FILL_EVENT_DISCRIMINATOR,
         &FillEvent {
             market,
             taker: Pubkey::new_unique(),
@@ -97,7 +94,7 @@ fn fill(market: Pubkey, base: u64, quote: u64, fee: u64) -> Vec<u8> {
 /// typed fills table.
 fn deposit(market: Pubkey) -> Vec<u8> {
     tagged(
-        DEPOSIT_DISCRIMINATOR,
+        DEPOSIT_EVENT_DISCRIMINATOR,
         &DepositEvent {
             market,
             sector_idx: 1,
@@ -115,13 +112,40 @@ fn deposit(market: Pubkey) -> Vec<u8> {
     )
 }
 
+/// The program these tests index. Placed at account-key index 0, so every
+/// blob built by [`raw_tx`] is attributed to it and passes the
+/// emitting-program check in `decode_tx`.
+const INDEXED_PROGRAM: Pubkey = DROPSET_ID;
+
+/// A transaction whose blobs all claim to come from [`INDEXED_PROGRAM`].
+/// Use [`raw_tx_from`] to attribute a blob elsewhere.
 fn raw_tx(slot: i64, signature: &str, blobs: Vec<Vec<u8>>) -> RawTx {
+    raw_tx_from(
+        slot,
+        signature,
+        blobs.into_iter().map(|b| (0u8, b)).collect(),
+    )
+}
+
+/// A transaction whose blobs carry the given `program_id_index` each.
+/// Index 0 is [`INDEXED_PROGRAM`]; index 1 is a foreign program sharing
+/// the transaction.
+fn raw_tx_from(slot: i64, signature: &str, blobs: Vec<(u8, Vec<u8>)>) -> RawTx {
     RawTx {
         slot,
         txn_index: 0,
         signature: signature.to_string(),
         block_time: Some(1_700_000_000),
-        inner_ix_blobs: blobs,
+        inner_ix_blobs: blobs
+            .into_iter()
+            .map(|(program_id_index, data)| InnerIx {
+                program_id_index,
+                data,
+            })
+            .collect(),
+        static_account_keys: vec![INDEXED_PROGRAM, Pubkey::new_from_array([9; 32])],
+        loaded_writable: Vec::new(),
+        loaded_readonly: Vec::new(),
     }
 }
 
@@ -138,7 +162,7 @@ async fn store_sink_routes_events_to_their_tables_and_advances_the_cursor() {
     let (_pg, pool, _store) = start_pg().await;
     let market = Pubkey::new_unique();
     let feed = "rpc:test";
-    let mut sink = StoreSink::new(pool.clone(), feed, EventWriter);
+    let mut sink = StoreSink::new(pool.clone(), feed, EventWriter::new(INDEXED_PROGRAM));
 
     // One transaction carrying a fill, a deposit, and a blob that is not a
     // Dropset event at all — the last must be ignored rather than stored.
@@ -159,12 +183,80 @@ async fn store_sink_routes_events_to_their_tables_and_advances_the_cursor() {
     assert_eq!(cursors.load(feed).await.unwrap(), Some(cursor));
 }
 
+/// The fabricated-fill path, end to end against a real database: a
+/// well-formed `FillEvent` naming a real market, emitted by a **foreign**
+/// program in a transaction that merely references ours, must write no
+/// rows at all.
+///
+/// This is the whole attack. `getSignaturesForAddress` is address-indexed,
+/// so such a transaction is polled and hydrated like any other, and both
+/// halves of the `[tag][discriminator]` envelope are public — so nothing
+/// but the emitting program id distinguishes this blob from a real fill.
+/// Were it accepted it would flow into `fill_events`, then through the
+/// take fold into `market_stats.volume_base/quote` and `last_price`, and
+/// out onto the public `/v1` surface. There is no schema-level backstop:
+/// the migrations carry no foreign key, so an unknown market inserts
+/// freely.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_fill_forged_by_a_foreign_program_writes_no_rows() {
+    let (_pg, pool, _store) = start_pg().await;
+    let market = Pubkey::new_unique();
+    let mut sink = StoreSink::new(pool.clone(), "rpc:test", EventWriter::new(INDEXED_PROGRAM));
+
+    // Index 1 is the foreign program; the payload is otherwise genuine.
+    let batch = Batch::new(vec![raw_tx_from(
+        10,
+        "sig-forged",
+        vec![(1, fill(market, 100, 200, 3)), (1, deposit(market))],
+    )]);
+
+    sink.handle(&batch).await.unwrap();
+
+    assert_eq!(count(&pool, "fill_events").await, 0, "forged fill stored");
+    assert_eq!(count(&pool, "events").await, 0, "forged event stored");
+}
+
+/// The other half of the same transaction shape: our genuine event is
+/// still indexed when a forgery rides alongside it. A check that dropped
+/// the whole transaction on sight of one foreign blob would lose real
+/// fills, so this pins the per-blob granularity.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_genuine_fill_survives_a_forgery_in_the_same_transaction() {
+    let (_pg, pool, _store) = start_pg().await;
+    let market = Pubkey::new_unique();
+    let mut sink = StoreSink::new(pool.clone(), "rpc:test", EventWriter::new(INDEXED_PROGRAM));
+
+    let batch = Batch::new(vec![raw_tx_from(
+        11,
+        "sig-mixed",
+        vec![
+            (1, fill(market, 999, 999, 9)),
+            (0, fill(market, 100, 200, 3)),
+        ],
+    )]);
+
+    sink.handle(&batch).await.unwrap();
+
+    assert_eq!(count(&pool, "fill_events").await, 1);
+    let base: Decimal = sqlx::query_scalar("SELECT fill_base FROM fill_events")
+        .fetch_one(&pool)
+        .await
+        .expect("read the stored leg");
+    assert_eq!(
+        base,
+        Decimal::from(100),
+        "the genuine leg is the stored one"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn re_delivering_a_batch_writes_no_duplicate_rows() {
     let (_pg, pool, _store) = start_pg().await;
     let market = Pubkey::new_unique();
-    let mut sink = StoreSink::new(pool.clone(), "rpc:test", EventWriter);
+    let mut sink = StoreSink::new(pool.clone(), "rpc:test", EventWriter::new(INDEXED_PROGRAM));
 
     // Two legs of one take, so the event PK has to separate them by ordinal,
     // plus a non-fill so the JSONB table's ON CONFLICT is re-delivered too.
@@ -198,7 +290,8 @@ async fn re_delivering_a_batch_writes_no_duplicate_rows() {
 async fn folding_before_the_store_sink_commits_finds_nothing_to_fold() {
     let (_pg, pool, store) = start_pg().await;
     let market = Pubkey::new_unique();
-    let mut store_sink = StoreSink::new(pool.clone(), "rpc:test", EventWriter);
+    let mut store_sink =
+        StoreSink::new(pool.clone(), "rpc:test", EventWriter::new(INDEXED_PROGRAM));
     let mut aggregate_sink = AggregateSink::new(store.clone(), 100);
 
     let batch = Batch::new(vec![raw_tx(13, "sig-e", vec![fill(market, 10, 20, 1)])]);
@@ -218,7 +311,8 @@ async fn folding_before_the_store_sink_commits_finds_nothing_to_fold() {
 async fn the_aggregate_sink_folds_written_legs_into_takes_and_rollups() {
     let (_pg, pool, store) = start_pg().await;
     let market = Pubkey::new_unique();
-    let mut store_sink = StoreSink::new(pool.clone(), "rpc:test", EventWriter);
+    let mut store_sink =
+        StoreSink::new(pool.clone(), "rpc:test", EventWriter::new(INDEXED_PROGRAM));
     let mut aggregate_sink = AggregateSink::new(store.clone(), 100);
 
     let batch = Batch::new(vec![raw_tx(

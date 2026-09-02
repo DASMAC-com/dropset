@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use dropset_feeds::{RawTx, StoreWriter};
 use dropset_sdk::events::DropsetEvent;
 use serde::Serialize;
+use solana_pubkey::Pubkey;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
@@ -185,7 +186,21 @@ impl Store {
 /// than duplicated. Decode happens here rather than in a separate stage
 /// because a transaction carrying no Dropset events should cost no rows and
 /// no extra pass.
-pub struct EventWriter;
+///
+/// Carries the indexed `program_id` because decoding is not just a parse:
+/// an event-CPI blob is only trustworthy if that program emitted it (see
+/// [`decode_tx`]), so the writer cannot do its job without knowing which
+/// program it indexes.
+pub struct EventWriter {
+    program_id: Pubkey,
+}
+
+impl EventWriter {
+    /// A writer that trusts only event-CPIs emitted by `program_id`.
+    pub fn new(program_id: Pubkey) -> Self {
+        Self { program_id }
+    }
+}
 
 #[async_trait]
 impl StoreWriter for EventWriter {
@@ -198,7 +213,7 @@ impl StoreWriter for EventWriter {
     ) -> anyhow::Result<u64> {
         let mut written = 0u64;
         for raw in records {
-            for de in decode_tx(raw) {
+            for de in decode_tx(raw, &self.program_id) {
                 written += write_event(tx, &de).await?;
             }
         }

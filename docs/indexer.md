@@ -215,12 +215,56 @@ primary key, the one frozen in `interface.md` §1:
 PRIMARY KEY (slot, txn_index, signature, event_ordinal)
 ```
 
-`event_ordinal` is a dense rank over the transaction's *recognized*
+`event_ordinal` is a dense rank over the transaction's *tagged*
 event-CPIs, in walk (heap-pop emission) order — not the true
-inner-instruction index. That relative order is what the PK needs for
-dedup; a tagged-but-undecodable event shifts every later ordinal, and
-the geyser path can supply the true inner-instruction index (see
-`indexer/src/decode.rs`). Every
+inner-instruction index. It is assigned at the tag-strip step, before
+the discriminator dispatch, so a tagged-but-undecodable event still
+consumes an ordinal and the events around it keep their numbering when
+the codec is later extended. That matters because the ordinal is a
+quarter of the frozen PK: ranking only the *recognized* events would
+make the key a function of codec coverage, and since the raw inserts
+use an untargeted `ON CONFLICT DO NOTHING` — which suppresses only a
+row that actually violates a unique constraint — a renumbered row
+inserts as a duplicate and is folded into the take and volume rollups
+twice. The geyser path can supply the true inner-instruction index
+(see `indexer/src/decode.rs`).
+
+The ordinal ranks *tagged* blobs, which includes event-CPIs emitted by
+some **other** program in a transaction that merely references this one.
+Those are dropped rather than stored, but they still consume an ordinal,
+so a stored event's ordinal is not always its rank among this program's
+own events. That is deliberate: it keeps the number a function of the
+transaction alone rather than of the trust policy, which is as mutable
+as the codec.
+
+Rows written before that change keep their old recognized-only
+ordinals, and this build numbers those same transactions differently.
+The consequence is **operational, not cosmetic**, and it is exactly the
+duplicate-insert mechanism described above: re-polling an already-stored
+slot with the new build inserts renumbered rows as *new* PK tuples
+rather than as no-ops, and the aggregator folds them into the take and
+volume rollups a second time. It is reachable in practice, because five
+event types were previously undecodable — any transaction emitting one
+of them before a fill renumbers.
+
+So the accepted cost is not "the numbering has a seam"; it is **do not
+re-poll affected slots with the new build**. Rebuilding the shared dev
+database from the raw tier is **declined** (2026-09-02) as capacity the
+queue never priced, the data being derived and dev-grade; a cursor reset
+or backfill across those slots is what must not happen. A production deployment
+should reindex from the raw tier rather than inherit the constraint.
+
+The same commit changed the `events.payload` wire format: `u64` and
+`i64` fields now cross as JSON **strings** rather than bare numbers, so
+a value above 2^53 survives a JavaScript consumer. Rows written before
+it carry bare numbers for those same fields, and nothing migrates them,
+so the column — and `/v1/events`, which serves it — is heterogeneous
+across that boundary. This is accepted on the same grounds and with the
+same date: nothing reads `payload` structurally (no cast, no
+containment match, no dashboard query), and `/v1` has no external
+consumers yet, which is what makes now the cheapest moment to fix the
+format. A consumer written against this API must tolerate both shapes
+on any pre-2026-09-02 row. Every
 write is an idempotent `INSERT … ON CONFLICT DO NOTHING`, so a replayed
 slot is a no-op — the PK *is* the dedup contract, end to end. Promoting
 the cold events out of the JSONB `events` table into their own typed

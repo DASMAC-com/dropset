@@ -104,7 +104,7 @@ pub mod venues;
 #[cfg(feature = "rpc")]
 mod rpc;
 #[cfg(feature = "rpc")]
-pub use rpc::{RawTx, RpcPollSource, RpcTransport};
+pub use rpc::{InnerIx, RawTx, RpcPollSource, RpcTransport};
 
 #[cfg(feature = "stream")]
 mod stream;

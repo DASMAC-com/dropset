@@ -20,7 +20,8 @@ use solana_pubkey::Pubkey;
 use solana_signature::Signature;
 use solana_transaction_status::option_serializer::OptionSerializer;
 use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta, UiInstruction, UiTransactionEncoding,
+    EncodedConfirmedTransactionWithStatusMeta, EncodedTransactionWithStatusMeta, UiInstruction,
+    UiTransactionEncoding,
 };
 use std::str::FromStr;
 
@@ -171,10 +172,41 @@ async fn enumerate_pages<P: RpcTransport>(
     })
 }
 
-/// A decoded transaction touching the watched program: its coordinates plus
-/// the flattened, base58-decoded inner-instruction `data` blobs. Consumers run
-/// their own event decoder over `inner_ix_blobs`; the framework does not decode
+/// One flattened inner instruction: its base58-decoded `data` blob and the
+/// account index naming the program that emitted it.
+///
+/// The index is carried **verbatim**, unresolved. Resolving it against the
+/// transaction's account keys is a consumer concern for the same reason
+/// decoding the blob is: the framework does not interpret
+/// (docs/data-feeds.md §4). What the framework owes a consumer is not
+/// throwing the index away — without it, an event-CPI blob cannot be
+/// attributed to an emitting program at all, and the `[tag][discriminator]`
+/// envelope is public, so attribution is the only thing that distinguishes
+/// a real event from a forged one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InnerIx {
+    /// Index into the transaction's full account-key list (static keys,
+    /// then ALT-loaded writable, then ALT-loaded readonly) naming the
+    /// program that emitted this inner instruction. Assemble that list
+    /// from the `*_account_keys` fields on [`RawTx`].
+    pub program_id_index: u8,
+    /// The inner instruction's `data`, base58-decoded. Opaque here — the
+    /// framework does not decode it.
+    pub data: Vec<u8>,
+}
+
+/// A decoded transaction touching the watched program: its coordinates, the
+/// flattened inner instructions, and the account-key material needed to
+/// resolve each one's emitting program. Consumers run their own event
+/// decoder over `inner_ix_blobs`; the framework does not decode
 /// (docs/data-feeds.md §4). The framework twin of the indexer's `RawTx`.
+///
+/// The account keys are carried as the three raw pieces the RPC response
+/// supplies rather than as one pre-assembled list, because assembling them
+/// is shared consumer logic (`dropset_sdk::events::full_account_keys`) and
+/// this crate is deliberately Dropset-agnostic — it depends on no SDK. A
+/// second copy of that assembly here is the duplication that lets the two
+/// drift.
 #[derive(Clone, Debug)]
 pub struct RawTx {
     pub slot: i64,
@@ -184,7 +216,15 @@ pub struct RawTx {
     pub txn_index: i64,
     pub signature: String,
     pub block_time: Option<i64>,
-    pub inner_ix_blobs: Vec<Vec<u8>>,
+    pub inner_ix_blobs: Vec<InnerIx>,
+    /// The message's static account keys, in order.
+    pub static_account_keys: Vec<Pubkey>,
+    /// Base58 ALT-loaded writable addresses, in order, as the RPC reports
+    /// them. Left unparsed: a consumer that cannot parse one must fail
+    /// closed rather than attribute an event to a guessed program.
+    pub loaded_writable: Vec<String>,
+    /// Base58 ALT-loaded readonly addresses, in order.
+    pub loaded_readonly: Vec<String>,
 }
 
 /// The opaque cursor an RPC poll persists: the newest signature already
@@ -406,18 +446,61 @@ impl<T: RpcTransport> Source for RpcPollSource<T> {
 }
 
 /// Flatten a fetched transaction's inner instructions into ordered,
-/// base58-decoded `data` blobs.
+/// base58-decoded `data` blobs, each keeping the account index of the
+/// program that emitted it, alongside the account-key material a consumer
+/// needs to resolve those indices.
+///
+/// An undecodable transaction body clears **all three** key fields, which
+/// leaves every index out of range — the fail-closed outcome, since
+/// attributing an event without the emitter is exactly what must not happen.
 fn to_raw_tx(signature: &str, tx: EncodedConfirmedTransactionWithStatusMeta) -> Option<RawTx> {
     let slot = tx.slot as i64;
     let block_time = tx.block_time;
-    let meta = tx.transaction.meta?;
+    let EncodedTransactionWithStatusMeta {
+        transaction, meta, ..
+    } = tx.transaction;
+    let meta = meta?;
+
+    // The three key fields travel together, and a body that will not decode
+    // has to clear every one of them.
+    //
+    // `transaction.decode()` and `meta.loaded_addresses` share no failure
+    // path, so reading them independently lets a decode failure empty the
+    // static keys while leaving the ALT lists populated. The assembled list
+    // would then be non-empty and **shifted**: index 0 resolves to the first
+    // ALT address instead of static key 0, so every `program_id_index`
+    // resolves — to the wrong key. ALT contents are author-chosen and
+    // permissionless, which makes that a forged blob's best case rather than
+    // a harmless degradation. Clearing all three instead makes every index
+    // out of range, which is what the doc comment above can then honestly
+    // claim.
+    let (static_account_keys, loaded_writable, loaded_readonly) = match transaction.decode() {
+        Some(decoded) => {
+            let (writable, readonly) = match &meta.loaded_addresses {
+                OptionSerializer::Some(loaded) => {
+                    (loaded.writable.clone(), loaded.readonly.clone())
+                }
+                _ => (Vec::new(), Vec::new()),
+            };
+            (
+                decoded.message.static_account_keys().to_vec(),
+                writable,
+                readonly,
+            )
+        }
+        None => (Vec::new(), Vec::new(), Vec::new()),
+    };
+
     let mut inner_ix_blobs = Vec::new();
     if let OptionSerializer::Some(groups) = meta.inner_instructions {
         for group in groups {
             for ix in group.instructions {
                 if let UiInstruction::Compiled(c) = ix {
                     if let Ok(bytes) = bs58::decode(&c.data).into_vec() {
-                        inner_ix_blobs.push(bytes);
+                        inner_ix_blobs.push(InnerIx {
+                            program_id_index: c.program_id_index,
+                            data: bytes,
+                        });
                     }
                 }
             }
@@ -429,6 +512,9 @@ fn to_raw_tx(signature: &str, tx: EncodedConfirmedTransactionWithStatusMeta) -> 
         signature: signature.to_string(),
         block_time,
         inner_ix_blobs,
+        static_account_keys,
+        loaded_writable,
+        loaded_readonly,
     })
 }
 
@@ -488,14 +574,33 @@ mod tests {
         }
     }
 
-    /// One compiled inner instruction carrying base58 `data`.
+    /// One compiled inner instruction carrying base58 `data`, emitted by
+    /// the program at account index 4.
     fn compiled_ix(data: &[u8]) -> serde_json::Value {
+        compiled_ix_from(4, data)
+    }
+
+    /// One compiled inner instruction attributed to `program_id_index` —
+    /// the field a consumer resolves to decide whether to trust the blob.
+    fn compiled_ix_from(program_id_index: u8, data: &[u8]) -> serde_json::Value {
         json!({
-            "programIdIndex": 4,
+            "programIdIndex": program_id_index,
             "accounts": [],
             "data": bs58::encode(data).into_string(),
             "stackHeight": 2,
         })
+    }
+
+    /// The blob list a flatten of `payloads` should produce, all attributed
+    /// to the default fixture index.
+    fn blobs(payloads: &[&[u8]]) -> Vec<InnerIx> {
+        payloads
+            .iter()
+            .map(|data| InnerIx {
+                program_id_index: 4,
+                data: data.to_vec(),
+            })
+            .collect()
     }
 
     #[test]
@@ -518,7 +623,115 @@ mod tests {
         assert_eq!(raw.signature, "sig-1");
         // The RPC path cannot learn a tx's index in its block.
         assert_eq!(raw.txn_index, 0);
-        assert_eq!(raw.inner_ix_blobs, vec![vec![1, 2, 3], vec![4], vec![5, 6]]);
+        assert_eq!(raw.inner_ix_blobs, blobs(&[&[1, 2, 3], &[4], &[5, 6]]));
+    }
+
+    /// Each blob keeps its own `programIdIndex`: the flatten spans
+    /// instruction groups, so two blobs in one transaction can have
+    /// different emitters and a consumer must be able to tell them apart.
+    #[test]
+    fn each_blob_keeps_its_own_emitting_program_index() {
+        let tx = encoded_tx(
+            42,
+            None,
+            json!([
+                { "index": 0, "instructions": [compiled_ix_from(0, &[1]), compiled_ix_from(3, &[2])] },
+                { "index": 1, "instructions": [compiled_ix_from(7, &[3])] },
+            ]),
+        );
+
+        let raw = to_raw_tx("sig-ix", tx).expect("meta present");
+        let indices: Vec<u8> = raw
+            .inner_ix_blobs
+            .iter()
+            .map(|ix| ix.program_id_index)
+            .collect();
+        assert_eq!(indices, vec![0, 3, 7]);
+    }
+
+    /// An undecodable transaction body yields no static keys, so every
+    /// index is unresolvable and a consumer fails closed. The blobs are
+    /// still carried — dropping them here would hide the condition from
+    /// the consumer that has to count it.
+    #[test]
+    fn an_undecodable_body_yields_no_static_keys() {
+        let tx = encoded_tx(
+            42,
+            None,
+            json!([
+                { "index": 0, "instructions": [compiled_ix(&[1])] },
+            ]),
+        );
+
+        let raw = to_raw_tx("sig-no-keys", tx).expect("meta present");
+        assert!(raw.static_account_keys.is_empty());
+        assert!(raw.loaded_writable.is_empty());
+        assert!(raw.loaded_readonly.is_empty());
+        assert_eq!(raw.inner_ix_blobs.len(), 1);
+    }
+
+    /// **The shifted-key-list case.** The test above cannot establish the
+    /// claim its name makes, because its fixture supplies no
+    /// `loadedAddresses` at all — so it passes whether or not the two
+    /// sources are handled together. This one supplies them.
+    ///
+    /// `transaction.decode()` and `meta.loaded_addresses` share no failure
+    /// path. Handled independently, a decode failure would leave the ALT
+    /// lists populated beside empty static keys, and the assembled list
+    /// would be non-empty with index 0 pointing at an ALT address rather
+    /// than static key 0 — so every `program_id_index` would resolve, to
+    /// the wrong key. Since ALT contents are author-chosen, that is
+    /// precisely how a forged blob would get itself attributed.
+    #[test]
+    fn an_undecodable_body_clears_the_loaded_addresses_too() {
+        let alt_writable = Pubkey::new_from_array([21; 32]);
+        let alt_readonly = Pubkey::new_from_array([22; 32]);
+        let meta: UiTransactionStatusMeta = serde_json::from_value(json!({
+            "err": null,
+            "status": { "Ok": null },
+            "fee": 5000,
+            "preBalances": [],
+            "postBalances": [],
+            "innerInstructions": [
+                { "index": 0, "instructions": [compiled_ix_from(0, &[1])] },
+            ],
+            "logMessages": [],
+            "preTokenBalances": [],
+            "postTokenBalances": [],
+            "rewards": [],
+            "loadedAddresses": {
+                "writable": [alt_writable.to_string()],
+                "readonly": [alt_readonly.to_string()],
+            },
+        }))
+        .expect("fixture matches the transaction-meta wire shape");
+
+        // `with_meta` builds an `EncodedTransaction::LegacyBinary("")`, whose
+        // `decode()` is `None` — the condition under test.
+        let raw = to_raw_tx("sig-shifted", with_meta(42, None, Some(meta))).expect("meta present");
+
+        assert!(
+            raw.loaded_writable.is_empty() && raw.loaded_readonly.is_empty(),
+            "ALT addresses must be cleared alongside the static keys, or index \
+             0 resolves to an attacker-chosen address"
+        );
+        // The decisive property: nothing is attributable at all.
+        assert_eq!(
+            dropset_sdk_events_full_account_keys(&raw),
+            Some(Vec::new()),
+            "the assembled key list must be empty, leaving every index out of range"
+        );
+    }
+
+    /// Assemble `raw`'s key material the way a consumer does. Spelled out
+    /// here rather than importing the SDK, because `feeds` deliberately does
+    /// not depend on it.
+    fn dropset_sdk_events_full_account_keys(raw: &RawTx) -> Option<Vec<Pubkey>> {
+        let mut keys = raw.static_account_keys.clone();
+        for encoded in raw.loaded_writable.iter().chain(raw.loaded_readonly.iter()) {
+            keys.push(Pubkey::from_str(encoded).ok()?);
+        }
+        Some(keys)
     }
 
     #[test]
@@ -940,6 +1153,6 @@ mod tests {
             }]),
         );
         let raw = to_raw_tx("sig-5", tx).expect("meta present");
-        assert_eq!(raw.inner_ix_blobs, vec![vec![9, 9]]);
+        assert_eq!(raw.inner_ix_blobs, blobs(&[&[9, 9]]));
     }
 }
