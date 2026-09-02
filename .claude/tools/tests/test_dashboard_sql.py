@@ -1,3 +1,4 @@
+# cspell:word dedents
 """Tests for the Grafana dashboard SQL extractor."""
 
 import json
@@ -304,8 +305,15 @@ class Extraction(unittest.TestCase):
 
 
 class CheckAndExtract(unittest.TestCase):
-    def _args(self, dashboards, mirror):
-        return type("Args", (), {"dashboards": dashboards, "mirror": mirror})()
+    def _args(self, dashboards, mirror, alerting=None):
+        # `alerting` defaults to None rather than to a directory: these cases are
+        # about the dashboard mirror, and a real path here would couple them to
+        # the committed alert rules.
+        return type(
+            "Args",
+            (),
+            {"dashboards": dashboards, "mirror": mirror, "alerting": alerting},
+        )()
 
     def test_check_fails_on_a_stale_mirror_then_passes_after_extract(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -387,6 +395,227 @@ class RealDashboards(unittest.TestCase):
         # found one query out of dozens.
         self.assertGreaterEqual(
             len(found), 20, f"only {len(found)} queries extracted — walk broken?"
+        )
+
+
+class BlockScalar(unittest.TestCase):
+    """The block-scalar reader, which is what makes the alerting files readable."""
+
+    def read(self, text, at=0):
+        return ds.block_scalar(text.splitlines(), at)[0]
+
+    def test_dedents_by_the_first_content_line(self):
+        self.assertEqual(self.read("  k: |-\n    a\n    b\n"), "a\nb")
+
+    def test_deeper_indentation_is_content(self):
+        # This is the case SQL depends on: an indented continuation line is part
+        # of the query, not the end of it.
+        self.assertEqual(
+            self.read("  k: |-\n    SELECT\n      x\n    FROM t\n"),
+            "SELECT\n  x\nFROM t",
+        )
+
+    def test_a_blank_line_does_not_terminate_the_value(self):
+        # A blank line carries no indentation to compare, so a naive reader ends
+        # the scalar here and silently truncates the query.
+        self.assertEqual(self.read("  k: |-\n    a\n\n    b\n"), "a\n\nb")
+
+    def test_stops_at_a_sibling_key(self):
+        self.assertEqual(self.read("  k: |-\n    a\n  other: 1\n"), "a")
+
+    def test_stops_at_a_shallower_key(self):
+        self.assertEqual(self.read("  k: |-\n    a\ntop: 1\n"), "a")
+
+    def test_strip_chomping_drops_the_trailing_newline(self):
+        self.assertEqual(self.read("k: |-\n  a\n"), "a")
+
+    def test_clip_chomping_keeps_exactly_one(self):
+        self.assertEqual(self.read("k: |\n  a\n"), "a\n")
+
+    def test_returns_the_index_of_the_next_construct(self):
+        lines = "  k: |-\n    a\n    b\n  other: 1\n".splitlines()
+        self.assertEqual(ds.block_scalar(lines, 0)[1], 3)
+        self.assertEqual(lines[3].strip(), "other: 1")
+
+
+class AlertExtraction(unittest.TestCase):
+    RULES = """apiVersion: 1
+groups:
+- folder: 'Dropset'
+  name: 'g'
+  rules:
+  - annotations:
+      summary: 'one'
+    data:
+    - model:
+        rawSql: |-
+          SELECT 1
+          FROM t
+        refId: 'A'
+    title: 'First'
+    uid: 'rule-one'
+  - data:
+    - model:
+        rawSql: |-
+          SELECT 2
+    title: 'Second'
+    uid: 'rule-two'
+"""
+
+    def parse(self, text, name="maker.yml"):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / name
+            p.write_text(text)
+            return ds.parse_alerting(p)
+
+    def test_keys_each_query_on_its_rule_uid(self):
+        self.assertEqual(
+            [rel for rel, _ in self.parse(self.RULES)],
+            ["alerting/rule-one.sql", "alerting/rule-two.sql"],
+        )
+
+    def test_extracts_the_query_text(self):
+        self.assertEqual(self.parse(self.RULES)[0][1], "SELECT 1\nFROM t")
+
+    def test_reads_the_uid_despite_it_sorting_after_the_query(self):
+        # The house yamllint rule orders keys alphabetically, so `uid` always
+        # arrives after `data`. A single forward pass that keyed on the most
+        # recent uid would key every rule on the PREVIOUS rule's uid.
+        self.assertEqual(self.parse(self.RULES)[1][0], "alerting/rule-two.sql")
+
+    def test_ignores_a_uid_nested_deeper_than_the_rule(self):
+        text = self.RULES.replace(
+            "    - model:\n        rawSql: |-\n          SELECT 1",
+            "    - datasource:\n        uid: 'dropset-postgres'\n"
+            "      model:\n        rawSql: |-\n          SELECT 1",
+        )
+        self.assertEqual(self.parse(text)[0][0], "alerting/rule-one.sql")
+
+    def test_numbers_multiple_queries_in_one_rule(self):
+        text = self.RULES.replace(
+            "        refId: 'A'\n",
+            "        refId: 'A'\n    - model:\n        rawSql: |-\n"
+            "          SELECT 99\n",
+        )
+        self.assertEqual(
+            [rel for rel, _ in self.parse(text)][:2],
+            ["alerting/rule-one-1.sql", "alerting/rule-one-2.sql"],
+        )
+
+    def test_comments_between_rules_do_not_end_the_rule_list(self):
+        # The committed files comment every rule's thresholds, so a comment at
+        # or above the rule indent is the NORMAL case, not an edge one. Treating
+        # one as a sibling key ended the list before the first rule and yielded
+        # nothing — a silent empty extraction, which the mirror gate then reads
+        # as "there is no alert SQL" rather than as a failure.
+        text = self.RULES.replace(
+            "  rules:\n", "  rules:\n  # why this rule fires\n  #\n  # continued\n"
+        )
+        self.assertEqual(
+            [rel for rel, _ in self.parse(text)],
+            ["alerting/rule-one.sql", "alerting/rule-two.sql"],
+        )
+
+    def test_a_following_group_ends_the_rule_list(self):
+        text = (
+            self.RULES
+            + """- folder: 'Other'
+  name: 'g2'
+  rules:
+  - data:
+    - model:
+        rawSql: |-
+          SELECT 3
+    uid: 'rule-three'
+"""
+        )
+        self.assertEqual(
+            [rel for rel, _ in self.parse(text)],
+            [
+                "alerting/rule-one.sql",
+                "alerting/rule-two.sql",
+                "alerting/rule-three.sql",
+            ],
+        )
+
+    def test_refuses_a_folded_scalar(self):
+        with self.assertRaises(ds.ExtractionError) as cm:
+            self.parse(self.RULES.replace("rawSql: |-", "rawSql: >-", 1))
+        self.assertIn("folded", str(cm.exception))
+
+    def test_refuses_a_rule_with_sql_but_no_uid(self):
+        with self.assertRaises(ds.ExtractionError) as cm:
+            self.parse(self.RULES.replace("    uid: 'rule-one'\n", "", 1))
+        self.assertIn("First", str(cm.exception))
+
+    def test_a_rule_without_sql_is_skipped_not_refused(self):
+        text = """apiVersion: 1
+groups:
+- rules:
+  - title: 'No query'
+    uid: 'rule-none'
+"""
+        self.assertEqual(self.parse(text), [])
+
+
+class RealAlerting(unittest.TestCase):
+    """The stdlib reader must agree with PyYAML on the committed alerting files.
+
+    This is what licenses reading YAML without a YAML library. The tool cannot
+    import PyYAML — the `dashboard-sql-lint` hook runs in an environment that has
+    only sqlfluff — but the SUITE runs under the ambient interpreter, so the
+    equivalence can be checked here even though it cannot be relied on there.
+
+    The day a rule uses a YAML feature the subset reader does not cover, this
+    fails rather than the mirror going quietly wrong.
+    """
+
+    #: `.claude/tools/tests/` -> repo root.
+    REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+
+    def files(self):
+        d = self.REPO_ROOT / ds.ALERTING_DIR
+        self.assertTrue(d.is_dir(), f"{d} is missing — this test cannot skip")
+        found = sorted(d.glob("*.yml"))
+        self.assertTrue(found, f"no alerting files under {d}")
+        return found
+
+    def test_agrees_with_pyyaml_on_every_committed_rule(self):
+        yaml = __import__("yaml")
+
+        for path in self.files():
+            doc = yaml.safe_load(path.read_text())
+            expected = []
+            for group in doc.get("groups") or []:
+                for rule in group.get("rules") or []:
+                    sql = [
+                        d["model"]["rawSql"]
+                        for d in rule.get("data") or []
+                        if isinstance(d.get("model"), dict)
+                        and str(d["model"].get("rawSql", "")).strip()
+                    ]
+                    for idx, q in enumerate(sql):
+                        suffix = f"-{idx + 1}" if len(sql) > 1 else ""
+                        expected.append(
+                            (f"alerting/{ds.slug(rule['uid'], 'rule')}{suffix}.sql", q)
+                        )
+
+            self.assertEqual(
+                ds.parse_alerting(path),
+                expected,
+                f"{path.name}: the stdlib reader and PyYAML disagree",
+            )
+
+    def test_the_committed_alert_rules_extract_cleanly(self):
+        found = ds.collect(
+            self.REPO_ROOT / ds.DASHBOARD_DIR, self.REPO_ROOT / ds.ALERTING_DIR
+        )
+        alerts = [r for r in found if r.startswith("alerting/")]
+        # A floor rather than an exact count, matching `RealDashboards`: exact
+        # churns on every rule added, non-emptiness passes if the walk finds one
+        # rule out of six.
+        self.assertGreaterEqual(
+            len(alerts), 5, f"only {len(alerts)} alert queries extracted — walk broken?"
         )
 
 
