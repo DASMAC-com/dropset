@@ -292,6 +292,15 @@ CI / PR-state reads `gh pr checks` / `gh pr view --json`), the
 PAT-not-OAuth auth setup, and the read/write permission split all live
 in `docs/conventions/github-mcp.md`.
 
+**Actions configuration lives there too** — the repository-secrets
+inventory, the secret-vs-variable-vs-constant rule (**a secret when the
+value must be masked in logs**, since Actions masks only secrets), the
+nine required status checks and the ruleset they come from, and the
+standing consequence that **a fork `pull_request` run receives no
+secrets**, so any required check with a secret dependency cannot pass
+on a fork PR. Add the next secret or required check against those,
+rather than per-PR.
+
 ## AWS infrastructure
 
 AWS resources are **CloudFormation YAML** under `infra/aws/` (network,
