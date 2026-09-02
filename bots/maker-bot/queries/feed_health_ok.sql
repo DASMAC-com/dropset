@@ -5,6 +5,12 @@
 -- arriving after a flap can still see what happened. Read them together with
 -- `status`: a row whose `status` is 'ok' and whose `last_error` is set has
 -- recovered, it has not failed.
+--
+-- `feed` is a SOURCE name, never a product. A batched venue prices its whole
+-- roster in one request and reports one constant name for all of it, so this
+-- row records that the poll succeeded — not that any particular pair was in
+-- the response. Per-pair delivery is `instrument_source_liveness`
+-- (0010_source_liveness.sql), which carries the argument in full.
 INSERT INTO feed_health (
     feed,
     status,

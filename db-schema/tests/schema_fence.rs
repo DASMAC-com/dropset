@@ -979,6 +979,152 @@ async fn liveness_picks_its_staleness_bound_by_asset_class() {
     }
 }
 
+/// The per-source view answers what the per-product one aggregates away: which
+/// COLLECTOR went dark on a pair, rather than whether the pair still has data
+/// from somebody.
+///
+/// The contrast in the `CAD-USD` rows is the whole point, and it is the same
+/// fixture shape the test above uses for the opposite purpose. Two sources poll
+/// it, one silent 80 hours and one fresh, so `instrument_liveness` reads the
+/// PRODUCT live — correctly, and unhelpfully: an operator reading only that
+/// view cannot see that half its collectors are dark. Both halves are asserted
+/// together here, because either alone is satisfiable by the wrong
+/// implementation.
+///
+/// **What this pins is a regression TOWARD the old shape.** A future edit
+/// re-adding a `GROUP BY product_id` to the per-source view would still satisfy
+/// every assertion in the test above, and every per-product consumer, while
+/// silently restoring the masking this view was added to remove. The row-count
+/// assertion is what catches that directly.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn source_liveness_separates_a_dark_collector_from_a_live_pair() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    // (source, product, hours silent) — `None` meaning registered but never
+    // collected. The classes are picked to exercise both staleness bounds on
+    // the per-source view too, so a copy of the view that dropped the
+    // class-aware `CASE` and took one flat bound fails here rather than only in
+    // the per-product test.
+    let fixtures: [(&str, &str, Option<i64>); 5] = [
+        // One product, two collectors, opposite verdicts. The pair the whole
+        // view exists for.
+        ("stale-src", "CAD-USD", Some(80)),
+        ("fresh-src", "CAD-USD", Some(30)),
+        // fx-pair silent 60h: inside the 72h session bound, so live per-source
+        // as well — the weekend case must not read as a dark collector.
+        ("probe", "EUR-USD", Some(60)),
+        // stablecoin-pair silent 60h: past its 48h bound, so stale. Same
+        // silence as EUR-USD, opposite verdict, on the per-source view.
+        ("probe", "EURC-USDC", Some(60)),
+        // Registered, never collected: not live, and carrying no timestamp.
+        ("probe", "GBP-USD", None),
+    ];
+
+    for (source, product, silent_hours) in fixtures {
+        sqlx::query(
+            "INSERT INTO instrument_registry
+                 (source, product_id, first_registered_at, last_registered_at)
+             VALUES ($1, $2, 1, 1)",
+        )
+        .bind(source)
+        .bind(product)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("register `{product}` under `{source}`: {e}"));
+
+        if let Some(hours) = silent_hours {
+            sqlx::query(
+                "INSERT INTO cex_prices
+                     (source, product_id, granularity_secs, bucket_start,
+                      low, high, open, close, volume)
+                 VALUES ($1, $2, 60,
+                         EXTRACT(EPOCH FROM now())::BIGINT - $3, 1, 1, 1, 1, 0)",
+            )
+            .bind(source)
+            .bind(product)
+            .bind(hours * 3600)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("insert a bar for `{product}`: {e}"));
+        }
+    }
+
+    for (source, product, class, live, has_data, bound_hours) in [
+        ("stale-src", "CAD-USD", "fx-pair", false, true, 72),
+        ("fresh-src", "CAD-USD", "fx-pair", true, true, 72),
+        ("probe", "EUR-USD", "fx-pair", true, true, 72),
+        ("probe", "EURC-USDC", "stablecoin-pair", false, true, 48),
+        ("probe", "GBP-USD", "fx-pair", false, false, 72),
+    ] {
+        let (asset_class, is_live, last_data_at, stale_after_secs): (
+            String,
+            bool,
+            Option<i64>,
+            i32,
+        ) = sqlx::query_as(
+            "SELECT asset_class, is_live, last_data_at, stale_after_secs
+                 FROM instrument_source_liveness
+                 WHERE source = $1 AND product_id = $2",
+        )
+        .bind(source)
+        .bind(product)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| {
+            panic!("`{source}`/`{product}` missing from instrument_source_liveness: {e}")
+        });
+
+        assert_eq!(asset_class, class, "wrong class for `{source}`/`{product}`");
+        assert_eq!(
+            is_live, live,
+            "wrong liveness verdict for `{source}`/`{product}`"
+        );
+        assert_eq!(
+            last_data_at.is_some(),
+            has_data,
+            "`{source}`/`{product}` last_data_at presence is wrong \
+             (got {last_data_at:?})"
+        );
+        assert_eq!(
+            stale_after_secs,
+            bound_hours * 3600,
+            "wrong staleness bound for `{source}`/`{product}`"
+        );
+    }
+
+    // The masking, asserted directly: the product reads live off the aggregate
+    // while one of its two collectors is 80 hours dark. Without this pair of
+    // assertions standing together, a view that simply reported the product's
+    // verdict under each source would pass everything above.
+    let (product_is_live,): (bool,) =
+        sqlx::query_as("SELECT is_live FROM instrument_liveness WHERE product_id = 'CAD-USD'")
+            .fetch_one(&pool)
+            .await
+            .expect("`CAD-USD` missing from instrument_liveness");
+    assert!(
+        product_is_live,
+        "the per-product aggregate must still read CAD-USD live — if this \
+         fails, the re-derivation changed per-product semantics rather than \
+         only adding the per-source axis"
+    );
+
+    // One row per registry row, not one per product. This is the assertion a
+    // re-introduced `GROUP BY product_id` fails.
+    let (rows,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM instrument_source_liveness WHERE product_id = 'CAD-USD'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count CAD-USD rows in instrument_source_liveness");
+    assert_eq!(
+        rows, 2,
+        "expected one row per collector for CAD-USD, got {rows} — the view is \
+         aggregating across sources"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn migrate_is_idempotent() {

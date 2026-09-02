@@ -671,6 +671,51 @@ restart, while operator-tunable runtime parameters want neither. See §12
 for why this particular configuration lives in the database rather than in
 the environment or a constant.
 
+**Health is per-feed; freshness is per-pair.** These are different
+questions answered by different tables, and conflating them is a
+silent-green failure rather than a wrong number. `feed_health` and
+`push_health` are keyed by **source name**, and a source name is
+venue-level for a *batched* venue: Kraken, Pyth, er-api, CoinGecko, CMC
+and Frankfurter each price a whole roster in one request and report one
+constant name for all of it, while the candle collectors (Coinbase,
+OANDA, Twelve Data, Alpha Vantage) name themselves per product. So a
+batched venue's health row stays fresh while one pair on it is dead, and
+a per-pair alert built on `last_ok_at` is wrong for exactly those
+venues. `feeds/src/health.rs` states the framework half — the runner
+hands a recorder a feed name and batch statistics, never the records, so
+a health row cannot report what the feed *said* — and both tables now
+carry it as a `COMMENT ON TABLE` as well, because the readers most
+likely to get this wrong work from the catalog and the query files
+rather than from Rust module docs.
+
+The per-pair question has two views, and which one you want depends on
+the axis. `instrument_liveness` is **per product**: it seeks each
+`(source, product_id)` series on the measurement tables' primary-key
+prefix, then aggregates across a product's collectors, so it answers
+"is this pair collecting from anybody". `instrument_source_liveness` is
+**per `(source, product)`** and does not aggregate, so it answers "did
+*this* collector stop delivering *this* pair" — which the per-product
+view necessarily discards. EUR-USD is polled by four collectors, so it
+reads live in the first view while three of them are dark; only the
+second shows that. Both take their staleness bound from `asset_class`
+so an FX weekend is not read as a dead collector, and both take it from
+one definition, in `0010_source_liveness.sql`. (0009 introduced the two
+constants with a note that they are defined nowhere else. That note
+predates the re-derivation, and an applied migration cannot be
+corrected in place — sqlx hashes the migration text, so editing even a
+comment breaks every database that already ran it.)
+
+**Both views measure delivery, never price age.** `observed_at` is the
+venue's own publish time only where the venue sends one — Pyth Hermes
+does — and otherwise the collector's poll second, which is the honest
+attribution for *arrival* and says nothing about how old the quote was
+when it arrived. Two blind spots follow. A venue answering `200 OK`
+with a frozen quote reads perfectly live, and no arrangement of receipt
+stamps catches it: that needs a publish timestamp the venue does not
+send. And a pegged pair legitimately sits still, so "price unchanged" is
+not a fault signal either — `USDC-USD`, the peg leg the Kraken
+collector exists to capture, is the case in point.
+
 ______________________________________________________________________
 
 ## 9. Sources and venue policy
