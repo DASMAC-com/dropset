@@ -225,10 +225,13 @@ pub fn sanitize_error(text: &str, max: usize) -> String {
 /// the prefix while the cause chain carries the same credential is a fix that
 /// looks complete and is not.
 ///
-/// A token with no `://` is left alone, so ordinary prose is unaffected. Port
-/// survives (it is part of the authority) except in the ambiguous case below;
-/// userinfo, path, query and fragment never do. Truncation is on a
-/// **character** boundary, as elsewhere here.
+/// A token with no `://` is left alone, so ordinary prose is unaffected. Path,
+/// query and fragment never survive. Port does (it is part of the authority),
+/// and userinfo does not — but both of those hold only for a **well-formed**
+/// token: the ambiguous case below drops the whole authority, an authority
+/// that is nothing but userinfo leaves an empty host, and the whitespace
+/// residual below is the one path on which userinfo can survive. Truncation is
+/// on a **character** boundary, as elsewhere here.
 ///
 /// **Userinfo goes before the authority is computed, not after**, and that
 /// order is the whole correctness argument. Bounding the authority first means
@@ -484,9 +487,12 @@ mod tests {
     /// The ordering bug this function was rewritten to close: a password
     /// carrying a raw separator ends the authority inside the credential, so
     /// bounding the authority before stripping userinfo emitted the password
-    /// as the host. Every arm asserts the secret is *absent*, not merely that
-    /// the output changed — an assertion on the exact string alone would pass
-    /// a future rewrite that swapped one leak for another.
+    /// as the host. Every arm carrying a secret asserts that secret is
+    /// *absent*, not merely that the output changed — an assertion on the
+    /// exact string alone would pass a future rewrite that swapped one leak
+    /// for another. The `?email=` arm carries no secret and asserts the
+    /// apparent *host* is absent instead, that being its whole point; the
+    /// final arm carries neither and pins the shape alone.
     #[test]
     fn redact_to_origin_strips_userinfo_before_bounding_the_authority() {
         // A `/` in the password — the dominant form in a hand-written

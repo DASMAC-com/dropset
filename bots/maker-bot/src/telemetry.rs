@@ -455,12 +455,14 @@ pub fn spawn(rt: &Runtime) -> Telemetry {
             // to read the operator's connection string, so its rendered cause
             // chain is the one message here whose whole subject is a value
             // that carries a password. Console output is not exempt from the
-            // custody rule — this bot is a compose service, so its stderr is
-            // captured by the log driver and retained — and `{:#}` walks a
-            // cause chain no caller here controls. Note the helper also bounds
-            // the text and flattens whitespace runs; both are a legibility
-            // cost this path does not otherwise need, accepted so the console
-            // and the columns cannot disagree about what a redacted URL is.
+            // custody rule wherever this bot's stderr is captured and retained
+            // — it runs as a service under a log driver in the compose stack,
+            // and any deployment that collects container output is the same
+            // case — and `{:#}` walks a cause chain no caller here controls.
+            // Note the helper also bounds the text and flattens whitespace
+            // runs; both are a legibility cost this path does not otherwise
+            // need, accepted so the console and the columns cannot disagree
+            // about what a redacted URL is.
             let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
             eprintln!(
                 "[telemetry] {DATABASE_URL_ENV} is not a usable connection \
@@ -489,10 +491,12 @@ pub fn spawn(rt: &Runtime) -> Telemetry {
         {
             // The same treatment as the connect error above. This chain is
             // the pool's rather than the parser's, so it carries a URL less
-            // reliably — but it is built from the same operator string, the
-            // redaction is a no-op on text holding no URL at all, and a
+            // reliably — but it is built from the same operator string, and a
             // console path that is *usually* clean is exactly the shape the
-            // custody rule declines to reason about case by case.
+            // custody rule declines to reason about case by case. This is the
+            // path that pays most for the bounding and whitespace flattening
+            // noted above, since a runner chain is the long one and is often
+            // URL-free; that cost is accepted for the same reason.
             let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
             eprintln!("[telemetry] runner exited: {cause}");
         }
