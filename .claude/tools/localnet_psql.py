@@ -44,6 +44,22 @@ developer running the tool, who already has a shell, so this is not an escalatio
 — but the argv surface is strictly more powerful than "run a query", which is
 worth knowing given the whole point is to collapse into one stable allow-rule.
 
+**It connects as the read-only role and refuses the owner.** This tool is a
+verification *reader*, so it logs in as ``dropset_ro`` and rejects a
+``DROPSET_DB_URL`` that names the ``dropset`` owner. Defaulting to the owner
+made the one-writer-per-table rule an honor system on the read path — nothing
+but care stopped a verification query being run by a role that could also
+write. A write belongs to the service that owns the table.
+
+**When the running stack's migration state lags the branch under test, target a
+disposable instance — never the live stack.** Spin a throwaway Postgres on a
+spare port and migrate that. Migrating the running localnet database to suit a
+branch mutates shared state that other sessions depend on, and an applied
+migration is immutable, so the repair is manual surgery or a data-destroying
+wipe. The failure this prevents is quieter than either: a verification run
+against a database whose schema does not match the code being verified will
+happily return a green answer to the wrong question.
+
 Row output is capped and the cap is **announced** — a silent truncation reads as
 a complete answer, which is the one thing worse than a verbose one. Stdlib only;
 a Python skill-tool under ``.claude/tools/`` — deliberately **not** a Cargo
@@ -61,7 +77,22 @@ import sys
 # The localnet compose project's Postgres service container.
 DEFAULT_CONTAINER = "dropset-localnet-postgres-1"
 
-DEFAULT_USER = "dropset"
+# The READ-ONLY role, and the default — this tool is a verification reader.
+#
+# Migration 0002 creates `dropset_ro` and grants it `SELECT` on every table in
+# `public` (plus a default-privileges grant, so tables added later are covered),
+# which is why defaulting to it is safe on any migrated database rather than
+# only where Grafana happens to be provisioned.
+#
+# Defaulting to the owner made the one-writer-per-table rule an honor system on
+# the read path: nothing but care stopped a verification query from being run by
+# a role that could also write. This makes it mechanical.
+DEFAULT_USER = "dropset_ro"
+
+# The owner role, named here only so it can be REFUSED. A write belongs to the
+# service that owns the table, never to an ad-hoc verification query.
+OWNER_USER = "dropset"
+
 DEFAULT_DB = "dropset"
 
 # Column separator for unaligned output. " | " reads like the aligned form
@@ -78,6 +109,33 @@ DEFAULT_TIMEOUT = 60
 
 class LocalnetPsqlError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
+
+
+def _url_user(db_url: str) -> str | None:
+    """The username in a ``postgres://user:pass@host/db`` URL, or ``None``.
+
+    Parsed rather than pattern-matched so a password containing ``@`` cannot
+    shift which side of the split the username lands on, and percent-decoded
+    because the client library decodes URI components — without that, a
+    percent-escaped spelling of the owner role reads as a different string here
+    and connects as the owner there.
+    """
+    from urllib.parse import unquote, urlsplit
+
+    try:
+        user = urlsplit(db_url).username
+    except ValueError:
+        # Unparseable: report it as "no username", which is what the caller's
+        # allowlist then refuses. This used to say the opposite — that a
+        # malformed URL must never become a refusal — and that was true under
+        # the old denylist, where `None` meant "not the owner, pass it through".
+        # Inverting to an allowlist inverted this too: `None` is now refused.
+        # That is the right direction (fail closed), but the refusal message
+        # will say "no username" for a string that is simply malformed, so read
+        # it as "this guard could not identify a role" rather than as a precise
+        # diagnosis.
+        return None
+    return unquote(user) if user is not None else None
 
 
 def build_argv(
@@ -109,6 +167,26 @@ def build_argv(
     elif not db_url:
         raise LocalnetPsqlError(
             "--direct needs DROPSET_DB_URL set to a connection string"
+        )
+    elif _url_user(db_url) != DEFAULT_USER:
+        # An ALLOWLIST, not a denylist of one — `--direct` is the path that
+        # could otherwise smuggle the owner back in, and naming the single role
+        # to reject left two ways through. A URL with **no** userinfo
+        # (`postgres://127.0.0.1:5432/dropset`) is a legitimate libpq string, and
+        # psql is exec'd with the inherited environment, so libpq resolves the
+        # role from PGUSER or the OS account — which on the localnet container is
+        # the superuser. Requiring the reader role by name closes that, and the
+        # percent-decode above closes the other.
+        #
+        # It fails CLOSED: an unusual-but-harmless URL is refused rather than
+        # quietly connecting as something this tool does not vouch for.
+        named = _url_user(db_url)
+        saw = f"as {named!r}" if named else "with no username"
+        raise LocalnetPsqlError(
+            f"DROPSET_DB_URL connects {saw}; this tool is a verification reader "
+            f"and connects only as {DEFAULT_USER!r}. Name that role in the URL "
+            f"— a write belongs to the service that owns the table, and an "
+            f"unnamed user falls back to PGUSER or the OS account."
         )
 
     # The caller's own `--var` pairs go FIRST, so the fixed flags below win.

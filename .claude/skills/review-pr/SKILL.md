@@ -889,6 +889,28 @@ already being asked to start the review.
      that session's 3.6k / 10 scoped-lint and 900 / 5
      `make lint` totals.
 
+     **To SEE what a formatter changed, read the slice
+     files — never `git diff` the file.** A formatter that
+     rewrote a file has already had its output captured in
+     `review-diff-docs.txt` / `-source.txt`. The general
+     "don't re-derive a diff" rule is stated twice already —
+     in `commit-changes` and in step 5's prose — but both sit
+     where the diff is *produced*, thousands of lines before
+     the point where you actually want to look at a reflow,
+     and by then the operative question feels like "what did
+     `mdformat` change?", which does not read as re-deriving
+     anything. Measured: `git diff` appears in one session's
+     hardening table at ≈1.0k over 2 calls, flagged
+     `cost: context` and the only `context`-labelled shape in
+     it — both calls made **after** the slices existed. One
+     was `git diff --stat` to size the change, which the
+     tool's verdict already reported as a per-file `changes`
+     count; the other was `git diff docs/market-making.md` to
+     see a reflow that `review-diff-docs.txt` already
+     contained in 67 lines. Small in absolute terms, and worth
+     naming because it is a documented anti-pattern being
+     reproduced by the skill that owns the tool.
+
    - A hook that fails because its binary isn't
      installed is **not** a diff problem. The
      frontend hooks — `biome`, `tsc` — report
@@ -1100,6 +1122,54 @@ already being asked to start the review.
      changes behavior tests pin).
    - **docs** — the doc-freshness lens.
 
+   **Each brief must NAME the slice it is handed**, and a
+   lens scoped to one tree gets that tree's `--only` diff
+   rather than the branch diff: a tools-correctness lens
+   receives `--only '.claude/tools/**'`, a
+   conventions-freshness lens receives `docs/conventions/**`
+   plus `CLAUDE.md`. The step already computes the split and
+   the failure is simply not routing it. Measured: seven
+   sub-agents summing **≈2.28M** of per-turn input —
+   cross-check 504.8k/6, test adequacy 502.8k/6, conventions
+   freshness 357.7k/5, correctness-modified 304.6k/4, skill
+   prose 289.4k/4, correctness-new 207.8k/3, security 110.0k/2
+   — with four of the seven at 1.7–2.8× the top of the
+   exemplar band. The diagnosis is **scope, not depth**: a
+   lens's context is re-sent every turn, so input scales with
+   (material handed in) × (turns taken), and the lenses that
+   ran longest were the ones handed the broadest material.
+   Some of that diff was irreducibly large (60 files,
+   +8656/−532), but the two correctness lenses are precisely
+   what `--only` exists to narrow and neither got a narrowed
+   slice. Print each lens's handed-in byte count alongside the
+   brief, so an over-broad one is visible at fan-out time
+   rather than in the next session's metrics.
+
+   **The docs lens gets a claim→excerpt table, not the source
+   slices.** This step routes the docs slice to it and says
+   nothing about what it needs to check a doc claim *against
+   the code*, so the natural move is to hand it the source too
+   — which is the whole diff by another name, defeating the
+   split. Measured: a doc-accuracy lens handed the docs slice
+   **plus both full source sub-slices** as "ground truth" came
+   in at **504.4k over 6 turns**, the second most expensive
+   agent of its session and 2.5× the cheapest substantive lens
+   on the same diff (249.6k / 4 turns).
+
+   A doc-accuracy lens adjudicates a bounded list of
+   **claims**, not a codebase — and the main loop wrote those
+   docs, so it already knows which code each claim rests on.
+   Every finding that lens returned turned on a handful of
+   lines already in the main loop's context; none needed
+   either source slice in full. So hand it the docs slice plus
+   a short table of *the assertion* and *the five to fifteen
+   lines that settle it*, cold-reading only where no excerpt
+   covers. Add the docs lens to the list whose comparison
+   material must be **inlined rather than named** — the same
+   excerpt-not-filenames discipline this step already
+   prescribes for the style lens, measurably its cheapest,
+   and simply never stated for docs.
+
    **When a slice is still huge, split the slice — do not
    tighten the prompt again.** This is the sharpened form of
    the point above, and it names the lever precisely. One
@@ -1136,6 +1206,21 @@ already being asked to start the review.
 
    Run it once per sub-slice, and hand each lens its own
    `--out` path.
+
+   **The slices are namespaced off that `--out` stem** —
+   `--out review-diff-tools.txt --split` writes
+   `review-diff-tools-source.txt` and siblings, while the plain
+   `--out review-diff.txt` still writes the documented
+   `review-diff-source.txt` set. That is what makes "its own
+   `--out` path" true rather than aspirational: the slice names
+   were once **fixed**, so a scoped `--only` run silently
+   overwrote the unscoped run's slices — and because a
+   tools-only run has no docs hunks, it left
+   `review-diff-docs.txt` **empty**. The lens handed that slice
+   then correctly reports nothing to review, which is a silent
+   and total failure of that lens, in the same class as the
+   missing-preamble case above. Caught in one review by a
+   `wc -l` before spawning; do not rely on catching it.
 
    **Rust inline tests are already extracted for you.** Rust
    keeps unit tests inside the source file, so the category
@@ -2018,25 +2103,68 @@ already being asked to start the review.
      lens measured here (85.8k / 2 turns / 1 tool call). One
      session noted its own exemplar figures may be
      *understated*.
+
    - **A reduced-tier fan-out staying inside its cap.** 190.6k
      over 4 turns, and 217.2k over 5 — both under cap, on a
      reduced tier, with the per-lens discipline held tighter
      rather than looser.
+
    - **The cross-check earning an overrun.** The adversarial
      pass overran its cap and caught **two blocking data-loss
      bugs** that every cheaper tier would have missed. It is
      the pass that overruns most often *and* returns the most
      value per turn — which is why its cap is deliberately
      higher than the primary lenses', not lower.
+
    - **The two-write Linear floor.** Sessions that hit the
      documented per-issue write floor recorded it as compliant
      but still non-trivial — the floor is real, and the cost
      that remains under it is not a lapse.
+
    - **Whole-file Reads that were correct.** One session's
      whole-file Reads were *sanctioned*, not a slip: it both
      edited those files and pasted their excerpts into five
      lens briefs, so the read was paid once and amortized five
      times. That is the documented exception, and it held.
+
+   - **A four-lens fan-out, every lens under cap.** Zero
+     overruns, measured as per-turn input (the
+     `session-metrics` rollup figure — *not* the Agent tool's
+     `subagent_tokens`, which reads about an order of
+     magnitude lower):
+
+     | lens                    | turns | cap | ≈input |
+     | ----------------------- | ----- | --- | ------ |
+     | Correctness             | 5     | 5   | 265.3k |
+     | Security                | 4     | 5   | 210.6k |
+     | Adversarial cross-check | 3     | 6   | 152.9k |
+     | Completeness            | 3     | 5   | 144.8k |
+
+     What produced it: an established-facts block composed for
+     the run and passed via `lens_preamble.py --facts-file` —
+     **92 facts**, carrying exact code excerpts, the consumer
+     map with line numbers, the CI path inventory, and (the
+     part that appears to do the work) the explicit
+     **negatives and limits**, closing with a section naming
+     what the main loop had *not* verified and leaving those
+     open. The completeness lens opened its report with
+     "adjudicating from the diff plus the established facts;
+     no code re-derivation needed" and made **zero cold
+     reads**.
+
+     Read the priciest lens correctly: Correctness at 265.3k
+     was the only one that cold-read source, and it did so
+     because its brief asked two questions the facts
+     deliberately did not answer — and it returned the
+     review's blocking finding. It was priced by its
+     *unanswered questions*, not by brief slippage, and a
+     future trim pass would otherwise misread that as an
+     overrun to cap harder. One honest caveat: the diff was
+     docs-only and 301 lines, so the absolute figures do not
+     transfer to a large source diff. What generalizes is the
+     **ratio** — lenses given complete facts made no cold
+     reads at all, and the one given genuine open questions
+     spent its turns on exactly those.
 
    When proposing a trim against any of these, say which
    figure you expect to move and by how much.
@@ -2172,6 +2300,35 @@ already being asked to start the review.
      `CLAUDE.md`, `docs/conventions/**`, or `.claude/**` at
      all.
 
+     **Say who locates it: the MAIN LOOP, before spawning.**
+     You cannot inline "the implicated block" without first
+     finding it, and leaving that unsaid is what makes this
+     rule aspirational — so it becomes a **pre-step**. Run
+     one `search_source.py` over `audit-registry.md` for the
+     subsystem-roots block, paste those lines into the brief,
+     and only then spawn.
+
+     Then state the scope as a **restriction**, not an
+     allowance: *"adjudicate from the inlined block; open a
+     convention file only to resolve a named dispute."* What
+     was actually written into one freshness brief was a
+     **permission** — "you may open at most TWO of the named
+     convention files" — which is the grant-shaped positive
+     scope this step warns against two paragraphs earlier.
+
+     Measured on one review, same model and diff: correctness
+     with excerpts inlined 106.7k / 2 turns, style with
+     excerpts inlined 106.7k / 2 turns, and the **freshness
+     lens given file names 336.2k / 6 turns, at cap** — 3.2x
+     the lenses that got their material, spent grepping the
+     registry and slice-reading two regions to find one
+     `ci-infra` root line the main loop could have grepped
+     once for a few hundred tokens. Its verdict was correct
+     and its finding real (`.dockerignore` falls outside
+     every subsystem root), so this is a scoping lever, not
+     an argument to drop the lens. It is also the same hoist
+     this step already mandates for repo-wide greps.
+
    - **Assert the known negatives, not just the positives.**
      The inlining rule above covers what you *have* read;
      this covers what you already know *isn't there*. A
@@ -2246,10 +2403,18 @@ already being asked to start the review.
      do not use the result. Re-issue with `--files-only` (or
      add a `--glob`), then slice-read the region it names.
 
-     Once the scope is a **single named file**, the helper no
-     longer advises — it **refuses** a wide `--context`
-     outright, because that shape is a whole-file read with
-     extra steps. Take `--files-only` and slice.
+     Two cases no longer depend on that obedience, because the
+     helper acts rather than advising. Once the scope is a
+     **single named file** it **clamps** a wide `--context` to
+     a line or two, that shape being a whole-file read with
+     extra steps. And past a size threshold, at **any** scope,
+     it **degrades** to `--files-only` — which is what catches
+     the sweep a scope rule cannot, such as a `--context 2`
+     across one crate directory returning 71 matches in 9
+     files to answer a location question. Both say so on the
+     summary line. `--force-context` overrides the degrade and
+     is for adjudication, not for buying a location answer
+     back at full price.
 
      **This rule is phase-neutral, and that is why it keeps
      getting missed.** Seven separate sessions answered a
@@ -2262,6 +2427,45 @@ already being asked to start the review.
      same thing for the implement phase, and
      `docs/conventions/context-economy.md` → "The levers" is
      the canonical statement.
+
+     **A refused or blocked sweep leaves its question
+     UNANSWERED — never read it as a negative.** This is where
+     the abandonment happened. Two `search_source.py` calls
+     were refused in one session; the second was retried in a
+     simpler form and answered, and the first never was. It had
+     been hunting a summing time-budget clause, which turned
+     out to be that review's most consequential finding — a
+     page's time budget contradicting the ledger by four
+     seconds. A lens found it instead, at its tool-call cap,
+     and called it the one item it could not settle. Retry in a
+     simpler form, or carry the question into the findings
+     catalogue as explicitly unverified. Note too that the
+     refusal text can misdiagnose itself: "too complex to
+     verify that it stays inside the worktree" often means
+     pattern complexity, not paths — it is the harness's
+     message, not this repo's, so rephrase rather than conclude
+     the question cannot be asked. See
+     `docs/conventions/shell-commands.md`.
+
+     **Some identifiers name a thing on BOTH sides of the
+     chain boundary, so a bare pattern spans two unrelated
+     domains.** At least `leader`, `market` and `vault` each
+     name a host-side Rust binding *and* an on-chain account
+     or field. `leader` is worst: a `Keypair` in the bot, a
+     `Pubkey` field on vault state, and a parameter name
+     inside the chain helpers — three meanings, one word.
+     Measured: a host-side question (find every consumer of
+     the maker bot's leader **keypair**) swept the identifier
+     plus a `.leader` word-boundary alternation and got **92
+     matches across 36 files**, the great majority on-chain
+     state entirely unrelated to the host process's signing
+     key. The call was correctly `--files-only`, so this was a
+     wasted round trip rather than a token sink — and the next
+     call answered the real question in one file. Anchor to
+     the host-side use (`ctx.leader`, `&ctx.leader`) or scope
+     with `--dir` to the crate, and expect a bare sweep to be
+     mostly noise. This is pattern precision, independent of
+     the output-width rule above.
 
      **Hoist for the files the lens will *predictably* need,
      not only the ones the main loop happened to read.** As
@@ -2370,8 +2574,14 @@ already being asked to start the review.
      that call is already settled.
 
      **Name the hook that actually covers this diff's
-     languages** — clippy is **Rust only**. `ruff check` owns
-     the Python surface, `biome` and `tsc` the TS/JS one. A
+     languages** — clippy is **Rust only**, and Rust now has a
+     **second** gate beside it: the `rustdoc` hook runs a
+     full-workspace `cargo doc` under `-D warnings`, which
+     settles **intra-doc link resolution** in the program crate
+     and in its generated SDK copy. So for Rust the gate is
+     `cargo clippy --all-targets -- -D warnings` **plus**
+     `rustdoc`. `ruff check` owns the Python surface, `biome`
+     and `tsc` the TS/JS one. A
      green `make lint` on a TS-only diff proves nothing if
      `biome` / `tsc` were the hooks that couldn't run (they
      need frontend deps, and a fresh worktree has none — see
@@ -2663,8 +2873,10 @@ already being asked to start the review.
    Give the cross-check the block above verbatim:
    unused-import / does-it-resolve / does-it-compile /
    unused-symbol are settled by the green step-4 gate — for
-   Rust that's `cargo clippy --all-targets -- -D warnings`,
-   for Python `ruff check`, for TS/JS `biome` / `tsc`. Name
+   Rust that's `cargo clippy --all-targets -- -D warnings`
+   **plus** `rustdoc`, which settles intra-doc-link
+   resolution; for Python `ruff check`, for TS/JS
+   `biome` / `tsc`. Name
    the hook that covers **this** diff, and say so plainly when
    it's one that couldn't run. Where the gate does hold, the
    cross-check must not cold-read a transitive dependency to
@@ -2760,9 +2972,10 @@ already being asked to start the review.
    committing, once at the end), never to this loop.
 
    **And run a fast suite at CHECKPOINTS — the lever there is
-   frequency, not scope.** One session ran the whole tools
-   suite dozens of times in an edit-one-tool loop, most runs
-   re-buying confidence it already had. Do not read that as a
+   frequency, not scope.** Measured: one session ran the whole
+   tools suite **53 times** (≈12.0k of result bytes) in an
+   edit-one-tool loop, most runs re-buying confidence the
+   previous run had already established. Do not read that as a
    reason to narrow the *scope*: step 4's measurement points
    the other way (the per-module discover run cost more **and**
    missed two sibling tests the edits had just broken). Whole
@@ -3151,6 +3364,54 @@ already being asked to start the review.
    every independent mutation you mean to verify, build once,
    run once, then revert once. Only a mutation whose effect
    another mutation would mask needs its own cycle.
+
+   **When the FIX is a new test, mutation-verify it — a test
+   is the one fix whose success is invisible to running the
+   suite.** A green suite is exactly what a worthless test
+   produces, so when a finding is "no test covers X" and the
+   fix is a new test, reintroduce X and confirm the new test
+   fails **on its behavioral assertion**, not on a
+   precondition. Failing on a precondition is not evidence.
+
+   **This lever deliberately adds cost** and must not be
+   folded into a saving: budget two extra suite runs per
+   mutation and say so, so a later metrics pass does not read
+   them as churn. One session's top hardening candidate was a
+   test binary at 5.7k over 20 calls, labelled
+   `context (failures)`, a meaningful share of which were
+   these verifications — and they are why it did not ship
+   three defects. That review found "no test would fail if X
+   were removed" three times, and under mutation **two of the
+   three fixes were worthless as written**: neutering one
+   config field left the new test green, because it read the
+   filter's variance before the next update's prediction step
+   and so computed a gate ~600x too small; another test
+   re-resolved its candidate set and never reached the
+   function it was named for, staying green until rewritten to
+   assert through the one observable channel. Tests that pass
+   whether or not the thing they name is present are worse
+   than no test, because they read as coverage. Nothing else
+   in that review would have caught it — the cross-check found
+   them only because the mutation results were in the findings
+   catalogue.
+
+   The technique above generalizes to this: batch the test
+   mutations the same way, one build and one run where they
+   are independent.
+
+   **If the diff edits both a source file and a doc citing
+   `file:line` in it, citations are a FINAL step.** Apply
+   every source edit first, then derive and write all
+   citations in one pass. A citation written before a later
+   edit to the same file is presumed stale — re-derive it, and
+   **do not arithmetic it forward**: one cross-check computed
+   a line number from hunk offsets and got 255 where the real
+   value was 252. This step is where it bites, because fixes
+   are applied after the fan-out *and* again after the
+   cross-check, so any such branch gets at least two shift
+   opportunities. One session derived its citations three
+   times and the second pass was wrong again. See
+   `docs/conventions/docs-and-style.md`.
 
    **Mirror CI's path filter, including when it skips.**
    `test.yml` gates its Tests jobs on a `code` filter that
@@ -3923,12 +4184,21 @@ already being asked to start the review.
    with, or just before, the prompt — not earlier. Skip
    only if no tag was resolvable:
 
-   ```txt
-   mcp__claude_ai_Linear__save_issue(
-     id: "<ENG-###>",
-     state: "In Review"
-   )
+   This is a **state-only** write, so it goes through the
+   zero-echo path rather than the MCP:
+
+   ```sh
+   python3 .claude/tools/board_batch.py state \
+     --id <ENG-###> --state "In Review"
    ```
+
+   It prints one line. The MCP equivalent echoes the entire
+   stored body back to transmit one enum — measured at ≈3.6k
+   on a consolidated issue, and this is the write that pays it
+   at its worst, since the body is at its largest by the
+   handoff. Unlike `init-pr`'s bootstrap write, nothing here
+   needs the body: the session has held it since step 3, so
+   the echo buys nothing at all.
 
    **One write, no retry loop.** If the response echo comes
    back still showing In Progress, do **not** re-issue the
@@ -4007,13 +4277,41 @@ already being asked to start the review.
    **sweep** that follows should harvest them, so metrics comes
    first and firm-perms is the **last interactive step**.
 
-   **Ask first, via `AskUserQuestion`.** This is a
-   skill-to-skill handoff, so gate it on the same TUI
-   selector the merge-queue prompt uses (per `CLAUDE.md` →
-   "The PR workflow and skill handoffs"):
-   ask whether to capture session metrics now, offering
-   "yes, run /session-metrics" (**first**, the recommended
-   default) and "skip".
+   **Ask first, via `AskUserQuestion` — and ask for BOTH
+   closing gates in that one call.** This is a skill-to-skill
+   handoff, so gate it on the same TUI selector the
+   merge-queue prompt uses (per `CLAUDE.md` → "The PR workflow
+   and skill handoffs"): one call carrying two questions —
+   whether to capture session metrics now, offering "yes, run
+   /session-metrics" (**first**, the recommended default) and
+   "skip"; and the `firm-perms` question the next step
+   describes, with its own options.
+
+   This is the same argument the entry gate already makes for
+   asking tier and spawn together, and it applies more
+   strongly here: both gates are unconditional, both are pure
+   run-this-closing-step authorizations, neither answer
+   changes what the other does, and by this point the user has
+   already been prompted twice.
+
+   **The ordering objection does not apply.** The next step
+   requires `firm-perms` to run *after* `/session-metrics` so
+   its sweep harvests that run's approvals — but that
+   constrains **execution** order, not **question** order.
+   Asking both up front and then running them in the
+   prescribed sequence preserves the property exactly, which
+   one session confirmed in practice: one interaction, both
+   approved, the sweep still ran last and still saw the
+   metrics run's approvals, for ≈60 tokens.
+
+   The real saving is one fewer blocking round trip at the
+   point the user is most likely to have walked away — the
+   merge resolves asynchronously and actively invites other
+   work, and a prompt firing into an absent user is the
+   failure the next step warns about. Halving the tail prompts
+   halves that exposure. Keep both decline paths and both
+   reporting requirements exactly as they are; only the prompt
+   is merged.
 
    - On **decline**, skip this step and note in the report
      that session metrics were **not** captured this run.
@@ -4035,10 +4333,11 @@ already being asked to start the review.
    **Ground the recommendations in this run.** As the review
    progressed you may have noticed wasteful payloads (a
    whole-file Read, a verbose build log, a repeated full PR
-   read, an inlined-diff fan-out). Per `CLAUDE.md`'s "track
-   consumption ideas as you go" habit, carry those
-   observations into `/session-metrics` so its prose names
-   concrete levers, not just the tool's raw sink ranking.
+   read, an inlined-diff fan-out). Per
+   `docs/conventions/context-economy.md` → "Track consumption
+   ideas as you go", carry those observations into
+   `/session-metrics` so its prose names concrete levers, not
+   just the tool's raw sink ranking.
 
 1. **Firm up the permission allowlist** — the **last
    interactive step**, so it sees the whole run's approvals.
@@ -4055,13 +4354,16 @@ already being asked to start the review.
    and a propose-then-confirm gate firing then would prompt
    an absent user.
 
-   **Ask first, via `AskUserQuestion`.** This is a
-   skill-to-skill handoff, so gate it on the same TUI
-   selector the merge-queue and `session-metrics` prompts use
-   (per `CLAUDE.md` → "The PR workflow and skill handoffs"):
-   ask whether to firm permissions now, offering
-   "yes, run /firm-perms sweep" (**first**, the recommended
-   default) and "skip".
+   **This step's question was already asked** — it rides the
+   previous step's batched `AskUserQuestion` as its second
+   question ("yes, run /firm-perms sweep", **first** and
+   recommended, versus "skip"), because both closing gates are
+   unconditional and independent and the user has been
+   prompted twice already. Do **not** prompt again here; act
+   on the answer already given. Only the prompt was merged —
+   the execution order is unchanged, and this step still runs
+   **after** `/session-metrics` so the sweep harvests that
+   run's approvals.
 
    - On **decline**, skip this step and note in the
      report that permissions were **not** firmed this run.
@@ -4125,43 +4427,33 @@ already being asked to start the review.
    printed after `firm-perms` and after the review summary
    above — the summary couldn't know this outcome yet.
 
-   **Treat the Linear status as not-yet-settled until this
-   probe returns the terminal merge.** After enqueue the PR
-   sits in the queue asynchronously
+   **The Linear status is settled at enqueue.** After enqueue
+   the PR sits in the queue asynchronously
    (`mergeQueueEntry.state: AWAITING_CHECKS`), and the
-   Linear/GitHub integration auto-transitions the issue to
-   **Done on merge** — no manual move, and effectively no lag
-   once the merge lands. So while the PR is still queued, do
-   **not** read, report, or act on the issue's Linear status:
-   polled mid-queue it reads a
-   stale **In Review** and invites a premature hand-move. Only
-   after the probe returns `merged: true` / `state: "MERGED"`
-   should you (re-)report the Linear status. The **In Review**
-   transition made at the enqueue handoff stays as-is; this
-   governs only what's reported/acted on *after* enqueue,
-   while the merge resolves.
+   Linear/GitHub integration makes **no state transition on
+   merge** — that is a team setting, not a skill behavior. So
+   the **In Review** state written at the enqueue handoff is
+   the state the issue holds through the merge and after it,
+   and it is accurate to read or report at any point.
 
-   **On a confirmed merge, write the issue BACK to In Review.**
-   Merge and completion are different events. The integration
-   sets the issue **Done** on merge, which hides exactly the
-   sessions that still owe follow-up — session metrics, perms
-   firming, post-merge tidy, and feedback that has to reach a
-   planning session or be filed. The operator closes sessions
-   at end of day and reopens the machine later with **no Linear
-   signal** that a merged issue's session still needs
-   attention. So the issue stays effectively in review while
-   the operator is still following up with its session.
+   **There is deliberately no post-merge write here.** An
+   earlier revision of this step observed the integration's
+   auto-**Done** and wrote the issue *back* to In Review,
+   because merge and completion are different events and an
+   auto-Done hides exactly the sessions that still owe
+   follow-up — session metrics, perms firming, post-merge
+   tidy, and feedback that has to reach a planning session.
+   The team setting now states that convention natively, so
+   the write-back was retired: it spent a full-body Linear
+   echo in every implementation session to restore a state
+   that nothing had moved.
 
-   Order matters, because the auto-transition and this write
-   can race: **wait until Done is actually observed**, then
-   write In Review, then **re-check** the state:
-
-   ```txt
-   mcp__claude_ai_Linear__save_issue(
-     id: "<ENG-###>",
-     state: "In Review"
-   )
-   ```
+   Two consequences follow, and both remove machinery rather
+   than add it. Nothing races this step, so no ordering
+   against an auto-transition is needed. And the residual gap
+   that revision accepted — a session dying before the
+   write-back ran, leaving the issue auto-Done with nobody to
+   re-mark it — is gone, because nothing sets Done at all now.
 
    Then run the existing tail — post-merge tidy, session
    metrics, `firm-perms` — and close with an explicit
@@ -4173,12 +4465,6 @@ already being asked to start the review.
    step is an `AskUserQuestion` — *"all follow-up complete:
    metrics filed, perms firmed, feedback forwarded — mark
    Done?"* — and nothing else sets that state.
-
-   **One residual gap, accepted:** a session that dies *before*
-   this step runs leaves the issue auto-Done with nobody to
-   re-mark it. The common case — the operator closing sessions
-   at day end after merge confirmation — is fully covered. Do
-   **not** build detection machinery for the crash case.
 
    Watch whether the PR lands or gets kicked back out with a
    **single** probe per check: the `gh api graphql` dequeue

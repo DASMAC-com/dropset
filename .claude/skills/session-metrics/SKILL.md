@@ -219,9 +219,10 @@ recommendation in **three** sources:
   one occurrence is enough.
 
 - **The observations you kept during the session** — per
-  `CLAUDE.md`'s "track consumption ideas as you go" habit,
-  the running notes on what felt wasteful. The sinks say
-  *where*; your notes say *why* and *what to change*.
+  `docs/conventions/context-economy.md` → "Track consumption
+  ideas as you go", the running notes on what felt wasteful.
+  The sinks say *where*; your notes say *why* and *what to
+  change*.
 
 Write each recommendation as grounded prose: name the
 sink (or candidate shape), state the lever

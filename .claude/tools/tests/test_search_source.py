@@ -1014,6 +1014,19 @@ class SingleFileContextRefusalTests(unittest.TestCase):
         self.assertIn("one.rs", printed)
         self.assertIn("offset/limit", printed)
 
+    def test_the_clamp_note_rides_the_summary_line(self):
+        # It used to be a trailing stderr write, while this tool's own comment
+        # claimed it "says on the summary line what it did" — the code and the
+        # comment disagreed. Two things went wrong with the trailing form: a
+        # result clipped at the harness's tool-result cap kept the narrowed
+        # output and lost the explanation, and a caller who had learned to read
+        # the summary line for scope information did not find it there.
+        _, printed = self._run(["needle", "--glob", "one.rs", "--context", "9"])
+        summary = [
+            ln for ln in printed.splitlines() if ln.startswith("search-source |")
+        ]
+        self.assertTrue(any("clamped" in ln for ln in summary))
+
     def test_the_clamp_actually_narrows_the_output(self):
         # The load-bearing property, actually asserted: an over-wide `--context`
         # must produce EXACTLY the output the limit produces, not merely exit 0.
@@ -1022,8 +1035,15 @@ class SingleFileContextRefusalTests(unittest.TestCase):
         def results(argv):
             # The clamp NOTE is expected to differ — it is the explanation, not
             # the result. Everything else must be byte-identical.
+            #
+            # It now rides the SUMMARY LINE rather than a trailing write, so it
+            # can no longer be dropped line-wise: doing that would discard the
+            # match counts along with it and the two runs would differ for a
+            # reason the test does not mean to assert. Cut each line at the
+            # first note marker instead, which keeps the counts and every
+            # result line while dropping only the explanation.
             _, printed = self._run(argv)
-            return [ln for ln in printed.splitlines() if "NOTE: --context" not in ln]
+            return [ln.split(" | NOTE:")[0] for ln in printed.splitlines()]
 
         wide = results(["needle", "--glob", "one.rs", "--context", "40"])
         at_limit = results(
@@ -1081,6 +1101,94 @@ class SingleFileContextRefusalTests(unittest.TestCase):
     def test_single_file_scope_returns_none_for_a_directory(self):
         (self.root / "sub").mkdir()
         self.assertIsNone(ss.single_file_scope(None, ("sub",)))
+
+
+class ContextDegradeTests(unittest.TestCase):
+    """A `--context` sweep that would print a lot degrades to `--files-only`.
+
+    The enforcement half of the two density advisories. Those are correct and
+    well-worded, and they arrive with the payload already paid for — which is
+    why four consecutive sessions read the rule, were warned at the moment it
+    happened, and took the expensive form anyway. This fires before anything is
+    printed. `--force-context` is the way past it.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        # Eight files, six well-separated matches each. The windows cannot merge
+        # at --context 1, so this prints ~136 lines: past the threshold, and
+        # spread across enough files that the single-file clamp cannot be what
+        # is under test here.
+        for n in range(8):
+            body = [
+                "fn needle() {}" if line % 5 == 0 else f"// filler {line}"
+                for line in range(30)
+            ]
+            (self.root / f"f{n}.rs").write_text(
+                "\n".join(body) + "\n", encoding="utf-8"
+            )
+        self.cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self.cwd)
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = ss.run(["search_source.py"] + argv)
+        return code, out.getvalue() + err.getvalue()
+
+    def test_a_large_context_sweep_degrades_to_files_only(self):
+        # The load-bearing property: the windows are not printed. Asserting only
+        # that the note appears would pass against an implementation that warned
+        # and emitted them anyway, which is precisely the behavior being fixed.
+        _, printed = self._run(["needle", "--context", "1"])
+        self.assertIn("DEGRADED", printed)
+        self.assertIn("f0.rs", printed)
+        self.assertNotIn("// filler", printed)
+
+    def test_force_context_prints_the_windows_anyway(self):
+        _, printed = self._run(["needle", "--context", "1", "--force-context"])
+        self.assertNotIn("DEGRADED", printed)
+        self.assertIn("// filler", printed)
+
+    def test_a_small_context_sweep_is_untouched(self):
+        # One file's worth is ~17 lines, well under the threshold. The degrade
+        # must not fire on the ordinary case it is not aimed at.
+        _, printed = self._run(["needle", "--context", "1", "--glob", "f0.rs"])
+        self.assertNotIn("DEGRADED", printed)
+        self.assertIn("// filler", printed)
+
+    def test_the_degrade_note_names_the_escape_hatch(self):
+        _, printed = self._run(["needle", "--context", "1"])
+        self.assertIn("--force-context", printed)
+
+    def test_the_degrade_states_the_line_count_it_avoided(self):
+        # The number is the entire argument for degrading, so it is reported
+        # rather than left as an assertion the caller has to take on trust.
+        _, printed = self._run(["needle", "--context", "1"])
+        self.assertRegex(printed, r"would have printed \d+ lines")
+
+    def test_an_explicit_files_only_is_not_relabelled_a_degrade(self):
+        # --files-only was already the cheap form; reporting it back as DEGRADED
+        # would describe the caller's own choice as the tool overriding them.
+        _, printed = self._run(["needle", "--context", "1", "--files-only"])
+        self.assertNotIn("DEGRADED", printed)
+
+    def test_the_degrade_note_rides_the_summary_line(self):
+        # Not a trailing write. A result clipped at the harness's tool-result cap
+        # would otherwise keep the narrowed output and lose the explanation for
+        # it, which is exactly backwards.
+        _, printed = self._run(["needle", "--context", "1"])
+        summary = [
+            ln for ln in printed.splitlines() if ln.startswith("search-source |")
+        ]
+        self.assertTrue(any("DEGRADED" in ln for ln in summary))
+
+    def test_a_degraded_run_still_exits_zero_on_matches(self):
+        code, _ = self._run(["needle", "--context", "1"])
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":

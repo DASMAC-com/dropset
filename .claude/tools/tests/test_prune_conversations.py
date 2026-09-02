@@ -15,6 +15,7 @@ from prune_conversations import (
     decide_slug,
     dropset_slug_sets,
     is_within,
+    kept_by_reason,
     parse_worktrees,
     safe_delete,
     slugify,
@@ -126,6 +127,90 @@ class DecideSlugTests(unittest.TestCase):
     def test_non_dropset_fresh_kept(self):
         d = self._decide("x", FRESH, {"d"}, set(), None)
         self.assertFalse(d.delete)
+
+    def test_completed_work_skips_the_age_grace_period(self):
+        # The whole point: a worktree that is gone and a PR that is merged is
+        # finished, so a two-day grace period protects nothing.
+        d = decide_slug(
+            "done",
+            FRESH,
+            dropset_slugs=set(),
+            protected_slugs=set(),
+            current_slug=None,
+            cutoff_ts=CUTOFF,
+            completed_slugs={"done"},
+        )
+        self.assertTrue(d.delete)
+        self.assertEqual(d.category, "completed")
+
+    def test_an_open_pr_beats_a_completed_marking(self):
+        # They are mutually exclusive by construction, so ordering it this way
+        # means a bug in the caller's set arithmetic costs disk, not data.
+        d = decide_slug(
+            "both",
+            OLD,
+            dropset_slugs={"both"},
+            protected_slugs={"both"},
+            current_slug=None,
+            cutoff_ts=CUTOFF,
+            completed_slugs={"both"},
+        )
+        self.assertFalse(d.delete)
+        self.assertEqual(d.reason, "open PR")
+
+    def test_an_open_pr_protects_a_slug_even_outside_the_dropset_set(self):
+        # The open-PR check sits above the dropset branch, so the guarantee is
+        # "an open PR is never pruned" rather than "…if we also recognized its
+        # worktree". A no-op with today's caller, asserted so the widening is
+        # deliberate rather than an accident of the reordering.
+        d = self._decide("x", OLD, set(), {"x"}, None)
+        self.assertFalse(d.delete)
+        self.assertEqual(d.reason, "open PR")
+
+    def test_the_current_session_beats_a_completed_marking(self):
+        d = decide_slug(
+            "cur",
+            OLD,
+            dropset_slugs=set(),
+            protected_slugs=set(),
+            current_slug="cur",
+            cutoff_ts=CUTOFF,
+            completed_slugs={"cur"},
+        )
+        self.assertFalse(d.delete)
+
+    def test_omitting_completed_slugs_changes_nothing(self):
+        # The parameter defaults to None, so every existing caller keeps its
+        # exact prior behavior.
+        d = self._decide("d", FRESH, {"d"}, set(), None)
+        self.assertFalse(d.delete)
+        self.assertEqual(d.reason, "dropset, within age")
+
+
+class KeptByReasonTests(unittest.TestCase):
+    """One collapsed 'protected' figure read as open-PR protection when only
+    four of 41 records actually were — the rest were the blunt age rule."""
+
+    @staticmethod
+    def _record(reason, delete=False):
+        return Record(Path("/x"), "kept", delete, reason, 0)
+
+    def test_kept_records_are_counted_per_reason(self):
+        groups = {
+            "kept": [
+                self._record("open PR"),
+                self._record("open PR"),
+                self._record("dropset, within age"),
+            ]
+        }
+        self.assertEqual(
+            kept_by_reason(groups),
+            {"dropset, within age": 1, "open PR": 2},
+        )
+
+    def test_deleted_records_are_not_counted_as_kept(self):
+        groups = {"dropset-old": [self._record("older than threshold", delete=True)]}
+        self.assertEqual(kept_by_reason(groups), {})
 
 
 class DecideHistoryTests(unittest.TestCase):

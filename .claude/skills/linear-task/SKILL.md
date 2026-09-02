@@ -150,20 +150,34 @@ what to file.
    before creating anything.
 
    Ask for **titles**, not bodies. A dedup question is a
-   yes/no, and the default response shape answers it at
+   yes/no, and the MCP's response shape answers it at
    thousands of tokens: one measured call returned 8 full
    issue objects — each with a long truncated description —
    for ≈3.0k, the 4th-costliest tool of that session, and
-   another spent ≈5.6k on a 15-result query. So cap it:
+   another spent ≈5.6k on a 15-result query.
 
-   ```txt
-   mcp__claude_ai_Linear__list_issues(
-     project: "<$LINEAR_PROJECT_ID>",
-     state: "Backlog",
-     query: "<the distinctive noun phrase>",
-     limit: 5,
-   )
+   **Capping `limit` is not enough, because nothing bounds the
+   row WIDTH.** A fully compliant probe — distinctive phrase,
+   project and state filters, `limit: 5` — still cost ≈1.9k:
+   five complete issue objects, each carrying a truncated
+   description plus the full scalar set (`slaBreachesAt`,
+   `gitBranchName`, `createdById`, team and project ids), to
+   answer a question the five **titles** answered alone. So
+   ≈1.9k is the floor for a careful call, not the price of a
+   careless one.
+
+   So use the title-only projection, which the MCP does not
+   offer:
+
+   ```sh
+   python3 .claude/tools/linear_issue.py find \
+     --query '<the distinctive noun phrase>' \
+     --project "$LINEAR_PROJECT_ID" --state Backlog --limit 5
    ```
+
+   It prints `identifier  title` lines and nothing else. Every
+   other filing skill's dedup step (`audit`, `audit-scope`,
+   `housekeeping`) runs this same probe and should use it too.
 
    Treat a **title** match as sufficient to investigate and
    a title mismatch as sufficient to proceed — only

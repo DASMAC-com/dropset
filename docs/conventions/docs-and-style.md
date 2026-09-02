@@ -1,3 +1,7 @@
+<!-- cspell:word empts -->
+
+<!-- cspell:word EMPTS -->
+
 # Docs, prose, and spelling
 
 ## Docs and skills prose
@@ -80,6 +84,39 @@ One gap worth knowing: the gate does not pass
 `--document-private-items`, so a broken link inside a **private**
 module's `//!` block is not checked. Keep those correct by hand.
 
+## `file:line` citations are derived LAST
+
+When a change edits a source file **and** a doc that cites `file:line`
+inside it, derive every citation **once, after all source edits have
+landed** — never interleaved. Treat a citation written before a later
+edit to the same file as presumed stale, and re-derive it.
+
+**Do not arithmetic it forward.** Computing a new line number from hunk
+offsets is a plausible-looking way to be wrong: one adversarial
+cross-check did exactly that and got **255** where the real value was
+**252**, caught only because it was then re-derived with a search.
+
+This is filed for correctness rather than tokens — the token cost is
+about 1k. One session derived its citations **three times**: after the
+initial change (`context.rs:92`); after a review fix rewrote a doc
+comment above that field, moving it to 94 and silently invalidating the
+written citation; and after a cross-check nit added one more line,
+moving it to 95 and the struct's closing brace from 169 to 170. Both
+citations written in the second pass were wrong again. The branch had
+already found pre-existing citations stale by 7 lines on one file and 3
+on another, and its own spec instructed a future auditor to re-derive
+rather than trust — so shipping a freshly stale citation in the commit
+that fixes stale citations would have been self-refuting.
+
+It is structurally likely to recur, which is why it is a rule and not a
+note: `review-pr` applies fixes after the lens fan-out **and** again
+after the cross-check, so any branch touching both code and a
+line-citing doc gets at least two shift opportunities.
+
+(A lint hook parsing `path:line` out of `docs/**` is worth considering
+if this recurs; it is not proposed now — the prose rule is cheap, and
+untested tooling here would need its own accuracy story.)
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —
@@ -94,6 +131,25 @@ comment style:
 
 The lone exception is a file that can't carry a comment (e.g.
 `.json`), where the dictionary is the only option.
+
+**cspell splits on hyphens and checks each part**, so a hyphenated
+coinage is only as safe as its halves — `pre-empts` is checked as `pre`
+plus `empts`, and fails on the second. Prefer an unhyphenated synonym
+(`overrides`, `takes precedence over`) to adding a fragment to the
+dictionary: a fragment is not a word, it would be a permanent entry
+blessing a misspelling repo-wide, and the `--unique` sorter would keep
+it alive.
+
+The failure is invisible until a full lint round-trip spends itself on
+it, which is why this is worth stating rather than discovering. One run
+wrote "it pre-empts every median and pair row below" into a Rust doc
+comment and the matching sentence in a doc; `make lint` then failed on
+two unknown words that appear nowhere in the source — `empts` and
+`EMPTS`. The split survives case, and neither reported word can be
+found by searching for the word actually typed: a reader diagnosing the
+failure searches for `empts` and finds nothing. The same split hits any
+`re-`, `pre-`, `non-` or `co-` coinage, and this repo's prose carries a
+lot of them.
 
 **Placement: one block at the top of the file, one word per line.**
 All of a file's inline escapes go together in a single block at the

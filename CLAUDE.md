@@ -109,9 +109,13 @@ The Linear state is the state machine of the **agentic programming
 session**; the PR's own merged/open state tracks the code. So **In
 Review** covers both PR-under-review *and*
 merged-with-follow-up-outstanding, and **Done** means operator-ratified
-complete — never merely merged. Linear's GitHub integration
-auto-transitions to Done on merge, so `review-pr` writes the issue
-**back** to In Review and only an explicit approval moves it to Done.
+complete — never merely merged. Linear's GitHub integration makes **no
+state transition on merge** — a team setting — so the In Review state
+`review-pr` writes at the enqueue handoff simply persists, and only an
+explicit approval moves it to Done. (The integration used to
+auto-transition to Done, which `review-pr` undid with a post-merge
+write-back; the setting states the convention natively now and that
+write was retired.)
 Two consequences elsewhere: `housekeeping` prunes a worktree on the
 issue's **status type** (completed / canceled), never on PR-merged; and
 the fleet-resume launcher resumes In Progress **or** In Review. Detail:
@@ -150,10 +154,18 @@ applied in order and atomically — so adding or amending part of a body
 **never** requires re-sending it, and a pure `append` needs no prior
 read at all. Passing `description` / `content` does replace wholesale;
 `patch` is the **update-only** alternative, never passed alongside it
-(and capped at 50 ops). It does **not** shrink the response echo
-(that's a fixed cost per call — fewer calls is the only lever there).
-Anchors must match the **stored** text exactly once, and Linear rewrites
-an `ENG-###` into a mention node, so never anchor on one. Detail:
+(and capped at 50 ops). Each op takes its **own** argument names —
+`append` / `prepend` take `text`, `replace` takes
+`old_string` / `new_string` — and guessing wrong costs a full-body echo
+for a rejected call; the table is in the convention doc. `patch` does
+**not** shrink that echo (a fixed cost per call), so for a body
+**append** — which has no anchor and so nothing for an ambiguity abort
+to protect — the zero-echo path is
+`.claude/tools/linear_issue.py append`; **anchored** edits stay on
+`patch`, where that abort is worth the echo. Non-body field writes go
+through `board_batch.py` (`state` is a single-issue alias). Anchors must
+match the **stored** text exactly once, and Linear rewrites an
+`ENG-###` into a mention node, so never anchor on one. Detail:
 `docs/conventions/linear-automation.md`.
 
 ### Parked findings sit in Todo, never Backlog
@@ -204,8 +216,11 @@ under the `Trim levers` milestone, keyed by a
 MCP `patch` path, because that path echoes the whole stored body
 on every write and the cost compounds on an accumulator.
 `trim-context` is the periodic **fold**: sweep the milestone,
-fold into the fewest coherent `Claude:` tasks, close the
-originals. A rejected lever is **closed with its reason**, and
+fold into **one** `Claude:` task — always one, whatever the lever
+count or surface spread — and close the originals. (The
+coherence floor above still governs audit findings and product
+filings; the meta-work fold is the named exemption.) A rejected
+lever is **closed with its reason**, and
 dedup-against-resolved makes that permanent. The old inbox
 document is retired — it outgrew the tool-result cap between
 mining passes. Detail: `docs/conventions/linear-automation.md`

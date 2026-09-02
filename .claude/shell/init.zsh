@@ -60,16 +60,6 @@ if [[ "$_DS_REPO" == */.claude/worktrees/* ]]; then
     "($_DS_REPO) — source the base checkout's copy instead"
 fi
 
-# An OPTIONAL extra file the secret coordinates may live in. The primary shape
-# is plain assignments in the untracked runtime config (see `_ds_secrets`), so
-# most machines will not have this file at all — the `-r` guard below simply
-# skips it.
-#
-# It is deliberately OUTSIDE the repo where it does exist: a path under the
-# checkout could be committed by an errant `git add -A`, and this boundary
-# should not depend on .gitignore staying correct.
-_DS_SECRETS_FILE="${DROPSET_SECRETS_FILE:-$HOME/.config/dropset/secrets.zsh}"
-
 # `cd` to the base repo checkout. The starting point for anything that must not
 # run inside a worktree (`housekeeping`, a planning session).
 #
@@ -82,8 +72,24 @@ _DS_SECRETS_FILE="${DROPSET_SECRETS_FILE:-$HOME/.config/dropset/secrets.zsh}"
 # reportable, and the pass that depends on fresh skills is the thing asking for
 # it. Fast-forwarding on every `cdds` would move `main` under a session that
 # never wanted it.
+# Takes an OPTIONAL tag: bare `cdds` lands in the base repo, `cdds 1077` lands
+# in that issue's worktree. Dropping the argument was a parity gap and a
+# silent one — the committed version ignored it and reported success from the
+# base repo, which is the worst way to fail: every later edit then targets the
+# base copy the worktree build never sees, the exact slip the worktree
+# edit-path guard exists to catch downstream. Accepts `1077` or `eng-1077`,
+# matching `raps`.
 cdds() {
   cd "$_DS_REPO" || return 1
+  [[ -z "$1" ]] && return 0
+
+  local tag="eng-${1#eng-}"
+  local worktree="$_DS_REPO/.claude/worktrees/$tag"
+  if [[ ! -d "$worktree" ]]; then
+    print -u2 "cdds: no worktree at $worktree"
+    return 1
+  fi
+  cd "$worktree"
 }
 
 # Internal: the same move, for helpers that must launch from the base repo
@@ -108,15 +114,14 @@ _ds_base() {
 #   DS_OP_GITHUB_REF='op://<vault>/<github-item>/credential'
 #
 # **Define them in the untracked runtime config**, alongside the `LINEAR_*` ids
-# that already live there. One personal config file, not two: the separate
+# that already live there. ONE personal config file, and only one: the separate
 # coordinates file existed to keep *scripts* out of the shell profile, and with
-# the function bodies now committed here there is nothing left to keep out. The
+# the function bodies committed here there is nothing left to keep out. Its
+# opt-in path was removed rather than left dormant — a second supported location
+# for the same three variables is a place for them to disagree, and the resulting
+# failure is silent (a stale copy wins and the wrong credential resolves). The
 # secrets boundary is unchanged — the runtime config is equally outside the
 # repo, and anything tracked carries placeholder shapes only.
-#
-# The optional `$_DS_SECRETS_FILE` is sourced first if it happens to exist, so
-# a machine still using that shape keeps working; plain assignments satisfy the
-# function either way, because everything below reads shell-visible variables.
 #
 # Four things about the shape below are load-bearing:
 #
@@ -134,8 +139,6 @@ _ds_base() {
 #     otherwise surfaces much later as an opaque MCP error mid-session, which
 #     is far worse to debug than one line at startup.
 _ds_secrets() {
-  [[ -r "$_DS_SECRETS_FILE" ]] && source "$_DS_SECRETS_FILE"
-
   if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_LINEAR_REF" ]]; then
     export LINEAR_API_KEY="${LINEAR_API_KEY:-$(op read --account \
       "$DS_OP_ACCOUNT" "$DS_OP_LINEAR_REF")}"
@@ -268,10 +271,17 @@ _ds_topic_sid() {
 #   * `/init-pr` as the initial prompt, so the bootstrap runs without being
 #     asked for — the same trick `paps` and `haps` use for their own skills.
 aps() {
+  _ds_base || return 1
+  _ds_secrets
+
+  # No tag: a plain session in the base repo. This form is the operator's, and
+  # dropping it was a parity gap rather than a decision — it is the entry point
+  # for work that is not tied to a worktree yet.
   if [[ -z "$1" ]]; then
-    print -u2 'Usage: aps <tag>'
-    return 1
+    claude --permission-mode acceptEdits
+    return
   fi
+
   # A bare number gets the `eng-` prefix, so `aps 882` and `aps eng-882` agree
   # and the aps→raps pair composes: `raps` resolves `eng-<n>`, so without this
   # `aps 882` would create a worktree named `882` that `raps 882` then reports
@@ -280,8 +290,6 @@ aps() {
   local tag="$1"
   [[ "$tag" == <-> ]] && tag="eng-$tag"
 
-  _ds_base || return 1
-  _ds_secrets
   claude -w "$tag" -n "$tag" --permission-mode acceptEdits /init-pr
 }
 
@@ -290,24 +298,48 @@ aps() {
 # number-to-worktree resolution is the whole point — you resume a number, not
 # a UUID.
 raps() {
+  # No number: the picker, from wherever the shell already is. The operator's
+  # form, and worth keeping for a reason the tag form cannot cover — a session
+  # whose worktree has already been pruned is still reachable this way.
   if [[ -z "$1" ]]; then
-    print -u2 'Usage: raps <n>'
-    return 1
+    _ds_secrets
+    claude --resume
+    return
   fi
-  local dir="$_DS_REPO/.claude/worktrees/eng-${1#eng-}"
-  if [[ ! -d "$dir" ]]; then
-    print -u2 "raps: no worktree at $dir"
-    return 1
+
+  local tag="eng-${1#eng-}"
+  local dir="$_DS_REPO/.claude/worktrees/$tag"
+
+  if [[ -d "$dir" ]]; then
+    cd "$dir" || return 1
+    _ds_secrets
+    # `-c/--continue` is per-directory, which is exactly the addressing this
+    # helper wants: the cd above has already selected the session.
+    claude --continue
+    return
   fi
-  cd "$dir" || return 1
+
+  # The worktree is gone — pruned after a merge, say — but the transcript
+  # outlives it, so fall back to the base repo rather than refusing. `--continue`
+  # is wrong here precisely because the cd no longer selects the right session:
+  # it would continue whatever ran last in the base repo. `--resume <tag>` filters
+  # the picker instead, which is a pick rather than a resume, and is the only
+  # form that still reaches the session.
+  _ds_base || return 1
   _ds_secrets
-  # `-c/--continue` is per-directory, which is exactly the addressing this
-  # helper wants: the cd above has already selected the session.
-  claude --continue
+  claude --resume "$tag"
 }
 
-# Start a NAMED session in the current directory (no worktree). The
-# general-purpose named-session entry point.
+# Start a NAMED session in the BASE REPO (no worktree). The general-purpose
+# named-session entry point.
+#
+# It runs `_ds_base` first, so `naps <name>` is `cdds` plus a named session.
+# That is the operator's behavior and the intended one: a named session is for
+# board or repo-wide work, which belongs in the base checkout, not in whatever
+# worktree the shell happened to be sitting in. An earlier committed revision
+# omitted the `_ds_base` and so inherited the caller's directory — a parity gap,
+# not a decision, and a quiet one: the session still starts, just somewhere
+# unintended.
 #
 # `--permission-mode acceptEdits` for the same reason as `aps`: the shared
 # settings file sets no default, so omitting it starts every session in the
@@ -318,6 +350,7 @@ naps() {
     print -u2 'Usage: naps <name>'
     return 1
   fi
+  _ds_base || return 1
   _ds_secrets
   claude -n "$1" --permission-mode acceptEdits
 }
@@ -334,6 +367,7 @@ rnaps() {
     print -u2 'Usage: rnaps <name>'
     return 1
   fi
+  _ds_base || return 1
   _ds_secrets
   claude --resume "$1"
 }

@@ -627,10 +627,8 @@ separate coordinates file existed to keep *scripts* out of the profile,
 so with the function bodies now committed there is nothing left for it
 to keep out.
 
-No code change was needed to make this the primary shape: the committed
-function sources its optional file *if present* and then reads whatever
-`DS_OP_*` variables are shell-visible, so plain assignments satisfy it
-as-is.
+The committed function reads whatever `DS_OP_*` variables are
+shell-visible, so plain assignments in the profile satisfy it directly.
 
 That split — committed function, uncommitted coordinates — is the point
 of the boundary. An `op://` reference is a *pointer*, not a value, so
@@ -638,13 +636,12 @@ committing one would leak no credential; but it would publish the layout
 of a personal secret store into permanent git history, and history does
 not forget.
 
-*Alternative, still supported:* a separate file outside the repo at
-`~/.config/dropset/secrets.zsh`, or wherever `DROPSET_SECRETS_FILE`
-points. It is sourced first when it exists, so a machine on that shape
-keeps working unchanged. Where it *is* used it sits outside the checkout
-deliberately — a path inside could be swept up by an errant
-`git add -A`, and this boundary should not depend on `.gitignore` staying
-correct.
+*Deliberately one location only.* An earlier revision also sourced a
+separate file at `~/.config/dropset/secrets.zsh` (or wherever
+`DROPSET_SECRETS_FILE` pointed). That path was removed rather than left
+dormant: two supported homes for the same three variables is somewhere
+for them to disagree, and the failure is silent — the stale copy wins
+and the wrong credential resolves. The profile is the one home.
 
 With no coordinates set at all the helper resolves nothing and warns; an
 already-exported `LINEAR_API_KEY` / `GITHUB_MCP_PAT` still wins, so
@@ -693,10 +690,10 @@ Four things about that shape are load-bearing:
   startup.
 
 The coordinates above are placeholders. The real account domain, vault
-name, and item titles appear only in the untracked runtime config (or
-that optional coordinates file) — never in a symlink into a tracked
-config repo — so substitute your own. Naming the real ones here would
-buy a reader nothing (they have to substitute regardless).
+name, and item titles appear only in the untracked runtime config —
+never in a symlink into a tracked config repo — so substitute your own.
+Naming the real ones here would buy a reader nothing (they have to
+substitute regardless).
 
 ### Session helpers (`.claude/shell/init.zsh`)
 

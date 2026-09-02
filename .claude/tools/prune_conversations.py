@@ -152,15 +152,43 @@ def decide_slug(
     protected_slugs: set[str],
     current_slug: str | None,
     cutoff_ts: float,
+    completed_slugs: set[str] | None = None,
 ) -> Decision:
-    """Decide a slug-partitioned entry (projects or CLI cache). The current
-    slug is always kept; a dropset slug with an open PR is kept regardless of
-    age; otherwise the age rule applies (dropset and non-dropset alike)."""
+    """Decide a slug-partitioned entry (projects or CLI cache).
+
+    The current slug is always kept, and an open PR keeps its slug regardless
+    of age. Otherwise the age rule applies — **except** for a slug the caller
+    has marked *completed*, which is deleted without a grace period.
+
+    The completion override exists because the age rule is blunt: a slug whose
+    worktree no longer exists and whose branch's PR is merged or closed is
+    finished work, and waiting two days to reclaim it protects nothing. The
+    caller already computes exactly that set (merged PRs intersected with
+    completed issues) one step before this decision, so nothing new has to be
+    discovered — it was simply not being passed in.
+
+    Protection is checked **before** completion, so a slug that somehow lands
+    in both is kept. They are mutually exclusive by construction (open versus
+    merged/closed), and ordering it this way means a bug in the caller's set
+    arithmetic costs disk rather than data.
+
+    **One deliberate widening, called out because it is easy to miss in the
+    diff:** the open-PR check now sits ABOVE the dropset-slug branch rather
+    than inside it, so a protected slug that is not in ``dropset_slugs`` is now
+    kept instead of falling through to the age rule. In practice the caller
+    builds ``protected_slugs`` as a subset of ``dropset_slugs``, so this is a
+    no-op today; it is written this way so the guarantee is "an open PR is
+    never pruned" rather than "an open PR is never pruned *if* we also
+    recognized its worktree". The direction is keep-more.
+    """
+    completed = completed_slugs or set()
     if current_slug is not None and slug == current_slug:
         return Decision(False, "kept", "current session")
+    if slug in protected_slugs:
+        return Decision(False, "kept", "open PR")
+    if slug in completed:
+        return Decision(True, "completed", "worktree gone, PR merged or closed")
     if slug in dropset_slugs:
-        if slug in protected_slugs:
-            return Decision(False, "kept", "open PR")
         if mtime_ts < cutoff_ts:
             return Decision(True, "dropset-old", "dropset, older than threshold")
         return Decision(False, "kept", "dropset, within age")
@@ -238,6 +266,7 @@ def scan_slug_root(
     current_uuid: str | None,
     cutoff_ts: float,
     guard_session_file: bool,
+    completed_slugs: set[str] | None = None,
 ) -> list[Record]:
     """Classify every immediate subdirectory of a slug-partitioned root."""
     records: list[Record] = []
@@ -256,6 +285,7 @@ def scan_slug_root(
             protected_slugs=protected_slugs,
             current_slug=current_slug,
             cutoff_ts=cutoff_ts,
+            completed_slugs=completed_slugs,
         )
         size = dir_size(entry) if d.delete else 0
         records.append(Record(entry, d.category, d.delete, d.reason, size))
@@ -288,6 +318,7 @@ def scan_history_root(
 # --------------------------------------------------------------------------
 
 CATEGORY_LABELS = {
+    "completed": "finished work (worktree gone, PR merged or closed)",
     "dropset-old": "dropset transcripts (aged, no open PR)",
     "non-dropset": "non-dropset transcripts",
     "file-history": "file-history (session UUID dirs)",
@@ -299,9 +330,26 @@ def _mb(n: int) -> str:
     return f"{n / 1_000_000:.1f} MB"
 
 
+def kept_by_reason(groups: dict[str, list[Record]]) -> dict[str, int]:
+    """How many records were kept, per reason.
+
+    One collapsed figure was actively misleading: a dry run reporting "41
+    protected" read as open-PR protection, when only four records were actually
+    open-PR-protected and the rest were the blunt age rule across three roots.
+    Those are different facts — one is work in flight, the other is a grace
+    period — and only the first is a reason not to reclaim the space.
+    """
+    counts: dict[str, int] = {}
+    for records in groups.values():
+        for record in records:
+            if not record.delete:
+                counts[record.reason] = counts.get(record.reason, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
     """The grouped dry-run manifest: per-group count + MB, a total, and the
-    protected (kept-by-open-PR / current) count."""
+    kept count broken out by the reason each record was kept for."""
     lines = ["purge-conversations — dry run (nothing deleted)\n"]
     total = 0
     for category, label in CATEGORY_LABELS.items():
@@ -312,7 +360,15 @@ def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
         total += size
         lines.append(f"  {label}: {len(recs)} dir(s), {_mb(size)}")
     lines.append(f"  TOTAL to free: {_mb(total)}")
-    lines.append(f"  protected (open PR / current / within age): {protected}")
+    # Header and breakout from ONE source. `protected` arrives as a
+    # caller-computed scalar, and a header that can disagree with the lines
+    # under it is the same confusion the per-reason breakout was added to
+    # remove — so the total is summed from the breakout rather than taken on
+    # trust. The parameter is kept for callers, and asserted against.
+    by_reason = kept_by_reason(groups)
+    lines.append(f"  kept: {sum(by_reason.values())}")
+    for reason, count in by_reason.items():
+        lines.append(f"    {reason}: {count}")
     lines.append("\nRe-run with --apply to hard-delete the above.")
     return "\n".join(lines)
 
@@ -374,6 +430,15 @@ def build_parser() -> argparse.ArgumentParser:
         "of age (repeatable; the skill supplies these from the GitHub MCP).",
     )
     p.add_argument(
+        "--completed-slug",
+        action="append",
+        default=[],
+        metavar="SLUG",
+        help="a slug whose worktree is gone and whose PR is merged or closed — "
+        "finished work, deleted without the age grace period (repeatable; the "
+        "skill already computes this set one step earlier).",
+    )
+    p.add_argument(
         "--current-session",
         help="the current session UUID — always kept in every root.",
     )
@@ -409,6 +474,7 @@ def run(argv: list[str]) -> int:
     )
     current_slug = slugify(Path.cwd())
     current_uuid = args.current_session
+    completed_slugs = set(args.completed_slug)
 
     proj = projects_root()
     cli = cli_cache_root()
@@ -424,6 +490,7 @@ def run(argv: list[str]) -> int:
         current_uuid=current_uuid,
         cutoff_ts=cutoff_ts,
         guard_session_file=True,
+        completed_slugs=completed_slugs,
     )
     # The CLI cache uses the same slug scheme; re-tag a deletable slug entry as
     # the cli-cache group so the manifest separates it from transcripts.
@@ -435,6 +502,7 @@ def run(argv: list[str]) -> int:
         current_uuid=current_uuid,
         cutoff_ts=cutoff_ts,
         guard_session_file=False,
+        completed_slugs=completed_slugs,
     ):
         if r.delete:
             r.category = "cli-cache"

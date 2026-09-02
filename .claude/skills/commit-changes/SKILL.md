@@ -56,14 +56,31 @@ changes here belong to this session.
      wrapped and the discover call is not, and it
      missed sibling tests the edit had just broken.
      This is what `review-pr` and `init-pr` also say.
+
    - **Frequency:** run it at a **checkpoint**, not
-     after every single-file edit. One session ran the
-     suite dozens of times in an edit-one-tool loop,
-     most runs re-buying confidence it already had.
-     (Deliberately no figure here: the one measured
-     count belongs to the scope bullet above, and
-     attaching it to both is what made these two
-     findings read as contradictory.)
+     after every single-file edit. Measured: one session
+     ran `make tools-tests` **53 times** (≈12.0k of
+     result bytes, classified `context (failures)`) in an
+     edit-one-tool loop, most runs re-buying confidence
+     the previous run had already established. The
+     wrapper is already in place there, so those bytes
+     are failure tails — the lever is fewer round trips,
+     not more redirection.
+
+     That session's own diff **documented this
+     discipline**, here and in `review-pr`, and then
+     violated it 53 times. A rule stated in a skill the
+     session is actively editing, and still not followed,
+     wants a cheaper trigger than prose:
+     `tree_fingerprint.py` already grades a check
+     fresh/stale/missing against tree content, so a
+     `tools-tests` fingerprint check before each run
+     would make a redundant re-run mechanically visible.
+
+     (This figure is the **frequency** measurement and is
+     a different quantity from the scope bullet's above.
+     Attaching one number to both is what previously made
+     these two findings read as contradictory.)
 
    So: whole suite, fewer times. The two rules point
    the same way once you see that one is about scope

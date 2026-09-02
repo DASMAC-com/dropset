@@ -652,14 +652,32 @@ def split_diff(diff_path: Path, out_dir: Path) -> dict:
     "nothing in this category" and "the split didn't run".
     """
     out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    paths = {name: out_dir / f"review-diff-{name}.txt" for name in SLICE_NAMES}
-    # The slice handles are opened O_TRUNC *before* the diff is read, so a `--out`
-    # that collides with a slice name would have its own input truncated first and
-    # every slice would come out empty with no error. Refuse instead.
-    if diff_path.resolve() in {p.resolve() for p in paths.values()}:
+    # Namespaced off the `--out` STEM, not a fixed prefix. Fixed names made two
+    # runs in one scratchpad silently destroy each other's slices: a
+    # `--only '.claude/tools/**' --split` run has no docs hunks, so it wrote an
+    # empty `review-diff-docs.txt` over the full run's 1684-line one — and the
+    # skill's own instruction ("run it once per sub-slice, and hand each lens its
+    # own `--out` path") reads as protection against exactly that while providing
+    # none, because `--out` did not reach these names. The failure is silent and
+    # total for the affected lens: it receives a 0-line slice and correctly
+    # reports nothing to review.
+    #
+    # Deriving from the stem also makes the old `--out`-collides-with-a-slice
+    # case structurally impossible (`<stem>-<name>.txt` can never equal
+    # `<stem>.txt`), so the guard that used to sit here is gone rather than left
+    # as a second, unreachable source of truth.
+    stem = diff_path.stem
+    paths = {name: out_dir / f"{stem}-{name}.txt" for name in SLICE_NAMES}
+    # One hazard the stem derivation does NOT close: an `--out` that is itself
+    # spelled like a slice (`--out review-diff-docs.txt`) writes the whole diff
+    # over a previous run's docs slice. The old guard refused that filename as a
+    # side effect; keep refusing it deliberately, since it is the same
+    # silent-overwrite failure by a different route.
+    if any(stem.endswith(f"-{name}") for name in SLICE_NAMES):
         raise ReviewDiffError(
-            f"--out {diff_path} collides with a --split slice name; choose another "
-            f"name (the slices are review-diff-source/tests/docs.txt in that dir)"
+            f"--out {diff_path.name} is spelled like a --split slice, so it "
+            f"would overwrite one; choose a name not ending in "
+            f"-{'/-'.join(SLICE_NAMES)}"
         )
     handles = {}
     counts = dict.fromkeys(SLICE_NAMES, 0)

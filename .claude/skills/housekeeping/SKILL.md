@@ -370,24 +370,45 @@ for a two-line answer across eleven PRs).
 
 **But PR-merged is not the prune criterion — the ISSUE'S
 STATUS TYPE is.** A merged PR whose Linear issue reads
-**In Review** is a session with outstanding follow-up (see
-`review-pr`'s outcome-watch step, which writes the issue back
-to In Review on merge precisely so this is visible), and
+**In Review** is a session with outstanding follow-up — the
+team's Git workflow automation makes no transition on merge,
+so that state survives the merge and stays visible — and
 pruning its worktree would recreate the worktree-loss incident
-in a third variant. So intersect the merged set with the board:
+in a third variant. So intersect the merged set with the
+board:
 
 - resolve each merged branch's `ENG-###` from its branch name,
-  read that issue's **status type**, and prune only when the
-  type is **`completed`** or **`canceled`**. Marked-duplicate
-  is a canceled-type state carrying `duplicateOf`, so it is
-  covered by construction.
+  then read the status type with **one field-selected
+  `list_issues`** — `fields: ["statusType"]`, plus `status` for
+  the report line — and prune only when the type is
+  **`completed`** or **`canceled`**. Marked-duplicate is a
+  canceled-type state carrying `duplicateOf`, so it is covered
+  by construction.
+
+  **Never a whole-issue read here.** This step used to say
+  only "read that issue's status type" without naming the
+  call, while the `gh pr list` half of the same step
+  field-selects three fields and explains why one paragraph
+  earlier — so the board half defaulted to the fattest read.
+  Measured: reading one issue whole cost ≈6.0k for a single
+  `statusType`, and a second **overflowed the tool-result cap**
+  (64.3KB, spilled to disk) so the field was not even
+  readable; the recovery `list_issues` then answered it for
+  ≈2.5k. That is ≈8.5k plus a disk spill to classify two
+  issues — and it scales the wrong way, since the longer an
+  issue's decision history the likelier a whole read
+  overflows, and long-running issues are exactly the ones that
+  reach a merged PR.
+
 - **Match on status TYPES, never state names.** A workflow
   rename would otherwise silently widen the prune, and this
   step deletes things.
+
 - **One guard:** a `canceled` issue whose PR is still **open**
   is *skipped and flagged in the report*, never pruned
   silently. Both worktree-loss incidents began as a
   prune-while-PR-open.
+
 - A merged branch with **no resolvable issue** falls through
   to `left` — report it rather than guessing.
 

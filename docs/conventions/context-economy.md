@@ -94,18 +94,32 @@ argument was *not* the reason — see that step for why.)
   the discipline fails at the moment of typing, not the moment of
   reading this doc, so the reminder is attached to the result.
 
-  **Once the scope is a single named file, the tool refuses a wide
-  `--context` outright.** A sweep over one file buys its matched regions
-  at an N-line markup and, on clustered matches, at a *higher* price than
+  **Once the scope is a single named file, the tool CLAMPS a wide
+  `--context`.** A sweep over one file buys its matched regions at an
+  N-line markup and, on clustered matches, at a *higher* price than
   reading the file. Measured: the three largest single results of one
   session were exactly this shape — a `--context 6` constants probe over
   one file (39 matches, overflowed the result cap, spilled 32KB to disk,
   three constants actually wanted), a `--context 12` struct probe, and a
   `--context 40` single-symbol probe that is a whole-file read with extra
   steps — ~11.9k together, roughly **60% of that session's entire Bash
-  cost**. `search_source.py` now detects a wildcard-free single-file
-  scope from the *arguments* and refuses before doing the work; take
-  `--files-only` and slice-read the region it names.
+  cost**. `search_source.py` detects a wildcard-free single-file scope
+  from the *arguments* and narrows the window, saying so on its summary
+  line; take `--files-only` and slice-read the region it names. It
+  clamps rather than refusing because a refusal keys on **scope** while
+  the cost is a function of **match count** — it rejected genuinely cheap
+  calls, and an unanswered question just costs a second one.
+
+  **Past a size threshold, any `--context` sweep degrades to
+  `--files-only` by itself**, whatever its scope, printing the file list
+  plus a note saying that it degraded and how to override. This covers
+  what the single-file clamp structurally cannot, since the clamp keys on
+  scope: the worst measured run was a `--context 2` sweep over one crate
+  *directory* — 71 matches across 9 files, ~5.6k, roughly **40% of that
+  session's entire Bash cost** — fired to answer a pure location
+  question, and no scope rule would have caught it. `--force-context` is
+  the escape hatch, for an adjudication read where the surrounding lines
+  genuinely are the question.
 
   **Treat the helper's advisory line as a DIRECTIVE, not a note.** When
   the summary reports clustering or a many-file spread, do not consume
@@ -113,8 +127,87 @@ argument was *not* the reason — see that step for why.)
   the named region. The detection already works — one session got the
   correct advisory on its top two sinks (~3.1k, 39% of its Bash cost) and
   consumed both results anyway. Obedience is the missing half, which is
-  also why the single-file case above was promoted from an advisory to a
-  refusal.
+  why both cases above were promoted out of advice and into the tool: the
+  single-file case into a clamp, the size case into a degrade. What
+  remains advisory is the shape neither threshold catches, and there the
+  NOTE is a finding about the call you just made — not boilerplate, and
+  not something to re-run in the same shape.
+
+  **Enumeration is a third case, beside existence and adjudication.**
+  The split above is location (`--files-only`) versus reading what code
+  does (`--context`), and a real third shape fits neither: *retrieving
+  several known blocks from one file*. That is a slice-read — one read
+  spanning them, or a bounded read per block — never a grep, however
+  tempting the single call looks. Measured: a `--context 3` sweep for
+  this answered at ~2.0k, the run's largest single result, and **still**
+  needed four separate slice reads afterwards, because the context width
+  truncated the very bullets the sweep was meant to retrieve. It bought
+  overlapping windows *and* the reads that replaced them. This is also
+  the case the tool's own thresholds cannot save you from: they fire once
+  the call is made, and here the right move is not to make it.
+
+  **If an earlier call this session already named the file, pass
+  `--glob`.** Narrowing the SCOPE is a separate axis from narrowing the
+  output, and this one has a concrete trigger: you already know where it
+  is. Measured in one session, two of its three largest Bash results were
+  unscoped sweeps fired when the target was already known — ~3.7k for a
+  context sweep over four alternated identifiers to settle a *one-bit*
+  question, returning 31 matches across 4 files that were mostly test
+  assertions when two regions were wanted; and ~1.8k sweeping a whole
+  crate for one config field, when a section map earlier in the same
+  session had already named the file. The same tool scoped to one file
+  cost ~200–500 tokens per call elsewhere in that run.
+
+  **A structure map matches TOP-LEVEL declarations only.** Anchor at
+  column zero and never add a leading-space alternative (`^ *fn`,
+  `^ *pub fn`): in Rust that turns the map into a dump of the
+  `#[cfg(test)]` module, which is routinely more than half the file. One
+  correctly-`--glob`-scoped map over a ~2140-line file returned **97
+  matches at ~1.9k** — roughly 80 of them test-module functions from a
+  block spanning lines ~810–2140 — to choose which regions of a ~17-line
+  type surface to read. `^pub enum|^pub struct|^impl` alone would have
+  cost about a fifth. The scope was right and the output width was wrong,
+  which is exactly why `--glob` did not save it. This is the same failure
+  as the comment-alternation case below, but that one names comment lines
+  specifically, so it does not fire here.
+
+  **Before the third slice of one file, sum what you have already
+  read.** Past roughly half the file, take one bounded read covering the
+  remaining regions instead of continuing to slice. The accumulating case
+  looks compliant at every individual step, which is why it needs its own
+  trigger: one session ran the prescribed declaration map over a ~650-line
+  `Makefile` and then sliced it **five** times off that map — 225 lines,
+  98, 50, 26, 14, about 413 lines in total, the first slice alone its
+  largest single result at ~3.3k. Both adjacent rules were followed and
+  neither applies: "a planned multi-region read is ONE bounded read"
+  governs regions planned up front, and these were discovered
+  incrementally; "if you already ran the map, slice from it" fires when a
+  map is followed by a *whole-file* read, not by many slices. Be honest
+  about the size of the win — a whole read of that file is ~6k, so five
+  slices at ~413 lines were not obviously worse in raw tokens. The
+  stronger case is fewer round trips.
+
+  **An identifier that names something on both sides of the chain
+  boundary spans two domains.** At least `leader`, `market` and `vault`
+  each name a host-side Rust binding *and* an on-chain account or field
+  — `leader` worst of all, being a `Keypair` in the bot, a `Pubkey` on
+  vault state, and a parameter name in the chain helpers. A host-side
+  sweep for the maker bot's leader keypair returned **92 matches across
+  36 files**, mostly on-chain state unrelated to the signing key; the
+  next call, anchored to the host-side use, answered it in one file.
+  Anchor to the use (`ctx.leader`) or scope with `--dir` to the crate.
+  This is pattern precision, a separate axis from output width.
+
+  **A whole-issue read is for an issue's CONTENT; a decision that turns
+  on a field is a field-selected `list_issues`.** Reading an issue whole
+  to learn one enum cost ~6.0k in one measured case, and a second
+  **overflowed the tool-result cap** (64.3KB, spilled to disk) so the
+  field was not even readable — then a recovery `list_issues` with
+  `fields: ["title", "status", "statusType"]` answered it for ~2.5k. That
+  is ~8.5k plus a disk spill to classify two issues, and the failure
+  scales the wrong way: the longer an issue's decision history, the
+  likelier a whole read overflows, and long-running issues are exactly
+  the ones that reach a merged PR.
 
   **A pattern you have not searched before starts `--files-only`.** The
   advisory is post-hoc by construction — it can only arrive with a
@@ -215,9 +308,11 @@ argument was *not* the reason — see that step for why.)
     largest sink of one session (top five, ~15k). The crate was small,
     so no per-file budget felt warranted — yet `model.rs` is ~40%
     `#[cfg(test)]` and only two signatures were needed. Before any
-    `Read` over ~300 lines, Grep for the structure
-    (`^fn |^impl |^pub`, or the language's equivalent); the map tells
-    you which slice you actually want.
+    `Read` over ~300 lines, Grep for the structure — the language's
+    **top-level declaration** shape (`^pub enum|^pub struct|^impl`, or
+    its equivalent), anchored at column zero and never with a
+    leading-space alternative; the map tells you which slice you
+    actually want.
 
     **Scope that structure-map grep to the file(s) you are about to
     read.** The instruction names a pattern but no scope, and aimed at

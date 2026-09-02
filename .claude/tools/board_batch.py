@@ -10,7 +10,7 @@ removal — and paid roughly 40k echoing bodies to confirm changes that fit on
 17 lines. Linear's ``issueUpdate`` returns whatever the caller selects, so
 requesting ``success`` alone makes the echo vanish.
 
-Four subcommands, all reading their config from the environment (no hard-coded
+Five subcommands, all reading their config from the environment (no hard-coded
 ids, never a committed token):
 
 * ``list`` — compact open-Backlog listing: ``number | priority | title``, one
@@ -20,6 +20,10 @@ ids, never a committed token):
   to field values and prints one line per issue.
 * ``priorities --updates FILE`` — a thin alias of ``fields`` for the
   priority-only case, kept because a priority sweep is the common shape.
+* ``state --id ENG-### --state NAME`` — a thin alias of ``fields`` for the
+  single-issue lifecycle transition, so ``init-pr``'s move to In Progress and
+  ``review-pr``'s to In Review are one command rather than a JSON file
+  composed to carry one enum. Through the MCP those cost ~3.6k each.
 * ``edges --pairs FILE [--remove]`` — add or remove **operator-directed**
   blocking edges.
 
@@ -60,11 +64,18 @@ skill's close-out step documents (code spans coming back mangled). The MCP
 is load-bearing: it has correctly refused writes whose anchor matched twice
 rather than guessing. Do not "finish the job" by adding a body writer here.
 
+The one exception is an **append**, and the distinction is anchoring: an
+append has no anchor, so nothing can match ambiguously and the atomic abort
+protects nothing. It therefore leaves the MCP — but it lives in
+``linear_issue.py``, not here, because this tool is the non-body writer and
+mixing the two would blur exactly the boundary the paragraph above draws.
+
 Usage:
     python3 .claude/tools/board_batch.py list
     python3 .claude/tools/board_batch.py list --state Todo
     python3 .claude/tools/board_batch.py fields --updates updates.json
     python3 .claude/tools/board_batch.py priorities --updates priorities.json
+    python3 .claude/tools/board_batch.py state --id ENG-123 --state "In Review"
     python3 .claude/tools/board_batch.py edges --pairs edges.json
     python3 .claude/tools/board_batch.py edges --pairs edges.json --remove
 
@@ -811,6 +822,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         p.add_argument("--updates", required=True, help="path to the updates JSON")
         _add_dry_run(p, top_level=False)
 
+    state_cmd = sub.add_parser(
+        "state",
+        help="transition ONE issue's workflow state (a thin alias of fields)",
+    )
+    state_cmd.add_argument("--id", required=True, help="ENG-### identifier")
+    state_cmd.add_argument("--state", required=True, help="target workflow state name")
+    _add_dry_run(state_cmd, top_level=False)
+
     edges = sub.add_parser(
         "edges", help="add or remove operator-directed blocking edges"
     )
@@ -833,6 +852,25 @@ def _normalize_priority_updates(raw: object) -> dict:
     return {number: {"priority": value} for number, value in raw.items()}
 
 
+def _normalize_state_update(identifier: str, state: str) -> dict:
+    """``state`` takes one ``ENG-###`` and a state name; widen it to the
+    ``{ref: {field: value}}`` shape `fields` applies.
+
+    It exists because the per-session lifecycle transitions — `init-pr`'s move
+    to In Progress at bootstrap, `review-pr`'s to In Review at the merge-queue
+    handoff — are single-issue, single-enum writes, and routing them through
+    `fields` meant composing a JSON file to carry one value. Through the MCP
+    those writes echo the entire stored body back: measured at ~3.6k to
+    transmit one enum, on a session where the Linear writes cost roughly three
+    times every shell command combined.
+
+    The identifier is passed straight through as the key rather than parsed to
+    an int, so it inherits :func:`_as_ref`'s team-prefix validation — a
+    ``FIN-123`` cannot silently resolve to ``ENG-123``.
+    """
+    return {identifier: {"state": state}}
+
+
 def run(argv: list[str]) -> int:
     args = _parse_args(argv)
     api_key = env_var("LINEAR_API_KEY")
@@ -852,9 +890,14 @@ def run(argv: list[str]) -> int:
     # Every write path loads its payload FIRST, then resolves numbers to ids from
     # a read scoped to what that payload names — so a write's cost tracks the
     # handful of issues it touches rather than the size of the board.
-    if args.cmd in ("fields", "priorities"):
-        raw = load_json_file(args.updates)
-        updates = _normalize_priority_updates(raw) if args.cmd == "priorities" else raw
+    if args.cmd in ("fields", "priorities", "state"):
+        if args.cmd == "state":
+            updates = _normalize_state_update(args.id, args.state)
+        else:
+            raw = load_json_file(args.updates)
+            updates = (
+                _normalize_priority_updates(raw) if args.cmd == "priorities" else raw
+            )
         if not isinstance(updates, dict):
             raise BoardBatchError("fields expects an object of number -> fields")
         if not updates:

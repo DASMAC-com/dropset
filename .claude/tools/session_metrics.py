@@ -135,6 +135,48 @@ class SubAgentLine:
         return self.input + self.cache_creation + self.cache_read
 
 
+def _load_allowlist() -> list[str]:
+    """The shared allowlist's rules, or ``[]`` when it cannot be read.
+
+    **This makes the report machine-dependent, deliberately.** Two operators
+    mining the same transcript can get different `cost_kind` labels, because
+    coverage is a fact about *this* machine's `settings.local.json` and churn is
+    a fact about what actually prompted here — which is the question the label
+    is answering. Worth knowing when comparing two runs' tables, and worth
+    pinning in tests: `test_session_metrics.py` replaces this function so the
+    suite never reads operator config.
+
+    Best-effort by design. This only ever *downgrades* a churn claim, so an
+    unreadable allowlist reports exactly what this table reported before the
+    coverage check existed — the safe direction, and the reason no failure here
+    is worth surfacing to the caller.
+    """
+    try:
+        import allowlist
+
+        return allowlist.load_allow(allowlist.resolve_settings_path(None))
+    except Exception:
+        return []
+
+
+def _is_allowlisted(signature: str, allow: list[str]) -> bool:
+    """Whether the shared allowlist already covers this command shape.
+
+    A false negative is harmless — the shape reports `prompt-churn`, which is
+    what it reported before — and `allowlist.covers` is known to miss some
+    mid-token globs, so this deliberately fails toward the old behavior rather
+    than asserting coverage it cannot prove.
+    """
+    if not allow or not signature:
+        return False
+    try:
+        import allowlist
+
+        return bool(allowlist.covers(f"Bash({signature}:*)", allow).get("covered"))
+    except Exception:
+        return False
+
+
 @dataclass
 class HardeningCandidate:
     """A repeated Bash command shape worth porting to a tool.
@@ -154,6 +196,11 @@ class HardeningCandidate:
     # True when the shape routed through `run_quiet.py`, i.e. its output was
     # deliberately kept out of context.
     via_run_quiet: bool = False
+    # True when the shared allowlist already covers this shape, so its repeats
+    # did NOT re-prompt. Set by the caller, which is the layer that can read
+    # `settings.local.json`. Defaults False, so an unresolved allowlist reports
+    # exactly what this table reported before — the safe direction.
+    allowlisted: bool = False
 
     def avg_bytes(self) -> int:
         return 0 if self.count == 0 else self.result_bytes // self.count
@@ -180,6 +227,16 @@ class HardeningCandidate:
         * ``prompt-churn`` — cheap and fast, but repeated in slightly different
           shapes, so each variant is a fresh permission prompt. A `printenv` is
           the type case: worth a tool, but not because of tokens.
+        * ``covered (no churn)`` — the same shape, except the shared allowlist
+          already covers it, so the repeats did **not** re-prompt and there is
+          no friction to remove.
+
+        That last one exists because the heuristic cannot see a prompt. It
+        infers churn from *many cheap, slightly-varying calls*, which is also
+        what a fully-covered shape looks like — and one filed lever argued for
+        a whole new tool on that basis before its own author checked coverage
+        and withdrew the reasoning. Consulting the allowlist is what stops the
+        table making that argument again.
 
         Size is checked before wrapping, so a quiet-runner command that *did*
         return big failure tails is never reported as merely a latency cost.
@@ -188,7 +245,11 @@ class HardeningCandidate:
             return "context (failures)" if self.via_run_quiet else "context"
         if self.via_run_quiet:
             return "wall-clock"
-        return "prompt-churn"
+        # Coverage is checked LAST, so it can only ever downgrade a churn claim
+        # — never mask a real token sink. A covered shape that returns large
+        # results is still `context`, because the cost there is the bytes and
+        # has nothing to do with prompting.
+        return "covered (no churn)" if self.allowlisted else "prompt-churn"
 
 
 @dataclass
@@ -406,6 +467,7 @@ class SessionAggregator:
         ]
         subagents.sort(key=lambda a: (-a.total_input(), a.agent))
 
+        allow = _load_allowlist()
         candidates = [
             HardeningCandidate(
                 signature=sig,
@@ -413,6 +475,7 @@ class SessionAggregator:
                 deterministic=is_deterministic_shape(sig),
                 result_bytes=shape.result_bytes,
                 via_run_quiet=shape.via_run_quiet,
+                allowlisted=_is_allowlisted(sig, allow),
             )
             for sig, shape in self._bash_shapes.items()
             if shape.count >= HARDENING_MIN_COUNT
@@ -781,7 +844,10 @@ def to_markdown(report: dict, session_label: str) -> str:
             "already `run_quiet.py`-wrapped, so the bytes are failure tails — the "
             "lever is fewer failed runs, not more redirection; **wall-clock** = "
             "wrapped and quiet, so hardening it buys latency, not tokens; "
-            "**prompt-churn** = cheap and fast, but each variant re-prompts._\n"
+            "**prompt-churn** = cheap and fast, but each variant re-prompts; "
+            "**covered (no churn)** = the same shape, but the allowlist "
+            "already covers it, so nothing re-prompted and there is no "
+            "friction to remove._\n"
         )
 
     return "".join(out)

@@ -410,6 +410,20 @@ class HardeningRanking(unittest.TestCase):
     problem.
     """
 
+    def setUp(self):
+        """Pin the allowlist so these tests never read machine-local settings.
+
+        `_load_allowlist` reads the operator's shared `settings.local.json`, so
+        left live the coverage label would depend on whose machine ran the
+        suite — `printenv LINEAR_TEAM_ID` really is covered here, which turned
+        two of these assertions red for a reason that has nothing to do with
+        the code. Default to "covers nothing"; the tests that care about the
+        wiring set it themselves.
+        """
+        real = sm._load_allowlist
+        self.addCleanup(lambda: setattr(sm, "_load_allowlist", real))
+        sm._load_allowlist = lambda: []
+
     def _run(self, calls):
         """Ingest ``[(command, result_text)]`` as real call/result pairs."""
         agg = sm.SessionAggregator()
@@ -490,6 +504,46 @@ class HardeningRanking(unittest.TestCase):
         candidate = report["hardening_candidates"][0]
         self.assertFalse(candidate.via_run_quiet)
         self.assertEqual(candidate.cost_kind(), "prompt-churn")
+
+    def test_an_allowlisted_cheap_repeat_is_not_called_churn(self):
+        """The heuristic cannot see a prompt: many cheap, slightly-varying calls
+        look identical whether they re-prompted or not. One filed lever argued
+        for a whole new tool on that basis before its own author checked
+        coverage and withdrew the reasoning."""
+        report = self._run([("printenv LINEAR_TEAM_ID", "abc\n")] * 4)
+        candidate = report["hardening_candidates"][0]
+        candidate.allowlisted = True
+        self.assertEqual(candidate.cost_kind(), "covered (no churn)")
+
+    def test_coverage_never_masks_a_real_token_sink(self):
+        """Coverage is checked last, so it can only downgrade a churn claim. A
+        covered shape returning large results is still `context`, because the
+        cost there is the bytes and has nothing to do with prompting."""
+        report = self._run([("make lint", "x" * 4000)] * 2)
+        candidate = report["hardening_candidates"][0]
+        candidate.allowlisted = True
+        self.assertEqual(candidate.cost_kind(), "context")
+
+    def test_an_unresolvable_allowlist_reports_what_it_reported_before(self):
+        """The safe direction: no allowlist means no downgrade."""
+        report = self._run([("printenv LINEAR_TEAM_ID", "abc\n")] * 4)
+        self.assertFalse(report["hardening_candidates"][0].allowlisted)
+        self.assertEqual(report["hardening_candidates"][0].cost_kind(), "prompt-churn")
+
+    def test_a_covered_shape_is_marked_from_the_real_allowlist(self):
+        """The wiring itself — without this the label ships inert, which is
+        exactly what two independent review lenses caught."""
+        sm._load_allowlist = lambda: ["Bash(printenv:*)"]
+        report = self._run([("printenv LINEAR_TEAM_ID", "abc\n")] * 4)
+        candidate = report["hardening_candidates"][0]
+        self.assertTrue(candidate.allowlisted)
+        self.assertEqual(candidate.cost_kind(), "covered (no churn)")
+
+    def test_an_uncovered_shape_is_still_churn_with_a_live_allowlist(self):
+        """A non-empty allowlist must not blanket-mark everything."""
+        sm._load_allowlist = lambda: ["Bash(git status:*)"]
+        report = self._run([("printenv LINEAR_TEAM_ID", "abc\n")] * 4)
+        self.assertEqual(report["hardening_candidates"][0].cost_kind(), "prompt-churn")
 
     def test_run_quiet_flag_is_sticky_across_a_shape(self):
         """One unwrapped call among wrapped ones is a slip, not a

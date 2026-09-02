@@ -51,10 +51,13 @@ trim lever as its own small **parked issue** — state `Todo` plus the
 a fingerprint hit it **appends that session's evidence** to the lever
 that already exists rather than filing a duplicate, so recurrence
 becomes an accumulating fact on one issue. `trim-context` is the
-**consumer**: it sweeps the milestone, folds the parked levers into the
-fewest coherent propose-only `Claude:` Backlog tasks — one section per
-lever, each keeping its own `**Fingerprint**:` line — and closes the
-parked originals. A lever judged not
+**consumer**: it sweeps the milestone, folds the parked levers into
+**one** propose-only `Claude:` Backlog task — always one, whatever the
+lever count or surface spread, with one section per lever, each keeping
+its own `**Fingerprint**:` line — and closes the parked originals. The
+coherence floor still governs audit findings and product filings; the
+meta-work fold is the named exemption (operator ruling, 2026-08-25).
+A lever judged not
 worth acting on is **closed with its reason**, which suppresses
 refiling permanently. `housekeeping` drives `trim-context` as its
 Session Metrics step; both skills also run standalone.
@@ -289,12 +292,12 @@ So:
   reads Done.
 - **Done means operator-ratified complete.** Never merely merged.
 
-Linear's GitHub integration auto-transitions an issue to Done on merge,
-which is exactly wrong under this reading: it hides the sessions that
-still owe something. So `review-pr`'s outcome-watch step **writes the
-issue back to In Review** once it observes that auto-Done, runs its
-follow-up tail, and moves to Done only on an explicit `AskUserQuestion`
-approval. Two consequences elsewhere:
+**The team's Git workflow automation makes no state transition on
+merge**, which states this reading natively: the **In Review** written
+at `review-pr`'s enqueue handoff is simply the state the issue keeps
+through the merge and after it. `review-pr`'s outcome-watch step runs
+its follow-up tail and moves to Done only on an explicit
+`AskUserQuestion` approval. Two consequences elsewhere:
 
 - **`housekeeping` prunes on the issue's status TYPE, not on
   PR-merged** — only `completed` or `canceled`. A merged PR whose issue
@@ -303,10 +306,14 @@ approval. Two consequences elsewhere:
 - **The fleet-resume launcher resumes In Progress *or* In Review**, so a
   merged-but-unfinished session reopens on machine start.
 
-Accepted gap: a session that dies before its outcome watch runs leaves
-the issue auto-Done with nobody to re-mark it. The common case — the
-operator closing sessions at day end after merge confirmation — is
-covered, and no detection machinery is built for the crash case.
+This replaced a **write-back**. The integration used to auto-transition
+to Done on merge, and `review-pr` observed that and wrote the issue back
+to In Review. Moving the rule into the team setting retired that write,
+which cost a full-body Linear echo in every implementation session to
+restore a state nothing should have moved. It also closed the gap the
+write-back carried: a session dying before its outcome watch ran used to
+leave the issue auto-Done with nobody to re-mark it. Nothing sets Done
+now except an explicit approval.
 
 ## An audit is a board issue, not a directive
 
@@ -673,14 +680,44 @@ Its `list` subcommand is the same trade for reads: a compact
 `list_issues` equivalent measured ~11k, on a call the planning and
 filing skills make every pass.
 
-**Body edits stay on the MCP `patch` path**, and that is a deliberate
-boundary rather than an unfinished job. Linear's API has no patch
-primitive — `description` is a whole string — so a Python body-writer
-would have to fetch, apply locally, and write back **wholesale**, which
-costs the read anyway and reintroduces the round-trip corruption hazard
-documented above. The MCP `patch` does anchor matching with **atomic
-abort on ambiguity**, and that safety is load-bearing: it has correctly
-refused writes whose anchor matched two locations rather than guessing.
+**ANCHORED body edits stay on the MCP `patch` path**, and that is a
+deliberate boundary rather than an unfinished job. Linear's API has no
+patch primitive — `description` is a whole string — so a Python
+body-writer would have to fetch, apply locally, and write back
+**wholesale**. For an anchored edit that reintroduces the round-trip
+corruption hazard documented above, and it throws away the part worth
+keeping: the MCP `patch` does anchor matching with **atomic abort on
+ambiguity**, safety that has correctly refused writes whose anchor
+matched two locations rather than guessing.
+
+**An `append` is the exception, and the distinction is anchoring.** An
+append has no anchor, so there is nothing to match ambiguously and
+nothing for an atomic abort to protect — "add at the end" is well
+defined against any stored body. So it may leave the MCP:
+
+```sh
+python3 .claude/tools/linear_issue.py append --id ENG-### --file <path>
+```
+
+That matters most exactly where the MCP costs most. The echo is a fixed
+cost per call against the body **as it now stands**, and an append
+*grows* that body — so each write echoes everything the previous ones
+added, and the cost is **quadratic in the number of appends, not
+linear**. "Fewer calls" is the usual answer and often has no purchase
+here: one planning session made six appends to a single accumulating
+issue as decisions arrived across hours, echoes growing to 6.2k, 6.9k,
+7.1k and twice 7.7k — five of that session's seven largest single
+results, all the same issue, roughly 35k combined. Each append recorded
+something that had just arrived from another session, so deferring one
+risked losing it to a restart.
+
+Reach for the tool once a session's appends to one issue exceed two.
+`trim_levers.py` already solved this for one issue family by doing the
+read-modify-write inside its own process; `linear_issue.py` is that
+mechanism over an arbitrary issue, and its `find` subcommand is the
+title-only projection the MCP does not offer — a compliant dedup probe
+with `limit: 5` still returns five whole issue objects (~1.9k) to answer
+a question the five titles answer alone.
 
 `edges` is covered under "Blocking relations" below — it executes an
 operator's decision and is never called by automation.
@@ -706,6 +743,26 @@ each skill must honor:
   correct, don't re-assert it just because a step says to set it.
 - **Fold a state transition into a write you are already making** rather
   than issuing it on its own.
+
+**The nominal budget is three writes on the worktree's own issue**: In
+Progress at `init-pr` bootstrap, ticks-plus-state at `review-pr`, and In
+Review at the merge-queue handoff. Stating the number is what makes an
+overrun *detectable* — without one, a session can have the MCP writer as
+its second-costliest tool while every individual skill step is
+compliant, which is exactly how ≈20k went unremarked. `review-pr`
+reports the count in its summary, so a fourth write is visible rather
+than merely regrettable.
+
+**Count writes and ECHOES separately — they are no longer the same
+number.** Of those three, only the first two echo: the In-Review
+transition goes through `board_batch.py state`. So the nominal profile
+is three writes and **two** echoes, dropping to one echo on an issue
+with no checklist (nothing to tick, so nothing to write at step 3).
+
+One fourth write is **sanctioned**: an issue rewritten mid-run by an
+operator scope reframe. That recurs whenever direction changes during
+implementation, and naming it here is what stops a legitimate reframe
+reading as an overrun.
 
 Two concrete call sites the rule above catches, both measured:
 
@@ -757,7 +814,7 @@ One measured session filed a single issue in two writes for exactly this
 — a create, then a follow-up purely to attach `blockedBy` (≈2k). There
 is no ordering constraint to respect: file it complete.
 
-#### The floor is structural — the only real lever is upstream
+#### The floor is structural — on the MCP path
 
 This is the single most recurrent observation across mined sessions
 (six entries), and most of it is **not** a trim target, which is why it
@@ -784,10 +841,37 @@ is recorded here rather than treated as a bug to fix:
   that one.
 
 So: assume a floor of **two full echoes per issue per session** on a long
-consolidated body, and know that the only lever which actually removes
-the cost is **upstream** — a write path that does not echo the body at
-all. For high-volume automated pipelines that lever now exists; see the
-carve-out at the end of "Partial edits".
+consolidated body — and read that as the floor **on the MCP path**,
+which is the only place it still binds. The lever that actually removes
+the cost is a write path that does not echo the body at all, and for
+three shapes it now exists: non-body field writes go through
+`board_batch.py`, body **appends** and title-only searches through
+`linear_issue.py`, and the high-volume filing pipelines have their own
+carve-out at the end of "Partial edits". What remains on the MCP, and is
+therefore still floored, is the **anchored** body edit — where `patch`'s
+ambiguity abort is worth what the echo costs.
+
+Say that precisely rather than as a general claim about the API. An
+earlier reading of this section concluded the only lever was upstream of
+anything the repo could edit, which was true of the MCP path and false
+of the API, and would have left this section asserting two incompatible
+things once the tools landed.
+
+**The old two-echo floor within `review-pr` is now ZERO, and that is a
+correction rather than a nuance.** The reasoning that produced it still
+holds — `review-pr` folds the In-Progress move into the box-tick write,
+an issue with no checkboxes has nothing to fold it into, and the
+In-Review move is gated on CI going green at a different point in the
+flow so it cannot fold backwards — but it counted **writes**, and what
+this section is about is **echoes**. The In-Review transition now goes
+through `board_batch.py state`, which echoes nothing. So on a
+checklist-free issue `review-pr` makes no echoing write at all, and on
+one with a checklist it makes exactly one.
+
+Do not re-derive the old pair as fixable waste; it was fixed. What
+remains for the whole session is `init-pr`'s bootstrap write, and that
+one is deliberate — see the three-write budget above, where the echo
+does double duty as the spec the session is about to surface.
 
 Two techniques worth keeping, both measured working:
 

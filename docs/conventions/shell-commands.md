@@ -286,16 +286,19 @@ don't write them, in ad-hoc shell or in committed skills/scripts:
   allowlist. To **create a file**, use the Write tool. To **read or
   parse** one (including JSON/IDL), use Read / Grep — never `python3` /
   `node` / `jq`.
+
 - **Ad-hoc compile-and-run scratch** — e.g. a
   `cat > /tmp/x.rs << EOF` heredoc piped into
   `rustc … && /tmp/x`. To check a language or layout question, Write a
   throwaway file and drive it with the normal target (`cargo test`, a
   `#[test]`), or reason it out — don't synthesize a one-off program
   through a heredoc-and-`&&` chain.
+
 - **`cd <path> && <cmd>`** (e.g. `cd <repo> && git -C <worktree> …`).
   The `cd &&` compound re-prompts as a path-resolution bypass. Run
   bare from the cwd, or address another checkout with `git -C <path>`
   alone — no `cd`, no `&&`.
+
 - **A search pattern containing `<` or `>`.** Angle brackets read as
   redirects, so a pattern carrying them is refused as "too complex to
   verify that it stays inside the worktree" even inside quotes. One
@@ -304,6 +307,7 @@ don't write them, in ad-hoc shell or in committed skills/scripts:
   `search_source.py` (it takes the pattern as an argument, not through
   the shell), or reword to avoid the characters — `--fixed` does not
   help, since the refusal happens before the tool ever runs.
+
 - **A multi-URL `curl` status probe carrying one `-o /dev/null`.** The
   flag binds to **one** URL, so an eight-URL probe with a single
   `-o /dev/null` writes the first response to `/dev/null` and dumps the
@@ -312,6 +316,51 @@ don't write them, in ad-hoc shell or in committed skills/scripts:
   When probing several endpoints for status alone, repeat the flag per
   URL (`-o /dev/null` once for each), or use a head-only request (`-I`)
   so there is no body to dump in the first place.
+
+  **Better, for more than a couple of endpoints: use the tool.**
+
+  ```sh
+  python3 .claude/tools/probe_endpoints.py --out-dir <dir> \
+    --url ecb=https://example.invalid/rates.csv
+  ```
+
+  It writes every body to the output directory and never to
+  stdout, and prints one row per endpoint. Be honest about the saving —
+  it is **prompt-churn and wall-clock, not tokens**, since writing
+  bodies to a file already keeps them out of context. What it removes is
+  N prompts and N hand-composed format strings, each a fresh chance to
+  omit the timeout or forget the redirect.
+
+  It also **flags redirects explicitly**, which matters here more than
+  it looks: the feeds HTTP client refuses redirects by standing policy,
+  so *reachable* does not imply *reachable by our client*. One session
+  found a central-bank CSV endpoint that resolved only through a 301,
+  and caught it purely because its hand-written format string happened
+  to include the redirect count.
+
+**A refused or blocked call leaves its question UNANSWERED.** That is
+the shared failure mode behind every entry above, and it is silent: the
+call returns no result, and no-result reads exactly like "nothing
+found". Retry it in a simpler form, or record the question explicitly
+as unverified — never let a refusal stand as a negative finding.
+
+Measured: two `search_source.py` calls were refused in one session. The
+second was retried in a simpler form and answered; **the first never
+was**. It had been looking for a summing time-budget clause, which
+turned out to be that review's most consequential finding — a page's
+time budget contradicting the ledger by four seconds. A sub-agent found
+it instead, and reported it as "the one item I could not settle" after
+hitting its tool-call cap. One notch down the fan-out tiers and a stale
+figure ships.
+
+Read the refusal text with suspicion, because it can misdiagnose its
+own cause. A pattern rejected as "too complex to verify that it stays
+inside the worktree" may name no path and touch no git at all — the
+real trigger being pattern complexity, such as an alternation, a `+`
+quantifier, or an unusual character. That message comes from the
+**harness**, not from anything this repo commits, so it cannot be
+reworded here; treat it as "rephrase and retry", never as "this
+question is structurally unanswerable".
 
 If a one-off like these still gets approved during a session, do
 **not** allow-list it (a `*` can't generalize a compound): the

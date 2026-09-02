@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` Backlog task under the fewest-coherent-PRs rule — one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line — then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
+description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` Backlog task — always ONE task, whatever the lever count or surface spread, with one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line — then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -114,16 +114,27 @@ A parked pool that has grown past what one coherent PR should carry is
 still a reason to fold a subset now and leave the rest parked — the
 cheaper read changes what a fold costs, not what a fold should contain.
 
-**3. Group into the fewest coherent PRs.** Per `CLAUDE.md` → "Structured
-filing fields", fold every set of levers that would land as **one PR**
-(same subsystem / crate / language-domain) into a single issue, and never
-fold across separate apps / languages / deploy units — that is the
-coherence floor. In practice most trim levers touch `.claude/**` and
-`docs/conventions/**` and belong together; a lever that touches product
-code does not join them.
+**3. Fold into ONE task — always.** Operator ruling, 2026-08-25: a
+trim-lever fold produces a **single** task, regardless of how many levers
+it carries or how many surfaces they touch. This step used to say "the
+fewest coherent PRs, one task per coherent group"; it no longer does, and
+**no size bound applies** either.
+
+The coherence floor is not being abandoned — it stays exactly where it
+belongs, on **audit findings and product filings**, which different
+sessions pull and which genuinely must not cross an app or language
+boundary. The meta-work fold is the named exemption, on the
+one-task-in-flight reasoning: these levers all edit `.claude/**`,
+`docs/conventions/**` or `CLAUDE.md`, so they land as one PR by
+construction, and splitting them into groups only produces several issues
+that serialize behind one another for no gain.
+
+The **per-lever fingerprint requirement is unchanged** — see step 4. That
+is what keeps later dedup matching each lever individually, and it is the
+reason one task loses nothing.
 
 **4. File the aggregated task, propose-only.** The fold's output is one
-`Claude:` Backlog task per coherent group. A trim lever always edits a
+`Claude:` Backlog task. A trim lever always edits a
 skill or convention doc, so the task is meta-work — prepend the
 **`Claude:`** prefix to its title, per `CLAUDE.md` → "Claude: meta-work
 prefix". Its body is **one `# Part N — <title>` section per lever**, and

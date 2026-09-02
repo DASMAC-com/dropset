@@ -208,10 +208,23 @@ not only to the sub-agents you brief:
 
 - **Map the structure before any Read over ~300 lines —
   scoped to the file(s) you are about to read.** One Grep for
-  `^fn |^impl |^pub` (or the language's equivalent) gives you
-  the section map, and the map tells you which slice you
-  actually want. A dispatcher whole-file Read (≈4.4k) to find
-  **one** append point is the recurring shape this prevents.
+  the language's **top-level declaration** shape
+  (`^pub enum|^pub struct|^impl`, say) gives you the section
+  map, and the map tells you which slice you actually want. A
+  dispatcher whole-file Read (≈4.4k) to find **one** append
+  point is the recurring shape this prevents.
+
+  **Anchor at column zero; never add a leading-space
+  alternative.** This bullet used to offer `^fn |^impl |^pub`,
+  and that example was itself the bug — a bare `^pub` matches
+  `pub fn` at top level only by luck of Rust formatting, and
+  any `^ *fn` variant turns the map into a dump of the
+  `#[cfg(test)]` module, routinely more than half a Rust file.
+  Measured: a correctly-`--glob`-scoped map over one ~2140-line
+  file returned **97 matches at ≈1.9k**, about 80 of them
+  test-module functions, to choose regions of a ~17-line type
+  surface. The scope was right and the width was wrong, which
+  is why `--glob` did not save it.
 
   **Pass `--glob <the file>`.** This instruction used to name
   a pattern and no scope, and aimed at the whole source set it
@@ -250,6 +263,30 @@ not only to the sub-agents you brief:
   own.** If any branch would match ordinary content rather
   than a declaration, the map is no longer smaller than the
   file, and the map was the whole point.
+
+- **If an earlier call this session already named the file,
+  pass `--glob` on it.** Scope and output width are separate
+  axes, and this one has a concrete trigger: you already know
+  where it is. Two of one session's three largest Bash results
+  were unscoped sweeps fired when the target was already
+  known — ≈3.7k to settle a *one-bit* question, and ≈1.8k
+  sweeping a whole crate for one config field a section map
+  had already located. Scoped to one file, the same tool cost
+  ≈200–500 tokens per call in that same run.
+
+- **Before the third slice of one file, sum what you have
+  already read.** Past roughly half the file, take one bounded
+  read over the remaining regions instead of slicing again.
+  This is the accumulating case, and it needs its own trigger
+  because it looks compliant at every step: one session mapped
+  a ~650-line `Makefile` correctly and then sliced it **five**
+  times off that map — 225 lines, 98, 50, 26, 14 — about 413
+  lines, the first slice alone its largest result at ≈3.3k.
+  Neither adjacent rule fires, since the regions were
+  discovered incrementally rather than planned, and the map
+  was followed by slices rather than a whole read. The saving
+  is modest in raw tokens; the stronger case is fewer round
+  trips.
 
 - **If you already ran the map, slice from it.** A map
   followed by a whole-file Read means the map was wasted —
@@ -451,8 +488,25 @@ not only to the sub-agents you brief:
   two sinks** (≈3.1k, 39% of its whole Bash cost) and used
   both results anyway. When you see it, re-issue with
   `--files-only` (or add a `--glob`) and slice-read the region
-  it names. Once the scope narrows to one named file the tool
-  stops advising and **refuses** a wide `--context` outright.
+  it names.
+
+  **Two cases no longer rely on you obeying it, because the
+  tool now acts.** Once the scope narrows to one named file it
+  **clamps** a wide `--context` to a line or two; and past a
+  size threshold, at any scope, it **degrades** to
+  `--files-only` and says so. Both announce themselves on the
+  summary line. `--force-context` overrides the second — take
+  it when the surrounding lines genuinely are the question, not
+  to get a location answer back in its expensive form.
+
+  **Enumerating several known blocks from one file is a
+  slice-read, not a grep.** It is a third shape beside
+  existence and adjudication, and the thresholds above cannot
+  save you from it, because they fire once the call is made.
+  One `--context 3` sweep for this cost ≈2.0k — its run's
+  largest single result — and *still* needed four slice reads
+  afterwards, since the context width truncated the very
+  bullets it was meant to retrieve.
 
   **A pattern you have not searched before starts
   `--files-only`.** The advisory can only arrive *with* a
@@ -528,7 +582,8 @@ python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
   "normalized_branch": "eng-603",
   "rename_needed": true,     // true iff a `worktree-` prefix is stripped
   "env_link": "created",     // frontend/.env.local
-  "secrets_env_link": "exists"  // infra/localnet/secrets.local.env
+  "secrets_env_link": "exists",  // infra/localnet/secrets.local.env
+  "frontend_node_modules": "absent"  // present / absent / no-frontend
 }
 ```
 
@@ -693,13 +748,34 @@ per-directory *content* — `frontend/node_modules`,
    typed on `ts` / `tsx` / `js` / `css` — which the repo has
    plenty of regardless of what *this* branch touches. So the
    first full `make lint` in a cold worktree fails on them
-   whatever the task is. Install when the surfaced task
-   touches `frontend/**`, or before the first full lint;
-   either way it is one command paid once per worktree, and
-   the alternative is a wasted lint round-trip plus a
-   diagnosis of an error that says nothing about the diff.
-   (`review-pr`'s lint step covers the recovery, but
-   recovering is the expensive path.)
+   whatever the task is.
+
+   **So read `frontend_node_modules` from the same JSON and
+   act on it — do not predict from the diff.** On `"absent"`,
+   run the install now, as part of the bootstrap. On
+   `"present"` or `"no-frontend"` there is nothing to do.
+
+   This used to say "install when the surfaced task touches
+   `frontend/**`, or before the first full lint", and the
+   conditional lost reliably to *this diff doesn't touch the
+   frontend*. Measured: a **docs-only** diff whose first
+   `make lint` failed on exactly two hooks:
+   `Command "biome" not found` and
+   `Command "tsc" not found`, with every other hook passing.
+   The failing hooks covered nothing in the diff, which is
+   precisely why the install had been skipped and precisely
+   why the failure carried no information. Recovery cost the
+   failed sweep, an install, and two scoped re-runs.
+
+   The asymmetry is one-directional: installing unnecessarily
+   costs one quiet command; not installing when it was needed
+   costs a failed full lint, a diagnosis of an error that says
+   nothing about the diff, an install anyway, and
+   re-verification. Reporting it as a field rather than
+   hard-coding an unconditional install keeps the skill acting
+   on a measured fact, the same design the two symlink
+   outcomes already use. (`review-pr`'s lint step covers the
+   recovery, but recovering is the expensive path.)
 
 1. Normalize the branch name to the bare Linear tag.
    The `aps` shell helper starts worktree sessions with
@@ -895,9 +971,19 @@ per-directory *content* — `frontend/node_modules`,
    been bought. Re-`get_issue`ing it there pays for the
    same body twice: two ≈1.1k echoes for one payload in
    one measured run, and far worse on a consolidated spec.
-   The echo is a fixed cost per call and `patch` does not
-   shrink it, so fewer calls is the only lever (see
-   `docs/conventions/linear-automation.md`).
+
+   **This one write deliberately stays on the MCP, and it is
+   the exception rather than the rule.** A state-only
+   transition otherwise belongs on the zero-echo path
+   (`board_batch.py state`), which is what `review-pr` uses at
+   its handoff — the echo there transmits one enum and buys
+   nothing, because that session already holds the body. Here
+   the echo does **double duty**: it is also how this session
+   obtains the spec it is about to surface, so routing this
+   write through the zero-echo path would not save the body,
+   it would just move it to a `get_issue` on the next step.
+   Do not "optimize" it. See
+   `docs/conventions/linear-automation.md`.
 
 1. Print the new PR URL and confirm the Linear issue was
    moved to In Progress.
@@ -948,6 +1034,40 @@ per-directory *content* — `frontend/node_modules`,
    task. If the user provided their own instructions,
    those win; don't override them with the issue.
 
+   **If the tag is AMBIGUOUS, ask — don't fetch candidates to
+   find out.** An `AskUserQuestion` costs on the order of a
+   hundred tokens; a whole-issue read on a mature body costs
+   thousands, and bodies here grow large by design. Measured:
+   a single speculative read was the largest result of its
+   session (≈4.5k), fetched to disambiguate an operator
+   reference transcribed as "8.5.9" that could plausibly have
+   named three issues — and it did not settle it. The planning
+   session could not disambiguate it either, the operator
+   resolved it directly, and the session asked anyway. So
+   ≈4.5k bought a guess that was neither confirmed nor used.
+   The conventions bound *repeat* fetches; nothing bounds the
+   first one, which is exactly where a speculative read lands.
+
+   **Wanting board or sequencing state? Ask a live planning
+   session before reading the Planning document.** `ListAgents`
+   is the liveness check, and messaging a planning session is
+   already the documented channel in the other direction. The
+   document getter returns the entire content with no slice
+   accessor, and the document only grows between close-out
+   rewrites, so the cost rises over time: one worktree
+   session's whole-document read was its largest result by a
+   wide margin (≈9.6k, about 2.4x the next largest and more
+   than every file Read in that session combined) to answer a
+   question that turned on roughly six lines. The same session
+   then messaged the live planning session and got a strictly
+   better answer for a fraction — the state of both blockers,
+   the operator's posture, a ruling on the actual question,
+   and an unprompted correction to a measured fact in the
+   document that had gone stale. The read surfaced none of
+   that, because a stale line reads exactly like a current
+   one. Read the document only when no planning session is
+   live.
+
    **Treat the issue's `file:line` citations as a snapshot
    of its discovery commit.** A filed issue records where
    something was when it was *found*, which may be months
@@ -969,6 +1089,42 @@ per-directory *content* — `frontend/node_modules`,
    reliable, but a part filed *before* an unrelated change
    may describe code that no longer exists.
 
+1. **Claim the migration number NOW if the task adds one —
+   at branch time, not at rebase.** When the surfaced task
+   will add a `db-schema/migrations/` file, resolve its
+   number here, before any work:
+
+   ```sh
+   gh pr list --state open --json number,files --limit 30
+   ```
+
+   ```sh
+   python3 .claude/tools/migration_collisions.py \
+     --others <scratchpad>/others.json
+   ```
+
+   Write the listing to the scratchpad file the tool reads;
+   it makes no network call of its own and compares
+   **numbers, not filenames**, so `0003_telemetry.sql` and
+   `0003_roster.sql` collide.
+
+   **Why here rather than at review.** `review-pr` already
+   runs this probe, and that is too late by construction: the
+   in-tree ascend guard only fires once both files coexist in
+   one tree, which first happens at **rebase** — after the
+   branch is written, reviewed and CI-green. Two branches took
+   the same number twice in one week. Cost per occurrence is a
+   rebase, a renumber and a full re-verify — and the expensive
+   half is one no guard can catch, because an applied
+   migration is **immutable**: renumbering the wrong side
+   against the shared dev database wedges it, and recovery is
+   manual surgery or a data-destroying wipe.
+
+   The probe is proven and cheap — one call, run by hand
+   before an enqueue and answered immediately. If it reports a
+   collision, take the free number now, while nothing has been
+   written and nothing has been applied.
+
 1. **Hand off to `/review-pr` when the work is ready.**
    This is the closing step of the bracketed session.
    Once the surfaced task's work is complete and every
@@ -987,12 +1143,34 @@ per-directory *content* — `frontend/node_modules`,
    contract).
 
    So compute the signals first, from a real diff rather
-   than an impression:
+   than an impression — **and rebase before you do**:
 
    ```sh
+   git fetch origin main
+   git rebase origin/main
    python3 .claude/tools/review_diff.py --base main \
      --out <scratchpad>/review-diff.txt
    ```
+
+   **A stale base makes the tier signals meaningless as well
+   as expensive**, and you learn it only after paying. Run
+   against a base that moved during the implement phase, the
+   verdict returns *main's* file list: one session whose
+   `origin/main` had gained 3 commits got back **85 files**,
+   every one from main's own commits, at ≈2.0k — its
+   third-largest result — when the branch's actual diff was 6
+   files. The tool did its job, reporting `ready: false` with
+   the stale-base blocker and exiting non-zero, but the
+   `files` array had already been serialized into the result.
+   And `files` is precisely what the tier decision reads, so
+   on a stale base it describes the wrong diff.
+
+   Rebasing is preferred over the cheap alternative because it
+   removes the failure rather than pricing it — and `review-pr`
+   step 2 rebases regardless, so nothing is lost. If you would
+   rather not rebase here, call `--gate-only` first (it emits
+   the verdict fields and omits the `files` array) and take the
+   full verdict only once `base_fresh` holds.
 
    Read `files` and the per-file `changes` for size, and
    whether any path is program code, the SDK surface, a
