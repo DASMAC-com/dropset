@@ -134,6 +134,20 @@
 //! fix. A leg with a live tape alongside is unaffected, because the tape
 //! dominates the precision and re-absorbs legitimately.
 //!
+//! ## A warm start must carry the absorption clocks
+//!
+//! The filter's state is no longer just an estimate and a variance — it is
+//! those plus how long ago each source was absorbed. Restoring the first two
+//! without the third would present every source as never-absorbed, so the next
+//! tick would take them all in at once and hand back exactly the
+//! over-confidence this mechanism removes, on a posterior that then defends
+//! itself against the live tape through the variance-aware re-seed gate.
+//!
+//! The safe direction is the conservative one: a restored clock that is *too
+//! old* only re-absorbs a source earlier than it should, which is the error
+//! this filter already tolerates. So a warm start that cannot recover the
+//! clocks should restore none of the state rather than part of it.
+//!
 //! ## What is deliberately left alone
 //!
 //! **Tape-class sources are not throttled.** A tape polled at roughly its own
