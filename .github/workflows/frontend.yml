@@ -7,6 +7,11 @@ env:
   # and nothing fetches at build time, so the values are compiled into the
   # bundle but never dialed. A real endpoint would add a network dependency
   # to the gate for no signal.
+  #
+  # The vault gate below does dial a real endpoint, but it takes its own
+  # step-scoped RPC_URL rather than borrowing from here — so this block stays
+  # a placeholder set, and pointing the gate at a dedicated provider later
+  # cannot leak that provider's URL into the built bundle.
   NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE: '10'
   NEXT_PUBLIC_RPC_URL: 'https://api.mainnet-beta.solana.com'
   NEXT_PUBLIC_WS_URL: 'wss://api.mainnet-beta.solana.com'
@@ -59,6 +64,33 @@ jobs:
       run: 'node frontend/scripts/fetch-token-icons.mjs --strict'
     - name: 'Wallet icon URLs are live'
       run: 'node frontend/scripts/fetch-wallet-icons.mjs --strict'
+    # Every listed currency must have a platform-fee vault — its ATA under
+    # the fee wallet — onchain. DFlow rejects any /order whose feeAccount
+    # does not exist, so a currency listed without one silently forfeits the
+    # 5 bps platform fee on every DFlow-routed swap into it. Nothing else
+    # surfaces that: the swap succeeds, it just earns nothing.
+    #
+    # Unscoped on purpose, on the same reasoning as the icon gates above. A
+    # filter on currencies.json edits would fire on the listing PR and never
+    # again, so it could not see a vault created late, or closed later to
+    # reclaim rent. That is not hypothetical — EUROP was listed, merged
+    # green, and its vault was still missing a day later, which is what
+    # prompted this gate.
+    #
+    # Tradeoff, accepted knowingly: this couples listing a currency to a
+    # funded mainnet transaction, and since it gates merge_group too, a
+    # missing vault blocks unrelated merges until someone creates it. There
+    # is deliberately no opt-out list — an escape hatch is precisely how a
+    # revenue gap becomes permanent.
+    #
+    # The address arrives from a secret rather than a variable because the
+    # script echoes it and Actions masks only secrets. Both inputs are scoped
+    # to this step: they belong to the gate, not to the build.
+    - env:
+        NEXT_PUBLIC_PLATFORM_FEE_WALLET: '${{ secrets.PLATFORM_FEE_WALLET }}'
+        RPC_URL: 'https://api.mainnet-beta.solana.com'
+      name: 'Platform-fee vaults exist'
+      run: 'node frontend/scripts/setup-fee-atas.mjs --check'
     # The frontend's unit tests. They run here rather than in test.yml, whose
     # paths filter excludes frontend/** entirely, so a test step placed there
     # would never fire for a frontend-only change. Scoped to pure logic:
