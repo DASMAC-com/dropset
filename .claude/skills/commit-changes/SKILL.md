@@ -71,11 +71,40 @@ changes here belong to this session.
      discipline**, here and in `review-pr`, and then
      violated it 53 times. A rule stated in a skill the
      session is actively editing, and still not followed,
-     wants a cheaper trigger than prose:
-     `tree_fingerprint.py` already grades a check
-     fresh/stale/missing against tree content, so a
-     `tools-tests` fingerprint check before each run
-     would make a redundant re-run mechanically visible.
+     wants a cheaper trigger than prose — so **gate the
+     run on a content fingerprint**, exactly as
+     `review-pr` step 5 already gates `make lint`. After a
+     passing run:
+
+     ```sh
+     python3 .claude/tools/tree_fingerprint.py record --check tools-tests
+     ```
+
+     and before any later run that would repeat it:
+
+     ```sh
+     python3 .claude/tools/tree_fingerprint.py check --check tools-tests
+     ```
+
+     It grades **`fresh`** (recorded against this exact
+     content — assert it and skip the re-run), **`stale`**
+     (the content moved — re-run), or **`missing`** (never
+     recorded — run it and record it), exiting 0 only on
+     the first.
+
+     Content, not a commit SHA, is the right key here for
+     the same reason it is there: an amend, a squash and a
+     no-overlap rebase all change the SHA while changing
+     no bytes, so a SHA-keyed gate would let precisely the
+     redundant re-runs through. A later run against an
+     unchanged tree now has to **assert** the prior result
+     rather than silently re-buy it.
+
+     This is the gate that this passage previously only
+     *proposed*, in the same breath as observing that
+     restating the rule had not worked — the proposal was
+     written in the PR that then ran the suite 53 times,
+     and a later session ran it 26 more.
 
      (This figure is the **frequency** measurement and is
      a different quantity from the scope bullet's above.

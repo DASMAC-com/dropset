@@ -206,13 +206,28 @@ not only to the sub-agents you brief:
   the file), **Grep to the region** then `Read` with
   `offset`/`limit` — don't pull the whole file.
 
-- **Map the structure before any Read over ~300 lines —
-  scoped to the file(s) you are about to read.** One Grep for
+- **Map the structure before a big Read — scoped to the
+  file(s) you are about to read.** One Grep for
   the language's **top-level declaration** shape
   (`^pub enum|^pub struct|^impl`, say) gives you the section
   map, and the map tells you which slice you actually want. A
   dispatcher whole-file Read (≈4.4k) to find **one** append
   point is the recurring shape this prevents.
+
+  **Trigger it on the QUESTION, not the line count.** This
+  used to say "any Read over ~300 lines", which makes it a
+  judgement call exactly at the boundary and silently exempts
+  the files most often read to *learn a convention*. Measured:
+  a **310-line** module — one line past that threshold, and
+  reading as a small file — was read whole at **≈3.4k**, its
+  session's single largest result of any kind, when three
+  regions totalling ~60 lines were what was wanted and no
+  whole-read condition applied. The same session sliced
+  correctly whenever the purpose *was* editing, which is what
+  identifies the culprit: the size trigger is not what failed,
+  the purpose framing is. **Reading to learn is always a
+  slice, at any size**; keep ~300 lines as a secondary
+  backstop for edit-shaped reads.
 
   **Anchor at column zero; never add a leading-space
   alternative.** This bullet used to offer `^fn |^impl |^pub`,
@@ -264,6 +279,22 @@ not only to the sub-agents you brief:
   than a declaration, the map is no longer smaller than the
   file, and the map was the whole point.
 
+  **On a RECORDS-shaped data file, match one field — even
+  when every branch is a legitimate declaration.** The rule
+  above catches a branch matching ordinary *content*; this is
+  the case where none of them do and the map is still several
+  times too big, because in a file of like objects each branch
+  fires **once per record** rather than once per section. The
+  branches do not partition the file, they multiply it.
+  Measured: a 394-line JSON array of stablecoins mapped with
+  `'"symbol"\|"mint"\|"name"'` returned ~88 lines at **≈1.0k**
+  — that session's largest Bash result — where `'"symbol"'`
+  alone returns ~25 and answers the same navigational
+  question; the mint and name values were never used from the
+  map and both came from the slice that followed. Pick the
+  single field that **identifies** a record and take the rest
+  from the slice.
+
 - **If an earlier call this session already named the file,
   pass `--glob` on it.** Scope and output width are separate
   axes, and this one has a concrete trigger: you already know
@@ -273,6 +304,22 @@ not only to the sub-agents you brief:
   sweeping a whole crate for one config field a section map
   had already located. Scoped to one file, the same tool cost
   ≈200–500 tokens per call in that same run.
+
+  **And when you know where a symbol is DEFINED and are
+  sweeping for its consumers, scope the sweep to the
+  consumers.** The definition is the one match you are
+  guaranteed not to need, and it is usually still in context
+  from the read that raised the question — so a `--context`
+  sweep re-buys it. Measured: a session that had just read a
+  constant's definition swept the identifier with
+  `--context 12`, its largest `search_source` call at ≈1.5k,
+  and roughly half the payload was the definition site read
+  moments earlier; the question was solely how the caller
+  passes the value. This is a third axis rather than the scope
+  rule again — that sweep was *already* narrow (two files,
+  both genuine hits) and the tool's advisory correctly did not
+  fire, because what was wasteful was one **specific known
+  file**, which no density heuristic can know is redundant.
 
 - **Before the third slice of one file, sum what you have
   already read.** Past roughly half the file, take one bounded
@@ -330,7 +377,7 @@ not only to the sub-agents you brief:
   `model.rs` is ~40% `#[cfg(test)]` and only two signatures
   were needed. Grep to the symbol, then `Read` the slice.
 
-- **Reading whole is licensed by any ONE of three
+- **Reading whole is licensed by any ONE of four
   conditions** — they are alternatives, not a conjunction, and
   the full statement with its evidence is in
   `docs/conventions/context-economy.md` → "The levers":
@@ -341,9 +388,32 @@ not only to the sub-agents you brief:
   1. you have planned a **multi-region** read whose regions add
      up to most of the file;
   1. the file is an **exemplar you are about to imitate N
-     times**, so the read amortizes across the N outputs.
+     times**, so the read amortizes across the N outputs;
+  1. you are **proving an ABSENCE and the absence is the
+     answer** — a negative claim cannot be established from a
+     slice, which shows a thing missing from the lines you
+     read and never from the file. Only when the absence *is*
+     what you will report, and only for a bounded file; say in
+     the report that the read was for a negative.
 
-  Absent all three, slice.
+  Absent all four, slice.
+
+  **The test is REUSE, not size** — which is why it gets
+  skipped: stated as a list of conditions it reads as being
+  about *large* files, so a small one passes an imagined size
+  test and the license is never run. A 192-line whole read for
+  a two-line edit is proportionally worse than a 600-line read
+  five lens briefs reuse. Measured beside two correctly-
+  licensed reads in one session: a 192-line module read whole
+  (≈2.3k) for one call site plus one import, never briefed to
+  any agent — while a sweep minutes earlier had already named
+  the exact line. So **name who else will use this content**
+  before reading whole; if the answer is "only this edit",
+  slice. And the operational trigger the conditions lack: **if
+  a search has already named the line you are about to edit,
+  slice from that line.** That sweep was a section map, and it
+  counts as one even though it came from `search_source.py`
+  rather than a deliberate structure grep.
 
 - **Route any repeated verbose-on-success command through the
   quiet runner** — and read that **by shape, not by name.**

@@ -334,9 +334,12 @@ answers the question, read large files by slice (Grep then `Read` with
 `offset`/`limit`), route verbose logs away from context — through
 `run_quiet.py`, for **any** repeated verbose-on-success runner, `pnpm`
 included — and never re-fetch what's already in context. Reading a file
-whole is licensed by any **one** of three conditions (edit-plus-brief,
-a planned multi-region read, or an exemplar you will imitate N times),
+whole is licensed by any **one** of four conditions (edit-plus-brief,
+a planned multi-region read, an exemplar you will imitate N times, or
+proving an absence that is itself the answer),
 not by all of them together — and **citing a file is not one of them**.
+The test is **reuse, not size**: name who else will use the content, and
+if the answer is "only this edit", slice however small the file.
 A harness-persisted tool result is sliced
 with `.claude/tools/read_result.py`, never `Read` whole; a file at
 another git ref is sliced with `.claude/tools/show_at_ref.py`, never a

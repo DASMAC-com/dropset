@@ -2416,6 +2416,32 @@ already being asked to start the review.
      is for adjudication, not for buying a location answer
      back at full price.
 
+     **Enumeration-for-edit is a THIRD case, and it takes
+     `--files-only`.** A sweep whose purpose is to enumerate
+     the sites of a rename or a removal produces a
+     **work list** you will open one by one, so its context is
+     redundant by construction: every site returned is a file
+     you are about to open and edit anyway. Measured: a
+     removal sweep with `--context 4` returned 8 matches
+     across 7 files at ≈1.7k, its session's fourth-largest
+     result; the tool printed its own advisory recommending
+     `--files-only`, the result was consumed anyway, and all
+     seven files were then opened and edited — so the payload
+     was bought twice.
+
+     The two-case split kept missing this because a rename
+     genuinely *feels* like adjudication, so the rule read as
+     licensing context and the advisory read as a false
+     positive. The distinction is **when** you need to see the
+     code: for an enumeration you need each site *while
+     editing it*, at which point the file is open; for a true
+     adjudication you need it *to decide whether to act at
+     all*, and you may never open the file. Only the second
+     earns context in the sweep — and this removes the
+     standing reason to override the advisory, which fires
+     correctly on rename sweeps and whose override trains the
+     habit of overriding it everywhere.
+
      **This rule is phase-neutral, and that is why it keeps
      getting missed.** Seven separate sessions answered a
      location question with a full context sweep, one paying
