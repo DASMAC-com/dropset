@@ -738,6 +738,38 @@ render-check:
 render-skills:
 	python3 .claude/tools/render_skills.py --write
 
+# Mirror every Grafana dashboard query into market-data/grafana/sql/, so a
+# change to a panel's SQL shows up as a one-line diff instead of a
+# one-character edit inside a 1,500-character JSON string. The JSON stays the
+# source of truth; this only reads it. Regenerate and commit the result
+# alongside any dashboard change.
+.PHONY: dashboard-sql
+dashboard-sql:
+	python3 .claude/tools/dashboard_sql.py extract
+
+# Fail if the mirror has drifted from the dashboards. Reads only committed
+# files, so it runs in CI (like `render-check`, and unlike `hook-wiring`).
+# Also enforces two guards that Grafana itself fails silently on: a nested
+# paren inside a macro argument (Grafana truncates it at the first closing
+# paren and the query never interpolates), and a `:regex`-formatted template
+# variable inside a single-quoted SQL literal (the regex formatter does not
+# escape quotes).
+.PHONY: dashboard-sql-check
+dashboard-sql-check:
+	python3 .claude/tools/dashboard_sql.py check
+
+# Lint the extracted SQL as Postgres, after substituting the Grafana macros and
+# template variables for typed stand-ins. Deliberately narrow — see
+# cfg/sqlfluff-dashboards.cfg for why the full rule set is wrong (and unsafe)
+# for SQL whose column names Grafana dictates. Needs sqlfluff IMPORTABLE by the
+# invoking interpreter (the tool runs `sys.executable -m sqlfluff`), not merely
+# an executable on PATH — without it the run fails with "No module named
+# sqlfluff", which reads like a lint finding. The pre-commit hook installs it
+# into its own env, so prefer `make lint` locally.
+.PHONY: dashboard-sql-lint
+dashboard-sql-lint:
+	python3 .claude/tools/dashboard_sql.py lint
+
 # Account for where a session's tokens went (the deterministic core of the
 # session-metrics skill). A stdlib-only Python skill-tool under .claude/tools/
 # (not a Cargo workspace member — see CLAUDE.md "Skill tooling"). Resolves the

@@ -41,11 +41,19 @@
 //! canonical id, so they are read from the store at startup instead of compiled
 //! in — see that module for why the deployment target decides this.
 //!
+//! [`instruments`] is its mirror: where `pyth_roster` reads roster reference
+//! data the store owns, `instruments` writes the roster the *environment* owns
+//! into the store, so a dashboard can ask what kind of thing a product is
+//! without hardcoding a product list into a panel. Both run once, at startup.
+//!
 //! Every binary asserts the shared schema at startup rather than provisioning
-//! one (`data-feeds.md` §8).
+//! one (`data-feeds.md` §8), and then registers its roster in the instruments
+//! dimension — the two startup writes that make a collector's configuration
+//! legible from the store rather than only from its logs.
 
 pub mod config;
 pub mod fx;
+pub mod instruments;
 pub mod pyth_roster;
 pub mod roster;
 pub mod store;

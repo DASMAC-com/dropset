@@ -138,7 +138,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- The estimator's output over its raw inputs. Each arm is a bare\n-- column inside the epoch-filter macro: Grafana captures a macro\n-- argument with a regex that stops at the first closing paren, so a\n-- to_timestamp(...) call inside one truncates the argument and the\n-- query fails to interpolate. The conversion happens in the SELECT\n-- list, never in the macro.\n--\n-- Raw prints: the scatter the fused line is judged against.\nSELECT\n  to_timestamp(observed_at) AS \"time\",\n  source || ' ' || product_id || ' tick' AS metric,\n  price AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source ~ '^${source:regex}$'\n  AND product_id ~ '^${product_id:regex}$'\nUNION ALL\n-- The fair price: the composed mid the maker quotes off, which is now\n-- built from the fused leg estimates rather than the bare medians.\n-- NULL exactly when the composition paused, and left as a gap rather\n-- than zero-filled -- a paused market and a market worth nothing are\n-- different facts.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fair (fused)' AS metric,\n  fair AS value\nFROM maker_telemetry\nWHERE $__unixEpochFilter(ts)\n  AND market ~ '^${market:regex}$'\n  AND fair IS NOT NULL\nUNION ALL\n-- The FX leg's two numbers, which is where the estimator is actually\n-- visible: `fused_value` is what the composition priced off and\n-- `value` is the fast median that guards dislocations.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fx estimate (fused)' AS metric,\n  fused_value AS value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market ~ '^${market:regex}$'\n  AND leg = 'fx'\n  AND fused_value IS NOT NULL\nUNION ALL\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fx consensus (fast)' AS metric,\n  value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market ~ '^${market:regex}$'\n  AND leg = 'fx'\nORDER BY 1",
+          "rawSql": "-- The estimator's output over its raw inputs. Each arm is a bare\n-- column inside the epoch-filter macro: Grafana captures a macro\n-- argument with a regex that stops at the first closing paren, so a\n-- to_timestamp(...) call inside one truncates the argument and the\n-- query fails to interpolate. The conversion happens in the SELECT\n-- list, never in the macro.\n--\n-- Raw prints: the scatter the fused line is judged against.\nSELECT\n  to_timestamp(observed_at) AS \"time\",\n  source || ' ' || product_id || ' tick' AS metric,\n  price AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\nUNION ALL\n-- The fair price: the composed mid the maker quotes off, which is now\n-- built from the fused leg estimates rather than the bare medians.\n-- NULL exactly when the composition paused, and left as a gap rather\n-- than zero-filled -- a paused market and a market worth nothing are\n-- different facts.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fair (fused)' AS metric,\n  fair AS value\nFROM maker_telemetry\nWHERE $__unixEpochFilter(ts)\n  AND market = ANY (ARRAY[${market:sqlstring}]::text[])\n  AND fair IS NOT NULL\nUNION ALL\n-- The FX leg's two numbers, which is where the estimator is actually\n-- visible: `fused_value` is what the composition priced off and\n-- `value` is the fast median that guards dislocations.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fx estimate (fused)' AS metric,\n  fused_value AS value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market = ANY (ARRAY[${market:sqlstring}]::text[])\n  AND leg = 'fx'\n  AND fused_value IS NOT NULL\nUNION ALL\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fx consensus (fast)' AS metric,\n  value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market = ANY (ARRAY[${market:sqlstring}]::text[])\n  AND leg = 'fx'\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -229,7 +229,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- Per-source fusion weights. Deliberately NOT filtered to weight > 0:\n-- a zero-weight row is a source that answered and was trimmed, which\n-- is the single most useful thing this table records. Filtering it out\n-- would leave a fused estimate with no record of what it refused.\n--\n-- The mechanism filter IS required, though, and for the opposite reason.\n-- The table is keyed by mechanism so the resolver's consensus attribution\n-- can land additively; those weights are exact linear-combination shares\n-- rather than shares of posterior information. Omitting this predicate\n-- would plot two vocabularies on one axis and double every series the\n-- day they arrive.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' ' || leg || ' ' || source AS metric,\n  weight AS value\nFROM maker_leg_contributions\nWHERE $__unixEpochFilter(ts)\n  AND mechanism = 'fusion'\n  AND market ~ '^${market:regex}$'\nORDER BY 1",
+          "rawSql": "-- Per-source fusion weights. Deliberately NOT filtered to weight > 0:\n-- a zero-weight row is a source that answered and was trimmed, which\n-- is the single most useful thing this table records. Filtering it out\n-- would leave a fused estimate with no record of what it refused.\n--\n-- The mechanism filter IS required, though, and for the opposite reason.\n-- The table is keyed by mechanism so the resolver's consensus attribution\n-- can land additively; those weights are exact linear-combination shares\n-- rather than shares of posterior information. Omitting this predicate\n-- would plot two vocabularies on one axis and double every series the\n-- day they arrive.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' ' || leg || ' ' || source AS metric,\n  weight AS value\nFROM maker_leg_contributions\nWHERE $__unixEpochFilter(ts)\n  AND mechanism = 'fusion'\n  AND market = ANY (ARRAY[${market:sqlstring}]::text[])\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -377,7 +377,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  source || ' ' || product_id AS feed,\n  extract(epoch FROM now()) - max(bucket_start) AS age_secs\nFROM cex_prices\nWHERE source ~ '^${source:regex}$'\n  AND product_id ~ '^${product_id:regex}$'\n  AND granularity_secs = $granularity\nGROUP BY 1\nORDER BY 1",
+          "rawSql": "SELECT\n  source || ' ' || product_id AS feed,\n  extract(epoch FROM now()) - max(bucket_start) AS age_secs\nFROM cex_prices\nWHERE source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n  AND granularity_secs = $granularity\nGROUP BY 1\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -549,7 +549,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- Candle closes and spot ticks in one series set. The tick half is\n-- what makes this panel move BETWEEN candle closes: 60s is the finest\n-- bucket any candle endpoint offers, so the candle half cannot show\n-- intra-minute movement however often it is polled.\n--\n-- Tick series are suffixed so the legend distinguishes them from the\n-- same venue's candle series, and they carry no granularity filter\n-- because a tick has no bucket width.\nSELECT\n  to_timestamp(bucket_start) AS \"time\",\n  source || ' ' || product_id AS metric,\n  \"close\" AS value\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source ~ '^${source:regex}$'\n  AND product_id ~ '^${product_id:regex}$'\n  AND granularity_secs = $granularity\nUNION ALL\nSELECT\n  to_timestamp(observed_at) AS \"time\",\n  source || ' ' || product_id || ' tick' AS metric,\n  price AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source ~ '^${source:regex}$'\n  AND product_id ~ '^${product_id:regex}$'\nORDER BY 1",
+          "rawSql": "-- Candle closes and spot ticks in one series set. The tick half is\n-- what makes this panel move BETWEEN candle closes: 60s is the finest\n-- bucket any candle endpoint offers, so the candle half cannot show\n-- intra-minute movement however often it is polled.\n--\n-- Tick series are suffixed so the legend distinguishes them from the\n-- same venue's candle series, and they carry no granularity filter\n-- because a tick has no bucket width.\nSELECT\n  to_timestamp(bucket_start) AS \"time\",\n  source || ' ' || product_id AS metric,\n  \"close\" AS value\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n  AND granularity_secs = $granularity\nUNION ALL\nSELECT\n  to_timestamp(observed_at) AS \"time\",\n  source || ' ' || product_id || ' tick' AS metric,\n  price AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -637,7 +637,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- The CTE is load-bearing, not style. Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so\n-- wrapping the epoch column in a to_timestamp call inside the\n-- time-group macro leaves it one truncated argument and the query\n-- fails to interpolate. Converting the column in a CTE first hands\n-- the macro a bare column name, which is all it can parse. For the\n-- same reason, do not name a macro in a comment here: the scanner\n-- does not skip comments and will try to interpolate the example.\nWITH bucketed AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    source\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source ~ '^${source:regex}$'\n    AND product_id ~ '^${product_id:regex}$'\n    AND granularity_secs = $granularity\n)\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  count(*) AS value\nFROM bucketed\nGROUP BY 1, 2\nORDER BY 1",
+          "rawSql": "-- The CTE is load-bearing, not style. Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so\n-- wrapping the epoch column in a to_timestamp call inside the\n-- time-group macro leaves it one truncated argument and the query\n-- fails to interpolate. Converting the column in a CTE first hands\n-- the macro a bare column name, which is all it can parse. For the\n-- same reason, do not name a macro in a comment here: the scanner\n-- does not skip comments and will try to interpolate the example.\nWITH bucketed AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    source\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n    AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n    AND granularity_secs = $granularity\n)\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  count(*) AS value\nFROM bucketed\nGROUP BY 1, 2\nORDER BY 1",
           "refId": "A"
         }
       ],
@@ -860,7 +860,6 @@
   "templating": {
     "list": [
       {
-        "allValue": ".*",
         "current": {
           "selected": true,
           "text": [
@@ -874,14 +873,14 @@
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT DISTINCT product_id FROM cex_prices UNION SELECT DISTINCT product_id FROM spot_ticks ORDER BY 1",
-        "description": "Products from both tiers. The union is load-bearing: a product that only a tick venue prices - which is most of the roster, since only EURC reaches a CEX candle endpoint - could not otherwise be selected and its series would stay invisible.",
+        "definition": "SELECT product_id FROM instruments ORDER BY 1",
+        "description": "Every product any collector is configured to poll, from the instruments dimension. Registry-driven rather than a scan of the measurement tables, which matters three ways: it covers both tiers by construction - most of the roster is tick-only, since only EURC reaches a CEX candle endpoint - a newly added pair appears before its first row lands, and it costs one small-table read instead of a DISTINCT over two unbounded tables on every dashboard load.",
         "includeAll": true,
         "label": "Product",
         "multi": true,
         "name": "product_id",
         "options": [],
-        "query": "SELECT DISTINCT product_id FROM cex_prices UNION SELECT DISTINCT product_id FROM spot_ticks ORDER BY 1",
+        "query": "SELECT product_id FROM instruments ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
@@ -889,7 +888,6 @@
         "type": "query"
       },
       {
-        "allValue": ".*",
         "current": {
           "selected": true,
           "text": [
@@ -903,14 +901,14 @@
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT DISTINCT source FROM cex_prices UNION SELECT DISTINCT source FROM spot_ticks ORDER BY 1",
+        "definition": "SELECT DISTINCT source FROM instrument_registry ORDER BY 1",
         "description": "Sources from both tiers, so the tick-only venues (kraken, pyth) are selectable rather than absent. Note that 'coinbase' appears once but writes both tiers - the table a row lives in is what distinguishes a print from a bucket, not the source label.",
         "includeAll": true,
         "label": "Source",
         "multi": true,
         "name": "source",
         "options": [],
-        "query": "SELECT DISTINCT source FROM cex_prices UNION SELECT DISTINCT source FROM spot_ticks ORDER BY 1",
+        "query": "SELECT DISTINCT source FROM instrument_registry ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
@@ -918,7 +916,6 @@
         "type": "query"
       },
       {
-        "allValue": ".*",
         "current": {
           "selected": true,
           "text": [

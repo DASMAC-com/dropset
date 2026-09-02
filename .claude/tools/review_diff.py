@@ -110,6 +110,13 @@ DIFF_EXCLUDES = (
     "sdk/ts/src/generated",
     "sdk/rs/src/generated",
     "sdk/idl/dropset.json",
+    # The Grafana dashboard SQL mirror, emitted by `dashboard_sql.py` from the
+    # dashboard JSON. Machine-authored and gated by its own regeneration check
+    # (`make dashboard-sql-check`), so reviewing it by eye adds nothing — and it
+    # is one file per panel, so it would otherwise swamp the diff the lenses
+    # read. The JSON it is generated FROM stays in the diff, which is where a
+    # query change should be reviewed.
+    "market-data/grafana/sql",
 )
 
 # Directories a recursive source search must never descend into. These are
@@ -198,6 +205,7 @@ CODE_FILTER_EXCLUDES = (
     "pnpm-workspace.yaml",
     "cfg/**",
     "infra/**",
+    "market-data/grafana/**",
 )
 
 # Where that filter actually lives, for the parity test.

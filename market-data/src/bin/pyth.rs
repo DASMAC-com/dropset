@@ -22,6 +22,7 @@ use dropset_feeds::{
     RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
+    instruments::register as register_instruments,
     pyth_roster,
     ticks::{SilenceWatch, Tick, TickConfig, TickDefaults, TickSource, TickWriter},
 };
@@ -60,6 +61,11 @@ async fn main() -> anyhow::Result<()> {
     let roster = pyth_roster::load(&pool).await?;
     let feeds = pyth_roster::to_feeds(&roster);
     let products = pyth_roster::product_ids(&roster);
+    // This venue's roster comes from the store rather than the environment, so
+    // the round trip is store-to-store — but the dimension is about what is
+    // being polled, not where the instruction came from, and Pyth's crosses
+    // belong in it like any other.
+    register_instruments(&pool, SOURCE, &products).await?;
 
     // Name every loaded row, so the effective roster of a running process is
     // legible without querying the database it came from. This is the log line

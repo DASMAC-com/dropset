@@ -2,6 +2,7 @@
 // cspell:word schemaname
 // cspell:word tablename
 // cspell:word unprovisioned
+// cspell:word viewname
 //! End-to-end tests for the startup fence against a real Postgres in a
 //! throwaway container.
 //!
@@ -223,6 +224,15 @@ async fn migrate_creates_every_expected_table() {
         "maker_leg_contributions",
         // 0008_push_liveness
         "push_health",
+        // 0009_instruments. `instruments` is a VIEW rather than a table, but
+        // `to_regclass` resolves any relation, so the existence probe below
+        // covers it unchanged — and its derivation is pinned separately by
+        // `the_instruments_view_derives_a_class_from_the_legs`, because a view
+        // that exists while classifying wrongly is the failure that matters.
+        "currency_kinds",
+        "instrument_registry",
+        "instruments",
+        "instrument_liveness",
     ] {
         let present: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
             .bind(table)
@@ -326,6 +336,28 @@ async fn reader_role_can_read_everything_and_write_nothing() {
             .unwrap_or_else(|e| panic!("reader cannot SELECT from `{table}`: {e}"));
     }
 
+    // Views are absent from `pg_tables`, so the loop above cannot see one — and
+    // the instruments dimension is read through a view. `ALTER DEFAULT
+    // PRIVILEGES ... ON TABLES` does extend to views, but that is precisely the
+    // kind of fact worth asserting rather than assuming: were it false, every
+    // class-filtered panel would render empty, with no error anywhere.
+    let views: Vec<String> =
+        sqlx::query_scalar("SELECT viewname FROM pg_views WHERE schemaname = 'public'")
+            .fetch_all(&pool)
+            .await
+            .expect("list public views");
+    assert!(
+        !views.is_empty(),
+        "no views in `public` — the probe below would vacuously pass"
+    );
+
+    for view in &views {
+        sqlx::query(&format!("SELECT count(*) FROM {view}"))
+            .fetch_one(&reader)
+            .await
+            .unwrap_or_else(|e| panic!("reader cannot SELECT from view `{view}`: {e}"));
+    }
+
     // The `ALTER DEFAULT PRIVILEGES` clause is the one grant nothing above
     // exercises: every table that exists was already covered by the blanket
     // `GRANT SELECT ON ALL TABLES`, so a migration that dropped the default
@@ -359,6 +391,210 @@ async fn reader_role_can_read_everything_and_write_nothing() {
         Some("42501"),
         "expected a privilege rejection, got: {err}"
     );
+}
+
+/// The instruments view derives a pair's class from its two legs' kinds.
+///
+/// The existence probe above cannot see this: a view with a typo in its `CASE`
+/// is created exactly as happily as a correct one, and every consequence of
+/// getting it wrong is silent — a mislabelled pair lands in the wrong class
+/// filter, and a *dropped* pair vanishes from the dashboard while the panel
+/// still renders. So the derivation is asserted directly, one product per class
+/// the `CASE` can produce.
+///
+/// This also pins the seeded `currency_kinds` rows the derivation reads: were
+/// `EURC` seeded as `fiat`, or `EUR` omitted, the expectations below would move
+/// even though the view itself was untouched.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn the_instruments_view_derives_a_class_from_the_legs() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    // The seed carries no 'crypto' row, because no collector polls an unpegged
+    // token yet — so the crypto arm is unreachable from the seed alone. Seed one
+    // here, because that arm is the ORDERING-sensitive one: it must win over
+    // both the fiat and stablecoin arms, and nothing else tests that.
+    sqlx::query("INSERT INTO currency_kinds (currency, kind) VALUES ('SOL', 'crypto')")
+        .execute(&pool)
+        .await
+        .expect("seed a crypto currency");
+
+    // `ZZZ` is the unseeded leg — a symbol the roster does not contain, which is
+    // what an unclassified product actually looks like. It has to be distinct
+    // from the crypto fixture now that SOL is seeded.
+    for (source, product) in [
+        ("probe", "EUR-USD"),
+        ("probe", "EURC-USDC"),
+        ("probe", "EURC-EUR"),
+        ("probe", "SOL-USDC"),
+        ("probe", "ZZZ-USDC"),
+        // The same product under a SECOND source. The dimension must still
+        // report exactly one row for it: the view groups by product_id, and
+        // that collapse is what stops four collectors polling EUR-USD from
+        // duplicating every entry in the dashboard's product picker. Note
+        // `fetch_one` below would happily return the first of several rows
+        // without erring, so the row count needs its own assertion.
+        ("second-src", "EUR-USD"),
+    ] {
+        sqlx::query(
+            "INSERT INTO instrument_registry
+                 (source, product_id, first_registered_at, last_registered_at)
+             VALUES ($1, $2, 1, 1)",
+        )
+        .bind(source)
+        .bind(product)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("register `{product}` under `{source}`: {e}"));
+    }
+
+    let (rows, sources): (i64, i32) = sqlx::query_as(
+        "SELECT count(*), max(source_count)::int FROM instruments
+             WHERE product_id = 'EUR-USD'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count EUR-USD rows in the dimension");
+    assert_eq!(rows, 1, "two sources must collapse to one dimension row");
+    assert_eq!(sources, 2, "both sources must be counted");
+
+    for (product, base, quote, class) in [
+        ("EUR-USD", "EUR", "USD", "fx-pair"),
+        ("EURC-USDC", "EURC", "USDC", "stablecoin-pair"),
+        // The peg pair, and why it is its own class rather than a stablecoin
+        // pair: it trades at ~1.0 and the only interesting thing about it is
+        // the deviation, so folding the two together would hide exactly what
+        // this pair exists to measure.
+        ("EURC-EUR", "EURC", "EUR", "peg-pair"),
+        // Any unpegged leg makes the pair crypto whatever the other leg is, so
+        // this arm has to beat the stablecoin one. Ordering-sensitive.
+        ("SOL-USDC", "SOL", "USDC", "crypto"),
+        // An unseeded leg must leave the product PRESENT and labelled, never
+        // drop it. An inner join here would make a class filter hide the
+        // series outright while the panel carried on rendering — the same
+        // silent-failure shape as a candle field map that fails to a flat
+        // line.
+        ("ZZZ-USDC", "ZZZ", "USDC", "unclassified"),
+    ] {
+        let row: (String, String, String) = sqlx::query_as(
+            "SELECT base, quote, asset_class FROM instruments WHERE product_id = $1",
+        )
+        .bind(product)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("`{product}` missing from the instruments view: {e}"));
+
+        assert_eq!(
+            (row.0.as_str(), row.1.as_str(), row.2.as_str()),
+            (base, quote, class),
+            "wrong derivation for `{product}`"
+        );
+    }
+}
+
+/// The liveness view picks its staleness bound by asset class, so an FX
+/// weekend is not read as a dead collector.
+///
+/// This is the assertion that stops the two thresholds quietly collapsing into
+/// one. A single 60-hour silence is required to read as LIVE for an `fx-pair`
+/// and STALE for a stablecoin pair — and the FX half is exactly what a flat
+/// 48-hour bound would get wrong, every weekend, for every FX pair on the
+/// dashboard. Getting it wrong is silent: the pair simply drops out of the
+/// default selection.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn liveness_picks_its_staleness_bound_by_asset_class() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    // (source, product, hours silent) — `None` meaning registered but never
+    // collected.
+    //
+    // The hour values pin BOTH constants from BOTH sides, which one value
+    // cannot. A single 60h fixture catches the two mutations that matter most
+    // — swapping 72/48, and collapsing them to one number — but `48 -> 24` and
+    // `72 -> 96` both survive it. The first of those matters: 24h sits inside
+    // the 24-27h publication gap this view explicitly budgets for, so a
+    // tightening regression there would be silent.
+    let fixtures: [(&str, &str, Option<i64>); 7] = [
+        // fx-pair quiet 60h: inside the 72h session bound, so live. This is the
+        // weekend case a flat 48h bound gets wrong for every FX pair.
+        ("probe", "EUR-USD", Some(60)),
+        // fx-pair quiet 80h: past 72h, so stale. Pins 72 from above.
+        ("probe", "AUD-USD", Some(80)),
+        // stablecoin-pair quiet 60h: past 48h, so stale. The same silence as
+        // EUR-USD, opposite verdict — that contrast IS the two-tier design.
+        ("probe", "EURC-USDC", Some(60)),
+        // stablecoin-pair quiet 30h: inside 48h, so live. Pins 48 from below,
+        // at a duration a daily-bar source legitimately reaches.
+        ("probe", "USDT-USDC", Some(30)),
+        // One product under TWO sources, one long-stale and one fresh. The
+        // aggregate must take the freshest: otherwise a single parked collector
+        // would drag a live pair out of the default selection. Nothing
+        // exercised the cross-source collapse before.
+        ("stale-src", "CAD-USD", Some(80)),
+        ("fresh-src", "CAD-USD", Some(30)),
+        // Registered, never collected.
+        ("probe", "GBP-USD", None),
+    ];
+
+    for (source, product, silent_hours) in fixtures {
+        sqlx::query(
+            "INSERT INTO instrument_registry
+                 (source, product_id, first_registered_at, last_registered_at)
+             VALUES ($1, $2, 1, 1)",
+        )
+        .bind(source)
+        .bind(product)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("register `{product}` under `{source}`: {e}"));
+
+        if let Some(hours) = silent_hours {
+            sqlx::query(
+                "INSERT INTO cex_prices
+                     (source, product_id, granularity_secs, bucket_start,
+                      low, high, open, close, volume)
+                 VALUES ($1, $2, 60,
+                         EXTRACT(EPOCH FROM now())::BIGINT - $3, 1, 1, 1, 1, 0)",
+            )
+            .bind(source)
+            .bind(product)
+            .bind(hours * 3600)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("insert a bar for `{product}`: {e}"));
+        }
+    }
+
+    for (product, class, live, has_data) in [
+        ("EUR-USD", "fx-pair", true, true),
+        ("AUD-USD", "fx-pair", false, true),
+        ("EURC-USDC", "stablecoin-pair", false, true),
+        ("USDT-USDC", "stablecoin-pair", true, true),
+        ("CAD-USD", "fx-pair", true, true),
+        // Not live, and carrying no timestamp rather than a zero that would
+        // render as 1970 on any panel formatting it as a time.
+        ("GBP-USD", "fx-pair", false, false),
+    ] {
+        let (asset_class, is_live, last_data_at): (String, bool, Option<i64>) = sqlx::query_as(
+            "SELECT asset_class, is_live, last_data_at
+                 FROM instrument_liveness WHERE product_id = $1",
+        )
+        .bind(product)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("`{product}` missing from instrument_liveness: {e}"));
+
+        assert_eq!(asset_class, class, "wrong class for `{product}`");
+        assert_eq!(is_live, live, "wrong liveness verdict for `{product}`");
+        assert_eq!(
+            last_data_at.is_some(),
+            has_data,
+            "`{product}` last_data_at presence is wrong (got {last_data_at:?})"
+        );
+    }
 }
 
 #[tokio::test]

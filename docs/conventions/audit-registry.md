@@ -326,6 +326,7 @@ sdk/conformance/**
 target/types/**
 frontend/lib/data/*.json
 keys/*.json
+market-data/grafana/sql/**
 frontend/public/**
 **/*.png
 **/*.svg

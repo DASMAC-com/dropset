@@ -77,6 +77,14 @@ jobs:
           - '!pnpm-workspace.yaml'
           - '!cfg/**'
           - '!infra/**'
+          # Grafana dashboard JSON, its provisioning, and the generated SQL
+          # mirror under market-data/grafana/sql/. No Rust target reads any of
+          # it (verified: no .rs file in db-schema/ or market-data/ references
+          # these paths), and the mirror is gated by its own
+          # `make dashboard-sql-check` hook in the lint workflow, which always
+          # runs. A dashboard-only PR therefore has nothing for the Rust suite
+          # to prove.
+          - '!market-data/grafana/**'
         predicate-quantifier: 'every'
   # The Python skill-tools under .claude/tools/ are pure-Python scripts (no
   # third-party deps, no Solana/Rust toolchain), so their unit tests run in the

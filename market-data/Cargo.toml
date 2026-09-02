@@ -84,6 +84,17 @@ tokio = { version = "1", features = [
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[dev-dependencies]
+# `tests/instruments.rs` runs the roster-registration statement against a real
+# Postgres in a throwaway container, matching db-schema's own fence tests. It
+# earns the dependency because that statement is reachable from no other gate:
+# it is a runtime (string-typed) query loaded by `include_str!`, so neither
+# clippy nor a compile-time macro can see it, and a typo in it would pass every
+# check in the repo and then abort startup for all seven collectors. The test is
+# `#[ignore]`d — it needs a Docker daemon; run it with
+# `cargo test -p dropset-market-data -- --ignored`.
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
+
 [package]
 description = "Market-data collection app and its crypto and FX reference feeds."
 name = "dropset-market-data"
