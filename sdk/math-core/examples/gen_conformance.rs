@@ -57,29 +57,57 @@ fn main() {
     ]);
 
     // Ratio math (saturated to u64 for the JS/wasm boundary).
-    let qfb_cases = [
-        (Price::encode(10_000_000, 0).unwrap(), 1_000_000u64),
-        (Price::encode(10_850_000, 0).unwrap(), 1_000_000),
-        (Price::encode(10_000_000, -2).unwrap(), 1_000_000),
-        (Price::encode(98_700_000, 2).unwrap(), 1_000),
+    //
+    // The spread is the same price x amount cross-product
+    // `roundtrip_never_overcharges_taker` pins in-crate, so the TS fork —
+    // which has no property test of its own — inherits the same rounding
+    // coverage. Both decoders truncate toward zero, and most of these
+    // combinations divide inexactly, so a fork that ceil'd or rounded
+    // half-up disagrees here instead of passing a suite of exact
+    // divisions. The minimal discriminating pairs are `quote_for_base` at
+    // 1.085 with base 3, which must give 3 rather than 4, and
+    // `base_for_quote` at 1.085 with quote 1, which must give 0 rather
+    // than 1.
+    let ratio_prices = [
+        Price::encode(10_000_000, 0).unwrap(),  // 1.0
+        Price::encode(10_850_000, 0).unwrap(),  // 1.085 (EUR/USD)
+        Price::encode(33_333_333, 0).unwrap(),  // ~3.333, never exact
+        Price::encode(98_700_000, 2).unwrap(),  // 987
+        Price::encode(10_000_000, -2).unwrap(), // 0.01
+        Price::encode(99_999_999, 5).unwrap(),  // large
     ];
-    let quote_for_base: Vec<Value> = qfb_cases
+    // 1_000 and 1_085_000 carry over the amounts the four `quote_for_base`
+    // and two `base_for_quote` cases this cross-product replaced, so the
+    // change only adds coverage.
+    let ratio_amounts = [
+        1_u64,
+        3,
+        7,
+        999,
+        1_000,
+        1_000_000,
+        1_085_000,
+        1_085_321,
+        7_777_777_777,
+    ];
+
+    let quote_for_base: Vec<Value> = ratio_prices
         .iter()
-        .map(|&(p, base)| {
-            json!({ "bits": p.as_u32(), "base": base,
-                    "expected": p.quote_for_base(base).min(u64::MAX as u128) as u64 })
+        .flat_map(|&p| {
+            ratio_amounts.iter().map(move |&base| {
+                json!({ "bits": p.as_u32(), "base": base,
+                        "expected": p.quote_for_base(base).min(u64::MAX as u128) as u64 })
+            })
         })
         .collect();
 
-    let bfq_cases = [
-        (Price::encode(10_000_000, 0).unwrap(), 1_000_000u64),
-        (Price::encode(10_850_000, 0).unwrap(), 1_085_000),
-    ];
-    let base_for_quote: Vec<Value> = bfq_cases
+    let base_for_quote: Vec<Value> = ratio_prices
         .iter()
-        .map(|&(p, quote)| {
-            json!({ "bits": p.as_u32(), "quote": quote,
-                    "expected": p.base_for_quote(quote).min(u64::MAX as u128) as u64 })
+        .flat_map(|&p| {
+            ratio_amounts.iter().map(move |&quote| {
+                json!({ "bits": p.as_u32(), "quote": quote,
+                        "expected": p.base_for_quote(quote).min(u64::MAX as u128) as u64 })
+            })
         })
         .collect();
 

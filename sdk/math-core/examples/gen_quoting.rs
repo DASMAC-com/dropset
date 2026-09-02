@@ -21,9 +21,20 @@
 //! - `ratio_ppm = price.quote_for_base(SCALE) · PPM / reference.quote_for_base(SCALE)`
 //! - ask `price_offset = ratio_ppm − PPM`; bid `price_offset = PPM − ratio_ppm`
 //! - `size_bps = size · BPS / leg_atoms` (leg = base for asks, quote for bids)
+//! - both expiry offsets are carried through verbatim, one per domain
 //!
 //! All arithmetic is integer and truncating, in the exact operation order
-//! the forks use, so the three implementations agree bit-for-bit.
+//! the forks use, so the three implementations agree bit-for-bit. The
+//! `cases` deliberately include ratios and sizes that do **not** divide
+//! evenly, so a fork that rounded half-up instead of truncating disagrees
+//! — a suite of exact divisions would pass either way.
+//!
+//! Expiry is dual-domain: a level is live only while **both** its slot and
+//! wall deadlines hold. The two offsets are independent inputs, so every
+//! level below carries a different value in each, and the `UNBOUNDED`
+//! sentinel appears in each domain paired with a finite bound in the other.
+//! A fork that derived one domain from the other, transposed them, or wrote
+//! a zero (which on-chain kills every level) fails these vectors.
 //!
 //! The happy-path `cases` pin only inputs that translate successfully. The
 //! forks are most likely to drift in their **error** handling — the guards
@@ -54,17 +65,29 @@ const BPS: u128 = 10_000;
 
 /// One native ask/bid level: the absolute price + atom size a leader
 /// quotes, sized against `leg_atoms` of the relevant inventory leg.
+///
+/// The two expiry offsets are independent domains (see the module docs),
+/// so every fixture below gives them **different** values — a fork that
+/// wrote one into the other's slot, or zeroed either, disagrees.
 struct NativeLevel {
     price: Price,
     size: u64,
     expiry_offset: u32,
+    expiry_offset_slots: u32,
 }
 
-fn nl(significand: u32, exp: i8, size: u64, expiry_offset: u32) -> NativeLevel {
+fn nl(
+    significand: u32,
+    exp: i8,
+    size: u64,
+    expiry_offset: u32,
+    expiry_offset_slots: u32,
+) -> NativeLevel {
     NativeLevel {
         price: Price::encode(significand, exp).unwrap(),
         size,
         expiry_offset,
+        expiry_offset_slots,
     }
 }
 
@@ -84,6 +107,7 @@ fn level_case(lvl: &NativeLevel, reference: Price, leg_atoms: u64, is_ask: bool)
         "price_bits": lvl.price.as_u32(),
         "size": lvl.size,
         "expiry_offset": lvl.expiry_offset,
+        "expiry_offset_slots": lvl.expiry_offset_slots,
         "price_offset": price_offset as u64,
         "size_bps": size_bps as u64,
     })
@@ -137,6 +161,7 @@ fn native_level_json(lvl: &NativeLevel) -> Value {
         "price_bits": lvl.price.as_u32(),
         "size": lvl.size,
         "expiry_offset": lvl.expiry_offset,
+        "expiry_offset_slots": lvl.expiry_offset_slots,
     })
 }
 
@@ -159,17 +184,20 @@ fn main() {
         // Reference 1.0, round offsets and sizes — hand-verifiable.
         // Asks 1.05/1.10 → +50000/+100000 ppm, 2500 bps each of 1_000_000
         // base. Bids 0.95/0.90 → +50000/+100000 ppm, 3000/1000 bps of quote.
+        // The slot offsets run *opposite* to the wall offsets here (asks
+        // 100s/250 slots, bids 200s/125 slots), so a fork that swapped the
+        // two domains fails rather than coincidentally agreeing.
         Case {
             reference: Price::encode(10_000_000, 0).unwrap(),
             base_atoms: 1_000_000,
             quote_atoms: 1_000_000,
             asks: vec![
-                nl(10_500_000, 0, 250_000, 100),
-                nl(11_000_000, 0, 250_000, 100),
+                nl(10_500_000, 0, 250_000, 100, 250),
+                nl(11_000_000, 0, 250_000, 100, 275),
             ],
             bids: vec![
-                nl(95_000_000, -1, 300_000, 200),
-                nl(90_000_000, -1, 100_000, 200),
+                nl(95_000_000, -1, 300_000, 200, 125),
+                nl(90_000_000, -1, 100_000, 200, 150),
             ],
         },
         // FX scale: reference EUR/USD 1.0850, asymmetric ladders and
@@ -179,13 +207,16 @@ fn main() {
             reference: Price::encode(10_850_000, 0).unwrap(),
             base_atoms: 4_000_000,
             quote_atoms: 7_000_000,
+            // The second level on each side pairs an *unbounded wall* offset
+            // with a finite slot bound, which only holds if the domains are
+            // carried independently.
             asks: vec![
-                nl(10_904_250, 0, 1_000_000, 50), // +5000 ppm
-                nl(11_392_500, 0, 800_000, u32::MAX),
+                nl(10_904_250, 0, 1_000_000, 50, 400), // +5000 ppm
+                nl(11_392_500, 0, 800_000, u32::MAX, 900),
             ],
             bids: vec![
-                nl(10_795_750, 0, 2_000_000, 50), // -5000 ppm
-                nl(10_416_000, 0, 1_500_000, u32::MAX),
+                nl(10_795_750, 0, 2_000_000, 50, 175), // -5000 ppm
+                nl(10_416_000, 0, 1_500_000, u32::MAX, 1_200),
             ],
         },
         // Single-level, sub-1.0 reference, level fully consuming its leg
@@ -194,8 +225,29 @@ fn main() {
             reference: Price::encode(99_000_000, -1).unwrap(), // 0.99
             base_atoms: 500_000,
             quote_atoms: 500_000,
-            asks: vec![nl(10_098_000, 0, 500_000, 10)], // 1.0098 → +20000/... per spec
-            bids: vec![nl(97_020_000, -1, 500_000, 10)], // 0.9702
+            // Both sides carry the same wall offset with different slot
+            // bounds — and the ask's is the `UNBOUNDED` sentinel while its
+            // wall offset is finite, the inverse of case 2's pairing. A fork
+            // deriving one domain from the other cannot satisfy both cases.
+            asks: vec![nl(10_098_000, 0, 500_000, 10, u32::MAX)], // 1.0098 → +20000/... per spec
+            bids: vec![nl(97_020_000, -1, 500_000, 10, 77)],      // 0.9702
+        },
+        // Inexact ratios: every offset above divides to a whole ppm, so the
+        // truncation in `level_to_relative`'s ratio step is unpinned by them
+        // — a fork that rounded half-up passes all of them. These do not
+        // divide. The ask ratio is 1_000_460.83 ppm, so the offset must floor
+        // to 460 (round-half-up gives 461); the bid ratio is 999_262.67 ppm,
+        // so its offset must be 738 (round-half-up gives 737). Note the two
+        // round in opposite directions, so a fork cannot satisfy both with a
+        // single wrong rounding mode. The sizes are inexact too: 700_000 of
+        // 3_000_000 base is 2333.33 → 2333 bps, and 900_000 of 7_000_000
+        // quote is 1285.71 → 1285 bps.
+        Case {
+            reference: Price::encode(10_850_000, 0).unwrap(), // 1.085
+            base_atoms: 3_000_000,
+            quote_atoms: 7_000_000,
+            asks: vec![nl(10_855_000, 0, 700_000, 300, 60)],
+            bids: vec![nl(10_842_000, 0, 900_000, 300, 90)],
         },
     ];
     // Rejection vectors: each native book trips exactly one translation
@@ -209,7 +261,7 @@ fn main() {
             reference: Price::ZERO,
             base_atoms: 1_000_000,
             quote_atoms: 1_000_000,
-            asks: vec![nl(10_500_000, 0, 1_000, 100)],
+            asks: vec![nl(10_500_000, 0, 1_000, 100, 55)],
             bids: vec![],
         },
         // Reference is the INFINITY sentinel — no ratio is defined.
@@ -219,7 +271,7 @@ fn main() {
             reference: Price::INFINITY,
             base_atoms: 1_000_000,
             quote_atoms: 1_000_000,
-            asks: vec![nl(10_500_000, 0, 1_000, 100)],
+            asks: vec![nl(10_500_000, 0, 1_000, 100, 55)],
             bids: vec![],
         },
         // Ask priced below the reference — offsets are unsigned, asks sit
@@ -230,7 +282,7 @@ fn main() {
             reference: Price::encode(10_000_000, 0).unwrap(), // 1.0
             base_atoms: 1_000_000,
             quote_atoms: 1_000_000,
-            asks: vec![nl(99_000_000, -1, 1_000, 100)], // 0.99
+            asks: vec![nl(99_000_000, -1, 1_000, 100, 55)], // 0.99
             bids: vec![],
         },
         // Bid priced above the reference — the `PPM − ratio_ppm` path the
@@ -243,7 +295,7 @@ fn main() {
             base_atoms: 1_000_000,
             quote_atoms: 1_000_000,
             asks: vec![],
-            bids: vec![nl(10_100_000, 0, 1_000, 100)], // 1.01
+            bids: vec![nl(10_100_000, 0, 1_000, 100, 55)], // 1.01
         },
         // Ask so far above the reference that the ppm offset overflows u32:
         // 4296× → offset 4_295_000_000 > u32::MAX (4_294_967_295).
@@ -253,7 +305,7 @@ fn main() {
             reference: Price::encode(10_000_000, 0).unwrap(), // 1.0
             base_atoms: 1_000_000,
             quote_atoms: 1_000_000,
-            asks: vec![nl(42_960_000, 3, 1_000, 100)], // 4296.0
+            asks: vec![nl(42_960_000, 3, 1_000, 100, 55)], // 4296.0
             bids: vec![],
         },
         // A single level larger than its inventory leg: 1_500_000 of
@@ -264,7 +316,7 @@ fn main() {
             reference: Price::encode(10_000_000, 0).unwrap(), // 1.0
             base_atoms: 1_000_000,
             quote_atoms: 1_000_000,
-            asks: vec![nl(10_500_000, 0, 1_500_000, 100)],
+            asks: vec![nl(10_500_000, 0, 1_500_000, 100, 55)],
             bids: vec![],
         },
         // Two individually-valid levels whose Σ exceeds the per-side
@@ -276,8 +328,8 @@ fn main() {
             base_atoms: 1_000_000,
             quote_atoms: 1_000_000,
             asks: vec![
-                nl(10_500_000, 0, 600_000, 100),
-                nl(11_000_000, 0, 600_000, 100),
+                nl(10_500_000, 0, 600_000, 100, 55),
+                nl(11_000_000, 0, 600_000, 100, 55),
             ],
             bids: vec![],
         },
@@ -288,14 +340,14 @@ fn main() {
             reference: Price::encode(10_000_000, 0).unwrap(), // 1.0
             base_atoms: 0,
             quote_atoms: 1_000_000,
-            asks: vec![nl(10_500_000, 0, 1_000, 100)],
+            asks: vec![nl(10_500_000, 0, 1_000, 100, 55)],
             bids: vec![],
         },
     ];
     let cases: Vec<Value> = cases.iter().map(case_json).collect();
     let rejections: Vec<Value> = rejections.iter().map(rejection_json).collect();
     let doc = json!({
-        "_comment": "Generated by `cargo run -p dropset-math-core --example gen_quoting`. Do not edit by hand. Verified against the Rust SDK quoting fork (sdk/rs/tests/quoting_conformance.rs) and the TS fork (sdk/ts/src/quoting.conformance.test.ts). `cases` pin successful translations: each level lists its native inputs (price_bits, size, expiry_offset) and the expected relative outputs (price_offset in ppm, size_bps). `rejections` pin the error paths: each is a native book that trips one guard, tagged with the QuotingError variant both forks must raise (the translation rejects, never clamps). All integer math is truncating.",
+        "_comment": "Generated by `cargo run -p dropset-math-core --example gen_quoting`. Do not edit by hand. Verified against the Rust SDK quoting fork (sdk/rs/tests/quoting_conformance.rs) and the TS fork (sdk/ts/src/quoting.conformance.test.ts). `cases` pin successful translations: each level lists its native inputs (price_bits, size, and one expiry_offset per domain — expiry_offset is the wall/seconds bound, expiry_offset_slots the slot bound, always different values so a transposed or zeroed domain fails) and the expected relative outputs (price_offset in ppm, size_bps). `rejections` pin the error paths: each is a native book that trips one guard, tagged with the QuotingError variant both forks must raise (the translation rejects, never clamps). All integer math is truncating.",
         "cases": cases,
         "rejections": rejections,
     });
