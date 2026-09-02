@@ -204,8 +204,8 @@ pub struct LegSample {
     ///
     /// `Carried` is the **routine** value between absorptions on a
     /// reference-only leg, where it means the estimator already held every
-    /// reading offered — not that anything went wrong. It is also, as ever, the
-    /// tick on which the composition falls back to `value`.
+    /// reading offered — not that anything went wrong. It is also the tick on
+    /// which the composition falls back to `value`.
     pub fusion_step: Option<String>,
     /// How many sources were actually fused, which is **not**
     /// `contributor_count`: that counts the fast consensus, while this counts
