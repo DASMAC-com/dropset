@@ -496,6 +496,87 @@
       ],
       "title": "Weekend vs weekday",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Every selected pair on one axis, each indexed to 100 at its first bar inside the visible window. This is the only panel here that reads more than one product at a time, and indexing is what makes that legible: raw closes are not comparable across pairs - EUR-USD sits near 1.08 while EUR-JPY sits near 170 - so an overlay of them is one flat line and one off-scale line. On a percent axis the question 'which of these moved most, and when' has a readable answer. The base is the first bar in the WINDOW rather than the series' first bar ever, so panning or zooming re-bases every series and the comparison always describes the period you are looking at. Pairs come from the Currency picker, so selecting EUR gives every EUR pair this venue carries. A pair with no bar inside the window is dropped rather than drawn flat, so an empty legend entry means 'not collected here', not 'unchanged'.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "index (window start = 100)",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "decimals": 3,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [
+            "first",
+            "last",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- Cross-pair overlay, indexed to 100 at each series' first bar INSIDE the\n-- window. Absolute levels are not comparable across pairs -- EUR-USD sits\n-- near 1.08 while EUR-JPY sits near 170 -- so an overlay of raw closes is one\n-- flat line and one off-scale line, and \"which moved most\" has no readable\n-- answer. Indexing puts every pair on a common percent axis.\n--\n-- The base is the first bar in the WINDOW, not the series' first bar ever, so\n-- panning or zooming re-bases every series and the comparison stays about the\n-- period actually on screen.\n--\n-- Scoped to the selected venue, matching how the rest of this dashboard\n-- reads: one venue at a time. Two vendors carrying the same pair would\n-- otherwise draw two nearly-identical lines and double the legend for no\n-- information.\nWITH bars AS (\n  SELECT\n    product_id,\n    bucket_start,\n    close\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ${venue_source:sqlstring}\n    AND product_id = ANY (ARRAY[${pairs:sqlstring}]::text[])\n    AND granularity_secs::text = ${granularity:sqlstring}\n),\n\nbase AS (\n  -- The earliest bar each pair has in the window, which is its index base.\n  SELECT DISTINCT ON (product_id)\n    product_id,\n    close\n  FROM bars\n  ORDER BY product_id, bucket_start\n)\n\nSELECT\n  to_timestamp(b.bucket_start) AS \"time\",\n  b.product_id AS metric,\n  -- nullif guards a zero base. Without it one bad series divides by zero and\n  -- fails the whole panel rather than just itself.\n  100.0 * b.close / nullif(f.close, 0) AS value\nFROM bars b\n-- INNER, not LEFT: a pair with no bar in the window has no base to index\n-- against, and emitting NULLs would add a legend entry that reads as a broken\n-- series rather than one this venue does not carry.\nINNER JOIN base f ON f.product_id = b.product_id\nORDER BY 1, 2",
+          "refId": "A"
+        }
+      ],
+      "title": "Cross-pair index \u2014 $currency pairs on $venue_source (window start = 100)",
+      "type": "timeseries"
     }
   ],
   "preload": false,
@@ -576,6 +657,72 @@
         "regex": "",
         "skipUrlSync": true,
         "sort": 3,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "USD",
+          "value": "USD"
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT legs.c\nFROM (\n  SELECT i.product_id, i.base AS c FROM instruments i\n  UNION ALL\n  SELECT i.product_id, i.quote FROM instruments i\n) legs\nWHERE EXISTS (\n  SELECT 1\n  FROM instrument_registry r\n  WHERE r.source = ${venue_source:sqlstring}\n    AND r.product_id = legs.product_id\n)\nORDER BY 1",
+        "description": "The currency umbrella: pick one and the Pairs picker below offers every pair with that currency on either leg. This is the selector the dashboard was built without - it reads one product at a time, and the README recorded that selecting by currency needed products tagged by currency family, which was a schema change rather than a dashboard one. That schema landed as the instruments dimension, so this reads the dimension's base and quote legs rather than splitting the product id, which means EURC and EUR are known to be the stablecoin and the fiat of the same currency instead of two unrelated strings. Scoped to the selected venue, for the same reason the Venue product picker is: an unfiltered list invites choosing a currency this venue does not quote, which renders nothing and reads as a broken panel.",
+        "includeAll": false,
+        "label": "Currency",
+        "multi": false,
+        "name": "currency",
+        "options": [],
+        "query": "SELECT DISTINCT legs.c\nFROM (\n  SELECT i.product_id, i.base AS c FROM instruments i\n  UNION ALL\n  SELECT i.product_id, i.quote FROM instruments i\n) legs\nWHERE EXISTS (\n  SELECT 1\n  FROM instrument_registry r\n  WHERE r.source = ${venue_source:sqlstring}\n    AND r.product_id = legs.product_id\n)\nORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "live only",
+          "value": "live only"
+        },
+        "description": "Whether the Pairs picker offers only pairs currently collecting, or every pair this venue is configured for. Defaults to live only, so the overlay opens on real data rather than on empty series for a pair whose collector is parked - quiet pairs stay reachable, but opt-in. Liveness comes from instrument_liveness, whose staleness bound is chosen by asset class: 72h for a fiat cross so an FX weekend is not mistaken for a dead collector, 48h for the always-open classes. A custom list rather than a query, so it can never be empty.",
+        "label": "Show",
+        "name": "include_quiet",
+        "options": [],
+        "query": "live only,all",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT i.product_id\nFROM instruments i\nINNER JOIN instrument_liveness l ON l.product_id = i.product_id\nWHERE ${currency:sqlstring} IN (i.base, i.quote)\n  AND (${include_quiet:sqlstring} = 'all' OR l.is_live)\n  AND EXISTS (\n    SELECT 1\n    FROM instrument_registry r\n    WHERE r.source = ${venue_source:sqlstring}\n      AND r.product_id = i.product_id\n  )\nORDER BY 1",
+        "description": "The pairs drawn on the cross-pair index panel - every pair carrying the selected Currency on either leg, on the selected venue, filtered by the Show setting. KNOWN COST, and it is measured rather than assumed: instrument_liveness leaves granularity_secs unconstrained, which defeats Postgres's MIN/MAX index transform and range-scans each series, so this query costs about 90ms and grows with cex_prices history. It is on a load-only path - this dashboard sets no auto-refresh - so it is paid once per load rather than continuously. The fix belongs in the view rather than here, and is being carried by the per-source liveness work that rewrites it; measured there at 0.8ms once granularity is constrained. Nothing about this query changes when that lands, it just gets fast.",
+        "includeAll": true,
+        "label": "Pairs",
+        "multi": true,
+        "name": "pairs",
+        "options": [],
+        "query": "SELECT i.product_id\nFROM instruments i\nINNER JOIN instrument_liveness l ON l.product_id = i.product_id\nWHERE ${currency:sqlstring} IN (i.base, i.quote)\n  AND (${include_quiet:sqlstring} = 'all' OR l.is_live)\n  AND EXISTS (\n    SELECT 1\n    FROM instrument_registry r\n    WHERE r.source = ${venue_source:sqlstring}\n      AND r.product_id = i.product_id\n  )\nORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
         "type": "query"
       },
       {
