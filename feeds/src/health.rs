@@ -1,3 +1,4 @@
+// cspell:word rfind
 //! Per-feed liveness, reported generically through the runner's metrics seam.
 //!
 //! [`FeedMetrics`] already gives the runner a place to report every turn of
@@ -227,18 +228,41 @@ pub fn sanitize_error(text: &str, max: usize) -> String {
 /// A token with no `://` is left alone, so ordinary prose is unaffected. Port
 /// survives (it is part of the authority); userinfo, path, query and fragment
 /// do not. Truncation is on a **character** boundary, as elsewhere here.
+///
+/// **Userinfo goes before the authority is computed, not after**, and that
+/// order is the whole correctness argument. Bounding the authority first means
+/// a credential containing a `/`, `?` or `#` ends the authority *inside
+/// itself*, leaving no `@` behind for a later split to remove:
+/// `postgres://u:pa/ss@h/db` reduces to `postgres://u:pa`, a redaction that
+/// emits the password. Such a separator is legal in userinfo only
+/// percent-encoded, but a hand-written connection string routinely carries one
+/// raw, and this function exists precisely for the paths where a raw
+/// operator-supplied string reaches a persisted column.
+///
+/// When the last `@` sits **past** the first separator the token is ambiguous:
+/// either a credential swallowed the separator, or a legal path or query holds
+/// an `@` (`?email=a@b.example`). Nothing here can tell those apart, so the
+/// authority reduces to `<redacted>`. Losing a host costs one diagnosis;
+/// guessing either leaks the credential or reports a query fragment as the
+/// host, and a misleading origin is worse than an absent one.
 pub fn redact_to_origin(text: &str, max: usize) -> String {
     let reduced = text
         .split_whitespace()
         .map(|token| match token.split_once("://") {
             Some((scheme, rest)) => {
                 // The authority ends at the first path, query, or fragment
-                // separator; anything before an `@` within it is userinfo.
-                let authority = match rest.find(['/', '?', '#']) {
-                    Some(end) => &rest[..end],
-                    None => rest,
+                // separator — but only once userinfo is out of the way.
+                let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+                let host = match rest.rfind('@') {
+                    // No userinfo anywhere in the token.
+                    None => &rest[..end],
+                    // Userinfo confined to the authority: the well-formed
+                    // case. Everything up to and including the last `@` goes,
+                    // so no credential reaches the output by construction.
+                    Some(at) if at < end => &rest[at + 1..end],
+                    // Ambiguous — see the doc comment.
+                    Some(_) => "<redacted>",
                 };
-                let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
                 format!("{scheme}://{host}")
             }
             None => token.to_string(),
@@ -445,6 +469,50 @@ mod tests {
         let got = redact_to_origin("GET https://h.example/v1?api-key=SECRET", MAX_ERROR_CHARS);
         assert!(!got.contains("SECRET"), "got: {got}");
         assert_eq!(got, "GET https://h.example");
+    }
+
+    /// The ordering bug this function was rewritten to close: a password
+    /// carrying a raw separator ends the authority inside the credential, so
+    /// bounding the authority before stripping userinfo emitted the password
+    /// as the host. Every arm asserts the secret is *absent*, not merely that
+    /// the output changed — an assertion on the exact string alone would pass
+    /// a future rewrite that swapped one leak for another.
+    #[test]
+    fn redact_to_origin_strips_userinfo_before_bounding_the_authority() {
+        // A `/` in the password — the dominant form in a hand-written
+        // connection string, and the shape that leaked.
+        let got = redact_to_origin("connect postgres://u:pa/SECRET@h:5432/db", MAX_ERROR_CHARS);
+        assert!(!got.contains("SECRET"), "got: {got}");
+        assert_eq!(got, "connect postgres://<redacted>");
+
+        // `?` and `#` end the authority just as `/` does, so both reach the
+        // same ambiguous branch rather than only the path separator.
+        for token in ["postgres://u:pa?SECRET@h/db", "postgres://u:pa#SECRET@h/db"] {
+            let got = redact_to_origin(token, MAX_ERROR_CHARS);
+            assert!(!got.contains("SECRET"), "got: {got}");
+            assert_eq!(got, "postgres://<redacted>");
+        }
+
+        // An `@` past the first separator with no userinfo at all: a legal
+        // URL, indistinguishable from the above, and deliberately redacted
+        // rather than reported as `https://b.example`.
+        let got = redact_to_origin(
+            "GET https://h.example/v1?email=a@b.example",
+            MAX_ERROR_CHARS,
+        );
+        assert_eq!(got, "GET https://<redacted>");
+
+        // Several `@` inside a well-formed authority: the last one bounds the
+        // userinfo, so the host still survives intact.
+        let got = redact_to_origin("wss://u:p@ss@h.example/x", MAX_ERROR_CHARS);
+        assert!(!got.contains("p@ss"), "got: {got}");
+        assert_eq!(got, "wss://h.example");
+
+        // An unparseable authority that is nothing but userinfo. The host is
+        // empty, which is honest; what matters is that the credential is gone.
+        let got = redact_to_origin("wss://u:SECRET@/x", MAX_ERROR_CHARS);
+        assert!(!got.contains("SECRET"), "got: {got}");
+        assert_eq!(got, "wss://");
     }
 
     /// A port is part of the authority and must survive — the localnet
