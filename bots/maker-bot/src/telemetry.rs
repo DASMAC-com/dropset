@@ -450,9 +450,17 @@ pub fn spawn(rt: &Runtime) -> Telemetry {
     let pool = match connect_lazy(&url) {
         Ok(pool) => pool,
         Err(e) => {
+            // Redacted like the persisted error columns, and for the same
+            // reason one axis over: the error being reported *is* a failure
+            // to read the operator's connection string, so its rendered cause
+            // chain is the one message here whose whole subject is a value
+            // that carries a password. Console output is not exempt from the
+            // custody rule — a bot's stderr is collected and retained, and
+            // `{:#}` walks a cause chain no caller here controls.
+            let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
             eprintln!(
                 "[telemetry] {DATABASE_URL_ENV} is not a usable connection \
-                 string ({e:#}) — running without operational telemetry"
+                 string ({cause}) — running without operational telemetry"
             );
             return Telemetry::disabled();
         }
@@ -475,7 +483,14 @@ pub fn spawn(rt: &Runtime) -> Telemetry {
         )
         .await
         {
-            eprintln!("[telemetry] runner exited: {e:#}");
+            // The same treatment as the connect error above. This chain is
+            // the pool's rather than the parser's, so it carries a URL less
+            // reliably — but it is built from the same operator string, the
+            // redaction is a no-op on text holding no URL at all, and a
+            // console path that is *usually* clean is exactly the shape the
+            // custody rule declines to reason about case by case.
+            let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
+            eprintln!("[telemetry] runner exited: {cause}");
         }
     });
 
