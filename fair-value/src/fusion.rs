@@ -120,10 +120,18 @@
 //! and it would let [`FusionConfig::reference_publish_interval`] be replaced by
 //! the observed instant.
 //!
-//! Being told the interval gives up only **phase**: the filter absorbs once per
-//! `T` from an arbitrary offset rather than at the true publication moment.
+//! Being told the interval mainly gives up **phase**: the filter absorbs once
+//! per `T` from an arbitrary offset rather than at the true publication moment.
 //! Phase moves *when* the variance resets, not how wide it gets between resets,
 //! and it is the width a spread model consumes.
+//!
+//! It also gives up any **off-cadence** republication, which is the part not to
+//! wave away: nothing here inspects the reading's value, so a fix that genuinely
+//! moves mid-interval is held off for the remainder of `T`. That is bounded
+//! rather than benign-by-definition — a `Carried` tick composes off the fast
+//! consensus, which does carry the moved value, so the estimate lags where the
+//! quote does not. Setting the interval to the source's real cadence is what
+//! keeps the case rare.
 //!
 //! ## The shape of the reported sigma
 //!
@@ -555,8 +563,17 @@ impl Fusion {
     /// What keeps that unreachable is not the eviction rule but
     /// [`Fusion::absorb_throttled`]'s scoping: only throttled sources are ever
     /// recorded, so the table holds one entry per *reference* source — one on
-    /// today's roster, against `MAX_CANDIDATES` slots. Filling it would take
-    /// more distinct reference sources than a leg can offer in a single tick.
+    /// today's roster, against `MAX_CANDIDATES` slots.
+    ///
+    /// **The guarantee is name stability, not per-tick width.** Entries are
+    /// never cleared, so occupancy accumulates over the filter's whole life
+    /// rather than resetting each tick — what bounds it is that the roster
+    /// carries a single reference source under a stable name, so no second
+    /// entry is ever created. Do not restate this as "more sources than a leg
+    /// can offer in one tick": that is the argument this module's own
+    /// `a_tape_never_consumes_a_slot_in_the_absorption_table` disproves, by
+    /// filling the table one fresh name per tick.
+    ///
     /// Evicting the longest-waiting entry is then the least-bad choice among
     /// bad ones, not a safe one.
     fn mark_absorbed(&mut self, source: &'static str) {

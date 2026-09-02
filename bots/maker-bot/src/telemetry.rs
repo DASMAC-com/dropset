@@ -209,9 +209,10 @@ pub struct LegSample {
     pub fusion_step: Option<String>,
     /// How many sources were actually fused, which is **not**
     /// `contributor_count`: that counts the fast consensus, while this counts
-    /// the fusion's admitted set. They differ in both directions — a reference
-    /// fix is fused but does not corroborate, and a trimmed outlier corroborates
-    /// the count but is not fused.
+    /// the fusion's *fusible* set — admitted by the trim **and** not already
+    /// absorbed. They differ in both directions — a reference fix is fused on
+    /// its absorption tick but does not corroborate, and a trimmed outlier
+    /// corroborates the count but is not fused.
     ///
     /// A source is also absent from this count on a tick where it was offered
     /// but **already absorbed**, which is what makes zero routine rather than
