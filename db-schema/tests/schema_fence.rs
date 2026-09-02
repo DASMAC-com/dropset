@@ -1,6 +1,9 @@
 // cspell:word bytea
+// cspell:word matview
+// cspell:word matviews
 // cspell:word schemaname
 // cspell:word tablename
+// cspell:word unlogged
 // cspell:word unprovisioned
 // cspell:word viewname
 //! End-to-end tests for the startup fence against a real Postgres in a
@@ -14,10 +17,10 @@
 //! fence that demanded equality would turn a supported window into a crash
 //! loop. That behavior is invisible to a unit test and easy to regress.
 //!
-//! Four tests here are not about the fence at all. They check the migrations
+//! Seven tests here are not about the fence at all. They check the migrations
 //! produced what they said they would, reading the `<migration>.fence` manifest
 //! that sits beside each migration: `migrate_produces_every_declared_relation`
-//! probes a container, and three run without one. `parse_manifest` carries the
+//! probes a container, and six run without one. `parse_manifest` carries the
 //! directive grammar; the probe's own doc comment carries the reason the
 //! declaration is per-migration rather than one list here, and the reason it is
 //! a sidecar rather than a comment in the SQL.
@@ -198,6 +201,14 @@ async fn fence_rejects_a_database_with_no_successful_migration() {
 ///
 /// The vocabulary is deliberately tiny: every directive is one more thing a
 /// future author has to get right, and the probe below is its only consumer.
+///
+/// It covers ordinary tables and views and, deliberately, nothing else. A
+/// **materialized view satisfies neither** `table` nor `view` — measured on
+/// PG 16, it is absent from both `pg_tables` and `pg_views` — so the first
+/// migration to add one needs a `matview` directive and a `pg_matviews` probe
+/// beside these. Writing that arm now would be speculation, and the failure is
+/// loud rather than silent, which is what makes deferring it safe. (Partitioned
+/// and unlogged tables both appear in `pg_tables`, so they need nothing.)
 #[derive(Debug, PartialEq, Eq)]
 enum Declared {
     /// A table — specifically a table, in `public` — that must exist once the
@@ -498,6 +509,18 @@ fn manifest_parser_rejects_every_shape_of_bad_identifier() {
     ] {
         assert!(parse_manifest(text).is_err(), "must reject {why}");
     }
+
+    // Assert the message, not just the rejection. Every case above still fails
+    // if the three `bad_identifier` arms are deleted — it just fails as
+    // "unrecognized directive" — so `is_err()` alone does not pin the one thing
+    // those arms exist for, which is telling the author which half of the line
+    // is wrong. This is the same argument `manifest_parser_accepts_none_with_a_reason`
+    // makes about its own arm.
+    let err = parse_manifest("table push-health\n").expect_err("must reject a hyphen");
+    assert!(
+        err.contains("lowercase identifier"),
+        "the error must name the identifier rule, got: {err}"
+    );
 }
 
 /// A negative count parses as an integer but can never be satisfied, so it is
@@ -625,11 +648,15 @@ async fn migrate_produces_every_declared_relation() {
                     );
                 }
                 Declared::Rows { table, count } => {
-                    // Interpolated, not bound — see `is_identifier`.
-                    let rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
-                        .fetch_one(&pool)
-                        .await
-                        .unwrap_or_else(|e| panic!("count rows in `{table}`: {e}"));
+                    // Interpolated, not bound — see `is_identifier`. Qualified
+                    // with `public.` so this resolves the same relation the
+                    // table and view probes above do, rather than through
+                    // whatever `search_path` happens to be set to.
+                    let rows: i64 =
+                        sqlx::query_scalar(&format!("SELECT count(*) FROM public.{table}"))
+                            .fetch_one(&pool)
+                            .await
+                            .unwrap_or_else(|e| panic!("count rows in `{table}`: {e}"));
                     assert_eq!(
                         rows, count,
                         "v{version} declares {count} seeded row(s) in `{table}`"
