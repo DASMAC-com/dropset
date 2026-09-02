@@ -549,10 +549,18 @@ indexer-down: check-docker
 # localnet up, and they share the one `dropset` database with the indexer.
 # Stopping them leaves the recorded history on the volume.
 #
-# Four keyless feeds, across both tiers. Candles into `cex_prices`: the Coinbase
-# reference price. Spot ticks into `spot_ticks`: the Coinbase ticker (the prints
-# between candle closes), Kraken (batched peg truth — a real market print of
-# `USDC/USD`), and Pyth Hermes (batched FX with a published confidence).
+# Three keyless feeds, across both tiers. Candles into `cex_prices`: the
+# Coinbase reference price. Spot ticks into `spot_ticks`: the Coinbase ticker
+# (the prints between candle closes) and Kraken (batched peg truth — a real
+# market print of `USDC/USD`).
+#
+# Pyth Hermes used to be the fourth and is no longer started here. It went from
+# keyless to keyed on 2026-08-26, and Pyth sells no free API tier — the plan
+# covering FX is $2,500/month — so on any machine running this stack it would
+# start, find no credential, exit, and restart forever. It keeps its compose
+# service behind a `pyth` profile; start it deliberately once a key exists.
+# Dropping it costs the only FX confidence half-width we collect
+# (docs/data-feeds.md §9).
 #
 # The three credentialed venues (`KEYED_UP` below) come up in the same breath,
 # behind a gate on the secrets enclave existing. There is deliberately no
@@ -590,7 +598,7 @@ indexer-down: check-docker
 collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --build --quiet-pull postgres migrate coinbase coinbase-ticker \
-		kraken pyth grafana
+		kraken grafana
 	@$(KEYED_UP)
 .PHONY: collectors-down
 collectors-down: check-docker

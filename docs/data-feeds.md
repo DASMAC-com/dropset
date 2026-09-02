@@ -893,6 +893,41 @@ ones that never did as a roster error rather than a venue gap. The
 per-product Coinbase collector needs no such watch — each of its feeds is
 named, so one that never yields is already identifiable in the logs.
 
+**Pyth is keyed as of 2026-08-26**, and the way that arrived is worth
+recording. The Core upgrade put Hermes behind a bearer token
+(`pyth/api-key`, §12); it had been keyless for this collector's whole
+life before, so the collector had no secret to resolve and nothing to
+fail on. It kept polling, kept warning, kept backing off, and wrote
+nothing for a week — container up, no restarts, no error state, every
+poll a 401. That is why the token is now resolved at *startup*: a
+missing credential has to be a process that dies, because a process that
+lives is invisible. The transport was complicit too — it logged
+`returned an error status` without the code, so an auth gate and an
+outage read identically; it now names the status.
+
+**There is no free API tier.** The developer docs read as though a free
+self-serve key restores access, and that is misleading — the plans page
+is explicit that the free tier is "view-only access through Pyth
+Terminal (no API permissions)". It grants browsing in a web app, not a
+credential this collector can use. The self-serve key is a time-boxed
+trial of Pyth Pro, so it is a one-shot diagnostic instrument, never a
+foundation.
+
+Priced access starts at **$500/month (Starter), which is crypto-only** —
+so it does not cover this collector at all, since what Pyth uniquely
+gave us here is *FX*. The tier that does is **Pro, from $2,500/month**.
+For comparison, every other FX source in this document runs on a free
+credential.
+
+That leaves three real options, and choosing among them is an open
+architecture question rather than a settled one: **self-host Hermes**
+(the only free path that keeps the confidence dimension — it reads the
+Pyth network and Wormhole directly and takes no Pyth credential), **buy
+the Pro tier**, or **degrade without a published confidence** and derive an
+uncertainty from bid/ask or cross-source spread instead. The 10 requests
+per 10 s per IP limit documented for Hermes is the old *public* limit,
+from before the gate, and no longer describes a path anyone can take.
+
 The CEX WebSocket adapter remains **deliberately out of scope**: §13 holds
 that question, and its trigger is a *quoting* need, not a visualization
 one. Polled ticks at 15 s serve the dashboard.
@@ -1876,7 +1911,7 @@ Three paths resolve from there, in the order the provider consults
 them:
 
 1. **The process environment**, always first — the override path, for a
-   machine that exports the three keys directly instead of keeping them
+   machine that exports the keys directly instead of keeping them
    in the enclave. No make target targets it *exclusively* any more, but
    `op run` inherits the environment rather than clearing it, so a key
    the enclave does not set still falls through to whatever was

@@ -128,11 +128,24 @@ pub struct PythHermesSource {
 impl PythHermesSource {
     /// Build the source over `base_url` (e.g. `https://hermes.pyth.network`),
     /// batching every feed in `feeds` into each poll.
-    pub fn new(base_url: &str, feeds: Vec<PythFeed>) -> Result<Self> {
-        Ok(Self {
-            http: HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL),
-            feeds,
-        })
+    ///
+    /// `api_key` is the Pyth bearer token ([`SECRET_NAME`]), taken as an
+    /// argument rather than read from the environment here — the caller decides
+    /// where the secret came from, as with every other keyed venue.
+    ///
+    /// `None` builds an unauthenticated client. Upstream Hermes has answered
+    /// those with 401 since the Core upgrade on 2026-08-26, so it is not a
+    /// working configuration against `hermes.pyth.network` — it stays
+    /// expressible because `base_url` may name a self-hosted instance, which
+    /// reads the Pyth network and Wormhole directly and needs no
+    /// credential. Spelling the absence at the call site is also what keeps a
+    /// keyless caller legible as a decision rather than an oversight.
+    pub fn new(base_url: &str, api_key: Option<&str>, feeds: Vec<PythFeed>) -> Result<Self> {
+        let mut http = HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL);
+        if let Some(api_key) = api_key {
+            http = http.with_secret_header("Authorization", &format!("Bearer {api_key}"))?;
+        }
+        Ok(Self { http, feeds })
     }
 
     /// Fetch every feed this source was built with, in one request.
@@ -154,6 +167,15 @@ impl PythHermesSource {
         Ok(parse_pyth(&body, &self.feeds))
     }
 }
+
+/// The canonical name of this venue's credential ([`crate::secrets`]) — the
+/// Pyth bearer token issued by Pyth Terminal.
+///
+/// Keyed only since the Core upgrade on 2026-08-26: Hermes served this feed
+/// without a credential for its whole life before that, which is why the
+/// collector had no secret to resolve and went dark rather than failing to
+/// start.
+pub const SECRET_NAME: &str = "pyth/api-key";
 
 /// This source's [`Source::name`] — the key its liveness is recorded under by
 /// [`crate::HealthReporter`], and therefore the value a consumer must join on
@@ -288,6 +310,41 @@ mod tests {
              documented 10 — a breach costs a 429 for the next 60s on the \
              primary anchor"
         );
+    }
+
+    #[test]
+    fn the_secret_name_matches_the_canonical_two_part_shape() {
+        // The name is what derives PYTH_API_KEY in the environment and
+        // op://<vault>/pyth/api-key in the enclave, so a rename here silently
+        // re-points both. `validate_name` is the same check the provider runs.
+        let (provider, secret) = crate::secrets::validate_name(SECRET_NAME).unwrap();
+        assert_eq!(provider, "pyth");
+        assert_eq!(secret, "api-key");
+        assert_eq!(crate::secrets::env_var(SECRET_NAME), "PYTH_API_KEY");
+    }
+
+    #[test]
+    fn a_key_is_accepted_and_kept_out_of_the_rendered_error() {
+        // Registered through `with_secret_header`, the token must not surface in
+        // a diagnostic. Asserted via the malformed-value error, which is the
+        // one place the header value reaches a rendered string.
+        let err = PythHermesSource::new(
+            "https://example.test",
+            Some("super-secret-token\ntail"),
+            vec![],
+        )
+        .err()
+        .expect("a newline in the token is rejected at construction");
+        let rendered = format!("{err:?}");
+        assert!(!rendered.contains("super-secret-token"), "{rendered}");
+    }
+
+    #[test]
+    fn a_keyless_client_still_builds() {
+        // Not a working configuration against upstream Hermes since the
+        // 2026-08-26 gate, but it must stay expressible: a self-hosted instance
+        // reads the Pyth network directly and takes no credential.
+        assert!(PythHermesSource::new("https://example.test", None, vec![]).is_ok());
     }
 
     /// A captured Hermes response: EUR/USD direct, USD/ZAR inverted.

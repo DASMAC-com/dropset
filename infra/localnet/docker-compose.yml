@@ -513,7 +513,18 @@ services:
     # and every row is logged, so the effective set is legible without querying
     # the database it came from.
     #
-    # Keyless and batched: one request per poll for the whole roster.
+    # Batched: one request per poll for the whole roster. Keyed since
+    # 2026-08-26, when the Pyth Core upgrade put Hermes behind a bearer token.
+    #
+    # **Opt-in, off by default**, which is why the `pyth` profile keeps it out
+    # of a plain `docker compose up` and out of `make collectors-up`. Pyth sells
+    # no free API tier — their free tier is view-only in a web terminal — and
+    # the plan covering FX is $2,500/month, so in practice nobody running this
+    # stack holds a key. Left in the default set the service would exit at
+    # startup and restart forever, and a permanently crash-looping container
+    # teaches operators to ignore a red container, which is the habit that let
+    # the original outage run for a week. Start it explicitly with
+    # `docker compose --profile pyth up pyth` once a key is in the enclave.
     build:
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
@@ -525,7 +536,15 @@ services:
     environment:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
+      # Required since the Pyth Core upgrade of 2026-08-26 put Hermes behind a
+      # bearer token. Empty, the collector names this variable and exits at
+      # startup rather than polling into a 401 — the failure has to be a
+      # process that dies, because the one that stayed up wrote nothing for a
+      # week and looked healthy throughout.
+      PYTH_API_KEY: '${PYTH_API_KEY:-}'
       RUST_LOG: 'info'
+    profiles:
+    - 'pyth'
     restart: 'unless-stopped'
   taker-bot:
     # The benign flow taker: stochastic swaps so the book moves and the maker
