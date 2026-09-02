@@ -72,8 +72,24 @@ fi
 # reportable, and the pass that depends on fresh skills is the thing asking for
 # it. Fast-forwarding on every `cdds` would move `main` under a session that
 # never wanted it.
+# Takes an OPTIONAL tag: bare `cdds` lands in the base repo, `cdds 1077` lands
+# in that issue's worktree. Dropping the argument was a parity gap and a
+# silent one — the committed version ignored it and reported success from the
+# base repo, which is the worst way to fail: every later edit then targets the
+# base copy the worktree build never sees, the exact slip the worktree
+# edit-path guard exists to catch downstream. Accepts `1077` or `eng-1077`,
+# matching `raps`.
 cdds() {
   cd "$_DS_REPO" || return 1
+  [[ -z "$1" ]] && return 0
+
+  local tag="eng-${1#eng-}"
+  local worktree="$_DS_REPO/.claude/worktrees/$tag"
+  if [[ ! -d "$worktree" ]]; then
+    print -u2 "cdds: no worktree at $worktree"
+    return 1
+  fi
+  cd "$worktree"
 }
 
 # Internal: the same move, for helpers that must launch from the base repo
