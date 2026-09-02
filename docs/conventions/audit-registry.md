@@ -301,13 +301,15 @@ push liveness (feeds <-> maker-bot <-> db-schema <-> grafana): a FOUR
   inside those upserts (CASE WHEN push_health.state = …), so a rewritten
   upsert silently converts them to write counters and a sustained outage
   starts reading as a flap. And push_health.last_error is fed producer
-  client text through feeds' redact_to_origin — as is
-  maker_telemetry.tick_error. The two are on equal footing: both carry
-  text derived from an operator-supplied endpoint, where credentials sit
-  in a path segment or userinfo as readily as in a query. Both columns
-  are readable by dropset_ro, so weakening either call site is a
-  disclosure. Note the 0003 and 0008 migration comments predate that and
-  still describe tick_error as taking the query-only sanitize_error.
+  client text through feeds' redact_to_origin, and the maker puts its
+  own tick errors through the same helper before writing
+  maker_telemetry.tick_error.
+  The two are on equal footing: both carry text derived from an
+  operator-supplied endpoint, where credentials sit in a path segment or
+  userinfo as readily as in a query. Both columns are readable by
+  dropset_ro, so weakening either call site is a disclosure. Note the
+  0003 and 0008 migration comments predate that and still describe
+  tick_error as taking the query-only sanitize_error.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit

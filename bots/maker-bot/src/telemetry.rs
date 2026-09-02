@@ -138,6 +138,13 @@ pub struct Sample {
     /// schema's comments promise is not in the database. The RPC client has no
     /// redaction of its own, which leaves the guard here at the write.
     ///
+    /// That guard is **URL-shaped**: it rewrites whitespace-delimited tokens
+    /// containing `://` and nothing else, so a credential reaching the text by
+    /// another route — header-style auth echoed into a message, a key quoted
+    /// inside a JSON body — passes through in clear. The three shapes below
+    /// are the ones an endpoint URL carries, not an exhaustive list of ways a
+    /// secret can reach this column.
+    ///
     /// It is **`redact_to_origin`, not the query-only `sanitize_error`**,
     /// because `rpc_url` is an operator-supplied endpoint: hosted providers
     /// authenticate by path segment (`/v2/<key>`) or by userinfo as readily as
@@ -638,9 +645,10 @@ async fn write_health(
 ///
 /// The error text arrives already redacted: [`LivenessReporter::failed`] puts
 /// the whole rendered cause chain through the framework's `redact_to_origin`,
-/// reducing every URL in it to scheme and host. That is the guard this column
-/// needs rather than the transport-level redaction `feed_health` relies on — a
-/// push producer's error never passes through the HTTP client that applies it.
+/// reducing every URL in it to scheme, host and port. That is the guard this
+/// column needs rather than the transport-level redaction `feed_health` relies
+/// on — a push producer's error never passes through the HTTP client that
+/// applies it.
 ///
 /// [`Sample::tick_error`] takes the same `redact_to_origin` treatment, for the
 /// same reason; the two columns are on equal footing. See that field for why,

@@ -1953,8 +1953,8 @@ ______________________________________________________________________
     `feed_health.last_error` is the one that differs, resting on the
     transport's allow-list redaction — **not** stricter, since it
     rewrites query values only and leaves a path segment or userinfo
-    untouched, but more legible on a path that has one, because it keeps
-    the benign parameters a failed backfill is diagnosed from.
+    untouched, but more legible where the URL carries benign parameters,
+    since it keeps the ones a failed backfill is diagnosed from.
 
     Note `0003_maker_telemetry.sql` and `0008_push_liveness.sql` describe
     `tick_error` as taking the query-only strip. Both migrations are
