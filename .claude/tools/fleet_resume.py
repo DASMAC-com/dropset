@@ -328,8 +328,23 @@ def summarize(result: dict) -> str:
         parts.append(f"{len(result['unrecognized_identifier'])} unrecognized")
     if result.get("opened") is not None:
         parts.append(f"{result['opened']} opened")
-        if result.get("unmarked"):
-            parts.append(f"{result['unmarked']} could not be marked")
+        unmarked = result.get("unmarked") or []
+        if unmarked:
+            # NAME them, and count them correctly. This used to interpolate the
+            # list itself into a slot reading "N could not be marked", so the
+            # summary printed a raw Python list repr where a count belonged.
+            parts.append(f"{len(unmarked)} could not be marked: {', '.join(unmarked)}")
+        # The silent path, and the one that actually bit: tabs opened but no
+        # tty came back, so nothing was marked and `unmarked` was empty too —
+        # a clean-looking summary over a total mark failure. Report the
+        # shortfall on its own, because an empty `unmarked` is otherwise
+        # indistinguishable from complete success.
+        missing = result.get("no_tty") or []
+        if missing:
+            parts.append(
+                f"{len(missing)} opened WITHOUT a resolvable tty, so it could "
+                f"not be marked: {', '.join(missing)}"
+            )
     return " | ".join(parts)
 
 
@@ -358,9 +373,20 @@ def run(argv: list[str]) -> int:
         unmarked = [tag for tag, tty in pairs if not mark_attention(tty)]
         result["opened"] = len(pairs)
         result["unmarked"] = unmarked
+        # A tab whose tty never came back is unreachable for marking, and its
+        # absence from `pairs` also kept it out of `unmarked` — so a total
+        # tty-parse failure reported "0 opened" and no mark complaint at all,
+        # over a window full of freshly opened tabs. Track the shortfall
+        # explicitly against what was REQUESTED rather than inferring it from
+        # what parsed.
+        resolved = {tag for tag, _ in pairs}
+        result["no_tty"] = [tag for tag in tags if tag not in resolved]
+        result["requested"] = len(tags)
     elif args.apply:
         result["opened"] = 0
         result["unmarked"] = []
+        result["no_tty"] = []
+        result["requested"] = 0
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")

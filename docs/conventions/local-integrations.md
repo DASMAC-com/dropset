@@ -738,7 +738,19 @@ so nothing committed here had ever run.
 The lesson generalizes past this one file: when moving an operative
 personal script under version control, diff the **behavior**, not just
 the shape, and decide each difference deliberately rather than
-inheriting it (the `cdds` pull was decided *against*, above).
+inheriting it.
+
+**And check that a deliberate decision was the operator's to make.**
+The `cdds` pull is the cautionary case: the migration decided *against*
+adopting it, recorded the reasoning here, and was later reversed by
+operator direction — the pull is now in `_ds_pull` and every verb
+inherits it. The reasoning was sound in isolation (a navigation command
+making a network call is a real cost) and still wrong, because it traded
+away a property the operator was relying on: entering the repo means
+having current code. A behavior the operator's own copy had is evidence
+of intent, not merely a difference to adjudicate — so the burden runs
+the other way, and dropping one wants an explicit ask rather than a
+recorded rationale.
 
 **What cannot ride this file:** the guard hooks' `settings.json` wiring.
 That is JSON read by the harness, not shell read by zsh, so sourcing
@@ -748,13 +760,35 @@ there.
 The family, one line each (`init-pr` names `aps` when it explains why a
 branch arrives as `worktree-eng-###`):
 
+- **`_ds_pull`** (internal) — fast-forward the **base** checkout's
+  `main`. Everything below inherits it, via `cdds` or via the internal
+  `_ds_base`, because the standing direction is that entering the repo —
+  or entering a worktree *from* the repo — means having current code.
+  Four properties carry the design:
+
+  - **Fast-forward only.** It never merges or rebases local work; a
+    divergence is reported and left for the operator.
+  - **The base checkout only, never a worktree.** A worktree's checkout
+    is a work branch, so pulling inside it would mutate that branch.
+    Worktrees share the object store, so fast-forwarding the base is
+    exactly what makes fresh `origin` refs reachable from them — the
+    benefit at none of the risk. On any branch but `main` it fetches and
+    stops.
+  - **Quiet on success, loud on trouble, fatal never.** A dead network,
+    an expired credential or a diverged `main` warns and returns 0. A
+    navigation command must not be able to brick session startup.
+  - **Throttled** (60s, stamped in `.git/.ds-last-pull`, claimed
+    *before* the pull). Not an optimization: `faps go` opens many tabs
+    at once and a pull takes `index.lock`, so without the throttle they
+    race and print git errors over each other.
+
 - **`cdds`** — `cd` to the base repo checkout. The starting point for
   anything that must not run inside a worktree (`housekeeping`, a
-  planning session). **It does not `git pull`**, deliberately: a
-  navigation command should not make a network call that can be slow,
-  fail, or print, and `housekeeping` already fast-forwards `main` as its
-  first step — where the operation is visible and its failure is
-  reportable.
+  planning session). **It fast-forwards `main` on the way in**, through
+  the shared `_ds_pull` helper described below. With a tag
+  (`cdds 1077`), the pull happens in the base repo *before* the `cd`, so
+  the worktree gets fresh `origin` refs through the shared object store
+  without its work branch being touched.
 
 - **`aps <tag>`** — start a **worktree** session:
   `claude -w <tag> -n <tag> --permission-mode acceptEdits /init-pr`.

@@ -60,18 +60,83 @@ if [[ "$_DS_REPO" == */.claude/worktrees/* ]]; then
     "($_DS_REPO) — source the base checkout's copy instead"
 fi
 
+# How recently a fast-forward must have happened for the next one to be skipped.
+#
+# This is not a micro-optimization. `faps go` opens many tabs at once and each
+# runs a session verb, so without a throttle they race for the base repo's
+# `index.lock` and print git errors over one another — a pull is a checkout, not
+# just a fetch, so it takes the lock. A minute is far shorter than a working
+# session and long enough to collapse a whole fleet launch into one pull.
+_DS_PULL_THROTTLE_SECONDS=60
+
+# Fast-forward the BASE checkout's `main` so anything starting from it starts on
+# current code. Called by `cdds` and by `_ds_base`, so every verb in the family
+# inherits it: entering the repo — or entering a worktree *from* the repo —
+# means having the latest code. Standing operator direction.
+#
+# Four properties, each load-bearing:
+#
+#   * **Fast-forward only.** It must never merge or rebase local work. A
+#     divergence is reported and otherwise left alone; resolving it is the
+#     operator's call, not a side effect of navigation.
+#   * **The base checkout only, never a worktree.** A worktree's checkout is a
+#     work branch, and pulling inside it would mutate that branch. Worktrees
+#     share the object store, so fast-forwarding the base is precisely what
+#     makes fresh `origin` refs reachable from them — the whole benefit at none
+#     of the risk. On any branch other than `main` this fetches and stops.
+#   * **Quiet on success, loud on trouble, fatal never.** A dead network, an
+#     expired credential or a diverged `main` must not brick session startup, so
+#     every failure path warns and returns 0. That is what makes it safe to hang
+#     off a navigation command.
+#   * **Bounded.** A stalled transfer is capped by git's own low-speed limit
+#     rather than an external `timeout`, which macOS does not ship.
+#
+# This REPLACES an earlier deliberate choice not to pull here, whose stated
+# objection was that a navigation command should not make a network call. The
+# objection is answered rather than simply overridden: the call is quiet,
+# bounded, throttled and non-fatal, so a bare `cdds` still lands where it says
+# it lands and still looks like it succeeded.
+_ds_pull() {
+  [[ -d "$_DS_REPO/.git" ]] || return 0
+
+  # Claim the throttle slot BEFORE pulling, not after. Two tabs launched in the
+  # same instant would otherwise both read a stale stamp and both pull, which is
+  # the lock contention this exists to prevent.
+  local stamp="$_DS_REPO/.git/.ds-last-pull"
+  local now last
+  now="$(date +%s)"
+  if [[ -f "$stamp" ]]; then
+    last="$(cat "$stamp" 2>/dev/null)"
+    if [[ -n "$last" ]] && (( now - last < _DS_PULL_THROTTLE_SECONDS )); then
+      return 0
+    fi
+  fi
+  print -r -- "$now" >| "$stamp" 2>/dev/null
+
+  local branch
+  branch="$(git -C "$_DS_REPO" symbolic-ref --quiet --short HEAD 2>/dev/null)"
+
+  if [[ "$branch" != "main" ]]; then
+    git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
+      -C "$_DS_REPO" fetch --quiet origin main 2>/dev/null ||
+      print -u2 "dropset: could not fetch origin/main (offline?) — continuing"
+    return 0
+  fi
+
+  git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
+    -C "$_DS_REPO" pull --ff-only --quiet 2>/dev/null ||
+    print -u2 "dropset: could not fast-forward main — diverged, dirty or" \
+      "offline. Continuing on the current checkout."
+}
+
 # `cd` to the base repo checkout. The starting point for anything that must not
 # run inside a worktree (`housekeeping`, a planning session).
 #
-# **It does not `git pull`, deliberately.** The operator's own copy did, and the
-# committed one is not adopting it: a navigation command should not make a
-# network call. A pull can be slow, can fail, and can print — so a bare `cd`
-# would sometimes leave the shell somewhere unexpected, or leave a `cd` looking
-# like it errored. And it is not needed: `housekeeping` step 1 fast-forwards
-# `main` as its **first** step, where the operation is visible, its failure is
-# reportable, and the pass that depends on fresh skills is the thing asking for
-# it. Fast-forwarding on every `cdds` would move `main` under a session that
-# never wanted it.
+# It fast-forwards `main` on the way in, via `_ds_pull` — see there for why that
+# is safe on a navigation command, and why it never touches a worktree's own
+# branch. With a tag, the pull happens in the base repo BEFORE the `cd`, so the
+# worktree gets fresh `origin` refs through the shared object store without its
+# work branch being touched.
 # Takes an OPTIONAL tag: bare `cdds` lands in the base repo, `cdds 1077` lands
 # in that issue's worktree. Dropping the argument was a parity gap and a
 # silent one — the committed version ignored it and reported success from the
@@ -81,6 +146,7 @@ fi
 # matching `raps`.
 cdds() {
   cd "$_DS_REPO" || return 1
+  _ds_pull
   [[ -z "$1" ]] && return 0
 
   local tag="eng-${1#eng-}"
@@ -101,8 +167,14 @@ cdds() {
 # next command runs in the base checkout, which is the slip the worktree
 # edit-path guard exists to catch. Left as-is deliberately: a subshell would
 # discard the `_ds_secrets` exports these helpers exist to set.
+#
+# It fast-forwards `main` too, so every session verb that launches from the base
+# repo — including the worktree ones, which start here before `claude -w` — gets
+# current code. `_ds_pull`'s throttle is what keeps a fleet launch from turning
+# that into N racing pulls.
 _ds_base() {
   cd "$_DS_REPO" || return 1
+  _ds_pull
 }
 
 # Resolve LINEAR_API_KEY and GITHUB_MCP_PAT from 1Password.
@@ -297,6 +369,22 @@ aps() {
 # worktree and continues its most recent conversation there. The
 # number-to-worktree resolution is the whole point — you resume a number, not
 # a UUID.
+#
+# **Where the session actually lives is not guessable from the directory**, which
+# is why this delegates. `aps` runs `claude -w <tag>` from the BASE repo, so
+# Claude Code files that session's transcript under the base repo's project slug
+# even though every `cwd` stamp in it points into the worktree — and no project
+# directory for the worktree ever exists. This helper used to `cd` into the
+# worktree and run `claude --continue` on the assumption that per-directory
+# addressing selects the session; for a `-w`-launched session it selects nothing
+# and reports "no conversation found" while the session sits intact under
+# another slug. Sessions that had been resumed from inside their worktree once
+# before DID have a worktree-slug transcript, which masked the bug and made it
+# look intermittent.
+#
+# `resolve_session.py` decides which of the three addressing forms reaches the
+# session; this verb only launches. `faps` types `raps`, so fleet resume
+# inherits the fix.
 raps() {
   # No number: the picker, from wherever the shell already is. The operator's
   # form, and worth keeping for a reason the tag form cannot cover — a session
@@ -308,26 +396,38 @@ raps() {
   fi
 
   local tag="eng-${1#eng-}"
-  local dir="$_DS_REPO/.claude/worktrees/$tag"
 
-  if [[ -d "$dir" ]]; then
-    cd "$dir" || return 1
-    _ds_secrets
-    # `-c/--continue` is per-directory, which is exactly the addressing this
-    # helper wants: the cd above has already selected the session.
-    claude --continue
-    return
-  fi
+  local mode sid run_from
+  {
+    read -r mode
+    read -r sid
+    read -r run_from
+  } <<< "$(python3 "$_DS_REPO/.claude/tools/resolve_session.py" \
+    --tag "$tag" --repo "$_DS_REPO" --format lines 2>/dev/null)"
 
-  # The worktree is gone — pruned after a merge, say — but the transcript
-  # outlives it, so fall back to the base repo rather than refusing. `--continue`
-  # is wrong here precisely because the cd no longer selects the right session:
-  # it would continue whatever ran last in the base repo. `--resume <tag>` filters
-  # the picker instead, which is a pick rather than a resume, and is the only
-  # form that still reaches the session.
-  _ds_base || return 1
+  cd "${run_from:-$_DS_REPO}" || return 1
+  _ds_pull
   _ds_secrets
-  claude --resume "$tag"
+
+  case "$mode" in
+    continue)
+      # The worktree has its own transcript, so per-directory addressing works
+      # and this is the original fast path.
+      claude --continue
+      ;;
+    resume)
+      # The `-w` case: resume by id from the base repo. This is the form that
+      # was missing, and the only one that reaches such a session.
+      claude --resume "$sid"
+      ;;
+    *)
+      # Nothing resolved — the worktree was pruned, or the session never
+      # started. `--resume <tag>` filters the picker rather than resuming, which
+      # is a pick rather than a resume, but it is the last form that can reach
+      # anything.
+      claude --resume "$tag"
+      ;;
+  esac
 }
 
 # Start a NAMED session in the BASE REPO (no worktree). The general-purpose
