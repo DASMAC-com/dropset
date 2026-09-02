@@ -145,20 +145,46 @@ pub fn dual_profile(
 /// `(offset_ppm, size_bps, expiry_secs)` tuples — asks and bids fill from
 /// level 0, unused slots stay zeroed. The ladder generalization of
 /// [`simple_profile`], for matcher scenarios that need more than one live
-/// level a side. Slot-unbounded, as [`simple_profile`] is.
+/// level a side. Slot-unbounded, as [`simple_profile`] is — a scenario that
+/// needs a finite slot bound wants [`dual_expiry_profile`].
 pub fn ladder_profile(asks: &[(u32, u16, u32)], bids: &[(u32, u16, u32)]) -> [u8; PROFILE_BYTES] {
+    let open = SlotSpan::UNBOUNDED.get();
+    let widen = |levels: &[(u32, u16, u32)]| -> Vec<(u32, u16, u32, u32)> {
+        levels
+            .iter()
+            .map(|&(offset_ppm, size_bps, expiry_secs)| (offset_ppm, size_bps, expiry_secs, open))
+            .collect()
+    };
+    dual_expiry_profile(&widen(asks), &widen(bids))
+}
+
+/// Build a multi-level profile from explicit per-level
+/// `(offset_ppm, size_bps, expiry_secs, expiry_slots)` tuples — the
+/// dual-domain generalization of [`ladder_profile`], which pins the slot
+/// bound open.
+///
+/// Expiry is the min of two independent bounds, so a scenario that means to
+/// age a level out in the *slot* domain — or to pin the two domains against
+/// each other — cannot be written with a slot-unbounded builder at all.
+/// Pair it with [`Fixture::warp_slots`] / [`Fixture::warp_unix`], which move
+/// one clock without touching the other, so the test can say which conjunct
+/// did the killing.
+pub fn dual_expiry_profile(
+    asks: &[(u32, u16, u32, u32)],
+    bids: &[(u32, u16, u32, u32)],
+) -> [u8; PROFILE_BYTES] {
     let mut profile: LiquidityProfile = bytemuck::Zeroable::zeroed();
-    for (i, &(offset_ppm, size_bps, expiry_secs)) in asks.iter().enumerate() {
+    for (i, &(offset_ppm, size_bps, expiry_secs, expiry_slots)) in asks.iter().enumerate() {
         profile.asks[i].price_offset = offset_ppm.into();
         profile.asks[i].size_bps = size_bps.into();
         profile.asks[i].expiry_offset_secs = expiry_secs.into();
-        profile.asks[i].expiry_offset_slots = SlotSpan::UNBOUNDED.get().into();
+        profile.asks[i].expiry_offset_slots = expiry_slots.into();
     }
-    for (i, &(offset_ppm, size_bps, expiry_secs)) in bids.iter().enumerate() {
+    for (i, &(offset_ppm, size_bps, expiry_secs, expiry_slots)) in bids.iter().enumerate() {
         profile.bids[i].price_offset = offset_ppm.into();
         profile.bids[i].size_bps = size_bps.into();
         profile.bids[i].expiry_offset_secs = expiry_secs.into();
-        profile.bids[i].expiry_offset_slots = SlotSpan::UNBOUNDED.get().into();
+        profile.bids[i].expiry_offset_slots = expiry_slots.into();
     }
     let mut bytes = [0u8; PROFILE_BYTES];
     bytes.copy_from_slice(bytemuck::bytes_of(&profile));

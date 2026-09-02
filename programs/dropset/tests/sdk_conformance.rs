@@ -14,14 +14,15 @@
 //! `matching.rs`'s original coverage was a single seeded ladder with two
 //! single-leg fills, which left the broader matching paths unpinned. This
 //! file replays the matcher across a scenario set that exercises the paths
-//! most likely to drift — cross-level fills, input capped at book depth, a
-//! limit price that stops mid-book, and a non-zero taker fee — through both
-//! the SDK simulator and a litesvm swap.
+//! most likely to drift — cross-level fills, cross-*vault* price-time
+//! priority, input capped at book depth, a limit price that stops mid-book,
+//! a non-zero taker fee, and each expiry domain independently — through
+//! both the SDK simulator and a litesvm swap.
 
 mod common;
 
 use anchor_v2_testing::{Keypair, Signer};
-use common::fixture::{ladder_profile, Fixture};
+use common::fixture::{dual_expiry_profile, ladder_profile, Fixture};
 
 use dropset_sdk::clock::{SlotTime, WallTime};
 use dropset_sdk::layout::MarketView;
@@ -40,8 +41,11 @@ fn market_bytes(f: &Fixture) -> Vec<u8> {
 /// for scenario-specific assertions.
 ///
 /// `taker` must already hold enough input-leg atoms (quote for a Buy, base
-/// for a Sell). The seeded ladders never expire, so `current_slot` only has
-/// to sit at or past the reference `quote_slot`.
+/// for a Sell). Most seeded ladders never expire, so the clocks only have to
+/// sit at or past the reference datum; the `sdk_expiry_*_domain` cases are
+/// the exception — they quote a bound that is finite in one domain and warp
+/// that domain's clock past it, which is how the dual gate gets compared
+/// against the engine's rather than only against its own vectors.
 fn predict_and_execute(
     f: &mut Fixture,
     taker: &Keypair,
@@ -259,6 +263,120 @@ fn sdk_simulate_swap_multi_level_sell() {
         q.legs >= 2,
         "expected a fill across both bid levels, got {}",
         q.legs
+    );
+}
+
+/// Cross-**vault** price-time priority, pinned differentially.
+///
+/// The DLL walk plus cross-vault sort is the part of the matcher the SDK
+/// re-implements rather than shares, and every other case in this file is
+/// single-vault — as was every off-chain fixture. `swap.rs` has seven
+/// `seeded_two_vaults` cases and not one of them runs the SDK, so the
+/// ordering was pinned on-chain and nowhere else.
+///
+/// Sector 0 is anchored at the *higher* reference, so the better (lower)
+/// ask lives in sector 1 and a correct walk crosses sector 1 before sector
+/// 0 — the reverse of both DLL order and sector order.
+///
+/// The take deliberately stops **inside** the second level. That is what
+/// makes the ordering observable at all: clearing both levels outright
+/// costs the same however they are ordered, so only a fill that runs out
+/// of input mid-book prices the two orders differently, and
+/// `predict_and_execute`'s in/out equality is then what catches a
+/// simulator that walked them the other way.
+#[test]
+fn sdk_simulate_swap_matches_onchain_across_two_vaults() {
+    let high = Price::encode(10_900_000, 0).unwrap().as_u32(); // 1.0900
+    let low = Price::encode(10_800_000, 0).unwrap().as_u32(); // 1.0800
+    let mut f = Fixture::seeded_two_vaults(high, low);
+    // Each vault quotes its full 1_000_000 base at +0.5% of its own
+    // reference — ~1.0854 in sector 1, ~1.0954 in sector 0 — so ~2.18M
+    // quote would clear both. 1.5M clears the cheaper level and bites into
+    // the dearer one.
+    let amount_in: u64 = 1_500_000;
+    let taker = f.funded_depositor(0, 3_000_000);
+
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY);
+    assert_eq!(q.legs, 2, "expected one ask level from each vault");
+    assert_eq!(
+        q.in_amount, amount_in,
+        "input should be exhausted inside the second vault's level"
+    );
+}
+
+/// A one-ask-level market whose expiry is finite in exactly one domain and
+/// open in the other, quoted after `warp` moves whichever clock the caller
+/// means to age out. `predict_and_execute` is the differential: it predicts
+/// with the SDK against the pre-swap bytes, runs the real `swap`, and
+/// asserts the two agree.
+fn expiry_domain_quote(
+    expiry_secs: u32,
+    expiry_slots: u32,
+    warp: impl FnOnce(&mut Fixture),
+) -> Quote {
+    let profile = dual_expiry_profile(&[(5_000, 10_000, expiry_secs, expiry_slots)], &[]);
+    let mut f = Fixture::seeded_with(1_000_000, 1_000_000, profile);
+    let taker = f.funded_depositor(0, 1_000_000);
+    warp(&mut f);
+    predict_and_execute(&mut f, &taker, SwapSide::Buy, 500_000, Price::INFINITY)
+}
+
+/// The bound this domain leaves open.
+const EXPIRY_OPEN: u32 = u32::MAX;
+/// Finite time-in-force per domain, small enough that warping past it keeps
+/// the blockhash valid.
+const TIF_SLOTS: u32 = 20;
+const TIF_SECS: u32 = 60;
+
+/// Dual-domain expiry, pinned **differentially** — the slot half.
+///
+/// The six expiry vectors are consumed by the native matcher, the WASM
+/// binding, the committed binary and the TS wrapper, all four downstream of
+/// the same `dropset-interface` matcher, while this file — the only harness
+/// that reaches the program — quotes ladders that never expire (see
+/// `predict_and_execute`). The program has its own expiry tests and the
+/// simulator has its own vectors; what neither side had is a comparison at
+/// a *shared* instant, which is the only thing that catches the two
+/// drifting apart.
+///
+/// The dead half on its own would be nearly vacuous — a simulator that
+/// always predicted an empty quote would satisfy it, since the engine also
+/// fills nothing. The live half against the *same* profile is what makes
+/// the pair sharp: both implementations must agree on a real non-zero fill
+/// when only the other domain's clock has moved.
+#[test]
+fn sdk_expiry_slot_domain_matches_onchain() {
+    let dead = expiry_domain_quote(EXPIRY_OPEN, TIF_SLOTS, |f| {
+        f.warp_slots(TIF_SLOTS as u64 + 10)
+    });
+    assert_eq!(
+        dead.legs, 0,
+        "slot bound passed: the book is dead even with the wall bound open"
+    );
+    assert_eq!(dead.out_amount, 0, "a dead book fills nothing");
+
+    let live = expiry_domain_quote(EXPIRY_OPEN, TIF_SLOTS, |_| {});
+    assert!(
+        live.out_amount > 0,
+        "the same profile must fill while inside its slot bound"
+    );
+}
+
+/// The wall half of the pair above. This is the halt case the wall datum
+/// exists for: slots frozen at a pre-halt value while wall time ran on.
+#[test]
+fn sdk_expiry_wall_domain_matches_onchain() {
+    let dead = expiry_domain_quote(TIF_SECS, EXPIRY_OPEN, |f| f.warp_unix(TIF_SECS as i64 + 10));
+    assert_eq!(
+        dead.legs, 0,
+        "wall bound passed: the book is dead even with the slot bound open"
+    );
+    assert_eq!(dead.out_amount, 0, "a dead book fills nothing");
+
+    let live = expiry_domain_quote(TIF_SECS, EXPIRY_OPEN, |_| {});
+    assert!(
+        live.out_amount > 0,
+        "the same profile must fill while inside its wall bound"
     );
 }
 
