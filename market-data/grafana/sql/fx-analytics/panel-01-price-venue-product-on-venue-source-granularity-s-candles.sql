@@ -11,7 +11,7 @@ SELECT
   "volume"
 FROM cex_prices
 WHERE $__unixEpochFilter(bucket_start)
-  AND source = '$venue_source'
-  AND product_id = '$venue_product'
-  AND granularity_secs::text = '$granularity'
+  AND source = ${venue_source:sqlstring}
+  AND product_id = ${venue_product:sqlstring}
+  AND granularity_secs::text = ${granularity:sqlstring}
 ORDER BY bucket_start

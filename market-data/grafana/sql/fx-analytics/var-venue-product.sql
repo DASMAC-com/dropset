@@ -2,4 +2,4 @@
 -- Source: fx-analytics.json
 -- Regenerate: make dashboard-sql
 
-SELECT DISTINCT product_id FROM cex_prices WHERE source = '$venue_source' ORDER BY 1
+SELECT DISTINCT product_id FROM cex_prices WHERE source = ${venue_source:sqlstring} ORDER BY 1

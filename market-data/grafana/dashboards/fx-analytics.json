@@ -134,7 +134,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  \"open\",\n  \"high\",\n  \"low\",\n  \"close\",\n  \"volume\"\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = '$venue_source'\n  AND product_id = '$venue_product'\n  AND granularity_secs::text = '$granularity'\nORDER BY bucket_start",
+          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  \"open\",\n  \"high\",\n  \"low\",\n  \"close\",\n  \"volume\"\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = ${venue_source:sqlstring}\n  AND product_id = ${venue_product:sqlstring}\n  AND granularity_secs::text = ${granularity:sqlstring}\nORDER BY bucket_start",
           "refId": "A"
         }
       ],
@@ -341,7 +341,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = '$venue_source'\n    AND product_id = '$venue_product'\n    AND granularity_secs::text = '$granularity'\n),\nreturns AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF('$granularity', '')::bigint\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM bars\n  WINDOW w AS (ORDER BY bucket_start)\n),\nclassified AS (\n  SELECT\n    EXTRACT(HOUR FROM bucket_ts AT TIME ZONE '$hour_tz')::int AS hour_of_day,\n    CASE\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 6\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 0\n           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') < 17\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 5\n           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') >= 17\n        THEN 'weekend'\n      ELSE 'weekday'\n    END AS regime,\n    r\n  FROM returns\n)\nSELECT\n  lpad(hour_of_day::text, 2, '0') AS hour,\n  stddev_samp(r) FILTER (WHERE regime = 'weekday') * 10000 AS weekday,\n  stddev_samp(r) FILTER (WHERE regime = 'weekend') * 10000 AS weekend\nFROM classified\nGROUP BY hour_of_day\nORDER BY hour_of_day",
+          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ${venue_source:sqlstring}\n    AND product_id = ${venue_product:sqlstring}\n    AND granularity_secs::text = ${granularity:sqlstring}\n),\nreturns AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF(${granularity:sqlstring}, '')::bigint\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM bars\n  WINDOW w AS (ORDER BY bucket_start)\n),\nclassified AS (\n  SELECT\n    EXTRACT(HOUR FROM bucket_ts AT TIME ZONE ${hour_tz:sqlstring})::int AS hour_of_day,\n    CASE\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 6\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 0\n           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') < 17\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 5\n           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') >= 17\n        THEN 'weekend'\n      ELSE 'weekday'\n    END AS regime,\n    r\n  FROM returns\n)\nSELECT\n  lpad(hour_of_day::text, 2, '0') AS hour,\n  stddev_samp(r) FILTER (WHERE regime = 'weekday') * 10000 AS weekday,\n  stddev_samp(r) FILTER (WHERE regime = 'weekend') * 10000 AS weekend\nFROM classified\nGROUP BY hour_of_day\nORDER BY hour_of_day",
           "refId": "A"
         }
       ],
@@ -423,7 +423,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = '$venue_source'\n    AND product_id = '$venue_product'\n    AND granularity_secs::text = '$granularity'\n),\nreturns AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF('$granularity', '')::bigint\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM bars\n  WINDOW w AS (ORDER BY bucket_start)\n),\nsessions (session, tz, open_hour, close_hour) AS (\n  VALUES\n    ('1 Sydney',   'Australia/Sydney', 8, 17),\n    ('2 Tokyo',    'Asia/Tokyo',       9, 18),\n    ('3 London',   'Europe/London',    8, 17),\n    ('4 New York', 'America/New_York', 8, 17)\n)\nSELECT\n  s.session,\n  stddev_samp(r.r) * 10000 AS vol_bps_per_bar\nFROM returns r\nJOIN sessions s\n  ON EXTRACT(HOUR FROM r.bucket_ts AT TIME ZONE s.tz) >= s.open_hour\n AND EXTRACT(HOUR FROM r.bucket_ts AT TIME ZONE s.tz) < s.close_hour\n AND EXTRACT(DOW FROM r.bucket_ts AT TIME ZONE s.tz) BETWEEN 1 AND 5\nGROUP BY s.session\nORDER BY s.session",
+          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ${venue_source:sqlstring}\n    AND product_id = ${venue_product:sqlstring}\n    AND granularity_secs::text = ${granularity:sqlstring}\n),\nreturns AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF(${granularity:sqlstring}, '')::bigint\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM bars\n  WINDOW w AS (ORDER BY bucket_start)\n),\nsessions (session, tz, open_hour, close_hour) AS (\n  VALUES\n    ('1 Sydney',   'Australia/Sydney', 8, 17),\n    ('2 Tokyo',    'Asia/Tokyo',       9, 18),\n    ('3 London',   'Europe/London',    8, 17),\n    ('4 New York', 'America/New_York', 8, 17)\n)\nSELECT\n  s.session,\n  stddev_samp(r.r) * 10000 AS vol_bps_per_bar\nFROM returns r\nJOIN sessions s\n  ON EXTRACT(HOUR FROM r.bucket_ts AT TIME ZONE s.tz) >= s.open_hour\n AND EXTRACT(HOUR FROM r.bucket_ts AT TIME ZONE s.tz) < s.close_hour\n AND EXTRACT(DOW FROM r.bucket_ts AT TIME ZONE s.tz) BETWEEN 1 AND 5\nGROUP BY s.session\nORDER BY s.session",
           "refId": "A"
         }
       ],
@@ -490,7 +490,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close, high, low\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = '$venue_source'\n    AND product_id = '$venue_product'\n    AND granularity_secs::text = '$granularity'\n),\nregimes AS (\n  SELECT\n    bucket_start,\n    close,\n    high,\n    low,\n    CASE\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 6\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 0\n           AND EXTRACT(HOUR FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') < 17\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 5\n           AND EXTRACT(HOUR FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') >= 17\n        THEN 'weekend'\n      ELSE 'weekday'\n    END AS regime\n  FROM bars\n),\nreturns AS (\n  SELECT\n    regime,\n    close,\n    high,\n    low,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF('$granularity', '')::bigint\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM regimes\n  WINDOW w AS (ORDER BY bucket_start)\n)\nSELECT\n  regime,\n  count(*) AS bars,\n  count(r) AS return_pairs,\n  stddev_samp(r) * 10000 AS vol_bps_per_bar,\n  avg(abs(r)) * 10000 AS mean_abs_move_bps,\n  max(abs(r)) * 10000 AS max_abs_move_bps,\n  count(DISTINCT close) AS distinct_closes,\n  count(*) FILTER (WHERE high = low) AS zero_range_bars\nFROM returns\nGROUP BY regime\nORDER BY regime",
+          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close, high, low\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ${venue_source:sqlstring}\n    AND product_id = ${venue_product:sqlstring}\n    AND granularity_secs::text = ${granularity:sqlstring}\n),\nregimes AS (\n  SELECT\n    bucket_start,\n    close,\n    high,\n    low,\n    CASE\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 6\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 0\n           AND EXTRACT(HOUR FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') < 17\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 5\n           AND EXTRACT(HOUR FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') >= 17\n        THEN 'weekend'\n      ELSE 'weekday'\n    END AS regime\n  FROM bars\n),\nreturns AS (\n  SELECT\n    regime,\n    close,\n    high,\n    low,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF(${granularity:sqlstring}, '')::bigint\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM regimes\n  WINDOW w AS (ORDER BY bucket_start)\n)\nSELECT\n  regime,\n  count(*) AS bars,\n  count(r) AS return_pairs,\n  stddev_samp(r) * 10000 AS vol_bps_per_bar,\n  avg(abs(r)) * 10000 AS mean_abs_move_bps,\n  max(abs(r)) * 10000 AS max_abs_move_bps,\n  count(DISTINCT close) AS distinct_closes,\n  count(*) FILTER (WHERE high = low) AS zero_range_bars\nFROM returns\nGROUP BY regime\nORDER BY regime",
           "refId": "A"
         }
       ],
@@ -540,14 +540,14 @@
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT DISTINCT product_id FROM cex_prices WHERE source = '$venue_source' ORDER BY 1",
+        "definition": "SELECT DISTINCT product_id FROM cex_prices WHERE source = ${venue_source:sqlstring} ORDER BY 1",
         "description": "The product to show, listing only what the selected venue actually carries. The filter on the source is load-bearing rather than cosmetic: an unfiltered list offers every product any source has ever written, so it invites selecting a symbol the chosen venue does not and could not quote. The committed default is the product with the densest traded tape, which is the one to verify against when checking that a panel renders.",
         "includeAll": false,
         "label": "Venue product",
         "multi": false,
         "name": "venue_product",
         "options": [],
-        "query": "SELECT DISTINCT product_id FROM cex_prices WHERE source = '$venue_source' ORDER BY 1",
+        "query": "SELECT DISTINCT product_id FROM cex_prices WHERE source = ${venue_source:sqlstring} ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
@@ -564,14 +564,14 @@
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT DISTINCT granularity_secs FROM cex_prices WHERE source = '$venue_source' AND product_id = '$venue_product' ORDER BY 1",
+        "definition": "SELECT DISTINCT granularity_secs FROM cex_prices WHERE source = ${venue_source:sqlstring} AND product_id = ${venue_product:sqlstring} ORDER BY 1",
         "description": "Bucket size, in seconds, listing only the values the selected venue and product actually hold. Query-driven rather than a fixed list, and the change is a bug fix: the fixed list offered every bucket size the schema permits while any one venue and product holds exactly one, so five of its six entries selected a silently empty panel that reads as a broken dashboard rather than as absent data. Which five are dead depends on the selection, which is precisely why filtering on the product as well as the source is load-bearing: bucket size varies by venue \u2014 the candle venues write 60s buckets and the daily-only FX vendors write 86400s ones \u2014 so a list filtered on the source alone would still offer a value the current selection cannot render. On a cold database this variable is empty, which is the honest signal that nothing has been collected yet, and is strictly better than offering a choice that renders nothing. Allowing it to be empty is what forces the two guards every consumer now carries: the filters compare it as text, and the three analytics panels that also do arithmetic on it wrap it so an empty value becomes null instead. Both exist for the same reason \u2014 an empty expansion of a bare numeric reference is a SQL parse error rather than an empty result, and a parse error fails before any row is considered, so casting the filter alone would have left those three panels red on a cold database while the other three read as no data. The sibling ingestion dashboard cites exactly that parse error as its reason for hardcoding the list at all; the trade is taken here deliberately and paid for in both places, rather than reversed silently. It is also excluded from URL sync, unlike the two variables above it: a bucket size pinned in a shared or reloaded link can outlive the selection it was valid for and then silently blanks every panel, and since exactly one bucket size exists per venue and product today, there is nothing worth deep-linking. Treat this variable as derived from the other two rather than as state of its own.",
         "includeAll": false,
         "label": "Granularity",
         "multi": false,
         "name": "granularity",
         "options": [],
-        "query": "SELECT DISTINCT granularity_secs FROM cex_prices WHERE source = '$venue_source' AND product_id = '$venue_product' ORDER BY 1",
+        "query": "SELECT DISTINCT granularity_secs FROM cex_prices WHERE source = ${venue_source:sqlstring} AND product_id = ${venue_product:sqlstring} ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": true,
@@ -588,7 +588,7 @@
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT min(bucket_start) * 1000 FROM cex_prices WHERE source = '$venue_source' AND product_id = '$venue_product' AND granularity_secs::text = '$granularity'",
+        "definition": "SELECT min(bucket_start) * 1000 FROM cex_prices WHERE source = ${venue_source:sqlstring} AND product_id = ${venue_product:sqlstring} AND granularity_secs::text = ${granularity:sqlstring}",
         "description": "The epoch-millisecond timestamp of the earliest collected bar for the current selection. Hidden, and not a control: it exists so the All data link can widen the time range to exactly where this series starts rather than to a fixed relative window. A fixed window cannot do that job \u2014 collection began on a specific date, so any last-N-days range wide enough to hold every bar also pads the chart with empty space to the left of the first bar, and that padding grows by a day every day. The link deliberately ends at now rather than at the last collected bar, so a series that has stopped still shows the gap between its final bar and the present, which is the only on-chart signal that it is dead. Known soft edge: an aggregate with no grouping returns one null row rather than no rows, so on a selection holding nothing this expands to an empty range bound and the link degrades to resetting the time picker with no indication it did. That is accepted rather than fixed, because the case only arises when there is nothing to show anyway.",
         "hide": 2,
         "includeAll": false,
@@ -596,7 +596,7 @@
         "multi": false,
         "name": "data_from",
         "options": [],
-        "query": "SELECT min(bucket_start) * 1000 FROM cex_prices WHERE source = '$venue_source' AND product_id = '$venue_product' AND granularity_secs::text = '$granularity'",
+        "query": "SELECT min(bucket_start) * 1000 FROM cex_prices WHERE source = ${venue_source:sqlstring} AND product_id = ${venue_product:sqlstring} AND granularity_secs::text = ${granularity:sqlstring}",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": true,

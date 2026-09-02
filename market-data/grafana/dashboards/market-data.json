@@ -462,7 +462,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  \"open\",\n  \"high\",\n  \"low\",\n  \"close\",\n  \"volume\"\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = '$candle_source'\n  AND product_id = '$product_id'\n  AND granularity_secs = $granularity\nORDER BY bucket_start",
+          "rawSql": "SELECT\n  to_timestamp(bucket_start) AS \"time\",\n  \"open\",\n  \"high\",\n  \"low\",\n  \"close\",\n  \"volume\"\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = ${candle_source:sqlstring}\n  AND product_id = ${product_id:sqlstring}\n  AND granularity_secs = $granularity\nORDER BY bucket_start",
           "refId": "A"
         }
       ],

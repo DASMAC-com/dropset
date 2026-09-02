@@ -2,4 +2,4 @@
 -- Source: fx-analytics.json
 -- Regenerate: make dashboard-sql
 
-SELECT min(bucket_start) * 1000 FROM cex_prices WHERE source = '$venue_source' AND product_id = '$venue_product' AND granularity_secs::text = '$granularity'
+SELECT min(bucket_start) * 1000 FROM cex_prices WHERE source = ${venue_source:sqlstring} AND product_id = ${venue_product:sqlstring} AND granularity_secs::text = ${granularity:sqlstring}
