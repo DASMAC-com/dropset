@@ -11,7 +11,9 @@
 -- means the request answered — not that every pair came back in it. A per-pair
 -- alert built on this column is therefore silently wrong for exactly those
 -- venues: the row stays fresh while one pair is dead. Read
--- `instrument_source_liveness` for the per-pair question.
+-- `instrument_source_liveness` for the per-pair question — noting its `source`
+-- is a bare venue token and so does not join this column, and that the four
+-- fusion-input venues with no tick collector have no rows there at all.
 INSERT INTO feed_health (
     feed,
     status,

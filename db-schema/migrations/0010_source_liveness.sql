@@ -31,7 +31,7 @@
 -- second, which is the honest attribution for *arrival* and says nothing about
 -- how old the quote was when it arrived.
 --
--- Two blind spots follow, and both are better named here than rediscovered:
+-- Three blind spots follow, and each is better named here than rediscovered:
 --
 --   * A venue answering `200 OK` with a FROZEN quote reads perfectly live. No
 --     arrangement of receipt stamps can catch that; it needs a publish
@@ -103,9 +103,53 @@ last_seen AS (
         GREATEST(bars.last_at, ticks.last_at) AS last_at
     FROM instrument_registry r
     LEFT JOIN LATERAL (
-        SELECT max(c.bucket_start) AS last_at
-        FROM cex_prices c
-        WHERE c.source = r.source AND c.product_id = r.product_id
+        -- One equality-prefixed probe per granularity, rather than a single
+        -- unconstrained scan of the `(source, product_id)` prefix.
+        --
+        -- WHY THIS SHAPE, AND THE MEASUREMENTS THAT CHOSE IT.
+        --
+        -- `cex_prices`' primary key is
+        -- `(source, product_id, granularity_secs, bucket_start)`. Constraining
+        -- only the first two leaves `granularity_secs` open, so Postgres
+        -- cannot apply its MIN/MAX index transform to `max(bucket_start)` and
+        -- index-only-scans the whole prefix instead. Measured against the
+        -- running store: 76.9 ms and 7,335 buffers for the aggregate view,
+        -- 98% of it spent right here, and growing LINEARLY with price history
+        -- — about 900 ms per dashboard load at ten times the current history.
+        --
+        -- Iterating the granularity vocabulary gives each probe a full
+        -- equality prefix, so the transform applies and each becomes one
+        -- backward seek: 0.8 ms and 884 buffers, flat with history.
+        --
+        -- Filtering the view the way a dashboard variable would does not help
+        -- on its own, because Postgres does not push that filter into the
+        -- aggregation — all products materialize regardless (measured at
+        -- 89.1 ms). The fix has to live at the definition site, which is why
+        -- it is here and not in the consumer.
+        --
+        -- `max` of the per-granularity maxima is the same value as `max` over
+        -- the open range: a granularity holding no rows contributes NULL, and
+        -- both `max` and the outer `GREATEST` ignore NULLs.
+        --
+        -- **THE VOCABULARY IS DUPLICATED, AND A TEST PINS IT.** A granularity
+        -- missing from this list makes its series read as never-collected — a
+        -- false "quiet", which 0009 explicitly identifies as the worse of the
+        -- two error directions because it HIDES data. So
+        -- `market-data/tests/granularity_agreement.rs` parses this list and
+        -- the dashboard's granularity variable and fails if they diverge. Add
+        -- a granularity in both places, or CI stops you. Do not "simplify"
+        -- this back to an open range to avoid the duplication; that trades a
+        -- caught divergence for an uncaught 78x regression.
+        SELECT max(g.last_at) AS last_at
+        FROM (VALUES (60), (300), (900), (3600), (21600), (86400))
+            AS gran (secs)
+        CROSS JOIN LATERAL (
+            SELECT max(c.bucket_start) AS last_at
+            FROM cex_prices c
+            WHERE c.source = r.source
+              AND c.product_id = r.product_id
+              AND c.granularity_secs = gran.secs
+        ) g
     ) bars ON true
     LEFT JOIN LATERAL (
         SELECT max(s.observed_at) AS last_at
@@ -166,7 +210,16 @@ COMMENT ON VIEW instrument_source_liveness IS
 -- product's sources is exactly the `max(GREATEST(bars, ticks))` the replaced
 -- body computed, and `is_live` is recomputed from that aggregate with the same
 -- expression. Existing consumers — the dashboards' variable queries among
--- them — see no difference.
+-- them — see the same rows and values.
+--
+-- The row set is identical; the internal cardinality is not quite. 0009
+-- grouped `last_seen` to one row per product BEFORE joining `instruments`,
+-- whereas this joins at one row per registry row and groups after, so the
+-- join and the final grouping go from N_products to N_registry (four-to-one
+-- for EUR-USD). The LATERAL probe count — the part that touches the
+-- measurement tables — is unchanged, and the registry is tens of rows, so
+-- this is noted for honesty rather than as a measured cost. No plan was
+-- measured either way.
 --
 -- `stale_after_secs` is a grouping key rather than an aggregate because it is
 -- a pure function of `asset_class`, which is per-product: every row of a
@@ -228,8 +281,9 @@ COMMENT ON VIEW instrument_liveness IS
 -- The reason to restate it in the catalog is that the readers who most need it
 -- never open those files. A dashboard or alert author works from the schema
 -- and the query files, and `feed_health` looks per-instrument the moment a
--- per-product source name appears in it — which it does, because the candle
--- collectors name themselves per product (`cex:coinbase:EURC-USDC`) while the
+-- per-product source name appears in it — which it does, because the
+-- per-product collectors name themselves that way (`cex:coinbase:EURC-USDC`)
+-- while the
 -- batched venues return one constant venue-level name for the whole venue.
 -- Reading a batched venue's row as per-pair is the silent-green failure this
 -- comment exists to prevent: the row stays fresh because the REQUEST
@@ -238,13 +292,24 @@ COMMENT ON VIEW instrument_liveness IS
 --
 -- AND THE TWO KEYS DO NOT JOIN, which is the part a panel author most needs.
 -- `feed_health.feed` is the framework's `Source::name`: prefixed and
--- per-product for the candle collectors (`cex:coinbase:EURC-USDC`), a venue
+-- per-product for the per-product collectors (`cex:coinbase:EURC-USDC`), a venue
 -- constant for the batched ones. `instrument_source_liveness.source` is the
 -- bare venue token the collector registers with `register_instruments`
 -- (`coinbase`, `oanda`, `twelvedata`, `alphavantage`, `kraken`, `pyth`). The
 -- two coincide only where the framework name happens to be a bare venue
 -- token, so a dashboard variable populated from one will silently match
 -- nothing in the other. Map them deliberately; never equi-join them.
+--
+-- AND FOUR VENUES HAVE NO ROW IN THAT VIEW AT ALL, which matters because a
+-- redirect that returns nothing is the very failure this comment is about.
+-- The view reads `instrument_registry`, and only the market-data collector
+-- binaries write it — there are none for er-api, CoinGecko, CMC or
+-- Frankfurter. Those four are fair-price fusion inputs with no tick
+-- collector, so a filter on `source = 'coingecko'` there returns zero rows,
+-- and zero rows is indistinguishable from healthy. For them the venue-level
+-- row in THIS table, plus the missing-leg shortfall the fusion records, is
+-- the whole available signal; per-pair delivery is not a question they
+-- answer.
 COMMENT ON TABLE feed_health IS
     'Per-FEED poll liveness: whether a poller is alive, when it last '
     'succeeded, and what it last failed with. The key is a framework source '
@@ -253,7 +318,10 @@ COMMENT ON TABLE feed_health IS
     'answered, not that any pair was in the response. For a per-pair answer '
     'read instrument_source_liveness — but note the keys do NOT join, since '
     'this column is a framework name (cex:coinbase:EURC-USDC) while that '
-    'view''s source is a bare venue token (coinbase).';
+    'view''s source is a bare venue token (coinbase); and that the four '
+    'fusion-input venues with no tick collector (er-api, CoinGecko, CMC, '
+    'Frankfurter) have no rows there at all, so this table is their only '
+    'signal.';
 
 COMMENT ON TABLE push_health IS
     'Per-CONNECTION transport state for a push source: subscribed and able to '

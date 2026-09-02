@@ -1157,6 +1157,108 @@ async fn source_liveness_separates_a_dark_collector_from_a_live_pair() {
         "expected one row per collector for CAD-USD, got {rows} — the view is \
          aggregating across sources"
     );
+
+    // And the symmetric assertion on the aggregate, which guards the
+    // consumer-visible half. `fetch_one` above returns the FIRST row and does
+    // not reject extras, so an edit that added `source` to `per_product`'s
+    // `GROUP BY` — emitting one row per collector from a view every consumer
+    // reads as one row per product — would return `true` and `false` rows in
+    // an undefined order and merely FLAKE. Counting is what makes it fail.
+    let (product_rows,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM instrument_liveness WHERE product_id = 'CAD-USD'")
+            .fetch_one(&pool)
+            .await
+            .expect("count CAD-USD rows in instrument_liveness");
+    assert_eq!(
+        product_rows, 1,
+        "expected exactly one aggregate row for CAD-USD, got {product_rows} — \
+         instrument_liveness is no longer one row per product"
+    );
+}
+
+/// Every granularity in the view's vocabulary is actually seen by it.
+///
+/// The `bars` lateral iterates a literal granularity list so each probe gets a
+/// full equality prefix on `cex_prices`' primary key — without it Postgres
+/// cannot apply its MIN/MAX index transform and scans the whole
+/// `(source, product_id)` prefix (measured: 76.9 ms and 7,335 buffers against
+/// the running store, versus 0.8 ms and 884 buffers with it).
+///
+/// `granularity_agreement` in market-data's tests pins that list against the
+/// dashboard's granularity variable, but agreement between two lists says
+/// nothing about whether either one WORKS. This is the behavioral half: a bar
+/// at each listed granularity must make its pair read live. A granularity
+/// dropped from the `VALUES` list contributes no rows to that series' `max`, so
+/// the pair reads never-collected — a false `quiet`, which `0009_instruments`
+/// singles out as the worse error direction because it hides data rather than
+/// reporting it.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn liveness_sees_a_bar_at_every_granularity_in_its_vocabulary() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    // Kept in step with the `VALUES` list in `0010_source_liveness.sql` by
+    // `granularity_agreement`, which fails if the view and the dashboard
+    // diverge. A granularity added there and not here would leave this test
+    // passing while covering one fewer probe, so if you add one, add it in all
+    // three places.
+    let granularities: [i64; 6] = [60, 300, 900, 3600, 21600, 86400];
+
+    // One product per granularity, so a single missing probe isolates to a
+    // single failing row rather than being masked by a sibling that shares the
+    // series. The ids only have to satisfy `instrument_registry`'s canonical
+    // shape; the class they resolve to is irrelevant here, because one hour of
+    // silence is inside every bound.
+    for secs in granularities {
+        let product = format!("G{secs}-USD");
+        sqlx::query(
+            "INSERT INTO instrument_registry
+                 (source, product_id, first_registered_at, last_registered_at)
+             VALUES ('granularity-probe', $1, 1, 1)",
+        )
+        .bind(&product)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("register `{product}`: {e}"));
+
+        sqlx::query(
+            "INSERT INTO cex_prices
+                 (source, product_id, granularity_secs, bucket_start,
+                  low, high, open, close, volume)
+             VALUES ('granularity-probe', $1, $2,
+                     EXTRACT(EPOCH FROM now())::BIGINT - 3600, 1, 1, 1, 1, 0)",
+        )
+        .bind(&product)
+        .bind(secs)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("insert a {secs}s bar for `{product}`: {e}"));
+    }
+
+    for secs in granularities {
+        let product = format!("G{secs}-USD");
+        let (is_live, last_data_at): (bool, Option<i64>) = sqlx::query_as(
+            "SELECT is_live, last_data_at
+             FROM instrument_source_liveness
+             WHERE source = 'granularity-probe' AND product_id = $1",
+        )
+        .bind(&product)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("`{product}` missing from the view: {e}"));
+
+        assert!(
+            last_data_at.is_some(),
+            "the {secs}s bar for `{product}` was not seen at all — that \
+             granularity is missing from the view's `VALUES` list"
+        );
+        assert!(
+            is_live,
+            "`{product}` has a bar one hour old at {secs}s and still reads \
+             quiet"
+        );
+    }
 }
 
 #[tokio::test]

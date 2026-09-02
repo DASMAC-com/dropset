@@ -718,12 +718,26 @@ populated from one will silently match nothing in the other.
 venue's own publish time only where the venue sends one — Pyth Hermes
 does — and otherwise the collector's poll second, which is the honest
 attribution for *arrival* and says nothing about how old the quote was
-when it arrived. Two blind spots follow. A venue answering `200 OK`
+when it arrived. Three blind spots follow. A venue answering `200 OK`
 with a frozen quote reads perfectly live, and no arrangement of receipt
 stamps catches it: that needs a publish timestamp the venue does not
-send. And a pegged pair legitimately sits still, so "price unchanged" is
+send. A pegged pair legitimately sits still, so "price unchanged" is
 not a fault signal either — `USDC-USD`, the peg leg the Kraken
-collector exists to capture, is the case in point.
+collector exists to capture, is the case in point. And two collector
+*processes* that share one source label collapse into a single row:
+Coinbase's candle and ticker binaries both register as `coinbase`
+deliberately, so if the candle collector goes dark while the ticker
+runs, that row still reads live. Closing the last one needs a distinct
+source per collector, which is a change to the collectors.
+
+Two things a panel author needs before building on any of this. The
+four fusion-input venues with no tick collector — er-api, CoinGecko,
+CMC, Frankfurter — have **no rows at all** in either liveness view,
+because only the market-data collector binaries write the registry
+those views read; a filter on one of them returns nothing, and nothing
+looks exactly like healthy. And adding a migration advances the schema
+version the fence checks, so the shared database has to be migrated
+*before* any binary built from that change will start.
 
 ______________________________________________________________________
 
