@@ -76,44 +76,75 @@ fn position(significand: u32, exp: i8, size: u64) -> Position {
     }
 }
 
-/// Build the representative market and serialize it to the exact account
-/// byte buffer `MarketView::load` (and thus the wasm binding) expects:
-/// discriminator, header, `u32` slab length, alignment pad, then the
-/// `Vault` sectors. One active vault (sector 0) carries a live EUR/USD book
-/// in its `remaining` positions (no flush armed, so the matcher reads them
-/// directly): two ask levels and two bid levels, enough for cross-level
-/// fills on both sides and a limit that stops mid-book.
-fn market_data() -> Vec<u8> {
-    let mut header = MarketHeader::zeroed();
-    header.head = 0u32.into(); // sector 0 is the (only) active vault
-    header.tombstone_head = NULL_SECTOR.into();
-    header.free_head = NULL_SECTOR.into();
-    header.active_count = 1u32.into();
-    header.taker_fee = TAKER_FEE_PPM.into();
-    header.max_platform_fee = MAX_PLATFORM_FEE_BPS.into();
-    header.base_mint = [2u8; 32];
-    header.quote_mint = [3u8; 32];
-
+/// Scaffold one active vault: a non-zero leader (so it is not a free
+/// sector), ample inventory, and a live reference price stamped with
+/// `stamp` — `FLUSH_BIT` clear, so the matcher reads `remaining`.
+/// `next`/`prev` wire it into the active DLL. The walk follows `next` only,
+/// but `prev` is set to match what the program writes.
+fn vault(stamp: u64, next: u32, prev: u32, leader: [u8; 32]) -> Vault {
     let mut v = Vault::zeroed();
-    v.next = NULL_SECTOR.into();
-    v.prev = NULL_SECTOR.into();
-    v.leader = [1u8; 32]; // non-zero leader => not a free sector
+    v.next = next.into();
+    v.prev = prev.into();
+    v.leader = leader;
     v.reference_price = ReferencePrice {
-        stamp: 1u64.into(), // nonce 1, FLUSH_BIT clear => read `remaining`
+        stamp: stamp.into(),
         price: Price::encode(10_850_000, 0).unwrap().as_u32().into(), // 1.0850
         quote_slot: 0u32.into(),
         quote_unix: 0u32.into(),
     };
     v.base_atoms = INVENTORY.into();
     v.quote_atoms = INVENTORY.into();
-    // Asks (consumed by a Buy): 1.0904 then 1.1393.
-    v.remaining.asks[0] = position(10_904_000, 0, 1_000_000);
-    v.remaining.asks[1] = position(11_393_000, 0, 800_000);
-    // Bids (consumed by a Sell): 1.0796 then 1.0416.
-    v.remaining.bids[0] = position(10_796_000, 0, 2_000_000);
-    v.remaining.bids[1] = position(10_416_000, 0, 1_500_000);
+    v
+}
 
-    let vaults = [v];
+/// Build the representative market and serialize it to the exact account
+/// byte buffer `MarketView::load` (and thus the wasm binding) expects:
+/// discriminator, header, `u32` slab length, alignment pad, then the
+/// `Vault` sectors.
+///
+/// **Two** active vaults (sectors 0 and 1), each carrying a live EUR/USD
+/// book in its `remaining` positions. Their levels **interleave** in price
+/// on both sides, so the sorted book alternates vaults and a fill walks
+/// 0, 1, 0, 1. That is the point: the DLL walk plus cross-vault sort is the
+/// part of the matcher the simulator re-implements rather than shares, and
+/// a single-vault fixture cannot tell that sort apart from a per-vault
+/// walk — every off-chain fixture used to be single-vault, so the ordering
+/// was pinned on-chain and nowhere else.
+///
+/// The deepest level on each side is an **equal-price pair** across the two
+/// vaults, which the nonce tie-break orders (older quote first). That
+/// ordering is invisible in a `Quote`'s totals — two levels at one price
+/// fill to the same amounts either way — so it is the resting-book vectors
+/// that pin it, not the swap cases.
+fn market_data() -> Vec<u8> {
+    let mut header = MarketHeader::zeroed();
+    header.head = 0u32.into(); // sector 0 heads the active DLL
+    header.tombstone_head = NULL_SECTOR.into();
+    header.free_head = NULL_SECTOR.into();
+    header.active_count = 2u32.into();
+    header.taker_fee = TAKER_FEE_PPM.into();
+    header.max_platform_fee = MAX_PLATFORM_FEE_BPS.into();
+    header.base_mint = [2u8; 32];
+    header.quote_mint = [3u8; 32];
+
+    // Sector 0 — nonce 1, the older quote, so it wins every equal-price tie.
+    let mut v0 = vault(1, 1, NULL_SECTOR, [1u8; 32]);
+    // Asks (consumed by a Buy): 1.0904, then the 1.1393 tie-break pair.
+    v0.remaining.asks[0] = position(10_904_000, 0, 1_000_000);
+    v0.remaining.asks[1] = position(11_393_000, 0, 500_000);
+    // Bids (consumed by a Sell): 1.0796, then the 1.0416 tie-break pair.
+    v0.remaining.bids[0] = position(10_796_000, 0, 2_000_000);
+    v0.remaining.bids[1] = position(10_416_000, 0, 1_500_000);
+
+    // Sector 1 — nonce 2, the newer quote. Its inner level on each side
+    // sits *between* sector 0's two, which is what interleaves the book.
+    let mut v1 = vault(2, NULL_SECTOR, 0, [4u8; 32]);
+    v1.remaining.asks[0] = position(10_950_000, 0, 400_000);
+    v1.remaining.asks[1] = position(11_393_000, 0, 300_000);
+    v1.remaining.bids[0] = position(10_700_000, 0, 800_000);
+    v1.remaining.bids[1] = position(10_416_000, 0, 600_000);
+
+    let vaults = [v0, v1];
     let mut buf = Vec::new();
     buf.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]); // discriminator (load skips it)
     buf.extend_from_slice(bytes_of(&header));
@@ -173,19 +204,22 @@ fn main() {
     let view = MarketView::load(&data).expect("fixture market decodes");
 
     let cases = [
-        // Buy that clears both ask levels — cross-level price-time priority,
-        // capped at book depth, and a non-zero taker fee on the output leg.
+        // Buy that clears all four ask levels — cross-*vault* price-time
+        // priority (the walk alternates sectors 0, 1, 0, 1), capped at book
+        // depth, and a non-zero taker fee on the output leg.
         Case {
             name: "buy_multi_level",
             side: SwapSide::Buy,
-            amount_in: 3_000_000, // quote atoms; dwarfs the ~2.0M-quote ask depth
+            amount_in: 3_000_000, // quote atoms; dwarfs the ~2.44M-quote ask depth
             limit: Price::INFINITY,
             now_slot: LIVE_SLOT,
             now_unix: LIVE_UNIX,
             platform_fee_bps: 0,
         },
-        // Buy with a 1.10 limit: ask[0] (1.0904) fills, ask[1] (1.1393)
-        // crosses — exactly one leg.
+        // Buy with a 1.10 limit: the two inner asks (1.0904 in sector 0 and
+        // 1.0950 in sector 1) fill, the 1.1393 tie-break pair crosses — so
+        // the limit stops the walk two legs in, having taken one level from
+        // each vault. A per-vault walk would stop after sector 0's level.
         Case {
             name: "buy_limit_stops",
             side: SwapSide::Buy,
@@ -205,11 +239,12 @@ fn main() {
             now_unix: LIVE_UNIX,
             platform_fee_bps: 0,
         },
-        // Sell that clears both bid levels — the symmetric cross-level path.
+        // Sell that clears all four bid levels — the symmetric cross-vault
+        // path, walking sectors 0, 1, 0, 1 down the bid side.
         Case {
             name: "sell_multi_level",
             side: SwapSide::Sell,
-            amount_in: 5_000_000, // base atoms; dwarfs the bid depth
+            amount_in: 5_000_000, // base atoms; dwarfs the 4.9M-base bid depth
             limit: Price::ZERO,
             now_slot: LIVE_SLOT,
             now_unix: LIVE_UNIX,

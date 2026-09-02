@@ -117,9 +117,18 @@ test('the taker fee and the platform fee are not transposed', () => {
     c.now_unix,
     c.platform_fee_bps,
   );
-  assert.equal(q.feeAmount, 1_800n);
-  assert.equal(q.platformFeeAmount, 17_982n);
-  assert.notEqual(q.feeAmount, q.platformFeeAmount);
+  // Sourced from the vector rather than transcribed, so enriching the
+  // fixture cannot silently retune this guard — the literals it used to
+  // carry went stale the moment the book gained a second vault. The
+  // separation the guard *relies* on is asserted outright instead, so a
+  // fixture that stopped keeping the two fees far apart fails here with
+  // its reason rather than quietly weakening the check.
+  assert.equal(q.feeAmount, BigInt(c.expected.fee_amount));
+  assert.equal(q.platformFeeAmount, BigInt(c.expected.platform_fee_amount));
+  assert.ok(
+    q.platformFeeAmount > q.feeAmount * 5n,
+    `the fees must stay far apart for a transposition to be detectable, got taker=${q.feeAmount} platform=${q.platformFeeAmount}`,
+  );
 });
 
 // Pin `SIDE_CODE` against the binding itself rather than against the vectors:
