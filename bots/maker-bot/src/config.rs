@@ -372,8 +372,20 @@ pub struct FeedConfig {
     /// only a rate to respect, not a budget to ration, and it can sit alongside
     /// CoinGecko's rather than being held back for emergencies.
     pub coinmarketcap_poll: Duration,
-    /// ECB/Frankfurter FX-anchor poll interval. ECB publishes once a working
-    /// day, so a slow poll suffices.
+    /// Daily FX-reference poll interval, shared by the Frankfurter and er-api
+    /// tiers. Both republish once a day — ECB on working days, er-api's blend
+    /// every day — so one knob is honest rather than a false choice between two
+    /// sources with the same cadence.
+    ///
+    /// Note this is **not** the cadence the `market-data-erapi` collector uses.
+    /// That process polls hourly, reasoning that anything faster re-reads a
+    /// value the provider has already said will not change; the default here is
+    /// 300 s, which is faster than that argument would justify on cadence
+    /// grounds alone. It is inherited from the Frankfurter tier rather than
+    /// chosen for er-api, and the maker wants a short interval for a different
+    /// reason — a restart or a transient failure must not dark the anchor for a
+    /// whole publication cycle. Both are keyless and batched, so the cost is one
+    /// request per interval per process.
     pub fx_poll: Duration,
     /// Pyth Hermes FX-anchor poll interval — the primary anchor tier. Hermes
     /// republishes on the order of a second, so this is the cadence at which
@@ -389,6 +401,9 @@ pub struct FeedConfig {
     /// CoinMarketCap REST base URL (`/public-api/v1/simple/price` is appended —
     /// the keyless public route).
     pub coinmarketcap_base_url: String,
+    /// er-api REST base URL (`/v6/latest/USD`), the second keyless daily FX
+    /// reference — the only tier that prices NGN.
+    pub erapi_base_url: String,
     /// Frankfurter REST base URL (`/latest`), the keyless ECB FX-rate feed.
     pub frankfurter_base_url: String,
     /// Pyth Hermes base URL (`/v2/updates/price/latest`).
@@ -544,6 +559,7 @@ impl Default for FeedConfig {
             coinbase_poll: Duration::from_secs(15),
             coingecko_base_url: "https://api.coingecko.com/api/v3".to_string(),
             coinmarketcap_base_url: "https://pro-api.coinmarketcap.com".to_string(),
+            erapi_base_url: "https://open.er-api.com".to_string(),
             frankfurter_base_url: "https://api.frankfurter.dev/v1".to_string(),
             pyth_base_url: "https://hermes.pyth.network".to_string(),
             kraken_base_url: "https://api.kraken.com".to_string(),

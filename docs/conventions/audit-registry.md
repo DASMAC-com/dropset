@@ -165,14 +165,16 @@ maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   adapters (feeds/src/venues/coingecko.rs, coinmarketcap.rs,
   frankfurter.rs, kraken.rs) following the batched-poll convention —
   stated in feeds/src/venues/mod.rs's module docs and docs/data-feeds.md
-  §4, and held by review rather than by a trait — plus two that
+  §4, and held by review rather than by a trait — plus three that
   deliberately sit OUTSIDE it: pyth.rs (whose FxQuote record
   carries a confidence half-width and a publish_time that a Quotes map's
-  bare f64 cannot express) and coinbase.rs's CoinbaseTicker (keyed by a
-  single product, so there is nothing to batch). Those two are the
+  bare f64 cannot express), erapi.rs (whose ErApiSnapshot carries the
+  provider's own refresh instants, which a bare f64 likewise cannot
+  express), and coinbase.rs's CoinbaseTicker (keyed by a
+  single product, so there is nothing to batch). Those three are the
   reason "every price Source is a batched quote venue" is NOT an
   invariant of this seam — the batched-poll convention does not reach
-  them, and a change to Source reaches all six. It implements
+  them, and a change to Source reaches all seven. It implements
   Source itself only for the logs-subscription fill socket bridged
   through ChannelSource (bots/maker-bot/src/fills.rs), driving both with
   run_until onto a ForwardSink its synchronous tick loop drains through
@@ -185,6 +187,13 @@ maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   record SHAPE to fair-value semantics: pyth.rs's publish_time is what
   ages the FX anchor (not receipt time), so a change to that field's
   meaning silently changes when the weekend crypto-only regime engages.
+  erapi.rs's last_update is a SECOND such coupling and the opposite
+  way round — it deliberately does NOT age the reading (the leg's single
+  leg_stale bound would drop an honestly-aged daily fix before the fusion
+  estimator saw it), and instead gates a provider-stall check no receipt
+  time can express. So the two timestamped adapters on this seam couple
+  to fair-value through different mechanisms, and a change treating them
+  alike breaks one of them.
 sdk-clients <-> sdk-math: the TS market reader (sdk/ts/src/market.ts)
   reads the opaque Vault slab through the WASM binding built from
   sdk/interface (resting_book, over matching::resting_levels), so the

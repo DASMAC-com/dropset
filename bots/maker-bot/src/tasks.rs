@@ -34,7 +34,7 @@ use crate::model::triggers::{self, RefTrigger};
 use crate::telemetry::{self, MarketId, Outcome, Record, SampleBuilder};
 use anyhow::Result;
 use dropset_fair_value::{Candidates, ClockCtx, Legs, Reading};
-use dropset_feeds::venues::FxQuote;
+use dropset_feeds::venues::{ErApiSnapshot, FxQuote};
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::collections::HashMap;
@@ -61,6 +61,10 @@ pub struct FeedReceivers {
     pub coingecko: broadcast::Receiver<HashMap<String, f64>>,
     pub coinmarketcap: Option<broadcast::Receiver<HashMap<u32, f64>>>,
     pub frankfurter: broadcast::Receiver<HashMap<String, f64>>,
+    /// er-api — the second daily FX reference, and the only tier that prices
+    /// NGN. Carries the provider's own refresh instants alongside the rates,
+    /// which is why it is a snapshot rather than a bare map.
+    pub erapi: broadcast::Receiver<ErApiSnapshot>,
 }
 
 /// Drain every reading queued on `rx` into `cache`, stamping `now` as the read
@@ -109,6 +113,33 @@ fn drain_entries_into(
     }
 }
 
+/// Drain er-api snapshots into `cache`, keeping the provider's own refresh
+/// instant beside each rate as well as the receipt time.
+///
+/// The extra field is why this cannot be [`drain_into`]: every other tier
+/// yields a bare map, and this one carries the instant its snapshot actually
+/// describes. That instant is not used to age the reading — see
+/// [`FeedHub::legs`] for why the receipt age governs instead — but it is what
+/// lets a *stalled provider* be told apart from a fresh one, which no receipt
+/// time can express.
+fn drain_erapi_into(
+    rx: &mut broadcast::Receiver<ErApiSnapshot>,
+    cache: &mut HashMap<String, (f64, i64, Instant)>,
+    now: Instant,
+) {
+    loop {
+        match rx.try_recv() {
+            Ok(snap) => {
+                for (currency, rate) in snap.rates {
+                    cache.insert(currency, (rate, snap.last_update, now));
+                }
+            }
+            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            Err(TryRecvError::Lagged(_)) => continue,
+        }
+    }
+}
+
 /// The shared feed cache. Each tier's source polls on its own cadence and
 /// forwards its readings onto a live sink; a cycle drains those into the
 /// per-tier caches below, and `legs()` composes each market's legs by walking
@@ -129,6 +160,8 @@ struct FeedHub {
     cmc: HashMap<u32, (f64, Instant)>,
     /// `currency → (usd per unit, when read)`.
     fx: HashMap<String, (f64, Instant)>,
+    /// `currency → (usd per unit, provider's refresh instant, when read)`.
+    erapi: HashMap<String, (f64, i64, Instant)>,
 }
 
 impl FeedHub {
@@ -140,6 +173,7 @@ impl FeedHub {
             cg: HashMap::new(),
             cmc: HashMap::new(),
             fx: HashMap::new(),
+            erapi: HashMap::new(),
         }
     }
 
@@ -156,6 +190,7 @@ impl FeedHub {
             drain_into(cmc, &mut self.cmc, now);
         }
         drain_into(&mut rx.frankfurter, &mut self.fx, now);
+        drain_erapi_into(&mut rx.erapi, &mut self.erapi, now);
     }
 
     /// This market's cached readings, aged to `now`, offered to the engine as
@@ -206,9 +241,35 @@ impl FeedHub {
         // A market with no tape FX source still resolves off it — the resolver
         // falls back to the reference set when nothing faster answered — so this
         // does not dark the fix-anchored markets.
+        // er-api is the second reference tier and the only one that prices NGN,
+        // so those markets get a corroborated FX leg instead of resting on a
+        // single fix. Suppressed over the weekend like Frankfurter, but for a
+        // different reason worth stating: Frankfurter is suppressed because it
+        // ages from receipt and would *look* fresh on Saturday, while er-api's
+        // stamp is honest and still refreshes daily — its blend republishes
+        // Friday's close over a shut market, so a genuinely fresh snapshot
+        // describes a market that is not trading. Both must stand aside for the
+        // crypto-only regime (§1 fm2); only one of them does so because its
+        // clock lies.
+        //
+        // Aged from receipt rather than from `last_update`, matching the sibling
+        // tier. The honest vintage is hours old and `leg_stale` is one bound
+        // shared by every leg, so an honestly-aged fix is dropped before the
+        // fusion estimator — whose variance model is built for exactly such a
+        // fix — ever sees it. Reconciling those two is the per-leg staleness
+        // split the config's `leg_stale` comment defers to analytics; until then
+        // the provider stall guard below is what keeps the receipt age from
+        // being a blank cheque.
+        let fx_erapi = (!tick.weekend)
+            .then(|| self.erapi.get(market.currency))
+            .flatten()
+            .filter(|(_, last_update, _)| !erapi_provider_stalled(*last_update, tick.now_unix))
+            .map(|(v, _, t)| Reading::new(*v, now.duration_since(*t)));
+
         let fx = Candidates::none()
             .push_trusted(SOURCE_PYTH, fx_pyth)
-            .push_reference(SOURCE_FRANKFURTER, fx_reference);
+            .push_reference(SOURCE_FRANKFURTER, fx_reference)
+            .push_reference(SOURCE_ERAPI, fx_erapi);
 
         // USDC/USD common-mode leg, shared across every market.
         let usdc_usd = Candidates::none()
@@ -369,6 +430,15 @@ struct TickCtx {
 /// duplication — hence one shared set of constants rather than two spellings.
 pub const SOURCE_PYTH: &str = "pyth-hermes";
 pub const SOURCE_FRANKFURTER: &str = "frankfurter";
+/// The er-api daily reference tier.
+///
+/// Spelled the same as the collector's `spot_ticks.source` **today**, which is
+/// convenient but is not an invariant this block guarantees — `SOURCE_PYTH`
+/// above is `pyth-hermes` while that collector stores `pyth`. The two
+/// vocabularies are deliberately separate (see the note above), so this stays a
+/// literal rather than importing the adapter's constant: joining them is the
+/// thing that note says not to do.
+pub const SOURCE_ERAPI: &str = "erapi";
 pub const SOURCE_COINBASE: &str = "coinbase";
 pub const SOURCE_KRAKEN: &str = "kraken";
 pub const SOURCE_COINGECKO: &str = "coingecko";
@@ -379,10 +449,14 @@ pub const SOURCE_CMC: &str = "coinmarketcap";
 /// absurd duration. Well past `leg_stale`, so it only ever bites on nonsense.
 const MAX_PYTH_AGE: Duration = Duration::from_secs(24 * 3600);
 
-/// How far ahead of this host's clock a `publish_time` may sit before it is
-/// treated as bogus rather than as "just published". Ordinary NTP skew between
-/// the publishers and us is sub-second; a minute is generous.
-const MAX_PYTH_CLOCK_SKEW: Duration = Duration::from_secs(60);
+/// How far ahead of this host's clock a venue-supplied timestamp may sit before
+/// it is treated as bogus rather than as "just published". Ordinary NTP skew
+/// between a publisher and us is sub-second; a minute is generous.
+///
+/// Shared by every tier that uses a venue's own stamp as a clock — Pyth's
+/// `publish_time` and er-api's snapshot instant — because the hazard is the
+/// property of doing that at all, not of either venue.
+const MAX_VENUE_CLOCK_SKEW: Duration = Duration::from_secs(60);
 
 /// Turn a cached Pyth quote into a [`Reading`], aged from the **publisher's**
 /// clock rather than from when this process received it.
@@ -403,7 +477,7 @@ const MAX_PYTH_CLOCK_SKEW: Duration = Duration::from_secs(60);
 fn pyth_reading(q: &FxQuote, read_at: Instant, now: Instant, now_unix: i64) -> Reading {
     let delta = now_unix.saturating_sub(q.publish_time);
     let received = now.duration_since(read_at);
-    let published = if delta < -(MAX_PYTH_CLOCK_SKEW.as_secs() as i64) {
+    let published = if delta < -(MAX_VENUE_CLOCK_SKEW.as_secs() as i64) {
         // Implausibly far ahead of us — trust nothing it says about its age.
         MAX_PYTH_AGE
     } else {
@@ -414,6 +488,36 @@ fn pyth_reading(q: &FxQuote, read_at: Instant, now: Instant, now_unix: i64) -> R
         Some(conf) => Reading::with_confidence(q.value, age, conf),
         None => Reading::new(q.value, age),
     }
+}
+
+/// How long er-api's own snapshot may go without advancing before the tier is
+/// dropped as a **stalled provider** rather than offered as a current fix.
+///
+/// This is the one check the provider's timestamps uniquely buy, and it closes a
+/// gap no receipt time can express. The reading is aged from receipt (see
+/// [`FeedHub::legs`]), so a provider frozen on a week-old table while still
+/// serving it happily reads as perfectly fresh forever: the poller is healthy,
+/// the response is a 200, and only the snapshot instant says otherwise. The
+/// sibling Frankfurter tier cannot make this check at all, because its adapter
+/// decodes no timestamp.
+///
+/// Two days rather than one, because the snapshot legitimately gaps 24–27 hours
+/// between publications and a one-day bound would fire on the ordinary case. The
+/// same 48 hours the store's always-open staleness class allows a daily-bar
+/// source, for the same reason.
+const MAX_ERAPI_SNAPSHOT_AGE: Duration = Duration::from_secs(48 * 3600);
+
+/// Whether er-api's own snapshot instant is too old — or implausibly far ahead —
+/// to be offered as a current fix. See [`MAX_ERAPI_SNAPSHOT_AGE`].
+///
+/// A stamp in the future counts as stalled on the same reasoning as
+/// [`MAX_VENUE_CLOCK_SKEW`]: venue-supplied data used as a clock has to be
+/// bounded in both directions, and an implausible forward stamp is nonsense
+/// rather than freshness.
+fn erapi_provider_stalled(last_update: i64, now_unix: i64) -> bool {
+    let delta = now_unix.saturating_sub(last_update);
+    delta > MAX_ERAPI_SNAPSHOT_AGE.as_secs() as i64
+        || delta < -(MAX_VENUE_CLOCK_SKEW.as_secs() as i64)
 }
 
 /// Whether the Unix timestamp `secs` falls in the FX-closed weekend window.
@@ -1590,6 +1694,10 @@ mod tests {
             ),
         );
         hub.fx.insert(m.currency.to_string(), (1.1400, now));
+        // The provider's snapshot instant is `now_unix` — a fresh table, so the
+        // stall guard does not fire and this tier reaches the leg.
+        hub.erapi
+            .insert(m.currency.to_string(), (1.1420, now_unix, now));
         hub.coinbase
             .insert(m.coinbase_product.unwrap().to_string(), (1.1530, now));
         hub.kraken
@@ -1615,7 +1723,7 @@ mod tests {
         // list — that ordering only decides who survives an over-full set.
         let (now, now_unix) = (Instant::now(), 1_786_579_250);
         let legs = full_hub(now, now_unix).legs(&eurc(), &tick_at(now, now_unix));
-        assert_eq!(legs.fx.iter().count(), 2, "Pyth and Frankfurter");
+        assert_eq!(legs.fx.iter().count(), 3, "Pyth and both daily references");
         assert_eq!(legs.crypto_usdc.iter().count(), 4, "two CEX, two indices");
         assert_eq!(legs.usdc_usd.iter().count(), 2);
     }
@@ -1632,22 +1740,24 @@ mod tests {
         let fx = resolved(&legs, |l| l.fx, &tick);
         assert_eq!(fx.reading.unwrap().value, 1.1500);
         assert_eq!(fx.reading.unwrap().confidence, Some(0.0001));
-        // Pyth stands alone in the **fast** set: Frankfurter republishes the
-        // ECB's daily fix, which is reference class and so corroborates nothing
-        // about the live signal. It is not absent — it is fused into the
-        // estimate, and it is still counted as a healthy source of the leg — but
-        // a rate that may be hours old is not a second opinion on where the
-        // market is right now, and reporting `Agreed` would say it was.
+        // Pyth stands alone in the **fast** set: both daily references are
+        // reference class and so corroborate nothing about the live signal. They
+        // are not absent — they are fused into the estimate, and are still
+        // counted as healthy sources of the leg — but a rate that may be hours
+        // old is not a second opinion on where the market is right now, and
+        // reporting `Agreed` would say it was. Adding a *second* reference tier
+        // must not change that: two daily fixes agreeing with each other is
+        // still not corroboration of the fast signal.
         assert_eq!(
             fx.state,
             ConsensusState::SingleTrusted,
-            "the daily fix does not corroborate the fast signal"
+            "neither daily fix corroborates the fast signal"
         );
         assert_eq!(fx.n, 1);
         assert_eq!(
             fx.healthy().iter().flatten().count(),
-            2,
-            "but both sources reach the estimator"
+            3,
+            "but all three sources reach the estimator"
         );
     }
 
@@ -1692,6 +1802,12 @@ mod tests {
         hub.pyth.clear();
         hub.coinbase.clear();
         hub.kraken.remove(USDC_KRAKEN_PAIR);
+        // The er-api tier is cleared too, deliberately: what this test pins is
+        // the *last source standing* path, and leaving two daily references in
+        // place would make them corroborate each other and resolve to their
+        // midpoint — a different case, covered by
+        // `the_two_daily_references_corroborate_each_other_when_pyth_drops`.
+        hub.erapi.clear();
 
         let legs = hub.legs(&m, &tick);
         let fx = resolved(&legs, |l| l.fx, &tick);
@@ -1818,12 +1934,29 @@ mod tests {
         let tick = tick_at(now, now_unix);
         let legs = hub.legs(&m, &tick);
         let fx = resolved(&legs, |l| l.fx, &tick);
-        assert_eq!(
-            fx.reading.unwrap().value,
-            1.1400,
-            "Frankfurter should carry it"
+        // The daily references carry it, and now there are two of them, so the
+        // handover lands on a combination of the pair rather than on one fix.
+        //
+        // Asserted as a strict range rather than the exact midpoint: the two
+        // references only average evenly because they currently share a receipt
+        // instant and so an identical variance. Per-leg staleness work will
+        // change that weighting deliberately, and a value assertion would then
+        // fail as though the price were wrong.
+        let v = fx.reading.unwrap().value;
+        assert!(
+            v > 1.1400 && v < 1.1420,
+            "the daily references should carry it, combined: {v}"
         );
-        assert_eq!(fx.n, 1, "the stale Pyth reading is not a healthy candidate");
+        assert_eq!(fx.n, 2, "both references, and not the stale Pyth reading");
+        // The point of the test, stated directly rather than inferred from the
+        // count: the stale anchor is not among the healthy candidates.
+        assert!(
+            !fx.healthy()
+                .iter()
+                .flatten()
+                .any(|c| c.source == SOURCE_PYTH),
+            "a stale Pyth reading is not a healthy candidate"
+        );
     }
 
     /// …but not while the FX session is shut. Frankfurter is aged from receipt,
@@ -1946,7 +2079,136 @@ mod tests {
     }
 
     #[test]
-    fn an_absurdly_aged_pyth_reading_hands_the_anchor_to_frankfurter() {
+    fn a_stalled_erapi_provider_is_dropped_though_its_poller_is_healthy() {
+        // The failure the snapshot instant exists to catch, and the one the
+        // receipt age cannot express: the poller answers every time, the
+        // response is a 200, and the table behind it has not moved in a week.
+        // Aged from receipt alone this reads as perfectly fresh forever.
+        let now_unix = 1_786_579_250;
+        let week = 7 * 24 * 3_600;
+        assert!(erapi_provider_stalled(now_unix - week, now_unix));
+
+        // A day-old snapshot is the ordinary case, not a stall: this venue
+        // legitimately gaps 24-27 hours between publications, so a tighter
+        // bound would fire every day.
+        assert!(!erapi_provider_stalled(now_unix - 26 * 3_600, now_unix));
+        assert!(!erapi_provider_stalled(now_unix, now_unix));
+
+        // Bounded in the forward direction too, on the same reasoning as
+        // `MAX_VENUE_CLOCK_SKEW`: this is venue-supplied data used as a clock, so
+        // a stamp far ahead of us is nonsense rather than maximal freshness.
+        // Ordinary sub-minute skew is still tolerated.
+        assert!(erapi_provider_stalled(now_unix + 10_000_000, now_unix));
+        assert!(!erapi_provider_stalled(now_unix + 30, now_unix));
+    }
+
+    #[test]
+    fn a_stalled_erapi_snapshot_leaves_the_leg_rather_than_padding_it() {
+        // The guard has to act at the leg, not only in isolation: a stalled
+        // provider that still reached `push_reference` would be counted as a
+        // healthy corroborating source and fused into the estimate.
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let tick = tick_at(now, now_unix);
+        let mut hub = full_hub(now, now_unix);
+        // Same rate, same receipt time — only the provider's own instant moves.
+        hub.erapi.insert(
+            eurc().currency.to_string(),
+            (1.1420, now_unix - 7 * 24 * 3_600, now),
+        );
+        let legs = hub.legs(&eurc(), &tick);
+        assert_eq!(
+            legs.fx.iter().count(),
+            2,
+            "Pyth and Frankfurter; the stalled tier stands aside"
+        );
+        assert!(
+            !legs.fx.iter().any(|c| c.source == SOURCE_ERAPI),
+            "a stalled provider must not appear as a candidate"
+        );
+    }
+
+    #[test]
+    fn both_daily_references_stand_aside_over_the_weekend() {
+        // Neither daily fix may carry the anchor on a shut market — the engine
+        // is meant to flip to the crypto-only regime (§1 fm2). er-api needs this
+        // for a different reason than Frankfurter: its stamp is honest and it
+        // still refreshes daily, so it republishes Friday's close over a closed
+        // market and a *genuinely fresh* snapshot describes a market that is not
+        // trading. Suppression cannot be inferred from its timestamp.
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let tick = TickCtx {
+            weekend: true,
+            ..tick_at(now, now_unix)
+        };
+        let legs = full_hub(now, now_unix).legs(&eurc(), &tick);
+        assert_eq!(
+            legs.fx.iter().count(),
+            1,
+            "only Pyth, which ages from its own publish time"
+        );
+        assert!(!legs.fx.iter().any(|c| c.source == SOURCE_ERAPI));
+        assert!(!legs.fx.iter().any(|c| c.source == SOURCE_FRANKFURTER));
+    }
+
+    #[test]
+    fn the_two_daily_references_corroborate_each_other_when_pyth_drops() {
+        // What the second reference tier actually buys. With the fast anchor
+        // gone, the fallback used to be one fix believed with nothing to check
+        // it against — reported honestly as `SingleUnverified`, but still a
+        // single point of failure for every market whose anchor is a daily rate.
+        // Two independently-constructed daily estimates now agree or visibly
+        // disagree.
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let tick = tick_at(now, now_unix);
+        let m = eurc();
+        let mut hub = full_hub(now, now_unix);
+        hub.pyth.clear();
+
+        let legs = hub.legs(&m, &tick);
+        let fx = resolved(&legs, |l| l.fx, &tick);
+        assert_eq!(fx.n, 2, "both daily references");
+        // Strictly between the two, which is the claim that matters: the pair is
+        // combined rather than one of them being picked. Both endpoints are
+        // excluded, so this fails if either fix wins outright — and it survives
+        // the weighting change per-leg staleness work will introduce, where an
+        // exact-midpoint assertion would not.
+        let v = fx.reading.unwrap().value;
+        assert!(
+            v > 1.1400 && v < 1.1420,
+            "combined, not whichever came first: {v}"
+        );
+        assert!(
+            !fx.state.is_uncorroborated(),
+            "two agreeing references are no longer a lone fix: {:?}",
+            fx.state
+        );
+    }
+
+    #[test]
+    fn a_sole_er_api_reference_resolves_the_leg_uncorroborated() {
+        // The shape the NGN markets run in, simulated on the EUR fixture: with
+        // no Pyth reading and no ECB reference, er-api is the only source that
+        // answers and the leg still resolves off it rather than darking. The
+        // currency here is incidental — EUR is one Frankfurter *does* price — so
+        // what this pins is the sole-reference resolution path, not coverage.
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let tick = tick_at(now, now_unix);
+        let m = eurc();
+        let mut hub = FeedHub::new();
+        hub.erapi
+            .insert(m.currency.to_string(), (1.1420, now_unix, now));
+        let legs = hub.legs(&m, &tick);
+        let fx = resolved(&legs, |l| l.fx, &tick);
+        assert_eq!(legs.fx.iter().count(), 1, "er-api alone");
+        assert_eq!(fx.reading.unwrap().value, 1.1420);
+        assert!(
+            fx.state.is_uncorroborated(),
+            "one reference fix alone is uncorroborated, not trusted"
+        );
+    }
+
+    #[test]
+    fn an_absurdly_aged_pyth_reading_hands_the_anchor_to_the_daily_references() {
         let now = Instant::now();
         let now_unix = 1_786_579_250;
         let mut hub = full_hub(now, now_unix);
@@ -1965,10 +2227,10 @@ mod tests {
         );
         let tick = tick_at(now, now_unix);
         let legs = hub.legs(&m, &tick);
-        assert_eq!(
-            resolved(&legs, |l| l.fx, &tick).reading.unwrap().value,
-            1.1400
-        );
+        // Between the two fixes, not equal to either — see the strict-range note
+        // in `a_stale_pyth_reading_hands_the_anchor_over_instead_of_masking_it`.
+        let v = resolved(&legs, |l| l.fx, &tick).reading.unwrap().value;
+        assert!(v > 1.1400 && v < 1.1420, "the two daily references: {v}");
     }
 
     #[test]

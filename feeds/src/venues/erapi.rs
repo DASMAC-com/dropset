@@ -14,15 +14,22 @@
 //! — Hermes catalogues NGN but has never published a price for it, and the ECB
 //! reference set omits it entirely, which left it on two vendors alone.
 //!
-//! **Status — nothing consumes this adapter yet.** No collector constructs
-//! [`ErApiSource`], there is no sink and no stored reading, so the coverage
-//! above is a property of the *source* rather than of what the roster records
-//! today. Read it as what wiring this venue would buy, not as coverage already
-//! obtained. The consumer is deliberately separate work: unlike
-//! [`frankfurter`](super::frankfurter), this venue yields a struct carrying the
-//! provider's refresh instants instead of a bare [`Quotes`] map, so it cannot
-//! drop into the maker's fair-value cascade unchanged, and those instants want
-//! a store that keys on them.
+//! **Status — two consumers, and they use the timestamps differently.** The
+//! `market-data-erapi` collector records each rate into `spot_ticks` keyed on
+//! [`ErApiSnapshot::last_update`], so the store holds the instant the snapshot
+//! actually describes and a re-poll lands on the primary key rather than
+//! duplicating one observation. The maker-bot offers the same readings as a
+//! second reference-class candidate on its FX leg, where they are aged from
+//! **receipt** instead — matching the sibling
+//! [`frankfurter`](super::frankfurter) tier, because that leg's single staleness
+//! bound would drop an honestly-aged daily fix before the fusion estimator saw
+//! it. There the snapshot instant is put to the use receipt time cannot serve:
+//! telling a *stalled provider* apart from a fresh one.
+//!
+//! So the coverage above is now what the roster records, not merely a property
+//! of the source. Reconciling the two aging conventions needs a per-leg
+//! staleness bound, which is deferred analytics work rather than something this
+//! adapter can settle.
 //!
 //! **License — internal use only, and this bounds where the data may go.** The
 //! open-access endpoint permits caching and commercial currency-conversion use
