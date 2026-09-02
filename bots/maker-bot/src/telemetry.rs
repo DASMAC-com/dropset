@@ -53,7 +53,7 @@ use dropset_fair_value::{Candidates, FairValue, FusionReport, Legs};
 // the framework rather than restated, so the two error columns cannot drift
 // apart — see its own doc there for why the bound is a character count.
 use dropset_feeds::{
-    connect_lazy, run_until, sanitize_error, BestEffortSink, ChannelSource, HealthOutcome,
+    connect_lazy, redact_to_origin, run_until, BestEffortSink, ChannelSource, HealthOutcome,
     HealthReporter, HealthUpdate, LinkState, LivenessReporter, LivenessUpdate, RunConfig, Sink,
     StoreSink, StoreWriter, MAX_ERROR_CHARS,
 };
@@ -129,6 +129,37 @@ pub struct Sample {
     pub launch_tvl_usd: Option<f64>,
     pub frozen: Option<bool>,
     pub reference_valid: Option<bool>,
+    /// Why the tick failed, reduced to scheme, host and port wherever it names
+    /// a URL.
+    ///
+    /// The text is typically Solana RPC client output derived from the
+    /// operator's `rpc_url`, and the read-only dashboard role can select this
+    /// column — so it is an exfiltration path for precisely the credential the
+    /// schema's comments promise is not in the database. The RPC client has no
+    /// redaction of its own, which leaves the guard here at the write.
+    ///
+    /// That guard is **URL-shaped**: it rewrites whitespace-delimited tokens
+    /// containing `://` and nothing else, so a credential reaching the text by
+    /// another route — header-style auth echoed into a message, a key quoted
+    /// inside a JSON body — passes through in clear. The three shapes below
+    /// are the ones an endpoint URL carries, not an exhaustive list of ways a
+    /// secret can reach this column.
+    ///
+    /// It is **`redact_to_origin`, not the query-only `sanitize_error`**,
+    /// because `rpc_url` is an operator-supplied endpoint: hosted providers
+    /// authenticate by path segment (`/v2/<key>`) or by userinfo as readily as
+    /// by query, and a query strip leaves both untouched. Applied to the whole
+    /// rendered cause chain rather than to an endpoint a caller formats in,
+    /// since a transport error routinely re-embeds the URL it failed to reach.
+    ///
+    /// Two schema comments predate this and now understate it.
+    /// `0003_maker_telemetry.sql` describes this column as taking the
+    /// query-only strip, and `0008_push_liveness.sql` calls
+    /// `push_health.last_error` the stronger of the two. Both migrations are
+    /// applied and therefore immutable — sqlx hashes the raw migration text,
+    /// so editing even a comment breaks the checksum on every database that
+    /// has already run it. This doc comment is the correction, and is
+    /// authoritative where the two disagree.
     pub tick_error: Option<String>,
 }
 
@@ -614,12 +645,14 @@ async fn write_health(
 ///
 /// The error text arrives already redacted: [`LivenessReporter::failed`] puts
 /// the whole rendered cause chain through the framework's `redact_to_origin`,
-/// reducing every URL in it to scheme and host. That is the guard this column
-/// needs rather than the transport-level redaction `feed_health` relies on — a
-/// push producer's error never passes through the HTTP client that applies it
-/// — and it is deliberately stronger than the query-only `sanitize_error` used
-/// for [`Sample::tick_error`], because a subscribe URL can carry its
-/// credential in a path segment or in userinfo as readily as in a query.
+/// reducing every URL in it to scheme, host and port. That is the guard this
+/// column needs rather than the transport-level redaction `feed_health` relies
+/// on — a push producer's error never passes through the HTTP client that
+/// applies it.
+///
+/// [`Sample::tick_error`] takes the same `redact_to_origin` treatment, for the
+/// same reason; the two columns are on equal footing. See that field for why,
+/// and for which schema comments predate it.
 async fn write_liveness(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     update: &LivenessUpdate,
@@ -1043,7 +1076,7 @@ impl SampleBuilder {
             tick_error: self
                 .error
                 .as_deref()
-                .map(|e| sanitize_error(e, MAX_ERROR_CHARS)),
+                .map(|e| redact_to_origin(e, MAX_ERROR_CHARS)),
         }
     }
 }
@@ -1542,10 +1575,60 @@ mod tests {
             "vault read failed: https://rpc.example/?api-key=SECRET timed out"
         ));
         let error = b.build().tick_error.expect("an error was set");
-        assert!(!error.contains("SECRET"), "got: {error}");
-        assert!(error.contains("https://rpc.example/?<redacted>"));
-        // The diagnosable part survives.
-        assert!(error.contains("timed out"));
+        // Pinned whole, deliberately. The query-only strip renders
+        // `https://rpc.example/?<redacted>` here, which satisfies both
+        // `!contains("SECRET")` and a `contains` on the host prefix — so only
+        // an equality distinguishes the two helpers on this input. The
+        // diagnosable remainder is pinned by the same assertion.
+        assert_eq!(error, "vault read failed: https://rpc.example timed out");
+    }
+
+    /// The shapes a query strip leaves untouched, and the reason this column
+    /// takes `redact_to_origin` instead: `rpc_url` is operator-supplied, and
+    /// hosted Solana providers authenticate by path segment or by userinfo.
+    #[test]
+    fn a_tick_error_redacts_a_credential_outside_the_query() {
+        // Path segment — the `/v2/<key>` shape.
+        let mut b = SampleBuilder::new(1, eurc(), fair(None), ProfileKind::Unknown);
+        b.error(&anyhow::anyhow!(
+            "vault read failed: https://rpc.example/v2/SECRET timed out"
+        ));
+        let error = b.build().tick_error.expect("an error was set");
+        assert_eq!(
+            error, "vault read failed: https://rpc.example timed out",
+            "path segment survived"
+        );
+
+        // Userinfo.
+        let mut b = SampleBuilder::new(1, eurc(), fair(None), ProfileKind::Unknown);
+        b.error(&anyhow::anyhow!(
+            "vault read failed: https://user:SECRET@rpc.example/ timed out"
+        ));
+        let error = b.build().tick_error.expect("an error was set");
+        assert_eq!(
+            error, "vault read failed: https://rpc.example timed out",
+            "userinfo survived"
+        );
+    }
+
+    /// The credential is stripped from the wrapped cause too, not just from a
+    /// URL the tick's own message formats in — a transport error routinely
+    /// re-embeds the endpoint it failed to reach.
+    #[test]
+    fn a_tick_error_redacts_a_credential_in_the_cause_chain() {
+        let mut b = SampleBuilder::new(1, eurc(), fair(None), ProfileKind::Unknown);
+        let cause = anyhow::anyhow!("transport: https://rpc.example/v2/SECRET refused");
+        b.error(&cause.context("reading the vault"));
+        let error = b.build().tick_error.expect("an error was set");
+        // Both ends of the chain are pinned, not just the absence: asserting
+        // only `!contains("SECRET")` would pass on an empty column, and would
+        // pass if `error()` stopped rendering the chain with `{:#}` — which is
+        // precisely the regression that would drop the inner cause carrying
+        // the URL, and so the one this test exists to catch.
+        assert_eq!(
+            error,
+            "reading the vault: transport: https://rpc.example refused"
+        );
     }
 
     /// A leg offered by one named source, fresh as of this tick.

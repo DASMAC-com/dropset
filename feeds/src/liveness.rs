@@ -78,10 +78,9 @@ pub enum LinkState {
     /// persists it, and the one in this workspace writes it to a column a
     /// read-only dashboard role can `SELECT`. Every route through
     /// [`LivenessReporter`] does so — [`LivenessReporter::failed`] applies
-    /// [`crate::sanitize_error`] and the [`Drop`] guard uses a fixed constant
-    /// — but
-    /// the variant is `pub`, so a caller building one directly carries the
-    /// obligation itself.
+    /// [`crate::redact_to_origin`] and the [`Drop`] guard uses a fixed
+    /// constant — but the variant is `pub`, so a caller building one directly
+    /// carries the obligation itself.
     Down { reason: Option<String> },
 }
 
