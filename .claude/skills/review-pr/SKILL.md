@@ -219,6 +219,32 @@ already being asked to start the review.
      in the resolution, checked mechanically — not "the
      linter passed".
 
+     **That check now exists, and the rule is still
+     absolute.** `.claude/tools/merge_completeness.py` takes
+     the lines each parent added relative to the merge base,
+     whitespace-normalized, and reports per-side survival
+     plus every apparent loss itemized:
+
+     ```sh
+     python3 .claude/tools/merge_completeness.py --path <file>
+     ```
+
+     Use it **while resolving by hand** — it is the tool that
+     makes a manual resolution auditable, and it is what
+     caught a doc comment reading "all four kinds" that merged
+     cleanly when the true post-merge answer was five.
+
+     It does **not** license auto-resolution, and the reason
+     is in the same evidence. Its value is the check
+     *failing* and forcing each loss to be explained one at a
+     time — never a green light. In that same resolution both
+     branches added a variant to one enum and an arm to one
+     match: every line from both sides survived, completeness
+     passed trivially, and the result was still wrong in a way
+     only reading revealed. A carve-out keyed on "the tool
+     passed" would have shipped it. So the tool raises the
+     floor on manual resolution rather than moving this rule.
+
      The better lever is removing the collision class at
      the source, because it fixes every session at once
      rather than one conflict at a time: the Makefile

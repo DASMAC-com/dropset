@@ -227,6 +227,7 @@ société
 solana
 solflare
 solscan
+sortedness
 soulbound
 sparticuz
 sqlfluff

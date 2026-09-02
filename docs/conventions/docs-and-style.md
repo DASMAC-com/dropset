@@ -216,6 +216,20 @@ merged against a nearby addition, can come back. It is accepted rather
 than fixed: a resurrected entry only over-permits one spelling, and the
 next hygiene pass re-detects it. Don't expect the sorter to catch it.
 
+**When you do resolve this file by hand, check completeness
+mechanically** — the linters here verify *sortedness*, and sortedness
+survives dropping a line, so a resolution that lost one side's word
+lints perfectly clean:
+
+```sh
+python3 .claude/tools/merge_completeness.py --path cfg/dictionary.txt
+```
+
+It reports how many lines each side added, how many survived, and
+itemizes every apparent loss so each one is explained rather than
+assumed. This is the dictionary's sharpest need because `merge=union`
+makes the *deletion* case silent in the other direction too.
+
 Union merge is sound here **only** because the dictionary is an
 unordered set that happens to be stored sorted. Do not extend the
 attribute to a file where a dropped, doubled, or reordered line changes
