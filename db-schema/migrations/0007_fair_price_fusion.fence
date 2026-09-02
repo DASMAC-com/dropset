@@ -1,0 +1,6 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+table maker_leg_contributions
+column maker_legs.fused_value
+column maker_legs.fused_sigma
+column maker_legs.fusion_step
+column maker_legs.fused_count

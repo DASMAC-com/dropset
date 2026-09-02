@@ -1,0 +1,12 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# `instruments` and `instrument_liveness` are views, and declaring them as such
+# is what pins that: a later migration replacing either with a table of the same
+# name would satisfy a `table` directive. What the views mean — the class
+# `instruments` derives from a leg — is pinned separately by
+# `the_instruments_view_derives_a_class_from_the_legs`, because a view that
+# exists while classifying wrongly is the failure that matters.
+table currency_kinds
+table instrument_registry
+view instruments
+view instrument_liveness
