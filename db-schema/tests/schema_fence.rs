@@ -14,12 +14,13 @@
 //! fence that demanded equality would turn a supported window into a crash
 //! loop. That behavior is invisible to a unit test and easy to regress.
 //!
-//! One test here is not about the fence at all:
-//! `migrate_produces_every_declared_relation` checks the migrations produced
-//! what they said they would, reading the `<migration>.fence` manifest that
-//! sits beside each migration. Its doc comment carries the grammar, the reason
-//! the declaration is per-migration rather than one list here, and the reason
-//! it is a sidecar rather than a comment in the SQL.
+//! Four tests here are not about the fence at all. They check the migrations
+//! produced what they said they would, reading the `<migration>.fence` manifest
+//! that sits beside each migration: `migrate_produces_every_declared_relation`
+//! probes a container, and three run without one. `parse_manifest` carries the
+//! directive grammar; the probe's own doc comment carries the reason the
+//! declaration is per-migration rather than one list here, and the reason it is
+//! a sidecar rather than a comment in the SQL.
 //!
 //! Most of these need a Docker daemon, so they are `#[ignore]`d and skipped by
 //! the default test run. Run them with:
@@ -199,13 +200,14 @@ async fn fence_rejects_a_database_with_no_successful_migration() {
 /// future author has to get right, and the probe below is its only consumer.
 #[derive(Debug, PartialEq, Eq)]
 enum Declared {
-    /// A table that must exist in `public` once the history has run.
+    /// A table — specifically a table, in `public` — that must exist once the
+    /// history has run.
     Table(String),
-    /// A view that must exist in `public`. Distinct from `Table` because the
-    /// probe asserts it is specifically a view: `to_regclass` resolves any
-    /// relation, so a single directive would pass just as happily if a later
-    /// migration replaced the view with a table of the same name — and the
-    /// difference is exactly what a consumer reading it depends on.
+    /// A view that must exist in `public`. Distinct from `Table` because each
+    /// probe asserts the relation *kind*, not merely that the name resolves:
+    /// one directive covering both would pass just as happily if a later
+    /// migration swapped a view for a table of the same name, or the reverse,
+    /// and the difference is exactly what a consumer reading it depends on.
     View(String),
     /// A column added to a table an earlier migration created. The table probe
     /// cannot see one of these — a migration that only adds columns creates
@@ -231,6 +233,15 @@ fn is_identifier(s: &str) -> bool {
         && !s.starts_with(|c: char| c.is_ascii_digit())
         && s.chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// The message for a directive the parser recognized but whose identifier it
+/// cannot accept, stated once so the three arms that need it agree.
+fn bad_identifier(directive: &str, got: &str) -> String {
+    format!(
+        "`{directive}` wants a lowercase identifier — [a-z0-9_], not starting \
+         with a digit — but got `{got}`"
+    )
 }
 
 /// Parse one migration's fence manifest.
@@ -262,13 +273,30 @@ fn parse_manifest(text: &str) -> Result<Vec<Declared>, String> {
             },
             ["rows", table, "=", count] if is_identifier(table) => Declared::Rows {
                 table: (*table).to_string(),
-                count: count
-                    .parse()
-                    .map_err(|_| format!("`rows` wants an integer count, got `{count}`"))?,
+                count: match count.parse::<i64>() {
+                    // A negative count parses as an integer but can never be
+                    // satisfied, so rejecting it here keeps the diagnostic on
+                    // the manifest line instead of deferring it to a container
+                    // run that reports an unsatisfiable row count.
+                    Ok(n) if n >= 0 => n,
+                    _ => {
+                        return Err(format!(
+                            "`rows` wants a non-negative integer count, got `{count}`"
+                        ))
+                    }
+                },
             },
             // A reason is mandatory: bare `none` falls to the error arm below,
             // so declaring nothing costs a sentence saying why.
             ["none", _, ..] => Declared::Nothing,
+            // A directive whose shape is right but whose identifier is not gets
+            // its own error. These must sit after the guarded arms above, and
+            // they exist because the catch-all would otherwise answer a typo'd
+            // hyphen with "unrecognized directive" — pointing the author at the
+            // half of the line they got right.
+            ["table", name] => return Err(bad_identifier("table", name)),
+            ["view", name] => return Err(bad_identifier("view", name)),
+            ["rows", table, "=", _] => return Err(bad_identifier("rows", table)),
             _ => return Err(format!("unrecognized directive: `{line}`")),
         });
     }
@@ -305,9 +333,13 @@ fn manifest_files() -> BTreeMap<i64, (String, String)> {
             .and_then(|n| n.to_str())
             .expect("manifest filename is UTF-8")
             .to_string();
-        // The same `<version>_` prefix sqlx parses a migration filename with,
-        // so a manifest is paired with its migration by name rather than by a
-        // reconstruction that would have to assume the zero-padding width.
+        // The same `<version>_` prefix sqlx parses a migration filename with.
+        // Pairing is on the parsed **version** only — reading the version out
+        // of the filename rather than reconstructing the filename from the
+        // version, which would have to assume the zero-padding width. The
+        // descriptive half is not compared, so a `.fence` whose suffix drifts
+        // from its migration's still pairs; that is cosmetic, and checking it
+        // would couple this to how sqlx derives a description.
         let version: i64 = name
             .split_once('_')
             .and_then(|(v, _)| v.parse().ok())
@@ -365,10 +397,11 @@ fn manifests() -> Vec<(i64, Vec<Declared>)> {
 fn every_migration_declares_a_fence_manifest() {
     let manifests = manifests();
     assert!(!manifests.is_empty(), "no migrations embedded");
-    // Guards against the parser going blind rather than wrong. If the embedded
-    // SQL ever stopped carrying comments, every manifest would parse as empty
-    // and the probe would pass over an empty work list — which looks exactly
-    // like success.
+    // The one vacuity `manifests()` cannot catch on its own. A missing manifest
+    // panics there and an empty one is a parse error, so the only way to reach
+    // an empty work list is for every migration to legitimately declare `none`
+    // — at which point the probe below iterates over nothing and passes, which
+    // looks exactly like success.
     assert!(
         manifests
             .iter()
@@ -402,6 +435,22 @@ fn manifest_parser_accepts_each_directive() {
     );
 }
 
+/// `none` gets its own acceptance test rather than riding the combination case
+/// in the rejection table below.
+///
+/// Delete the `["none", _, ..]` arm and that rejection case still passes — it
+/// just fails as "unrecognized directive" instead, while its label still claims
+/// it proved `none` cannot be combined with a real declaration. So the arm was
+/// pinned only indirectly, by 0002 being the one migration that uses it.
+#[test]
+fn manifest_parser_accepts_none_with_a_reason() {
+    assert_eq!(
+        parse_manifest("none creates a login role and its grants, not a relation\n")
+            .expect("the manifest must parse"),
+        vec![Declared::Nothing]
+    );
+}
+
 /// Each of these would otherwise narrow the probe without failing it, which is
 /// the failure mode worth pinning: a manifest that parses to fewer relations
 /// than the author wrote still passes, and says nothing about what it dropped.
@@ -410,7 +459,6 @@ fn manifest_parser_rejects_what_would_silently_narrow_the_probe() {
     for (text, why) in [
         ("# only a comment\n", "a manifest declaring nothing"),
         ("none\n", "`none` without a reason"),
-        ("table push-health\n", "a non-identifier table name"),
         ("column maker_legs\n", "a column without its table"),
         ("rows t = many\n", "a non-integer row count"),
         ("tables t\n", "an unrecognized directive"),
@@ -422,6 +470,49 @@ fn manifest_parser_rejects_what_would_silently_narrow_the_probe() {
     ] {
         assert!(parse_manifest(text).is_err(), "must reject {why}");
     }
+}
+
+/// Every branch of `is_identifier`, on every directive that has to enforce it.
+///
+/// Split out from the table above because these are the guard on the one probe
+/// that **interpolates** its table name into SQL rather than binding it — so
+/// the alphabet is the whole bound, and one hyphen case was not enough to pin
+/// it. The `rows` case is the load-bearing one.
+#[test]
+fn manifest_parser_rejects_every_shape_of_bad_identifier() {
+    for (text, why) in [
+        ("table push-health\n", "a hyphen"),
+        ("table Push_health\n", "an uppercase letter"),
+        ("table 0feed\n", "a leading digit"),
+        ("view push-health\n", "a hyphen on a view"),
+        (
+            "column maker-legs.fused_value\n",
+            "a hyphen on the table half",
+        ),
+        (
+            "column maker_legs.fused-value\n",
+            "a hyphen on the column half",
+        ),
+        ("rows t-x = 1\n", "a hyphen on an interpolated table name"),
+        ("rows T = 1\n", "an uppercase interpolated table name"),
+    ] {
+        assert!(parse_manifest(text).is_err(), "must reject {why}");
+    }
+}
+
+/// A negative count parses as an integer but can never be satisfied, so it is
+/// rejected at the manifest rather than deferred to a container run that would
+/// report it as an unsatisfiable row count.
+#[test]
+fn manifest_parser_rejects_a_negative_row_count() {
+    assert!(parse_manifest("rows indexer_cursor = -1\n").is_err());
+    assert_eq!(
+        parse_manifest("rows indexer_cursor = 0\n").expect("zero is a legal count"),
+        vec![Declared::Rows {
+            table: "indexer_cursor".to_string(),
+            count: 0,
+        }]
+    );
 }
 
 /// Every relation the migrations declare actually exists once they have run.
@@ -470,14 +561,27 @@ async fn migrate_produces_every_declared_relation() {
         for decl in declared {
             match decl {
                 Declared::Table(table) => {
-                    let present: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
-                        .bind(table.as_str())
-                        .fetch_one(&pool)
-                        .await
-                        .expect("probe table");
+                    // `pg_tables` scoped to `public`, not `to_regclass`. The
+                    // latter resolves *any* relation kind through the
+                    // `search_path`, so it would answer yes for a view of the
+                    // same name — leaving the substitution `view` exists to
+                    // catch unguarded in the one direction that matters more,
+                    // since a table silently becoming a view breaks every
+                    // writer of it.
+                    let present: bool = sqlx::query_scalar(
+                        "SELECT EXISTS (
+                             SELECT 1 FROM pg_tables
+                             WHERE schemaname = 'public' AND tablename = $1
+                         )",
+                    )
+                    .bind(table.as_str())
+                    .fetch_one(&pool)
+                    .await
+                    .expect("probe table");
                     assert!(
                         present,
-                        "v{version} declares table `{table}`, which is absent after migrating"
+                        "v{version} declares table `{table}`, which is absent after \
+                         migrating (or is not a table)"
                     );
                 }
                 Declared::View(view) => {
@@ -498,9 +602,9 @@ async fn migrate_produces_every_declared_relation() {
                     );
                 }
                 Declared::Column { table, column } => {
-                    // Scoped to `public`, matching the `to_regclass` probe
-                    // above: without it a same-named table in any visible
-                    // schema would satisfy this.
+                    // Scoped to `public`, as the table and view probes above
+                    // are: without it a same-named table in any visible schema
+                    // would satisfy this.
                     let present: bool = sqlx::query_scalar(
                         "SELECT EXISTS (
                              SELECT 1 FROM information_schema.columns
@@ -521,9 +625,7 @@ async fn migrate_produces_every_declared_relation() {
                     );
                 }
                 Declared::Rows { table, count } => {
-                    // The table name is interpolated because an identifier
-                    // cannot be a bind parameter; `is_identifier` at parse time
-                    // is what bounds what can reach here.
+                    // Interpolated, not bound — see `is_identifier`.
                     let rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
                         .fetch_one(&pool)
                         .await

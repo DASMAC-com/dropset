@@ -551,7 +551,8 @@ directive per line — `table <name>`, `view <name>`,
 `db-schema/tests/schema_fence.rs` replays the history against a
 throwaway Postgres and probes for each declared relation. A migration
 with no manifest fails the ordinary test run, as does a manifest with no
-migration, so the pairing holds in both directions.
+migration, so the pairing holds in both directions. The relation probes
+themselves need a Postgres container and run under `--ignored`.
 
 The manifest is a **declaration, not a derivation**: nothing parses
 `CREATE TABLE` out of the DDL, which would make the check agree with
