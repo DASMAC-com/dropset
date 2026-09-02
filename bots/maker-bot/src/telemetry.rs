@@ -455,8 +455,12 @@ pub fn spawn(rt: &Runtime) -> Telemetry {
             // to read the operator's connection string, so its rendered cause
             // chain is the one message here whose whole subject is a value
             // that carries a password. Console output is not exempt from the
-            // custody rule — a bot's stderr is collected and retained, and
-            // `{:#}` walks a cause chain no caller here controls.
+            // custody rule — this bot is a compose service, so its stderr is
+            // captured by the log driver and retained — and `{:#}` walks a
+            // cause chain no caller here controls. Note the helper also bounds
+            // the text and flattens whitespace runs; both are a legibility
+            // cost this path does not otherwise need, accepted so the console
+            // and the columns cannot disagree about what a redacted URL is.
             let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
             eprintln!(
                 "[telemetry] {DATABASE_URL_ENV} is not a usable connection \
