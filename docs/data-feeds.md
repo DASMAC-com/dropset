@@ -1782,15 +1782,20 @@ from a vault that was never consulted.
 Three paths resolve from there, in the order the provider consults
 them:
 
-1. **The process environment**, always first — the override path, and
-   what CI uses. No `op`, no vault, no 1Password dependency in CI.
+1. **The process environment**, always first — the override path, for a
+   machine that exports the three keys directly instead of keeping them
+   in the enclave. No make target targets it *exclusively* any more, but
+   `op run` inherits the environment rather than clearing it, so a key
+   the enclave does not set still falls through to whatever was
+   exported. No CI workflow runs a collector at all, so CI is not a
+   consumer of it.
 
-1. **The containers**: `make fx-collectors-up` wraps the compose
-   invocation in `op run`, which resolves the references and exports
-   them under the derived variable names. A container never reaches a
-   secret store itself — it has no `op` and no session, and is handed
-   resolved values. That is the same shape the hosted deploy has, where
-   the instance role fetches from Secrets Manager.
+1. **The containers**: `make collectors-up` wraps the keyed half of the
+   compose invocation in `op run`, which resolves the references and
+   exports them under the derived variable names. A container never
+   reaches a secret store itself — it has no `op` and no session, and is
+   handed resolved values. That is the same shape the hosted deploy has,
+   where the instance role fetches from Secrets Manager.
 
 1. **A collector run straight from the host**, which resolves through
    `op read` per key — no credential exported, and no `op run`:

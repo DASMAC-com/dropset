@@ -69,6 +69,7 @@ dropset
 dtolnay
 eclob
 econia
+elif
 equi
 erapi
 etherfuse

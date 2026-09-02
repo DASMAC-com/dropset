@@ -384,28 +384,47 @@ decks-build: check-pnpm
 # but not the prices feeding it is showing half the system. Grafana opens on
 # http://localhost:3200 alongside the frontend's own tab.
 #
+# That is every collector, keyed venues included — `collectors-up` gates the
+# keyed half on the secrets enclave itself, so this target needs no FX step of
+# its own and no credential handling.
+#
 # `collectors-up` runs FIRST and synchronously, before the TUI takes the
 # alternate screen — it is the slow, chatty step (it builds the Rust images on
 # a cold tree) and the one that fails when Docker is not running, so both its
 # progress and its errors belong on a plain terminal rather than under a TUI.
 # It is also why this target now needs `check-docker`.
 #
-# On exit the trap runs `collectors-down`, which stops the four collectors and
-# Grafana and deliberately LEAVES `postgres` — the volume holds recorded
-# candles, and every per-app `down` target here is scoped for exactly that
-# reason. The browser tabs are the operator's to close.
+# On exit the trap stops the background frontend and nothing else, because
+# nothing else is this recipe's to stop. Everything the TUI owns tears itself
+# down when the TUI quits: `Drop for Validator` kills the validator child and
+# its temp ledger, `Drop for BotManager` kills and reaps every maker/taker
+# child, and `Drop for App` stops the explorer container. That holds for
+# Ctrl-C as well as `q` — the TUI runs in raw mode, so crossterm delivers
+# Ctrl-C as a key event rather than a signal, and it routes to the same clean
+# quit that runs those destructors instead of bypassing them.
 #
-# Two honest limits on that teardown, since "tears down what it started" would
-# overstate it. `collectors-up` is idempotent, so collectors the operator had
-# already started are stopped too on exit; and it runs BEFORE the trap is
-# installed, so a Ctrl-C during the image build leaves them up (`make
-# collectors-down` recovers). Both are recoverable and neither touches data.
+# What is left when the demo ends is therefore the collectors it started —
+# every one, or the keyless four if the enclave gate declined — plus
+# Grafana. They are deliberately left running: they are a standing
+# recording service, not a demo fixture. Every minute they are down is a hole
+# in the stored history that no later run can backfill at tick resolution, and
+# `restart: unless-stopped` already says they are meant to outlive whatever
+# started them. Quitting the demo should cost the demo, not the data.
 #
-# `DEMO_CLEANUP` disarms the trap (`trap -`) as its first act. INT and EXIT
-# are both trapped and the shell runs the EXIT handler after the INT one, so
-# without that the whole teardown ran twice on Ctrl-C. That was free when the
-# handler was a bare `kill`; it is not free now that it also runs a
-# five-service `docker compose rm -sf`.
+# So stopping the collectors is always an explicit act: `make
+# collectors-down` for the collectors alone, or `make clean-docker` when
+# tearing the whole localnet down. The browser tabs are the operator's to
+# close, and so is the decision to stop recording.
+#
+# This is why the target does not try to stop only what it started. It has no
+# way to tell — `collectors-up` is idempotent, so a demo cannot distinguish
+# the collectors it launched from the ones already running — and under the
+# rule above it does not need to: the answer is the same either way.
+#
+# `DEMO_CLEANUP` still disarms the trap (`trap -`) as its first act. INT and
+# EXIT are both trapped and the shell runs the EXIT handler after the INT one,
+# so without it the handler runs twice on Ctrl-C. That is harmless for a bare
+# `kill` and it is correct hygiene regardless.
 FRONTEND_LOG ?= /tmp/dropset-frontend.log
 # The background half and its cleanup, hoisted into variables the way `FX_UP`
 # is: the Makefile linter caps a recipe body at 5 lines and counts
@@ -413,12 +432,11 @@ FRONTEND_LOG ?= /tmp/dropset-frontend.log
 # before these additions.
 DEMO_FRONTEND = $(MAKE) --no-print-directory frontend-localnet \
 	>$(FRONTEND_LOG) 2>&1 </dev/null
-DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null; \
-	$(MAKE) --no-print-directory collectors-down
+DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null
 .PHONY: demo
 demo: check-docker
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
-	$(MAKE) --no-print-directory collectors-up
+	$(MAKE) --no-print-directory collectors-up KEYED_PAUSE=1
 	$(call open-browser,3200)
 	@set -m; $(DEMO_FRONTEND) & group=$$!; set +m; \
 	trap '$(DEMO_CLEANUP)' INT TERM EXIT; $(MAKE) --no-print-directory tui
@@ -473,9 +491,8 @@ explorer-down: check-docker
 # path rather than moving to the destructive one.
 #
 # To stop one app's own services and leave the rest up, use the per-service
-# targets (`indexer-down` / `collectors-down` / `explorer-down` /
-# `fx-collectors-down`) — each is scoped precisely because `postgres` is
-# shared.
+# targets (`indexer-down` / `collectors-down` / `explorer-down`) — each is
+# scoped precisely because `postgres` is shared.
 CLEAN_DOWN = docker compose -f infra/localnet/docker-compose.yml \
 	--profile taker --profile fx down --rmi local --remove-orphans
 .PHONY: clean-docker
@@ -532,12 +549,26 @@ indexer-down: check-docker
 # localnet up, and they share the one `dropset` database with the indexer.
 # Stopping them leaves the recorded history on the volume.
 #
-# Four feeds, across both tiers. Candles into `cex_prices`: the Coinbase
+# Four keyless feeds, across both tiers. Candles into `cex_prices`: the Coinbase
 # reference price. Spot ticks into `spot_ticks`: the Coinbase ticker (the prints
 # between candle closes), Kraken (batched peg truth — a real market print of
-# `USDC/USD`), and Pyth Hermes (batched FX with a published confidence). All
-# four are keyless, which is what keeps this target working on a machine with no
-# credentials at all; `fx-collectors-up` starts the keyed FX venues.
+# `USDC/USD`), and Pyth Hermes (batched FX with a published confidence).
+#
+# The three credentialed venues (`KEYED_UP` below) come up in the same breath,
+# behind a gate on the secrets enclave existing. There is deliberately no
+# separate target for them: every service here is a market-data collector, and
+# which ones happen to need an API key is a property of the vendor rather than
+# a distinction worth spending a target name on — the old `fx-` prefix said
+# "foreign exchange" while actually meaning "needs credentials", and would have
+# aged badly the first time a keyed venue published something other than FX.
+#
+# The gate is what keeps this target working on a machine with no credentials
+# at all: the keyless four come up regardless, and a keyed half that cannot
+# start warns loudly without failing the run (see `KEYED_WARN` below for why
+# it is loud and why it is non-fatal). A machine holding its keys as plain
+# exported environment variables rather than in the enclave has no target
+# for them any more — it runs the `--profile fx` compose invocation by
+# hand. The gate deliberately does not guess.
 #
 # Grafana comes up with them, because a collector you cannot see is a
 # collector you cannot verify: the point of starting a feed is watching what
@@ -560,10 +591,12 @@ collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --build --quiet-pull postgres migrate coinbase coinbase-ticker \
 		kraken pyth grafana
+	@$(KEYED_UP)
 .PHONY: collectors-down
 collectors-down: check-docker
-	docker compose -f infra/localnet/docker-compose.yml \
-		rm -sf coinbase coinbase-ticker kraken pyth grafana
+	docker compose -f infra/localnet/docker-compose.yml --profile fx \
+		rm -sf coinbase coinbase-ticker kraken pyth grafana oanda \
+		twelvedata alphavantage
 
 # Grafana alone, on http://localhost:3200, serving the provisioned
 # market-data ingestion dashboard (market-data/grafana/, docs/data-feeds.md
@@ -584,12 +617,12 @@ grafana-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		rm -sf grafana
 
-# The free-tier FX collectors (docs/data-feeds.md §9, "The free-tier FX
-# roster").
-# Separate from `collectors-up` because these three need API credentials while
-# every feed that target starts is keyless: it must keep working on a machine
-# with no keys at all. Each service reads its credential from the environment
-# and refuses to start without one, naming the variable it wanted.
+# The credentialed half of `collectors-up` — the free-tier FX venues
+# (docs/data-feeds.md §9, "The free-tier FX roster"). No target of its own:
+# `collectors-up` runs `KEYED_UP` behind the enclave gate, and
+# `collectors-down` removes these three alongside the keyless four. Each
+# service reads its credential from the environment and refuses to start
+# without one, naming the variable it wanted.
 #
 # Each takes a **roster** (`FX_PRODUCT_IDS`), so one service per venue covers
 # every pair rather than one service per pair. The two metered venues widen
@@ -604,10 +637,12 @@ grafana-down: check-docker
 # vault access — they are handed resolved values, which is exactly the shape
 # the hosted deploy has with Secrets Manager.
 #
-# The enclave is optional, hence the fallback branch rather than a hard
-# dependency: a machine with the three keys exported by hand still works, and
-# so does CI. `op run` resolves eagerly, so a bad reference stops the stack
-# here instead of starting a collector that 401s a minute later.
+# The enclave is optional, hence the gate rather than a hard dependency: a
+# checkout without 1Password access still gets the keyless four. (No CI
+# workflow runs any collector target, so CI is not a consumer of that
+# path — it is there for a fresh checkout.) `op run` resolves eagerly, so a
+# bad reference stops the stack here instead of starting a collector that
+# 401s a minute later.
 #
 # The enclave file is `include`d as well as passed to `op run`, because the
 # two need different things from it. `op run` injects it into the *child*
@@ -640,17 +675,73 @@ OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account '$(DROPSET_OP_ACCOUNT)',)
 FX_UP = docker compose -f infra/localnet/docker-compose.yml \
 	--profile fx up -d --build --quiet-pull postgres migrate oanda \
 	twelvedata alphavantage
-.PHONY: fx-collectors-up
-fx-collectors-up: check-docker
-	@if [ -f $(FX_ENV) ]; then \
-		op run $(OP_ACCT) --env-file=$(FX_ENV) -- $(FX_UP); \
-	else \
-		echo 'No $(FX_ENV) (cp its .example) — using exported keys.'; \
-		$(FX_UP); fi
-.PHONY: fx-collectors-down
-fx-collectors-down: check-docker
-	docker compose -f infra/localnet/docker-compose.yml --profile fx \
-		rm -sf oanda twelvedata alphavantage
+# A keyed bring-up that does not happen is LOUD, and it does not abort the
+# run. Loud because the failure is otherwise invisible in exactly the way that
+# matters: the keyless feeds are up, Grafana is green, and the three keyed
+# venues quietly record nothing — the same no-data-reads-as-healthy trap the
+# dashboards have. A one-line notice scrolls past under a compose build; a
+# banner does not.
+#
+# Non-fatal because this is now the default bring-up and sits on the `demo`
+# path: a 1Password hiccup should cost the keyed venues, not the whole stack.
+# The keyless four are unaffected by anything that goes wrong here, so the
+# useful thing to do is start them, say plainly what is missing, and continue.
+# The alternative — exit non-zero on a bad `op://` reference, treating it as
+# the config bug it usually is — was the road not taken; it would have made
+# `make demo` fail on a credential problem that has nothing to do with the
+# demo.
+#
+# Two failure modes route through the banner: no enclave file at all, and a
+# keyed bring-up that exits non-zero — `op` missing or signed out, a bad
+# reference, a wrong account, or the compose build itself failing. `op run`
+# exits with its CHILD's status, so the reason names the symptom rather than
+# diagnosing a cause it cannot actually distinguish; the underlying error
+# prints immediately above the banner.
+#
+# A third mode is NOT covered, and the gap is recorded here rather than
+# papered over. `docker compose up -d` returns as soon as the containers
+# start, and the compose file passes each credential as `${VAR:-}` rather
+# than the required form — so an enclave that resolves but is MISSING one of
+# the three references starts a collector that names its variable and dies.
+# That exits 0 and prints no banner.
+#
+# That `${VAR:-}` is not an unforced choice: the explorer-image workflow runs
+# `docker compose config` over this file with no environment at all, and the
+# required form fails that parse for every service (docker-compose.yml, the
+# alphavantage comment). So the fix is not to tighten it.
+#
+# `--wait` is the candidate — it was measured to exit 0 here despite the
+# one-shot `migrate`, which `depends_on: service_completed_successfully`
+# covers — but it is not adopted yet: these services are
+# `restart: unless-stopped`, so a crash-looping container can read as
+# running, and an unbounded `--wait` would hang `make demo` rather than warn
+# it. Adopting it wants a `--wait-timeout` and its own verification.
+#
+# `KEYED_WARN` is not self-contained: it reads a `reason` shell variable its
+# caller must set in the same shell. `KEYED_UP` below is that caller.
+# `demo` passes `KEYED_PAUSE=1`, which holds the terminal after the banner
+# until the operator acknowledges it. That target is the whole reason the
+# banner has to be loud and the only place it is not: `demo` opens a Grafana
+# tab on the next line — taking window focus — and the TUI takes the
+# alternate screen on the line after, so the warning is behind a green
+# dashboard within a second of printing and does not resurface until quit.
+# Every other caller prints and carries on.
+#
+# Gated on stdin being a tty as well, so a script, a CI job or a backgrounded
+# run never blocks on a prompt nobody is there to answer.
+KEYED_PAUSE =
+KEYED_WARN = printf '\n%s\n%s\n%s\n%s\n%s\n\n' \
+	'=====================================================================' \
+	'  WARNING — the keyed venues are NOT running.' \
+	"  Reason: $$reason" \
+	'  OANDA, Twelve Data and Alpha Vantage will record nothing.' \
+	'====================================================================='; \
+	if [ -n '$(KEYED_PAUSE)' ] && [ -t 0 ]; then \
+	printf '  press enter to continue… '; read -r _; printf '\n'; fi
+KEYED_UP = if [ ! -f "$(FX_ENV)" ]; then \
+	reason='no $(FX_ENV) (cp its .example)'; $(KEYED_WARN); \
+	elif ! op run $(OP_ACCT) --env-file=$(FX_ENV) -- $(FX_UP); then \
+	reason='the keyed bring-up failed (see the error above)'; $(KEYED_WARN); fi
 
 # Localnet bot stack: the maker bot (infra/localnet). It signs with the repo
 # keys/ keypairs and reaches the host-run validator at

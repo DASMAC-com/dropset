@@ -31,10 +31,10 @@ and not the other:
   secrets enclave's one operator file, holding the vault name and one ``op://``
   reference per credential. Unlike ``.claude/settings.local.json``, nothing
   resolves this path through a worktree to the main checkout, so without the
-  link a fresh worktree has none and ``make fx-collectors-up`` there silently
-  falls back to whatever keys happen to be exported. Both consumers follow a
-  symlink: the ``Makefile``'s ``-include`` and its ``[ -f ]`` guard (``test -f``
-  follows links, unlike ``-h``), and ``op run --env-file``.
+  link a fresh worktree has none and ``make collectors-up`` there brings up
+  the keyless feeds and warns that it is skipping the keyed venues. Both
+  consumers follow a symlink: the ``Makefile``'s ``-include`` and its ``-f``
+  guard (``test -f`` follows links, unlike ``-h``), and ``op run --env-file``.
 
 That step used to be prose in the skill — a Glob pair
 plus a bare ``ln -s`` against an **absolute base-repo path**, which re-prompted

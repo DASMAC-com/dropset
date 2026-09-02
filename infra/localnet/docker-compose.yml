@@ -50,8 +50,8 @@ services:
     # cannot stand in for the OANDA anchor (docs/data-feeds.md §9).
     #
     # Keyed, so it sits behind the `fx` profile with the other two: a plain
-    # `docker compose up` and `make collectors-up` stay keyless and always work,
-    # and `make fx-collectors-up` starts these.
+    # `docker compose up` stays keyless and always works, and `make
+    # collectors-up` adds these when the secrets enclave is present.
     #
     # The credential is passed as `${VAR:-}`, NOT the `${VAR:?}` required form,
     # even though the latter would catch a missing key at compose time. The
@@ -63,7 +63,7 @@ services:
     #
     # The variable name is derived from the collector's canonical secret name
     # (`alphavantage/api-key`, docs/data-feeds.md §12) rather than chosen here —
-    # `make fx-collectors-up` resolves the value from the 1Password enclave and
+    # `make collectors-up` resolves the value from the 1Password enclave and
     # exports it under exactly this spelling. A container never reaches a secret
     # store itself: it has no `op`, and it is handed a resolved value.
     build:
