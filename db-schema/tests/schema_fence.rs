@@ -1002,27 +1002,49 @@ async fn source_liveness_separates_a_dark_collector_from_a_live_pair() {
     let (_pg, pool) = start_pg().await;
     migrate(&pool).await.expect("apply migrations");
 
-    // (source, product, hours silent) — `None` meaning registered but never
-    // collected. The classes are picked to exercise both staleness bounds on
-    // the per-source view too, so a copy of the view that dropped the
-    // class-aware `CASE` and took one flat bound fails here rather than only in
-    // the per-product test.
-    let fixtures: [(&str, &str, Option<i64>); 5] = [
+    // (source, product, hours silent, which table) — `None` hours meaning
+    // registered but never collected.
+    //
+    // The classes exercise both staleness bounds from both sides on the
+    // per-source view, so a copy that dropped the class-aware `CASE` for one
+    // flat bound fails here rather than only in the per-product test: flat-72
+    // fails `EURC-USDC`, flat-48 fails `EUR-USD`.
+    //
+    // **The table column is load-bearing, not decoration.** `last_seen` reads
+    // `cex_prices` and `spot_ticks` through two separate correlated LATERAL
+    // joins, and before this fixture set no test in this file inserted a
+    // `spot_ticks` row at all — so the ticks join was exercised by nothing and
+    // dropping it, or dropping its `s.source = r.source` predicate, passed a
+    // green suite. Both `EUR-USD` and `EURC-EUR` below arrive via ticks.
+    let fixtures: [(&str, &str, Option<i64>, &str); 6] = [
         // One product, two collectors, opposite verdicts. The pair the whole
         // view exists for.
-        ("stale-src", "CAD-USD", Some(80)),
-        ("fresh-src", "CAD-USD", Some(30)),
+        // The fresh one arrives via TICKS while the dark one has only a stale
+        // bar, and that asymmetry is deliberate: it is what makes a dropped
+        // `s.source = r.source` on the ticks LATERAL detectable. Without it,
+        // that predicate could be deleted and every assertion here would still
+        // pass, because no product would have ticks under one source while
+        // being registered under another.
+        ("stale-src", "CAD-USD", Some(80), "bars"),
+        ("fresh-src", "CAD-USD", Some(30), "ticks"),
         // fx-pair silent 60h: inside the 72h session bound, so live per-source
-        // as well — the weekend case must not read as a dark collector.
-        ("probe", "EUR-USD", Some(60)),
+        // as well — the weekend case must not read as a dark collector. Via
+        // ticks, which is what covers that LATERAL and its source predicate.
+        ("probe", "EUR-USD", Some(60), "ticks"),
         // stablecoin-pair silent 60h: past its 48h bound, so stale. Same
         // silence as EUR-USD, opposite verdict, on the per-source view.
-        ("probe", "EURC-USDC", Some(60)),
+        ("probe", "EURC-USDC", Some(60), "bars"),
+        // peg-pair silent 30h: an ALWAYS-OPEN class that must read LIVE. Every
+        // other live row here is `fx-pair`, so without this a class predicate
+        // injected into the per-source `is_live` — darkening every
+        // stablecoin/peg/crypto collector while leaving `stale_after_secs`
+        // correct — would pass. Also the pair ENG-1074 leads with.
+        ("probe", "EURC-EUR", Some(30), "ticks"),
         // Registered, never collected: not live, and carrying no timestamp.
-        ("probe", "GBP-USD", None),
+        ("probe", "GBP-USD", None, "bars"),
     ];
 
-    for (source, product, silent_hours) in fixtures {
+    for (source, product, silent_hours, table) in fixtures {
         sqlx::query(
             "INSERT INTO instrument_registry
                  (source, product_id, first_registered_at, last_registered_at)
@@ -1034,30 +1056,42 @@ async fn source_liveness_separates_a_dark_collector_from_a_live_pair() {
         .await
         .unwrap_or_else(|e| panic!("register `{product}` under `{source}`: {e}"));
 
-        if let Some(hours) = silent_hours {
-            sqlx::query(
+        let Some(hours) = silent_hours else { continue };
+        let statement = match table {
+            "bars" => {
                 "INSERT INTO cex_prices
                      (source, product_id, granularity_secs, bucket_start,
                       low, high, open, close, volume)
                  VALUES ($1, $2, 60,
-                         EXTRACT(EPOCH FROM now())::BIGINT - $3, 1, 1, 1, 1, 0)",
-            )
+                         EXTRACT(EPOCH FROM now())::BIGINT - $3, 1, 1, 1, 1, 0)"
+            }
+            "ticks" => {
+                "INSERT INTO spot_ticks (source, product_id, observed_at, price)
+                 VALUES ($1, $2, EXTRACT(EPOCH FROM now())::BIGINT - $3, 1)"
+            }
+            other => panic!("unknown fixture table `{other}`"),
+        };
+        sqlx::query(statement)
             .bind(source)
             .bind(product)
             .bind(hours * 3600)
             .execute(&pool)
             .await
-            .unwrap_or_else(|e| panic!("insert a bar for `{product}`: {e}"));
-        }
+            .unwrap_or_else(|e| panic!("insert a {table} row for `{product}`: {e}"));
     }
 
-    for (source, product, class, live, has_data, bound_hours) in [
-        ("stale-src", "CAD-USD", "fx-pair", false, true, 72),
-        ("fresh-src", "CAD-USD", "fx-pair", true, true, 72),
-        ("probe", "EUR-USD", "fx-pair", true, true, 72),
-        ("probe", "EURC-USDC", "stablecoin-pair", false, true, 48),
-        ("probe", "GBP-USD", "fx-pair", false, false, 72),
-    ] {
+    // `bound_hours` sits between the two booleans deliberately: adjacent
+    // `bool`s can only be read by counting positions against the pattern.
+    let expected: [(&str, &str, &str, bool, i32, bool); 6] = [
+        ("stale-src", "CAD-USD", "fx-pair", false, 72, true),
+        ("fresh-src", "CAD-USD", "fx-pair", true, 72, true),
+        ("probe", "EUR-USD", "fx-pair", true, 72, true),
+        ("probe", "EURC-USDC", "stablecoin-pair", false, 48, true),
+        ("probe", "EURC-EUR", "peg-pair", true, 48, true),
+        ("probe", "GBP-USD", "fx-pair", false, 72, false),
+    ];
+
+    for (source, product, class, live, bound_hours, has_data) in expected {
         let (asset_class, is_live, last_data_at, stale_after_secs): (
             String,
             bool,
@@ -1065,8 +1099,8 @@ async fn source_liveness_separates_a_dark_collector_from_a_live_pair() {
             i32,
         ) = sqlx::query_as(
             "SELECT asset_class, is_live, last_data_at, stale_after_secs
-                 FROM instrument_source_liveness
-                 WHERE source = $1 AND product_id = $2",
+             FROM instrument_source_liveness
+             WHERE source = $1 AND product_id = $2",
         )
         .bind(source)
         .bind(product)

@@ -40,6 +40,13 @@
 --   * A pegged pair legitimately sits still, so "price unchanged" is not a
 --     fault signal here either — `USDC-USD`, the peg leg the Kraken collector
 --     exists to capture, is the case in point.
+--   * Two collector PROCESSES sharing one source label collapse into one row,
+--     and `coinbase` is a live instance of it (the `last_seen` note below has
+--     the detail). If its candle collector goes dark while its ticker keeps
+--     running, that row still reads live — the same masking shape this view
+--     exists to remove, one level further in. Closing it needs a distinct
+--     `source` per collector, which is a change to the collectors and not to
+--     this view.
 --
 -- WHERE THE THRESHOLDS LIVE NOW.
 --
@@ -72,11 +79,24 @@ last_seen AS (
     -- `bucket_start` in its key. 0009 states the argument in full; measure
     -- before putting either view on a per-load path.
     --
-    -- A given source writes bars or ticks and never both, so one argument to
-    -- `GREATEST` is NULL by construction. It ignores NULLs and returns NULL
-    -- only when every argument is NULL, so a registered pair whose venue has
-    -- never answered yields NULL — distinguishable from one that answered and
-    -- stopped, with no 0 sentinel to manufacture and then undo.
+    -- `GREATEST` ignores NULL arguments and returns NULL only when every
+    -- argument is NULL, so a registered pair whose venue has never answered
+    -- yields NULL — distinguishable from one that answered and stopped, with
+    -- no 0 sentinel to manufacture and then undo.
+    --
+    -- Usually only one side is populated, because most collectors write bars
+    -- or ticks and not both. `coinbase` is the exception, and it is not
+    -- hypothetical: `market-data/src/bin/coinbase.rs` writes `cex_prices`
+    -- while `market-data/src/bin/coinbase_ticker.rs` writes `spot_ticks`,
+    -- both under the source label `coinbase`, and deliberately so — "it is
+    -- the same venue, and the table is what distinguishes a print from a
+    -- bucket". For that source both arguments are populated and `GREATEST`
+    -- returns the later of the two, which is the right reading of "when did
+    -- anything last arrive for this pair".
+    --
+    -- 0009 states the never-both case as an invariant. That was wrong when it
+    -- was written and it is immutable now, so this is the corrected
+    -- statement; do not propagate the invariant form into a later migration.
     SELECT
         r.source,
         r.product_id,
@@ -130,9 +150,12 @@ FROM bounded;
 COMMENT ON VIEW instrument_source_liveness IS
     'Per-(source, product) ingestion liveness: when a reading for this pair '
     'last reached us from this collector, and a live/quiet verdict against an '
-    'asset-class bound. Read this rather than feed_health to ask whether one '
-    'collector stopped delivering one pair. Delivery staleness, never price '
-    'age: a venue answering with a frozen quote reads live here.';
+    'asset-class bound. The two class bounds are defined here and inherited '
+    'by instrument_liveness, which aggregates this view. Read this rather '
+    'than feed_health to ask whether one collector stopped delivering one '
+    'pair, noting the keys do NOT join (a bare venue token here, a framework '
+    'source name there). Delivery staleness, never price age: a venue '
+    'answering with a frozen quote reads live here.';
 
 -- The per-product dimension, re-derived as a strict aggregate of the view
 -- above rather than a second traversal of the measurement tables.
@@ -150,18 +173,40 @@ COMMENT ON VIEW instrument_source_liveness IS
 -- product carries the same bound, so grouping by it is exact and needs no
 -- `min`/`max` that would imply a choice was being made between differing
 -- values.
+--
+-- **A future migration that changes this view's input incompatibly must drop
+-- this view first.** Postgres refuses to `CREATE OR REPLACE` a view whose
+-- column list another view depends on, so altering
+-- `instrument_source_liveness`'s columns or types means
+-- `DROP VIEW instrument_liveness`, then the replacement, then recreating this
+-- one — all in the same migration. Appending a column to the source view
+-- needs none of that, since this one selects by name. That is the price of
+-- deriving rather than duplicating, and it is worth naming here because the
+-- error arrives at migration time on somebody else's change.
 CREATE OR REPLACE VIEW instrument_liveness AS
+WITH per_product AS (
+    -- The aggregate named once, so the projection below reads a value rather
+    -- than repeating the call three times.
+    SELECT
+        product_id,
+        asset_class,
+        stale_after_secs,
+        max(last_data_at) AS last_data_at
+    FROM instrument_source_liveness
+    GROUP BY product_id, asset_class, stale_after_secs
+)
 SELECT
     product_id,
     asset_class,
-    max(last_data_at) AS last_data_at,
+    last_data_at,
     stale_after_secs,
-    max(last_data_at) IS NOT NULL
-        AND max(last_data_at)
-            > EXTRACT(EPOCH FROM now())::BIGINT - stale_after_secs
+    -- Same NULL guard as the per-source view, and spelled out for the same
+    -- reason: a product no collector has ever answered for is not live, and
+    -- that should be answered on purpose rather than by the comparison.
+    last_data_at IS NOT NULL
+        AND last_data_at > EXTRACT(EPOCH FROM now())::BIGINT - stale_after_secs
         AS is_live
-FROM instrument_source_liveness
-GROUP BY product_id, asset_class, stale_after_secs;
+FROM per_product;
 
 COMMENT ON VIEW instrument_liveness IS
     'Per-product data freshness and a live/quiet verdict, with the staleness '
@@ -170,7 +215,6 @@ COMMENT ON VIEW instrument_liveness IS
     'collectors, so a product reads live while individual collectors are dark '
     '— ask that view for the per-collector answer. Not a market calendar: it '
     'knows how long silence has run, not when a session is expected closed.';
-
 
 -- THE HEALTH TABLES' CONTRACT, STATED WHERE ITS READERS ARE.
 --
@@ -188,19 +232,33 @@ COMMENT ON VIEW instrument_liveness IS
 -- collectors name themselves per product (`cex:coinbase:EURC-USDC`) while the
 -- batched venues return one constant venue-level name for the whole venue.
 -- Reading a batched venue's row as per-pair is the silent-green failure this
--- comment exists to prevent: the row stays fresh while any product on the
--- venue ticks.
+-- comment exists to prevent: the row stays fresh because the REQUEST
+-- answered, whatever it contained — so one pair that stopped arriving, or
+-- every pair, still leaves it looking healthy.
+--
+-- AND THE TWO KEYS DO NOT JOIN, which is the part a panel author most needs.
+-- `feed_health.feed` is the framework's `Source::name`: prefixed and
+-- per-product for the candle collectors (`cex:coinbase:EURC-USDC`), a venue
+-- constant for the batched ones. `instrument_source_liveness.source` is the
+-- bare venue token the collector registers with `register_instruments`
+-- (`coinbase`, `oanda`, `twelvedata`, `alphavantage`, `kraken`, `pyth`). The
+-- two coincide only where the framework name happens to be a bare venue
+-- token, so a dashboard variable populated from one will silently match
+-- nothing in the other. Map them deliberately; never equi-join them.
 COMMENT ON TABLE feed_health IS
     'Per-FEED poll liveness: whether a poller is alive, when it last '
-    'succeeded, and what it last failed with. The key is a source name, which '
-    'is venue-level for a batched venue (one request prices many products), '
-    'so this row is NOT per-product and a fresh row does not mean every pair '
-    'on the venue is ticking. For a per-pair answer read '
-    'instrument_source_liveness.';
+    'succeeded, and what it last failed with. The key is a framework source '
+    'name, which is venue-level for a batched venue (one request prices many '
+    'products), so this row is NOT per-product: it records that the request '
+    'answered, not that any pair was in the response. For a per-pair answer '
+    'read instrument_source_liveness — but note the keys do NOT join, since '
+    'this column is a framework name (cex:coinbase:EURC-USDC) while that '
+    'view''s source is a bare venue token (coinbase).';
 
 COMMENT ON TABLE push_health IS
     'Per-CONNECTION transport state for a push source: subscribed and able to '
     'deliver, never message recency — silence is a push source''s healthy '
     'state. Like feed_health this is keyed per feed, not per product, so it '
     'cannot answer whether one pair stopped arriving; read '
-    'instrument_source_liveness for that.';
+    'instrument_source_liveness for that, keeping in mind the two keys do NOT '
+    'join (a framework source name here, a bare venue token there).';

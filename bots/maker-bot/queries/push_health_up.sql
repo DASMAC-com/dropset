@@ -22,7 +22,8 @@
 -- still arriving — and since silence is a push source's healthy state, no
 -- duration of it is evidence either way. That is not a gap to close here (see
 -- `feeds/src/liveness.rs`); the per-pair question belongs to
--- `instrument_source_liveness`.
+-- `instrument_source_liveness`, whose `source` is a bare venue token and so
+-- does not join this column.
 INSERT INTO push_health (
     feed,
     state,

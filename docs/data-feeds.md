@@ -677,7 +677,7 @@ silent-green failure rather than a wrong number. `feed_health` and
 `push_health` are keyed by **source name**, and a source name is
 venue-level for a *batched* venue: Kraken, Pyth, er-api, CoinGecko, CMC
 and Frankfurter each price a whole roster in one request and report one
-constant name for all of it, while the candle collectors (Coinbase,
+constant name for all of it, while the per-product collectors (Coinbase,
 OANDA, Twelve Data, Alpha Vantage) name themselves per product. So a
 batched venue's health row stays fresh while one pair on it is dead, and
 a per-pair alert built on `last_ok_at` is wrong for exactly those
@@ -689,9 +689,9 @@ likely to get this wrong work from the catalog and the query files
 rather than from Rust module docs.
 
 The per-pair question has two views, and which one you want depends on
-the axis. `instrument_liveness` is **per product**: it seeks each
-`(source, product_id)` series on the measurement tables' primary-key
-prefix, then aggregates across a product's collectors, so it answers
+the axis. `instrument_liveness` is **per product**: it scans each
+`(source, product_id)` prefix on the measurement tables, then
+aggregates across a product's collectors, so it answers
 "is this pair collecting from anybody". `instrument_source_liveness` is
 **per `(source, product)`** and does not aggregate, so it answers "did
 *this* collector stop delivering *this* pair" — which the per-product
@@ -699,11 +699,20 @@ view necessarily discards. EUR-USD is polled by four collectors, so it
 reads live in the first view while three of them are dark; only the
 second shows that. Both take their staleness bound from `asset_class`
 so an FX weekend is not read as a dead collector, and both take it from
-one definition, in `0010_source_liveness.sql`. (0009 introduced the two
-constants with a note that they are defined nowhere else. That note
-predates the re-derivation, and an applied migration cannot be
-corrected in place — sqlx hashes the migration text, so editing even a
-comment breaks every database that already ran it.)
+one definition, in whichever migration currently defines the views
+(today `0010_source_liveness.sql`). (0009 introduced the two constants
+with a note that they are defined nowhere else. That note predates the
+re-derivation, and an applied migration cannot be corrected in place —
+sqlx hashes the migration text, so editing even a comment breaks every
+database that already ran it.)
+
+One join to make deliberately rather than by reflex: a health row's
+`feed` and a liveness row's `source` are **different vocabularies**. The
+former is the framework `Source::name` (`cex:coinbase:EURC-USDC` for a
+per-product collector, a venue constant for a batched one); the latter
+is the bare venue token the collector registers. They coincide only
+where the framework name is itself a bare token, so a panel variable
+populated from one will silently match nothing in the other.
 
 **Both views measure delivery, never price age.** `observed_at` is the
 venue's own publish time only where the venue sends one — Pyth Hermes

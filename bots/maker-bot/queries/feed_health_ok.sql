@@ -10,7 +10,9 @@
 -- roster in one request and reports one constant name for all of it, so this
 -- row records that the poll succeeded — not that any particular pair was in
 -- the response. Per-pair delivery is `instrument_source_liveness`
--- (0010_source_liveness.sql), which carries the argument in full.
+-- (0010_source_liveness.sql), which carries the argument in full — and the
+-- two keys do NOT join: this is a framework `Source::name`, that is a bare
+-- venue token.
 INSERT INTO feed_health (
     feed,
     status,
