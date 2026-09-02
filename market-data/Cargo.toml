@@ -37,6 +37,10 @@ name = "market-data-coinbase-ticker"
 path = "src/bin/coinbase_ticker.rs"
 
 [[bin]]
+name = "market-data-erapi"
+path = "src/bin/erapi.rs"
+
+[[bin]]
 name = "market-data-kraken"
 path = "src/bin/kraken.rs"
 

@@ -132,6 +132,45 @@ services:
       PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC}'
       RUST_LOG: 'info'
     restart: 'unless-stopped'
+  erapi:
+    # The er-api daily FX collector: one batched keyless request prices every
+    # roster currency into `spot_ticks`, stamped with the provider's own refresh
+    # instant rather than the poll second (docs/data-feeds.md §9).
+    #
+    # It carries the leg no other keyless source does: NGN. Pyth Hermes
+    # catalogues that currency but has never published a price for it, and the
+    # ECB set behind Frankfurter omits it entirely, so until this service ran
+    # it rested on two keyed vendors alone. Keyless, so it comes up with
+    # `make collectors-up`.
+    #
+    # **`POLL_INTERVAL_SECS` is hourly and does NOT read
+    # `TICK_POLL_INTERVAL_SECS`.** The other `spot_ticks` collectors poll every
+    # 15 s, which for a snapshot refreshed once a day would spend ~5,700 keyless
+    # requests a day re-reading a value the provider has already said will not
+    # change. The idempotent insert absorbs the redundant polls that remain.
+    #
+    # **`ERAPI_PRODUCT_IDS` deliberately does not chain to `FX_PRODUCT_IDS`**
+    # the way the keyed FX venues do. That shared roster is the three pairs
+    # those vendors are paid for; this venue prices its whole table in one
+    # request, so narrowing it to that set would discard the coverage that is
+    # the only reason to run it.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/collectors.Dockerfile'
+    command:
+    - 'market-data-erapi'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      POLL_INTERVAL_SECS: '${ERAPI_POLL_INTERVAL_SECS:-3600}'
+      PRODUCT_IDS: >-
+        ${ERAPI_PRODUCT_IDS:-AUD-USD,BRL-USD,CAD-USD,CHF-USD,EUR-USD,
+        GBP-USD,IDR-USD,JPY-USD,MXN-USD,MYR-USD,NGN-USD,SGD-USD,
+        TRY-USD,ZAR-USD}
+      RUST_LOG: 'info'
+    restart: 'unless-stopped'
   explorer:
     # `.github/workflows/explorer-image.yml` builds this image (multi-arch) and
     # pushes it to the `image:` tag below; `pull` / `up` prefer that prebuilt

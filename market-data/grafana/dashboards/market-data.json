@@ -902,7 +902,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM instrument_registry ORDER BY 1",
-        "description": "Sources from both tiers, so the tick-only venues (kraken, pyth) are selectable rather than absent. Note that 'coinbase' appears once but writes both tiers - the table a row lives in is what distinguishes a print from a bucket, not the source label.",
+        "description": "Sources from both tiers, so the tick-only venues (kraken, pyth, erapi) are selectable rather than absent. Note that 'coinbase' appears once but writes both tiers - the table a row lives in is what distinguishes a print from a bucket, not the source label.",
         "includeAll": true,
         "label": "Source",
         "multi": true,

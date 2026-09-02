@@ -6,9 +6,10 @@
 //! once and prints the reference each market *would* stamp — the wiring check
 //! that every venue is reachable and decoding, with no validator and no writes.
 //! Pass `--drop <tier>` (repeatable: `pyth`, `coinbase`, `kraken`, `coingecko`,
-//! `cmc`, `fx`) in a dry run to suppress a tier and watch the cascade fall
-//! through to the next one — dropping `pyth` is how you check the Frankfurter
-//! FX fallback still carries the anchor.
+//! `cmc`, `fx`, `erapi`) in a dry run to suppress a tier and watch the cascade
+//! fall through to the next one — dropping `pyth` is how you check the daily FX
+//! references still carry the anchor, and dropping `fx` leaves er-api as the
+//! only one, which is the shape the NGN markets run in permanently.
 //!
 //! Flags:
 //!   --rpc <url>            RPC endpoint (default http://127.0.0.1:8899)
@@ -17,15 +18,15 @@
 //!   --market <symbol>      quote only this market (repeatable); default: all
 //!   --dry-run              poll feeds and print the intended quotes, then exit
 //!   --drop <tier>          dry-run only: suppress pyth | coinbase | kraken |
-//!                          coingecko | cmc | fx
+//!                          coingecko | cmc | fx | erapi
 
 use anyhow::{anyhow, Context, Result};
 use dropset_fair_value::{
     Candidates, ClockCtx, ConsensusState, FairValueEngine, LegReport, Reading, Regime,
 };
 use dropset_feeds::venues::{
-    CmcSource, CoinGeckoSource, CoinbaseTicker, FrankfurterSource, KrakenSource, PythFeed,
-    PythHermesSource,
+    CmcSource, CoinGeckoSource, CoinbaseTicker, ErApiSource, FrankfurterSource, KrakenSource,
+    PythFeed, PythHermesSource,
 };
 use dropset_feeds::{
     forward_channel, run_until, run_until_with_metrics, HttpClient, RunConfig, Sink, Source,
@@ -38,7 +39,7 @@ use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::model::fair_mid::build_legs;
 use dropset_maker_bot::quote_state::QuoteStateStore;
 use dropset_maker_bot::tasks::{
-    FeedReceivers, SOURCE_CMC, SOURCE_COINBASE, SOURCE_COINGECKO, SOURCE_FRANKFURTER,
+    FeedReceivers, SOURCE_CMC, SOURCE_COINBASE, SOURCE_COINGECKO, SOURCE_ERAPI, SOURCE_FRANKFURTER,
     SOURCE_KRAKEN, SOURCE_PYTH,
 };
 use dropset_maker_bot::telemetry::{self, Telemetry};
@@ -581,6 +582,19 @@ fn spawn_price_feeds(
         telemetry,
         HealthRow::Report,
     );
+    // The second daily reference, on the same roster and the same cadence as
+    // Frankfurter — one batched request prices every currency, so widening the
+    // roster costs this tier nothing.
+    let erapi = spawn_feed(
+        rt,
+        ErApiSource::new(&cfg.erapi_base_url, roster.currencies.clone())?,
+        RunConfig {
+            poll_interval: cfg.fx_poll,
+            error_backoff: FEED_ERROR_BACKOFF,
+        },
+        telemetry,
+        HealthRow::Report,
+    );
     Ok(FeedReceivers {
         pyth,
         kraken,
@@ -588,6 +602,7 @@ fn spawn_price_feeds(
         coingecko,
         coinmarketcap,
         frankfurter,
+        erapi,
     })
 }
 
@@ -653,6 +668,16 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         rt.block_on(CmcSource::new(&cfg.feeds.coinmarketcap_base_url, roster.coinmarketcap)?.poll())
             .unwrap_or_default()
     };
+    // Only the rates are kept: the dry run composes one tick from a single poll,
+    // so there is no receipt age to compare a snapshot instant against and no
+    // stall to detect across polls.
+    let erapi = if drop("erapi") {
+        Default::default()
+    } else {
+        rt.block_on(ErApiSource::new(&cfg.feeds.erapi_base_url, roster.currencies.clone())?.poll())
+            .map(|snap| snap.rates)
+            .unwrap_or_default()
+    };
     let fx = if drop("fx") {
         Default::default()
     } else {
@@ -664,13 +689,15 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
 
     println!(
         "Tiers live: pyth {} feeds, coinbase {} products, kraken {} pairs, \
-         coingecko {} ids, coinmarketcap {} ids, fx {} currencies",
+         coingecko {} ids, coinmarketcap {} ids, fx {} currencies, \
+         erapi {} currencies",
         pyth.len(),
         coinbase.len(),
         kraken.len(),
         cg.len(),
         cmc.len(),
-        fx.len()
+        fx.len(),
+        erapi.len()
     );
     if !args.drop.is_empty() {
         println!("Suppressed tiers: {}", args.drop.join(", "));
@@ -727,7 +754,8 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         // agree or a dry run stops predicting the live mid.
         let fx_q = Candidates::none()
             .push_trusted(SOURCE_PYTH, fx_pyth)
-            .push_reference(SOURCE_FRANKFURTER, q(fx.get(m.currency).copied()));
+            .push_reference(SOURCE_FRANKFURTER, q(fx.get(m.currency).copied()))
+            .push_reference(SOURCE_ERAPI, q(erapi.get(m.currency).copied()));
         // Basis leg: Coinbase token/USDC, Kraken token/USD, then the reflexive
         // CoinGecko / CMC index. Kraken's USD quote is converted with the peg
         // leg's consensus, exactly as `FeedHub::legs` does — the two collections
