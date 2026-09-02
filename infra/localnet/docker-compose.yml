@@ -524,10 +524,13 @@ services:
     # crash-looping container teaches operators to ignore a red container,
     # which is the habit that let the original outage run for a week.
     #
-    # To start it once a key IS held, go through `op run` the way the keyed
-    # collectors do — a bare `docker compose --profile pyth up pyth` runs
-    # outside the enclave, so PYTH_API_KEY interpolates to empty from the
-    # ambient shell and the container exits naming it:
+    # To start it once a key IS held: uncomment PYTH_API_KEY in your
+    # secrets.local.env (it ships commented out, because a reference to a
+    # vault item you do not have can fail the whole enclave), then go through
+    # `op run` the way the keyed collectors do. A bare
+    # `docker compose --profile pyth up pyth` runs outside the enclave, so
+    # PYTH_API_KEY interpolates to empty from the ambient shell and the
+    # container exits naming it:
     #
     #   op run --env-file=infra/localnet/secrets.local.env -- \
     #     docker compose -f infra/localnet/docker-compose.yml \
