@@ -1,4 +1,3 @@
-# cspell:word DISCRIM
 # cspell:word lddw
 # cspell:word ldxb
 # Hybrid sBPF entrypoint for the dropset program.
@@ -33,9 +32,23 @@
 #
 # Account order is [signer(0), market(1)] on both paths. The signer is
 # required to carry NO data (data_len == 0) so the market record sits at a
-# *static* input offset regardless of the market's (variable) size. Every
-# offset below is pinned by the `offset_of!` assertion test so the assembly
-# and the Rust layout cannot drift.
+# *static* input offset regardless of the market's (variable) size.
+#
+# The `.equ` block below is the ONE hand-written copy of these offsets.
+# `build.rs` parses it into `$OUT_DIR/asm_equ.rs`, and `src/asm_offsets.rs`
+# asserts every layout symbol against the offset derived from the real Rust
+# `#[repr(C)]` types — at COMPILE time. So no `.equ` offset can drift from
+# the layout: changing one without the other fails the build instead of
+# silently mis-stamping on-chain. The instruction-data offsets and the
+# discriminators are pinned against the real serialization in
+# tests/asm_parity.rs; the error codes are held against the kernels' own
+# copies in quote_write.rs.
+#
+# Note precisely what that does NOT cover: it pins the `.equ` TABLE, not the
+# instruction stream. An instruction that stored through a bare literal
+# instead of a symbol would be invisible to it. Every layout-dependent
+# access below therefore goes through a symbol — keep it that way, and treat
+# a raw offset literal in an instruction as a bug.
 #
 # Register discipline through the shared preamble: r1 = accounts region,
 # r2 = instruction data, r6 = the discriminator (held for the payload
@@ -52,9 +65,12 @@
 .equ IX_QUOTE_SLOT_OFF, 9         # u32
 # No instruction references this any more — the fused ldxdw at
 # IX_QUOTE_SLOT_OFF spans both datums. Kept because it documents the wire
-# layout that fusion depends on, but note nothing mechanically ties it to
-# anything: asm_parity pins the literal 13, and uses this name only as an
-# assertion message. Same for RP_QUOTE_UNIX_OFF below.
+# layout the fusion depends on, and it is no longer inert: asm_parity
+# indexes the serialized payload BY this symbol rather than by a re-typed
+# literal, and src/asm_offsets.rs const-asserts its adjacency to
+# IX_QUOTE_SLOT_OFF. Same for RP_QUOTE_UNIX_OFF below, which is additionally
+# checked against the real field offset and against the bound where
+# base_atoms begins.
 .equ IX_QUOTE_UNIX_OFF, 13        # u32
 # set_liquidity_profile payload
 .equ IX_PROFILE_OFF, 5            # [u8; 224], past disc(1) + vault_idx(4)
@@ -289,11 +305,12 @@ quote_write:
 
 # --- set_liquidity_profile payload (mirrors liquidity_profile.rs) ---
 write_profile:
-    # One `sol_memcpy_` of the whole 224-byte blob: the syscall is metered
-    # at max(10, len / 250) CU, so ~10 CU against ~40 for the 20 hand-rolled
-    # ldxdw/stxdw pairs a chunked copy would need. dst is the program-owned
-    # writable market data, src the readable instruction-data region — the
-    # two never overlap (dst precedes src in the input buffer).
+    # One `sol_memcpy_` of the whole PROFILE_SIZE blob: the syscall is
+    # metered at max(10, len / 250) CU, so ~10 CU against ~56 for the 28
+    # hand-rolled ldxdw/stxdw pairs a chunked copy of that width would need.
+    # dst is the program-owned writable market data, src the readable
+    # instruction-data region — the two never overlap (dst precedes src in
+    # the input buffer).
     #
     # The source length is NOT bounded against the instruction-data length —
     # see the note under the error codes above for why that is safe and

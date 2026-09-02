@@ -494,6 +494,18 @@ const _: () = assert!(core::mem::offset_of!(Vault, leader) == 8);
 const _: () = assert!(core::mem::offset_of!(Vault, tombstoned) == 143);
 const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 144);
 const _: () = assert!(core::mem::offset_of!(Vault, profile) == 148);
+// `quote_authority` is the authorization field and `reference_price` is the
+// fused store's target, so both are load-bearing in the same sense as the
+// pins above. They are pinned here, absolutely, because `asm_offsets.rs`
+// only ties them to the assembly's own literal — which is the right check
+// for ASM/Rust drift but says nothing about **already-deployed** accounts,
+// whose bytes a coordinated reorder would silently re-interpret. Pinning
+// `ReferencePrice.stamp` at 0 additionally closes a compensating pair:
+// `asm_offsets.rs` checks `reference_price + stamp` as a sum, which a
+// 68-plus-4 reorder would satisfy.
+const _: () = assert!(core::mem::offset_of!(Vault, quote_authority) == 40);
+const _: () = assert!(core::mem::offset_of!(Vault, reference_price) == 72);
+const _: () = assert!(core::mem::offset_of!(ReferencePrice, stamp) == 0);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 8);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, tombstone_head) == 12);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, free_head) == 16);
@@ -513,9 +525,9 @@ const _: () = assert!(core::mem::offset_of!(MarketHeader, free_head) == 16);
 // fused copy **mis-targeted** — writing the wall datum into the slot
 // field. (Mis-targeted, not misaligned: the store stays 8-byte-shaped
 // and lands where it always did; it is the *fields* underneath that
-// moved.) The `offset_of!` test that pins the assembly's absolute
-// offsets catches a shift of the whole record; this catches a swap
-// *within* it.
+// moved.) The compile-time assertions in `src/asm_offsets.rs`, which
+// compare the assembly's own lifted `.equ` table against these offsets,
+// catch a shift of the whole record; this catches a swap *within* it.
 //
 // The `Level` and `Position` pins are a weaker claim, and deliberately
 // so — the assembly reads neither. `Level` crosses in the profile blob

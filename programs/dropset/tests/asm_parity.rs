@@ -5,12 +5,18 @@
 //!
 //! Two layers:
 //!
-//! 1. [`asm_offsets_match_layout`] re-derives every offset the assembly
-//!    hardcodes — from the real `#[repr(C)]` / `#[account]` layout and
-//!    agave's aligned account serialization — and asserts it against the
-//!    literal the `.s` uses. A `layout.rs` reorder / width change (or a
-//!    wrong ABI offset) breaks this test rather than silently mis-stamping
-//!    on-chain. Always runs.
+//! 1. [`asm_offsets_match_wire_format`] pins the assembly's instruction-data
+//!    offsets and discriminators against what the generated client actually
+//!    serializes. Always runs.
+//!
+//!    Its *layout* counterpart is no longer a test at all: every
+//!    `MARKET_*` / `VAULT_*` / `RP_*` offset the assembly hardcodes is now
+//!    checked at **compile time** in `src/asm_offsets.rs`, against the
+//!    `.equ` table `build.rs` lifts out of `src/asm/entrypoint.s`. That is
+//!    strictly stronger than asserting it here was — it reads the
+//!    assembly, so a `layout.rs` reorder or width change breaks the
+//!    **build** and cannot be papered over by editing a literal on this
+//!    side. The offsets below come from that same lifted table.
 //!
 //! 2. The `*_parity` tests deploy the reference (feature-off) build beside
 //!    the default asm `.so` and push identical inputs through both,
@@ -19,6 +25,14 @@
 //!    fail) when the reference oracle `.so` is absent, so a plain
 //!    `cargo test` — which only builds the default asm `.so` — stays green.
 //!    `make program-parity` builds both.
+//!
+//!    That skip is convenience for a bare local run and **must never be
+//!    what CI does**, because a skipped test is scored as a passing one:
+//!    every parity assertion in this file could evaporate into a green
+//!    required job with nothing compared. So the skip is gated on
+//!    [`REQUIRE_ORACLE_ENV`] — any run that sets it turns a missing oracle
+//!    into a hard failure, and both `make test-parity` and the CI job do.
+//!    See [`ref_built`].
 //!
 //! Only *legitimate* inputs are compared for byte-parity: a real wallet
 //! signer carries no data, so the assembly's signer-empty / writable
@@ -46,122 +60,23 @@ use anchor_lang_v2::InstructionData;
 use anchor_v2_testing::Signer;
 use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
 use core::mem::{offset_of, size_of};
-use dropset::{LiquidityProfile, Market, MarketHeader, Price, ReferencePrice, Vault};
+use dropset::asm_offsets::equ;
+use dropset::{Price, ReferencePrice, Vault};
 use solana_pubkey::Pubkey;
 
-// ── agave aligned account serialization (the input-buffer ABI) ──────────
-// A serialized account record is
-//   [RuntimeAccount header(88) | data | MAX_PERMITTED_DATA_INCREASE(10240)
-//    | pad-to-8 | rent_epoch(8)]
-// preceded by an 8-byte account count. These mirror the constants in
-// `entrypoint.s`; the asserts below tie them to what the assembly encodes.
-const NUM_ACCOUNTS_SIZE: usize = 8;
-const ACCT_HEADER_SIZE: usize = 88;
-const MAX_PERMITTED_DATA_INCREASE: usize = 10240;
-const RENT_EPOCH_SIZE: usize = 8;
-// RuntimeAccount header field offsets.
-const HDR_IS_SIGNER: usize = 1;
-const HDR_IS_WRITABLE: usize = 2;
-const HDR_PUBKEY: usize = 8;
-const HDR_DATA_LEN: usize = 80;
-const HDR_DATA: usize = 88;
-// Anchor account discriminator.
-const DISC_SIZE: usize = 8;
+/// Narrow an assembly offset for indexing. The lifted `.equ` table is `u64`
+/// — the assembly's word — and every offset in it is tiny.
+fn wire_off(offset: u64) -> usize {
+    usize::try_from(offset).expect("assembly offset fits a usize")
+}
 
 #[test]
-fn asm_offsets_match_layout() {
-    // account 0 (signer) field offsets: base is num_accounts(8).
-    assert_eq!(NUM_ACCOUNTS_SIZE + HDR_IS_SIGNER, 9, "SIGNER_IS_SIGNER_OFF");
-    assert_eq!(NUM_ACCOUNTS_SIZE + HDR_PUBKEY, 16, "SIGNER_PUBKEY_OFF");
-    assert_eq!(NUM_ACCOUNTS_SIZE + HDR_DATA_LEN, 88, "SIGNER_DATA_LEN_OFF");
-
-    // account 1 (market) base, with the signer carrying zero data — its
-    // data region is therefore just the DATA_INCREASE pad, contributing
-    // nothing between the header and the rent-epoch tail.
-    let market_base =
-        NUM_ACCOUNTS_SIZE + ACCT_HEADER_SIZE + MAX_PERMITTED_DATA_INCREASE + RENT_EPOCH_SIZE;
-    assert_eq!(market_base, 10344, "MARKET_BASE");
-    assert_eq!(
-        market_base + HDR_IS_WRITABLE,
-        10346,
-        "MARKET_IS_WRITABLE_OFF"
-    );
-    assert_eq!(market_base + HDR_DATA_LEN, 10424, "MARKET_DATA_LEN_OFF");
-    assert_eq!(market_base + HDR_DATA, 10432, "MARKET_DATA_OFF");
-
-    // market data framing: [disc(8)][MarketHeader][len:u32][pad][vaults].
-    let data_off = market_base + HDR_DATA;
-    assert_eq!(
-        data_off + DISC_SIZE + offset_of!(MarketHeader, nonce),
-        10440,
-        "MARKET_NONCE_OFF"
-    );
-    assert_eq!(
-        data_off + DISC_SIZE + size_of::<MarketHeader>(),
-        10693,
-        "MARKET_LEN_OFF"
-    );
-    // `Market::space_for(0)` IS the slab's ITEMS_OFFSET (align_up over the
-    // len field to align_of::<Vault>() == 4), so this pins the pad.
-    assert_eq!(Market::space_for(0), 268, "SLAB_ITEMS_OFF");
-    assert_eq!(size_of::<Vault>(), 692, "VAULT_SIZE");
-
-    // Vault field offsets the two payloads write to.
-    assert_eq!(
-        offset_of!(Vault, quote_authority),
-        40,
-        "VAULT_QUOTE_AUTHORITY_OFF"
-    );
-    let rp = offset_of!(Vault, reference_price);
-    assert_eq!(rp + offset_of!(ReferencePrice, stamp), 72, "RP_STAMP_OFF");
-    assert_eq!(rp + offset_of!(ReferencePrice, price), 80, "RP_PRICE_OFF");
-    assert_eq!(
-        rp + offset_of!(ReferencePrice, quote_slot),
-        84,
-        "RP_QUOTE_SLOT_OFF"
-    );
-    assert_eq!(
-        rp + offset_of!(ReferencePrice, quote_unix),
-        88,
-        "RP_QUOTE_UNIX_OFF"
-    );
-    // The field immediately past the fused 8-byte store, pinned so
-    // "nothing bleeds" is self-evident here rather than left to
-    // arithmetic: the store covers vault+84..92 and `base_atoms` begins
-    // at exactly 92.
-    //
-    // Note what the fusion changed about the STAKES of these offset
-    // asserts. It widened the blast radius of a drift rather than
-    // creating one: `RP_QUOTE_UNIX_OFF` at 88 drifting +4 could already
-    // put four leader-supplied bytes into `base_atoms`'s low half, so
-    // this bound was fund-safety-relevant before. What changed is that a
-    // single drifted offset now carries eight bytes across the boundary
-    // instead of four, and the pair moves as one store rather than two
-    // independently-targeted ones.
-    //
-    // (Resist the tempting shorthand that a corrupted datum is simply
-    // fail-safe. It is fail-safe *downward* — a datum pushed back makes
-    // levels read expired and stop matching — but a datum pushed forward
-    // saturates `deadline_after` toward `u32::MAX` and makes them
-    // effectively immortal instead. The slot/unix transposition this
-    // change guards against happens to land on the safe side; arbitrary
-    // corruption does not.)
-    //
-    // Either way these asserts are load-bearing for fund safety, not
-    // merely for correctness: any future proposal to relax, `#[ignore]`,
-    // or `#[cfg]`-gate them is a fund-safety change.
-    assert_eq!(
-        offset_of!(Vault, base_atoms),
-        92,
-        "fused store's upper bound"
-    );
-    assert_eq!(offset_of!(Vault, profile), 148, "VAULT_PROFILE_OFF");
-    assert_eq!(size_of::<LiquidityProfile>(), 224, "PROFILE_SIZE");
-
-    // Instruction-data layout: the assembly reads `vault_idx` at +1 and
-    // hands `sol_memcpy_` a source pointer of +5, so pin those against the
-    // *real* serialization rather than re-deriving them arithmetically —
-    // encode a recognizable payload and locate it in the wire bytes.
+fn asm_offsets_match_wire_format() {
+    // `set_liquidity_profile` (disc 6): the assembly reads `vault_idx` at
+    // IX_VAULT_IDX_OFF and hands `sol_memcpy_` a source pointer of
+    // IX_PROFILE_OFF. Pin both against the *real* serialization rather than
+    // re-deriving them arithmetically — encode a recognizable payload and
+    // locate it in the wire bytes.
     let probe: [u8; PROFILE_BYTES] = core::array::from_fn(|i| (i % 251 + 1) as u8);
     let wire = dropset::instruction::SetLiquidityProfile {
         vault_idx: 0x0403_0201,
@@ -173,19 +88,32 @@ fn asm_offsets_match_layout() {
         1 + size_of::<u32>() + PROFILE_BYTES,
         "ix data len"
     );
-    assert_eq!(wire[0], 6, "discriminator");
     assert_eq!(
-        &wire[1..5],
+        u64::from(wire[0]),
+        equ::DISCRIM_SET_LIQUIDITY_PROFILE,
+        "discriminator"
+    );
+    let idx = wire_off(equ::IX_VAULT_IDX_OFF);
+    assert_eq!(
+        &wire[idx..idx + 4],
         &0x0403_0201u32.to_le_bytes(),
         "IX_VAULT_IDX_OFF"
     );
-    assert_eq!(&wire[5..], &probe, "IX_PROFILE_OFF");
-    assert_eq!(PROFILE_BYTES, size_of::<LiquidityProfile>());
+    assert_eq!(
+        &wire[wire_off(equ::IX_PROFILE_OFF)..],
+        &probe,
+        "IX_PROFILE_OFF"
+    );
+    assert_eq!(
+        PROFILE_BYTES as u64,
+        equ::PROFILE_SIZE,
+        "the fixture's blob width must be the assembly's copy length"
+    );
 
     // Same treatment for disc 5, whose three u32 payload fields the
-    // assembly reads at fixed offsets +5 / +9 / +13. `quote_unix` is last
-    // and therefore the one a stale SDK builder would silently omit, so
-    // pin its position against the real serialization too.
+    // assembly reads at fixed offsets. `quote_unix` is last and therefore
+    // the one a stale SDK builder would silently omit, so pin its position
+    // against the real serialization too.
     let wire = dropset::instruction::SetReferencePrice {
         vault_idx: 0x0403_0201,
         price_bits: 0x0807_0605,
@@ -194,46 +122,36 @@ fn asm_offsets_match_layout() {
     }
     .data();
     assert_eq!(wire.len(), 1 + 4 * size_of::<u32>(), "ix data len");
-    assert_eq!(wire[0], 5, "discriminator");
     assert_eq!(
-        &wire[1..5],
-        &0x0403_0201u32.to_le_bytes(),
-        "IX_VAULT_IDX_OFF"
+        u64::from(wire[0]),
+        equ::DISCRIM_SET_REFERENCE_PRICE,
+        "discriminator"
     );
-    assert_eq!(
-        &wire[5..9],
-        &0x0807_0605u32.to_le_bytes(),
-        "IX_PRICE_BITS_OFF"
-    );
-    assert_eq!(
-        &wire[9..13],
-        &0x0C0B_0A09u32.to_le_bytes(),
-        "IX_QUOTE_SLOT_OFF"
-    );
-    assert_eq!(
-        &wire[13..17],
-        &0x100F_0E0Du32.to_le_bytes(),
-        "IX_QUOTE_UNIX_OFF"
-    );
+    for (offset, expected, label) in [
+        (equ::IX_VAULT_IDX_OFF, 0x0403_0201u32, "IX_VAULT_IDX_OFF"),
+        (equ::IX_PRICE_BITS_OFF, 0x0807_0605, "IX_PRICE_BITS_OFF"),
+        (equ::IX_QUOTE_SLOT_OFF, 0x0C0B_0A09, "IX_QUOTE_SLOT_OFF"),
+        (equ::IX_QUOTE_UNIX_OFF, 0x100F_0E0D, "IX_QUOTE_UNIX_OFF"),
+    ] {
+        let off = wire_off(offset);
+        assert_eq!(&wire[off..off + 4], &expected.to_le_bytes(), "{label}");
+    }
 
-    // ── The fused-copy contract ──────────────────────────────────────
+    // ── The fused-copy contract, wire side ───────────────────────────
     //
     // The disc-5 payload moves the two clock datums as a single
-    // `ldxdw`/`stxdw` pair rather than two word copies. That is legal
-    // only while the pair is adjacent *and in the same order* on both
-    // sides of the copy — the instruction data and the vault record —
-    // so pin both halves here, where a break names the assembly.
+    // `ldxdw`/`stxdw` pair rather than two word copies. That is legal only
+    // while the pair is adjacent *and in the same order* on both sides of
+    // the copy — the instruction data and the vault record.
     //
-    // `layout.rs` const-asserts the vault-side adjacency too, and that
-    // fires at compile time; this one covers the wire side, which no
-    // const-assert can see, and states the contract in one place.
+    // The vault side is settled at compile time: `layout.rs` const-asserts
+    // the field adjacency and `src/asm_offsets.rs` ties it to the offsets
+    // the assembly actually stores through, including the bound past which
+    // `base_atoms` begins. What no const can see is the *wire* side's byte
+    // order, which is what this asserts.
+    let pair = wire_off(equ::IX_QUOTE_SLOT_OFF);
     assert_eq!(
-        rp + offset_of!(ReferencePrice, quote_unix),
-        rp + offset_of!(ReferencePrice, quote_slot) + 4,
-        "vault-side datum pair must stay adjacent for the fused stxdw"
-    );
-    assert_eq!(
-        &wire[9..17],
+        &wire[pair..pair + 8],
         &0x100F_0E0D_0C0B_0A09u64.to_le_bytes(),
         "ix-side datum pair must read as one little-endian u64 \
          (quote_slot low, quote_unix high) for the fused ldxdw"
@@ -249,8 +167,39 @@ fn valid_price() -> u32 {
     Price::encode(10_850_000, 0).unwrap().as_u32()
 }
 
+/// Set by any run that requires the reference oracle to be present —
+/// `make test-parity` and the `Tests (asm parity)` CI job both export it.
+///
+/// It exists because nextest and the default harness alike score an early
+/// `return` as **passed**: without this gate, a build or cache mishap that
+/// left `dropset_ref.so` missing would take all eleven comparison tests
+/// below with it and still report a green required check. The value is
+/// never read, only its presence.
+const REQUIRE_ORACLE_ENV: &str = "DROPSET_REQUIRE_PARITY_ORACLE";
+
+/// Whether the reference oracle `.so` is on disk — the guard every
+/// comparison test below opens with.
+///
+/// # Panics
+///
+/// If the oracle is absent while [`REQUIRE_ORACLE_ENV`] is set. That is the
+/// whole point: a bare `cargo test --test asm_parity` skips (the oracle is
+/// genuinely not built), while CI fails loudly rather than silently
+/// asserting nothing.
 fn ref_built() -> bool {
-    std::path::Path::new(common::REF_PROGRAM_SO_PATH).exists()
+    if std::path::Path::new(common::REF_PROGRAM_SO_PATH).exists() {
+        return true;
+    }
+    assert!(
+        std::env::var_os(REQUIRE_ORACLE_ENV).is_none(),
+        "reference oracle missing at {} while {REQUIRE_ORACLE_ENV} is set.\n\
+         This run requires the Rust↔ASM comparison to actually happen, so a \
+         skip is a failure: build the pair with `make program-parity` (or \
+         investigate why the cached artifact pair is incomplete). Unset \
+         {REQUIRE_ORACLE_ENV} only for a deliberate asm-only local run.",
+        common::REF_PROGRAM_SO_PATH,
+    );
+    false
 }
 
 /// Open vault 0, stamp `(price_bits, quote_slot, quote_unix)`, and read
@@ -373,6 +322,139 @@ fn oob_err(mut f: Fixture) -> String {
         .expect_err("vault_idx past the slab length must reject")
 }
 
+/// A recognizable non-zero `base_atoms` for the target sector. Every byte is
+/// distinct and non-zero, so a store that overruns into *any* part of it
+/// shows up in the diff.
+const SEEDED_BASE_ATOMS: u64 = 0x1234_5678_9ABC_DEF0;
+
+/// The neighboring sector's `base_atoms`, likewise recognizable and
+/// distinct from [`SEEDED_BASE_ATOMS`], so a store that lands one sector low
+/// overwrites bytes that were neither zero nor the target's.
+const NEIGHBOR_BASE_ATOMS: u64 = 0x0BAD_0BAD_0BAD_0BAD;
+
+/// The target sector's stamp, and the neighboring sector's. Explicit for
+/// the same reason as [`PROFILE_QUOTE_UNIX`] — the two builds' clocks cannot
+/// be compared — and **pairwise distinct in every field**, which is what
+/// makes a mis-targeted store visible: a store landing one sector low, or
+/// reading the wrong payload word, changes a byte rather than rewriting the
+/// value already there.
+const STAMP_TARGET: (u32, u32) = (7, 1_700_000_000);
+/// See [`STAMP_TARGET`]. Distinct slot, distinct datum, distinct price.
+const STAMP_NEIGHBOR: (u32, u32) = (3, 1_600_000_000);
+
+/// A valid price distinct from [`valid_price`], for the neighboring sector.
+///
+/// Without this the two sectors shared a price word, and a mis-targeted
+/// store that wrote only `price` one sector low would write the value
+/// already there — invisible to a byte diff, which can only see a change.
+///
+/// The significand must carry exactly 8 digits (`Price` normalizes to
+/// `[10_000_000, 99_999_999]`), so this is not a free choice of any
+/// smaller-looking number.
+fn neighbor_price() -> u32 {
+    Price::encode(12_500_000, 0).unwrap().as_u32()
+}
+
+/// Open two vaults, seed the neighboring sector's reference price and both
+/// sectors' `base_atoms`, then stamp a price onto the *second* sector.
+///
+/// Returns every `(index, new_value)` the stamp changed in the market
+/// account's data, plus the target sector's `base_atoms` afterwards.
+fn stamp_write_footprint(mut f: Fixture) -> (Vec<(usize, u8)>, u64) {
+    let auth = f.authority.pubkey();
+    f.create_vault(0, auth, false, Pubkey::default())
+        .expect("create_vault 0");
+    f.create_vault(1, auth, false, Pubkey::default())
+        .expect("create_vault 1");
+    let signer = f.authority.insecure_clone();
+    // Seed sector 0's reference price, so a store that lands one sector low
+    // overwrites recognizable bytes rather than zeros. Every field differs
+    // from the target write below, price included.
+    f.set_reference_price_at(
+        &signer,
+        0,
+        neighbor_price(),
+        STAMP_NEIGHBOR.0,
+        STAMP_NEIGHBOR.1,
+    )
+    .expect("seed vault 0's reference price");
+    // Both sectors' `base_atoms` non-zero — see `poke_base_atoms`. This is
+    // the field the fused store's upper bound abuts, and a fresh vault
+    // leaves it at zero, where a clobber-to-zero would be invisible.
+    f.poke_base_atoms(0, NEIGHBOR_BASE_ATOMS);
+    f.poke_base_atoms(1, SEEDED_BASE_ATOMS);
+
+    let before = f.market_data();
+    f.set_reference_price_at(&signer, 1, valid_price(), STAMP_TARGET.0, STAMP_TARGET.1)
+        .expect("set_reference_price");
+    let after = f.market_data();
+
+    let changed = before
+        .iter()
+        .zip(after.iter())
+        .enumerate()
+        .filter(|(_, (b, a))| b != a)
+        .map(|(i, (_, &a))| (i, a))
+        .collect();
+    (changed, f.vault(1).base_atoms.get())
+}
+
+#[test]
+fn stamp_write_footprint_parity() {
+    if !ref_built() {
+        eprintln!("skipping stamp_write_footprint_parity: reference oracle absent");
+        return;
+    }
+    // The disc-6 path has had a whole-account footprint diff since it
+    // landed; this is the disc-5 counterpart. It exists because the
+    // assembly's own guidance invites further fusion here ("minimize total
+    // copies — fuse adjacent u32s into one u64 move wherever layout
+    // allows"), and the scalar readback assertions above only pin the
+    // four fields this path is *supposed* to write. Whether it wrote
+    // anything else is a question only a whole-account diff can answer.
+    let reference = stamp_write_footprint(Fixture::bootstrap_ref());
+    let asm = stamp_write_footprint(Fixture::bootstrap());
+    // Identity-free like the profile footprint — the changed bytes are the
+    // nonce, the stamp and the payload u32s, no pubkeys — so the two
+    // fixtures' independent keypairs don't make the builds incomparable.
+    assert_eq!(
+        reference, asm,
+        "asm and reference must move the same bytes to the same values"
+    );
+
+    // Vault 1 of two is the target; everything outside these three ranges
+    // must be untouched.
+    let vault1 = common::fixture::vault_byte_offset(1);
+    let nonce = 8..8 + size_of::<u64>();
+    let rp = vault1 + offset_of!(Vault, reference_price);
+    let stamp = rp + offset_of!(ReferencePrice, stamp);
+    let stamp = stamp..stamp + size_of::<u64>();
+    // `price`, `quote_slot` and `quote_unix` are three adjacent u32s — the
+    // latter two written as a single fused double-word — so the payload is
+    // one contiguous span, and it ends exactly where `base_atoms` begins.
+    // Pinning that adjacency here is what makes the range check below a
+    // statement about the fused store's upper bound rather than arithmetic.
+    let payload = rp + offset_of!(ReferencePrice, price);
+    let payload = payload..payload + 3 * size_of::<u32>();
+    assert_eq!(
+        payload.end,
+        vault1 + offset_of!(Vault, base_atoms),
+        "the payload span must end exactly at base_atoms"
+    );
+    for (idx, _) in &asm.0 {
+        assert!(
+            nonce.contains(idx) || stamp.contains(idx) || payload.contains(idx),
+            "byte {idx} changed outside nonce / stamp / reference-price \
+             payload of sector 1"
+        );
+    }
+    // And the field immediately past the fused store is intact — asserted
+    // directly rather than inferred from the changed set, which can only
+    // ever prove a subset (a write of the value already there is not a
+    // change). This is the assertion a widened or overlapping store fails.
+    assert_eq!(asm.1, SEEDED_BASE_ATOMS, "base_atoms untouched");
+}
+
 // ── set_liquidity_profile (disc 6) ──────────────────────────────────────
 
 /// A distinct value on every level of both sides, so a truncated, shifted,
@@ -391,9 +473,26 @@ fn full_ladder() -> [u8; PROFILE_BYTES] {
     common::fixture::ladder_profile(&levels, &bids)
 }
 
+/// The wall-clock datum the profile-write cases stamp before writing.
+///
+/// Explicit rather than taken from the bank clock, for the same reason
+/// [`stamp_and_read`] takes one: the two builds run on separate `LiteSVM`
+/// instances, so anything derived from their clocks cannot be compared.
+/// Distinguished against a single-/double-digit `quote_slot` per the
+/// fixture's convention, so a slot/wall transposition is visible in any
+/// assertion that reads either.
+const PROFILE_QUOTE_UNIX: u32 = 1_700_000_011;
+
 /// The observable state of a profile write: the stored blob, the reference
-/// price triple it must leave untouched, and the post-write market nonce.
-type ProfileWrite = (Vec<u8>, u64, u32, u32, u64);
+/// price fields it must leave untouched (stamp aside, which it re-arms), and
+/// the post-write market nonce.
+///
+/// `quote_unix` is here deliberately. It is the wall half of the dual-domain
+/// expiry gate, and omitting it left one specific corruption invisible: the
+/// profile write clobbering it *to zero*. A footprint diff cannot see that
+/// (a byte that was already zero never shows up as changed), so the only
+/// thing that can is reading the field back and comparing it.
+type ProfileWrite = (Vec<u8>, u64, u32, u32, u32, u64);
 
 /// Open vault 0, stamp a price, then write `profile` and read back
 /// everything the two builds must agree on.
@@ -402,7 +501,7 @@ fn write_profile_and_read(mut f: Fixture, profile: [u8; PROFILE_BYTES]) -> Profi
     f.create_vault(0, auth, false, Pubkey::default())
         .expect("create_vault");
     let signer = f.authority.insecure_clone();
-    f.set_reference_price(&signer, 0, valid_price(), 11)
+    f.set_reference_price_at(&signer, 0, valid_price(), 11, PROFILE_QUOTE_UNIX)
         .expect("set_reference_price");
     f.set_liquidity_profile(&signer, 0, profile)
         .expect("set_liquidity_profile");
@@ -412,6 +511,7 @@ fn write_profile_and_read(mut f: Fixture, profile: [u8; PROFILE_BYTES]) -> Profi
         v.reference_price.stamp.get(),
         v.reference_price.price.as_u32(),
         v.reference_price.quote_slot.get(),
+        v.reference_price.quote_unix.get(),
         f.market_header().nonce.get(),
     )
 }
@@ -439,7 +539,8 @@ fn profile_happy_path_parity() {
     );
     assert_eq!(asm.2, valid_price(), "reference price untouched");
     assert_eq!(asm.3, 11, "quote_slot untouched");
-    assert_eq!(asm.4, 2, "nonce bumped by the profile write");
+    assert_eq!(asm.4, PROFILE_QUOTE_UNIX, "quote_unix untouched");
+    assert_eq!(asm.5, 2, "nonce bumped by the profile write");
 }
 
 #[test]
@@ -464,9 +565,10 @@ fn profile_write_footprint_parity() {
         eprintln!("skipping profile_write_footprint_parity: reference oracle absent");
         return;
     }
-    // Bound the write's blast radius on each build, then compare. A 160-byte
-    // `sol_memcpy_` is the one payload here big enough to run off its field,
-    // so the assertion is which bytes of the *whole* market account moved:
+    // Bound the write's blast radius on each build, then compare. The
+    // `PROFILE_BYTES`-wide `sol_memcpy_` is the one payload here big enough
+    // to run off its field, so the assertion is which bytes of the *whole*
+    // market account moved:
     // only `market.nonce`, the target sector's `reference_price.stamp`, and
     // its `profile`. A bleed into `remaining`, into `reference_price.price`,
     // or into the neighboring sector shows up as an out-of-range index.
@@ -499,12 +601,13 @@ fn profile_write_footprint_parity() {
     // rather than the changed-byte set: a ladder byte that was already zero
     // never shows up as "changed", so the changed set can only ever prove a
     // subset of the copy.
-    assert_eq!(asm.2, ladder, "the whole 160-byte blob is in place");
+    assert_eq!(asm.2, ladder, "the whole profile blob is in place");
 }
 
-/// Open two vaults, write `profile` onto the *second*, and return every
-/// `(index, new_value)` the write changed in the market account's data,
-/// the post-write nonce, and the target sector's stored profile region.
+/// Open two vaults, stamp the second's reference price, write `profile` onto
+/// that second sector, and return every `(index, new_value)` the write
+/// changed in the market account's data, the post-write nonce, and the
+/// target sector's stored profile region.
 fn profile_write_footprint(
     mut f: Fixture,
     profile: [u8; PROFILE_BYTES],
@@ -522,6 +625,17 @@ fn profile_write_footprint(
     // low would overwrite recognizable bytes rather than zeros.
     f.set_liquidity_profile(&signer, 0, simple_profile(5_000, 10_000, u32::MAX))
         .expect("seed vault 0's ladder");
+    // Stamp the TARGET sector's reference price non-zero before the
+    // before-image is taken. This is what makes the "leaves the reference
+    // price alone" half of this test real: a footprint diff can only ever
+    // see a change *away* from the stored value, so with these fields left
+    // at zero a profile write that clobbered one of them **to zero** would
+    // change no byte and pass silently. `quote_unix` is the case that
+    // matters most — it is the wall half of the dual-domain expiry gate,
+    // and zeroing it is precisely the corruption a diff cannot otherwise
+    // see.
+    f.set_reference_price_at(&signer, 1, valid_price(), 11, PROFILE_QUOTE_UNIX)
+        .expect("stamp the target sector's reference price");
 
     let before = f.market_data();
     f.set_liquidity_profile(&signer, 1, profile)
@@ -623,9 +737,10 @@ fn profile_cu(mut f: Fixture) -> u64 {
 /// Anchor's dispatch + account deserialization, so each must come in
 /// cheaper — asserted so a regression that erodes the saving fails the test.
 /// The profile row is also the `sol_memcpy_`-versus-chunked measurement: the
-/// syscall is metered at `max(10, len / 250)` CU, against ~40 for the 20
-/// 8-byte load/store pairs a hand-rolled 160-byte copy would need. Run with
-/// `--nocapture` (or read the make-test-parity log) to see the table.
+/// syscall is metered at `max(10, len / 250)` CU — 10 CU at `PROFILE_BYTES`
+/// (224) — against ~56 for the 28 8-byte load/store pairs a hand-rolled copy
+/// of that width would need. Run with `--nocapture` (or read the
+/// make-test-parity log) to see the table.
 #[test]
 fn cu_report() {
     if !ref_built() {

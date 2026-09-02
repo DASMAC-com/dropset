@@ -2264,6 +2264,29 @@ impl Fixture {
         );
     }
 
+    /// Set `Vault.base_atoms` (pooled base inventory) directly.
+    ///
+    /// The honest way to a non-zero balance is a deposit, with its mints,
+    /// ATAs and token CPI. The Rust↔ASM parity footprint tests need only
+    /// that the field is **not zero** before they snapshot, and nothing on
+    /// the quote-write path reads it, so the poked value does not have to
+    /// be consistent with the vault's share accounting.
+    ///
+    /// Why they need it: `base_atoms` begins at exactly the upper bound of
+    /// the fused `quote_slot`/`quote_unix` store, so it is the first field
+    /// a widened or overlapping store would run into. A byte diff can only
+    /// see a change *away* from the stored value, so on a fresh vault —
+    /// where this field is zero — a clobber to zero moves no byte and the
+    /// diff proves nothing. Seeding it non-zero is what gives that
+    /// assertion teeth.
+    pub fn poke_base_atoms(&mut self, sector_idx: u32, base_atoms: u64) {
+        self.poke_vault_bytes(
+            sector_idx,
+            core::mem::offset_of!(Vault, base_atoms),
+            &base_atoms.to_le_bytes(),
+        );
+    }
+
     /// Set `MarketHeader.nonce` directly. The nonce only advances one
     /// per quote/fill through normal instructions, so it can't reach
     /// `u64::MAX` in a test the honest way — poke it to drive the

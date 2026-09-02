@@ -94,6 +94,16 @@ check-pnpm:
 	@command -v pnpm >/dev/null \
 		|| { echo "pnpm not found (npm i -g pnpm)"; exit 1; }
 
+# `test-parity` runs the suite under nextest to match the CI job exactly
+# (see that target). Every other test target uses plain `cargo test`, so
+# this is the one place the runner is a hard prerequisite — name it rather
+# than letting it surface as `no such command: nextest`.
+.PHONY: check-nextest
+check-nextest:
+	@command -v cargo-nextest >/dev/null \
+		|| { echo "cargo-nextest not found (cargo install cargo-nextest)"; \
+			exit 1; }
+
 # === On-chain program: build & keypair ===
 
 # Materialize the program keypair into the (git-ignored) build dir from
@@ -150,9 +160,19 @@ test-no-teardown: program-no-teardown
 # Rust↔ASM parity: deploy both artifacts and assert the assembly fast path
 # (the default `dropset.so`) matches the reference kernel — identical stamp
 # bytes and domain error codes.
+#
+# Mirrors the required `Tests (asm parity)` CI job in both respects that
+# can hide a false green. The runner is `nextest`, the one CI uses, so a
+# local pass and a CI pass mean the same thing. And
+# `DROPSET_REQUIRE_PARITY_ORACLE` makes the suite refuse to *skip*: the
+# `program-parity` prerequisite just built the oracle, so if the tests
+# still cannot find it, that is a real failure and this target is where it
+# should surface. A bare `cargo test --test asm_parity` leaves the
+# variable unset and still skips, which is what makes an asm-only local
+# run cheap.
 .PHONY: test-parity
-test-parity: program-parity
-	cargo test --test asm_parity
+test-parity: check-nextest program-parity
+	DROPSET_REQUIRE_PARITY_ORACLE=1 cargo nextest run --test asm_parity
 
 # === SDK & codegen ===
 

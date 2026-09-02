@@ -60,6 +60,7 @@ deque
 devnet
 dflow
 discordapp
+discrim
 doctest
 doctests
 dotless
