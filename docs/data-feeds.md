@@ -1945,11 +1945,21 @@ ______________________________________________________________________
     credential in the part nobody looked at. Nothing diagnostic is lost:
     a subscribe either reached the endpoint or did not.
 
-    The three error columns are therefore on deliberately different
-    footings — `feed_health.last_error` on the transport's allow-list
-    redaction, `push_health.last_error` on the origin reduction, and
-    `maker_telemetry.tick_error` on the query-only strip. See
-    `0008_push_liveness.sql`.
+    Two of the three error columns are on the same footing:
+    `push_health.last_error` and `maker_telemetry.tick_error` both take
+    the origin reduction, for the same reason — the maker's tick errors
+    are Solana RPC client text derived from the operator's `rpc_url`, so
+    the path-segment and userinfo shapes reach that column too.
+    `feed_health.last_error` is the one that differs, resting on the
+    transport's allow-list redaction, which is stricter *and* more
+    legible on a path that has one.
+
+    Note `0003_maker_telemetry.sql` and `0008_push_liveness.sql` describe
+    `tick_error` as taking the query-only strip. Both migrations are
+    applied and therefore immutable — sqlx hashes the raw migration text,
+    so editing even a comment breaks the checksum on every database that
+    has run it. The `Sample::tick_error` doc comment carries the
+    correction and is authoritative where they disagree.
 
   Both reporters share their offer-and-damp mechanics (the full-channel
   and dead-drain handling, and the log damping that keeps a flapping
