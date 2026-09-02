@@ -287,6 +287,19 @@ impl HttpClient {
         Ok(self)
     }
 
+    /// The value of a header this client will send, for tests only.
+    ///
+    /// A venue builds its credential header by string-formatting a scheme onto
+    /// a token (`Bearer {api_key}`), and nothing else in the crate can observe
+    /// the result without a live request — so a wrong header name, a missing
+    /// space, or a dropped scheme is invisible to every other test. Marking
+    /// the value sensitive affects `Debug`, not `to_str`, so the assertion is
+    /// still possible here.
+    #[cfg(test)]
+    pub(crate) fn header_value(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|value| value.to_str().ok())
+    }
+
     /// Validate a header `name` / `value` pair for the two constructors above.
     ///
     /// The error context names only the header *name*, never the value: a
@@ -1126,11 +1139,11 @@ mod tests {
         // satisfy.
         let client = HttpClient::new("https://example.test").unwrap();
         let unauthorized = client
-            .check_status(response_with_status(401), "url")
+            .check_status(response_with_status(401), "https://example.test/v2")
             .unwrap_err()
             .to_string();
         let server_error = client
-            .check_status(response_with_status(500), "url")
+            .check_status(response_with_status(500), "https://example.test/v2")
             .unwrap_err()
             .to_string();
         assert_ne!(unauthorized, server_error);
@@ -1141,7 +1154,7 @@ mod tests {
     fn a_success_status_passes_the_response_through() {
         let client = HttpClient::new("https://example.test").unwrap();
         let response = client
-            .check_status(response_with_status(200), "url")
+            .check_status(response_with_status(200), "https://example.test/v2")
             .expect("a 2xx must not be an error");
         assert_eq!(response.status(), 200);
     }

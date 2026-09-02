@@ -130,16 +130,15 @@ impl PythHermesSource {
     /// batching every feed in `feeds` into each poll.
     ///
     /// `api_key` is the Pyth bearer token ([`SECRET_NAME`]), taken as an
-    /// argument rather than read from the environment here — the caller decides
-    /// where the secret came from, as with every other keyed venue.
+    /// argument rather than read from the environment here
+    /// (docs/data-feeds.md §4) — the caller decides where the secret came
+    /// from.
     ///
     /// `None` builds an unauthenticated client. Upstream Hermes has answered
     /// those with 401 since the Core upgrade on 2026-08-26, so it is not a
     /// working configuration against `hermes.pyth.network` — it stays
     /// expressible because `base_url` may name a self-hosted instance, which
-    /// reads the Pyth network and Wormhole directly and needs no
-    /// credential. Spelling the absence at the call site is also what keeps a
-    /// keyless caller legible as a decision rather than an oversight.
+    /// reads the Pyth network and Wormhole directly and needs no credential.
     pub fn new(base_url: &str, api_key: Option<&str>, feeds: Vec<PythFeed>) -> Result<Self> {
         let mut http = HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL);
         if let Some(api_key) = api_key {
@@ -324,27 +323,43 @@ mod tests {
     }
 
     #[test]
-    fn a_key_is_accepted_and_kept_out_of_the_rendered_error() {
-        // Registered through `with_secret_header`, the token must not surface in
-        // a diagnostic. Asserted via the malformed-value error, which is the
-        // one place the header value reaches a rendered string.
-        let err = PythHermesSource::new(
-            "https://example.test",
-            Some("super-secret-token\ntail"),
-            vec![],
-        )
-        .err()
-        .expect("a newline in the token is rejected at construction");
-        let rendered = format!("{err:?}");
-        assert!(!rendered.contains("super-secret-token"), "{rendered}");
+    fn a_key_becomes_a_bearer_authorization_header() {
+        // The one line this whole change exists for, and the only assertion
+        // that can reach it: there is no key to test end-to-end against, so
+        // without this the header name, the scheme, and the separating space
+        // could each be wrong and every other test would still pass.
+        let source = PythHermesSource::new("https://example.test", Some("a-token"), vec![])
+            .expect("a well-formed token is accepted");
+        assert_eq!(
+            source.http.header_value("authorization"),
+            Some("Bearer a-token")
+        );
     }
 
     #[test]
-    fn a_keyless_client_still_builds() {
+    fn a_malformed_token_is_rejected_at_construction_rather_than_at_the_venue() {
+        // A newline would smuggle a second header line, so it must fail here.
+        // Deliberately NOT asserted as a redaction test: the error comes from
+        // header parsing, whose rendering never carries the offending value,
+        // so a "token does not appear" assertion would hold with every
+        // redaction mechanism in the crate deleted. `http.rs` owns that
+        // property, against a value that actually reaches a rendered string.
+        let err = PythHermesSource::new("https://example.test", Some("token\ntail"), vec![])
+            .err()
+            .expect("a newline in the token is rejected at construction");
+        assert!(format!("{err:?}").contains("Authorization"), "{err:?}");
+    }
+
+    #[test]
+    fn a_keyless_client_sends_no_authorization_header() {
         // Not a working configuration against upstream Hermes since the
         // 2026-08-26 gate, but it must stay expressible: a self-hosted instance
-        // reads the Pyth network directly and takes no credential.
-        assert!(PythHermesSource::new("https://example.test", None, vec![]).is_ok());
+        // reads the Pyth network directly and takes no credential. Asserted as
+        // the ABSENCE of the header rather than merely that construction
+        // succeeded, so an empty or malformed one cannot pass as keyless.
+        let source = PythHermesSource::new("https://example.test", None, vec![])
+            .expect("a keyless client builds");
+        assert_eq!(source.http.header_value("authorization"), None);
     }
 
     /// A captured Hermes response: EUR/USD direct, USD/ZAR inverted.

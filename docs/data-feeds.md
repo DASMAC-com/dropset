@@ -928,6 +928,22 @@ uncertainty from bid/ask or cross-source spread instead. The 10 requests
 per 10 s per IP limit documented for Hermes is the old *public* limit,
 from before the gate, and no longer describes a path anyone can take.
 
+**So `market-data-pyth` is parked, and the table above lists a collector
+that no longer starts by default.** It sits behind the compose `pyth`
+profile and is not in `make collectors-up`; it will read dark in the
+ingestion dashboard's source-coverage panel, by decision rather than by
+fault, until a credential or a self-hosted endpoint exists. It is the
+first deliberately-parked source, and nothing yet distinguishes one from
+a genuinely broken collector on that panel — so treat every *other* dark
+source as a fault.
+
+One caveat on the self-hosting option, since the collector does not
+support it today: `market-data/src/bin/pyth.rs` resolves `pyth/api-key`
+unconditionally at startup, so pointing `BASE_URL` at a self-hosted
+Hermes still fails on the missing credential. Taking that path means
+making the credential optional there as well — deliberately left alone
+here rather than adding a config knob for an endpoint nobody runs yet.
+
 The CEX WebSocket adapter remains **deliberately out of scope**: §13 holds
 that question, and its trigger is a *quoting* need, not a visualization
 one. Polled ticks at 15 s serve the dashboard.

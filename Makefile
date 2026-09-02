@@ -554,13 +554,13 @@ indexer-down: check-docker
 # (the prints between candle closes) and Kraken (batched peg truth — a real
 # market print of `USDC/USD`).
 #
-# Pyth Hermes used to be the fourth and is no longer started here. It went from
-# keyless to keyed on 2026-08-26, and Pyth sells no free API tier — the plan
-# covering FX is $2,500/month — so on any machine running this stack it would
-# start, find no credential, exit, and restart forever. It keeps its compose
-# service behind a `pyth` profile; start it deliberately once a key exists.
-# Dropping it costs the only FX confidence half-width we collect
-# (docs/data-feeds.md §9).
+# Pyth Hermes used to be the fourth and is no longer started here. It went
+# from keyless to keyed on 2026-08-26 and Pyth sells no usable free API tier,
+# so on any machine running this stack it would start, find no credential,
+# exit, and restart forever. It keeps its compose service behind a `pyth`
+# profile; start it deliberately once a key exists. Dropping it costs the only
+# FX confidence half-width we collect — the pricing and the open
+# self-host-or-degrade decision are in docs/data-feeds.md §9.
 #
 # The three credentialed venues (`KEYED_UP` below) come up in the same breath,
 # behind a gate on the secrets enclave existing. There is deliberately no

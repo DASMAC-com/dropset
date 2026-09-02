@@ -517,14 +517,21 @@ services:
     # 2026-08-26, when the Pyth Core upgrade put Hermes behind a bearer token.
     #
     # **Opt-in, off by default**, which is why the `pyth` profile keeps it out
-    # of a plain `docker compose up` and out of `make collectors-up`. Pyth sells
-    # no free API tier — their free tier is view-only in a web terminal — and
-    # the plan covering FX is $2,500/month, so in practice nobody running this
-    # stack holds a key. Left in the default set the service would exit at
-    # startup and restart forever, and a permanently crash-looping container
-    # teaches operators to ignore a red container, which is the habit that let
-    # the original outage run for a week. Start it explicitly with
-    # `docker compose --profile pyth up pyth` once a key is in the enclave.
+    # of a plain `docker compose up` and out of `make collectors-up`. Pyth
+    # sells no usable free API tier (docs/data-feeds.md §9), so in practice
+    # nobody running this stack holds a key. Left in the default set the
+    # service would exit at startup and restart forever, and a permanently
+    # crash-looping container teaches operators to ignore a red container,
+    # which is the habit that let the original outage run for a week.
+    #
+    # To start it once a key IS held, go through `op run` the way the keyed
+    # collectors do — a bare `docker compose --profile pyth up pyth` runs
+    # outside the enclave, so PYTH_API_KEY interpolates to empty from the
+    # ambient shell and the container exits naming it:
+    #
+    #   op run --env-file=infra/localnet/secrets.local.env -- \
+    #     docker compose -f infra/localnet/docker-compose.yml \
+    #     --profile pyth up pyth
     build:
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'

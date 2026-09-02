@@ -12,10 +12,8 @@
 //! decides that. Read once, at startup, and logged; restart to apply a change.
 //!
 //! Hermes has required a bearer credential since the Pyth Core upgrade on
-//! 2026-08-26; before that it was keyless, which is why this collector once had
-//! no secret to resolve. The token is resolved at startup so its absence is a
-//! startup failure — the alternative, which this collector actually lived
-//! through, is a process that stays up and silently writes nothing.
+//! 2026-08-26; before that it was keyless, which is why this collector once
+//! had no secret to resolve and so had nothing to fail on.
 //!
 //! `observed_at` is Hermes' own `publish_time`, not the poll second. That is
 //! what makes a re-poll idempotent: the publishers agreed on that instant, so
