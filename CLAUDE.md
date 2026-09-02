@@ -136,6 +136,25 @@ emit it at filing time, so the prefix and the touched paths stay
 consistent by construction; a human filters the Linear board by it. It
 is a **Linear-title signal only — never a PR title** (PR titles keep
 `type(ENG-###): Subject`).
+
+**A `Claude:` filing lands PARKED, never in Backlog** — state `Todo`
+plus the **`Claude meta`** milestone, in the creating call, the same
+lifecycle the trim levers use. This is the filer-safe substitute for a
+blocking edge: an automated filer may never place one, so a meta stray
+filed between folds used to land unblocked in Backlog and clutter the
+operator's "Next" view until a planning bootstrap swept it (one
+bootstrap found seven). A milestone hides it by construction and
+touches none of the human-curated edge machinery. The one thing that
+does **not** get parked is the assembled **batch issue** itself, which
+is the thing meant to be pulled.
+
+**The planning bootstrap is the single assimilation point** — once a
+day it sweeps the milestone and folds every parked stray into **one**
+batch issue, and it assembles a new batch **only when no meta issue is
+In Progress or In Review**. Assembly consumes the pool *as of
+bootstrap*; a stray filed afterwards waits for the next one rather than
+joining a batch mid-flight. `housekeeping`'s propose-merges-among-meta
+step is **retired** — one writer, one rhythm.
 Detail: `docs/conventions/linear-automation.md`.
 
 ### Keep Linear tags out of PR bodies and comments
@@ -170,15 +189,26 @@ match the **stored** text exactly once, and Linear rewrites an
 
 ### Parked findings sit in Todo, never Backlog
 
-An issue carrying a **parking milestone** — `Audit findings`, or
-`Trim levers` for session trim levers — is *parked*: filed so it
-is not lost, deliberately **not** in the pull queue. Backlog
+An issue carrying a **parking milestone** — `Audit findings`,
+`Trim levers` for session trim levers, or `Claude meta` for
+agent-infra strays — is *parked*: filed so it is not lost,
+deliberately **not** in the pull queue. Backlog
 means pullable and the operator's "Next" view is the unblocked
 Backlog, so a filing skill sets state **`Todo` plus the
 milestone, in the creating call**. Promotion is a
 planning-session act with **two** halves — clear the milestone
-**and** move Todo → Backlog. Parked issues are exempt from the
-meta batch and its edge until promoted. Detail:
+**and** move Todo → Backlog. Every bootstrap says each parked
+count **out loud**, so a parked issue is invisible to the queue
+without being invisible to the operator; a genuinely urgent
+stray (a broken guard, an actively hurting verb) can be
+promoted on the spot rather than waiting for the rhythm.
+
+`Claude meta` differs from the other two in where promotion
+leads: a parked meta stray is consumed by the next **batch
+assembly** rather than being pulled on its own, and a
+meta-flavored *audit* finding is promoted by swapping its
+milestone from `Audit findings` to `Claude meta` — not by
+moving it to Backlog. Detail:
 `docs/conventions/linear-automation.md`.
 
 ### An audit is a board issue, not a directive
@@ -237,14 +267,17 @@ rebase). A filer that believes a real dependency exists **proposes** it
 via `AskUserQuestion` with the concrete evidence and writes it only on
 an explicit yes; the default in any autonomous run is **no edge**, with
 the suspicion recorded as prose. Human-placed edges are authoritative
-and never rewritten. **One standing exception, operator-ratified:** a
-planning session folds the open `Claude:`-prefixed meta-work into a
-single **batch issue** at bootstrap and places its one edge — behind
-whatever meta issue is In Progress **or In Review** (both mean a session
-is still working it) — as routine bookkeeping, with no
-per-edge proposal. (This supersedes the earlier serial chain, which
-needed an edge per issue.) Automated filers still place
-none. File overlap is **not** a
+and never rewritten. **There is no longer any exception** — not even
+for meta-work bookkeeping. A planning session still folds the open
+`Claude:`-prefixed meta-work into a single **batch issue** at
+bootstrap, but that batch now carries **no edge at all**: it is
+assembled only when no meta issue is In Progress or In Review, so the
+condition the edge used to encode is satisfied by construction instead.
+(This retires the standing one-edge-behind-the-batch carve-out, which
+had itself superseded an earlier serial chain needing an edge per
+issue. Parking a stray under the `Claude meta` milestone is what keeps
+it out of the pull queue in the meantime — a filer-safe substitute for
+an edge no filer was ever allowed to place.) File overlap is **not** a
 dependency, and the automated machinery that used to `related`-link it
 is **retired** — nothing records collision links any more, at filing
 time or on a sweep; reconciling overlap is planning-session work, judged

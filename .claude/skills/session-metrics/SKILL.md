@@ -326,9 +326,11 @@ Compactness is a discipline from day one here — the document
 this replaced grew past the tool-result cap precisely because
 nothing bounded per-entry length.
 
-**No relations, no blocking edges.** Parked levers are exempt
-from the meta batch and its edge until `trim-context` folds
-them; the writer has no relation mutation at all.
+**No relations, no blocking edges.** A parked lever is outside
+the meta batch until `trim-context` folds it, and the batch
+itself now carries no edge at all — its assembly precondition
+replaced it (`CLAUDE.md` → "Blocking relations"). Either way
+the writer has no relation mutation at all.
 
 **A re-run is safe.** The probe makes this idempotent: a second
 run for the same session finds each lever already filed and

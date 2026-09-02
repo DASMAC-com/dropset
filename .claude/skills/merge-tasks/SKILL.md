@@ -16,6 +16,19 @@ committed Python tool `.claude/tools/merge_tasks.py` (per
 `CLAUDE.md` → "Skill tooling"); the skill drives the Linear
 MCP reads and writes around it.
 
+**The main caller is the planning bootstrap's meta-batch
+assembly.** Once a day it sweeps the `Claude meta` parking
+milestone and folds every parked stray into one batch issue
+through this skill — so the `Claude:`-prefix decision and the
+no-size-bound exemption below are on the hot path rather than
+being edge cases. Two things that assembly expects of the
+survivor, and that a caller should pass rather than fix up
+afterwards: it goes to **Backlog, Urgent** (it is the one meta
+issue meant to be pulled, unlike its parked inputs), and it
+carries **no blocking edge** — the assembly precondition, not a
+relation, is what keeps one batch in flight at a time. See the
+`plan` skill, step 1.
+
 ## Input
 
 The issue numbers to merge — bare (`615`) or tagged

@@ -52,9 +52,12 @@ a fingerprint hit it **appends that session's evidence** to the lever
 that already exists rather than filing a duplicate, so recurrence
 becomes an accumulating fact on one issue. `trim-context` is the
 **consumer**: it sweeps the milestone, folds the parked levers into
-**one** propose-only `Claude:` Backlog task — always one, whatever the
+**one** propose-only `Claude:` task — always one, whatever the
 lever count or surface spread, with one section per lever, each keeping
-its own `**Fingerprint**:` line — and closes the parked originals. The
+its own `**Fingerprint**:` line — and closes the parked originals. That
+output task **parks too**, under `Claude meta`, so the next planning
+bootstrap's batch assembly consumes it rather than it sitting unblocked
+in the operator's Next view. The
 coherence floor still governs audit findings and product filings; the
 meta-work fold is the named exemption (operator ruling, 2026-08-25).
 A lever judged not
@@ -370,7 +373,8 @@ which is why an unrecorded non-decision counts as a failure of it.
 ## Parked findings sit in **Todo**, never Backlog
 
 An issue stamped with a parking milestone — `Audit findings` for audit
-output, `Trim levers` for session trim levers — is **parked**: filed so
+output, `Trim levers` for session trim levers, `Claude meta` for
+agent-infra strays — is **parked**: filed so
 it is not lost, deliberately *not* in the pull queue. Backlog means
 pullable, and the operator's "Next" view is the unblocked Backlog, so a
 parked finding filed as Backlog surfaces as available work and has to be
@@ -383,10 +387,49 @@ is then a planning-session act with two halves: **clear the milestone and
 move Todo → Backlog**. Doing only one leaves the board lying about
 whether the work is available.
 
-Parked findings are also **exempt from the meta batch and its edge**
-until they are promoted: that edge governs work which is queued, and
-parked is not queued. Nothing about parking places or implies a blocking
-edge — see "Blocking relations".
+Nothing about parking places or implies a blocking edge — see "Blocking
+relations", where the meta batch's one remaining edge has since been
+retired outright. Parking is in fact the **substitute** for that edge on
+the filing path: an automated filer may never place one, so a milestone
+is how a filer keeps its own output out of the pull queue.
+
+**Where promotion leads differs by milestone.** `Audit findings` and
+`Trim levers` promote into pullable Backlog work. `Claude meta` does
+not: a parked meta stray is consumed by the next **batch assembly**
+rather than pulled on its own, so "promotion" there means being folded
+into a batch. And a meta-flavored *audit* finding is promoted by
+**swapping** its milestone from `Audit findings` to `Claude meta` — it
+stays parked, changing which rhythm will pick it up, rather than
+becoming available work.
+
+**Every bootstrap says each parked count out loud.** Parked must be
+invisible to the queue without being invisible to the operator, and a
+count is what keeps those two apart: an issue nobody can see is an issue
+nobody can promote. A genuinely urgent stray — a broken guard, a verb
+that is actively hurting — is promoted on the spot rather than waiting
+for the daily rhythm.
+
+### Which milestones park, and which do not
+
+The project's milestones split into two kinds, and only one kind parks.
+**Parking** milestones — `Audit findings`, `Trim levers`,
+`Claude meta` — mean "filed, deliberately not queued", and an issue
+carrying one is read as parked by every rule above. The rest —
+`Integrations`, `UX features`, `Hardening`, `Mechanisms` — are ordinary
+**delivery** milestones grouping pullable work; an issue under one of
+those is queued like any other and is *not* parked.
+
+Say which kind you mean when you write a rule against "a milestone",
+because the two behave oppositely. The distinction is by **name**, not
+by any field Linear exposes, so it lives here rather than being
+derivable — and the three parking names are the closed set.
+
+One place the two kinds *do* behave alike, which is easy to
+misattribute: `board_batch.py list` drops **every** milestoned issue by
+default, delivery milestones included. That default exists to keep the
+Todo *umbrella* read clean, and umbrellas carry no milestone of either
+kind, so it is correct for that read without implying a delivery
+milestone parks anything.
 
 **This gives `Todo` two meanings, so every Todo read must say which it
 wants.** Todo is both the board's *umbrella / initiative* tier (what a
@@ -470,6 +513,48 @@ product code on the board.
   (see "Keep Linear tags out of PR bodies and comments" below for the
   title-scope rule); the `Claude:` token is **not** added to a PR
   title, where the conventional type and `ENG-###` scope already apply.
+
+### A meta filing is parked, and assimilated once a day
+
+Every `Claude:` filing lands **state `Todo` plus the `Claude meta`
+milestone, in the creating call** — parked, never Backlog. The batch
+issue an assembly produces is the sole exception, since it is the thing
+meant to be pulled.
+
+**The motivating failure is structural, not cosmetic.** An automated
+filer may never place a blocking edge (see "Blocking relations"), so
+before this rule every meta stray filed between folds landed
+*unblocked* in Backlog and sat in the operator's "Next" view until the
+next planning bootstrap swept it — one bootstrap found seven. Parking is
+the filer-safe equivalent of the edge the filer is not allowed to place:
+a milestone removes the issue from the queue by construction while
+touching none of the human-curated edge machinery.
+
+**The planning bootstrap is the single assimilation point.** Once a day
+it sweeps the milestone and folds every parked stray into **one** batch
+issue via `merge-tasks` — lowest number survives, Backlog, Urgent,
+each finding's `**Fingerprint**:` line preserved, and **no size bound**
+(the standing meta-class exemption from the coherence floor). One
+writer, one rhythm: `housekeeping`'s propose-merges-among-meta step is
+**retired**, so nothing else proposes meta merges.
+
+**A new batch is assembled only when no meta issue is In Progress or In
+Review.** Both states mean a session is still working it. While a batch
+is in flight, strays simply accumulate parked — which is what retires
+the batch's old blocking edge outright: the edge existed to encode "wait
+for the one in flight", and that is now true by construction rather than
+by a written relation.
+
+**Assembly consumes the pool as of bootstrap.** A stray filed after an
+assembly waits for the next one rather than joining a batch already
+born. Without that boundary an assembly has no defined membership, and
+an issue could be folded into a batch whose session had already read its
+own scope.
+
+**`trim-context`'s output task parks too**, under `Claude meta` rather
+than going straight to Backlog, and the next assembly consumes it as a
+part. The trim levers keep their own milestone, writer and fold — that
+pipeline is unchanged; only where its *output* lands moved.
 
 ## Keep Linear tags out of PR bodies and comments
 
@@ -999,40 +1084,40 @@ skill's session in the base repo, human-directed, one edge at a time.
 That is the whole of the exception: not "a skill that is allowed to",
 but "the place a human does it".
 
-**One standing edge class, operator-ratified: the meta batch's edge.**
-The goal has not changed — exactly one meta issue unblocked at a time,
-so agent-infra work lands one batch at a time rather than several
-sessions rewriting the same skills at once. The **shape** has: a
-planning session now **folds** the open `Claude:`-prefixed issues into a
-single batch issue at bootstrap (see the `plan` skill, step 1), and that
-batch needs at most **one** edge — behind whatever meta issue is
-currently **In Progress *or* In Review**.
+**There is no standing edge class any more — the meta batch's edge is
+retired.** The goal is unchanged: exactly one meta issue unblocked at a
+time, so agent-infra work lands one batch at a time rather than several
+sessions rewriting the same skills at once. What changed is that the
+goal is now reached **without a relation**.
 
-**Both states, deliberately** — this is where the edge rule meets the
-session-state convention above, and taking only In Progress leaves the
-rule with no anchor exactly when it is needed. An In Review meta issue
-is a session that has merged its code but still owes follow-up, and the
-fleet-resume launcher already treats it as live (it resumes on state
-type `started`, which covers both). The edge is about *scheduling the
-next batch*, so it should key on the same "is a session still working
-this?" question the rest of the convention keys on — not on whether the
-code happens to have landed.
+A planning session assembles a batch **only when no meta issue is In
+Progress or In Review** (see the `plan` skill), and strays accumulate
+**parked** under the `Claude meta` milestone in the meantime. So the
+condition the edge used to encode — *wait for the one in flight* — holds
+by construction: there is nothing for a new batch to queue behind,
+because a new batch is not born until the previous one is out of flight.
 
-*Superseded (2026-08-18 → 2026-08-20): the serial chain.* The earlier
-form kept every open meta issue blocking the next, which needed an edge
-per issue and left the board carrying a long chain to maintain. The
-batch form reaches the same one-at-a-time property with one edge, and
-the fold is itself the bookkeeping.
+**Both states still matter, for the same reason they did as an edge.**
+An In Review meta issue is a session that has merged its code but still
+owes follow-up, and the fleet-resume launcher already treats it as live
+(it resumes on state type `started`, which covers both). The assembly
+precondition keys on the same "is a session still working this?"
+question the rest of this convention keys on — not on whether the code
+happens to have landed.
 
-Either way it is **routine bookkeeping**: a planning session places that
-edge without a fresh per-edge proposal, because the operator ratified
-the class rather than the instance.
+*Superseded twice, and the direction is worth noting.* The serial chain
+(2026-08-18) kept every open meta issue blocking the next, an edge per
+issue and a long chain to maintain. The batch form (2026-08-20) reached
+the same property with one edge. The parked-milestone form (2026-09-02)
+reaches it with **none** — each step removed relations rather than
+adding them, which is the right direction for a mechanism whose whole
+risk is a spurious edge dropping an issue out of the available set.
 
-This narrows nothing else. It is still the planning session placing it,
-still one edge, and **automated filers still place no edges at all** —
-a filing skill that notices a new meta issue does not chain it. Treat
-any other edge, semantic ones included, under the one-at-a-time rule
-above.
+So this section now has **no** exception to state: the planning session
+is still the only place a human places an edge, and **no automated
+writer places one at all**. A filing skill that notices a new meta issue
+neither chains it nor queues it — it parks it. Treat every edge,
+semantic ones included, under the one-at-a-time rule above.
 
 **The mechanism is `board_batch.py edges`**, and it changes none of the
 above. There is no MCP path for relations at all, so a planning session

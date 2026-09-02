@@ -54,9 +54,10 @@ Every subcommand takes ``--dry-run``. Reads ``LINEAR_API_KEY``,
 ``LINEAR_ASSIGNEE_ID`` from the environment — never a hard-coded UUID, per
 ``CLAUDE.md`` → "Linear automation".
 
-**It writes no relations, ever.** A parked lever is not in the pull queue and is
-exempt from the meta batch and its edge until it is folded; blocking edges are
-human-curated in a planning session. Stdlib only; a Python skill-tool under
+**It writes no relations, ever.** A parked lever is not in the pull queue and
+sits outside the meta batch until it is folded — and the batch itself carries no
+blocking edge any more, its assembly precondition having replaced the one it
+used to need. Blocking edges are human-curated in a planning session. Stdlib only; a Python skill-tool under
 ``.claude/tools/`` — deliberately **not** a Cargo workspace member. Tests live in
 ``tests/test_trim_levers.py``, run via ``make tools-tests``.
 """

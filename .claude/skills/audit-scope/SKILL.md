@@ -348,6 +348,17 @@ Optional (ask on a direct run if not provided):
      "Claude: meta-work prefix". A finding touching product
      / on-chain / SDK / frontend code gets no prefix.
 
+     **A meta finding stays parked under `Audit findings`,
+     not `Claude meta`.** Audit output parks under its own
+     milestone whatever surface it names, so file it the
+     same way as every other finding here — state `Todo`
+     plus `Audit findings`. Promoting a meta-flavored
+     finding is then a **milestone swap** to `Claude meta`
+     (a planning-session act), after which the next batch
+     assembly consumes it. Filing it directly under
+     `Claude meta` would skip the sequencing decision that
+     promotion exists to make.
+
      **Dependencies — file none.** A blocking edge is
      **human-curated** (`CLAUDE.md` → "Blocking
      relations"), and this skill is an **autonomous

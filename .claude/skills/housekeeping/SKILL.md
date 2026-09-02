@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (one aggregated propose-only task), propose merges among `Claude:`-prefixed meta-work issues only, then capture session metrics and run the purge dry-run. It runs NO audit of its own and reads no Planning document: auditing is planning-filed board work — a planning session files an audit issue naming its target, and the session that pulls it runs one scoped audit-scope pass (the broad random rotation survives only as an explicit ad-hoc /audit). It does NOT analyze the board and files no collision links at all (that machinery is retired): Backlog-wide merge groups and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (one aggregated propose-only task), then capture session metrics and run the purge dry-run. It proposes NO meta-work merges: a `Claude:` filing parks under the `Claude meta` milestone and the planning bootstrap folds that milestone once a day, so that step is retired (one writer, one rhythm). It runs NO audit of its own and reads no Planning document: auditing is planning-filed board work — a planning session files an audit issue naming its target, and the session that pulls it runs one scoped audit-scope pass (the broad random rotation survives only as an explicit ad-hoc /audit). It does NOT analyze the board and files no collision links at all (that machinery is retired): Backlog-wide merge groups and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -29,10 +29,11 @@ committed skills and upgrades the Claude Code CLI
    points at a `CLAUDE.md` section or `docs/conventions/`
    doc that no longer exists, filing the drift
    **propose-only**.
-1. **Propose merges among meta-work issues** — fold
-   near-duplicate `Claude:`-prefixed issues, which are this
-   skill's own filing output. Nothing else about the board
-   is touched.
+1. **(Retired)** — meta-work merges are the planning
+   bootstrap's job now: a `Claude:` filing parks under the
+   `Claude meta` milestone and the bootstrap folds the whole
+   milestone once a day. Nothing about the board is touched
+   here.
 1. **Capture session metrics** — unconditionally, filing
    each trim lever as a parked issue.
 1. **Purge-conversations dry run** — in-pass and read-only;
@@ -89,7 +90,6 @@ order:
   non-prompting branch so the morning driver never stalls
   waiting on an answer. Passing `interactive` (e.g.
   `housekeeping interactive`) restores the prompts — the
-  meta-work merge gate (step 6), the
   perms-cruft removal (step 7), the stale-memory purge
   (step 8), and the session-metrics (step 9) and
   purge-conversations (step 10) offers. See "One-shot vs.
@@ -110,8 +110,7 @@ two modes, and the default is the non-interrupting one:
   `AskUserQuestion`: each interactive step takes its
   **non-prompting branch** — the same branch the steps below
   label the *unattended* pass.
-  Concretely: step 6 **lists** its meta-work merge
-  candidates and merges nothing; steps 7
+  Concretely: steps 7
   and 8 **propose / list** the perms cruft and the stale
   memories and delete nothing; and steps 9 and 10 (the
   session-metrics and purge-conversations offers) are
@@ -151,8 +150,6 @@ re-derives the identical list from scratch.
 
 Batch these, each **only when non-empty**:
 
-- the **meta-work merge proposals** from step 6 ("merge
-  these?") — `Claude:`-prefixed issues only;
 - the **allowlist cruft** approved for removal in step 7;
 - the **stale memories** approved for purge in step 8;
 - the **inbox size** only when `trim-context` reports the
@@ -214,11 +211,16 @@ What moved, and where it landed:
   available set — so the check earns its place even without
   the tool.
 
-**The one carve-out that stays here** is step 6's meta-work
-merge proposal, scoped to the `Claude:` title prefix. That
-is not board sequencing: this skill *files* those issues
-itself via the `trim-context` mining pass, so folding its
-own near-duplicate output is upkeep on its own artifacts.
+**No carve-out stays here.** Step 6's meta-work merge
+proposal was the last one, and it is retired: a `Claude:`
+filing now parks under the `Claude meta` milestone and the
+planning bootstrap folds that milestone once a day. The old
+justification — that this skill *files* those issues itself
+via the `trim-context` pass, so folding its own output was
+upkeep rather than sequencing — no longer buys anything,
+because the parked pool is swept wholesale by the session
+that decides sequencing anyway. Leaving a second writer on
+that pool would only race the bootstrap's assembly.
 
 ## Run it from the base repo root
 
@@ -649,35 +651,36 @@ freshness lens does on the PR path — here, periodically.
   lands later through a normal PR. If everything resolves,
   file nothing and note "in sync" in the report.
 
-**6. Propose merges among meta-work issues only.**
+**6. RETIRED — meta-work merges are the planning
+bootstrap's job.** Do nothing here and file nothing. The
+step number is kept so the later references to steps 7a /
+7b / 8 stay put.
 
-**This step does not analyze the board.** No collision
-recording (that machinery is retired outright), no
-Backlog-wide merge-group scan, no scheduling-smell report —
-the latter two belong to the `plan` skill (its steps 1 and
-2), which is where somebody is actually deciding
+This skill used to scan open `Claude:`-prefixed issues and
+propose folding the near-duplicates, on the reasoning that
+it is itself a **producer** of them: step 4's `trim-context`
+pass can file near-duplicate aggregated tasks, so folding
+those read as upkeep on its own output rather than board
 sequencing.
-See "Why the board belongs to `plan`" below.
 
-What remains is a narrow carve-out, and it exists because
-this skill is itself a **producer** of issues: step 4 runs
-the `trim-context` mining pass, and repeated passes can file
-near-duplicate aggregated tasks. Folding those is upkeep on
-this skill's **own output**, not board sequencing.
+That reasoning is now moot rather than merely reassigned.
+A `Claude:` filing lands **parked** under the `Claude meta`
+milestone (per `CLAUDE.md` → "Claude: meta-work prefix"), and
+the planning bootstrap sweeps that milestone once a day and
+folds **everything** in it into one batch issue. So the
+strays this step existed to catch are collected by
+construction, on a defined rhythm, by the session that is
+actually deciding sequencing — and `trim-context`'s output
+task parks into the same milestone like any other stray.
 
-So: scan open issues whose titles carry the **`Claude:`**
-meta-work prefix, and propose folding any that would land as
-one PR. Scope it by that title token — an issue without the
-prefix is out of scope for this step, whatever it touches.
-Propose-only, as everywhere else here: in an attended pass
-surface the groups via `AskUserQuestion` and run
-`/merge-tasks <ids>` on the approved ones; in a one-shot
-pass just list the suggestions and merge nothing. The
-**coherence floor** still binds (`merge-tasks`' own
-`cross_area` warning is the backstop).
+Two writers on one pool is the thing being removed. This
+skill runs ad-hoc and possibly several times a day, so
+leaving it proposing folds too would race the bootstrap's
+assembly and could split one batch across two rhythms. **One
+writer, one rhythm.**
 
-If no meta-work duplicates are open, say "no meta-work
-merges proposed" and move on.
+Say "meta-work merges are the planning bootstrap's job" in
+the report, and move on.
 
 **7. Audit the base repo's settings files.** Two checks over
 the same git-ignored pair, both of which only this session is
@@ -973,12 +976,9 @@ more useful than skipping the step and calling it deferred.
 - Convention references: in sync, or the dangling
   `CLAUDE.md` / `docs/conventions/` references filed
   (with the ENG-### of the aggregated task).
-- Meta-work merge proposals: the near-duplicate
-  `Claude:`-prefixed clusters proposed for folding via
-  `merge-tasks` and which the human approved merging
-  (attended), or the suggested groups listed (unattended) —
-  or that there were none. **Nothing about the wider board**
-  is reported here; that is the `plan` skill's output.
+- Meta-work merges: one line saying they are the planning
+  bootstrap's job. **Nothing about the wider board** is
+  reported here; that is the `plan` skill's output.
 - Permission allowlist: the `settings.local.json`
   entries flagged as cruft and, for an attended pass, which
   the human approved removing — or that it was clean.
@@ -1001,8 +1001,8 @@ this skill deliberately dropped.
 
 **12. Fire the closing gate.** With the report printed, batch
 every deferred decision into the single `AskUserQuestion`
-described in "The closing gate" above — the meta-work merge
-groups, the allowlist cruft, the stale memories,
+described in "The closing gate" above — the allowlist cruft,
+the stale memories,
 the inbox size — including only the categories that are
 non-empty. This runs in **both** modes.
 

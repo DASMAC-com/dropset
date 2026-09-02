@@ -442,6 +442,14 @@ fingerprint prefix above (a fingerprint-slug convention, not a title
 one). A finding touching product / on-chain / SDK / frontend code gets
 no prefix.
 
+**A meta finding still parks under `Audit findings`, not
+`Claude meta`.** Audit output parks under its own milestone whatever
+surface it names, so the prefix changes the title and nothing about the
+filing. Promotion is then a **milestone swap** to `Claude meta` — a
+planning-session act, after which the next meta-batch assembly consumes
+it. Filing straight into `Claude meta` would bypass the sequencing
+decision promotion exists to make.
+
 **Dependencies — file none.** Blocking edges are **human-curated** (per
 `docs/conventions/linear-automation.md` → "Blocking relations"), and a
 rotation is autonomous: there is nobody to answer an `AskUserQuestion`,
