@@ -1947,12 +1947,14 @@ ______________________________________________________________________
 
     Two of the three error columns are on the same footing:
     `push_health.last_error` and `maker_telemetry.tick_error` both take
-    the origin reduction, for the same reason — the maker's tick errors
-    are Solana RPC client text derived from the operator's `rpc_url`, so
-    the path-segment and userinfo shapes reach that column too.
+    the origin reduction. The maker's tick errors typically carry Solana
+    RPC client text derived from the operator's `rpc_url`, so the
+    path-segment and userinfo shapes reach that column too.
     `feed_health.last_error` is the one that differs, resting on the
-    transport's allow-list redaction, which is stricter *and* more
-    legible on a path that has one.
+    transport's allow-list redaction — **not** stricter, since it
+    rewrites query values only and leaves a path segment or userinfo
+    untouched, but more legible on a path that has one, because it keeps
+    the benign parameters a failed backfill is diagnosed from.
 
     Note `0003_maker_telemetry.sql` and `0008_push_liveness.sql` describe
     `tick_error` as taking the query-only strip. Both migrations are

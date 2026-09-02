@@ -129,28 +129,30 @@ pub struct Sample {
     pub launch_tvl_usd: Option<f64>,
     pub frozen: Option<bool>,
     pub reference_valid: Option<bool>,
-    /// Why the tick failed, reduced to scheme and host wherever it names a URL.
+    /// Why the tick failed, reduced to scheme, host and port wherever it names
+    /// a URL.
     ///
-    /// The text is Solana RPC client output derived from the operator's
-    /// `rpc_url`, and the read-only dashboard role can select this column — so
-    /// it is an exfiltration path for precisely the credential the schema's
-    /// comments promise is not in the database. The RPC client has no redaction
-    /// of its own, which leaves the guard here at the write.
+    /// The text is typically Solana RPC client output derived from the
+    /// operator's `rpc_url`, and the read-only dashboard role can select this
+    /// column — so it is an exfiltration path for precisely the credential the
+    /// schema's comments promise is not in the database. The RPC client has no
+    /// redaction of its own, which leaves the guard here at the write.
     ///
-    /// It is `redact_to_origin`, not the query-only `sanitize_error`, because
-    /// `rpc_url` is an operator-supplied endpoint: hosted providers authenticate
-    /// by path segment (`/v2/<key>`) or by userinfo as readily as by query, and
-    /// a query strip leaves both untouched. Applied to the whole rendered cause
-    /// chain rather than to an endpoint a caller formats in, since a transport
-    /// error routinely re-embeds the URL it failed to reach.
+    /// It is **`redact_to_origin`, not the query-only `sanitize_error`**,
+    /// because `rpc_url` is an operator-supplied endpoint: hosted providers
+    /// authenticate by path segment (`/v2/<key>`) or by userinfo as readily as
+    /// by query, and a query strip leaves both untouched. Applied to the whole
+    /// rendered cause chain rather than to an endpoint a caller formats in,
+    /// since a transport error routinely re-embeds the URL it failed to reach.
     ///
-    /// **Two schema comments predate this and now understate it.**
-    /// `0003_maker_telemetry.sql` describes this column as taking the query-only
-    /// strip, and `0008_push_liveness.sql` calls `push_health.last_error` the
-    /// stronger of the two. Both migrations are applied and therefore immutable
-    /// — sqlx hashes the raw migration text, so editing even a comment breaks
-    /// the checksum on every database that has already run it. This doc comment
-    /// is the correction, and is authoritative where the two disagree.
+    /// Two schema comments predate this and now understate it.
+    /// `0003_maker_telemetry.sql` describes this column as taking the
+    /// query-only strip, and `0008_push_liveness.sql` calls
+    /// `push_health.last_error` the stronger of the two. Both migrations are
+    /// applied and therefore immutable — sqlx hashes the raw migration text,
+    /// so editing even a comment breaks the checksum on every database that
+    /// has already run it. This doc comment is the correction, and is
+    /// authoritative where the two disagree.
     pub tick_error: Option<String>,
 }
 
@@ -1565,10 +1567,12 @@ mod tests {
             "vault read failed: https://rpc.example/?api-key=SECRET timed out"
         ));
         let error = b.build().tick_error.expect("an error was set");
-        assert!(!error.contains("SECRET"), "got: {error}");
-        assert!(error.contains("https://rpc.example"));
-        // The diagnosable part survives.
-        assert!(error.contains("timed out"));
+        // Pinned whole, deliberately. The query-only strip renders
+        // `https://rpc.example/?<redacted>` here, which satisfies both
+        // `!contains("SECRET")` and a `contains` on the host prefix — so only
+        // an equality distinguishes the two helpers on this input. The
+        // diagnosable remainder is pinned by the same assertion.
+        assert_eq!(error, "vault read failed: https://rpc.example timed out");
     }
 
     /// The shapes a query strip leaves untouched, and the reason this column
@@ -1582,9 +1586,10 @@ mod tests {
             "vault read failed: https://rpc.example/v2/SECRET timed out"
         ));
         let error = b.build().tick_error.expect("an error was set");
-        assert!(!error.contains("SECRET"), "path segment survived: {error}");
-        assert!(error.contains("https://rpc.example"));
-        assert!(error.contains("timed out"));
+        assert_eq!(
+            error, "vault read failed: https://rpc.example timed out",
+            "path segment survived"
+        );
 
         // Userinfo.
         let mut b = SampleBuilder::new(1, eurc(), fair(None), ProfileKind::Unknown);
@@ -1592,9 +1597,10 @@ mod tests {
             "vault read failed: https://user:SECRET@rpc.example/ timed out"
         ));
         let error = b.build().tick_error.expect("an error was set");
-        assert!(!error.contains("SECRET"), "userinfo survived: {error}");
-        assert!(error.contains("https://rpc.example"));
-        assert!(error.contains("timed out"));
+        assert_eq!(
+            error, "vault read failed: https://rpc.example timed out",
+            "userinfo survived"
+        );
     }
 
     /// The credential is stripped from the wrapped cause too, not just from a
@@ -1606,7 +1612,15 @@ mod tests {
         let cause = anyhow::anyhow!("transport: https://rpc.example/v2/SECRET refused");
         b.error(&cause.context("reading the vault"));
         let error = b.build().tick_error.expect("an error was set");
-        assert!(!error.contains("SECRET"), "got: {error}");
+        // Both ends of the chain are pinned, not just the absence: asserting
+        // only `!contains("SECRET")` would pass on an empty column, and would
+        // pass if `error()` stopped rendering the chain with `{:#}` — which is
+        // precisely the regression that would drop the inner cause carrying
+        // the URL, and so the one this test exists to catch.
+        assert_eq!(
+            error,
+            "reading the vault: transport: https://rpc.example refused"
+        );
     }
 
     /// A leg offered by one named source, fresh as of this tick.
