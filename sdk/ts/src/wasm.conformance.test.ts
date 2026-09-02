@@ -28,9 +28,13 @@
  * `sdk/conformance/simulate_swap_vectors.json` the Rust-side binding test
  * uses, so a layout change landed without `make wasm` fails here.
  *
- * **Both** exported bindings are covered. This file used to import only
- * `simulate_swap`, which left `resting_book` — the one the order-book UI
- * actually calls — unverified against the shipped artifact. Layout drift
+ * Both **market-reading** bindings are covered — `simulate_swap` and
+ * `resting_book`. (The module also exports five `price_*` helpers, which
+ * decode no account bytes and so cannot go stale against a layout change;
+ * `sdk/ts/src/conformance.test.ts` pins those against the price vectors.)
+ * This file used to import only `simulate_swap`, which left `resting_book`
+ * — the one the order-book UI actually calls — unverified against the
+ * shipped artifact. Layout drift
  * would still have been caught, since the two share `MarketView::load` and
  * the level collector, but the binding-local surface would not: its
  * `split_side` marshalling and its Buy-to-asks / Sell-to-bids mapping.
@@ -146,7 +150,17 @@ test('committed wasm simulate_swap matches the conformance vectors', () => {
 // `ask_sizes` while leaving `ask_prices` untouched — and a transposed side
 // mapping swaps the ask and bid arrays wholesale.
 test('committed wasm resting_book matches the conformance books', () => {
-  assert.ok(vectors.books.length > 0, 'fixture carries no expected books');
+  // Pin the set, not a floor: with `length > 0`, four of the five books
+  // could vanish on a regeneration and this would still pass — including
+  // `far_out_live`, the only place the far-out level's *resting* presence is
+  // observed. Two of the five are captured at a dead clock and so compare
+  // empty arrays, which is signal only because the live siblings are here
+  // to contrast with.
+  assert.deepEqual(
+    vectors.books.map((b) => b.name).sort(),
+    ['far_out_live', 'flush_live', 'primary_live', 'primary_slot_dead', 'primary_wall_dead'],
+    'expected book set',
+  );
   for (const b of vectors.books) {
     const book = resting_book(marketFor(b.market), b.now_slot, b.now_unix);
     try {

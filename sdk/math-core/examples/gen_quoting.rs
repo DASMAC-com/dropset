@@ -184,9 +184,9 @@ fn main() {
         // Reference 1.0, round offsets and sizes — hand-verifiable.
         // Asks 1.05/1.10 → +50000/+100000 ppm, 2500 bps each of 1_000_000
         // base. Bids 0.95/0.90 → +50000/+100000 ppm, 3000/1000 bps of quote.
-        // The slot offsets run *opposite* to the wall offsets here (asks
-        // 100s/250 slots, bids 200s/125 slots), so a fork that swapped the
-        // two domains fails rather than coincidentally agreeing.
+        // The slot offsets run *opposite* to the wall offsets here — asks
+        // 100s / 250-275 slots, bids 200s / 125-150 slots — so a fork that
+        // swapped the two domains fails rather than coincidentally agreeing.
         Case {
             reference: Price::encode(10_000_000, 0).unwrap(),
             base_atoms: 1_000_000,

@@ -78,9 +78,10 @@ fn position(significand: u32, exp: i8, size: u64) -> Position {
 
 /// Scaffold one active vault: a non-zero leader (so it is not a free
 /// sector), ample inventory, and a live reference price stamped with
-/// `stamp` — `FLUSH_BIT` clear, so the matcher reads `remaining`.
-/// `next`/`prev` wire it into the active DLL. The walk follows `next` only,
-/// but `prev` is set to match what the program writes.
+/// `stamp`. The caller owns that stamp, `FLUSH_BIT` included — clear means
+/// the matcher reads `remaining`, armed means it materializes from
+/// `profile`. `next`/`prev` wire it into the active DLL. The walk follows
+/// `next` only, but `prev` is set to match what the program writes.
 fn vault(stamp: u64, next: u32, prev: u32, leader: [u8; 32]) -> Vault {
     let mut v = Vault::zeroed();
     v.next = next.into();
@@ -139,16 +140,25 @@ fn serialize_market(header: &MarketHeader, vaults: &[Vault]) -> Vec<u8> {
 /// that sort apart from a per-vault walk — every off-chain fixture used to
 /// be single-vault, so the ordering was pinned on-chain and nowhere else.
 ///
-/// The deepest level on each side is an **equal-price pair** across the two
+/// The far level on each side is an **equal-price pair** across the two
 /// vaults, which the nonce tie-break orders (older quote first). That
 /// ordering is invisible in a `Quote`'s totals — two levels at one price
 /// fill to the same amounts either way — so it is the `books` vectors that
 /// pin it, not the swap cases.
+///
+/// The nonces run **against** sector order on purpose: sector 0 heads the
+/// DLL but carries the *newer* quote, so the older one lives in sector 1.
+/// Without that inversion the tie-break would be unpinned even with the
+/// pair present — nonce order, sector order and DLL encounter order would
+/// all coincide, so keying on the sector index, or doing a stable sort and
+/// never tie-breaking at all, would emit the identical book. With it, only
+/// a sort that actually consults the nonce puts sector 1's level first.
 fn market_data() -> Vec<u8> {
     let header = market_header(2);
 
-    // Sector 0 — nonce 1, the older quote, so it wins every equal-price tie.
-    let mut v0 = vault(1, 1, NULL_SECTOR, [1u8; 32]);
+    // Sector 0 — nonce 2, the NEWER quote, so it *loses* every equal-price
+    // tie despite being first in both the slab and the DLL walk.
+    let mut v0 = vault(2, 1, NULL_SECTOR, [1u8; 32]);
     // Asks (consumed by a Buy): 1.0904, then the 1.1393 tie-break pair.
     v0.remaining.asks[0] = position(10_904_000, 0, 1_000_000);
     v0.remaining.asks[1] = position(11_393_000, 0, 500_000);
@@ -156,9 +166,12 @@ fn market_data() -> Vec<u8> {
     v0.remaining.bids[0] = position(10_796_000, 0, 2_000_000);
     v0.remaining.bids[1] = position(10_416_000, 0, 1_500_000);
 
-    // Sector 1 — nonce 2, the newer quote. Its inner level on each side
-    // sits *between* sector 0's two, which is what interleaves the book.
-    let mut v1 = vault(2, NULL_SECTOR, 0, [4u8; 32]);
+    // Sector 1 — nonce 1, the OLDER quote, so it wins the equal-price ties
+    // from the later sector. Its inner level on each side sits *between*
+    // sector 0's two, which is what interleaves the book. The tied levels
+    // carry different depths from sector 0's, so the ordered size array is
+    // what makes the winner observable.
+    let mut v1 = vault(1, NULL_SECTOR, 0, [4u8; 32]);
     v1.remaining.asks[0] = position(10_950_000, 0, 400_000);
     v1.remaining.asks[1] = position(11_393_000, 0, 300_000);
     v1.remaining.bids[0] = position(10_700_000, 0, 800_000);
@@ -201,7 +214,8 @@ fn position_at(significand: u32, exp: i8, size: u64) -> Position {
 fn far_out_market_data() -> Vec<u8> {
     let header = market_header(1);
     let mut v = vault(1, NULL_SECTOR, NULL_SECTOR, [1u8; 32]);
-    // Honest ask at 1.0904, then the largest representable price behind it.
+    // Honest ask at 1.0904, then a price near the top of the representable
+    // range behind it.
     v.remaining.asks[0] = position(10_904_000, 0, 1_000);
     v.remaining.asks[1] = position_at(99_999_999, 15, 1_000_000);
     // Honest bid at 1.0796, then a far-out bid behind it — the symmetric
@@ -237,8 +251,7 @@ fn far_out_market_data() -> Vec<u8> {
 /// quote against.
 fn flush_market_data() -> Vec<u8> {
     let header = market_header(1);
-    let mut v = vault(1, NULL_SECTOR, NULL_SECTOR, [1u8; 32]);
-    v.reference_price.stamp = (1u64 | FLUSH_BIT).into();
+    let mut v = vault(1u64 | FLUSH_BIT, NULL_SECTOR, NULL_SECTOR, [1u8; 32]);
     // Asks at +0.5% and +5% of the 1.0850 reference, 25% of base inventory
     // each; bids symmetric on the quote leg. `size_bps` sums to 5000 a
     // side, well inside the per-side ceiling.
@@ -405,7 +418,10 @@ fn main() {
         Case {
             name: "sell_multi_level",
             side: SwapSide::Sell,
-            amount_in: 5_000_000, // base atoms; dwarfs the 4.9M-base bid depth
+            // Base atoms, and the bid depth to compare against is the
+            // base *cost* of clearing all four levels — 4.62M — not the
+            // 4.9M their `size` fields sum to, which is quote-denominated.
+            amount_in: 5_000_000,
             limit: Price::ZERO,
             now_slot: LIVE_SLOT,
             now_unix: LIVE_UNIX,

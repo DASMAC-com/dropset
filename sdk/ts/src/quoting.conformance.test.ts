@@ -73,6 +73,15 @@ const ERROR_TAGS: Record<string, string> = {
 };
 
 function nativeLevel(c: NativeLevelCase): NativeLevel {
+  // The two expiry offsets must differ on every level, or the transposition
+  // half of the assertions below proves nothing: a fork that swapped the
+  // domains would copy equal values and stay green. The generator states
+  // this as an invariant, so assert it rather than trusting the prose.
+  assert.notEqual(
+    c.expiry_offset,
+    c.expiry_offset_slots,
+    'a level whose two expiry domains carry the same value cannot detect a transposition',
+  );
   // Expiry is dual-domain and both offsets are carried through verbatim, so
   // the vectors supply one per domain with different values on every level
   // — matching the Rust fork's reading. Taking the slot bound from the

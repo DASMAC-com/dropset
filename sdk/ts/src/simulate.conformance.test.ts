@@ -145,6 +145,12 @@ test('the taker fee and the platform fee are not transposed', () => {
   // its reason rather than quietly weakening the check.
   assert.equal(q.feeAmount, BigInt(c.expected.fee_amount));
   assert.equal(q.platformFeeAmount, BigInt(c.expected.platform_fee_amount));
+  // Both fees must be non-zero before the separation below means anything:
+  // at a zero taker fee `feeAmount * 5n` is 0, so any positive platform fee
+  // satisfies it and the guard degenerates. The transcribed literals this
+  // replaced caught that for free; asserting it outright restores it.
+  assert.ok(q.feeAmount > 0n, 'a zero taker fee makes the separation vacuous');
+  assert.ok(q.platformFeeAmount > 0n, 'expected a non-zero platform fee');
   assert.ok(
     q.platformFeeAmount > q.feeAmount * 5n,
     `the fees must stay far apart for a transposition to be detectable, got taker=${q.feeAmount} platform=${q.platformFeeAmount}`,

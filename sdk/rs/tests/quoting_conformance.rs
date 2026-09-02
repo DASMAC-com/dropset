@@ -24,7 +24,21 @@ fn u32_of(v: &Value, k: &str) -> u32 {
     v[k].as_u64().unwrap() as u32
 }
 
+/// The two expiry offsets must differ on every level, or the transposition
+/// half of the assertions below proves nothing: a fork that swapped the
+/// domains would copy equal values and stay green. The generator states this
+/// as an invariant, so assert it rather than trusting the prose.
+fn assert_domains_differ(v: &Value) {
+    assert_ne!(
+        u32_of(v, "expiry_offset"),
+        u32_of(v, "expiry_offset_slots"),
+        "a level whose two expiry domains carry the same value cannot \
+         detect a transposition"
+    );
+}
+
 fn native_level(v: &Value) -> NativeLevel {
+    assert_domains_differ(v);
     NativeLevel {
         price: Price::from_bits(u32_of(v, "price_bits")),
         size: v["size"].as_u64().unwrap(),

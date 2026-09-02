@@ -74,11 +74,19 @@ fn main() {
         Price::encode(33_333_333, 0).unwrap(),  // ~3.333, never exact
         Price::encode(98_700_000, 2).unwrap(),  // 987
         Price::encode(10_000_000, -2).unwrap(), // 0.01
-        Price::encode(99_999_999, 5).unwrap(),  // large
+        Price::encode(99_999_999, 5).unwrap(),  // 999_999.99
     ];
-    // 1_000 and 1_085_000 carry over the amounts the four `quote_for_base`
-    // and two `base_for_quote` cases this cross-product replaced, so the
-    // change only adds coverage.
+    // Every price and amount the six replaced cases used is present in the
+    // two axes — 1_000_000 and 1_000 for `quote_for_base`, 1_000_000 and
+    // 1_085_000 for `base_for_quote` — so the cross-product is a strict
+    // superset and the change only adds coverage.
+    //
+    // Keep both axes small enough that no product exceeds 2^53: `expected`
+    // rides as a JSON number and the TS fork widens it with `BigInt`, which
+    // is lossless only below that. The current maximum is 7_777_777_699_222_222.
+    // A larger price or amount would break the round-trip loudly (TS computes
+    // its own value and would mismatch) but for a reason that reads as
+    // nothing to do with the addition.
     let ratio_amounts = [
         1_u64,
         3,

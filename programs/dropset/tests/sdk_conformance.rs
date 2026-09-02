@@ -233,6 +233,82 @@ fn sdk_simulate_swap_matches_onchain_with_a_platform_fee() {
     );
 }
 
+/// The platform-fee refusal, pinned **differentially**.
+///
+/// A declared fee above the market's ceiling makes the engine reject the
+/// whole `swap`, and the simulator answers by refusing to quote rather than
+/// clamping the rate down to the ceiling. Both halves were pinned only
+/// inside their own implementation — the vectors carry an all-zero `Quote`
+/// for an over-ceiling case, and the program has its own rejection test —
+/// so a simulator that clamped instead of refusing would keep matching its
+/// own vectors while promising a fill the engine will not honor.
+///
+/// This cannot ride `predict_and_execute`: that helper expects the swap to
+/// land, and the whole point here is that it must not.
+#[test]
+fn sdk_platform_fee_over_ceiling_refuses_on_both_sides() {
+    const CEILING_BPS: u16 = 100;
+    let mut f = Fixture::seeded(10_000_000, 10_000_000);
+    let admin = f.authority.insecure_clone();
+    f.set_max_platform_fee(&admin, CEILING_BPS)
+        .expect("set the market's platform-fee ceiling");
+    let amount_in: u64 = 1_000_000;
+    let taker = f.funded_depositor(0, 2 * amount_in);
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+
+    // Predict at one bps over the ceiling, reading both clocks from the same
+    // bank the swap below executes against.
+    let predicted = {
+        let now_slot = f.now_slot();
+        let now_unix = f.now_unix();
+        let data = market_bytes(&f);
+        let view = MarketView::load(&data).expect("SDK decodes the market account");
+        simulate_swap(
+            &view,
+            SwapSide::Buy,
+            amount_in,
+            Price::INFINITY,
+            now_slot,
+            now_unix,
+            CEILING_BPS + 1,
+        )
+    };
+    assert_eq!(
+        predicted,
+        Quote::default(),
+        "the simulator must refuse an over-ceiling fee, not clamp it to the ceiling"
+    );
+
+    let base_ata = f.base_ata(&taker.pubkey());
+    let quote_ata = f.quote_ata(&taker.pubkey());
+    let base_before = f.token_balance(&base_ata);
+    let quote_before = f.token_balance(&quote_ata);
+
+    let ix = f.swap_ix_with_fee(
+        &taker.pubkey(),
+        SwapSide::Buy as u8,
+        amount_in,
+        Price::INFINITY.as_u32(),
+        0,
+        Some(&integrator.pubkey()),
+        CEILING_BPS + 1,
+    );
+    f.send_ix(&taker, ix)
+        .expect_err("an over-ceiling platform fee must be rejected on-chain");
+
+    // The refusal is a whole-take rejection, so nothing moved either leg.
+    assert_eq!(
+        f.token_balance(&base_ata),
+        base_before,
+        "no base moved on a rejected take"
+    );
+    assert_eq!(
+        f.token_balance(&quote_ata),
+        quote_before,
+        "no quote moved on a rejected take"
+    );
+}
+
 #[test]
 fn sdk_simulate_swap_multi_level_buy() {
     // Two ask levels, 30% of base each, at +0.5% and +2%. A buy big enough
@@ -302,6 +378,17 @@ fn sdk_simulate_swap_matches_onchain_across_two_vaults() {
         q.in_amount, amount_in,
         "input should be exhausted inside the second vault's level"
     );
+    // Pin the exact fill, because the two assertions above hold under a
+    // broken sort. Price order gives 1_378_474; walking sector 0 first —
+    // which a per-vault or sector-keyed sort would do — gives 1_372_719
+    // instead. Without this the test keeps passing while silently ceasing
+    // to test cross-vault ordering, and the same is true if the arguments
+    // are ever swapped so that price order coincides with sector order.
+    assert_eq!(
+        q.out_amount, 1_378_474,
+        "the cheaper vault's level must fill first; 1_372_719 is what \
+         walking sector 0 first would yield"
+    );
 }
 
 /// A one-ask-level market whose expiry is finite in exactly one domain and
@@ -321,20 +408,25 @@ fn expiry_domain_quote(
     predict_and_execute(&mut f, &taker, SwapSide::Buy, 500_000, Price::INFINITY)
 }
 
-/// The bound this domain leaves open.
+/// The open bound in **either** domain — each test passes it as the domain
+/// it is *not* aging out, so it serves as both. `SlotSpan::UNBOUNDED` and
+/// `WallSpan::UNBOUNDED` are both `u32::MAX`, which is what lets one
+/// constant stand for both.
 const EXPIRY_OPEN: u32 = u32::MAX;
-/// Finite time-in-force per domain, small enough that warping past it keeps
-/// the blockhash valid.
+/// Finite slot time-in-force, small enough that warping past it keeps the
+/// blockhash valid.
 const TIF_SLOTS: u32 = 20;
+/// Finite wall time-in-force, in seconds.
 const TIF_SECS: u32 = 60;
 
 /// Dual-domain expiry, pinned **differentially** — the slot half.
 ///
 /// The six expiry vectors are consumed by the native matcher, the WASM
 /// binding, the committed binary and the TS wrapper, all four downstream of
-/// the same `dropset-interface` matcher, while this file — the only harness
-/// that reaches the program — quotes ladders that never expire (see
-/// `predict_and_execute`). The program has its own expiry tests and the
+/// the same `dropset-interface` matcher, while every *other* case in this
+/// file — the only harness that reaches the program — quotes ladders that
+/// never expire (see `predict_and_execute`). The program has its own expiry
+/// tests and the
 /// simulator has its own vectors; what neither side had is a comparison at
 /// a *shared* instant, which is the only thing that catches the two
 /// drifting apart.
@@ -360,6 +452,7 @@ fn sdk_expiry_slot_domain_matches_onchain() {
         live.out_amount > 0,
         "the same profile must fill while inside its slot bound"
     );
+    assert_eq!(live.legs, 1, "the live half must fill its one ask level");
 }
 
 /// The wall half of the pair above. This is the halt case the wall datum
@@ -378,6 +471,7 @@ fn sdk_expiry_wall_domain_matches_onchain() {
         live.out_amount > 0,
         "the same profile must fill while inside its wall bound"
     );
+    assert_eq!(live.legs, 1, "the live half must fill its one ask level");
 }
 
 #[test]

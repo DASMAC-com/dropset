@@ -160,8 +160,8 @@ pub fn ladder_profile(asks: &[(u32, u16, u32)], bids: &[(u32, u16, u32)]) -> [u8
 
 /// Build a multi-level profile from explicit per-level
 /// `(offset_ppm, size_bps, expiry_secs, expiry_slots)` tuples — the
-/// dual-domain generalization of [`ladder_profile`], which pins the slot
-/// bound open.
+/// dual-domain generalization of [`ladder_profile`], whose slot bound is
+/// pinned open.
 ///
 /// Expiry is the min of two independent bounds, so a scenario that means to
 /// age a level out in the *slot* domain — or to pin the two domains against
