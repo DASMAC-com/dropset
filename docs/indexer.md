@@ -215,12 +215,26 @@ primary key, the one frozen in `interface.md` §1:
 PRIMARY KEY (slot, txn_index, signature, event_ordinal)
 ```
 
-`event_ordinal` is a dense rank over the transaction's *recognized*
+`event_ordinal` is a dense rank over the transaction's *tagged*
 event-CPIs, in walk (heap-pop emission) order — not the true
-inner-instruction index. That relative order is what the PK needs for
-dedup; a tagged-but-undecodable event shifts every later ordinal, and
-the geyser path can supply the true inner-instruction index (see
-`indexer/src/decode.rs`). Every
+inner-instruction index. It is assigned at the tag-strip step, before
+the discriminator dispatch, so a tagged-but-undecodable event still
+consumes an ordinal and the events around it keep their numbering when
+the codec is later extended. That matters because the ordinal is a
+quarter of the frozen PK: ranking only the *recognized* events would
+make the key a function of codec coverage, and since the raw inserts
+use an untargeted `ON CONFLICT DO NOTHING` — which suppresses only a
+row that actually violates a unique constraint — a renumbered row
+inserts as a duplicate and is folded into the take and volume rollups
+twice. The geyser path can supply the true inner-instruction index
+(see `indexer/src/decode.rs`).
+
+Rows written before that change keep their old recognized-only
+ordinals. The resulting one-off numbering discontinuity on the shared
+dev database is **accepted** rather than reindexed (2026-09-02): the
+affected data is derived and dev-grade, so re-deriving it is capacity
+better spent elsewhere. A production deployment should reindex from
+the raw tier instead of inheriting the discontinuity. Every
 write is an idempotent `INSERT … ON CONFLICT DO NOTHING`, so a replayed
 slot is a no-op — the PK *is* the dedup contract, end to end. Promoting
 the cold events out of the JSONB `events` table into their own typed

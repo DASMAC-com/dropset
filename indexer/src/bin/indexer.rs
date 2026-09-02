@@ -45,7 +45,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Order matters: the aggregator reads legs the store sink has committed.
     let sinks: Vec<Box<dyn Sink<RawTx>>> = vec![
-        Box::new(StoreSink::new(pool, feed.clone(), EventWriter)),
+        Box::new(StoreSink::new(
+            pool,
+            feed.clone(),
+            EventWriter::new(cfg.program_id),
+        )),
         Box::new(AggregateSink::new(store, cfg.signature_batch_limit as i64)),
     ];
 

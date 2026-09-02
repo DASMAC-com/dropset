@@ -32,6 +32,8 @@ use crate::types::{
     SetRegistryDefaultsEvent, SetTakerFeeEvent, WithdrawEvent,
 };
 use borsh::BorshDeserialize;
+use solana_pubkey::Pubkey;
+use std::str::FromStr;
 
 /// The anchor v2 `emit_cpi!` self-CPI tag, little-endian — the 8-byte
 /// prefix on every event inner-instruction's data (`0x1d9acb512ea545e4`).
@@ -152,6 +154,61 @@ pub fn strip_event_tag(inner_ix_data: &[u8]) -> Option<&[u8]> {
         .filter(|payload| payload.len() >= DISCRIMINATOR_LEN)
 }
 
+/// Assemble a transaction's full account-key list in the order an
+/// instruction's `program_id_index` addresses: the message's static keys
+/// first, then the address-lookup-table loaded addresses (writable, then
+/// readonly).
+///
+/// Returns `None` if a loaded address won't parse — the caller then cannot
+/// safely attribute any event in the transaction and must fail closed
+/// rather than trust an unverified emitter.
+///
+/// The loaded addresses are taken as base58 string slices rather than as
+/// `solana_transaction_status::UiLoadedAddresses` so this crate stays free
+/// of the transaction-status dependency (the same reason
+/// [`EVENT_IX_TAG`] is hand-copied rather than imported from
+/// `anchor_lang_v2`). Every caller has the two `Vec<String>` fields to
+/// hand; unwrapping their `OptionSerializer` is three lines at the call
+/// site and keeps this the one shared, tested implementation.
+pub fn full_account_keys(
+    static_keys: &[Pubkey],
+    loaded_writable: &[String],
+    loaded_readonly: &[String],
+) -> Option<Vec<Pubkey>> {
+    let mut keys = static_keys.to_vec();
+    for encoded in loaded_writable.iter().chain(loaded_readonly.iter()) {
+        keys.push(Pubkey::from_str(encoded).ok()?);
+    }
+    Some(keys)
+}
+
+/// Resolve one inner instruction's `program_id_index` against the
+/// transaction's full account-key list (see [`full_account_keys`]).
+///
+/// `None` when the index is out of range, which is the fail-closed answer:
+/// a blob whose emitter cannot be resolved must not be attributed to any
+/// program.
+pub fn emitting_program(account_keys: &[Pubkey], program_id_index: u8) -> Option<Pubkey> {
+    account_keys.get(program_id_index as usize).copied()
+}
+
+/// Whether this inner instruction was emitted by `program_id`.
+///
+/// **This is the check that makes an event-CPI blob trustworthy.** Both
+/// halves of the `[tag][discriminator]` envelope are public and carry no
+/// Dropset-specific secret — the tag is an anchor-wide constant and the
+/// discriminator is `sha256("event:<Name>")[..8]`, which any program with
+/// a struct of that name reproduces exactly — so anyone can forge the
+/// bytes. The emitting program id is the only thing `emit_cpi!`'s self-CPI
+/// actually authenticates, and `getSignaturesForAddress` is
+/// address-indexed rather than invoked-program-indexed, so a transaction
+/// that merely *references* the program is polled and hydrated. Without
+/// this check a foreign program's `emit_cpi!` of a Dropset-shaped payload
+/// is indistinguishable from a real event.
+pub fn emitted_by(account_keys: &[Pubkey], program_id_index: u8, program_id: &Pubkey) -> bool {
+    emitting_program(account_keys, program_id_index).as_ref() == Some(program_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +286,72 @@ mod tests {
             decode_event_payload(&payload),
             Some(DropsetEvent::Fill(fill))
         );
+    }
+
+    /// `program_id_index` addresses static keys first, then loaded
+    /// writable, then loaded readonly — the order a transaction with a
+    /// lookup table composes its account keys.
+    #[test]
+    fn resolves_keys_static_then_writable_then_readonly() {
+        let static_a = Pubkey::new_from_array([10; 32]);
+        let static_b = Pubkey::new_from_array([11; 32]);
+        let writable = Pubkey::new_from_array([12; 32]);
+        let readonly = Pubkey::new_from_array([13; 32]);
+        let keys = full_account_keys(
+            &[static_a, static_b],
+            &[writable.to_string()],
+            &[readonly.to_string()],
+        )
+        .expect("all parse");
+        assert_eq!(keys, vec![static_a, static_b, writable, readonly]);
+    }
+
+    /// With no lookup-table loads the static keys stand alone.
+    #[test]
+    fn resolves_keys_without_loaded_addresses() {
+        let static_a = Pubkey::new_from_array([10; 32]);
+        let keys = full_account_keys(&[static_a], &[], &[]).expect("static-only resolves");
+        assert_eq!(keys, vec![static_a]);
+    }
+
+    /// A loaded address that won't parse means the full list cannot be
+    /// trusted, so no event in the transaction may be attributed.
+    #[test]
+    fn malformed_loaded_address_resolves_to_none() {
+        assert!(full_account_keys(
+            &[Pubkey::new_from_array([10; 32])],
+            &["not-a-pubkey".to_string()],
+            &[],
+        )
+        .is_none());
+    }
+
+    /// The spoof this check exists for: a byte-identical event emitted by
+    /// any program other than ours is not ours. Both halves of the
+    /// `[tag][discriminator]` envelope are public, so the emitter is the
+    /// only discriminating signal.
+    #[test]
+    fn emitted_by_accepts_only_the_named_program() {
+        let ours = Pubkey::new_from_array([1; 32]);
+        let foreign = Pubkey::new_from_array([9; 32]);
+        let account_keys = vec![ours, foreign];
+
+        assert!(emitted_by(&account_keys, 0, &ours));
+        assert!(
+            !emitted_by(&account_keys, 1, &ours),
+            "forged by a foreigner"
+        );
+        assert_eq!(emitting_program(&account_keys, 1), Some(foreign));
+    }
+
+    /// An out-of-range `program_id_index` (e.g. an unresolved key)
+    /// resolves to no account, so the event fails closed rather than
+    /// indexing out of bounds.
+    #[test]
+    fn emitted_by_rejects_an_out_of_range_program_index() {
+        let ours = Pubkey::new_from_array([1; 32]);
+        assert!(!emitted_by(&[ours], 7, &ours));
+        assert_eq!(emitting_program(&[ours], 7), None);
     }
 
     // ── minimal sha256, test-only (avoids a crate dependency) ──────────
