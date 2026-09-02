@@ -527,6 +527,86 @@ mod tests {
         }
     }
 
+    /// The decimals the bootstrap creates each mock mint with must equal the
+    /// *mainnet* decimals the frontend scales by.
+    ///
+    /// This crate is the authority on what a localnet mint actually is — these
+    /// values reach `spl_token`'s `InitializeMint`. The frontend, meanwhile,
+    /// substitutes only the mint address and token program on localnet (its
+    /// `currencies.localnet.json` overlay carries no decimals), so it keeps
+    /// scaling displayed prices and the submitted swap amount by the mainnet
+    /// figure. If the two disagree the demo mis-scales silently: the program
+    /// hands the mint's own decimals to the checked transfer, so no CPI can
+    /// notice, and a six-versus-six pair — most of this roster — hides the
+    /// drift completely.
+    ///
+    /// Also pins that every pair *has* an overlay entry, since a missing one
+    /// would leave the app addressing the real mainnet mint on localnet.
+    #[test]
+    fn mint_decimals_match_the_frontend_currency_data() {
+        use std::collections::HashMap;
+
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../frontend/lib/data");
+        let read = |name: &str| -> serde_json::Value {
+            let path = format!("{dir}/{name}");
+            let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {path}: {e}"))
+        };
+        let currencies = read("currencies.json");
+        let localnet = read("currencies.localnet.json");
+
+        let mut mainnet_decimals: HashMap<String, u64> = HashMap::new();
+        for entry in currencies
+            .as_object()
+            .expect("currencies.json is a currency-keyed object")
+            .values()
+        {
+            for coin in entry["stablecoins"]
+                .as_array()
+                .expect("each currency carries a stablecoins array")
+            {
+                mainnet_decimals.insert(
+                    coin["symbol"]
+                        .as_str()
+                        .expect("symbol is a string")
+                        .to_owned(),
+                    coin["decimals"].as_u64().expect("decimals is a number"),
+                );
+            }
+        }
+
+        let check = |spec: &MintSpec| {
+            let listed = mainnet_decimals
+                .get(spec.symbol)
+                .copied()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} is not listed in the frontend's currencies.json",
+                        spec.symbol
+                    )
+                });
+            assert_eq!(
+                listed,
+                u64::from(spec.decimals),
+                "{}: frontend scales by {listed} decimals, bootstrap creates the \
+                 mint with {}",
+                spec.symbol,
+                spec.decimals
+            );
+            assert!(
+                localnet.get(spec.symbol).is_some(),
+                "{} has no entry in currencies.localnet.json, so the frontend \
+                 would address its mainnet mint on localnet",
+                spec.symbol
+            );
+        };
+
+        for c in PAIRS {
+            check(&c.base);
+            check(&c.quote);
+        }
+    }
+
     /// Each market's seed deposit opens both legs at ≈ $100, so the vault is
     /// symmetric around its own quote regardless of the token's decimals.
     #[test]

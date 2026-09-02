@@ -7,15 +7,8 @@ import {
   NoRouteError,
   quoteBestRoute,
 } from "@dropset/sdk";
-import { address } from "@solana/kit";
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
-import {
-  onchainMint,
-  onchainTokenProgram,
-  PROGRAM_FOR_KIND,
-  stablecoinByMint,
-} from "../data/currencies";
 import {
   MIN_TOKENS_TO_FETCH,
   QUOTE_DEBOUNCE_MS,
@@ -29,7 +22,8 @@ import {
   projectedRemaining,
   recordResponse,
 } from "../dflow/rateLimitBudget";
-import { gateNowUnix, syncChainClock } from "../eclob/chainClock";
+import { gateNowSlot, gateNowUnix, syncChainClock } from "../eclob/chainClock";
+import { eclobRouteInput } from "../eclob/route";
 import { DFLOW_QUOTE_URL, PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
 import { getErrorMessage } from "../guards";
@@ -126,19 +120,9 @@ export const useRouterQuote = (
         // localnet); the aggregator prices the real ones. They coincide on
         // mainnet, which is the only cluster where this path runs today —
         // localnet forces the eCLOB-only route.
-        const eclobLeg =
-          eclobAvailable &&
-          stablecoinByMint(inputMint) &&
-          stablecoinByMint(outputMint)
-            ? {
-                inputMint: address(onchainMint(inputMint)),
-                outputMint: address(onchainMint(outputMint)),
-                inputTokenProgram:
-                  PROGRAM_FOR_KIND[onchainTokenProgram(inputMint)],
-                outputTokenProgram:
-                  PROGRAM_FOR_KIND[onchainTokenProgram(outputMint)],
-              }
-            : null;
+        const eclobLeg = eclobAvailable
+          ? eclobRouteInput(inputMint, outputMint)
+          : null;
 
         // Resolve the platform fee through the app's own per-mint cache rather
         // than letting the router re-derive it: handing the router the raw
@@ -170,7 +154,7 @@ export const useRouterQuote = (
           if (cancelled || gen !== generation) return;
           gatedEclob = {
             leg: eclobLeg,
-            nowSlot: Number(slot),
+            nowSlot: gateNowSlot(slot),
             nowUnix: gateNowUnix(),
           };
         }

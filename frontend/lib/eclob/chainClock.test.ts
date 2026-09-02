@@ -6,6 +6,7 @@ import {
   CLOCK_SAFETY_MARGIN_SECS,
   CLOCK_SKEW_FULL_CORRECTION_SECS,
   CLOCK_SKEW_TOLERANCE_SECS,
+  SLOT_SAFETY_MARGIN_SLOTS,
 } from "../data/timings";
 import { isPlausibleChainSecs, skewCorrectionSecs } from "./chainClock";
 
@@ -230,5 +231,24 @@ describe("the gate against a cached chain offset", () => {
 
     await syncChainClock(rpcReturning(BigInt(DEVICE_SECS) * 1_000n), 1n);
     expect(gateNowUnix()).toBe(DEVICE_SECS + CLOCK_SAFETY_MARGIN_SECS);
+  });
+});
+
+describe("slot gate", () => {
+  it("nudges a confirmed slot forward by the slot-domain margin", async () => {
+    const { gateNowSlot } = await import("./chainClock");
+
+    expect(gateNowSlot(1_000)).toBe(1_000 + SLOT_SAFETY_MARGIN_SLOTS);
+    expect(gateNowSlot(1_000n)).toBe(1_000 + SLOT_SAFETY_MARGIN_SLOTS);
+  });
+
+  // The whole point of the constant: a `confirmed` slot is behind head, so
+  // gating on it raw reports levels as more alive than the engine will find
+  // them. The margin must move the gate *forward* (levels die sooner here),
+  // matching the direction the wall-clock margin moves.
+  it("moves the gate forward, so a dying level is dropped sooner", async () => {
+    const { gateNowSlot } = await import("./chainClock");
+
+    expect(gateNowSlot(500)).toBeGreaterThan(500);
   });
 });

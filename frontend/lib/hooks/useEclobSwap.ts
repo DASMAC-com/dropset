@@ -10,6 +10,7 @@ import { percentToBps } from "../format/percent";
 import { getErrorMessage } from "../guards";
 import { type Slippage, useSwapStore } from "../store";
 import { waitForSwapConfirmation } from "../swap/confirm";
+import { readRealizedFill } from "../swap/realizedFill";
 import { SwapError } from "../swap/types";
 import type { CompletedSwap, SwapStatus, UseDflowSwap } from "./useDflowSwap";
 
@@ -83,9 +84,47 @@ export function useEclobSwap(): UseDflowSwap {
       });
       setStatus("confirming");
       await waitForSwapConfirmation(client.runtime.rpc, res.signature);
-      setResult({ ...res, fromStablecoin, toStablecoin });
-      setStatus("success");
-      setAmount("");
+
+      // Confirmation only proves the transaction didn't revert, and on our own
+      // program that is not the same as the swap having happened: a fill below
+      // `minOut` soft-reverts, moves nothing, and still returns Ok. So settle
+      // the quoted figures against the receipt before reporting anything. A
+      // null reading is "couldn't tell" rather than "didn't fill" — an
+      // unreadable receipt keeps the quoted figures rather than announcing a
+      // swap that did not happen.
+      const realized = await readRealizedFill(
+        client.runtime.rpc,
+        res.signature,
+        res.settlement,
+      );
+      // An unreadable receipt is reported as a success at the quoted figures —
+      // which is exactly the pre-fix behavior, so it is worth stating why it
+      // is still the right direction rather than a hole in the fix.
+      //
+      // The two errors are not symmetric. Announcing "no funds were swapped"
+      // about a swap that did happen invites the user to swap again, at their
+      // own expense. Announcing a success about a swap that did not happen is
+      // self-correcting: the balance refetch fired below shows the unchanged
+      // balance moments later. So when the receipt cannot be read, this fails
+      // in the direction that cannot cost the user money — and `no-fill` is
+      // asserted only when the chain actually said so.
+      const treatAsFilled = realized === null || realized.filled;
+      setResult({
+        signature: res.signature,
+        inAmount: realized?.amounts?.inAmount ?? res.inAmount,
+        outAmount: realized?.amounts?.outAmount ?? res.outAmount,
+        fromStablecoin,
+        toStablecoin,
+      });
+      setStatus(treatAsFilled ? "success" : "no-fill");
+      // Clear the input only on a real fill. After a no-fill the balance is
+      // untouched and the natural next action is to retry, so keeping the
+      // amount saves the user re-typing it.
+      if (treatAsFilled) setAmount("");
+      // Emitted either way: a no-fill still spends the network fee, and on a
+      // first-time swap into the output token the rent for that ATA as well
+      // (a separate instruction, outside the swap's rollback). So the balances
+      // on screen are stale in both cases.
       emit("swapSucceeded");
     } catch (e) {
       const err =

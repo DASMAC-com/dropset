@@ -4,7 +4,10 @@ import * as Popover from "@radix-ui/react-popover";
 import { useRef, useState } from "react";
 import { Check, Settings2 } from "@/components/icons";
 import { useAppEvent } from "@/lib/events";
-import { sanitizeSlippagePercent } from "@/lib/format/input";
+import {
+  parseSlippagePercent,
+  sanitizeSlippagePercent,
+} from "@/lib/format/input";
 import { type Slippage, useSwapStore } from "@/lib/store";
 
 const PRESETS: { label: string; percent: number }[] = [
@@ -53,9 +56,9 @@ export function MaxSlippageButton() {
   const applyCustom = (raw: string) => {
     const cleaned = sanitizeSlippagePercent(raw);
     setCustom(cleaned);
-    const num = Number.parseFloat(cleaned);
-    if (Number.isFinite(num) && num > 0) {
-      setSlippage({ mode: "fixed", percent: num });
+    const percent = parseSlippagePercent(cleaned);
+    if (percent !== null) {
+      setSlippage({ mode: "fixed", percent });
     }
   };
 

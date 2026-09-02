@@ -58,6 +58,44 @@ export function SwapResult({
     );
   }
 
+  // Confirmed, but nothing moved — the fill came in under the taker's floor
+  // and the program soft-reverted. Deliberately not styled as a failure: the
+  // transaction did what it was asked to, and the point to get across is that
+  // the funds are untouched, since the one thing a user must not do here is
+  // assume the swap happened. Still links to the explorer, because there is a
+  // real transaction to look at.
+  if (status === "no-fill" && result) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
+      >
+        <CircleAlert size={18} className="shrink-0 text-muted-fg" aria-hidden />
+        <span className="font-medium text-foreground">No Fill</span>
+        <a
+          href={explorerTxUrl(result.signature.toString())}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex min-w-0 items-center gap-1 truncate text-muted-fg transition-colors hover:text-foreground"
+        >
+          <span className="truncate">
+            Price moved past your limit — no {result.fromStablecoin} was swapped
+          </span>
+          <ExternalLink size={12} className="shrink-0" />
+        </a>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Dismiss"
+          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
+        >
+          <X size={14} />
+        </button>
+      </div>
+    );
+  }
+
   if (status === "error" && error) {
     const isCancel = error.kind === "rejected";
     return (

@@ -1915,6 +1915,7 @@ dependencies = [
  "libc",
  "open",
  "ratatui",
+ "serde_json",
  "solana-client",
  "solana-commitment-config",
  "solana-instruction",

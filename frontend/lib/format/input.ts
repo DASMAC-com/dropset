@@ -41,6 +41,25 @@ export const sanitizePercent = (raw: string): string =>
 export const sanitizeSlippagePercent = (raw: string): string =>
   sanitizeDecimal(raw, 2);
 
+/**
+ * The slippage percent a sanitized input string commits, or `null` when it
+ * commits nothing — an empty box, or a bare `.` on the way to a real value.
+ *
+ * **Zero is a value, not a rejection.** A tolerance of 0% is the legitimate
+ * "exact or nothing" setting: it makes `minOut` the quoted output exactly, so
+ * any adverse move soft-reverts and no funds change hands. Refusing to commit
+ * it is what made the input silently disagree with the store — the box showed
+ * `0.00` while the swap still executed at whatever tolerance was set before
+ * it, which on a money path is the worst of both.
+ *
+ * Split out of the popover so that distinction has somewhere to be tested;
+ * the component has no test harness of its own.
+ */
+export const parseSlippagePercent = (cleaned: string): number | null => {
+  const num = Number.parseFloat(cleaned);
+  return Number.isFinite(num) && num >= 0 ? num : null;
+};
+
 // Re-exported here so amount-formatting concerns live in one module from
 // the consumer's POV — the implementation stays in lib/balance.ts where the
 // related bigint helpers live.

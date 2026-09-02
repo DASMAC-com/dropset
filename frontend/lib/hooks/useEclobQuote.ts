@@ -4,7 +4,7 @@ import { quoteEclob } from "@dropset/sdk";
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
 import { QUOTE_DEBOUNCE_MS, QUOTE_REFRESH_MS } from "../data/timings";
-import { gateNowUnix, syncChainClock } from "../eclob/chainClock";
+import { gateNowSlot, gateNowUnix, syncChainClock } from "../eclob/chainClock";
 import { resolveEclobRoute } from "../eclob/route";
 import { PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
@@ -20,8 +20,11 @@ import { INITIAL_QUOTE, type QuoteState } from "../quote";
 //
 // Only runs while `enabled` (route mode is eCLOB). Debounce on input change,
 // then re-simulate every QUOTE_REFRESH_MS so the quote tracks the maker bot
-// re-quoting the book. The simulation is local (WASM) — the only network hops
-// are reading the market account and the current slot.
+// re-quoting the book. The simulation is local (WASM), so the per-tick network
+// hops are just the market account and the current slot. The chain-clock sync
+// below can add a third — a `getBlockTime` — but it is cached and throttled to
+// CLOCK_RESYNC_INTERVAL_SECS across every consumer, so it is far from every
+// tick.
 export const useEclobQuote = (
   inputMint: string,
   outputMint: string,
@@ -100,14 +103,15 @@ export const useEclobQuote = (
         // Keep the wall-clock half of the gate honest against the cluster —
         // see lib/eclob/chainClock.ts. Quoting against an unchecked device
         // clock would let a skewed browser price levels the engine has already
-        // expired.
+        // expired. The sync takes the raw slot; the gate takes it margined,
+        // for the same reason in the other domain.
         await syncChainClock(rpc, slot);
         if (cancelled || gen !== generation) return;
 
         const q = await quoteEclob(rpc, {
           leg: { route },
           amount: atomic,
-          nowSlot: Number(slot),
+          nowSlot: gateNowSlot(slot),
           nowUnix: gateNowUnix(),
           platformFeeBps: PLATFORM_FEE ? PLATFORM_FEE.bps : 0,
         });

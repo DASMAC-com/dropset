@@ -8,6 +8,7 @@ import {
 } from "@dropset/sdk";
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
 import {
+  type Address,
   address,
   appendTransactionMessageInstructions,
   compileTransaction,
@@ -27,11 +28,47 @@ import {
 } from "@solana-program/token";
 import { PLATFORM_FEE } from "../env";
 import { getErrorMessage } from "../guards";
+import type { SettlementRef } from "../swap/realizedFill";
 import { CANCEL_PATTERN, SwapError, type SwapOutcome } from "../swap/types";
-import { gateNowUnix, syncChainClock } from "./chainClock";
-import { platformFeeBpsFor, resolveEclobRoute } from "./route";
+import { gateNowSlot, gateNowUnix, syncChainClock } from "./chainClock";
+import { type EclobRoute, platformFeeBpsFor, resolveEclobRoute } from "./route";
 
 type Rpc = SolanaClientRuntime["rpc"];
+
+/**
+ * The quoted outcome, plus what the caller needs to read back what the
+ * transaction *actually* moved once it confirms.
+ *
+ * The two amounts here come from the pre-flight simulation and are a
+ * prediction, not a receipt: a fill below `minOut` soft-reverts and moves
+ * nothing while still returning a successful transaction, so a caller must
+ * settle these against `readRealizedFill` before reporting them to a user.
+ * `settlement` is carried out of here rather than re-derived by the caller
+ * because the on-chain mints are a property of the resolved route (mock demo
+ * mints on localnet), which does not outlive this call.
+ */
+export type EclobSwapOutcome = SwapOutcome & {
+  settlement: SettlementRef;
+};
+
+/**
+ * Which mints the taker spends and receives on this route, for `owner`.
+ *
+ * A pure function of the route, and exported so the base/quote mapping can be
+ * pinned: it mirrors the SDK's own derivation of `outputMint` (base on a buy,
+ * quote on a sell) and a transposition here would be silent and user-visible.
+ * Both mints still belong to the taker, so the balance reader would find both,
+ * measure each in the wrong direction, and — after its coherence check —
+ * withhold the amounts on a swap that really filled.
+ */
+export const settlementFor = (
+  route: EclobRoute,
+  owner: Address,
+): SettlementRef => ({
+  owner,
+  inputMint: route.side === "sell" ? route.baseMint : route.quoteMint,
+  outputMint: route.outputMint,
+});
 
 export type EclobSwapInput = {
   inputMint: string;
@@ -54,12 +91,34 @@ const BPS_DENOMINATOR = 10_000n;
 const MAX_SLIPPAGE_BPS = 9_999;
 
 // The output floor below which the swap soft-reverts: the simulated output
-// less the (clamped) slippage tolerance. Rounds down (integer division), so
-// the actual floor is never looser than requested.
-const applySlippage = (out: bigint, bps: number): bigint => {
-  const clamped = BigInt(
-    Math.min(Math.max(Math.trunc(bps), 0), MAX_SLIPPAGE_BPS),
-  );
+// less the (clamped) slippage tolerance.
+//
+// Integer division truncates, which *lowers* the floor — so the floor this
+// returns is loose by at most one atom rather than tight. An output of 1001 at
+// 50 bps has an exact floor of 995.995 and this yields 995, so a fill at 995
+// clears a floor the taker sized at 995.995. One atom is far below any
+// meaningful slippage, and rounding the other way would reject fills sitting
+// exactly on a floor the taker did ask for, so the direction is deliberate.
+// It is spelled out because the looseness is not self-evident from the
+// expression, and a reader who assumed the safe direction was guaranteed
+// could build on it.
+//
+// A non-finite `bps` is clamped before it reaches `BigInt`: `Math.trunc(NaN)`
+// is `NaN`, and `Math.min`/`Math.max` propagate it, so without the guard
+// `BigInt(NaN)` throws a RangeError out of a swap that has already been
+// quoted. It falls back to zero — the tightest floor, not this module's idea
+// of a sensible tolerance. Zero is a legitimate setting ("exact or nothing")
+// rather than an error value, so the conflation is deliberate: a slippage
+// that arrived as NaN is an upstream bug, and on a money path the safe
+// failure is one that risks no funds. The swap then soft-reverts on any
+// adverse move, which the caller now reports as a swap that did not happen.
+//
+// Exported only so the rounding direction and the non-finite guard can be
+// pinned directly — both are one-line properties whose failure is silent, and
+// neither is reachable through `executeEclobSwap` without a wallet and an RPC.
+export const applySlippage = (out: bigint, bps: number): bigint => {
+  const finite = Number.isFinite(bps) ? Math.trunc(bps) : 0;
+  const clamped = BigInt(Math.min(Math.max(finite, 0), MAX_SLIPPAGE_BPS));
   return (out * (BPS_DENOMINATOR - clamped)) / BPS_DENOMINATOR;
 };
 
@@ -75,7 +134,7 @@ const applySlippage = (out: bigint, bps: number): bigint => {
 //      submit.
 export async function executeEclobSwap(
   input: EclobSwapInput,
-): Promise<SwapOutcome> {
+): Promise<EclobSwapOutcome> {
   const {
     inputMint,
     outputMint,
@@ -102,10 +161,17 @@ export async function executeEclobSwap(
   // chain's slot and the wall clock each quote's datums are measured from. A
   // level rests only inside both of its deadlines, and the engine measures the
   // second against cluster time — so the device clock is checked against the
-  // chain here (lib/eclob/chainClock.ts) rather than trusted. This is the
-  // sizing that sets `minOut` below: a device clock running slow would size
-  // against levels the engine has already dropped, and the swap would
-  // soft-revert on `minOut` with the taker still paying fees.
+  // chain here (lib/eclob/chainClock.ts) rather than trusted, and the slot,
+  // read at `confirmed` and so already behind head, is nudged forward by the
+  // slot-domain margin. Both corrections point the same way, because this is
+  // the sizing that sets `minOut` below: gating against levels the engine has
+  // already dropped sizes a floor the fill cannot reach, and the swap
+  // soft-reverts — moving no funds, but still spending the network fee and the
+  // rent for a first-time output ATA (created by the separate instructions
+  // below, which the swap's own rollback does not reach).
+  //
+  // `syncChainClock` gets the RAW slot: it asks the node for that block's
+  // production time, and a slot nudged past head has no block.
   const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
   await syncChainClock(rpc, slot);
 
@@ -151,7 +217,7 @@ export async function executeEclobSwap(
     route.side,
     atomicAmount,
     route.limitPriceBits,
-    Number(slot),
+    gateNowSlot(slot),
     gateNowUnix(),
     platformFeeBps,
   );
@@ -281,5 +347,10 @@ export async function executeEclobSwap(
     );
   }
 
-  return { signature, inAmount: quote.inAmount, outAmount: quote.outAmount };
+  return {
+    signature,
+    inAmount: quote.inAmount,
+    outAmount: quote.outAmount,
+    settlement: settlementFor(route, taker.address),
+  };
 }
