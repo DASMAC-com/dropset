@@ -544,6 +544,31 @@ Two properties are load-bearing:
   refusal to start. Wiring the fence into them would convert a tolerated
   condition into an outage.
 
+**Every migration declares what it produces.** Beside each
+`<version>_<name>.sql` sits a `<version>_<name>.fence` manifest, one
+directive per line — `table <name>`, `view <name>`,
+`column <table>.<column>`, `rows <table> = <n>`, or `none <reason>` — and
+`db-schema/tests/schema_fence.rs` replays the history against a
+throwaway Postgres and probes for each declared relation. A migration
+with no manifest fails the ordinary test run, as does a manifest with no
+migration, so the pairing holds in both directions. The relation probes
+themselves need a Postgres container and run under `--ignored`.
+
+The manifest is a **declaration, not a derivation**: nothing parses
+`CREATE TABLE` out of the DDL, which would make the check agree with
+itself whatever the migration did. It is per-migration rather than one
+central list because a central list is a shared append surface — the
+previous one drew three textual conflicts in a single week, whereas two
+branches adding migrations now touch disjoint files.
+
+It is a **sidecar rather than a comment in the SQL** because `sqlx`
+checksums a migration's raw file text and refuses one whose checksum no
+longer matches what was applied. A comment added to a shipped migration
+would break every database that already ran it, and would leave a
+mis-declaration uncorrectable; a `.fence` file is outside the text
+`sqlx` hashes, and `sqlx` ignores any file in the directory that does
+not end in `.sql`.
+
 The runner doubles as the local reset story — point it at a fresh
 database and the full history replays — and, because it is idempotent, as
 a compose init step that re-runs harmlessly on every restart.

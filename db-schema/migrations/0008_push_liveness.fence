@@ -1,0 +1,2 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+table push_health

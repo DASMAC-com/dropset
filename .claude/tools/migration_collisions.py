@@ -75,8 +75,17 @@ DEFAULT_DIR = "db-schema/migrations"
 DEFAULT_BASE = "origin/main"
 
 # `0004_spot_ticks.sql` -> 4. Anchored at the basename so a directory component
-# that happens to start with digits cannot be read as the version.
-_NUMBER_RE = re.compile(r"^(\d+)_")
+# that happens to start with digits cannot be read as the version, and required
+# to end in `.sql` so only an actual migration counts.
+#
+# The extension is load-bearing, not decoration. The migrations directory also
+# holds a `<version>_<name>.fence` manifest beside each migration
+# (db-schema/tests/schema_fence.rs), and matching on the version prefix alone
+# read all nine of them as added migrations — reporting a branch that touched no
+# SQL at all as "adds 1, 2, 3, 4, 5, 6, 7, 8, 9". That direction is fail-safe
+# (extra numbers can only invent a collision, never hide one), but a fabricated
+# collision blocks an enqueue, and correcting a manifest is a supported edit.
+_NUMBER_RE = re.compile(r"^(\d+)_.*\.sql$")
 
 
 class MigrationCollisionsError(Exception):
@@ -125,6 +134,12 @@ def added_migrations(base_ref: str = DEFAULT_BASE, directory: str = DEFAULT_DIR)
     breaks its checksum — and it is not a numbering collision, so it must not
     be reported as one.
 
+    Only paths that actually encode a version are returned. The pathspec is a
+    directory, and that directory holds sidecars as well as migrations, so
+    filtering here is what keeps ``mine`` a list of migrations rather than a
+    list of everything that was added next to one — which the summary line
+    reads directly to decide whether the branch adds a migration at all.
+
     Refuses a ``directory`` that does not exist at the repo root. An absent
     migrations directory means the pathspec is wrong, and the honest answer to
     "did anything collide?" is then an error, not "no".
@@ -149,7 +164,9 @@ def added_migrations(base_ref: str = DEFAULT_BASE, directory: str = DEFAULT_DIR)
         check=True,
         cwd=root,
     ).stdout
-    return sorted({p for p in out.split("\0") if p.strip()})
+    return sorted(
+        {p for p in out.split("\0") if p.strip() and migration_number(p) is not None}
+    )
 
 
 def load_others(path: str) -> list[dict]:

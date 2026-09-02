@@ -1,0 +1,9 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+table feed_cursors
+table fill_events
+table events
+table takes
+table market_stats
+table indexer_cursor
+table cex_prices
+rows indexer_cursor = 1
