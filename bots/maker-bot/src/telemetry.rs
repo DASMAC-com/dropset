@@ -188,20 +188,35 @@ pub struct LegSample {
     /// sigma, which no path currently produces — kept as a cheap guard on a
     /// column a dashboard plots, not as a state a consumer must handle.
     ///
-    /// **A lower bound, not the uncertainty, on a leg fed by a slow source** —
-    /// the filter re-absorbs an unchanged reading every tick, so a daily fix's
-    /// precision is counted repeatedly. See `fair-value/src/fusion.rs`.
+    /// **Expect a sawtooth on a leg fed only by a slow source**, not a flat
+    /// line. The filter absorbs a reference fix once per its configured
+    /// publication interval and widens on drift alone in between, so the series
+    /// steps tight at each absorption and climbs until the next. That shape is
+    /// correct: with a daily fix as the only evidence, uncertainty about *now*
+    /// genuinely grows through the day. A panel that alerts on the climb is
+    /// reading the estimator working, not failing. See
+    /// `fair-value/src/fusion.rs`.
     pub fused_sigma: Option<f64>,
     /// What the fusion did this tick, as the Rust variant's `Debug` name, in
     /// the same convention every other enum-ish column uses. Four values:
     /// `Carried`, `Seeded`, `Fused`, and `Reseeded` — the last carrying the size
     /// of the dislocation it adopted.
+    ///
+    /// `Carried` is the **routine** value between absorptions on a
+    /// reference-only leg, where it means the estimator already held every
+    /// reading offered — not that anything went wrong. It is also the tick on
+    /// which the composition falls back to `value`.
     pub fusion_step: Option<String>,
     /// How many sources were actually fused, which is **not**
     /// `contributor_count`: that counts the fast consensus, while this counts
-    /// the fusion's admitted set. They differ in both directions — a reference
-    /// fix is fused but does not corroborate, and a trimmed outlier corroborates
-    /// the count but is not fused.
+    /// the fusion's *fusible* set — admitted by the trim **and** not already
+    /// absorbed. They differ in both directions — a reference fix is fused on
+    /// its absorption tick but does not corroborate, and a trimmed outlier
+    /// corroborates the count but is not fused.
+    ///
+    /// A source is also absent from this count on a tick where it was offered
+    /// but **already absorbed**, which is what makes zero routine rather than
+    /// alarming on a reference-only leg.
     pub fused_count: Option<i32>,
 }
 
@@ -237,11 +252,17 @@ pub struct ContributionSample {
     pub variance: Option<f64>,
     /// Its share of the posterior information, in `[0, 1]`.
     ///
-    /// **Zero is meaningful and common**: it is a source that answered and was
-    /// *excluded* by the trim for sitting outside the dispersion band. Its
-    /// `value` is the interesting number on such a row — it is what the
-    /// estimator declined to believe. A reader filtering `weight > 0` is
-    /// discarding exactly the disagreements this table exists to surface.
+    /// **Zero is meaningful and common**, and it has *two* causes this column
+    /// cannot tell apart. Either the source was *excluded* by the trim for
+    /// sitting outside the dispersion band — its `value` is then the
+    /// interesting number on the row, being what the estimator declined to
+    /// believe — or it was *already absorbed*, a reference source between
+    /// publications, which is the routine steady state rather than a
+    /// disagreement.
+    ///
+    /// Either way a reader filtering `weight > 0` is discarding exactly the
+    /// rows this table exists to surface. Separating the two needs a
+    /// discriminator column that does not exist yet.
     pub weight: f64,
 }
 

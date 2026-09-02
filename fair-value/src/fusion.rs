@@ -76,29 +76,101 @@
 //!   confidence the single reading does not carry.
 //! - **N ≥ 2** — the ordinary batch update.
 //!
-//! # Known limitation: a slow source is re-absorbed every tick
+//! # Absorbing a source once per publication, not once per tick
 //!
-//! The filter keeps no record of *which* measurements it has already taken in,
-//! so a source that has not republished contributes its precision again on
-//! every tick. For a tape polled at roughly its own cadence that is close
-//! enough to true — each poll really is a fresh observation. For a **daily
-//! reference fix** on a 5 s tick it is not: the same observation is counted
-//! thousands of times, and a standard Kalman update treats each count as
-//! independent evidence.
+//! A recursive filter is only entitled to add a measurement's precision to its
+//! prior when that measurement is **new evidence**. The prior already contains
+//! everything absorbed before it, so re-absorbing an unchanged reading counts
+//! one observation twice — and on a tick loop far faster than the source
+//! publishes, thousands of times. A standard update treats each count as
+//! independent evidence and converges the *variance* accordingly.
 //!
-//! The consequence is confined to the **variance**, not the value — the
-//! estimate converges to the fix either way — but it is the variance that
-//! [`FusionReport::sigma`] advertises as a spread-width input. On a
-//! reference-only leg the steady state is roughly `sqrt(q * R)` rather than
-//! `R`, so the reported sigma can sit several times tighter than a single daily
-//! observation justifies. Only the drift term bounds it.
+//! The consequence is confined to the variance, not the value — the estimate
+//! converges to the reading either way — but it is the variance that
+//! [`FusionReport::sigma`] advertises as a spread-width input.
 //!
-//! This is **accepted for now and must be closed before anything prices off
-//! the sigma.** Closing it needs the filter to detect a repeated
-//! observation — the reading's own publication instant, rather than its age
-//! relative to the tick — which is new state and a design decision, not a
-//! calibration change. Until then treat `fused_sigma` on a slow-source leg as
-//! a lower bound on the true uncertainty.
+//! ## The wrong quantity is the observation interval
+//!
+//! For a source publishing every `T` seconds, read at variance `R`, under
+//! process noise `q`, the steady-state posterior variance is `sqrt(q * T * R)`.
+//! A filter that absorbs on every tick computes `sqrt(q * dt * R)` instead, so
+//! its sigma is too tight by exactly `(T / dt)^(1/4)`. For a daily fix on a 5 s
+//! tick that is roughly **11x**. The defect is not "slow sources" in general —
+//! it is the single substitution of `dt` for `T`.
+//!
+//! So the filter must absorb each source once per `T`, and there are only two
+//! ways to know when that is: **observe** the publication, or **be told** the
+//! interval.
+//!
+//! ## Why the interval is configured rather than observed
+//!
+//! Observing would need each reading's own publication instant, and no such
+//! instant reaches this crate for the class that needs it. [`crate::Reading`]
+//! carries an `age`, and for the reference roster that age is stamped at
+//! **receipt**: the maker-bot's cache re-stamps every drain, and the Frankfurter
+//! source re-emits the ECB fix on every poll, so a fix published this morning
+//! still arrives claiming to be a second old. Deriving a publication instant
+//! from that age would mark every tick as a fresh publication and change
+//! nothing.
+//!
+//! That upstream receipt-stamping is a defect in its own right — it is equally
+//! why the age inflation below cannot bite on a reference source, and why the
+//! bot suppresses Frankfurter over the weekend by hand rather than letting it
+//! age out. Repairing it is a feeds-and-transport change, not this filter's,
+//! and it would let [`FusionConfig::reference_publish_interval`] be replaced by
+//! the observed instant.
+//!
+//! Being told the interval mainly gives up **phase**: the filter absorbs once
+//! per `T` from an arbitrary offset rather than at the true publication moment.
+//! Phase moves *when* the variance resets, not how wide it gets between resets,
+//! and it is the width a spread model consumes.
+//!
+//! It also gives up any **off-cadence** republication, which is the part not to
+//! wave away: nothing here inspects the reading's value, so a fix that genuinely
+//! moves mid-interval is held off for the remainder of `T`. That is bounded
+//! rather than benign-by-definition — a `Carried` tick composes off the fast
+//! consensus, which does carry the moved value, so the estimate lags where the
+//! quote does not. Setting the interval to the source's real cadence is what
+//! keeps the case rare.
+//!
+//! ## The shape of the reported sigma
+//!
+//! On a reference-only leg the sigma traces a **sawtooth**: tight just after an
+//! absorption, widening on drift alone until the next one. That is the honest
+//! shape — with a daily fix as the only evidence, uncertainty about *now*
+//! genuinely grows through the day and resets at the fix. A leg with a live tape
+//! alongside is unaffected, because the tape dominates the precision and
+//! re-absorbs legitimately.
+//!
+//! ## A warm start must carry the absorption clocks
+//!
+//! The filter's state is an estimate, a variance, and how long ago each source
+//! was absorbed. Restoring the first two without the third presents every
+//! source as never-absorbed, so the next tick takes them all in at once and
+//! hands back exactly the over-confidence this mechanism removes — on a
+//! posterior that then defends itself against the live tape through the
+//! variance-aware re-seed gate.
+//!
+//! **Get the direction right, because it inverts easily.** A clock is time
+//! *since* the last absorption, so an over-large one makes its source eligible
+//! **sooner** — it absorbs too often, which is the over-confident error. The
+//! conservative restoration is an under-large clock, which only makes a source
+//! wait longer than `T`. So a warm start that cannot recover the clocks should
+//! restore none of the state rather than part of it, and one that restores them
+//! approximately should round *down*.
+//!
+//! ## What is deliberately left alone
+//!
+//! **Tape-class sources are not throttled.** A tape polled at roughly its own
+//! cadence really does bring a fresh observation each poll, which is the case
+//! this whole mechanism exists to distinguish from a repeated one. A tape
+//! polled *much* faster than it prints has a milder form of the same
+//! over-count — bounded by the same fourth-root, so a 10x over-poll is ~1.8x
+//! rather than 11x — and no throttle is applied for it, because the interval
+//! that would fix it is not known per source and a wrong one costs more than
+//! the error it corrects. Detecting an unchanged value would suppress a
+//! flat-but-live tape on a quiet market, trading over-confidence for
+//! under-confidence rather than removing it.
 
 use std::time::Duration;
 
@@ -153,6 +225,25 @@ pub struct FusionConfig {
     /// on ordinary tick-to-tick noise precisely when it was working best,
     /// which converts the filter into a slower spelling of the median.
     pub reseed_floor_frac: f64,
+
+    /// How often a [`SourceClass::Reference`] source publishes a genuinely new
+    /// observation — the `T` the module header derives.
+    ///
+    /// The filter absorbs a reference source's precision at most once per this
+    /// interval and carries it in between, because the alternative is counting
+    /// one daily fix as thousands of independent observations. It is a
+    /// **configured** interval rather than an observed one for the reason the
+    /// header gives: no publication instant survives the transport, so the
+    /// filter cannot see when a fix actually moved.
+    ///
+    /// Set it to the source's real cadence. Setting it *too short* restores the
+    /// over-confidence this exists to remove; setting it too long only makes
+    /// the estimate conservative, so the two errors are not symmetric and the
+    /// safe direction is long.
+    ///
+    /// No tape counterpart, deliberately — see the header's closing section for
+    /// why a tape is left alone.
+    pub reference_publish_interval: Duration,
 }
 
 impl FusionConfig {
@@ -182,6 +273,21 @@ impl FusionConfig {
         if !self.reseed_sigma.is_finite() || self.reseed_sigma <= 0.0 {
             return Err(ConfigError::NotPositive("fusion.reseed_sigma"));
         }
+        // A zero interval is precisely the absorb-every-tick behavior the
+        // throttle exists to remove, and it would fail silently as an
+        // over-confident sigma rather than loudly.
+        //
+        // This catches only a literally zero interval, not every degenerate
+        // one: any interval at or below the tick period behaves the same way,
+        // and `Duration::from_nanos(1)` passes here. Bounding it properly would
+        // need the tick period, which is not known at validate time — so this
+        // is a floor against the one value that is unambiguously a mistake,
+        // not a proof that the setting is sane.
+        if self.reference_publish_interval.is_zero() {
+            return Err(ConfigError::NotPositive(
+                "fusion.reference_publish_interval",
+            ));
+        }
         Ok(())
     }
 }
@@ -208,6 +314,12 @@ impl Default for FusionConfig {
             reseed_sigma: 4.0,
             // Placeholder: 20 bp. TBD(analytics).
             reseed_floor_frac: 2e-3,
+            // The ECB reference fix — the only reference-class source on the
+            // roster today — publishes once a business day, so one day is the
+            // honest default rather than a placeholder. TBD(analytics) only in
+            // the sense that a second reference source on a different cadence
+            // would need this to become per-source rather than per-class.
+            reference_publish_interval: Duration::from_secs(86_400),
         }
     }
 }
@@ -257,9 +369,19 @@ pub struct FusedContribution {
     /// weight is a consequence of this number, so recording only the weight
     /// would leave the reason for it unrecoverable.
     pub variance: f64,
-    /// Its share of the posterior information, in `[0, 1]`. Zero means the
-    /// source answered and was **trimmed** — it sat outside the dispersion band
-    /// of the fast consensus, so the estimator declined to believe it.
+    /// Its share of the posterior information, in `[0, 1]`.
+    ///
+    /// **Zero has two causes, and they are not distinguishable from this set.**
+    /// Either the source was **trimmed** — it sat outside the dispersion band
+    /// of the fast consensus, so the estimator declined to believe it — or it
+    /// was **already absorbed**, a throttled reference source between
+    /// publications (see the module header). The first is a disagreement worth
+    /// an operator's attention; the second is the routine steady state of a
+    /// reference-only leg, and on such a leg it is the *common* case.
+    ///
+    /// Reading them apart needs a discriminator this struct does not carry —
+    /// deliberately, since the persisted attribution row would need one too and
+    /// that is a schema change rather than a filter change.
     pub weight: f64,
 }
 
@@ -269,7 +391,7 @@ pub enum FusionStep {
     /// Nothing was fused this tick. The estimate was carried unchanged and its
     /// variance grown by the elapsed time.
     ///
-    /// **Three conditions reach this, and only one of them is a feed outage.**
+    /// **Four conditions reach this, and only one of them is a feed outage.**
     /// A reader who assumes the first will misdiagnose the others:
     ///
     /// - no healthy source answered at all;
@@ -277,11 +399,17 @@ pub enum FusionStep {
     ///   outside the dispersion band, or the leg had no fast consensus to trim
     ///   against (an absent leg, or a dispersed pair). This is the case to
     ///   watch: it appears beside a *non-zero* contributor count;
+    /// - sources answered and **every one had already been absorbed** — the
+    ///   throttled steady state of a reference-only leg between publications,
+    ///   described in the module header. This is the *routine* case, not a
+    ///   fault: the estimate is resting on an observation it already holds
+    ///   while its variance widens on drift;
     /// - the accumulated precision came out non-finite, so the update was
     ///   declined rather than applied.
     ///
-    /// So `Carried` alongside contributors means the estimator refused what it
-    /// was offered, which is a very different operator story from silence.
+    /// So `Carried` alongside contributors means the estimator did not take in
+    /// what it was offered — because it disagreed with it, or because it
+    /// already had it — which is a very different operator story from silence.
     Carried,
     /// The filter had no prior, so this tick established one outright.
     ///
@@ -378,6 +506,18 @@ pub struct Fusion {
     /// Current variance of the estimate, in squared leg units. Meaningless
     /// while `estimate` is `None`.
     variance: f64,
+    /// How long ago each source's reading was last absorbed — the state that
+    /// makes a throttled source's precision count once per publication rather
+    /// than once per tick.
+    ///
+    /// Elapsed time per source rather than an absolute clock: the filter is
+    /// only ever asked "has `T` passed for this source", never "when was it",
+    /// so carrying an origin would be state with no reader — and an f64 second
+    /// count accumulating for the life of a market is a precision question
+    /// nobody needs to answer. `Duration` saturates, which is the right
+    /// overflow behavior here: a source absorbed impossibly long ago should
+    /// stay eligible, not wrap to freshly-absorbed.
+    absorbed: [Option<Absorbed>; MAX_CANDIDATES],
     cfg: FusionConfig,
 }
 
@@ -387,8 +527,127 @@ impl Fusion {
         Self {
             estimate: None,
             variance: f64::INFINITY,
+            absorbed: [None; MAX_CANDIDATES],
             cfg,
         }
+    }
+
+    /// How long ago `source` was last absorbed, or `None` if it never has been.
+    fn absorbed_since(&self, source: &str) -> Option<Duration> {
+        self.absorbed
+            .iter()
+            .flatten()
+            .find(|a| a.source == source)
+            .map(|a| a.since)
+    }
+
+    /// Age every source's absorption clock by the elapsed tick.
+    fn age_absorbed(&mut self, dt: Duration) {
+        for a in self.absorbed.iter_mut().flatten() {
+            a.since = a.since.saturating_add(dt);
+        }
+    }
+
+    /// Record that `source`'s reading was taken into the estimate just now.
+    ///
+    /// **Eviction is a lossy last resort, and it errs in the UNSAFE
+    /// direction** — say so plainly, because the arithmetic is not obvious.
+    /// Dropping an entry makes [`Fusion::absorbed_since`] return `None`, which
+    /// reads as never-absorbed, so that source re-absorbs on the very next tick
+    /// instead of at `T`: precisely the over-count this mechanism removes, and
+    /// the direction [`FusionConfig::reference_publish_interval`] identifies as
+    /// the dangerous one. Nor is the loss bounded by "it was nearly eligible
+    /// anyway" — if the table filled within a single tick every `since` is
+    /// zero, so the largest is zero and evicting it forfeits a whole `T`.
+    ///
+    /// What keeps that unreachable is not the eviction rule but
+    /// [`Fusion::absorb_throttled`]'s scoping: only throttled sources are ever
+    /// recorded, so the table holds one entry per *reference* source — one on
+    /// today's roster, against `MAX_CANDIDATES` slots.
+    ///
+    /// **The guarantee is name stability, not per-tick width.** Entries are
+    /// never cleared, so occupancy accumulates over the filter's whole life
+    /// rather than resetting each tick — what bounds it is that the roster
+    /// carries a single reference source under a stable name, so no second
+    /// entry is ever created. Do not restate this as "more sources than a leg
+    /// can offer in one tick": that is the argument this module's own
+    /// `a_tape_never_consumes_a_slot_in_the_absorption_table` disproves, by
+    /// filling the table one fresh name per tick.
+    ///
+    /// Evicting the longest-waiting entry is then the least-bad choice among
+    /// bad ones, not a safe one.
+    fn mark_absorbed(&mut self, source: &'static str) {
+        if let Some(slot) = self
+            .absorbed
+            .iter_mut()
+            .flatten()
+            .find(|a| a.source == source)
+        {
+            slot.since = Duration::ZERO;
+            return;
+        }
+        if let Some(empty) = self.absorbed.iter_mut().find(|a| a.is_none()) {
+            *empty = Some(Absorbed {
+                source,
+                since: Duration::ZERO,
+            });
+            return;
+        }
+        if let Some(stalest) = self.absorbed.iter_mut().flatten().max_by_key(|a| a.since) {
+            *stalest = Absorbed {
+                source,
+                since: Duration::ZERO,
+            };
+        }
+    }
+
+    /// Reset the absorption clock of every **throttled** measurement this
+    /// update took in.
+    ///
+    /// Scoped by [`throttled`] rather than by `fusible` alone, so the filter
+    /// only ever *writes* a clock it will later *read*. A tape's clock is never
+    /// consulted — [`Fusion::is_new_observation`] short-circuits before
+    /// reaching the table — so recording one would be write-only state that
+    /// consumes a slot and, worse, competes for eviction with the reference
+    /// clock that is the whole point of the table. A tape commits on nearly
+    /// every tick, so its `since` sits at zero while a reference's climbs
+    /// toward `T`; with tapes in the table the eviction below would therefore
+    /// select the reference *every time*, silently disarming the throttle for
+    /// the one source it exists to throttle.
+    ///
+    /// Called only where an update **commits** — never on the declined-update
+    /// paths, because a measurement the filter refused to apply has not been
+    /// absorbed and must stay eligible for the next tick. A trimmed reading is
+    /// likewise never marked: it may be admitted later, when the consensus it
+    /// disagreed with has moved, and it is still the same unabsorbed
+    /// observation when that happens.
+    ///
+    /// **A re-seed marks too, and that is deliberate.** [`Fusion::reseed`]
+    /// takes its *value* from the fast median and discards the weighted sum,
+    /// but the measurements' *precision* is exactly what sets the posterior
+    /// variance on that path — so they have been folded in, and leaving them
+    /// unmarked would let the next tick add that same precision again.
+    fn absorb_throttled(&mut self, measurements: &[Option<Measurement>]) {
+        for m in measurements
+            .iter()
+            .flatten()
+            .filter(|m| m.fusible() && throttled(m.candidate.class))
+        {
+            self.mark_absorbed(m.candidate.source);
+        }
+    }
+
+    /// Whether this candidate brings a new observation, or is one the filter
+    /// has already taken in.
+    ///
+    /// A source never absorbed is always new, which is what lets a leg seed on
+    /// its first tick whatever its class.
+    fn is_new_observation(&self, c: &Candidate) -> bool {
+        if !throttled(c.class) {
+            return true;
+        }
+        self.absorbed_since(c.source)
+            .is_none_or(|since| since >= self.cfg.reference_publish_interval)
     }
 
     /// Fuse this tick's healthy candidates into the estimate.
@@ -417,6 +676,7 @@ impl Fusion {
         dt: Duration,
     ) -> FusionReport {
         self.predict(dt);
+        self.age_absorbed(dt);
 
         // The fill zips against the destination array rather than indexing by a
         // running counter, so an oversized `healthy` drops its trailing
@@ -430,13 +690,20 @@ impl Fusion {
             let Some(variance) = self.measurement_variance(c) else {
                 continue;
             };
+            // Two independent reasons a reading may not be fused, kept apart
+            // because they are different facts about it: the trim is *this
+            // reading disagrees*, the observation test is *the filter already
+            // holds this reading*. Only a reading that is both admitted and new
+            // contributes precision; either alone reports at weight zero.
             let admitted = admits(fast, band, c.reading.value);
+            let new_observation = self.is_new_observation(c);
             *slot = Some(Measurement {
                 candidate: *c,
                 variance,
                 admitted,
+                new_observation,
             });
-            n += usize::from(admitted);
+            n += usize::from(admitted && new_observation);
         }
         let measurements = &measurements[..];
 
@@ -582,6 +849,7 @@ impl Fusion {
         let value = weighted * variance;
         self.estimate = Some(value);
         self.variance = variance;
+        self.absorb_throttled(measurements);
 
         FusionReport {
             value: Some(value),
@@ -626,6 +894,7 @@ impl Fusion {
         let value = weighted * variance;
         self.estimate = Some(value);
         self.variance = variance;
+        self.absorb_throttled(measurements);
 
         FusionReport {
             value: Some(value),
@@ -660,6 +929,7 @@ impl Fusion {
 
         self.estimate = Some(fast);
         self.variance = variance;
+        self.absorb_throttled(measurements);
 
         FusionReport {
             value: Some(fast),
@@ -671,13 +941,50 @@ impl Fusion {
     }
 }
 
+/// Whether a source of this class has its precision counted at most once per
+/// publication interval, rather than on every tick.
+///
+/// **The single definition of the throttle rule**, read by
+/// [`Fusion::is_new_observation`] and written by [`Fusion::absorb_throttled`].
+/// It is a free function precisely so those two cannot drift: spelling the
+/// class test separately on each side is what let the write side record tape
+/// clocks the read side would never consult.
+///
+/// Only [`SourceClass::Reference`] is throttled — see the module header for why
+/// a tape is left alone.
+fn throttled(class: SourceClass) -> bool {
+    matches!(class, SourceClass::Reference)
+}
+
 /// One healthy candidate prepared for fusion: the variance it would be fused
-/// at, and whether the trim admitted it.
+/// at, whether the trim admitted it, and whether it is an observation the
+/// filter has not already taken in.
 #[derive(Clone, Copy, Debug)]
 struct Measurement {
     candidate: Candidate,
     variance: f64,
     admitted: bool,
+    /// Not "fresh" — this module already binds freshness to a reading's *age*
+    /// (see `Fusion::update`'s `healthy` parameter, which arrives
+    /// freshness-filtered). This is the orthogonal question of whether the
+    /// filter already holds this observation.
+    new_observation: bool,
+}
+
+impl Measurement {
+    /// Whether this reading contributes precision to the estimate — admitted by
+    /// the trim *and* not already absorbed.
+    fn fusible(&self) -> bool {
+        self.admitted && self.new_observation
+    }
+}
+
+/// One source's absorption clock — how long since its reading was last taken
+/// into the estimate. See [`Fusion::absorbed`].
+#[derive(Clone, Copy, Debug)]
+struct Absorbed {
+    source: &'static str,
+    since: Duration,
 }
 
 /// Whether a reading is close enough to the fast consensus to be fused, within
@@ -711,14 +1018,14 @@ fn admits(fast: Option<f64>, band: f64, value: f64) -> bool {
     ((value - fast) / fast).abs() <= band
 }
 
-/// Add every **admitted** measurement's precision and precision-weighted value
+/// Add every **fusible** measurement's precision and precision-weighted value
 /// to the running totals, which start at the prior's contribution.
 fn accumulate(
     measurements: &[Option<Measurement>],
     mut information: f64,
     mut weighted: f64,
 ) -> (f64, f64) {
-    for m in measurements.iter().flatten().filter(|m| m.admitted) {
+    for m in measurements.iter().flatten().filter(|m| m.fusible()) {
         information += 1.0 / m.variance;
         weighted += m.candidate.reading.value / m.variance;
     }
@@ -740,6 +1047,11 @@ fn accumulate(
 /// to believe. This is what makes an official rate that contradicts the tape
 /// visible rather than quietly averaged away: the row is there, its value is
 /// there, and its weight is zero.
+///
+/// **A throttled source is listed the same way**, for the weaker but related
+/// reason that it did answer and its reading is what the estimate is resting
+/// on between absorptions. The two zeroes are not distinguishable from the
+/// attribution alone — see [`FusedContribution::weight`].
 fn attribute(
     measurements: &[Option<Measurement>],
     information: f64,
@@ -751,7 +1063,7 @@ fn attribute(
             source: m.candidate.source,
             value: m.candidate.reading.value,
             variance: m.variance,
-            weight: if usable && m.admitted {
+            weight: if usable && m.fusible() {
                 (1.0 / m.variance) / information
             } else {
                 0.0
@@ -1210,5 +1522,273 @@ mod tests {
         // case here half of `validate`'s condition could be deleted silently.
         bad(|c| c.tape_noise_frac = 2.0);
         bad(|c| c.drift_frac_per_sec = 1.5);
+        // A zero interval is the absorb-every-tick behavior the throttle
+        // exists to remove, so it is a degenerate setting and not an opt-out.
+        bad(|c| c.reference_publish_interval = Duration::ZERO);
+    }
+
+    fn reference(source: &'static str, value: f64) -> Candidate {
+        Candidate::reference(source, Reading::new(value, Duration::ZERO))
+    }
+
+    /// What the engine passes as `fast` for a **reference-only** leg.
+    ///
+    /// Not `None`, which is the trap: `fast` is documented as the tape-class
+    /// median, but `FairValueEngine::compose` passes the leg's resolved
+    /// reading, and the resolver falls back to the reference set when no tape
+    /// answered (`consensus::a_leg_with_only_reference_sources_still_resolves`).
+    /// Passing `None` here would trim every candidate away and test nothing —
+    /// `admits` rejects everything when there is no consensus to measure by.
+    fn resolved(value: f64) -> Option<f64> {
+        Some(value)
+    }
+
+    /// The defect this mechanism exists to remove, stated as the arithmetic it
+    /// broke: an unchanging reference fix must not sharpen the estimate tick
+    /// after tick, because it is one observation and not thousands.
+    ///
+    /// The assertion is deliberately against the **single-observation
+    /// variance** rather than against a remembered number. That is the quantity
+    /// with a meaning — one daily fix cannot justify more confidence than one
+    /// daily fix — so the test states the invariant instead of pinning
+    /// whatever the filter happens to produce.
+    #[test]
+    fn a_reference_fix_is_absorbed_once_however_many_ticks_see_it() {
+        let mut f = fusion();
+        let c = set(&[reference("frankfurter", 1.14)]);
+
+        // The seeding tick takes it in at its own variance.
+        let seeded = f.update(&c, resolved(1.14), BAND, secs(5));
+        assert_eq!(seeded.step, FusionStep::Seeded);
+        assert_eq!(seeded.n, 1);
+        let at_absorption = seeded.variance;
+
+        // An hour of 5 s ticks offering the very same fix.
+        let mut last = seeded;
+        for _ in 0..720 {
+            last = f.update(&c, resolved(1.14), BAND, secs(5));
+        }
+
+        // Nothing was fused on any of them, and the estimate is unmoved.
+        assert_eq!(last.step, FusionStep::Carried);
+        assert_eq!(last.n, 0);
+        assert_eq!(last.value, seeded.value);
+
+        // The variance GREW on drift rather than converging. Before this
+        // mechanism it fell toward sqrt(q * dt * R), several-fold tighter than
+        // one observation justifies; the direction of this inequality is the
+        // whole fix.
+        assert!(
+            last.variance > at_absorption,
+            "an unchanging fix must widen the estimate, not sharpen it: \
+             {at_absorption} -> {}",
+            last.variance
+        );
+
+        // And it grew by exactly the random walk over the elapsed hour, which
+        // is the only term entitled to move it.
+        let cfg = FusionConfig::default();
+        let drift = cfg.drift_frac_per_sec * 1.14;
+        // 720 sequential additions against a one-shot computation, so the
+        // worst-case relative drift is ~720 * 2.2e-16 ≈ 1.6e-13. The bound is
+        // deliberately well clear of that rather than snug against it: this
+        // assertion states "only the random walk moved it", and it should fail
+        // when that stops being true, not when someone lengthens the loop.
+        let expected = at_absorption + drift * drift * 3_600.0;
+        assert!((last.variance - expected).abs() < 1e-10 * expected);
+    }
+
+    /// The throttle is scoped to the reference class: a tape is fresh evidence
+    /// on every poll and must keep being absorbed, or the fix would trade one
+    /// calibration error for another.
+    #[test]
+    fn a_tape_is_still_absorbed_every_tick() {
+        let mut f = fusion();
+        let c = set(&[tape("oanda", 1.14)]);
+
+        let seeded = f.update(&c, Some(1.14), BAND, secs(5));
+        let mut last = seeded;
+        for _ in 0..20 {
+            last = f.update(&c, Some(1.14), BAND, secs(5));
+        }
+
+        assert_eq!(last.step, FusionStep::Fused);
+        assert_eq!(last.n, 1);
+        assert!(
+            last.variance < seeded.variance,
+            "repeated tape polls are independent observations and must sharpen"
+        );
+    }
+
+    /// Once the configured interval has passed the fix counts again, and the
+    /// variance snaps back to roughly one observation's worth — the reset half
+    /// of the sawtooth the module header describes.
+    #[test]
+    fn the_fix_counts_again_once_its_publication_interval_has_passed() {
+        let mut f = fusion();
+        let c = set(&[reference("frankfurter", 1.14)]);
+
+        let seeded = f.update(&c, resolved(1.14), BAND, secs(5));
+        // Held off for just under a day...
+        let held = f.update(&c, resolved(1.14), BAND, secs(86_000));
+        assert_eq!(held.step, FusionStep::Carried);
+        assert!(held.variance > seeded.variance);
+
+        // ...and taken in again once the interval is met.
+        let absorbed = f.update(&c, resolved(1.14), BAND, secs(400));
+        assert_eq!(absorbed.step, FusionStep::Fused);
+        assert_eq!(absorbed.n, 1);
+        assert!(
+            absorbed.variance < held.variance,
+            "a genuinely new fix must sharpen the estimate again"
+        );
+    }
+
+    /// A throttled source still appears in the attribution, at weight zero —
+    /// the same treatment a trimmed source gets, and for the related reason
+    /// that its reading is what the estimate is resting on.
+    #[test]
+    fn a_throttled_source_is_reported_rather_than_dropped() {
+        let mut f = fusion();
+        let c = set(&[reference("frankfurter", 1.14)]);
+
+        f.update(&c, resolved(1.14), BAND, secs(5));
+        let carried = f.update(&c, resolved(1.14), BAND, secs(5));
+
+        let rows: Vec<_> = carried.contributions().collect();
+        assert_eq!(rows.len(), 1, "the source answered and must be listed");
+        assert_eq!(rows[0].source, "frankfurter");
+        assert_eq!(rows[0].value, 1.14);
+        assert_eq!(rows[0].weight, 0.0, "it contributed no precision");
+    }
+
+    /// A trimmed reading is not an absorbed one. The two exclusions are
+    /// independent, so a source the trim rejected must stay eligible — losing
+    /// that would let a single tick of disagreement silence a fix for a whole
+    /// publication interval.
+    #[test]
+    fn a_trimmed_reference_is_not_recorded_as_absorbed() {
+        let mut f = fusion();
+        // Seed the filter off a tape so there is a fast consensus to trim
+        // against, and offer a fix far outside the band.
+        let far = set(&[tape("oanda", 1.14), reference("frankfurter", 1.60)]);
+        let seeded = f.update(&far, Some(1.14), BAND, secs(5));
+        assert_eq!(seeded.n, 1, "the fix was trimmed, the tape was not");
+
+        // The fix now agrees, on the very next tick. It was never absorbed, so
+        // the throttle must not be holding it off.
+        let near = set(&[tape("oanda", 1.14), reference("frankfurter", 1.141)]);
+        let fused = f.update(&near, Some(1.14), BAND, secs(5));
+        assert_eq!(fused.n, 2, "the fix must be eligible, having never counted");
+    }
+
+    /// Absorption is tracked per source, so one source's throttle never
+    /// silences another's — including when both are reference class.
+    #[test]
+    fn absorption_is_tracked_per_source() {
+        let mut f = fusion();
+        let first = set(&[reference("frankfurter", 1.14)]);
+        f.update(&first, resolved(1.14), BAND, secs(5));
+
+        // A second reference source appears, never yet absorbed.
+        let both = set(&[reference("frankfurter", 1.14), reference("erapi", 1.141)]);
+        let r = f.update(&both, resolved(1.14), BAND, secs(5));
+
+        assert_eq!(r.n, 1, "only the newcomer counts");
+        let erapi = r
+            .contributions()
+            .find(|c| c.source == "erapi")
+            .expect("the newcomer is attributed");
+        assert!(erapi.weight > 0.0, "and it carries the whole contribution");
+        let frank = r
+            .contributions()
+            .find(|c| c.source == "frankfurter")
+            .expect("the throttled source is still listed");
+        assert_eq!(frank.weight, 0.0);
+    }
+
+    /// A tape must never occupy a slot in the absorption table.
+    ///
+    /// The regression this pins is subtle and was live: `absorb_throttled` used
+    /// to mark *every* fusible measurement, so tapes wrote clocks nothing ever
+    /// read. A tape commits on nearly every tick, so its `since` sits at zero
+    /// while a reference's climbs — which meant that once the table filled, the
+    /// longest-waiting entry was *always* the reference, and evicting it
+    /// disarmed the throttle for the one source it exists for.
+    ///
+    /// Offering more distinct tape names than the table has slots is what makes
+    /// the bug observable: under the old behavior they would evict the
+    /// reference and it would re-absorb immediately.
+    #[test]
+    fn a_tape_never_consumes_a_slot_in_the_absorption_table() {
+        let mut f = fusion();
+
+        // Absorb the fix, then churn far more tape names than MAX_CANDIDATES.
+        let seed = set(&[reference("frankfurter", 1.14), tape("t0", 1.14)]);
+        assert_eq!(f.update(&seed, resolved(1.14), BAND, secs(5)).n, 2);
+
+        for i in 0..(MAX_CANDIDATES * 3) {
+            // A fresh tape identity every tick, alongside the same fix.
+            let name: &'static str = Box::leak(format!("tape-{i}").into_boxed_str());
+            let c = set(&[reference("frankfurter", 1.14), tape(name, 1.14)]);
+            let r = f.update(&c, resolved(1.14), BAND, secs(5));
+            assert_eq!(
+                r.n, 1,
+                "tick {i}: only the new tape may count — the fix is throttled"
+            );
+        }
+
+        // The fix's clock survived the churn, so it is still throttled.
+        let c = set(&[reference("frankfurter", 1.14)]);
+        let after = f.update(&c, resolved(1.14), BAND, secs(5));
+        assert_eq!(
+            after.step,
+            FusionStep::Carried,
+            "the fix must still be held off; a lost clock re-absorbs it"
+        );
+        assert_eq!(after.n, 0);
+    }
+
+    /// A re-seed marks its measurements absorbed, and that is deliberate: the
+    /// value comes from the fast median but the *precision* is what sets the
+    /// posterior variance on that path, so leaving them unmarked would let the
+    /// next tick add the same precision twice.
+    #[test]
+    fn a_reseed_absorbs_the_measurements_whose_precision_it_used() {
+        let mut f = fusion();
+        let near = set(&[tape("oanda", 1.14), reference("frankfurter", 1.14)]);
+        assert_eq!(f.update(&near, resolved(1.14), BAND, secs(5)).n, 2);
+
+        // A dislocation the tape agrees on, far beyond the re-seed gate, with
+        // the fix moving with it so it stays inside the trim band.
+        let jumped = set(&[tape("oanda", 1.30), reference("frankfurter", 1.30)]);
+        let r = f.update(&jumped, resolved(1.30), BAND, secs(5));
+        assert!(r.step.reseeded(), "expected a re-seed, got {:?}", r.step);
+        assert_eq!(r.value, Some(1.30));
+
+        // The fix contributed precision to that re-seed, so it is now absorbed
+        // and must not contribute again on the following tick.
+        let next = f.update(&jumped, resolved(1.30), BAND, secs(5));
+        assert_eq!(
+            next.n, 1,
+            "the tape alone; the fix was absorbed by the re-seed"
+        );
+    }
+
+    /// A leg with a live tape alongside the fix is unaffected: the tape keeps
+    /// the filter fusing every tick, and the fix simply stops padding the
+    /// precision. This is the case the roster actually runs, so it is the one
+    /// that must not regress.
+    #[test]
+    fn a_tape_beside_a_throttled_fix_still_fuses_every_tick() {
+        let mut f = fusion();
+        let c = set(&[tape("oanda", 1.14), reference("frankfurter", 1.141)]);
+
+        f.update(&c, Some(1.14), BAND, secs(5));
+        let later = f.update(&c, Some(1.14), BAND, secs(5));
+
+        assert_eq!(later.step, FusionStep::Fused);
+        assert_eq!(later.n, 1, "the tape alone, the fix already absorbed");
+        assert_eq!(later.contributions().count(), 2, "both still reported");
     }
 }

@@ -1087,6 +1087,17 @@ signal:
   are NULL for the peg leg, which is not fused at all — that leg feeds a
   band check, and a guard whose job is to fire on any bad reading must
   not read a smoothed one.
+- **A run of `Carried` on a reference-only leg is the steady state, not
+  a fault** — the counterpart to `SingleUnverified` below, and the same
+  trap. The estimator absorbs a reference fix once per its publication
+  interval and carries the estimate in between, so between absorptions
+  every offered reading is one it already holds. Expect `fused_count` at
+  0 and `fused_sigma` climbing on drift until the next absorption resets
+  it; a **sawtooth** in that series is the estimator working, and a flat
+  line would be the thing to distrust. `Carried` is also the tick on
+  which the composition falls back to `value`, so a query
+  reconstructing what was quoted must read `fusion_step` alongside —
+  never `fused_value` alone.
 
 `SingleTrusted` and `SingleUnverified` must never be collapsed.
 `SingleUnverified` is the **steady state** for a market with no second
