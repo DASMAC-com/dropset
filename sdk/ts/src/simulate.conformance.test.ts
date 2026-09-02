@@ -36,6 +36,8 @@ type ExpectedQuote = {
 };
 type SwapCase = {
   name: string;
+  /** Which fixture market this case was generated against. */
+  market: string;
   side: number;
   amount_in: number;
   limit_price_bits: number;
@@ -50,9 +52,27 @@ const vectors = JSON.parse(
     new URL('../../conformance/simulate_swap_vectors.json', import.meta.url),
     'utf8',
   ),
-) as { market_data: number[]; cases: SwapCase[] };
+) as {
+  market_data: number[];
+  markets: Record<string, number[]>;
+  cases: SwapCase[];
+};
 
 const marketData = Uint8Array.from(vectors.market_data);
+
+/**
+ * The account bytes a case quotes against. `'primary'` is the two-vault book
+ * in `market_data`; the far-out and flush fixtures need books of their own,
+ * since a far-out level behind ample honest depth would be reached by the
+ * cases that deliberately dwarf that depth, and a flush-armed vault reads
+ * its levels from a relative profile instead of from `remaining`.
+ */
+function marketFor(name: string): Uint8Array {
+  if (name === 'primary') return marketData;
+  const extra = vectors.markets[name];
+  assert.ok(extra !== undefined, `case names unknown market "${name}"`);
+  return Uint8Array.from(extra);
+}
 
 /** The binding's discriminant → the wrapper's side name. */
 const SIDE_BY_CODE: Record<number, SwapSide> = { 0: 'buy', 1: 'sell' };
@@ -71,7 +91,7 @@ test('the wrapper marshals every conformance vector out unchanged', () => {
     const side = SIDE_BY_CODE[c.side];
     assert.ok(side !== undefined, `${c.name}: unmapped side ${c.side}`);
     const q = simulateSwap(
-      marketData,
+      marketFor(c.market),
       side,
       BigInt(c.amount_in),
       c.limit_price_bits,
@@ -109,7 +129,7 @@ test('the taker fee and the platform fee are not transposed', () => {
   );
   assert.ok(c, 'expected a buy_multi_level_platform_fee vector');
   const q = simulateSwap(
-    marketData,
+    marketFor(c.market),
     'buy',
     BigInt(c.amount_in),
     c.limit_price_bits,

@@ -50,6 +50,8 @@ type ExpectedQuote = {
 };
 type SwapCase = {
   name: string;
+  /** Which fixture market this case was generated against. */
+  market: string;
   side: number;
   amount_in: number;
   limit_price_bits: number;
@@ -61,7 +63,11 @@ type SwapCase = {
 
 const vectors = JSON.parse(
   readFileSync(new URL('../../conformance/simulate_swap_vectors.json', import.meta.url), 'utf8'),
-) as { market_data: number[]; cases: SwapCase[] };
+) as {
+  market_data: number[];
+  markets: Record<string, number[]>;
+  cases: SwapCase[];
+};
 
 // The glue is built `--target web`, whose default init fetches the binary
 // relative to `import.meta.url`. Under Node we hand it the committed bytes
@@ -72,10 +78,24 @@ initSync({
 
 const marketData = Uint8Array.from(vectors.market_data);
 
+/**
+ * The account bytes a case quotes against — `'primary'` is `market_data`,
+ * anything else a key in `markets`. The far-out and flush fixtures carry
+ * books that cannot coexist with the primary one, so they get buffers of
+ * their own; routing the flush fixture through here is what finally sends
+ * the profile-to-level materialization through this committed binary.
+ */
+function marketFor(name: string): Uint8Array {
+  if (name === 'primary') return marketData;
+  const extra = vectors.markets[name];
+  assert.ok(extra !== undefined, `case names unknown market "${name}"`);
+  return Uint8Array.from(extra);
+}
+
 test('committed wasm simulate_swap matches the conformance vectors', () => {
   for (const c of vectors.cases) {
     const q = simulate_swap(
-      marketData,
+      marketFor(c.market),
       c.side,
       BigInt(c.amount_in),
       c.limit_price_bits,

@@ -33,8 +33,8 @@
 use bytemuck::{bytes_of, cast_slice, Zeroable};
 use dropset_interface::clock::{SlotTime, WallTime};
 use dropset_interface::layout::{
-    MarketHeader, MarketView, Position, ReferencePrice, Vault, ACCOUNT_DISCRIMINATOR_LEN,
-    NULL_SECTOR, VAULT_ALIGN,
+    Level, MarketHeader, MarketView, Position, ReferencePrice, Vault, ACCOUNT_DISCRIMINATOR_LEN,
+    FLUSH_BIT, NULL_SECTOR, VAULT_ALIGN,
 };
 use dropset_interface::matching::{simulate_swap, SwapSide};
 use dropset_interface::price::Price;
@@ -116,16 +116,40 @@ fn vault(stamp: u64, next: u32, prev: u32, leader: [u8; 32]) -> Vault {
 /// ordering is invisible in a `Quote`'s totals — two levels at one price
 /// fill to the same amounts either way — so it is the resting-book vectors
 /// that pin it, not the swap cases.
-fn market_data() -> Vec<u8> {
+/// The common header every fixture market carries: DLL heads set, both fee
+/// rates stamped, and `active_count` supplied by the caller.
+fn market_header(active_count: u32) -> MarketHeader {
     let mut header = MarketHeader::zeroed();
     header.head = 0u32.into(); // sector 0 heads the active DLL
     header.tombstone_head = NULL_SECTOR.into();
     header.free_head = NULL_SECTOR.into();
-    header.active_count = 2u32.into();
+    header.active_count = active_count.into();
     header.taker_fee = TAKER_FEE_PPM.into();
     header.max_platform_fee = MAX_PLATFORM_FEE_BPS.into();
     header.base_mint = [2u8; 32];
     header.quote_mint = [3u8; 32];
+    header
+}
+
+/// Serialize a header + vault slab into the exact account byte buffer
+/// `MarketView::load` (and thus the wasm binding) expects: discriminator,
+/// header, `u32` slab length, alignment pad, then the `Vault` sectors.
+fn serialize_market(header: &MarketHeader, vaults: &[Vault]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]); // load skips it
+    buf.extend_from_slice(bytes_of(header));
+    buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
+    // The slab aligns the first sector to the on-chain Vault align — pad to
+    // it, matching `MarketView::load`'s `items_start` computation.
+    while !buf.len().is_multiple_of(VAULT_ALIGN) {
+        buf.push(0);
+    }
+    buf.extend_from_slice(cast_slice(vaults));
+    buf
+}
+
+fn market_data() -> Vec<u8> {
+    let header = market_header(2);
 
     // Sector 0 — nonce 1, the older quote, so it wins every equal-price tie.
     let mut v0 = vault(1, 1, NULL_SECTOR, [1u8; 32]);
@@ -144,21 +168,98 @@ fn market_data() -> Vec<u8> {
     v1.remaining.bids[0] = position(10_700_000, 0, 800_000);
     v1.remaining.bids[1] = position(10_416_000, 0, 600_000);
 
-    let vaults = [v0, v1];
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]); // discriminator (load skips it)
-    buf.extend_from_slice(bytes_of(&header));
-    buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
-    // The slab aligns the first sector to the on-chain Vault align — pad to
-    // it, matching `MarketView::load`'s `items_start` computation.
-    while !buf.len().is_multiple_of(VAULT_ALIGN) {
-        buf.push(0);
-    }
-    buf.extend_from_slice(cast_slice(&vaults));
-    buf
+    serialize_market(&header, &[v0, v1])
 }
 
-/// One swap input + the `Quote` the native matcher returns for it.
+/// One `remaining` level at an explicit exponent, for prices outside the
+/// band [`position`] covers.
+fn position_at(significand: u32, exp: i8, size: u64) -> Position {
+    Position {
+        price: Price::encode(significand, exp).unwrap().as_u32().into(),
+        size: size.into(),
+        expires_at_unix: WALL_DEADLINE.into(),
+        expires_at_slot: SLOT_DEADLINE.into(),
+    }
+}
+
+/// A market carrying, on **each** side, one honest level with an absurdly
+/// far-out level resting behind it.
+///
+/// There is no program-side bound on a level's price and no oracle coming,
+/// so a leader may post any valid price and a far-out level rests
+/// harmlessly at the tail of the book. The property that makes exact-in
+/// safe is that such a level **ends the walk and takes nothing**: one
+/// output atom there costs more than the taker's whole remaining budget, so
+/// the budget goes back to the taker rather than being confiscated —
+/// `min_out` could not object, because residue never reduces output.
+///
+/// That property was pinned in-crate for **asks only** (the sole far-out
+/// helper builds ask-only markets) and reached no vector at all, so neither
+/// the WASM binding, the committed binary, nor the TS wrapper exercised it.
+/// The bid side matters more, not less: in ratio terms a bid reaches
+/// farther than an ask, since it runs toward zero rather than up.
+///
+/// Honest depth is deliberately shallow (1_000 atoms) so the taker's budget
+/// is not the binding cap — the far-out level, not exhaustion, is what ends
+/// the walk.
+fn far_out_market_data() -> Vec<u8> {
+    let header = market_header(1);
+    let mut v = vault(1, NULL_SECTOR, NULL_SECTOR, [1u8; 32]);
+    // Honest ask at 1.0904, then the largest representable price behind it.
+    v.remaining.asks[0] = position(10_904_000, 0, 1_000);
+    v.remaining.asks[1] = position_at(99_999_999, 15, 1_000_000);
+    // Honest bid at 1.0796, then the smallest representable price behind it
+    // — the symmetric case, which had no coverage on either side of the
+    // seam. One quote atom out there costs ~1e15 base.
+    v.remaining.bids[0] = position(10_796_000, 0, 1_000);
+    v.remaining.bids[1] = position_at(10_000_000, -15, 1_000_000);
+    serialize_market(&header, &[v])
+}
+
+/// A market whose vault has the **flush bit armed** and quotes a relative
+/// `LiquidityProfile` ladder rather than absolute `remaining` positions.
+///
+/// Every other fixture here leaves the bit clear, so the matcher reads
+/// `remaining` and the profile-to-level materialization — resolving each
+/// level's absolute price from `reference ± price_offset` ppm and its size
+/// from `size_bps` of the vault's inventory — never reached the WASM
+/// binding, the committed binary, or the TS wrapper. That is the state
+/// every market is in immediately after a retune, and it was pinned only
+/// natively and against the engine.
+///
+/// The offsets are chosen against the same `quote_unix`/`quote_slot` datum
+/// of zero the other fixtures use, so the materialized deadlines land on
+/// the same [`WALL_DEADLINE`] / [`SLOT_DEADLINE`] the rest of the vectors
+/// quote against.
+fn flush_market_data() -> Vec<u8> {
+    let header = market_header(1);
+    let mut v = vault(1, NULL_SECTOR, NULL_SECTOR, [1u8; 32]);
+    v.reference_price.stamp = (1u64 | FLUSH_BIT).into();
+    // Asks at +0.5% and +5% of the 1.0850 reference, 25% of base inventory
+    // each; bids symmetric on the quote leg. `size_bps` sums to 5000 a
+    // side, well inside the per-side ceiling.
+    let level = |offset_ppm: u32, size_bps: u16| Level {
+        price_offset: offset_ppm.into(),
+        size_bps: size_bps.into(),
+        expiry_offset_secs: WALL_DEADLINE.into(),
+        expiry_offset_slots: SLOT_DEADLINE.into(),
+    };
+    v.profile.asks[0] = level(5_000, 2_500);
+    v.profile.asks[1] = level(50_000, 2_500);
+    v.profile.bids[0] = level(5_000, 2_500);
+    v.profile.bids[1] = level(50_000, 2_500);
+    serialize_market(&header, &[v])
+}
+
+/// The market a case quotes against. `PRIMARY` is the two-vault book in
+/// `market_data`; the others are the extra buffers in `markets`.
+const PRIMARY: &str = "primary";
+const FAR_OUT: &str = "far_out";
+const FLUSH: &str = "flush";
+
+/// One swap input + the `Quote` the native matcher returns for it. Which
+/// market a case quotes against comes from the group it is emitted in, not
+/// from the case itself — see `main`.
 struct Case {
     name: &'static str,
     side: SwapSide,
@@ -171,7 +272,7 @@ struct Case {
     platform_fee_bps: u16,
 }
 
-fn case_json(view: &MarketView<'_>, c: &Case) -> Value {
+fn case_json(view: &MarketView<'_>, market: &str, c: &Case) -> Value {
     let q = simulate_swap(
         view,
         c.side,
@@ -183,6 +284,7 @@ fn case_json(view: &MarketView<'_>, c: &Case) -> Value {
     );
     json!({
         "name": c.name,
+        "market": market,
         "side": c.side as u8,
         "amount_in": c.amount_in,
         "limit_price_bits": c.limit.as_u32(),
@@ -202,6 +304,10 @@ fn case_json(view: &MarketView<'_>, c: &Case) -> Value {
 fn main() {
     let data = market_data();
     let view = MarketView::load(&data).expect("fixture market decodes");
+    let far_out_data = far_out_market_data();
+    let far_out_view = MarketView::load(&far_out_data).expect("far-out market decodes");
+    let flush_data = flush_market_data();
+    let flush_view = MarketView::load(&flush_data).expect("flush market decodes");
 
     let cases = [
         // Buy that clears all four ask levels — cross-*vault* price-time
@@ -371,10 +477,97 @@ fn main() {
             platform_fee_bps: 0,
         },
     ];
-    let cases: Vec<Value> = cases.iter().map(|c| case_json(&view, c)).collect();
+    // ── Far-out levels ──────────────────────────────────────────────────
+    // A level the taker cannot afford one output atom at ends the walk and
+    // takes **nothing**, even though honest depth filled ahead of it. Both
+    // sides, because the bid side had no coverage anywhere and reaches
+    // farther in ratio terms than the ask side does.
+    let far_out_cases = [
+        Case {
+            name: "buy_far_out_ask_ends_walk",
+            side: SwapSide::Buy,
+            // Dwarfs the 1_000-atom honest ask, so exhaustion cannot be
+            // what stops the walk — the far-out level behind it is.
+            amount_in: 5_000_000,
+            limit: Price::INFINITY,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+        Case {
+            name: "sell_far_out_bid_ends_walk",
+            side: SwapSide::Sell,
+            amount_in: 5_000_000,
+            limit: Price::ZERO,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+    ];
+    // ── Flush materialization ───────────────────────────────────────────
+    // The same two cross-level takes, but against a vault whose flush bit
+    // is armed, so each level's price and size are materialized from the
+    // relative profile instead of read from `remaining`.
+    let flush_cases = [
+        Case {
+            name: "flush_buy_multi_level",
+            side: SwapSide::Buy,
+            amount_in: 3_000_000,
+            limit: Price::INFINITY,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+        Case {
+            name: "flush_sell_multi_level",
+            side: SwapSide::Sell,
+            amount_in: 3_000_000,
+            limit: Price::ZERO,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+        // The flush path has its own expiry arithmetic — the deadline is
+        // materialized from the profile's offsets plus the reference datum,
+        // where `remaining` carries absolute deadlines — so each domain
+        // needs a kill case here too rather than inheriting the primary
+        // market's.
+        Case {
+            name: "flush_expiry_slot_dead_wall_live",
+            side: SwapSide::Buy,
+            amount_in: 3_000_000,
+            limit: Price::INFINITY,
+            now_slot: SLOT_DEADLINE,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+        Case {
+            name: "flush_expiry_wall_dead_slot_live",
+            side: SwapSide::Buy,
+            amount_in: 3_000_000,
+            limit: Price::INFINITY,
+            now_slot: LIVE_SLOT,
+            now_unix: WALL_DEADLINE,
+            platform_fee_bps: 0,
+        },
+    ];
+    let cases: Vec<Value> = cases
+        .iter()
+        .map(|c| case_json(&view, PRIMARY, c))
+        .chain(
+            far_out_cases
+                .iter()
+                .map(|c| case_json(&far_out_view, FAR_OUT, c)),
+        )
+        .chain(flush_cases.iter().map(|c| case_json(&flush_view, FLUSH, c)))
+        .collect();
     let doc = json!({
-        "_comment": "Generated by `cargo run -p dropset-interface --example gen_simulate_swap`. Do not edit by hand. `market_data` is a representative market account's raw bytes (incl. the 8-byte discriminator); each case lists a swap input (side 0=buy/1=sell, amount_in, limit_price_bits, now_slot, now_unix, platform_fee_bps) and the Quote the native matcher returns. Level expiry is dual-domain: a level rests only while it is inside BOTH its slot deadline and its wall-clock deadline, so the `expiry_*` cases pin each bound independently plus the boundary in each domain. A case whose platform_fee_bps exceeds the market's max_platform_fee expects an all-zero Quote: the engine rejects that swap, so the simulator refuses to quote it rather than clamping the rate. Verified against the WASM binding in sdk/interface/tests/wasm_conformance.rs (wasm::simulate_swap == native matcher); the native matcher is pinned to the on-chain engine by programs/dropset/tests/sdk_conformance.rs.",
+        "_comment": "Generated by `cargo run -p dropset-interface --example gen_simulate_swap`. Do not edit by hand. `market_data` is the primary market account's raw bytes (incl. the 8-byte discriminator) — two active vaults whose levels interleave in price, so a fill walks across vaults and the cross-vault price-time sort is pinned rather than assumed. `markets` holds the extra fixture buffers in the same format, and each case's `market` field names which buffer it quotes against: \"primary\" means `market_data`, otherwise it is a key in `markets`. The `far_out` market rests an absurdly-priced level behind an honest one on EACH side, pinning that such a level ends the walk and takes nothing rather than absorbing the taker's unspent budget; the `flush` market has its vault's flush bit armed, so its levels are materialized from a relative LiquidityProfile instead of read from `remaining`. Each case lists a swap input (side 0=buy/1=sell, amount_in, limit_price_bits, now_slot, now_unix, platform_fee_bps) and the Quote the native matcher returns. Level expiry is dual-domain: a level rests only while it is inside BOTH its slot deadline and its wall-clock deadline, so the `expiry_*` cases pin each bound independently plus the boundary in each domain. A case whose platform_fee_bps exceeds the market's max_platform_fee expects an all-zero Quote: the engine rejects that swap, so the simulator refuses to quote it rather than clamping the rate. Verified against the WASM binding in sdk/interface/tests/wasm_conformance.rs (wasm::simulate_swap == native matcher); the native matcher is pinned to the on-chain engine by programs/dropset/tests/sdk_conformance.rs.",
         "market_data": data,
+        "markets": {
+            FAR_OUT: far_out_data,
+            FLUSH: flush_data,
+        },
         "cases": cases,
     });
     emit(&doc, "simulate_swap_vectors.json");

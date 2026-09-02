@@ -53,12 +53,30 @@ fn vectors() -> Value {
 }
 
 fn market_data(v: &Value) -> Vec<u8> {
-    v["market_data"]
-        .as_array()
-        .expect("market_data is an array")
+    byte_array(&v["market_data"], "market_data")
+}
+
+fn byte_array(v: &Value, what: &str) -> Vec<u8> {
+    v.as_array()
+        .unwrap_or_else(|| panic!("{what} is an array"))
         .iter()
-        .map(|b| b.as_u64().expect("market_data byte") as u8)
+        .map(|b| b.as_u64().unwrap_or_else(|| panic!("{what} byte")) as u8)
         .collect()
+}
+
+/// The account bytes a case quotes against. `"primary"` is the top-level
+/// `market_data`; every other name is a key in `markets` — the far-out and
+/// flush fixtures, which need their own buffers because their books cannot
+/// coexist with the primary one (a far-out level behind ample honest depth
+/// would be reached by the cases that deliberately dwarf that depth, and a
+/// flush-armed vault reads its levels from somewhere else entirely).
+fn market_for(v: &Value, name: &str) -> Vec<u8> {
+    if name == "primary" {
+        return market_data(v);
+    }
+    let m = &v["markets"][name];
+    assert!(!m.is_null(), "case names unknown market `{name}`");
+    byte_array(m, name)
 }
 
 fn u64_at(v: &Value, k: &str) -> u64 {
@@ -69,14 +87,16 @@ fn u64_at(v: &Value, k: &str) -> u64 {
 #[test]
 fn native_simulate_swap_matches_vectors() {
     let v = vectors();
-    let data = market_data(&v);
-    let view = MarketView::load(&data).expect("fixture market decodes");
-
     let cases = v["cases"].as_array().expect("cases is an array");
     assert!(!cases.is_empty(), "fixture carries no cases");
 
     for c in cases {
         let name = c["name"].as_str().expect("case name");
+        // Each case names its own market, so a far-out or flush case is
+        // quoted against the buffer it was generated from rather than
+        // against the primary book.
+        let data = market_for(&v, c["market"].as_str().expect("case market"));
+        let view = MarketView::load(&data).expect("fixture market decodes");
         let side = match u64_at(c, "side") {
             0 => SwapSide::Buy,
             1 => SwapSide::Sell,
@@ -164,6 +184,40 @@ fn the_fixture_still_carries_both_expiry_domains() {
         "expected three slot-led and three wall-led expiry cases (each \
          domain: the cross case, plus its boundary live and dead); found \
          {expiry:?}"
+    );
+}
+
+/// The flush market must keep carrying its own two expiry cases, for the
+/// same reason the primary market's six are pinned above.
+///
+/// The flush path computes each deadline from the profile's offsets plus
+/// the reference datum, where `remaining` carries absolute deadlines, so it
+/// is separate expiry arithmetic reached by separate cases. Losing them
+/// would leave the flush materialization pinned only at a live clock, with
+/// a green suite — the failure mode this whole file guards against.
+#[test]
+fn the_fixture_still_carries_the_flush_expiry_cases() {
+    let v = vectors();
+    let flush: Vec<&str> = v["cases"]
+        .as_array()
+        .expect("cases is an array")
+        .iter()
+        .filter(|c| c["market"].as_str() == Some("flush"))
+        .map(|c| c["name"].as_str().expect("case name"))
+        .filter(|n| n.starts_with("flush_expiry_"))
+        .collect();
+
+    assert_eq!(
+        flush.len(),
+        2,
+        "expected each domain to kill the flush-materialized book on its \
+         own; found {flush:?}"
+    );
+    assert!(
+        flush.iter().any(|n| n.contains("slot_dead"))
+            && flush.iter().any(|n| n.contains("wall_dead")),
+        "expected one slot-led and one wall-led flush expiry case; found \
+         {flush:?}"
     );
 }
 

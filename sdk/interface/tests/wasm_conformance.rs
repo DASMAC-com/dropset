@@ -31,12 +31,27 @@ fn vectors() -> Value {
 }
 
 fn market_data(v: &Value) -> Vec<u8> {
-    v["market_data"]
-        .as_array()
+    byte_array(&v["market_data"])
+}
+
+fn byte_array(v: &Value) -> Vec<u8> {
+    v.as_array()
         .unwrap()
         .iter()
         .map(|b| b.as_u64().unwrap() as u8)
         .collect()
+}
+
+/// The account bytes a case quotes against: `"primary"` is the top-level
+/// `market_data`, every other name a key in `markets` (the far-out and
+/// flush fixtures, which need books of their own).
+fn market_for(v: &Value, name: &str) -> Vec<u8> {
+    if name == "primary" {
+        return market_data(v);
+    }
+    let m = &v["markets"][name];
+    assert!(!m.is_null(), "case names unknown market `{name}`");
+    byte_array(m)
 }
 
 /// Every case: the binding's `Quote` must match the native matcher's,
@@ -45,9 +60,10 @@ fn market_data(v: &Value) -> Vec<u8> {
 #[wasm_bindgen_test]
 fn wasm_simulate_swap_matches_vectors() {
     let v = vectors();
-    let data = market_data(&v);
     for c in v["cases"].as_array().unwrap() {
         let name = c["name"].as_str().unwrap();
+        // Each case names the market it was generated against.
+        let data = market_for(&v, c["market"].as_str().unwrap());
         let side = c["side"].as_u64().unwrap() as u8;
         let amount_in = c["amount_in"].as_u64().unwrap();
         let limit_bits = c["limit_price_bits"].as_u64().unwrap() as u32;
