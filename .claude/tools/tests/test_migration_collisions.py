@@ -37,6 +37,18 @@ class MigrationNumber(unittest.TestCase):
         self.assertEqual(mc.migration_number("2024_old/0007_z.sql"), 7)
         self.assertIsNone(mc.migration_number("0007_dir/plain.sql"))
 
+    def test_a_sidecar_sharing_a_migrations_version_prefix_is_not_a_migration(self):
+        # The migrations directory also holds a `<version>_<name>.fence`
+        # manifest beside each migration. Matching the version prefix alone read
+        # every one of them as an added migration, which invents a collision and
+        # blocks an enqueue on a branch that touched no SQL.
+        self.assertIsNone(
+            mc.migration_number("db-schema/migrations/0009_instruments.fence")
+        )
+        self.assertEqual(
+            mc.migration_number("db-schema/migrations/0009_instruments.sql"), 9
+        )
+
 
 class Collisions(unittest.TestCase):
     def test_the_real_instance_two_different_names_one_number(self):
