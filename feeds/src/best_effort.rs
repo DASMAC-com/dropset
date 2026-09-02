@@ -52,6 +52,20 @@ pub struct BestEffortSink<S> {
     /// Consecutive failures; reset by the next success, so the recovery line
     /// can report how many batches were lost.
     consecutive: u64,
+    /// Batches dropped over this sink's whole life, never reset.
+    ///
+    /// Deliberately separate from `consecutive` rather than derived from it,
+    /// because the two answer different questions and only one of them
+    /// survives a recovery. `consecutive` is "is it failing *now*", and a
+    /// single success erases it — so a sink that drops one batch an hour,
+    /// every hour, reports zero forever while losing a batch an hour. This is
+    /// the total, which is what "how much have we lost" needs.
+    dropped_batches: u64,
+    /// Records inside those batches. Kept beside the batch count because a
+    /// batch is a variable amount of data — twenty dropped heartbeat batches
+    /// and one dropped backfill batch are very different losses, and the
+    /// batch count alone cannot tell them apart.
+    dropped_records: u64,
 }
 
 impl<S> BestEffortSink<S> {
@@ -63,7 +77,25 @@ impl<S> BestEffortSink<S> {
             inner,
             label: label.into(),
             consecutive: 0,
+            dropped_batches: 0,
+            dropped_records: 0,
         }
+    }
+
+    /// Total `(batches, records)` dropped since this sink was constructed.
+    ///
+    /// **This is the only record that anything was lost.** The wrapper's whole
+    /// job is to return `Ok` when the inner sink fails, so the runner sees a
+    /// success and `feed_health` records one: a sink dropping every batch is
+    /// indistinguishable, from outside, from one delivering every batch. The
+    /// logs carry the first failure and every fiftieth after it, which is
+    /// right for noticing an outage and useless for quantifying one.
+    ///
+    /// Counts are per-process and reset on restart, so a difference between
+    /// two readings is meaningful and an absolute value is only meaningful
+    /// beside an uptime.
+    pub fn dropped(&self) -> (u64, u64) {
+        (self.dropped_batches, self.dropped_records)
     }
 }
 
@@ -87,6 +119,12 @@ where
             }
             Err(e) => {
                 self.consecutive += 1;
+                // Counted before the reporting decision below, not inside it:
+                // only one line in fifty is emitted during an outage, so
+                // counting where the logging happens would record one drop in
+                // fifty, and would do it silently.
+                self.dropped_batches += 1;
+                self.dropped_records += batch.len() as u64;
                 // The first failure and every REPORT_EVERY-th after it. An
                 // outage is one event, not one per batch.
                 if self.consecutive == 1 || self.consecutive.is_multiple_of(REPORT_EVERY) {
@@ -171,5 +209,64 @@ mod tests {
         sink.handle(&Batch::new(vec![1, 2, 3])).await.unwrap();
         assert_eq!(seen.load(Ordering::SeqCst), 3);
         assert_eq!(sink.consecutive, 0);
+        assert_eq!(sink.dropped(), (0, 0), "nothing failed, so nothing is lost");
+    }
+
+    #[tokio::test]
+    async fn the_drop_total_survives_a_recovery() {
+        // THE POINT OF THE COUNTER. `consecutive` is reset by any success, so
+        // a sink that fails intermittently reports zero between blips while
+        // steadily losing data. The total is what says how much is gone.
+        let failing = Arc::new(AtomicBool::new(true));
+        let seen = Arc::new(AtomicUsize::new(0));
+        let mut sink = BestEffortSink::new(
+            "test telemetry",
+            Flaky {
+                failing: failing.clone(),
+                seen: seen.clone(),
+            },
+        );
+
+        sink.handle(&Batch::new(vec![1, 2])).await.unwrap();
+        sink.handle(&Batch::new(vec![3, 4, 5])).await.unwrap();
+        assert_eq!(sink.dropped(), (2, 5));
+
+        // Recover: `consecutive` goes to zero, the total must NOT.
+        failing.store(false, Ordering::SeqCst);
+        sink.handle(&Batch::new(vec![6])).await.unwrap();
+        assert_eq!(sink.consecutive, 0);
+        assert_eq!(
+            sink.dropped(),
+            (2, 5),
+            "a success must not erase what was already lost"
+        );
+
+        // Fail again: the total accumulates across the outages rather than
+        // restarting with each one.
+        failing.store(true, Ordering::SeqCst);
+        sink.handle(&Batch::new(vec![7, 8])).await.unwrap();
+        assert_eq!(sink.dropped(), (3, 7));
+    }
+
+    #[tokio::test]
+    async fn every_dropped_batch_is_counted_not_just_the_reported_ones() {
+        // Only the first failure and every REPORT_EVERY-th after it is logged.
+        // Counting where the logging happens would record one drop in fifty,
+        // so this drives more than one reporting interval and checks the count
+        // against the batches actually handed over.
+        let batches = (REPORT_EVERY * 2 + 7) as usize;
+        let mut sink = BestEffortSink::new(
+            "test telemetry",
+            Flaky {
+                failing: Arc::new(AtomicBool::new(true)),
+                seen: Arc::new(AtomicUsize::new(0)),
+            },
+        );
+
+        for _ in 0..batches {
+            sink.handle(&Batch::new(vec![1, 2, 3])).await.unwrap();
+        }
+
+        assert_eq!(sink.dropped(), (batches as u64, batches as u64 * 3));
     }
 }
