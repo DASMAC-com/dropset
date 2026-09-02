@@ -51,10 +51,14 @@ use std::time::Duration;
 
 /// The value written to `spot_ticks.source`.
 ///
-/// Taken from the adapter's own `FEED_NAME` rather than restated, so the stored
-/// label and the feed's logged name cannot drift apart. The venue is written
-/// `er-api` in prose and `erapi` everywhere a key is parsed.
-const SOURCE: &str = dropset_feeds::venues::erapi::FEED_NAME;
+/// A literal, like every sibling collector's, and deliberately **not** bound to
+/// the adapter's `FEED_NAME`. This value is schema-facing data: it is the domain
+/// of the dashboard's Source variable and the key every stored row is filed
+/// under, so a rename inside `feeds/` must not silently re-label new rows and
+/// orphan the existing ones — which is exactly what deriving it would do, with
+/// no compile error. The venue is written `er-api` in prose and `erapi`
+/// everywhere a key is parsed.
+const SOURCE: &str = "erapi";
 
 /// The cursor key this collector's sink is wired with. A latest-rates endpoint
 /// has no resume position, so nothing is written under it.
@@ -77,11 +81,42 @@ const DEFAULT_PRODUCTS: &str = "AUD-USD,BRL-USD,CAD-USD,CHF-USD,EUR-USD,GBP-USD,
 /// Lower than the streaming collectors' threshold because the evidence is
 /// stronger per poll: this venue returns its **whole** table on every request
 /// rather than answering a per-symbol query, so a currency absent from a
-/// complete response is one the provider does not carry. It is not one, because a
-/// single truncated or partial response should not be allowed to cry wolf. At the
-/// hourly cadence above this reports a roster typo within a few hours, which is
-/// well inside the 24-hour latency the data itself carries.
+/// complete response is one the provider does not carry. The threshold is still
+/// not `1`, because a single truncated or partial response should not be allowed
+/// to cry wolf. At the hourly cadence above this reports a roster typo within a
+/// few hours, which is well inside the 24-hour latency the data itself carries.
 const SILENCE_THRESHOLD: u32 = 3;
+
+/// How far ahead of this host's clock the provider's refresh instant may sit
+/// before it is treated as bogus rather than as "just published".
+///
+/// The same minute the maker-bot's `MAX_VENUE_CLOCK_SKEW` allows, and it is here
+/// for a sharper reason: this is the path that **persists**. `spot_ticks` has no
+/// plausibility constraint on `observed_at` (only `confidence` is checked), the
+/// column is part of the insert's conflict key, and
+/// `db-schema/migrations/0009_instruments.sql` derives each feed's last-seen
+/// instant as `max(observed_at)`. So one far-future stamp would pin that
+/// product's freshness forever, and — because the insert is
+/// `ON CONFLICT … DO NOTHING` — the correct later snapshot, whose instant is
+/// smaller, could never supersede it. Writing such a row is not recoverable in
+/// place; refusing it is one comparison.
+const MAX_CLOCK_SKEW_SECS: i64 = 60;
+
+/// The instant a reading is attributed to: the provider's own refresh instant
+/// where it is plausible, else the poll second.
+///
+/// Both rejections degrade to the poll second rather than to the epoch or to a
+/// far-future date. That costs the idempotency the ordinary path enjoys — a
+/// poll-stamped row is new on every poll — which is the honest trade: a snapshot
+/// whose own timestamp is nonsense has no instant to dedup on, and duplicate
+/// rows are recoverable where a permanently-pinned bogus one is not.
+fn observation_instant(last_update: i64, poll_secs: i64) -> i64 {
+    if last_update <= 0 || last_update.saturating_sub(poll_secs) > MAX_CLOCK_SKEW_SECS {
+        poll_secs
+    } else {
+        last_update
+    }
+}
 
 const DEFAULTS: TickDefaults = TickDefaults {
     base_url: "https://open.er-api.com",
@@ -154,14 +189,9 @@ async fn main() -> anyhow::Result<()> {
                 let product_id = by_currency.get(currency)?;
                 Some(Tick {
                     product_id: product_id.clone(),
-                    // Prefer the provider's refresh instant — see the module
-                    // note. Fall back to the poll second only if it is missing,
-                    // since a zero would attribute the reading to the epoch.
-                    observed_at: if snap.last_update > 0 {
-                        snap.last_update
-                    } else {
-                        poll_secs
-                    },
+                    // Prefer the provider's refresh instant, bounded in both
+                    // directions — see `observation_instant`.
+                    observed_at: observation_instant(snap.last_update, poll_secs),
                     price: *rate,
                     // This venue publishes no uncertainty. `None` records that
                     // it has no confidence notion, which a zero would misread as
@@ -185,4 +215,39 @@ async fn main() -> anyhow::Result<()> {
         ..RunConfig::default()
     };
     run(source, sinks, run_cfg).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_plausible_provider_instant_is_what_the_reading_is_attributed_to() {
+        let poll = 1_788_307_351;
+        // The ordinary case: a snapshot published ~21.7 hours ago, which is what
+        // this venue actually serves.
+        let published = poll - 78_131;
+        assert_eq!(observation_instant(published, poll), published);
+        // Sub-minute skew ahead of us is tolerated rather than discarded.
+        assert_eq!(observation_instant(poll + 30, poll), poll + 30);
+        assert_eq!(observation_instant(poll, poll), poll);
+    }
+
+    #[test]
+    fn an_implausible_provider_instant_degrades_to_the_poll_second() {
+        let poll = 1_788_307_351;
+        // A missing or zeroed stamp must not attribute the reading to the epoch.
+        assert_eq!(observation_instant(0, poll), poll);
+        assert_eq!(observation_instant(-1, poll), poll);
+        // A far-future stamp is nonsense, not freshness. This is the case that
+        // matters most: `spot_ticks` has no plausibility constraint on
+        // `observed_at`, the insert is `ON CONFLICT … DO NOTHING`, and the
+        // instruments view reads `max(observed_at)` — so such a row would pin
+        // the feed's last-seen instant permanently and could never be
+        // superseded by the correct later snapshot.
+        assert_eq!(observation_instant(poll + 10_000_000, poll), poll);
+        assert_eq!(observation_instant(i64::MAX, poll), poll);
+        // Saturating arithmetic: no wrap, no panic, at either extreme.
+        assert_eq!(observation_instant(i64::MIN, poll), poll);
+    }
 }

@@ -430,10 +430,14 @@ struct TickCtx {
 /// duplication — hence one shared set of constants rather than two spellings.
 pub const SOURCE_PYTH: &str = "pyth-hermes";
 pub const SOURCE_FRANKFURTER: &str = "frankfurter";
-/// The er-api daily reference tier. Spelled to match both the adapter's
-/// `FEED_NAME` and the `market-data-erapi` collector's `spot_ticks.source`, so
-/// a health row, a stored tick, and a dispersion attribution all name the same
-/// venue — the silent-join failure this constant set exists to prevent.
+/// The er-api daily reference tier.
+///
+/// Spelled the same as the collector's `spot_ticks.source` **today**, which is
+/// convenient but is not an invariant this block guarantees — `SOURCE_PYTH`
+/// above is `pyth-hermes` while that collector stores `pyth`. The two
+/// vocabularies are deliberately separate (see the note above), so this stays a
+/// literal rather than importing the adapter's constant: joining them is the
+/// thing that note says not to do.
 pub const SOURCE_ERAPI: &str = "erapi";
 pub const SOURCE_COINBASE: &str = "coinbase";
 pub const SOURCE_KRAKEN: &str = "kraken";
