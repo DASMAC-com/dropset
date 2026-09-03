@@ -175,6 +175,92 @@ class LoadOthers(unittest.TestCase):
         self.assertEqual([e["pr"] for e in mc.load_others(path)], [1, 2])
 
 
+class OthersFromGh(unittest.TestCase):
+    """The in-process fetch. It exists because the two-command form had an
+    unwritable gap — a redirect is a compound the shell guard blocks, and
+    re-emitting the output with the Write tool routes every open PR's file
+    list through context, which is the cost the tool exists to avoid."""
+
+    def _gh(self, stdout, returncode=0, stderr=""):
+        return mock.patch.object(
+            mc.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(
+                args=mc.GH_OPEN_PRS,
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
+            ),
+        )
+
+    def test_it_normalizes_ghs_shape_to_the_others_shape(self):
+        """gh returns `number` and a list of {path: …}; downstream must see
+        exactly one shape, so there is one comparison path."""
+        payload = json.dumps(
+            [
+                {
+                    "number": 351,
+                    "files": [
+                        {"path": "db-schema/migrations/0004_pyth.sql"},
+                        {"path": "README.md"},
+                    ],
+                }
+            ]
+        )
+        with self._gh(payload):
+            got = mc.others_from_gh()
+        self.assertEqual(
+            got,
+            [
+                {
+                    "pr": 351,
+                    "files": [
+                        "db-schema/migrations/0004_pyth.sql",
+                        "README.md",
+                    ],
+                }
+            ],
+        )
+
+    def test_a_pr_touching_no_files_yields_an_empty_list_not_a_crash(self):
+        with self._gh(json.dumps([{"number": 9, "files": []}])):
+            self.assertEqual(mc.others_from_gh(), [{"pr": 9, "files": []}])
+        with self._gh(json.dumps([{"number": 9}])):
+            self.assertEqual(mc.others_from_gh(), [{"pr": 9, "files": []}])
+
+    def test_the_normalized_output_feeds_collisions(self):
+        """The point of normalizing: the fetched shape must work with the same
+        `collisions` the file path uses."""
+        payload = json.dumps(
+            [{"number": 351, "files": [{"path": "db-schema/migrations/0003_a.sql"}]}]
+        )
+        with self._gh(payload):
+            others = mc.others_from_gh()
+        found = mc.collisions(["db-schema/migrations/0003_b.sql"], others)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["pr"], 351)
+
+    def test_a_gh_failure_reports_its_last_line(self):
+        with self._gh("", returncode=1, stderr="x\ngh: not authenticated"):
+            with self.assertRaises(mc.MigrationCollisionsError) as ctx:
+                mc.others_from_gh()
+        self.assertIn("not authenticated", str(ctx.exception))
+
+    def test_non_json_output_is_a_clean_error(self):
+        with self._gh("not json"):
+            with self.assertRaises(mc.MigrationCollisionsError):
+                mc.others_from_gh()
+
+    def test_the_two_sources_are_mutually_exclusive_and_one_is_required(self):
+        for argv in (
+            ["migration_collisions.py"],
+            ["migration_collisions.py", "--others", "x.json", "--others-from-gh"],
+        ):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                with redirect_stderr(io.StringIO()):
+                    mc.run(argv)
+
+
 class AddedMigrations(unittest.TestCase):
     """``added_migrations`` over a real throwaway repo — the diff filter is the
     behavior under test, so git is not mocked."""

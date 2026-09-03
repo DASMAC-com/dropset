@@ -125,6 +125,27 @@ no agent re-fetches it by shelling out. (For content too large or
 special-character-laden to sit inline cleanly, use the file-handoff
 pattern from the shell rules — write it out and pass the path.)
 
+**Do the work yourself — do not spawn sub-agents of your own.** If the
+brief looks too large for one agent, say so in your report rather than
+fanning it out. A skill that genuinely wants nested delegation grants it
+explicitly, the same shape as the narrowing rule below.
+
+This is in the brief because unbudgeted nesting is both expensive and
+**invisible**. Measured (session fa6fc519, the ENG-978 seam audit): the
+main loop deliberately spawned 11 agents and the per-agent rollup
+reported **15**. The four extra were grandchildren — a
+comment-and-doc-freshness agent decomposed its brief into lanes, fanned
+them out, then fanned out verifiers on top, at **≈8.8M of per-turn
+input**, roughly 16% of the session's sub-agent total, from agents no
+skill asked for. Its own report opens "All three lanes are done", which
+is the tell.
+
+The work was not wasted — that agent returned the largest finding set
+and its verifiers confirmed every claim it checked. The problem is that a
+skill planning an 11-agent rotation cannot reason about cost or
+concurrency if any agent may silently multiply itself. So the cost is
+not the objection; being **unobservable** is.
+
 **A skill may narrow this scope, never loosen it.** The brief is the
 floor: shell discipline plus the freedom to explore. A spawning skill
 is free to add a tighter *subject* scope on top — a diff reviewer, for

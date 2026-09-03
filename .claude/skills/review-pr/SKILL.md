@@ -2962,11 +2962,25 @@ already being asked to start the review.
 
    ```sh
    python3 .claude/tools/review_diff.py --base origin/<base> \
-     --out <scratchpad>/review-diff.txt --split
+     --out <scratchpad>/review-diff.txt --gate-only
    ```
 
    If the diff changed, re-run the affected lenses before
-   spending the cross-check on a stale picture.
+   spending the cross-check on a stale picture — and re-run
+   this command with `--split` at that point, since the slices
+   genuinely need regenerating. Not before.
+
+   **`--gate-only` is the default for a freshness probe;
+   `--split` is the exception.** The general rule, stated once:
+   *the verdict a freshness gate needs is two fields — take
+   `--gate-only` unless you are about to hand slices to an
+   agent.* The full verdict serializes the whole `files` array,
+   which is precisely what a "has the base moved" question does
+   not use: two of one session's eight largest results were
+   `review_diff` verdicts (≈2.5k and ≈1.3k) across five runs,
+   only two of which needed `--split`, and one printed a
+   13-entry `files` array to answer one bit. The gating still
+   runs in full and the exit status is unchanged.
 
    Spawn a fresh sub-agent that receives the collected findings
    and the diff (prepend the same `CLAUDE.md`
@@ -3902,6 +3916,24 @@ already being asked to start the review.
      place. Stop and get signing working before starting a
      wait.
 
+   - **Probe signing BEFORE the wait, not only on failure.**
+     The alarm above is reactive: it fires once a commit has
+     already failed. `init-pr` step 0b pre-checks signing at
+     bootstrap, and that cannot cover this case — the agent
+     locks while the session sits *idle*, which is exactly what
+     a long unattended wait produces. So make the checkpoint
+     commit immediately before entering the wait (and before
+     the step-5 fan-out, the other long idle stretch), and if
+     it cannot be signed, resolve that first rather than
+     starting a wait with unpushed work.
+
+     Measured: a rebase resumed after a pause failed part-way
+     with `failed to fill whole buffer`, leaving the worktree
+     mid-rebase to be aborted and re-run after an operator
+     unlock. That cost little **only because the branch
+     happened to be pushed already** — luck of timing, not
+     design.
+
    - **Write the working diff to the scratchpad** before the
      wait, so recovery is one `git apply` even if the commit
      could not be made:
@@ -4299,25 +4331,29 @@ already being asked to start the review.
    destroys collected market data outside the venues' backfill
    windows. Two in-flight PRs really did each add an `0003`.
 
-   List the other open PRs' files (one field-selected read),
-   write them to a small JSON file, and let the tool compare:
+   One call — the tool does the open-PR read itself:
 
    ```sh
-   gh pr list --state open --json number,files --limit 30
+   python3 .claude/tools/migration_collisions.py --others-from-gh
    ```
 
-   ```sh
-   python3 .claude/tools/migration_collisions.py \
-     --others <scratchpad>/others.json
-   ```
-
-   The tool takes its `--others` payload from a file precisely
-   so the network read stays on the `gh`/MCP path and the
-   compare stays deterministic; it makes no network call. It
-   compares **numbers, not filenames** — `0003_telemetry.sql`
+   It compares **numbers, not filenames** — `0003_telemetry.sql`
    and `0003_roster.sql` collide — and exits non-zero on a
    collision, so a caller checking only the status cannot
    enqueue through one.
+
+   **This step used to prescribe two commands with no way to
+   connect them**, and every sanctioned route across the gap is
+   closed: a `>` redirect is a compound the shell guard blocks,
+   a pipe likewise, and capturing the listing to re-emit it
+   with `Write` routes every open PR's file list through
+   context — the ~4.0k-for-two-lines cost the tool exists to
+   avoid. So the read moved inside the tool, which is how
+   `review_diff.py --overlap` already solves the identical
+   problem; the two steps should not disagree about it.
+   `--others <file>.json` remains for a caller that already
+   holds the inventory, and keeps the compare network-free for
+   tests.
 
    **On a collision, stop and coordinate the renumber
    deliberately.** The tiebreak, and its direction is the whole

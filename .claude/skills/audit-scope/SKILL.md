@@ -148,8 +148,21 @@ Optional (ask on a direct run if not provided):
    (Read/Grep/Glob over shell, one bare globbable command
    per Bash call) precisely *because* they explore widely.
    Don't narrow the brief — unlike a diff review, an
-   audit is meant to look anywhere in the repo. At
-   minimum:
+   audit is meant to look anywhere in the repo.
+
+   **Split a dimension that would invite
+   self-decomposition, at plan time.** The brief now tells
+   every agent not to spawn sub-agents of its own, but a
+   dimension whose scope spans obviously separable lanes
+   invites exactly that: comment-accuracy over source
+   comments *plus* a spec doc *plus* five READMEs is three
+   jobs wearing one name. One such agent fanned out four
+   grandchildren for ≈8.8M of per-turn input that no skill
+   asked for, and the fan-out was invisible to the
+   rotation's own plan. If a dimension reads as lanes,
+   make it separate agents here, where they are counted.
+
+   At minimum:
 
    - **Security / pen-testing** — use the checklist for
      the scope's kind:

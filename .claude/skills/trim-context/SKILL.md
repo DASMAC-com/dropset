@@ -105,6 +105,32 @@ them to a file with one `## <identifier>` heading each, printing only
 sizes; slice it with
 `python3 .claude/tools/read_result.py --section '<identifier>' <file>`.
 
+**For the fold itself, take the sections — not the bodies.** A fold
+consumes two things from each lever, its statement and its concrete
+edit, and cites the evidence prose by reference rather than inlining it.
+Parked bodies are written to a house structure, so ask for those
+headings across every lever in one call:
+
+```sh
+python3 .claude/tools/read_result.py \
+  --sections '^#+ (The lever|Lever|Concrete edit|Proposed edit)' \
+  <scratchpad>/levers.md
+```
+
+`--sections` (plural) exists for this. `--section` refuses an ambiguous
+pattern — right for a single read, and it stops applying at exactly the
+scale where slicing matters, because the same heading in every lever is
+N matches by construction. That refusal is what made the whole-file read
+the compliant-looking move.
+
+Measured: the pool-wide *fetch* is no longer the problem — one
+`--bodies-out` wrote 41 bodies (103,250 chars) for ≈858 tokens. The
+**per-lever body** is: reading only the 12 intended levers still cost
+~8.5k across 7 `--slice` calls, because each lever carries its full
+session evidence and the fold needs two sections of it. An earlier pass
+paid ≈14.2k reading the dump whole — that session's largest single
+result.
+
 **The fold's reads had become its larger cost**, which is why this exists:
 the plain listing prints titles only, so a fold ran **one fetch per
 lever** — 21 of them on one pass — and the nearest sweep that did carry

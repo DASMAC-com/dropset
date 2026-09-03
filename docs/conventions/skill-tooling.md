@@ -74,9 +74,12 @@ resolves the in-flight issues from Linear, skips the ones already open,
 and emits one AppleScript that opens and resumes the rest; read-only
 unless `--apply`), `migration_collisions.py` (compares this branch's new
 migration numbers
-against other open PRs' before an enqueue — it takes the other PRs'
-files from a **file** rather than calling GitHub, so the network read
-stays on the MCP/`gh` path and the compare stays deterministic),
+against other open PRs' before an enqueue — `--others-from-gh` runs that
+open-PR read **inside its own process**, because the earlier
+read-then-compare pair left a gap no sanctioned shell form could bridge
+and re-emitting the listing put every PR's file list through context;
+`--others <file>.json` remains for a caller that already holds the
+inventory and keeps the compare network-free),
 `check_home_paths.py` (the committed-agent-material hygiene guard, wired
 as a scoped pre-commit hook), `lens_preamble.py` (composes the standing
 half of a lens brief from the

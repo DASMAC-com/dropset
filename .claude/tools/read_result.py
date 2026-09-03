@@ -258,6 +258,50 @@ def section(lines: list[str], pattern: str) -> tuple[list[str], int]:
     return lines[start:end], start + 1
 
 
+def sections(lines: list[str], pattern: str) -> tuple[list[str], int]:
+    """**Every** heading block whose heading matches ``pattern``, concatenated.
+
+    The deliberate counterpart to ``section``, which refuses an ambiguous
+    pattern so `--section 'Part 2'` cannot silently return `Part 24`. That
+    refusal is right for a single-section read and stops applying at exactly
+    the scale where slicing matters most: a fold needs the same two sections
+    out of every lever in a dump, which is N matches by construction, so
+    `--section` rejects it (`4 headings match … narrow the pattern`) and the
+    compliant-looking move becomes reading the whole file.
+
+    Measured: one pass wrote all 41 parked bodies to a file correctly and then
+    spent ~8.5k across 7 `--slice` calls to fold 12 of them, because
+    "the lever plus the edit for these 12 identifiers" was not expressible in
+    one call. Asking for multiple matches explicitly is what makes it one.
+
+    Blocks are emitted in file order, each running to the next heading of the
+    same or shallower depth — the same bound ``section`` uses.
+    """
+    try:
+        rx = re.compile(pattern, re.IGNORECASE)
+    except re.error as e:
+        raise ReadResultError(
+            f"--sections {pattern!r} is not a valid regex: {e}"
+        ) from e
+
+    heads = list(iter_headings(lines))
+    found = [(i, d, text) for i, d, text in heads if rx.search(text)]
+    if not found:
+        raise ReadResultError(
+            f"no heading matches {pattern!r} — run --headings to see what is there"
+        )
+
+    out: list[str] = []
+    for start, depth, _ in found:
+        end = len(lines)
+        for i, d, _ in heads:
+            if i > start and d <= depth:
+                end = i
+                break
+        out.extend(lines[start:end])
+    return out, len(found)
+
+
 def grep(lines: list[str], pattern: str, context: int) -> list[str]:
     """Matching lines as ``<line>:<text>``, with ``--`` between context runs.
 
@@ -395,6 +439,14 @@ def run(argv: list[str]) -> int:
         help="list markdown headings with line numbers",
     )
     mode.add_argument("--section", default=None, metavar="RE", help="one heading block")
+    mode.add_argument(
+        "--sections",
+        default=None,
+        metavar="RE",
+        help="EVERY matching heading block, in file order — the deliberate "
+        "multi-match form, for when N matches is the point (a fold wanting "
+        "the same two sections out of every lever) rather than an ambiguity",
+    )
     mode.add_argument("--grep", default=None, metavar="RE", help="matching lines")
     mode.add_argument(
         "--slice", default=None, metavar="A:B", help="inclusive line range"
@@ -441,6 +493,10 @@ def run(argv: list[str]) -> int:
         block, start = section(lines, args.section)
         out = block
         summary = f"section at line {start}, {len(block)} line(s)"
+    elif args.sections is not None:
+        block, count = sections(lines, args.sections)
+        out = block
+        summary = f"{count} section(s), {len(block)} line(s) of {len(lines)}"
     elif args.grep is not None:
         out = grep(lines, args.grep, max(0, args.context))
         shown = sum(1 for line in out if line != "--")

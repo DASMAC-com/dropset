@@ -121,6 +121,25 @@ argument was *not* the reason — see that step for why.)
   the escape hatch, for an adjudication read where the surrounding lines
   genuinely are the question.
 
+  **`--force-context` lifts the size degrade and NEVER the single-file
+  clamp**, and the asymmetry is deliberate rather than an oversight. The
+  degrade fires on size alone, where the surrounding lines may really be
+  the question and nothing substitutes for them. The clamp fires only
+  once the caller has *already named one file* — and for that case a
+  slice `Read` answers the same question strictly better, so an override
+  would buy nothing but a way to pay more.
+
+  So **a clamp is information, not an obstacle.** When it fires, it has
+  told you the scope is one file; slice-read the region it names. Reaching
+  for `--force-context` there does not work and should not: one session
+  with the rule available, operating carefully, still fired two
+  `--force-context --context 3` single-file sweeps in one run (≈2.6k and
+  ≈2.1k, ~15% of its entire Bash cost) — both carrying the clustering
+  advisory in the very result it then consumed, and both asked a pure
+  *location* question. That signature — right rule, careful session,
+  twice in one run — is why this one is enforced in the tool rather than
+  restated here.
+
   **Treat the helper's advisory line as a DIRECTIVE, not a note.** When
   the summary reports clustering or a many-file spread, do not consume
   that result: re-issue `--files-only` (or add a `--glob`) and slice-read
