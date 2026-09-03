@@ -49,6 +49,7 @@ coingecko
 coinmarketcap
 cooldown
 coprocess
+coreutils
 cpis
 creat
 crossterm
@@ -58,6 +59,7 @@ dedup
 dedups
 depeg
 deque
+desync
 devnet
 dflow
 discordapp
@@ -82,6 +84,7 @@ eurozone
 eurøp
 exfiltration
 faps
+fchmod
 fieldless
 fintech
 firmable
@@ -138,6 +141,7 @@ memecoins
 metas
 meteora
 milestoned
+mispairing
 mispriced
 moneyness
 mpsc
@@ -193,6 +197,7 @@ reauthored
 refspec
 regclass
 rels
+reorderer
 repeg
 repr
 reqwest

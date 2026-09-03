@@ -253,6 +253,27 @@ db-schema <-> market-data config: a THIRD kind of contract, unlike the
   market-data/tests/pyth_roster_agreement.rs pins the seed to that
   constant by comparing source text, since maker-bot has no lib target.
   A cross has to be added in both places or the test fails.
+db-schema <-> market-data instruments: the THIRD write path into the
+  shared schema, and structurally unlike the two row-shape seams above —
+  it writes a REGISTRY of what exists rather than observations.
+  db-schema/migrations/0009_instruments.sql defines instrument_registry
+  (primary key (source, product_id), with CHECKs pinning the canonical
+  product-id shape and a non-blank source), the seeded currency_kinds
+  reference table, and the instruments and instrument_liveness views
+  over them. The single writer is market-data/src/instruments.rs
+  (register), driven by market-data/queries/instrument_register.sql and
+  called at startup by EVERY collector binary under market-data/src/bin
+  — so a collector that never starts leaves no row, which is the point:
+  a dark collector is visible as an absent registration rather than as
+  silence. Readers are the two views, market-data's Grafana source
+  variable, and market-data/tests/instruments.rs.
+  Two coupling hazards to watch, both stated in the migration itself:
+  the currency_kinds seed is coupled to the roster file with NOTHING
+  checking it (an unseeded currency classifies as 'unclassified' rather
+  than failing), and a registry row deliberately does not imply a price
+  series — so an audit must not read registration as liveness. The
+  registry is the statement that this surface exists at all; the
+  containment tests are its mechanical check.
 db-schema <-> grafana dashboards: db-schema/migrations owns the
   dropset_ro reader role and the SELECT grants behind it, which the
   provisioned datasource

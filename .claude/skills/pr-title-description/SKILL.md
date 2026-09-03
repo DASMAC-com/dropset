@@ -34,9 +34,33 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    )
    ```
 
-1. Get the full diff against `main`:
-   `git diff main..HEAD` and
-   `git log main..HEAD --oneline`.
+1. Get the branch's own diff, against the **remote** ref with
+   the **three-dot** merge-base form:
+
+   ```sh
+   git fetch origin main
+   ```
+
+   ```sh
+   git diff origin/main...HEAD
+   ```
+
+   ```sh
+   git log origin/main...HEAD --oneline
+   ```
+
+   **Not `main..HEAD`.** A worktree's local `main` is stale in
+   the normal case — worktrees rarely fast-forward it — so the
+   two-dot form against it gives both a **wrong** diff and a
+   fat payload. Measured live on PR #385: it reported **40
+   changed files** where the true branch delta was **3**, and
+   the whole overstated diff transited context. The cost is not
+   only tokens: describing 37 files the PR does not change is
+   how a title and body come out wrong.
+
+   The three-dot form is what makes this robust — it diffs from
+   the **merge base**, so it reports only the branch's own
+   changes however far the base has moved.
 
    Don't look up recent merged PRs for their style — the
    title and description formats are **standardized below**

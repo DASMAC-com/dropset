@@ -567,19 +567,25 @@ Dedup and refile so a 30-minute loop never duplicates work:
   they can be hand-consolidated.
 
 - Otherwise **create** one aggregated issue, one bullet per
-  new finding:
+  new finding — through the zero-echo writer, **not**
+  `save_issue`:
 
-  ```txt
-  mcp__claude_ai_Linear__save_issue(
-    team: "<$LINEAR_TEAM_ID>",
-    project: "<$LINEAR_PROJECT_ID>",
-    assignee: "<$LINEAR_ASSIGNEE_ID>",
-    state: "Backlog",
-    title: "cspell hygiene: move words inline / regroup escape blocks",
-    description: "<one bullet per finding, each w/ a **Fingerprint**: line>",
-    priority: 3,
-  )
+  ```sh
+  python3 .claude/tools/linear_issue.py create \
+    --title "cspell hygiene: move words inline / regroup escape blocks" \
+    --body-file <scratchpad>/cspell-findings.md \
+    --state Backlog --priority 3
   ```
+
+  `save_issue` echoes the **whole stored body** back on a
+  create, and that echo is then replayed on every later turn
+  (`CLAUDE.md` → "Context economy"). An aggregated finding
+  body is long by design — one bullet plus a
+  `**Fingerprint**:` line per finding — so this is precisely
+  the shape the echo costs most on, which is why
+  `audit-scope` and `trim-context` already route their
+  filings here. Team, project and assignee come from the
+  `LINEAR_*` environment, so they are not passed.
 
 - If every finding is already open (nothing new), file
   **nothing** — neither create nor append.
@@ -633,19 +639,39 @@ skill pointing at something that no longer exists, so this
 read-only pass flags that drift the same way `review-pr`'s
 freshness lens does on the PR path — here, periodically.
 
-- **Collect the targets.** List the headings in
-  `CLAUDE.md` and the files under `docs/conventions/`
-  (Read / Glob; never a shell `find … | …` pipe).
-- **Scan the skills.** Grep `.claude/skills/**` for
-  references to `CLAUDE.md` section names and
-  `docs/conventions/…` paths (the Grep tool, or a bare
-  single `grep` where it's absent — never `git grep`).
-- **Flag dangling references** — a skill that cites a
-  `CLAUDE.md` section heading that no longer exists, or a
-  `docs/conventions/<file>.md` path that isn't present.
+**One call does the whole check:**
+
+```sh
+python3 .claude/tools/convention_refs.py
+```
+
+It prints one line when everything resolves, or one line per
+dangling citation naming the citer, the target, the anchor and
+the **kind** — `missing-file` (the doc was renamed) or
+`missing-anchor` (the section was) — and exits 1 so a caller
+can branch on the status. `--json` for the machine-readable
+form. Same shape and exit convention as the `hook_wiring.py`
+and `allowlist.py cruft` calls in steps 7a/7b.
+
+**This used to be four prose bullets, and executing them took
+eight greps** — a 101-line citation sweep to yield a 12-name
+set, a 25-line one for a 6-name set, four heading listings,
+and a targeted grep to confirm one anchor by hand — ~1.2k per
+pass to print one line. Every input is mechanical (the anchor
+sets, the citation forms, the set difference), which is the
+skill-tooling test, and step 5 was the odd one out in a skill
+whose neighbors already call tools.
+
+Two behaviors the prose never settled and the tool now does,
+both of which arose in practice: a citation may target a
+**bolded paragraph** rather than a heading (anchoring on
+headings alone reports false drift), and a citation inside a
+**fenced example** is documenting the form rather than making
+a claim, so it is not checked.
+
 - **File propose-only**, to the same env-resolved
-  destination as step 4 (`save_issue`,
-  `state: "Backlog"`, priority 3), one aggregated task per
+  destination as step 4 (`linear_issue.py create`,
+  `--state Backlog --priority 3`), one aggregated task per
   pass listing each dangling reference and its fix, with a
   `**Fingerprint**: convention-ref:<skill>:<target>` line
   per finding so later passes dedup; drop any fingerprint

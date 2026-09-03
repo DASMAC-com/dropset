@@ -424,9 +424,11 @@ is opt-in — nothing is enforced on a checkout until you wire it up.
 to the main checkout**, so wiring it once makes it live in every
 worktree. Each guard's **script** is committed; its
 `PreToolUse` **wiring** is not — and a committed guard is **inert until
-wired**, which `make hook-wiring` reports on (it names every hook
-nothing points at, and writes nothing; `housekeeping` runs the same
-check each pass). The **session helpers** (`cdds`, `aps`, `raps`,
+wired**, which `make hook-wiring` reports on (it names every committed
+**guard** hook that cannot fire — unwired, wired under a `matcher` that
+never selects the tools it inspects, or pointed at a path that resolves
+to nothing — and writes nothing; `housekeeping` runs the same check
+each pass). The **session helpers** (`cdds`, `aps`, `raps`,
 `naps`, `rnaps`, `paps`, `haps`, `faps`) are the exception that *is*
 committed, at
 `.claude/shell/init.zsh`, sourced from the base checkout by one guarded
@@ -482,7 +484,16 @@ de-duplicates at the next `make lint` (not at commit time; a deleted
 word it resurrects does not heal at all). A sorted list is a
 merge-conflict generator, which is also why
 each Makefile target declares its own `.PHONY` beside its rule rather
-than in one central sorted block. Full detail:
+than in one central sorted block.
+**Never copy a claim out of an applied migration into prose** — the
+runner hashes the raw bytes, so a shipped migration (comments included)
+can never be corrected, which makes it a permanent anchor for whatever
+it said that day. Reference the migration and state the *current* claim
+in the mutable doc, so a correction has one home; a shipped comment that
+proves wrong gets its correction recorded elsewhere with a
+back-reference. `audit-scope`'s doc-freshness lens carries the
+counterpart: a migration's immutability makes it the **least**
+authoritative statement of current behavior. Full detail:
 `docs/conventions/docs-and-style.md`.
 
 ## Audit registry

@@ -49,6 +49,9 @@ Prints JSON::
       "diff_lines": 1234,
       "diff_empty": false,
       "files": [{"path": "…", "changes": 12}],
+      "crates": {"sdk": {"source": 12, "docs": 0, "tests": 0,
+                         "has_source": true}},
+      "code_crates": 1,           // trees with an actual source change
       "runs_rust_suites": false,   // any path outside the CI code filter?
       "runs_artifact_gates": false,// any generation input touched?
       "ready": true,               // exactly `not blockers`
@@ -152,10 +155,20 @@ SEARCH_EXCLUDE_DIRS = (
 # most-specific-first: a path is classified by the first list it matches, so
 # `docs/x.md` is docs and `sdk/rs/tests/y.rs` is tests even though both would
 # also match a broader rule below them.
+# `decks/` is narrowed to its PROSE rather than listed as a whole tree. The
+# whole tree was on the wrong side of this module's own stated rationale — that
+# everything unmatched is source, because a misfiled source file is a *missed
+# review* while a misfiled doc is only a wasted read. Listing `decks/**`
+# traded the safe failure for the unsafe one across a package: one diff of six
+# `.tsx` / `.ts` / `.css` files carrying state, effects, URL parsing and a
+# third-party selector produced `source: 0 lines` / `docs: 224 lines`, so the
+# correctness, security and style lenses were each handed an **empty file** and
+# the run had to notice and pass them the full diff instead. A slide-heavy deck
+# component now lands in source, which costs a lens a little prose to read.
 DOCS_PATTERNS = (
     "**/*.md",
     "docs/**",
-    "decks/**",
+    "decks/**/*.md",
     "**/*.mdx",
 )
 
@@ -294,6 +307,84 @@ def slice_for(path: str) -> str:
 def matches_any(path: str, patterns) -> bool:
     """Whether ``path`` matches at least one of ``patterns``."""
     return any(matches(path, p) for p in patterns)
+
+
+# The single bucket every repository-root file shares. Angle brackets keep it
+# from ever colliding with a real directory name.
+ROOT_TREE = "<root>"
+
+
+def crate_of(path: str) -> str:
+    """The top-level tree a changed path belongs to.
+
+    A coarse stand-in for "crate": the first path segment, which is what the
+    workspace layout makes it (``programs/…``, ``sdk/rs/…``, ``feeds/…``). It
+    exists to answer *how many trees does this diff span*, not to resolve a
+    Cargo package, so a coarse answer is the right one.
+
+    **A repository-ROOT file is not a tree, and treating it as one defeated the
+    metric.** `Makefile` and `Cargo.toml` have no first segment, so returning
+    the path itself made each root file its own "crate" and a diff touching two
+    of them read as spanning two crates. Measured on the very diff that added
+    this function: `cfg/dictionary.txt` and `.claude/**` gave `code_crates: 2`,
+    where one of the two was a two-line dictionary entry — the same
+    over-escalation the rollup was written to stop, arriving through the
+    denominator instead of the numerator. Root files therefore share one
+    bucket.
+    """
+    head, sep, _ = path.partition("/")
+    if not sep:
+        return ROOT_TREE
+    return head or ROOT_TREE
+
+
+def crate_rollup(files) -> dict:
+    """``{crate: {"source": n, "docs": n, "tests": n, "has_source": bool}}``.
+
+    Why this exists: the review tier's multi-crate trigger weighed the
+    **presence** of a second crate rather than what changed in it, so a
+    seven-line docs-only change in a second tree escalated a diff to the full
+    fan-out. `--split` already separates docs from source per file; what was
+    missing was the per-crate rollup that turns that into a predicate.
+
+    Note **docs-only** above means a docs *path* — a `.md` file, or anything
+    under `docs/**`. It used to read "doc-comment fix", which the bound below
+    contradicts four lines later: a `///` comment lives in a `.rs` file, so it
+    classifies as source and still escalates. Stating the motivating case as
+    the tool actually decides it matters more than it sounds, because a reader
+    tiering a diff takes that sentence as license and then the tool disagrees.
+
+    ``has_source`` is the field a tier decision wants: a crate with no source
+    **or test** changes at all should not count toward "spans crates". Note the
+    deliberate asymmetry — this discounts such a crate from the *crate count*
+    and nothing else. The change is still fully reviewed (one such seven-line
+    doc fix was itself a real finding from an earlier PR that had gone stale),
+    so the docs and completeness lenses must still see it.
+
+    **Tests count as code.** This was `source > 0` alone, which discounted a
+    crate whose only change was to its tests — and a second crate's test change
+    is exactly the kind of cross-tree coupling the multi-crate trigger exists
+    to catch. The docstring justified the discount for the *docs* case only, so
+    excluding tests was scope the rationale never covered, and it failed open on
+    the tier decision. Docs remain the only discounted slice.
+
+    **The bound, stated rather than papered over:** this classifies by PATH,
+    so it catches a crate whose changes are non-code *files* and not a crate
+    whose `.rs` changes happen to be entirely doc comments. Line-level
+    classification is not computed here, so a doc-comment-only source change
+    still reads as source. That is the conservative direction — it over-counts
+    crates rather than under-reviewing one — and closing it would need a
+    line-level pass this tool does not do.
+    """
+    rollup: dict[str, dict] = {}
+    for entry in files:
+        path = entry["path"] if isinstance(entry, dict) else str(entry)
+        changes = entry.get("changes", 0) if isinstance(entry, dict) else 0
+        bucket = rollup.setdefault(crate_of(path), {"source": 0, "docs": 0, "tests": 0})
+        bucket[slice_for(path)] += max(1, changes)
+    for bucket in rollup.values():
+        bucket["has_source"] = bucket["source"] > 0 or bucket["tests"] > 0
+    return rollup
 
 
 def _git(args: list[str], cwd: Path | None = None) -> str:
@@ -1019,6 +1110,8 @@ def gate(
             f"regeneration and suite gates still apply"
         )
 
+    crates = crate_rollup(files)
+
     verdict = {
         "base": base,
         "base_ref": base_ref,
@@ -1032,6 +1125,12 @@ def gate(
         "diff_empty": diff_empty,
         "only": only or [],
         "files": files,
+        # The tier decision's crate inputs. `code_crates` is the one to read:
+        # it counts only trees with an actual source change, so a docs-only
+        # second crate no longer escalates a diff to the full fan-out on
+        # presence alone.
+        "crates": crates,
+        "code_crates": sum(1 for b in crates.values() if b["has_source"]),
         "runs_rust_suites": runs_rust_suites,
         "runs_artifact_gates": runs_artifact_gates,
         "ready": not blockers,

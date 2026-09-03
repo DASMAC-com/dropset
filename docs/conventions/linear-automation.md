@@ -370,6 +370,42 @@ has run, and the history lives on the board. The known risk of the
 issue model is cadence decay by neglect; the heartbeat is the guard,
 which is why an unrecorded non-decision counts as a failure of it.
 
+## Reading the Planning document from outside a planning session
+
+A worktree session that wants to check itself against planning direction
+is doing something worth **encouraging**, so the check has to be cheap.
+Two rules, in order:
+
+1. **Ask a live planning session first.** `ListAgents` is the liveness
+   check and `SendMessage` is already the documented channel in the
+   other direction. A peer answers the *question* rather than the text:
+   one session that read the document and then messaged its planning
+   peer got the state of both blockers, the operator's posture, a ruling
+   on the actual question, and an unprompted correction to a figure in
+   the document that had gone stale. The read surfaced none of that,
+   because **a stale line reads exactly like a current one.**
+
+1. **Otherwise use the scoped reader**, never `get_document`:
+
+   ```sh
+   python3 .claude/tools/planning_doc.py --headings
+   python3 .claude/tools/planning_doc.py --section 'Audit state'
+   ```
+
+   It fetches in its own process and prints only what was asked for,
+   resolving `LINEAR_PLANNING_DOC_ID` itself so every form reduces to
+   one allow-rule. `--out <file>` spills the whole content and prints a
+   heading map, for when several sections are wanted.
+
+The MCP `get_document` returns the entire content with **no slice
+accessor**, and this document only grows between close-out rewrites, so
+the cost rises over time. Measured: one such read was a session's
+largest single main-loop result at **≈7.9k**, more than double the next
+non-filing result, consumed for four short passages out of a document
+also covering the board schema, four live tracks, the current phase,
+feeds roster detail, migration numbering, the calendar track,
+session-metrics state, standing decisions and verification debt.
+
 ## Parked findings sit in **Todo**, never Backlog
 
 An issue stamped with a parking milestone — `Audit findings` for audit
@@ -762,10 +798,28 @@ python3 .claude/tools/board_batch.py fields --updates <file>
 ```
 
 Use it for **every non-body issue field** — priority, state, parent,
-milestone, labels, assignee. (Relations are not issue fields; they are a
-separate mutation pair, so adding or removing a blocking edge is the
-`edges` subcommand below, not `fields`. Passing a relation key to
-`fields` is rejected.) One planning
+milestone, labels, assignee, and **title**. (Relations are not issue
+fields; they are a separate mutation pair, so adding or removing a
+blocking edge is the `edges` subcommand below, not `fields`. Passing a
+relation key to `fields` is rejected.)
+
+**`title` is on that list and did not used to be**, which mattered more
+than it sounds: with `linear_issue.py` offering only `append` and
+`find`, retitling had exactly one route — an MCP `save_issue` that
+echoes the **entire stored body** back in order to write a short string.
+That is structurally worst on precisely the issues most likely to need
+it. Retitling the whole-pool fold task returned **116,512 characters**
+and overflowed the tool-result cap, because a fold body is proportional
+to the whole parked pool and the title is the field that needs
+correcting once the body has outgrown the scope the original title
+described — then cost a second call to verify, since a spilled echo is
+not worth reading to confirm one string. Two notes on its shape: the
+id-shaped refusal does **not** apply (a title is prose, so the
+whitespace heuristic that protects `milestone` and `assignee` would
+reject every real value), and unlike a milestone a title **cannot be
+cleared**, so `null` or blank is refused rather than sent.
+
+One planning
 session made 21 writes of which **17 touched no body at all** (a
 priority change, three parent/state/priority moves, eleven milestone
 stamps, one relation removal) and paid roughly **40k** echoing bodies to
@@ -903,6 +957,34 @@ Two generalizations of the checklist rule, both measured:
 aggregated survivor body. A burst of peer folds is the shape to watch —
 several handoffs for one issue arriving within minutes, each taking its
 own echo. Buffer them and write once.
+
+**Consolidation has a RECURRING cost, not only a one-time saving.**
+Because the echo floor is a function of **body size**, folding issues
+trades a one-time merge saving for a per-session tax on every later
+transition against the survivor — and the survivor's body is by
+construction the largest. Measured: four unavoidable round-trips on one
+consolidated issue cost **≈30k**, the biggest concentrated sink of that
+run, with every individual call compliant — the bootstrap write, one
+justified `get_issue` (a planning session had rewritten the body after
+the snapshot), the checklist-tick write, and the In-Review write. The
+documented lever is "fewer calls", and there were already only four. On
+that body a **state-only** transition cost ≈7.6k.
+
+Scoped honestly, because two of those four have since moved: the
+In-Review transition now goes through `board_batch.py state` and body
+appends through `linear_issue.py append`, both zero-echo. What remains
+size-dependent is the anchored `patch` write and any `get_issue`. So the
+tax is smaller than 30k today, and it still scales with the body.
+
+Two consequences at fold time: a very large survivor body is a reason to
+prefer `patch` over a full-body write, and to **skip any transition
+whose state is already correct**. That second one is prescribed generally
+elsewhere; a consolidated body is where it pays most.
+
+**None of this argues against `/merge-tasks`.** Folding is correct, and
+the one-task ruling makes it *more* common — which is exactly why the
+recurring side belongs in writing rather than being rediscovered per
+session.
 
 **Relations and state belong in the CREATING call.** `blockedBy`,
 `blocks`, `relatedTo`, `parentId` and `state` are all accepted at

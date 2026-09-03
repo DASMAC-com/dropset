@@ -7,6 +7,8 @@ user-invocable: true
 
 <!-- cspell:word ETIMEDOUT -->
 
+<!-- cspell:word signingkey -->
+
 # `init-pr`
 
 Bootstrap the current worktree: fetch main, set up the
@@ -94,6 +96,48 @@ gh auth refresh -h github.com -s notifications
 If `gh auth status` reports no valid credential, **stop** and
 tell the user to re-authenticate — don't rename, rebase, or
 commit first.
+
+**Pre-check commit signing here too, for the same reason.**
+Branch protection requires a verified signature on every
+commit, so a locked signing agent fails the bootstrap commit at
+step 6 — after the branch has been renamed and rebased. That is
+the same half-finished-bootstrap shape this step exists to
+prevent, and it is cheap to rule out first:
+
+```sh
+ssh-add -l
+```
+
+**Probe the AGENT, not the config.** The obvious check —
+`git config --get user.signingkey` — reports only that a key is
+*configured*, which is exactly the state a locked agent is in:
+it passes, silently, in the one case this pre-check exists to
+catch, and a green probe then reads as "signing works". Measured
+first-hand: the run that added this pre-check had the probe pass
+and step 6 die anyway, on a locked 1Password agent.
+
+`ssh-add -l` exits non-zero when the agent holds no identities
+(1) or cannot be reached (2), so it fails in the case that
+matters. Its bound, stated rather than assumed: it covers **SSH**
+signing (`gpg.format = ssh`, this repo's setup) and says nothing
+about a GPG key — check `git config --get gpg.format` first if
+that is ever in doubt.
+
+A configured SSH signing key whose agent is locked fails the
+commit with `failed to fill whole buffer`, then
+`fatal: failed to write commit object`. If step 6 dies that
+way, the fix is an operator one — unlock the 1Password desktop
+app, which restores its SSH agent — so **stop and ask** rather
+than retrying more than once or trying to work around it.
+Nothing is lost: the rename and rebase are idempotent and no
+commit was written.
+
+Keep the standing **"a signing failure is an unpushed-state
+alarm"** rule as well; this adds a pre-check, it does not
+replace the alarm. And note the case a startup-only check
+cannot catch: an agent that locks *during* a long unattended
+wait, which is why `review-pr` re-checks before its fan-out and
+its CI wait rather than trusting a probe from session start.
 
 ## Input
 
@@ -272,6 +316,24 @@ not only to the sub-agents you brief:
   `^[a-zA-Z0-9_-]+:`), and if you genuinely want the prose
   headings, ask for them as a separate narrow query.
 
+  **In Rust, `^///` is prose — never put it in a section
+  map.** This is the branch that slips past the rule above,
+  because a doc comment is *declaration-adjacent*: it sits
+  immediately above the item it documents, so it reads as part
+  of the declaration rather than as content. It is content.
+  Measured: mapping `db-schema/tests/schema_fence.rs` with
+  `^enum |^fn |^async fn |^#\[|^const |^/// |^}` returned
+  **≈1.8k**, the fifth-largest single result of that run, to
+  answer "where are the declarations" — because that file is
+  roughly half doc comment by design, the repo's house style
+  there being long rationale blocks. A Rust section map wants
+  `^fn |^pub fn |^impl |^enum |^struct |^const` and nothing
+  else.
+
+  The one-line generalization worth carrying: **a marker that
+  *introduces* a declaration is not the declaration**, and only
+  the declaration belongs in a section map.
+
   **On a prose file, the declaration shape IS the heading
   marker — `^#`, and nothing else.** The rule above reads as
   being about source, so a doc gets mapped with an alternation
@@ -448,10 +510,84 @@ not only to the sub-agents you brief:
   run something whose success output is longer than its
   verdict, wrap it.
 
+  **A DRY RUN or expansion is in this class too, and reads as
+  if it is not.** Naming runners is what lets it slip: a reader
+  checking `make -n` against the list sees `make`, then reasons
+  that `-n` exempts it. It does not. The class by shape is **any
+  command whose output is a program's own text rather than its
+  result** — `make -n`, `make -p`, `git config --list`,
+  `docker compose config` — and the follow-up is a grep of the
+  captured log for the one line in question, never a read of
+  the result.
+
+  The reason it sticks: you are asking a *targeted* question of
+  a *whole-program* dump, so the ratio of wanted to bought
+  lines is worst exactly when the target is most recursive.
+  Measured: `make -n demo` run four times, the two unwrapped
+  calls landing the whole expanded recipe cascade — one the
+  session's 6th-largest single result at ≈972 tokens, ≈1.1k
+  across the shape — to learn whether one recipe line still
+  carried a teardown. Asked later through the wrapper plus a
+  two-pattern grep of the log, the same question cost ~50
+  tokens.
+
+  Two things specific to the dry-run case, both counterintuitive:
+  `make -n` still **executes** `$(MAKE)` sub-make lines, so it is
+  not side-effect-free either — that run's first `make -n demo`
+  really did tear down the keyless collectors. And the cascade
+  scales with the target's recursion depth rather than with the
+  question, so the cheapest-looking target produced the fattest
+  result.
+
   **Nothing prints until the command exits**, so do not poll
   the log of a *backgrounded* run — one session made seven such
   `tail` calls, all empty. Wait for the completion
   notification.
+
+- **Verifying a UI change in a browser: assert
+  programmatically, and screenshot CLIPPED.** This belongs here
+  because browser verification happens in the implement phase,
+  where no skill is driving. A screenshot read back is a
+  top-tier context sink: five full-viewport PNGs were **91% of
+  one session's entire Read cost** (≈105k of ≈115k) and its top
+  five largest results, while two **clipped** captures in the
+  same session cost ≈1.4k each and answered the question
+  completely.
+
+  So: measure the element's bounding box and assert the
+  geometry — an intersection check is a few hundred bytes and
+  is *stronger* evidence than an image because it is exact —
+  then pass that rect to puppeteer's `clip`. Reserve a
+  full-viewport capture for when the composition itself is the
+  question, and take at most one. Not "don't screenshot": the
+  full frames in that session were shown to the operator and
+  drove real decisions. See
+  `docs/conventions/context-economy.md` → "The levers".
+
+- **Before `replace_all`, check whether the replacement
+  CONTAINS the search string.** If it does, the call is not
+  idempotent: sites already carrying the new name get rewritten
+  again, so a call that looks like a safe mechanical rename
+  corrupts the sites that were already correct. Either scope
+  the edit to the specific occurrences, or rename through a
+  token that is not a substring of its replacement.
+
+  The general form: **`replace_all` is safe only when search
+  and replacement are disjoint** — which makes the trap
+  strongest for the commonest kind of rename, widening an
+  identifier by prefix or suffix.
+
+  Measured: a `replace_all` of `MAX_ATTEMPTS` →
+  `REALIZED_FILL_MAX_ATTEMPTS` rewrote the substring inside an
+  import line that had *already* been written by hand,
+  producing `REALIZED_FILL_REALIZED_FILL_MAX_ATTEMPTS`. It
+  surfaced as **14 failing tests** with
+  `ReferenceError: REALIZED_FILL_MAX_ATTEMPTS is not defined` —
+  a runtime error naming the **correct** symbol, which reads as
+  "the import is missing" rather than "the import is mangled",
+  so the first instinct is to open the wrong file. Cost was a
+  full frontend test run, a slice-read to find the mangling, a
+  corrective edit and a second test run.
 
 - **Verify at checkpoints, not after every edit.** Those 12
   test runs were a fix-verify loop after single-file edits,
@@ -1174,18 +1310,27 @@ per-directory *content* — `frontend/node_modules`,
    number here, before any work:
 
    ```sh
-   gh pr list --state open --json number,files --limit 30
+   python3 .claude/tools/migration_collisions.py --others-from-gh
    ```
 
-   ```sh
-   python3 .claude/tools/migration_collisions.py \
-     --others <scratchpad>/others.json
-   ```
-
-   Write the listing to the scratchpad file the tool reads;
-   it makes no network call of its own and compares
+   One call. `--others-from-gh` runs the `gh pr list` read
+   **inside the tool's own process**, and it compares
    **numbers, not filenames**, so `0003_telemetry.sql` and
    `0003_roster.sql` collide.
+
+   **This used to be two commands with no way to connect
+   them.** The step named a `gh pr list` and a
+   `--others <file>.json` compare and left the gap to the
+   caller, and every sanctioned way across it is closed: a
+   `>` redirect is a compound the shell guard blocks (and
+   worktree isolation refused it first), a pipe likewise, and
+   capturing the output to re-emit it with `Write` routes
+   every open PR's file list **through context** — the exact
+   ~4.0k cost for a two-line answer that the tool exists to
+   avoid. The read moved into the tool, matching how
+   `review_diff.py --overlap` already handles the identical
+   problem. `--others <file>.json` remains for a caller that
+   already holds the inventory.
 
    **Why here rather than at review.** `review-pr` already
    runs this probe, and that is too late by construction: the

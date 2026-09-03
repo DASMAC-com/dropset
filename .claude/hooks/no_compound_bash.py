@@ -16,9 +16,12 @@ reason on stderr, which Claude Code feeds back to the model so it can
 split the command. The guard fails *open*: any parse problem returns 0
 rather than wedging the session.
 
-Escape hatch: a command carrying the literal marker `#compound-ok` is
-let through, so a genuinely-unavoidable compound (rare) stays possible
-and auditable in the transcript.
+Escape hatch: a command carrying the literal marker `#compound-ok` as a
+genuine unquoted comment is let through, so a genuinely-unavoidable
+compound (rare) stays possible. The marker is visible in the transcript,
+which is what makes a *marked* bypass reviewable — but do not read that
+as the guard recording every bypass, because a scan that finds nothing
+leaves no trace at all.
 
 **Parser audit, recorded so it is not repeated — including what the
 first pass got wrong.** A sibling project's destructive-command guard
@@ -40,6 +43,16 @@ destructive guard, where the same defect was an outright bypass of its
 no-override deny tier, is what surfaced it. Both are fixed. The lesson
 worth keeping: an audit that checks for one named bug class is not an
 audit of the parser, and should not be recorded as one.
+
+**And the second audit missed one too.** Fixing the comment branch left
+the scanner still looking only for operator *characters*, so `ls\\npwd` —
+two commands, no operator between them — was clean by construction. A
+later reproduction found it directly and confirmed it live: the harness
+passes raw multi-line text through in `tool_input.command` and
+normalizes nothing. A newline is now a separator in its own right. The
+compounding lesson: this parser has now been declared clean twice and
+been wrong twice, both times about what it was not looking *for* rather
+than how it looked.
 """
 
 import json
@@ -56,10 +69,25 @@ def find_violation(cmd):
     operators (`|`, `;`, `&`, `<`, `>`) but command substitution (`$(`
     and a backtick) stays active inside double quotes, mirroring real
     shell. A backslash outside single quotes escapes the next character.
+
+    **A newline between two commands is itself a separator.** `ls\\npwd`
+    packs two calls into one Bash invocation exactly as `ls; pwd` does, and
+    the convention forbids both — but this scanner only ever looked for
+    operator *characters*, so a bare two-line call had nothing to find and
+    passed. Three things deliberately do not count as a second command: a
+    newline inside quotes (ordinary text), a backslash-escaped newline (a
+    line continuation, i.e. one command spread over two lines), and a line
+    that is blank or holds only a comment.
     """
     quote = None  # None | "'" | '"'
     i = 0
     n = len(cmd)
+    # `seen_content` — has the current logical line carried any command text?
+    # `pending_newline` — did an earlier line, so that the next real character
+    # begins a *second* command? Tracking both is what lets a trailing
+    # newline and a comment-only line stay legal.
+    seen_content = False
+    pending_newline = False
     while i < n:
         c = cmd[i]
 
@@ -69,8 +97,33 @@ def find_violation(cmd):
             i += 1
             continue
 
-        # Outside single quotes, a backslash escapes the next character.
+        # Outside single quotes, a backslash escapes the next character —
+        # including a newline, which is a line continuation (one command
+        # spread over two lines) rather than a separator. Consuming both
+        # characters here is what keeps a continuation legal.
+        #
+        # But an escaped NON-newline character is ordinary command content and
+        # must run the same bookkeeping as any other content character. This
+        # branch used to `i += 2; continue` unconditionally, so it skipped past
+        # the `pending_newline` test and never set `seen_content` — which made
+        # an all-escaped line invisible to the newline separator in both
+        # directions:
+        #
+        #     ls\n\p\w\d      # `pending_newline` set, but no character tests it
+        #     \l\s\npwd       # line 1 sets no content, so the newline is inert
+        #
+        # Both are two commands in bash (`\l\s` is `ls`, `\p\w\d` is `pwd`).
+        # Contrived to write by accident — and this is the parser whose own
+        # docstring records being "declared clean twice and wrong twice, both
+        # times about what it was not looking for". This was the third, of the
+        # same shape, so the bookkeeping is now shared rather than duplicated
+        # into a branch that can forget it.
         if c == "\\":
+            escaped = cmd[i + 1] if i + 1 < n else ""
+            if escaped != "\n":
+                if pending_newline:
+                    return "a newline separating two commands (\\n)"
+                seen_content = True
             i += 2
             continue
 
@@ -86,11 +139,16 @@ def find_violation(cmd):
             continue
 
         # Unquoted.
-        if c == "'":
-            quote = "'"
-        elif c == '"':
-            quote = '"'
-        elif c == "#" and (i == 0 or cmd[i - 1].isspace()):
+        if c == "\n":
+            # End of a logical line. If it carried a command, the next one
+            # starts a second command.
+            if seen_content:
+                pending_newline = True
+            seen_content = False
+            i += 1
+            continue
+
+        if c == "#" and (i == 0 or cmd[i - 1].isspace()):
             # An unquoted '#' starts a comment that ends at the NEWLINE — so
             # skip to it and keep scanning, rather than returning.
             #
@@ -103,8 +161,25 @@ def find_violation(cmd):
             newline = cmd.find("\n", i)
             if newline == -1:
                 return None
+            # Skipping the comment also crosses its newline, so close the line
+            # here exactly as the branch above would have. Comment text is not
+            # command content, so a comment-only line leaves `seen_content`
+            # false and adds no second command.
+            if seen_content:
+                pending_newline = True
+            seen_content = False
             i = newline + 1
             continue
+
+        if not c.isspace():
+            if pending_newline:
+                return "a newline separating two commands (\\n)"
+            seen_content = True
+
+        if c == "'":
+            quote = "'"
+        elif c == '"':
+            quote = '"'
         elif c == "`":
             return "a backtick command substitution (`)"
         elif c == "$" and i + 1 < n and cmd[i + 1] == "(":
@@ -182,6 +257,8 @@ DENY_MESSAGE = (
     "reusable allow-rule, so it re-prompts on every run.\n\n"
     "Run one bare command per Bash call instead:\n"
     "  - Split `&&` / `;` chains into separate tool calls.\n"
+    "  - Split a multi-line command into one tool call per line (a "
+    "backslash line-continuation of a single command is fine).\n"
     "  - Replace `>` / `>>` redirects with the Write tool, and `<` with "
     "Read.\n"
     "  - Replace pipes into sed/awk/grep/head/tail with the Read or Grep "
@@ -247,6 +324,40 @@ def _self_test():
         ("echo hi # plain trailing comment", False),
         # '#' mid-word is literal, not a comment.
         ("git show HEAD#nope", False),
+        # A newline between two commands is a separator, with or without a
+        # comment in the way — the whole point is that neither line needs to
+        # carry an operator for this to be two commands.
+        ("ls\npwd", True),
+        ("ls #x\nrm -rf /tmp/zzz", True),
+        ("git log # note\nls && pwd", True),
+        ("echo hi # ok\ncargo build > /tmp/x", True),
+        ("ls\ncat /etc/hosts | head", True),
+        # A trailing or leading newline adds no second command.
+        ("ls\n", False),
+        ("\nls", False),
+        ("ls\n\n", False),
+        # A line holding only a comment is not a second command.
+        ("ls\n# note", False),
+        ("# note\nls", False),
+        # A backslash-escaped newline is a line continuation: one command.
+        ("python3 run_quiet.py -- \\\n  python3 lint_paths.py --changed", False),
+        # An escaped non-newline character is ordinary content, so it both
+        # TRIPS a pending newline and SETS content for the line it sits on.
+        # The escape branch used to skip the bookkeeping entirely, leaving an
+        # all-escaped line invisible to the separator from either side.
+        ("ls\n\\p\\w\\d", True),
+        ("\\l\\s\npwd", True),
+        ("\\l\\s\n\\p\\w\\d", True),
+        # ...while a single escaped command on one line stays one command.
+        ("\\l\\s -la", False),
+        ("printf %s\\n", False),
+        # A continuation whose second line is escaped is still one command.
+        ("\\l\\s \\\n  -la", False),
+        # A newline inside quotes is ordinary text.
+        ('git commit -m "line one\nline two"', False),
+        ("printf 'a\nb'", False),
+        # The escape hatch still covers a deliberate multi-line command.
+        ("ls\npwd #compound-ok", False),
     ]
     failures = []
     for cmd, should_block in cases:

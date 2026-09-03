@@ -258,6 +258,68 @@ def section(lines: list[str], pattern: str) -> tuple[list[str], int]:
     return lines[start:end], start + 1
 
 
+def sections(lines: list[str], pattern: str) -> tuple[list[str], int]:
+    """**Every** heading block whose heading matches ``pattern``, concatenated.
+
+    The deliberate counterpart to ``section``, which refuses an ambiguous
+    pattern so `--section 'Part 2'` cannot silently return `Part 24`. That
+    refusal is right for a single-section read and stops applying at exactly
+    the scale where slicing matters most: a fold needs the same two sections
+    out of every lever in a dump, which is N matches by construction, so
+    `--section` rejects it (`4 headings match … narrow the pattern`) and the
+    compliant-looking move becomes reading the whole file.
+
+    Measured: one pass wrote all 41 parked bodies to a file correctly and then
+    spent ~8.5k across 7 `--slice` calls to fold 12 of them, because
+    "the lever plus the edit for these 12 identifiers" was not expressible in
+    one call. Asking for multiple matches explicitly is what makes it one.
+
+    Blocks are emitted in file order, each running to the next heading of the
+    same or shallower depth — the same bound ``section`` uses.
+
+    **A nested match is not emitted twice.** A parent block runs to the next
+    heading of its own depth, so it already contains its children; a child
+    heading that also matches the pattern was then emitted a second time, and
+    a pattern matching a word that appears at two depths duplicated everything
+    between them. That is payload inflation in the one tool whose entire
+    purpose is shrinking a payload, so a match falling inside an
+    already-emitted block is skipped and the returned count reflects blocks
+    actually emitted rather than headings matched.
+    """
+    try:
+        rx = re.compile(pattern, re.IGNORECASE)
+    except re.error as e:
+        raise ReadResultError(
+            f"--sections {pattern!r} is not a valid regex: {e}"
+        ) from e
+
+    heads = list(iter_headings(lines))
+    found = [(i, d, text) for i, d, text in heads if rx.search(text)]
+    if not found:
+        raise ReadResultError(
+            f"no heading matches {pattern!r} — run --headings to see what is there"
+        )
+
+    out: list[str] = []
+    emitted = 0
+    covered_to = -1
+    for start, depth, _ in found:
+        if start < covered_to:
+            # Already inside a block emitted above — a nested heading whose
+            # parent also matched. Emitting it again would duplicate every line
+            # between the two.
+            continue
+        end = len(lines)
+        for i, d, _ in heads:
+            if i > start and d <= depth:
+                end = i
+                break
+        out.extend(lines[start:end])
+        covered_to = end
+        emitted += 1
+    return out, emitted
+
+
 def grep(lines: list[str], pattern: str, context: int) -> list[str]:
     """Matching lines as ``<line>:<text>``, with ``--`` between context runs.
 
@@ -395,6 +457,14 @@ def run(argv: list[str]) -> int:
         help="list markdown headings with line numbers",
     )
     mode.add_argument("--section", default=None, metavar="RE", help="one heading block")
+    mode.add_argument(
+        "--sections",
+        default=None,
+        metavar="RE",
+        help="EVERY matching heading block, in file order — the deliberate "
+        "multi-match form, for when N matches is the point (a fold wanting "
+        "the same two sections out of every lever) rather than an ambiguity",
+    )
     mode.add_argument("--grep", default=None, metavar="RE", help="matching lines")
     mode.add_argument(
         "--slice", default=None, metavar="A:B", help="inclusive line range"
@@ -441,6 +511,10 @@ def run(argv: list[str]) -> int:
         block, start = section(lines, args.section)
         out = block
         summary = f"section at line {start}, {len(block)} line(s)"
+    elif args.sections is not None:
+        block, count = sections(lines, args.sections)
+        out = block
+        summary = f"{count} section(s), {len(block)} line(s) of {len(lines)}"
     elif args.grep is not None:
         out = grep(lines, args.grep, max(0, args.context))
         shown = sum(1 for line in out if line != "--")

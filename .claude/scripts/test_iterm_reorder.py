@@ -19,6 +19,63 @@ ir = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(ir)
 
 
+class LoadPalette(unittest.TestCase):
+    """The palette is read from iterm-colors.sh, not copied. The duplication it
+    replaced was silent: an unrecognized hex falls through to "neutral", so a
+    recolor left the colors right and killed attention ordering outright."""
+
+    def _write(self, body):
+        import tempfile
+
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".sh", delete=False, encoding="utf-8"
+        )
+        tmp.write(body)
+        tmp.close()
+        self.addCleanup(lambda: Path(tmp.name).unlink(missing_ok=True))
+        return Path(tmp.name)
+
+    def test_reads_the_committed_palette(self):
+        palette, from_file = ir.load_palette()
+        self.assertTrue(from_file, "the committed iterm-colors.sh must be found")
+        self.assertEqual(palette["yellow"], {"3a2c08"})
+        self.assertEqual(palette["green"], {"080c2a", "082a0c"})
+
+    def test_a_recolored_palette_is_picked_up(self):
+        """The whole point: new hexes must classify, not fall through."""
+        path = self._write(
+            'STATE_NEUTRAL="111111"\n'
+            'STATE_REPLY="222222"\n'
+            'STATE_PERMISSION="333333"\n'
+            'STATE_MARK="444444"\n'
+        )
+        palette, from_file = ir.load_palette(path)
+        self.assertTrue(from_file)
+        self.assertEqual(ir._group_for_color("333333", palette), "yellow")
+        self.assertEqual(ir._group_for_color("222222", palette), "green")
+        self.assertEqual(ir._group_for_color("444444", palette), "green")
+        self.assertEqual(ir._group_for_color("111111", palette), "neutral")
+        # And the OLD hexes must no longer classify — that is what "read the
+        # palette" buys over "keep the copies in sync".
+        self.assertEqual(ir._group_for_color("3a2c08", palette), "neutral")
+
+    def test_a_partial_palette_falls_back_whole(self):
+        """Half a palette would silently demote the missing state to neutral,
+        which is the failure mode being removed — so fall back entirely."""
+        path = self._write('STATE_PERMISSION="333333"\n')
+        palette, from_file = ir.load_palette(path)
+        self.assertFalse(from_file)
+        self.assertEqual(palette["yellow"], {"3a2c08"})
+
+    def test_a_missing_palette_file_falls_back(self):
+        palette, from_file = ir.load_palette(Path("/nonexistent/iterm-colors.sh"))
+        self.assertFalse(from_file)
+        self.assertEqual(palette["green"], {"080c2a", "082a0c"})
+
+    def test_group_lookup_is_case_and_whitespace_tolerant(self):
+        self.assertEqual(ir._group_for_color(" 3A2C08\n"), "yellow")
+
+
 class PlanOrder(unittest.TestCase):
     def setUp(self):
         self.seq, self.last_group, self.counter = {}, {}, 0

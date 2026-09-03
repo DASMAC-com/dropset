@@ -28,7 +28,10 @@ local-integrations convention doc.
 
 # cspell:word ttys
 
+from __future__ import annotations
+
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -37,11 +40,29 @@ try:
 except ImportError:  # importable for unit-testing the pure ordering logic
     iterm2 = None
 
-# Where the bash hooks record each session's state. Keep the prefix and the
-# state hexes in sync with iterm-colors.sh.
+# Where the bash hooks record each session's state.
 STATE_PREFIX = "/tmp/iterm-color-"
-_YELLOW_HEX = "3a2c08"  # permission request / file edit -> go approve
-_GREEN_HEXES = {"080c2a", "082a0c"}  # reply wanted / attend mark
+
+# The palette is READ from iterm-colors.sh rather than copied here. It used to
+# be duplicated, and the duplication was a silent trap: `_group_for_color`
+# falls through to "neutral" for any hex it does not recognize, so recoloring
+# the palette — which the convention doc explicitly invites, saying "edit this
+# file to recolor everything" — left the colors correct and killed FIFO
+# attention ordering outright, with nothing to see. These values are only a
+# last-resort fallback for a deploy where the palette cannot be located.
+_FALLBACK_PALETTE = {
+    "yellow": frozenset({"3a2c08"}),  # permission request / file edit
+    "green": frozenset({"080c2a", "082a0c"}),  # reply wanted / attend mark
+}
+
+# `STATE_PERMISSION` is the yellow; `STATE_REPLY` and `STATE_MARK` are both
+# greens. `STATE_NEUTRAL` needs no entry — it is the fall-through.
+_PALETTE_KEYS = {
+    "yellow": ("STATE_PERMISSION",),
+    "green": ("STATE_REPLY", "STATE_MARK"),
+}
+
+_STATE_ASSIGNMENT = re.compile(r'^(STATE_[A-Z]+)="([0-9a-fA-F]{6})"', re.MULTILINE)
 
 # Group ordering: yellow first, then green, then everything else.
 _PRIORITY = {"yellow": 0, "green": 1, "neutral": 2}
@@ -49,10 +70,61 @@ _PRIORITY = {"yellow": 0, "green": 1, "neutral": 2}
 POLL_SECONDS = 0.3
 
 
-def _group_for_color(color: str) -> str:
-    if color == _YELLOW_HEX:
+def palette_source() -> Path | None:
+    """Where to read `iterm-colors.sh` from, or None if it cannot be found.
+
+    A sibling first, which covers both the in-checkout layout and the
+    `~/.claude/scripts/` global deploy (the deploy step copies the whole
+    family). The explicit home path covers the iTerm2 `AutoLaunch/` deploy,
+    where only this file is copied and there are no siblings.
+    """
+    for candidate in (
+        Path(__file__).resolve().parent / "iterm-colors.sh",
+        Path.home() / ".claude" / "scripts" / "iterm-colors.sh",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def load_palette(path: Path | None = None) -> tuple[dict, bool]:
+    """Return ``(palette, from_file)`` — the state hexes and whether they came
+    from `iterm-colors.sh` rather than the fallback.
+
+    Reports the provenance instead of swallowing it: a reorderer silently
+    running on stale fallback hexes is the very failure this replaced, so the
+    caller announces which source it got.
+    """
+    path = palette_source() if path is None else path
+    if path is None:
+        return {k: set(v) for k, v in _FALLBACK_PALETTE.items()}, False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {k: set(v) for k, v in _FALLBACK_PALETTE.items()}, False
+
+    found = {name: value.lower() for name, value in _STATE_ASSIGNMENT.findall(text)}
+    palette = {}
+    for group, names in _PALETTE_KEYS.items():
+        palette[group] = {found[n] for n in names if n in found}
+    # A partial read is worse than no read: it would silently demote whichever
+    # state went missing to "neutral". Fall back whole rather than in part.
+    if not all(palette.values()):
+        return {k: set(v) for k, v in _FALLBACK_PALETTE.items()}, False
+    return palette, True
+
+
+# Loaded once at import. A palette edit therefore needs the reorderer
+# restarted — unlike `iterm-monitor.sh`, which re-reads on every state change.
+PALETTE, PALETTE_FROM_FILE = load_palette()
+
+
+def _group_for_color(color: str, palette: dict | None = None) -> str:
+    palette = PALETTE if palette is None else palette
+    color = color.strip().lower()
+    if color in palette["yellow"]:
         return "yellow"
-    if color in _GREEN_HEXES:
+    if color in palette["green"]:
         return "green"
     return "neutral"
 
@@ -132,6 +204,19 @@ def _prune(seq: dict, last_group: dict, live: set) -> None:
 
 
 async def main(connection):
+    # Say which palette is in force. Running on the fallback hexes still works
+    # but silently drifts the moment someone recolors iterm-colors.sh, and a
+    # silent drift here degrades to "no attention ordering at all".
+    if PALETTE_FROM_FILE:
+        print(f"iterm-reorder: palette read from {palette_source()}")
+    else:
+        print(
+            "iterm-reorder: iterm-colors.sh not found or unreadable — using "
+            "built-in fallback hexes. If the palette has been recolored, "
+            "attention ordering will not recognize the new states.",
+            file=sys.stderr,
+        )
+
     app = await iterm2.async_get_app(connection)
     seq: dict = {}  # tab_id -> FIFO sequence within its current attention group
     last_group: dict = {}  # tab_id -> last-seen group (to detect entry)

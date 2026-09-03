@@ -42,12 +42,29 @@ call, generalizes it via `firm_core.py`, and writes the rule into the
 shared `settings.local.json` at the main checkout:
 
 ```sh
-python3 .claude/tools/firm_last.py
-python3 .claude/tools/firm_last.py exact
+python3 .claude/tools/firm_last.py --session-id <this-session-uuid>
+python3 .claude/tools/firm_last.py exact --session-id <this-session-uuid>
 ```
 
-`exact` is the tool's **only** argument — pass it when, and only when,
-the invocation was `/firm-perms exact`. Don't forward the invocation
+**Always pass `--session-id`, and read it off your own scratchpad
+path.** The UUID is the directory name immediately above `scratchpad` in
+the scratchpad directory your environment names — the same id that names
+the on-disk transcript, so nothing has to be guessed.
+
+Without it the tool resolves the transcript by **newest mtime**, and with
+one planning session plus several implementers writing concurrently, the
+most recently touched transcript is frequently not the session that just
+approved the command. The firm then harvests *another session's*
+approval into the shared `settings.local.json` that resolves through
+every worktree. That is recoverable — the write is additive and the tool
+reports what it firmed and which transcript it came from — but it is a
+race worth not running, and the id is free to supply.
+
+(Do **not** rely on `$CLAUDE_SESSION_ID`: it is not set in a Bash tool
+call, which is why the tool no longer consults it.)
+
+`exact` is the tool's only positional argument — pass it when, and only
+when, the invocation was `/firm-perms exact`. Don't forward the invocation
 word blindly: `sweep` belongs to the other mode entirely, and the tool
 would silently treat it as a bare fast firm.
 

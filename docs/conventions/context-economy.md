@@ -121,6 +121,28 @@ argument was *not* the reason — see that step for why.)
   the escape hatch, for an adjudication read where the surrounding lines
   genuinely are the question.
 
+  **`--force-context` lifts the size degrade and NEVER the single-file
+  clamp**, and the asymmetry is deliberate rather than an oversight. The
+  degrade fires without the caller having named anything — on printed
+  size, or on a sweep spread across more than three files — where the
+  surrounding lines may really be the question and nothing substitutes
+  for them. ("Size alone" overstated it: the spread half never fires
+  under `--dir` or `--glob` at all.) The clamp fires only
+  once the caller has *already named one file* — and for that case a
+  slice `Read` answers the same question strictly better, so an override
+  would buy nothing but a way to pay more.
+
+  So **a clamp is information, not an obstacle.** When it fires, it has
+  told you the scope is one file; slice-read the region it names. Reaching
+  for `--force-context` there does not work and should not: one session
+  with the rule available, operating carefully, still fired two
+  `--force-context --context 3` single-file sweeps in one run (≈2.6k and
+  ≈2.1k, ~15% of its entire Bash cost) — both carrying the clustering
+  advisory in the very result it then consumed, and both asked a pure
+  *location* question. That signature — right rule, careful session,
+  twice in one run — is why this one is enforced in the tool rather than
+  restated here.
+
   **Treat the helper's advisory line as a DIRECTIVE, not a note.** When
   the summary reports clustering or a many-file spread, do not consume
   that result: re-issue `--files-only` (or add a `--glob`) and slice-read
@@ -792,6 +814,79 @@ argument was *not* the reason — see that step for why.)
   covers a cold `pnpm install`, whose output is nearly all registry
   retries and peer-dependency trees: route it through the quiet runner
   (`python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`).
+
+- **Verifying a UI change: assert programmatically, screenshot
+  CLIPPED.** A screenshot read back is a top-tier context sink and
+  nothing here said so. Measured: five full-viewport PNGs cost **≈105k
+  of one session's ≈115k total Read cost — 91%** — and took the top five
+  places in its largest-results table (≈37.0k, ≈20.8k, ≈17.7k, ≈15.2k,
+  ≈14.4k), while every other Read in that session combined came to under
+  11k. A 1280×800 capture read back at ≈37k is worth about twenty-five
+  whole-file source reads.
+
+  The same session demonstrates the fix, which is what makes this
+  concrete rather than speculative: two **clipped** screenshots, taken
+  with puppeteer's `clip` against an element's measured bounding box,
+  cost **≈1.4k each** — ~15× cheaper — and answered "does this control
+  look right" completely. So:
+
+  - **Assert first.** A bounding-box query plus an
+    intersection/geometry check is a few hundred bytes and is *stronger*
+    evidence than an image, because it is exact. In that session a
+    programmatic rectangle-intersection test had already proven the
+    overlay did not collide with anything, which is what made the
+    full-frame shots confirmatory.
+  - **Clip by default.** `clip` takes the rect you just measured, so it
+    costs nothing extra to author.
+  - **Reserve a full viewport** for when the composition itself is the
+    question, take **at most one**, and consider a smaller viewport or a
+    reduced `deviceScaleFactor`.
+
+  The lever is *not* "don't screenshot" — those full-frame images were
+  shown to the operator and drove real design decisions. It is that the
+  default should be clipped and the count deliberate.
+
+- **After a formatter rewrites a file you are still editing, take ONE
+  bounded read covering all the remaining edits' regions.** A formatter
+  invalidates every line the session holds for that file, so the next
+  anchored `Edit` needs its exact text again — and the
+  "before the third slice, sum what you have read" rule does not fire,
+  because each re-read *feels* individually licensed: something just
+  invalidated the previous one, so it reads as a fresh **first** read
+  rather than a third slice.
+
+  Measured: one source file slice-read **five times** in a session
+  (offsets 210, 160, 418, 226, 486) and a second file twice, together
+  that run's five largest single results and the whole of its Read cost
+  (5.8k) — a round trip per edit. Cheaper still where possible: order
+  the edits **before** the formatter runs, then let the hook reformat
+  once at the end.
+
+- **A DRY RUN or expansion is verbose-on-success too.** The rule above
+  is stated by naming runners, and a reader checking `make -n` against
+  that list sees `make` and then reasons that `-n` exempts it. It does
+  not. The class by **shape** is *any command whose output is a
+  program's own text rather than its result* — `make -n`, `make -p`,
+  `git config --list`, `docker compose config` — and the follow-up is a
+  grep of the captured log for the one line in question, never a read of
+  the result.
+
+  Why it sticks: you are asking a **targeted** question of a
+  **whole-program** dump, so the ratio of wanted to bought lines is
+  worst precisely when the target is most recursive. Measured:
+  `make -n demo` run four times, the two unwrapped calls landing the
+  entire expanded recipe cascade — one the session's 6th-largest single
+  result at ~972 tokens, ~1.1k across the shape — to learn whether one
+  recipe line still carried a teardown. The same question asked later
+  through the wrapper plus a two-pattern grep of the log cost ~50
+  tokens.
+
+  Two things specific to a dry run, both counterintuitive: `make -n`
+  still **executes** `$(MAKE)` sub-make lines, so it is not
+  side-effect-free either (that run's first `make -n demo` really did
+  tear down the keyless collectors), and the cascade scales with the
+  target's recursion depth rather than with the question — so the
+  cheapest-looking target produced the fattest result.
 
 - **Bound a probe or extraction script's output at both ends.** When
   probing an unfamiliar external API, go **through a filtering script**

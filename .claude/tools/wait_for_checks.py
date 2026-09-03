@@ -38,6 +38,12 @@ watch instead of being believed, bounded by both :data:`MAX_WATCH_ROUNDS` and
 the caller's original ``--timeout`` so it cannot outlive the budget that was
 set, and ``pending_checks`` names whatever is still outstanding.
 
+The two retryable states hold **separate** round counters, so the reported
+``watch_rounds`` is bounded by their SUM (:data:`MAX_WATCH_ROUNDS` +
+:data:`MAX_NONE_ROUNDS`) rather than by either alone — a wait that observes
+`pending` several times and then `none` spends rounds from both budgets. The
+``--timeout`` bound is unaffected and remains the real ceiling.
+
 A second mode, ``--run <id>``, watches **one workflow run** to its terminal
 state instead of a PR's checks. That is the merge-queue half of the same job:
 once ``mergeQueueEntry`` names the queue branch's check run, this blocks on it.
@@ -144,6 +150,28 @@ DEFAULT_TIMEOUT = 3600
 # wedged in `pending` reports a timeout at a predictable point instead of
 # re-watching until the full `--timeout` elapses.
 MAX_WATCH_ROUNDS = 5
+
+#: Read conclusions that mean "ask again" rather than "this is the answer".
+#:
+#: `pending` is obvious. `none` is here because it is the *registration race*:
+#: `gh` exits immediately when no check has registered yet, which is the norm
+#: in the seconds after a push, and believing it declares a CI-unverified
+#: commit green. The tool already re-entered the watch for `pending`; `none`
+#: was left believing itself, even though `pending` fails safe and `none`
+#: fails open.
+RETRY_CONCLUSIONS = ("pending", "none")
+
+#: Rounds and pacing for a `none` re-read, deliberately NOT the pending ones.
+#:
+#: The registration race resolves in **seconds** — the measured instance
+#: returned in 1 second with four runs already starting — while
+#: `DEFAULT_INTERVAL` is sized for a whole CI run. Reusing the pending pacing
+#: would add minutes of dead wall-clock to every genuinely check-less PR, which
+#: is a real cost paid on the common case to guard the rare one. A short settle
+#: bounded by a few rounds separates the race from the absence at almost no
+#: cost.
+NONE_SETTLE_SECONDS = 3
+MAX_NONE_ROUNDS = 3
 
 # The fields `gh pr checks --json` exposes that a review actually needs — and
 # nothing more, since the point of this read is to be the one compact payload.
@@ -507,6 +535,26 @@ def wait(
     says pending, bounded by :data:`MAX_WATCH_ROUNDS` and by the caller's
     ``timeout``; exhausting either reports ``timeout``, which is the honest
     answer, rather than a settled pending, which is not an answer at all.
+
+    ``pending`` and ``none`` count their rounds separately, so the loop's own
+    worst case is their sum (8) rather than either cap — still finite, and the
+    ``timeout`` deadline bounds it independently. The returned ``watch_rounds``
+    is that shared total, which is why it can exceed
+    :data:`MAX_WATCH_ROUNDS`.
+
+    **``none`` is re-entered on the same footing, and it is the more dangerous
+    of the two.** ``pending`` fails *safe* — keep waiting — while ``none`` fails
+    **open**: it declares a commit CI-clean. Measured: a wait started in the
+    tool call right after a push returned in **1 second** with
+    ``conclusion: "none"``, ``counts: {}``, ``settled: true`` and
+    ``mergeable: "MERGEABLE"``, while four runs were in fact already starting
+    and ``Semantic PR`` had already completed on that exact SHA. Taking that
+    literally treats a CI-unverified commit as green.
+
+    A commit that genuinely has no checks still reports ``none`` once the
+    rounds are spent, **not** ``timeout`` — the rounds established the absence
+    rather than timing out on a wedged run, and collapsing the two would trade
+    one wrong answer for another.
     """
     log = log_path_for(pr)
     started = time.monotonic()
@@ -514,6 +562,19 @@ def wait(
     settled = True
     rounds = 0
     summary: dict | None = None
+    # Rounds spent PER retryable state, not one shared counter.
+    #
+    # A shared counter plus a per-state cap is a fail-open: a wait that read
+    # `pending` twice and then `none` on the third round would compare
+    # rounds(3) against the `none` cap(3), exit with `exhausted_on == "none"`,
+    # and the terminal branch would then PRESERVE `none` — reporting a PR whose
+    # CI was observed pending twice as having no checks at all. That is exactly
+    # the fail-open this retry was added to close, arriving from the pending
+    # side, so the counters are separated.
+    state_rounds = {state: 0 for state in RETRY_CONCLUSIONS}
+    # Which retryable state spent its own rounds, so an exhausted `none` can be
+    # reported as `none` rather than collapsed into `timeout`.
+    exhausted_on: str | None = None
 
     while watch:
         remaining = int(deadline - time.monotonic())
@@ -523,16 +584,27 @@ def wait(
         rounds += 1
         settled = watch_checks(pr, repo, interval, remaining, log)
         summary = summarize(read_checks(pr, repo))
-        if not settled or summary["conclusion"] != "pending":
+        state = summary["conclusion"]
+        if not settled or state not in RETRY_CONCLUSIONS:
             break
-        if rounds >= MAX_WATCH_ROUNDS:
+        # The two retryable states get their own cap and pacing: a `none` is a
+        # seconds-scale registration race, a `pending` is a whole CI run.
+        state_rounds[state] += 1
+        cap = MAX_NONE_ROUNDS if state == "none" else MAX_WATCH_ROUNDS
+        if state_rounds[state] >= cap:
+            # `none` survives the terminal branch only when EVERY round it saw
+            # was `none`. A `none` that followed observed `pending` rounds is a
+            # checks-disappeared anomaly, not an absence, and must not read as
+            # green.
+            exhausted_on = state if state_rounds.get("pending", 0) == 0 else None
             settled = False
             break
         # gh exits immediately when it sees nothing left to wait on, so pace the
         # re-entry rather than spinning through the cap in a few milliseconds.
         # Each round re-truncates the log; the last round's is the one that
         # describes the state actually being reported.
-        time.sleep(max(0.0, min(float(interval), deadline - time.monotonic())))
+        pause = float(NONE_SETTLE_SECONDS if state == "none" else interval)
+        time.sleep(max(0.0, min(pause, deadline - time.monotonic())))
 
     # `--no-watch`, or a timeout budget already spent before the first round.
     if summary is None:
@@ -576,7 +648,13 @@ def wait(
         # waiting on. But a `fail` it *did* observe is definite and strictly more
         # informative than `timeout`, so that one survives — otherwise a caller
         # branching on `conclusion` can't tell a wedged run from a red one.
-        conclusion = "timeout"
+        #
+        # An exhausted `none` also survives: the rounds were spent establishing
+        # that no check ever registered, which is an answer, where `timeout`
+        # would claim a wedged run that never existed. The conflict probe above
+        # has already run on it, so a conflicting PR has been separated out.
+        if not (exhausted_on == "none" and conclusion == "none"):
+            conclusion = "timeout"
 
     return {
         "pr": pr,

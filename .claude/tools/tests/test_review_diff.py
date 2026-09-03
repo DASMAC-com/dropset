@@ -212,6 +212,102 @@ class SliceForTests(unittest.TestCase):
         a documented limitation, asserted so it can't drift silently."""
         self.assertEqual(rd.slice_for("programs/dropset/src/swap.rs"), "source")
 
+    def test_deck_code_is_source_and_only_deck_prose_is_docs(self):
+        """`decks/**` as a whole tree put real application logic on the unsafe
+        side of this module's own rationale: one diff of six `.tsx`/`.ts`/`.css`
+        files produced `source: 0` / `docs: 224`, so the correctness, security
+        and style lenses were each handed an empty file."""
+        self.assertEqual(rd.slice_for("decks/app/DemoDeck.tsx"), "source")
+        self.assertEqual(rd.slice_for("decks/app/page.ts"), "source")
+        self.assertEqual(rd.slice_for("decks/styles/deck.css"), "source")
+        # Deck prose still routes to docs.
+        self.assertEqual(rd.slice_for("decks/demo-v1-spec.md"), "docs")
+
+
+class CrateRollupTests(unittest.TestCase):
+    """The tier decision's crate inputs. The multi-crate trigger weighed the
+    PRESENCE of a second crate rather than what changed in it, so a seven-line
+    doc fix in a second tree escalated a diff to the full fan-out."""
+
+    @staticmethod
+    def _files(*pairs):
+        return [{"path": p, "changes": c} for p, c in pairs]
+
+    def test_a_docs_only_second_crate_does_not_count_as_code(self):
+        rollup = rd.crate_rollup(
+            self._files(("sdk/rs/src/lib.rs", 40), ("docs/interface.md", 7))
+        )
+        self.assertTrue(rollup["sdk"]["has_source"])
+        self.assertFalse(rollup["docs"]["has_source"])
+
+    def test_two_source_crates_both_count(self):
+        rollup = rd.crate_rollup(
+            self._files(("sdk/rs/src/lib.rs", 4), ("programs/x/src/lib.rs", 9))
+        )
+        self.assertEqual(sum(1 for b in rollup.values() if b["has_source"]), 2)
+
+    def test_changed_lines_are_attributed_per_slice(self):
+        rollup = rd.crate_rollup(
+            self._files(
+                ("feeds/src/http.rs", 10),
+                ("feeds/README.md", 3),
+                ("feeds/tests/it.rs", 5),
+            )
+        )
+        self.assertEqual(rollup["feeds"]["source"], 10)
+        self.assertEqual(rollup["feeds"]["docs"], 3)
+        self.assertEqual(rollup["feeds"]["tests"], 5)
+        self.assertTrue(rollup["feeds"]["has_source"])
+
+    def test_a_zero_change_entry_still_registers_the_crate(self):
+        """A rename or mode change reports no line delta, and dropping it would
+        under-count the tree it touched."""
+        rollup = rd.crate_rollup(self._files(("sdk/rs/src/lib.rs", 0)))
+        self.assertTrue(rollup["sdk"]["has_source"])
+
+    def test_root_level_files_share_one_bucket(self):
+        """A root file is not a tree. Each one used to become its own "crate",
+        so a diff touching `Makefile` and `Cargo.toml` read as spanning two —
+        the over-escalation this rollup exists to stop, arriving through the
+        denominator. Measured on the diff that added the rollup itself.
+        """
+        rollup = rd.crate_rollup(
+            self._files(("CLAUDE.md", 2), ("Makefile", 4), ("Cargo.toml", 1))
+        )
+        self.assertEqual(list(rollup), [rd.ROOT_TREE])
+        self.assertEqual(sum(1 for b in rollup.values() if b["has_source"]), 1)
+
+    def test_a_root_level_docs_file_alone_is_not_code(self):
+        rollup = rd.crate_rollup(self._files(("CLAUDE.md", 2)))
+        self.assertFalse(rollup[rd.ROOT_TREE]["has_source"])
+
+    def test_a_tests_only_second_crate_counts_as_code(self):
+        """Tests are code, and a second crate's test change is exactly the
+        cross-tree coupling the multi-crate trigger exists to catch. This was
+        `source > 0` alone, which discounted it — scope the docstring's
+        docs-only rationale never covered, failing open on the tier decision.
+        """
+        rollup = rd.crate_rollup(
+            self._files(("sdk/rs/src/lib.rs", 40), ("feeds/tests/it.rs", 12))
+        )
+        self.assertTrue(rollup["feeds"]["has_source"])
+        self.assertEqual(rollup["feeds"]["source"], 0)
+        self.assertEqual(sum(1 for b in rollup.values() if b["has_source"]), 2)
+
+    def test_docs_remain_the_only_discounted_slice(self):
+        """The complement of the two above, so the discount cannot quietly grow
+        a third member: docs alone is the one slice that does not make a tree
+        count as code.
+        """
+        for path, expected in (
+            ("feeds/src/http.rs", True),
+            ("feeds/tests/it.rs", True),
+            ("feeds/README.md", False),
+        ):
+            with self.subTest(path=path):
+                rollup = rd.crate_rollup(self._files((path, 5)))
+                self.assertEqual(rollup["feeds"]["has_source"], expected)
+
 
 class DiffHeaderPathTests(unittest.TestCase):
     """Slicing keys on the destination path in each ``diff --git`` header."""

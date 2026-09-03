@@ -60,6 +60,42 @@ PERM_WAIT_STALE_SECONDS="${ITERM_PERM_WAIT_STALE_SECONDS:-120}"
 # Per-tty sentinel recording when a permission-prompt yellow was last refreshed.
 perm_wait_path() { printf '%s%s.permwait' "$STATE_PREFIX" "$1"; } # $1 = tty base
 
+# Per-tty state file (the color the monitor paints from).
+state_file_path() { printf '%s%s' "$STATE_PREFIX" "$1"; } # $1 = tty base
+
+# Clear a permission yellow that has stopped being refreshed. $1 = tty base.
+#
+# Lives HERE rather than in iterm-monitor.sh so it can be sourced and tested:
+# the monitor ends in an infinite poll loop, so sourcing that file to reach this
+# function would hang. Behavior is unchanged by the move — it is still the
+# monitor that calls it, on the monitor's slow cadence.
+#
+# Writes the state file rather than painting directly, so the monitor's normal
+# change-detection does the paint and there stays one painting path.
+#
+# All four guards matter, and each is a case that must NOT heal:
+#   * no sentinel      — nothing is waiting (an edit-tool yellow carries none,
+#                        and its lifetime is not governed by permission
+#                        re-fires, so it must never be healed);
+#   * state not yellow — a green or neutral tab is not a lingering permission;
+#   * unreadable mtime — answer unknown, so leave it alone;
+#   * fresh sentinel   — the prompt is still being re-fired, i.e. still waiting.
+heal_stale_permission() {
+  local tty_base="$1" sentinel state_file mtime now
+  [ -n "$tty_base" ] || return 0
+  sentinel="$(perm_wait_path "$tty_base")"
+  state_file="$(state_file_path "$tty_base")"
+  [ -f "$sentinel" ] || return 0
+  [ "$(cat "$state_file" 2>/dev/null)" = "$STATE_PERMISSION" ] || return 0
+  mtime=$(stat -f %m "$sentinel" 2>/dev/null) || return 0
+  [ -n "$mtime" ] || return 0
+  now=$(date +%s)
+  if [ "$((now - mtime))" -ge "$PERM_WAIT_STALE_SECONDS" ]; then
+    rm -f "$sentinel"
+    echo "$STATE_NEUTRAL" >"$state_file"
+  fi
+}
+
 # Map a state hex to the *tab* tint hex (or the literal "default" for no tint).
 bg_to_tab() {
   case "$1" in

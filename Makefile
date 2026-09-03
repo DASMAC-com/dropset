@@ -878,6 +878,13 @@ session-metrics:
 # tab-ordering logic). The tools tests import their modules bare (`import
 # firm_core`), so discovery runs with the tests dir as start and the tool home
 # as top-level (`-t`) to keep those imports resolving. Run in CI's lint job.
+#
+# `.claude/hooks` is deliberately NOT a discovery root — the guards are hook
+# entry points, not unittest modules. Their in-file case tables (150+ cases
+# across four parsers) reach this target through
+# `.claude/tools/tests/test_hook_self_tests.py`, which shells each guard's
+# `--self-test`. Before that they ran only when a human typed the flag by hand,
+# which left the most security-sensitive files here the least covered.
 .PHONY: tools-tests
 tools-tests:
 	python3 -m unittest discover \

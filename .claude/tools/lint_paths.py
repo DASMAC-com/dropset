@@ -89,6 +89,10 @@ _LS_FILES = [
     "-z",
 ]
 
+# The hook `--prose` runs. Named here rather than inline so the pre-flight and
+# the hook config cannot drift apart silently.
+PROSE_HOOK = "cspell"
+
 # `--changed`'s untracked half. A file that has never been added is by
 # definition part of this branch's work, and it is exactly the class the
 # whole-tree resolver above exists to stop losing — so it must survive the
@@ -254,6 +258,13 @@ def main(argv: list[str] | None = None) -> int:
         f"(default: {DEFAULT_BASE})",
     )
     parser.add_argument(
+        "--prose",
+        action="store_true",
+        help="the spelling pre-flight: run ONLY the cspell hook over this "
+        "branch's changed files. Implies --changed, and takes no arguments, "
+        "which is the whole point — see PROSE_HOOK.",
+    )
+    parser.add_argument(
         "--print",
         action="store_true",
         dest="print_only",
@@ -266,6 +277,25 @@ def main(argv: list[str] | None = None) -> int:
         help="arguments forwarded verbatim to `pre-commit run` (pass them after `--`)",
     )
     args = parser.parse_args(argv)
+
+    hook_args = list(args.hook_args)
+    if args.prose:
+        # `--prose` is a zero-argument spelling pre-flight, and being
+        # zero-argument is the mechanism rather than a convenience. The rule
+        # "check spelling before the first full round" exists, is documented,
+        # and gets skipped — because the full sweep needs no arguments while
+        # the prescribed narrow form needs a hook id and a path list. That is
+        # the same asymmetry `--changed` was added to remove, one level down.
+        #
+        # What it buys is FEWER FAILED ROUNDS, not narrower output: one
+        # measured session ran `make lint` six times for ~2.1k of failure
+        # tails, two of those rounds spelling-only, each discovering three
+        # more British spellings. The scoped form
+        # would have failed identically on an unknown word; only finding them
+        # all at once helps.
+        args.changed = True
+        if not hook_args:
+            hook_args = [PROSE_HOOK]
 
     root = repo_root()
     files = changed_files(root, args.base) if args.changed else lint_files(root)
@@ -296,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     return subprocess.run(
-        pre_commit_cmd(args.config, args.hook_args, files),
+        pre_commit_cmd(args.config, hook_args, files),
         cwd=root,
     ).returncode
 

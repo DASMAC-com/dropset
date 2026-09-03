@@ -148,11 +148,25 @@ Optional (ask on a direct run if not provided):
    (Read/Grep/Glob over shell, one bare globbable command
    per Bash call) precisely *because* they explore widely.
    Don't narrow the brief — unlike a diff review, an
-   audit is meant to look anywhere in the repo. At
-   minimum:
+   audit is meant to look anywhere in the repo.
+
+   **Split a dimension that would invite
+   self-decomposition, at plan time.** The brief now tells
+   every agent not to spawn sub-agents of its own, but a
+   dimension whose scope spans obviously separable lanes
+   invites exactly that: comment-accuracy over source
+   comments *plus* a spec doc *plus* five READMEs is three
+   jobs wearing one name. One such agent fanned out four
+   grandchildren for ≈8.8M of per-turn input that no skill
+   asked for, and the fan-out was invisible to the
+   rotation's own plan. If a dimension reads as lanes,
+   make it separate agents here, where they are counted.
+
+   At minimum:
 
    - **Security / pen-testing** — use the checklist for
      the scope's kind:
+
      - *Program (Rust):* missing signer / owner / PDA /
        `has_one` checks, unchecked arithmetic, CPI to
        unverified programs, slippage / min-out gaps,
@@ -179,19 +193,23 @@ Optional (ask on a direct run if not provided):
        skill or settings file; and a skill step that tells
        an agent to weaken or route around a guard rather
        than satisfy it.
+
    - **Comment accuracy** — comments and doc-comments
      that contradict, overstate, or no longer match the
      code they annotate.
+
    - **Magic numbers / DRY / duplication** — unnamed
      values that should be named or configured; repeated
      logic, parallel branches that should share a helper,
      copy-pasted constants or shapes. Flag the opposite
      too: premature or speculative abstractions with one
      caller that add indirection without payoff.
+
    - **Modularity / extensibility** — coupling,
      abstractions in the wrong layer, hidden
      dependencies, seams that force editing many files to
      extend.
+
    - **Hierarchical organization** — for every directory
      in scope, count the immediate children. A directory
      with, say, more than ~15 files and no subdirectories
@@ -201,6 +219,7 @@ Optional (ask on a direct run if not provided):
      suggest (by-feature, by-layer, by-shape). Applies
      even to directories that aren't growing, when the
      groupings are visible.
+
    - **Naming conventions** — names follow the casing and
      idioms already established in sibling files (don't
      invent a house style); names describe what a thing
@@ -209,12 +228,33 @@ Optional (ask on a direct run if not provided):
      stale-after-refactor names (a `*_temp` / `*_new` /
      `*_v2` that outlived its reason). Flag a rename only
      when it genuinely improves clarity.
+
    - **Doc-freshness vs code** — when the scope is a
      `docs/**` file (or code a doc describes): Grep the
      doc's named symbols (structs / fields / invariants /
      events / endpoints / env vars) against the code and
      flag drift (renamed field, changed size assert,
      dropped event field, stale status line).
+
+     **A quoted MIGRATION inverts the usual instinct.**
+     When a doc quotes or paraphrases a claim from
+     `db-schema/migrations/**`, check it against HEAD
+     *behavior*, never against the migration text. An
+     applied migration is immutable — the runner hashes the
+     raw bytes and rejects any change, so even a comment
+     cannot be reworded — which makes it the **least**
+     authoritative statement of current behavior while
+     looking like the most authoritative one. Measured
+     instances: an asymmetry claim in migrations 0003 and
+     0008 was copied into two prose docs and both went
+     stale silently when the world it described was
+     corrected, and migration 0009 states a false invariant
+     (that a source writes bars or ticks and never both,
+     untrue for the coinbase source) whose correction lives
+     in 0010's text instead. Anything reasoning off a
+     migration's stated invariant may be reasoning off a
+     false premise that can never be fixed in place.
+
    - **Instruction integrity** — when the scope is agent
      infra, this is the dimension that matters most, and it
      replaces the code-facing reading of doc-freshness
@@ -229,6 +269,7 @@ Optional (ask on a direct run if not provided):
      prescribed command against the tool's **argument
      parser**, never against its prose — a docstring and an
      `add_argument` call drift independently.
+
    - **One sub-agent per extra focus area.**
 
    Each sub-agent returns findings with `file`, `line`,
@@ -325,20 +366,40 @@ Optional (ask on a direct run if not provided):
      `mcp__claude_ai_Linear__list_issues` (same
      destination) so a re-run doesn't refile a finding
      already captured — match on the `**Fingerprint**:`
-     line. Then `save_issue` (no `id`):
+     line. Then file through the **zero-echo writer**, one
+     call per finding, body on disk:
 
-     ```txt
-     mcp__claude_ai_Linear__save_issue(
-       team: "<$LINEAR_TEAM_ID>",
-       project: "<$LINEAR_PROJECT_ID>",
-       assignee: "<$LINEAR_ASSIGNEE_ID>",
-       state: "Todo",                 // parked, NOT pullable
-       milestone: "Audit findings",   // parked — see above
-       title: "<file>: <imperative fix, no trailing period>",
-       description: "<markdown body, literal newlines>",
-       priority: 3  // 2 for high-severity security
-     )
+     ```sh
+     python3 .claude/tools/linear_issue.py create \
+       --title '<file>: <imperative fix, no trailing period>' \
+       --body-file <scratchpad>/finding-N.md \
+       --state Todo --milestone 'Audit findings' --priority 3
      ```
+
+     `--priority 2` for a high-severity security finding.
+     Team, project and assignee resolve from the `LINEAR_*`
+     environment by default, so they are never spelled here.
+
+     **Not `save_issue`.** The MCP echoes the entire stored
+     body back on a *create* as well, which makes it worst
+     for precisely this caller: an audit files folded issues
+     with a part and a fingerprint per finding, so the bodies
+     are long **by design** and the cost grows with exactly
+     the thing the fold rule encourages. Measured (session
+     fa6fc519, the ENG-978 seam audit): `save_issue` was the
+     top main-loop sink at **9 calls / ≈22.8k**, supplying
+     six of the session's eight largest single results, while
+     the entire rest of the main loop's tool results came to
+     roughly 23k combined — one shape, about half the cost.
+     Every echoed byte was content the session had just
+     authored, so nothing decision-relevant is lost.
+
+     State, milestone and priority are writer *parameters*,
+     which is what lets one filer serve this skill's
+     `Todo` + `Audit findings` parking and a planning
+     session's Backlog-plus-priority follow-up filings
+     (27 calls / ≈30.1k in one measured pass) without a
+     second implementation.
 
      **Meta-work prefix.** If every path the finding's fix
      will edit sits under the meta surface (`.claude/**`,

@@ -74,10 +74,23 @@ resolves the in-flight issues from Linear, skips the ones already open,
 and emits one AppleScript that opens and resumes the rest; read-only
 unless `--apply`), `migration_collisions.py` (compares this branch's new
 migration numbers
-against other open PRs' before an enqueue — it takes the other PRs'
-files from a **file** rather than calling GitHub, so the network read
-stays on the MCP/`gh` path and the compare stays deterministic),
-`check_home_paths.py` (the committed-agent-material hygiene guard, wired
+against other open PRs' before an enqueue — `--others-from-gh` runs that
+open-PR read **inside its own process**, because the earlier
+read-then-compare pair left a gap no sanctioned shell form could bridge
+and re-emitting the listing put every PR's file list through context;
+`--others <file>.json` remains for a caller that already holds the
+inventory and keeps the compare network-free),
+`convention_refs.py` (reports skill/doc citations whose target file or
+anchor no longer resolves, distinguishing the two — it replaced four
+prose bullets that took eight greps and ~1.2k per housekeeping pass to
+print one line, and both `housekeeping` step 5 and `review-pr`'s
+freshness lens call it so the periodic and PR paths cannot drift),
+`planning_doc.py` (a scoped reader for the Planning document — the MCP
+`get_document` has no slice accessor and returns a document that only
+grows, so one measured read was a session's largest main-loop result at
+≈7.9k for four short passages; ask a live planning session first, use
+this when none is live), `check_home_paths.py` (the
+committed-agent-material hygiene guard, wired
 as a scoped pre-commit hook), `lens_preamble.py` (composes the standing
 half of a lens brief from the
 [sub-agent brief](sub-agent-brief.md) plus a skill's own committed

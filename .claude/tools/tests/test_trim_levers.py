@@ -1060,12 +1060,58 @@ class BodiesBearingReadTests(unittest.TestCase):
             path = os.path.join(d, "bodies.md")
             code, out, err = self._run(["list", "--bodies-out", path])
             self.assertEqual(code, 0)
-            written = open(path, encoding="utf-8").read()
+            written = Path(path).read_text(encoding="utf-8")
         self.assertIn("BODY-ONE", written)
         self.assertIn("BODY-TWO", written)
         # Zero echo: the payload is in the file, never in the output.
         self.assertNotIn("BODY-ONE", out + err)
         self.assertIn("chars to", err)
+
+    def test_bodies_out_suppresses_the_row_listing(self):
+        """`--bodies-out`'s output IS the file. Printing the rows too meant a
+        fold following step 2 as written bought the same 41-row listing three
+        times — ~4.3k for one listing's worth of information, ranks 4, 5 and 7
+        of that session's largest results."""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bodies.md")
+            _, out, err = self._run(["list", "--bodies-out", path])
+            self.assertNotIn("ENG-1", out)
+            self.assertNotIn("ENG-2", out)
+            # The size line still reports what happened.
+            self.assertIn("body(ies)", err)
+
+    def test_fingerprints_alongside_bodies_out_is_accepted_but_inert(self):
+        """What passing both actually does — which is not "compose".
+
+        `--fingerprints` adds a column to the ROW LISTING, and `--bodies-out`
+        suppresses that listing, so the pair is a no-op rather than a
+        combination: stdout is the size line either way. The keys are not lost,
+        because they never depended on the flag — each rides the spilled file
+        inside its own lever's body, which is where `compose` reads them.
+
+        Named for what it verifies. As "composes … in one call" it read as
+        evidence that the flag contributed something to the combined call, and
+        the skill prescribed it on that basis.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bodies.md")
+            _, with_flag, _ = self._run(
+                ["list", "--fingerprints", "--bodies-out", path]
+            )
+            written = Path(path).read_text(encoding="utf-8")
+            _, without_flag, _ = self._run(["list", "--bodies-out", path])
+
+        self.assertNotIn("ENG-1", with_flag)
+        self.assertEqual(with_flag, without_flag)
+        # The keys ride the file regardless, inside each lever's own body.
+        self.assertIn("BODY-ONE", written)
+        self.assertIn("alpha:one", written)
+
+    def test_the_bare_listing_still_prints_rows(self):
+        """The is-anything-parked check is the one job the rows are for."""
+        _, out, _err = self._run(["list"])
+        self.assertIn("ENG-1", out)
+        self.assertIn("ENG-2", out)
 
     def test_the_written_document_carries_one_heading_per_lever(self):
         # `read_result.py --headings` / `--section` is the intended next call.
@@ -1082,6 +1128,190 @@ class BodiesBearingReadTests(unittest.TestCase):
             path = os.path.join(d, "bodies.md")
             self._run(["list", "--bodies-out", path])
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+
+class ComposeFoldTests(unittest.TestCase):
+    """`list --bodies-out` solved the fold's fetch; this is its composition.
+    Two of the rules here are silently damaging when missed by hand, which is
+    why they are the tool's job rather than the folder's."""
+
+    DUMP = (
+        "## ENG-1 | First lever\n"
+        "\n"
+        "https://linear.app/dasmac/issue/ENG-1\n"
+        "\n"
+        "# Lever\n"
+        "\n"
+        "Do the thing.\n"
+        "\n"
+        "## Evidence\n"
+        "\n"
+        "Measured once.\n"
+        "\n"
+        "**Fingerprint**: a:first\n"
+        "\n"
+        "## ENG-2 | Second lever\n"
+        "\n"
+        "https://linear.app/dasmac/issue/ENG-2\n"
+        "\n"
+        "# Lever\n"
+        "\n"
+        "Do the other thing.\n"
+        "\n"
+        "**Fingerprint**: a:second\n"
+    )
+
+    def test_a_url_inside_a_fenced_example_survives_the_fold(self):
+        """The leading-URL strip is anchored to the position `render_bodies`
+        writes, not matched anywhere. Matching globally deleted a URL on its
+        own line inside a fenced example — and a lever about an HTTP surface is
+        exactly the kind that carries one, so the global form corrupted the
+        bodies it was most likely to be folding.
+        """
+        dump = (
+            "## ENG-9 | Redirect lever\n"
+            "\n"
+            "https://linear.app/dasmac/issue/ENG-9\n"
+            "\n"
+            "Probe the endpoint:\n"
+            "\n"
+            "```\n"
+            "https://api.example.com/v1/quotes\n"
+            "```\n"
+            "\n"
+            "**Fingerprint**: feeds-http:redirect\n"
+        )
+        body, report = tl.compose_fold(dump)
+        self.assertIn("https://api.example.com/v1/quotes", body)
+        # ...while the dump's own heading URL is still removed.
+        self.assertNotIn("linear.app/dasmac/issue/ENG-9", body)
+        self.assertEqual(report["folded"], ["ENG-9"])
+
+    def test_a_repeated_identifier_is_refused(self):
+        """Two dumps concatenated, or one appended to twice. Folding it emits
+        the lever as two numbered parts while the single underlying issue is
+        closed once, so the duplicate part survives with nothing behind it —
+        and `--exclude` on that identifier would drop both.
+        """
+        with self.assertRaises(tl.TrimLeversError) as ctx:
+            tl.compose_fold(self.DUMP + self.DUMP)
+        self.assertIn("more than once", str(ctx.exception))
+        self.assertIn("ENG-1", str(ctx.exception))
+
+    def test_each_lever_becomes_a_numbered_part_titled_from_the_dump(self):
+        body, summary = tl.compose_fold(self.DUMP)
+        self.assertIn("# Part 1 — First lever", body)
+        self.assertIn("# Part 2 — Second lever", body)
+        self.assertEqual(summary["folded"], ["ENG-1", "ENG-2"])
+        self.assertEqual(summary["next_part"], 3)
+
+    def test_body_headings_are_demoted_so_they_nest_under_the_part(self):
+        """Pasted unmodified, a lever's own `# Lever` collides with `# Part N`
+        at the same level and the aggregated task loses its structure — all the
+        text present, reading as one flat document."""
+        body, _ = tl.compose_fold(self.DUMP)
+        self.assertIn("## Lever", body)
+        self.assertIn("### Evidence", body)
+        self.assertNotIn("\n# Lever", body)
+
+    def test_a_heading_inside_a_fence_is_left_alone(self):
+        """Levers ABOUT filing conventions quote fenced markdown examples, so
+        this is a likely body rather than a contrived one."""
+        dump = (
+            "## ENG-3 | Fenced\n\n"
+            "# Lever\n\n"
+            "```md\n"
+            "# not a heading, quoted material\n"
+            "```\n\n"
+            "**Fingerprint**: a:fenced\n"
+        )
+        body, _ = tl.compose_fold(dump)
+        self.assertIn("## Lever", body)
+        self.assertIn("# not a heading, quoted material", body)
+        self.assertNotIn("## not a heading", body)
+
+    def test_the_bare_issue_url_is_stripped(self):
+        body, _ = tl.compose_fold(self.DUMP)
+        self.assertNotIn("linear.app", body)
+
+    def test_fingerprints_are_carried_into_every_part(self):
+        """Per-lever dedup rests on this; losing one is invisible until a later
+        pass refiles a lever that was already folded."""
+        body, _ = tl.compose_fold(self.DUMP)
+        self.assertIn("**Fingerprint**: a:first", body)
+        self.assertIn("**Fingerprint**: a:second", body)
+
+    def test_a_part_with_no_fingerprint_fails_loudly(self):
+        dump = "## ENG-9 | No key\n\nSome prose and no field line.\n"
+        with self.assertRaises(tl.TrimLeversError) as ctx:
+            tl.compose_fold(dump)
+        self.assertIn("ENG-9", str(ctx.exception))
+        self.assertIn("dedup", str(ctx.exception))
+
+    def test_excluded_levers_are_dropped_and_numbering_closes_up(self):
+        body, summary = tl.compose_fold(self.DUMP, exclude=("ENG-1",))
+        self.assertNotIn("First lever", body)
+        self.assertIn("# Part 1 — Second lever", body)
+        self.assertEqual(summary["skipped"], ["ENG-1"])
+        self.assertEqual(summary["folded"], ["ENG-2"])
+
+    def test_the_start_number_carries_a_batch_composed_in_halves(self):
+        body, summary = tl.compose_fold(self.DUMP, start=11)
+        self.assertIn("# Part 11 — First lever", body)
+        self.assertIn("# Part 12 — Second lever", body)
+        self.assertEqual(summary["next_part"], 13)
+
+    def test_an_exclusion_matching_nothing_is_reported(self):
+        """A silent no-op would fold a lever the caller meant to drop."""
+        _, summary = tl.compose_fold(self.DUMP, exclude=("ENG-404",))
+        self.assertEqual(summary["unknown_exclusions"], ["ENG-404"])
+
+    def test_a_dump_with_no_sections_is_an_error(self):
+        with self.assertRaises(tl.TrimLeversError):
+            tl.compose_fold("just some prose\n")
+
+    def test_excluding_everything_is_an_error_not_an_empty_body(self):
+        with self.assertRaises(tl.TrimLeversError):
+            tl.compose_fold(self.DUMP, exclude=("ENG-1", "ENG-2"))
+
+    def test_compose_needs_no_linear_credentials(self):
+        """It is pure local text work, so it must run in a shell with no
+        secrets resolved — and that is also what makes it testable without
+        mocking the transport."""
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "bodies.md")
+            dst = os.path.join(d, "folded.md")
+            Path(src).write_text(self.DUMP, encoding="utf-8")
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with redirect_stdout(out), redirect_stderr(err):
+                    code = tl.run(
+                        [
+                            "trim_levers.py",
+                            "compose",
+                            "--bodies-file",
+                            src,
+                            "--out",
+                            dst,
+                        ]
+                    )
+            self.assertEqual(code, 0)
+            written = Path(dst).read_text(encoding="utf-8")
+            self.assertIn("# Part 1 — First lever", written)
+            # Zero echo: the composed body never reaches the transcript.
+            self.assertNotIn("Do the thing", out.getvalue() + err.getvalue())
+            self.assertIn("composed 2 part(s)", out.getvalue())
+
+    def test_the_composed_file_is_owner_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "bodies.md")
+            dst = os.path.join(d, "folded.md")
+            Path(src).write_text(self.DUMP, encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                tl.run(
+                    ["trim_levers.py", "compose", "--bodies-file", src, "--out", dst]
+                )
+            self.assertEqual(os.stat(dst).st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":

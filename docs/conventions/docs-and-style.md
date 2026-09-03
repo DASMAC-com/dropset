@@ -117,6 +117,40 @@ line-citing doc gets at least two shift opportunities.
 if this recurs; it is not proposed now — the prose rule is cheap, and
 untested tooling here would need its own accuracy story.)
 
+## Never copy a claim out of an applied migration
+
+An applied migration is **immutable**: the runner hashes the raw file
+bytes and rejects any changed hash, so a shipped migration's text can
+never be corrected — not even a comment. That makes prose inside a
+migration a permanent anchor for whatever it said on the day it landed.
+
+So a claim must have **one home, and it must be a mutable one**:
+
+- **Don't copy a claim out of a migration into prose.** Reference the
+  migration and state the **current** claim in the mutable doc, so a
+  correction has exactly one place to land.
+- **When a shipped migration's comment proves wrong**, record the
+  correction in the schema doc (or the next migration's text) with a
+  back-reference. Never restate the frozen version alongside it as
+  though both were current.
+- **Prefer a sidecar to a SQL comment** for anything expected to
+  evolve. The fence-sidecar design chose separate files over in-SQL
+  comments for exactly this reason, and it is the working precedent.
+
+Three measured instances, two of them the same day. An asymmetry claim
+documented in migrations 0003 and 0008 was copied into two prose docs;
+the world it described was later corrected, the migrations could not be,
+and the prose copies went stale silently. A liveness doc named a helper
+a merged PR had retired. And migration 0009 states that a source writes
+bars or ticks and never both — false for the coinbase source, whose
+candle and ticker binaries share a source label deliberately — with the
+correction stated in 0010 because 0009 cannot be touched.
+
+The auditing counterpart is in `audit-scope`'s doc-freshness dimension:
+a migration's immutability makes it the *least* authoritative statement
+of current behavior, which inverts the usual instinct to trust the
+schema.
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —
@@ -132,6 +166,13 @@ comment style:
 The lone exception is a file that can't carry a comment (e.g.
 `.json`), where the dictionary is the only option.
 
+**A source file's doc comments are usage sites like any other.** The
+≥ 2 files rule is framed around prose, so a term appearing in two Rust
+module headers reads as "one file" or as not counting at all — it
+counts. The same goes the other way: a `.rs` change that adds module
+headers, item docs or long explanatory comments **is** a prose change
+for spelling purposes, and gets the pre-flight below.
+
 **cspell splits on hyphens and checks each part**, so a hyphenated
 coinage is only as safe as its halves — `pre-empts` is checked as `pre`
 plus `empts`, and fails on the second. Prefer an unhyphenated synonym
@@ -139,6 +180,27 @@ plus `empts`, and fails on the second. Prefer an unhyphenated synonym
 dictionary: a fragment is not a word, it would be a permanent entry
 blessing a misspelling repo-wide, and the `--unique` sorter would keep
 it alive.
+
+**The dictionary is US-spelling by construction, so a British variant
+fails by construction — and is never a dictionary candidate.** Both
+halves of that are already true and the failure was still discovered
+one word at a time: one session's lint failed on spelling in **two
+separate rounds**, each surfacing three more `-our` / `-ise` variants.
+So when a change authors much prose, run the spelling pre-flight once
+before the first full round rather than finding them a round at a time:
+
+```sh
+python3 .claude/tools/run_quiet.py -- \
+  python3 .claude/tools/lint_paths.py --prose
+```
+
+`--prose` runs only the cspell hook over this branch's changed files,
+and takes **no arguments** — which is the mechanism, not a convenience.
+The reason the full sweep kept winning is that it needed no arguments
+while the prescribed narrow form needed a hook id and a path list; that
+is the same asymmetry `--changed` exists to remove, one level down. What
+it buys is *fewer failed rounds*, not narrower output — the scoped form
+fails identically on an unknown word.
 
 The failure is invisible until a full lint round-trip spends itself on
 it, which is why this is worth stating rather than discovering. One run

@@ -26,12 +26,21 @@ maker telemetry and the pyth roster. Resolved by hand under exactly that rule
 
 Usage::
 
-    # This branch's new migrations, from the merge-base with the base ref:
+    # Preferred — fetch the open-PR inventory in-process:
+    python3 .claude/tools/migration_collisions.py --others-from-gh
+
+    # Or compare against a file the caller assembled:
     python3 .claude/tools/migration_collisions.py --others <file.json>
 
-``--others`` is a JSON array the caller assembles from the GitHub MCP — this
-tool makes **no** network call, so the compare stays deterministic and testable
-and the network read stays where the convention puts it::
+``--others-from-gh`` runs the `gh pr list` read **inside this process**. It
+exists because the two-command form had an unwritable gap: a redirect or pipe
+is a compound the shell guard blocks, and capturing the output to re-emit it
+with the Write tool routes every open PR's file list through context — the
+exact cost this tool exists to avoid (~4.0k for a two-line answer). This is
+the same in-process shape ``review_diff.py --overlap`` already uses.
+
+``--others`` remains for a caller that already holds the inventory, and keeps
+the compare deterministic and testable with no network call at all::
 
     [{"pr": 351, "files": ["db-schema/migrations/0004_pyth.sql"]}, …]
 
@@ -207,6 +216,93 @@ def load_others(path: str) -> list[dict]:
     return data
 
 
+# `gh pr list` defaults to 30 and truncates SILENTLY past its limit, which in a
+# collision checker is a fail-open: the one PR that would have collided is the
+# one dropped, and the tool reports "clear". The limit is therefore set well
+# above any plausible open-PR count, and `others_from_gh` warns when the result
+# comes back exactly at it — at that point truncation cannot be ruled out and
+# "clear" is no longer a claim this tool can make quietly.
+GH_PR_LIMIT = 200
+
+GH_OPEN_PRS = (
+    "gh",
+    "pr",
+    "list",
+    "--state",
+    "open",
+    "--json",
+    "number,files",
+    "--limit",
+    str(GH_PR_LIMIT),
+)
+
+
+def others_from_gh() -> list[dict]:
+    """The open-PR file inventory, fetched **inside this process**.
+
+    The step that drives this tool used to prescribe two commands with an
+    unwritable gap between them::
+
+        gh pr list --state open --json number,files --limit 30
+        python3 .claude/tools/migration_collisions.py --others <file>.json
+
+    Nothing connected them, and every sanctioned way to connect them is
+    closed: a `>` redirect is a compound the shell guard blocks (and the
+    worktree-isolation guard refused it first), a pipe likewise, and
+    capturing the output to re-emit it with the Write tool routes the whole
+    per-PR file list **through context** — the precise cost the step's own
+    rationale says this tool exists to avoid (~4.0k for a two-line answer).
+
+    So the read moves in here, which is how ``review_diff.py --overlap``
+    already solves the identical problem: it intersects open-PR file lists
+    in-process, precisely so the per-PR lists never reach context. The two
+    steps should not disagree about this.
+    """
+    try:
+        completed = subprocess.run(
+            GH_OPEN_PRS, capture_output=True, text=True, check=False
+        )
+    except OSError as exc:
+        raise MigrationCollisionsError(f"could not run `gh pr list`: {exc}") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or "").strip().splitlines()
+        raise MigrationCollisionsError(
+            "`gh pr list` failed: " + (detail[-1] if detail else "no detail")
+        )
+    try:
+        data = json.loads(completed.stdout or "[]")
+    except ValueError as exc:
+        raise MigrationCollisionsError(
+            f"`gh pr list` did not return JSON: {exc}"
+        ) from exc
+    if not isinstance(data, list):
+        raise MigrationCollisionsError("`gh pr list` did not return an array")
+    if len(data) >= GH_PR_LIMIT:
+        # Exactly at the limit means gh may have truncated, and the PR it
+        # dropped could be the colliding one. Refuse rather than report a
+        # "clear" that is no longer supported — a silent truncation in a
+        # collision checker fails in the dangerous direction.
+        raise MigrationCollisionsError(
+            f"`gh pr list` returned {len(data)} PRs, at the --limit of "
+            f"{GH_PR_LIMIT}, so the list may be truncated and a dropped PR "
+            "could be the colliding one. Raise GH_PR_LIMIT and re-run."
+        )
+
+    # gh spells them `number` and a list of {path: …} objects; normalize to the
+    # `--others` shape so exactly one comparison path exists downstream.
+    out: list[dict] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        files = [
+            f.get("path")
+            for f in (entry.get("files") or [])
+            if isinstance(f, dict) and f.get("path")
+        ]
+        out.append({"pr": entry.get("number"), "files": files})
+    return out
+
+
 def collisions(mine: list[str], others: list[dict]) -> list[dict]:
     """Every (my migration, their migration) pair sharing a version number.
 
@@ -267,11 +363,19 @@ def run(argv: list[str]) -> int:
             "PRs' before enqueueing. Exits non-zero on a collision."
         ),
     )
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
         "--others",
-        required=True,
         help="JSON file: [{'pr': N, 'files': [path, …]}, …], assembled by the "
-        "caller from the GitHub MCP (this tool makes no network call)",
+        "caller from the GitHub MCP",
+    )
+    source.add_argument(
+        "--others-from-gh",
+        action="store_true",
+        help="fetch the open-PR file inventory in-process via `gh pr list` — "
+        "the preferred form, because it leaves no unwritable gap between a "
+        "network read and this compare, and keeps the per-PR file lists out "
+        "of context entirely",
     )
     parser.add_argument(
         "--base",
@@ -286,7 +390,7 @@ def run(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv[1:])
 
-    others = load_others(args.others)
+    others = others_from_gh() if args.others_from_gh else load_others(args.others)
     mine = added_migrations(args.base, args.directory)
     found = collisions(mine, others)
     result = {
