@@ -149,9 +149,13 @@ does **not** get parked is the assembled **batch issue** itself, which
 is the thing meant to be pulled.
 
 **The planning bootstrap is the single assimilation point** — once a
-day it sweeps the milestone and folds every parked stray into **one**
-batch issue, and it assembles a new batch **only when no meta issue is
-In Progress or In Review**. Assembly consumes the pool *as of
+day it sweeps the milestone **plus any open, unpulled batch** (every
+open `Claude:`-prefixed Backlog issue not In Progress or In Review) and
+folds them into **one** batch issue, and it assembles a new batch **only
+when no meta issue is In Progress or In Review**. The unpulled-batch
+half of that pool is what keeps exactly one meta issue unblocked in
+Next: an unpulled batch sits in Backlog, so the precondition alone does
+not cover it. Assembly consumes the pool *as of
 bootstrap*; a stray filed afterwards waits for the next one rather than
 joining a batch mid-flight. `housekeeping`'s propose-merges-among-meta
 step is **retired** — one writer, one rhythm.

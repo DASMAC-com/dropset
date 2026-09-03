@@ -254,10 +254,29 @@ class Summary(unittest.TestCase):
                 "opened": 0,
                 "unmarked": [],
                 "no_tty": ["889", "1042"],
+                "requested": 3,
             }
         )
-        self.assertIn("2 of 2 requested produced no tty", line)
+        self.assertIn("2 of 3 requested produced no tty", line)
         self.assertIn("889, 1042", line)
+
+    def test_the_denominator_is_omitted_when_requested_is_unknown(self):
+        # Defaulting it to the numerator would assert that EVERY requested tab
+        # failed — an unverified claim of the same species as the "opened"
+        # wording this replaced.
+        line = fr.summarize(
+            {
+                "in_flight": 1,
+                "resume": [{}],
+                "skipped_already_live": [],
+                "unrecognized_identifier": [],
+                "opened": 0,
+                "unmarked": [],
+                "no_tty": ["889"],
+            }
+        )
+        self.assertIn("1 produced no tty", line)
+        self.assertNotIn("requested", line)
 
     def test_a_fully_marked_run_stays_quiet(self):
         line = fr.summarize(

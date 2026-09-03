@@ -26,24 +26,32 @@ skip reading the merge.
 **Which files this is for.** Any shared file whose content is an ordered or
 keyed list that several branches append to:
 
-* ``cfg/dictionary.txt``, for a hand-resolved conflict in it.
-* The alphabetically-keyed YAML under ``cfg/`` and ``infra/aws/``, which have no
-  structural escape from this class.
+The **alphabetically-keyed YAML** under ``cfg/`` and ``infra/aws/`` is the
+standing case: those files have no structural escape from the shared insertion
+point, so a conflict in them is resolved by hand.
 
-**What it does NOT cover, stated plainly because the obvious guess is wrong.**
-This checks that every line each parent *added* survives. It is therefore blind
-to the ``merge=union`` **resurrection** hazard on the dictionary: a resurrected
-word is a *base* line reappearing after one side deleted it, so it is in
-neither parent's added set, is never examined, and always reports COMPLETE.
-Union merge needs no hand resolution anyway — git keeps both sides — so the two
-concerns barely overlap; the tool is for the files you resolve *by hand*, and
-the resurrection case is covered by the next spelling-hygiene pass instead.
+``cfg/dictionary.txt`` is deliberately **not** on that list. It carries a
+``merge=union`` attribute precisely so it is never hand-resolved (``CLAUDE.md``
+→ "Docs and skills prose" states that as a rule), and this tool is for files
+you *do* resolve by hand. Its one residual hazard — union merge resurrecting a
+word one side deleted — is also invisible here, since a resurrected line is a
+*base* line reappearing rather than one either parent added; the next
+spelling-hygiene pass is what catches that.
 
-Also bounded to files where **line multiplicity is not meaningful**. Comparison
-is set-based over normalized lines, so "ours added this line twice and the
-resolution kept one" reports as survived. That is sound for a ``--unique``
-sorted word list and for YAML (which forbids duplicate keys), and it is a real
-gap for prose — including, ironically, the doc-comment case in the story above.
+**Two bounds, stated because the obvious guess is wrong both times.**
+
+It checks that every line each parent *added* survives, so a **deletion** that
+one side made and the resolution undid is never examined. Additions only.
+
+And comparison is **set-based over normalized lines**, so "ours added this line
+twice, the resolution kept one" reports as survived. That bound bites the YAML
+case above more than it first appears: duplicate *keys* are forbidden, but
+duplicate *lines* are routine in nested YAML — ``  Enabled: true`` and
+``    - Effect: Allow`` repeat freely down a CloudFormation template. So on
+deeply-nested YAML this under-reports a lost repeat, and on prose it under-
+reports outright. Read a COMPLETE verdict as "no *distinct* added line went
+missing", which is weaker than it sounds and is still the thing a sortedness
+check cannot tell you at all.
 
 The central schema-fence relation list — the file that originally motivated the
 tool — was retired when each migration moved to its own fence sidecar, so that
@@ -292,13 +300,24 @@ def run(argv: list[str]) -> int:
     # exact moment nothing has been resolved. Refuse instead. This matters
     # because the primary documented invocation runs against the working-tree
     # copy mid-conflict, which is precisely when markers are present.
-    for marker in ("<<<<<<< ", "=======", ">>>>>>> "):
-        if any(line.startswith(marker) for line in resolution.splitlines()):
-            raise MergeCompletenessError(
-                f"{resolution_path} still contains conflict markers — resolve it "
-                f"first; an unresolved file contains both sides by construction "
-                f"and would report COMPLETE"
-            )
+    # `=======` is matched EXACTLY, not as a prefix. A conflict divider is that
+    # line and nothing else, whereas a prefix test also refuses any file
+    # carrying a setext-style heading underline or an `=======` rule — a false
+    # refusal on ordinary content, and this tool advertises itself for any
+    # ordered or keyed file.
+    def is_marker(line):
+        return (
+            line.startswith("<<<<<<< ")
+            or line.startswith(">>>>>>> ")
+            or line.strip() == "======="
+        )
+
+    if any(is_marker(line) for line in resolution.splitlines()):
+        raise MergeCompletenessError(
+            f"{resolution_path} still contains conflict markers — resolve it "
+            f"first; an unresolved file contains both sides by construction "
+            f"and would report COMPLETE"
+        )
 
     base_text = git_show(base, args.path, repo)
     ours_text = git_show(args.ours, args.path, repo)

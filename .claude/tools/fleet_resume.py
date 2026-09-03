@@ -347,9 +347,14 @@ def summarize(result: dict) -> str:
             # (osascript aborted, or returned nothing) — and this line cannot
             # tell them apart. Claiming "opened" would also contradict the
             # "N opened" it sits beside, which counts only what parsed.
-            requested = result.get("requested") or len(missing)
+            # Omit the denominator when it is unknown rather than defaulting it
+            # to the numerator — "N of N requested" would assert that EVERY
+            # requested tab failed, which is the same species of unverified
+            # claim this rewording removed from the previous version.
+            requested = result.get("requested")
+            scope = f" of {requested} requested" if requested else ""
             parts.append(
-                f"{len(missing)} of {requested} requested produced no tty, so "
+                f"{len(missing)}{scope} produced no tty, so "
                 f"nothing was marked for: {', '.join(missing)}"
             )
     return " | ".join(parts)
