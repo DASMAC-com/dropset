@@ -1214,6 +1214,45 @@ already being asked to start the review.
    spending another round rewording the brief. Prompt
    tightening has saturated; slice granularity has not.
 
+   **The subdivision decision is PER LENS, not per fan-out.**
+   Stated only as "subdivide an oversized slice", it reads as
+   one judgement about the diff, so a session that finds the
+   diff to be a single coherent seam declines to subdivide for
+   *every* lens at once — which is the wrong shape, because the
+   lenses do not all ask cross-cutting questions.
+
+   The test: **does this lens's question span the seam between
+   crates, or sit inside one?** Correctness and security
+   usually need the cross-crate chain and are right to take the
+   whole slice. Style, naming and a new-public-surface question
+   usually do not.
+
+   Measured (session a252a9d3, PR #391): a 1,888-line diff
+   across five crates produced a 1,070-line source slice handed
+   to **every** lens. Every lens came in at or under cap and the
+   brief discipline was fully applied — 45 established facts
+   including negatives, verbatim comparison excerpts, a
+   three-sub-question ceiling, caps in both turns and tool
+   calls. Input still ran 1.4–3.3× the efficient exemplars.
+   The style lens's three questions were entirely about one
+   file's new public surface and it was handed all five crates;
+   `--only 'sdk/rs/**'` would have cut it to roughly a third.
+   So the answer is never "always subdivide" — it is "decide per
+   lens", and the per-lens byte count printed above is what
+   makes a wrong decision visible before the lens runs.
+
+   **Never tell a lens its slice holds a whole function.** A
+   diff slice is *hunks*, so an unchanged remainder of a
+   function it touches is simply not there. A brief that
+   promises otherwise sends the lens looking for a body it
+   cannot see, and the honest outcomes are both bad: it either
+   reads the file itself — buying the whole file the slicing was
+   meant to avoid — or reasons about the missing half from its
+   name. Say what the slice is (changed hunks, with N lines of
+   context) and inline any surrounding region the question
+   genuinely needs, which the excerpt rule below already
+   covers.
+
    **Use `--only` to cut it; do not hand-roll the split.**
    `--split` cuts by *category* (source / tests / docs) and
    cannot subdivide within one, which is why this paragraph
@@ -1271,6 +1310,24 @@ already being asked to start the review.
    payload the session itself produced, which is exactly why it
    slips — the rule reads as being about *tool results*, and a
    file you wrote does not feel like one.
+
+   **But a per-FILE question wants a per-file scope.** The rule
+   above is what makes the slice the reflex, and reaching for it
+   to settle a claim about one file inside it buys every other
+   file too. Measured (session 08c0ae6b, PR #383): a
+   `read_result.py --grep '^[+-][^+-]'` over a 450-line source
+   slice returned ≈4.7k — rank 3 of all results that session —
+   printing 306 of 447 lines, when the question concerned one
+   file with 31 changed lines. The other ~275 lines were files
+   the main loop had itself just authored and already held. A
+   path-limited `git diff` in the same turn cost a fraction and
+   is what actually answered it.
+
+   So scope it: `--only '<path>'` on `review_diff.py`, or a
+   path-limited `git diff`. Grepping a whole slice for `^[+-]`
+   re-buys every file in it, and this is the one case where
+   "the slice IS the diff" points the wrong way — the slice is
+   still the right *source*, just not the right *scope*.
 
    A lens that genuinely needs two categories gets two paths;
    the full `diff_path` stays available for the cross-check,
@@ -1478,6 +1535,26 @@ already being asked to start the review.
      `i32`, an `f64` intermediate);
    - the **rounding direction**, where one applies;
    - whether it **saturates or wraps** on overflow.
+
+   **Quote an expression WHOLE, guard included.** An
+   established fact that drops a null guard, a default, or a
+   short-circuit hands the lens a materially different
+   expression from the one in the source — and the fact block
+   says to treat its contents as binding and not re-derive
+   them, so the lens has no license to notice. A quoted
+   expression is either the whole expression or it is a
+   paraphrase that should be labelled as one.
+
+   **Hoist the WRITER-side constants that define a key, not
+   only the reader-side schema.** A facts block that gives a
+   lens the schema a key is parsed by, without the constants
+   the key is composed from, cannot support the question the
+   lens was spawned to answer: whether a diff's key is
+   *well-formed*. The lens can see how the value is consumed
+   and not what a correct one looks like, so it either goes to
+   the source for the writer or adjudicates the half it has.
+   When a fact concerns a key, an id, or a wire format, hoist
+   both ends.
 
    It composes two committed halves, each with a single
    owner: the canonical shell rules from the convention doc,
@@ -1933,6 +2010,32 @@ already being asked to start the review.
      each result into the catalogue — a resolved check is worth
      one line, not silence.
 
+     **RE-SHAPE an inherited check before running it.** A check
+     that arrives from a lens report is already phrased — often
+     as a grep — and gets run verbatim, which is precisely
+     where the match-the-search-shape-to-the-question rule gets
+     skipped. The lens phrased it for *adjudication* inside its
+     own scope; the main loop usually needs *existence*. So
+     restate the check as your question type first, then run
+     it.
+
+     Measured (session dacc811a, PR #347): the single largest
+     result of the run (≈5.0k) was a `search_source.py` call
+     with `--context 3`, run to settle one yes/no question a
+     lens had raised — `--files-only` plus one targeted
+     slice-read answers that for a fraction. It was the third
+     session in a row for the underlying lever, and what
+     distinguishes it is *where the search came from*: not one
+     the session composed, but one it inherited. Prescribing
+     the inherited-check pathway above is what makes this gap
+     live rather than incidental.
+
+     Re-shaping can change the tool entirely, not just the
+     flags: a security lens returned "verify urllib's redirect
+     scheme allowlist", phrased as a source question. Run as
+     posed it meant reading CPython; re-shaped it was one
+     source-introspection call in the interpreter.
+
    This is distinct from scaling the lens *count* down for an
    extraction/move diff (above) — here the lens runs at full
    depth; the provided context just spares it the re-survey.
@@ -2192,6 +2295,22 @@ already being asked to start the review.
      reads at all, and the one given genuine open questions
      spent its turns on exactly those.
 
+   - **A second facts-block fan-out holding under cap, with
+     its mutation-verify cost.** Recorded because a rule that
+     is working leaves no evidence of its own, so the only way
+     the facts-block discipline accumulates a defense is for
+     each run that holds to be written down. The pairing
+     matters as much as the figures: composing and verifying
+     the facts block is not free, and a future trim pass
+     eyeing that cost should have to argue against the lens
+     figures it bought rather than treating the spend as
+     unexplained overhead.
+
+     This is a **protective** entry, not a trim — it proposes
+     no change. If a later pass wants to cut the facts-block
+     work, the burden it has to meet is naming which lens
+     figure it expects to move.
+
    When proposing a trim against any of these, say which
    figure you expect to move and by how much.
 
@@ -2296,6 +2415,24 @@ already being asked to start the review.
    `docs/conventions/` + `test.yml` and re-running repo-wide
    greps for rules the diff barely touches. Tighten the
    briefing:
+
+   - **First, probe whether ANY convention governs the
+     surface — and skip the lens when nothing does.** This
+     lens costs the most exactly when it returns the least,
+     because "no convention governs this at all" is a
+     **negative**, and establishing a negative is what sends
+     it sweeping the whole convention set. The two-section cap
+     below cannot help there: there are no two sections to
+     name.
+
+     So run one cheap main-loop probe for a governing doc
+     before spawning it — a `search_source.py --files-only`
+     over `docs/conventions/` and `CLAUDE.md` for the diff's
+     subsystem terms — and if it comes back empty, don't spawn
+     the lens. Record the empty probe in the catalogue instead:
+     "no convention governs this surface" is a one-line
+     finding when the main loop establishes it, and a
+     six-figure sweep when a sub-agent does.
 
    - **Cap the freshness lens at two named sections, and hand
      their excerpts inline — not their names.** Not "read
