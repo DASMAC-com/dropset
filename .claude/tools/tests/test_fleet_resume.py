@@ -224,6 +224,79 @@ class Summary(unittest.TestCase):
         self.assertIn("1 opened", line)
         self.assertIn("could not be marked", line)
 
+    def test_the_unmarked_slot_carries_a_COUNT_and_the_tags(self):
+        # It used to interpolate the list itself into a slot reading "N could
+        # not be marked", printing a raw Python list repr where a count belongs.
+        line = fr.summarize(
+            {
+                "in_flight": 2,
+                "resume": [{}, {}],
+                "skipped_already_live": [],
+                "unrecognized_identifier": [],
+                "opened": 2,
+                "unmarked": ["889", "1042"],
+            }
+        )
+        self.assertIn("2 could not be marked", line)
+        self.assertIn("889, 1042", line)
+        self.assertNotIn("['889'", line)
+
+    def test_tabs_opened_without_a_tty_are_reported(self):
+        # The silent path that actually bit: no tty came back, so nothing was
+        # marked AND `unmarked` was empty, giving a clean-looking summary over
+        # a total mark failure.
+        line = fr.summarize(
+            {
+                "in_flight": 2,
+                "resume": [{}, {}],
+                "skipped_already_live": [],
+                "unrecognized_identifier": [],
+                "opened": 0,
+                "unmarked": [],
+                "no_tty": ["889", "1042"],
+                "requested": 3,
+            }
+        )
+        self.assertIn("2 of 3 requested produced no tty", line)
+        self.assertIn("889, 1042", line)
+
+    def test_the_denominator_is_omitted_when_requested_is_unknown(self):
+        # Defaulting it to the numerator would assert that EVERY requested tab
+        # failed — an unverified claim of the same species as the "opened"
+        # wording this replaced.
+        line = fr.summarize(
+            {
+                "in_flight": 1,
+                "resume": [{}],
+                "skipped_already_live": [],
+                "unrecognized_identifier": [],
+                "opened": 0,
+                "unmarked": [],
+                "no_tty": ["889"],
+            }
+        )
+        self.assertIn("1 produced no tty", line)
+        self.assertNotIn("requested", line)
+
+    def test_a_fully_marked_run_stays_quiet(self):
+        line = fr.summarize(
+            {
+                "in_flight": 1,
+                "resume": [{}],
+                "skipped_already_live": [],
+                "unrecognized_identifier": [],
+                "opened": 1,
+                "unmarked": [],
+                "no_tty": [],
+            }
+        )
+        # A positive assertion too, so the test cannot pass on an empty
+        # summary — both checks below are negative, and `return ""` would
+        # satisfy them on its own.
+        self.assertIn("1 opened", line)
+        self.assertNotIn("could not be marked", line)
+        self.assertNotIn("produced no tty", line)
+
     def test_unrecognized_identifiers_are_surfaced_when_present(self):
         """The one branch of `summarize` nothing else covers.
 
@@ -366,6 +439,45 @@ class Cli(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)["unmarked"], ["889"])
         self.assertIn("could not be marked", err)
+
+    def test_tabs_that_report_no_tty_are_tracked_against_what_was_requested(self):
+        # The measured silent failure: the AppleScript ran and tabs opened, but
+        # nothing parsed as a tty. `unmarked` stays empty because it is derived
+        # from what DID parse, so without `no_tty` the run reports total
+        # success over a total mark failure.
+        with (
+            mock.patch.object(fr, "_post", return_value=_page([_issue("ENG-889")])),
+            mock.patch.object(fr, "live_tags", return_value=set()),
+            mock.patch.object(fr, "_osascript", return_value="garbage output\n"),
+            mock.patch.object(fr, "mark_attention", return_value=True) as marker,
+        ):
+            code, out, err = self._run("--apply")
+        self.assertEqual(code, 0)
+        marker.assert_not_called()
+        parsed = json.loads(out)
+        self.assertEqual(parsed["opened"], 0)
+        self.assertEqual(parsed["unmarked"], [])
+        self.assertEqual(parsed["no_tty"], ["889"])
+        self.assertEqual(parsed["requested"], 1)
+        self.assertIn("1 of 1 requested produced no tty", err)
+
+    def test_a_partial_tty_shortfall_is_reported(self):
+        with (
+            mock.patch.object(
+                fr,
+                "_post",
+                return_value=_page([_issue("ENG-889"), _issue("ENG-1042")]),
+            ),
+            mock.patch.object(fr, "live_tags", return_value=set()),
+            mock.patch.object(fr, "_osascript", return_value="889 /dev/ttys009\n"),
+            mock.patch.object(fr, "mark_attention", return_value=True),
+        ):
+            code, out, err = self._run("--apply")
+        self.assertEqual(code, 0)
+        parsed = json.loads(out)
+        self.assertEqual(parsed["opened"], 1)
+        self.assertEqual(parsed["no_tty"], ["1042"])
+        self.assertIn("1042", err)
 
     def test_a_missing_env_var_raises_a_user_facing_error(self):
         with mock.patch.dict(os.environ, {"LINEAR_API_KEY": ""}):

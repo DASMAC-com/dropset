@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # cspell:word pgdata
+# cspell:word fgrep
 """PreToolUse guard: stop catastrophic and hard-to-reverse Bash commands.
 
 The three committed guards cover shell **form** (compounds, `git grep`) and
@@ -225,6 +226,201 @@ def split_comments(cmd):
 
 _CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
 
+# Programs whose quoted arguments are DATA — a search pattern, a regex, a format
+# string — rather than shell to be run. For these, and ONLY these, a
+# destructive-looking match that begins inside a quoted argument is ignored.
+#
+# The motivating false positive was a read-only search: a `search_source.py`
+# call whose pattern happened to contain `rm -f` was denied as a recursive
+# force-delete, because `rm` inside the quoted pattern paired with the `-f'` in
+# it and the `r` in a later `--dir` flag to satisfy both lookaheads of
+# `_RM_RECURSIVE_FORCE`. The command deletes nothing and touches nothing.
+#
+# Scoped three ways, and each narrowing is load-bearing.
+#
+# **By program**, to this allowlist. Suppressing every quoted match would let
+# `bash -c "rm -rf /"` and `sh -c '…'` straight through, since there the quoted
+# text IS shell.
+#
+# **By tier** — the ASK tier only; see `classify`. The measured false positive
+# was an ask-tier `rm -rf` match, so suppression buys nothing on the deny tier,
+# and the deny tier is where being wrong is unrecoverable. It would also break
+# outright there: the catastrophic targets are deliberately matched in their
+# quoted forms (`_CATASTROPHIC_TARGET` carries `"$HOME"` and `'$HOME'`), so
+# `rm -rf "$HOME"` depends on quoted content being scanned.
+#
+# **By quote kind** — see `inert_spans`. A DOUBLE-quoted argument is not inert:
+# `$(…)`, a backtick and `${x:-$(…)}` all execute inside one. Treating it as
+# data made `grep "$(git push --force origin main)" f` — which really does run
+# the push — classify clean, and that string had previously been a deny. Caught
+# in adversarial review of this very change, which is why the comment now
+# describes what the code holds rather than the stronger property it read as.
+#
+# What this buys is narrow and worth stating exactly, because the earlier
+# wording claimed more than the code holds: on a line that is a SINGLE SIMPLE
+# COMMAND invoking one of these programs, a destructive command name inside a
+# quoted argument is data. The code does not verify that the span is the
+# *pattern* argument specifically — it suppresses any qualifying quoted span on
+# such a line — so the guarantee rests on the line having no second command,
+# which `_RE_EVALUATES` is what enforces.
+READ_ONLY_PROGRAMS = frozenset(
+    {
+        "ack",
+        "ag",
+        "egrep",
+        "fgrep",
+        "grep",
+        "read_result.py",
+        "rg",
+        "search_source.py",
+        "show_at_ref.py",
+    }
+)
+
+
+# Text that makes a DOUBLE-quoted span executable rather than literal: command
+# substitution in both spellings, and parameter expansion (which can carry a
+# substitution in a default, as in `${x:-$(…)}`). A bare `$` is included because
+# it is the cheap over-approximation and the failure direction is safe — an
+# excluded span is simply scanned as before.
+_LIVE_IN_DOUBLE_QUOTES = ("$", "`")
+
+# Constructs that make a quoted span executable no matter WHICH quote it used,
+# by handing it back to a shell later on the same line. Their presence disables
+# suppression for the whole line.
+#
+# This is the second half of the same lesson as `_LIVE_IN_DOUBLE_QUOTES`, and it
+# was missed the first time. Suppression is applied per LINE once token 0 is
+# allowlisted — not to a pattern argument — so a *single*-quoted span is literal
+# only to the shell's tokenizer, and `eval`, `sh -c` or `xargs sh -c` later on
+# the line re-evaluates it. All four of these classified clean before this
+# check, and each genuinely runs the destructive operation:
+#
+#     grep -rl OLD src | xargs -n1 sh -c 'rm -rf build'
+#     rg -l OLD src | xargs -n1 sh -c 'git push --force origin feature'
+#     grep x f; eval 'rm -rf build'
+#     grep -c x f && sh -c 'rm -rf build'
+#
+# The sibling compound guard blocks every one of them on the separator alone,
+# but each guard is wired independently and that one has an escape marker, so
+# this guard must not lean on it.
+_RE_EVALUATES = re.compile(r"(?:[|;&]|\beval\b|\bxargs\b|\b(?:ba|z)?sh\b|\bsource\b)")
+
+
+def quoted_spans(line):
+    """``[(start, end, quote)]`` index ranges of ``line`` that sit inside quotes.
+
+    An UNTERMINATED quote contributes no span, deliberately. This function only
+    ever leads to suppressing a match, so the conservative direction is to
+    report less quoting rather than more: a stray quote must not be a way to
+    hide a real command behind it.
+    """
+    spans = []
+    quote = None
+    start = 0
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if quote is None:
+            if c == "\\":
+                i += 2
+                continue
+            if c in "'\"":
+                quote = c
+                start = i + 1
+        else:
+            if quote == '"' and c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                spans.append((start, i, quote))
+                quote = None
+        i += 1
+    return spans
+
+
+def inert_spans(line):
+    """The quoted spans of ``line`` that no shell on this line will execute.
+
+    Two conditions, and the second is the one that is easy to get wrong.
+
+    A **double**-quoted span is literal only without command substitution or
+    expansion: `$(…)`, a backtick and `${x:-$(…)}` all RUN inside double
+    quotes, so treating such a span as data is what turned
+    `grep "$(git push --force origin main)" f` from a deny into a clean
+    verdict.
+
+    And **no** span on the line is literal — single quotes included — once
+    something on that line hands a string back to a shell. Suppression applies
+    per line, so `eval`, `sh -c` and `xargs sh -c` re-evaluate a span the
+    tokenizer treated as literal.
+
+    Both were real, reproducible bypasses found by adversarial review of this
+    guard's own change, one round apart. Every variant is pinned in the
+    self-test below; the docstring is deliberately explicit about what is
+    *not* claimed, because the previous version asserted the first condition
+    alone and read as covering both.
+    """
+    spans = quoted_spans(line)
+
+    # Look for the re-evaluating construct OUTSIDE the quotes only. Scanning the
+    # raw line breaks the very case this carve-out exists for: the measured
+    # false positive is `search_source.py 'askq|rm -f'`, whose pattern contains
+    # a `|` that is data, not a pipe. An unquoted separator means a second
+    # command; a quoted one means nothing at all.
+    def quoted(index):
+        return any(lo <= index < hi for lo, hi, _ in spans)
+
+    for match in _RE_EVALUATES.finditer(line):
+        if not quoted(match.start()):
+            return []
+
+    return [
+        (lo, hi)
+        for lo, hi, quote in spans
+        if quote == "'" or not any(t in line[lo:hi] for t in _LIVE_IN_DOUBLE_QUOTES)
+    ]
+
+
+def program_of(line):
+    """The program a line invokes, for the read-only check.
+
+    ``python3 .claude/tools/search_source.py`` reports ``search_source.py``: the
+    interpreter is not the interesting name, the script it runs is. But `-m`
+    names a MODULE rather than a path, so `python3 -m grep` is not this repo's
+    `grep` and must not reach the allowlist — the interpreter is reported
+    instead, which is not allowlisted.
+    """
+    tokens = line.strip().split()
+    if not tokens:
+        return ""
+    program = tokens[0].rpartition("/")[2]
+    if program in ("python", "python3"):
+        for token in tokens[1:]:
+            if token == "-m":
+                return program
+            if not token.startswith("-"):
+                return token.rpartition("/")[2]
+    return program
+
+
+def _matches(pattern, line, allow_quoted=True):
+    """Whether ``pattern`` fires on ``line``.
+
+    ``allow_quoted`` is False on the DENY tier, so no catastrophic match is ever
+    suppressed: the measured false positive was an ask-tier match, so the
+    carve-out buys nothing there, and the deny tier is the one place being wrong
+    cannot be walked back with a marker.
+    """
+    if not allow_quoted or program_of(line) not in READ_ONLY_PROGRAMS:
+        return bool(pattern.search(line))
+    spans = inert_spans(line)
+    for match in pattern.finditer(line):
+        if not any(lo <= match.start() < hi for lo, hi in spans):
+            return True
+    return False
+
 
 def classify(cmd):
     """``("deny"|"ask"|None, reason)`` for one command string.
@@ -249,10 +445,11 @@ def classify(cmd):
     cmd = _CONTINUATION_RE.sub(" ", cmd)
     lines = [line for line in cmd.splitlines() if line.strip()]
     for pattern, reason in DENY_PATTERNS:
-        if any(pattern.search(line) for line in lines):
+        # allow_quoted=False: the read-only carve-out does not apply here.
+        if any(_matches(pattern, line, allow_quoted=False) for line in lines):
             return "deny", reason
     for pattern, reason in ASK_PATTERNS:
-        if any(pattern.search(line) for line in lines):
+        if any(_matches(pattern, line) for line in lines):
             return "ask", reason
     return None, ""
 
@@ -341,6 +538,64 @@ def _self_test():
         ("docker system prune -af", "ask"),
         ("docker volume rm dropset_pgdata", "ask"),
         ("git branch -D eng-900", "ask"),
+        # A read-only SEARCH whose quoted pattern merely CONTAINS destructive
+        # text. The measured false positive: `rm` inside the pattern paired
+        # with the `-f'` in it and the `r` in a later `--dir` to satisfy both
+        # lookaheads of _RM_RECURSIVE_FORCE, denying a command that deletes
+        # nothing.
+        ("python3 .claude/tools/search_source.py 'askq|rm -f' --dir .claude", None),
+        ("grep -e 'rm -rf /' -e trap /tmp/log.txt", None),
+        ('grep -rn "git push --force" docs', None),
+        ("rg 'git reset --hard' .claude", None),
+        # ...but the allowlist must not become a bypass. The quoted text of a
+        # SHELL is shell, and an unquoted destructive command on a read-only
+        # program's line is still that command.
+        #
+        # These two land on `ask` rather than `deny` for a PRE-EXISTING reason
+        # unrelated to quoted-argument scanning: the deny pattern anchors the
+        # catastrophic target at end-of-line, and the closing quote sits after
+        # it. Pinned at `ask` here so the case still proves the point that
+        # matters — a shell's quoted payload is never suppressed — and so a
+        # later change to that anchor is noticed here rather than silently.
+        ('bash -c "rm -rf /"', "ask"),
+        ("sh -c 'rm -rf $HOME'", "ask"),
+        ('bash -c "git push --force origin main"', "deny"),
+        ("grep pattern file; rm -rf /", "deny"),
+        # An unterminated quote must not hide a real command behind it: the
+        # span scan reports no quoting rather than swallowing the remainder.
+        ("grep 'unclosed rm -rf /", "deny"),
+        # A quoted CATASTROPHIC TARGET is still a real deny — the patterns match
+        # `"$HOME"` deliberately, so the fix must not blank quoted content.
+        # (These pin pre-existing behavior only: `rm` is not an allowlisted
+        # program, so `_matches` short-circuits and the span scan never runs.
+        # The cases that actually exercise suppression are the `grep`/`rg` ones.)
+        ('rm -rf "$HOME"', "deny"),
+        ("rm -rf '$HOME'", "deny"),
+        # COMMAND SUBSTITUTION inside a double-quoted argument EXECUTES. Treating
+        # such a span as inert data was a real bypass — `grep "$(git push
+        # --force origin main)" f` really does run the push, and it had
+        # previously been an un-overridable deny. Every variant is pinned.
+        ('grep "$(git push --force origin main)" f', "deny"),
+        ('grep "$(rm -rf ~)" file', "ask"),
+        ('grep "`rm -rf ~`" file', "ask"),
+        ('grep "${x:-$(rm -rf ~)}" file', "ask"),
+        ('rg "$(rm -rf ~)" .', "ask"),
+        ('python3 .claude/tools/search_source.py "$(rm -rf ~)"', "ask"),
+        # `-m` names a module, not this repo's tool, so it must not reach the
+        # allowlist.
+        ('python3 -m grep "$(rm -rf ~)"', "ask"),
+        # A DOUBLE-quoted pattern with no substitution is still inert, so the
+        # carve-out keeps working for the ordinary case.
+        ('grep "rm -rf /" /tmp/log.txt', None),
+        # A SINGLE-quoted span is literal to the tokenizer but not to a shell
+        # invoked later on the same line. Suppression is per line, so `eval`,
+        # `sh -c` and `xargs sh -c` re-evaluate it — each of these runs the
+        # destructive operation for real and classified clean before the
+        # re-evaluation check.
+        ("grep -rl OLD src | xargs -n1 sh -c 'rm -rf build'", "ask"),
+        ("rg -l OLD src | xargs -n1 sh -c 'git push --force origin feature'", "ask"),
+        ("grep x f; eval 'rm -rf build'", "ask"),
+        ("grep -c x f && sh -c 'rm -rf build'", "ask"),
         # deny tier
         ("rm -rf /", "deny"),
         ("rm -rf ~", "deny"),

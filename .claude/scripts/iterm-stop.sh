@@ -21,3 +21,11 @@ fi
 emit_reset >"/dev/$TTY_NAME"
 
 rm -f "$STATE_PREFIX$TTY_NAME"
+# Both per-TTY sentinels go with the state they annotate. Leaving them behind
+# outlives the session that owned them: a stale sticky-green would suppress the
+# next session's first permission prompt, and a stale permission-wait timestamp
+# would be read by the next session's heal check. `iterm-start.sh` also clears
+# them, so this is the belt to that braces — a session that ends cleanly should
+# not depend on the next one tidying up after it.
+rm -f "$STATE_PREFIX$TTY_NAME.askq"
+rm -f "$STATE_PREFIX$TTY_NAME.permwait"

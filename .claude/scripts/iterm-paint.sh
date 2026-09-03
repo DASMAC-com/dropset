@@ -108,5 +108,26 @@ else
   rm -f "$(askq_sentinel_path "$TTY_BASE")"
 fi
 
+# Maintain the permission-wait sentinel. Refresh it on every permission_prompt
+# yellow — the harness re-fires that notification while the prompt waits, so its
+# mtime tracks "still waiting" — and clear it on any other paint. The monitor
+# heals a STALE one back to neutral, which is what stops a guard-denied tool
+# from leaving the tab yellow forever; see PERM_WAIT_STALE_SECONDS in
+# iterm-colors.sh for why that safety net is needed and why it is generous.
+# The clear is keyed on the COLOR, not on "anything that isn't a Notification".
+# An edit tool's PreToolUse also paints yellow (see color_for_event), so an
+# else-branch would delete a live sentinel the moment a Write followed an
+# approved permission prompt — and the guard most likely to then deny that
+# Write is the worktree edit-path guard, whose tool set is exactly those four.
+# That reintroduced the wedge this whole mechanism exists to close, one step
+# further along. Clearing only on a non-permission paint keeps the sentinel
+# alive across a repaint while still dropping it the moment the tab goes
+# neutral or green.
+if [ "$EVENT" = "Notification" ] && [ "$COLOR" = "$STATE_PERMISSION" ]; then
+  : >"$(perm_wait_path "$TTY_BASE")"
+elif [ "$COLOR" != "$STATE_PERMISSION" ]; then
+  rm -f "$(perm_wait_path "$TTY_BASE")"
+fi
+
 echo "$COLOR" >"$STATE_PREFIX$TTY_BASE"
 emit_set_colors "$COLOR" >"$TTY_PATH"

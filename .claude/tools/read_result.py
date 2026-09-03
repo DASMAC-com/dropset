@@ -37,6 +37,12 @@ Usage::
     # One scalar, no mode needed — the commonest thing this is wanted for
     python3 .claude/tools/read_result.py <file> --field status
 
+    # Buy a long spec ONCE: write it to disk, get back only a heading map
+    python3 .claude/tools/read_result.py <file> --field description \\
+        --spill <scratchpad>/spec.md
+    # ...then every later consultation addresses the spill, not the source
+    python3 .claude/tools/read_result.py <scratchpad>/spec.md --section 'Part 7'
+
 ``--field`` alone prints a field of at most ``FIELD_PRINT_MAX_LINES`` lines.
 That case — reading one scalar back out of a spilled MCP echo, an issue's
 ``status`` after a state-only write — used to error with "pick a mode" and had
@@ -86,6 +92,14 @@ FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
 # that. The commonest real use is one scalar — an issue's ``status`` after a
 # state-only write — which is why passing ``--field`` by itself works at all.
 FIELD_PRINT_MAX_LINES = 20
+
+# How many headings a ``--spill`` prints as its navigation map. A spill exists to
+# keep a payload OUT of the transcript, so what it prints in exchange has to be
+# bounded too — a 200-heading body would otherwise trade a whole-read for a
+# heading dump, which is the same failure wearing a different flag. Past this the
+# total is stated and the map truncated, which is still enough to pick a
+# ``--section`` pattern.
+SPILL_HEADING_MAX = 40
 
 
 class ReadResultError(Exception):
@@ -330,6 +344,36 @@ def payload(path: Path, field: str | None) -> str:
     return extract_field(text, field) if field else text
 
 
+def spill(text: str, dest: Path) -> tuple[bool, str]:
+    """Write ``text`` to ``dest`` once; report whether it was actually written.
+
+    Idempotent by content, which is the whole point rather than a nicety: a
+    session consults one long spec many times, and the rule this serves is that
+    the payload is bought **once**. Re-running the same spill therefore must not
+    rewrite the file or re-echo the body — it reports ``unchanged`` and the
+    caller carries on slicing. Returns ``(written, note)``.
+    """
+    try:
+        if dest.exists() and dest.read_text(encoding="utf-8") == text:
+            return False, "unchanged"
+    except (OSError, UnicodeDecodeError):
+        # An unreadable existing file is no reason to refuse the write — the
+        # write below surfaces any real permission problem with a better message
+        # than a read failure would.
+        #
+        # `UnicodeDecodeError` is caught explicitly because it is a subclass of
+        # `ValueError`, not of `OSError`: an existing file holding invalid UTF-8
+        # would otherwise escape uncaught and produce a traceback, which is the
+        # exact opposite of the fall-through-and-overwrite this comment claims.
+        pass
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text, encoding="utf-8")
+    except OSError as e:
+        raise ReadResultError(f"cannot write {dest}: {e}") from e
+    return True, "written"
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="read_result.py",
@@ -362,6 +406,14 @@ def run(argv: list[str]) -> int:
         "--count",
         action="store_true",
         help="print size only — lines, characters, headings",
+    )
+    mode.add_argument(
+        "--spill",
+        default=None,
+        metavar="FILE",
+        help="write the payload to FILE once and print only a heading map, so "
+        "every later consultation slices the file instead of re-buying the "
+        "field. Idempotent by content",
     )
     parser.add_argument(
         "--context",
@@ -397,6 +449,35 @@ def run(argv: list[str]) -> int:
         lo, hi = parse_slice(args.slice, len(lines))
         out = [f"{i}:{lines[i - 1]}" for i in range(lo, hi + 1)]
         summary = f"lines {lo}-{hi} of {len(lines)}"
+    elif args.spill is not None:
+        dest = Path(args.spill)
+        _, note = spill(text, dest)
+        # Print the heading MAP, never the payload. The spill's entire purpose is
+        # to keep the body out of the transcript, so echoing it here would undo
+        # the call in the one place most likely to look correct — and the map is
+        # what makes the NEXT call a `--section` rather than another `--field`.
+        found = headings(lines)
+        out = found[:SPILL_HEADING_MAX]
+        elided = len(found) - len(out)
+        summary = (
+            f"spilled to {dest} ({note}), {len(lines)} line(s), "
+            f"{len(text)} character(s), {len(found)} heading(s)"
+        )
+        if elided:
+            summary += f", {elided} not listed"
+        # Name the follow-up form explicitly. The failure this flag exists to fix
+        # was a session re-reading one body three times through `--field`, so the
+        # summary has to say plainly where to go next.
+        if found:
+            summary += (
+                f". Slice it with: read_result.py {dest} --section <RE> "
+                f"(or --headings, --slice) — do NOT re-run --field on the source"
+            )
+        else:
+            summary += (
+                f". No headings, so navigate with: read_result.py {dest} "
+                f"--grep <RE> or --slice A:B — do NOT re-run --field on the source"
+            )
     elif args.diff is not None:
         # --diff is the one mode where zero context is unhelpful: a bare changed
         # line gives no anchor for where in the body it landed.
@@ -427,8 +508,9 @@ def run(argv: list[str]) -> int:
             summary = f"field {args.field}, {len(lines)} line(s)"
     else:
         raise ReadResultError(
-            "pick a mode: --headings, --section, --grep, --slice, --diff, or "
-            "--count. (--field may be passed alone for a short field.)"
+            "pick a mode: --headings, --section, --grep, --slice, --diff, "
+            "--count, or --spill. (--field may be passed alone for a short "
+            "field.)"
         )
 
     for line in out:

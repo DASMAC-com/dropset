@@ -158,6 +158,23 @@ argument was *not* the reason — see that step for why.)
   session had already named the file. The same tool scoped to one file
   cost ~200–500 tokens per call elsewhere in that run.
 
+  **When you already know where a symbol is DEFINED and are sweeping for
+  its consumers, exclude the defining file.** The definition is the one
+  match you are guaranteed not to need, and it is usually still in
+  context from the read that raised the question — so a `--context`
+  sweep re-buys it. Measured: a session that had just read a constant's
+  definition swept the identifier with `--context 12`, its largest
+  `search_source` call at ~1.5k, and roughly half the payload was the
+  definition site it had read moments earlier. The question was solely
+  how the caller passes the value.
+
+  This is a third axis, distinct from both the scope rule above and the
+  output-width rule: the sweep here was *already* narrow — two files,
+  both genuine hits — and the tool's advisory correctly did not fire,
+  since four matches across two files is neither clustered nor spread.
+  What was wasteful was one **specific known file**, which no
+  density heuristic can know is redundant.
+
   **A structure map matches TOP-LEVEL declarations only.** Anchor at
   column zero and never add a leading-space alternative (`^ *fn`,
   `^ *pub fn`): in Rust that turns the map into a dump of the
@@ -219,6 +236,28 @@ argument was *not* the reason — see that step for why.)
   distinction: the same session's adjudication sweeps took context and
   were right to, finding three real stale-comment defects.
 
+  **Enumeration-for-edit is a THIRD case, and it takes
+  `--files-only`.** A sweep whose purpose is to enumerate the sites of a
+  rename or a removal produces a **work list** you will open one by one —
+  so the context it buys is redundant by construction: every site
+  returned is a file you are about to open and edit anyway. Measured: a
+  removal sweep with `--context 4` returned 8 matches across 7 files at
+  ~1.7k, the session's fourth-largest result; the tool printed its own
+  advisory recommending `--files-only`, the result was consumed anyway,
+  and all seven files were then opened and edited — so the payload was
+  bought twice.
+
+  The reason the two-case split kept missing this is that a rename
+  genuinely *feels* like adjudication, so the rule read as licensing
+  context and the advisory read as a false positive. The distinction is
+  **when** you need to see the code: for an enumeration you need each
+  site *while editing it*, at which point the file is open; for a true
+  adjudication you need it *to decide whether to act at all*, and you may
+  never open the file. Only the second earns context in the sweep. This
+  also removes the standing reason to override the tool's advisory,
+  which fires correctly on rename sweeps — and overriding it there
+  trains the habit of overriding it everywhere.
+
   **Verify a list-producing flag with a count, not the list.** One
   session's largest single result (~5.8k, ~35% of its Bash cost) was a
   new tool's `--print` dumping ~600 repo paths to answer the yes/no
@@ -258,7 +297,23 @@ argument was *not* the reason — see that step for why.)
     the title/description format section. Grep the doc's headings
     (`^#`), then slice-read the step you want.
 
-  **Three sufficient conditions for reading a file whole.** Any one of
+  **Ask who else will use the content, not how big the file is.** The
+  license below is about **amortization**, and stating it as a list of
+  conditions makes it read as being about *large* files — so a small one
+  passes an imagined size test and the license itself is never run. A
+  192-line whole read for a two-line edit is proportionally worse than a
+  600-line read that five lens briefs then reuse. Measured in one
+  session beside two correctly-licensed reads: a 192-line module read
+  whole (~2.3k) for one call site plus one import, never briefed to any
+  agent — and a sweep minutes earlier had already named the exact line.
+  So before reading whole, **name who else will use this content**; if
+  the answer is "only this edit", slice, whatever the size. The
+  operational corollary: **if a search has already named the line you
+  are about to edit, slice from that line** — that sweep was a section
+  map, and it counts as one even though it came from
+  `search_source.py` rather than a deliberate structure grep.
+
+  **Four sufficient conditions for reading a file whole.** Any one of
   them is enough on its own — they are alternatives, not a single
   conjunction. This used to read as one condition ("only when you will
   BOTH edit the file and brief agents on it") sitting beside a sibling
@@ -277,6 +332,7 @@ argument was *not* the reason — see that step for why.)
      review-lens briefs, which is what held every lens under its turn
      cap. Paid once, amortized five times. Absent that second use,
      slice.
+
   1. **You have planned a multi-region read, and the regions add up to
      most of the file.** Slicing is only cheaper when you are reading
      *less*. One run read `swap.rs` across four separate slices
@@ -284,11 +340,30 @@ argument was *not* the reason — see that step for why.)
      whole-file `Read` (~4.4k) on a dispatcher to find one append point.
      Decide the regions first, then pick — but a planned multi-region
      read is ONE bounded read, never several.
+
   1. **The file is an exemplar you are about to imitate N times.**
      Reading one file whole to write three new files in its shape
      amortizes across the N outputs rather than across a fan-out, which
      is a different denominator the first condition does not cover. Two
      or more imitations is enough; for exactly one, slice.
+
+  1. **You are proving an ABSENCE, and the absence is the answer.** A
+     negative claim about a file cannot be established from a slice: a
+     slice shows a thing missing from the lines you read, never from the
+     file. Grepping for it only proves you guessed every spelling the
+     absence could take. One session read a 118-line workflow whole
+     (~1.6k) to establish that a job carries no paths-filter, no
+     `needs:` gate and no `if:` condition, and therefore that a new hook
+     in it reaches the merge queue — not sliceable, and the read was the
+     cheapest sound way to it.
+
+     Two guards ship with this one, because it is the easiest to
+     over-claim. It licenses the read only when the absence **is the
+     answer being reported**, not when it is a passing assumption; and
+     only for a **bounded** file — a negative about a
+     multi-thousand-line file wants a tool or a structured query, not a
+     read. Say in the report that the read was for a negative, so the
+     claim and its evidence travel together.
 
   And two clarifications that do *not* authorize reading whole:
 
@@ -307,12 +382,26 @@ argument was *not* the reason — see that step for why.)
     exception to it.** Survey-time whole-file reads were the single
     largest sink of one session (top five, ~15k). The crate was small,
     so no per-file budget felt warranted — yet `model.rs` is ~40%
-    `#[cfg(test)]` and only two signatures were needed. Before any
-    `Read` over ~300 lines, Grep for the structure — the language's
-    **top-level declaration** shape (`^pub enum|^pub struct|^impl`, or
-    its equivalent), anchored at column zero and never with a
-    leading-space alternative; the map tells you which slice you
-    actually want.
+    `#[cfg(test)]` and only two signatures were needed. Grep for the
+    structure first — the language's **top-level declaration** shape
+    (`^pub enum|^pub struct|^impl`, or its equivalent), anchored at
+    column zero and never with a leading-space alternative; the map
+    tells you which slice you actually want.
+
+    **Trigger that on the QUESTION you are asking, not the line
+    count.** Written as a size threshold ("any `Read` over ~300 lines")
+    it becomes a judgement call exactly at the boundary, and it silently
+    exempts the files most often read to *learn a convention*. Measured:
+    a **310-line** module — one line past the threshold, and reading as
+    a small file — was read whole at **~3.4k**, that session's single
+    largest result of any kind, when what was needed was three regions
+    totalling ~60 lines and none of the whole-read conditions applied.
+    The same session sliced correctly whenever the purpose *was*
+    editing, which is what identifies the culprit: the size trigger is
+    not what failed, the purpose framing is. **Reading to learn** —
+    types, conventions, an exemplar you will not imitate N times — is
+    always a slice, at any size. Keep ~300 lines as a secondary
+    backstop for edit-shaped reads.
 
     **Scope that structure-map grep to the file(s) you are about to
     read.** The instruction names a pattern but no scope, and aimed at
@@ -341,6 +430,22 @@ argument was *not* the reason — see that step for why.)
     of your alternation matches on its own.** If you genuinely want the
     prose headings *and* the declarations, ask for them as two narrow
     queries.
+
+    **On a RECORDS-shaped data file, match one field, not an
+    alternation — even when every branch is a legitimate
+    declaration.** The rule above catches a branch that matches ordinary
+    *content*; this is the case where none of them do and the map is
+    still several times too big, because in a file of like objects each
+    branch fires **once per record** rather than once per section. The
+    branches do not partition the file, they multiply it: three branches
+    over N records return 3N lines to answer what one branch answers.
+    Measured: a 394-line JSON array of stablecoins mapped with
+    `'"symbol"\|"mint"\|"name"'` returned ~88 lines at **~1.0k**, that
+    session's largest Bash result, where `'"symbol"'` alone returns ~25
+    and answers the same navigational question — the mint and name
+    values were never used from the map and both came from the slice
+    that followed. Pick the single field that **identifies** a record,
+    and take everything else from the slice.
 
 - **Don't read a file you are about to delete, or one you just
   authored.** Two cases adjacent to "never re-fetch what's already in

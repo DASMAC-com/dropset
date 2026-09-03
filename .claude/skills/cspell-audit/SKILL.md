@@ -1,6 +1,6 @@
 ---
 name: cspell-audit
-description: Enforce spelling-escape hygiene — every word in cfg/dictionary.txt must be used in at least two files (a word used in only one file is moved to an inline cspell escape in that file and dropped from the global dictionary, unless the sole file can't host a comment, e.g. JSON), and every file's inline escapes sit in one contiguous block at the top. Fixes directly when invoked; housekeeping runs the same check read-only and files the drift as one aggregated Backlog issue.
+description: Enforce spelling-escape hygiene — every word in cfg/dictionary.txt must be used in at least two files (a word used in only one file is moved to an inline cspell escape in that file and dropped from the global dictionary, unless the sole file can't host a comment, e.g. JSON), and every file's inline escapes sit in one contiguous block at the top. Fixes directly when invoked; housekeeping runs the same check read-only and files the drift as one aggregated issue — Backlog when any escape lands in product code, parked under `Claude meta` when every touched file is on the meta surface.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -255,9 +255,20 @@ The `housekeeping` skill runs this check on its periodic
 pass — escape drift is slow, so it's upkeep, not part of
 the `audit` rotation. It invokes `cspell-audit` in delegated
 mode (read-only, no edits) and files the run's violations
-as a **single aggregated** Backlog issue — **not** one
+as a **single aggregated** issue — **not** one
 issue per finding, because cspell fixes are trivial,
-file-disjoint, and belong in one PR. Each finding is a
+file-disjoint, and belong in one PR.
+
+**Backlog or parked depends on where the fix lands, so
+decide it rather than defaulting.** Moving a word out of
+`cfg/dictionary.txt` edits that file (meta) *and* the one
+file hosting the new inline escape (anything). If every
+such file is on the meta surface — `.claude/**`,
+`CLAUDE.md`, `docs/conventions/**`, `cfg/**` — the issue is
+a `Claude:` filing and parks under `Claude meta` (per
+`CLAUDE.md` → "Claude: meta-work prefix"). If any escape
+lands in product code, it is not meta and goes to Backlog
+as an ordinary task. Each finding is a
 bullet carrying its own `**Fingerprint**:` line, so one
 issue = one PR while later passes still dedup each finding
 individually. The fingerprint is stable across runs and

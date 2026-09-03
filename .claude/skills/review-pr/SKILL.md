@@ -219,6 +219,32 @@ already being asked to start the review.
      in the resolution, checked mechanically — not "the
      linter passed".
 
+     **That check now exists, and the rule is still
+     absolute.** `.claude/tools/merge_completeness.py` takes
+     the lines each parent added relative to the merge base,
+     whitespace-normalized, and reports per-side survival
+     plus every apparent loss itemized:
+
+     ```sh
+     python3 .claude/tools/merge_completeness.py --path <file>
+     ```
+
+     Use it **while resolving by hand** — it is the tool that
+     makes a manual resolution auditable, and it is what
+     caught a doc comment reading "all four kinds" that merged
+     cleanly when the true post-merge answer was five.
+
+     It does **not** license auto-resolution, and the reason
+     is in the same evidence. Its value is the check
+     *failing* and forcing each loss to be explained one at a
+     time — never a green light. In that same resolution both
+     branches added a variant to one enum and an arm to one
+     match: every line from both sides survived, completeness
+     passed trivially, and the result was still wrong in a way
+     only reading revealed. A carve-out keyed on "the tool
+     passed" would have shipped it. So the tool raises the
+     floor on manual resolution rather than moving this rule.
+
      The better lever is removing the collision class at
      the source, because it fixes every session at once
      rather than one conflict at a time: the Makefile
@@ -2415,6 +2441,32 @@ already being asked to start the review.
      summary line. `--force-context` overrides the degrade and
      is for adjudication, not for buying a location answer
      back at full price.
+
+     **Enumeration-for-edit is a THIRD case, and it takes
+     `--files-only`.** A sweep whose purpose is to enumerate
+     the sites of a rename or a removal produces a
+     **work list** you will open one by one, so its context is
+     redundant by construction: every site returned is a file
+     you are about to open and edit anyway. Measured: a
+     removal sweep with `--context 4` returned 8 matches
+     across 7 files at ≈1.7k, its session's fourth-largest
+     result; the tool printed its own advisory recommending
+     `--files-only`, the result was consumed anyway, and all
+     seven files were then opened and edited — so the payload
+     was bought twice.
+
+     The two-case split kept missing this because a rename
+     genuinely *feels* like adjudication, so the rule read as
+     licensing context and the advisory read as a false
+     positive. The distinction is **when** you need to see the
+     code: for an enumeration you need each site *while
+     editing it*, at which point the file is open; for a true
+     adjudication you need it *to decide whether to act at
+     all*, and you may never open the file. Only the second
+     earns context in the sweep — and this removes the
+     standing reason to override the advisory, which fires
+     correctly on rename sweeps and whose override trains the
+     habit of overriding it everywhere.
 
      **This rule is phase-neutral, and that is why it keeps
      getting missed.** Seven separate sessions answered a
@@ -4679,8 +4731,33 @@ already being asked to start the review.
      registered and the PR that was registered and kicked out
      read *identically* on this probe.
 
-     **Resolve that ambiguity with one `gh run list` — before
-     concluding anything.** The queue branch is the evidence:
+     **First rule out that it already MERGED, because this
+     probe cannot be trusted to notice.** GraphQL lags the
+     merge. A measured run got an open, unmerged, all-null
+     answer from GraphQL while a `gh pr view` state read *at
+     the same moment* returned `MERGED`.
+
+     Every all-null test below — the `gh run list`
+     evidence, the earlier-non-null rule, the two-consecutive
+     rule — reads that as a removal, so following them
+     literally concludes "kicked out of the queue" on a PR
+     that merged, and sends the next session diagnosing a CI
+     failure that does not exist.
+
+     One read settles it, and it is already inside the `gh`
+     carve-out for polled PR-state reads
+     (`docs/conventions/github-mcp.md`):
+
+     ```sh
+     gh pr view <number> --json state,mergedAt
+     ```
+
+     `state: "MERGED"` (or a non-null `mergedAt`) → it
+     merged; take the merged path and stop. Only once this
+     says otherwise do the removal tests below mean anything.
+
+     **Resolve the remaining ambiguity with one `gh run list`
+     — before concluding anything.** The queue branch is the evidence:
      if a run set for `pr-<number>-` exists, the entry
      demonstrably existed, so an all-null probe now means it
      **left**. If no such run set exists, the PR was never

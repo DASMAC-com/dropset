@@ -129,6 +129,8 @@ linkifies
 litesvm
 localnet
 localtime
+lookahead
+lookaheads
 lpad
 macropod
 memcpy
@@ -167,6 +169,7 @@ permissioned
 permissioning
 permissionless
 permissionlessly
+permwait
 pgrep
 pkill
 poppler
@@ -224,6 +227,7 @@ société
 solana
 solflare
 solscan
+sortedness
 soulbound
 sparticuz
 sqlfluff
@@ -267,6 +271,7 @@ unpadded
 unparseable
 unpegged
 unpullable
+unpulled
 unpushed
 unrouted
 unstarted

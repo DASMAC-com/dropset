@@ -413,6 +413,75 @@ class CliTests(unittest.TestCase):
         self.assertIn("error:", err.getvalue())
 
 
+class SpillTests(unittest.TestCase):
+    def setUp(self):
+        self.dest = Path(tempfile.mkdtemp()) / "spec.md"
+
+    def test_the_payload_lands_on_disk_verbatim(self):
+        src = _persisted({"description": BODY})
+        _invoke(src, "--field", "description", "--spill", str(self.dest))
+        self.assertEqual(self.dest.read_text(encoding="utf-8"), BODY)
+
+    def test_stdout_carries_the_heading_map_and_NOT_the_body(self):
+        # The whole point of the flag: the body goes to disk, only the map is
+        # echoed. A spill that printed the payload would cost what it saves.
+        src = _persisted({"description": BODY})
+        _, out, _ = _invoke(src, "--field", "description", "--spill", str(self.dest))
+        self.assertIn("Part 1", out)
+        self.assertIn("Part 2", out)
+        self.assertNotIn("body of one", out)
+        self.assertNotIn("nested under one", out)
+
+    def test_the_summary_names_the_destination_and_the_follow_up_form(self):
+        src = _persisted({"description": BODY})
+        _, _, err = _invoke(src, "--field", "description", "--spill", str(self.dest))
+        self.assertIn(str(self.dest), err)
+        self.assertIn("--section", err)
+        # The failure this flag exists to fix is re-reading one body through
+        # --field, so the summary has to say not to.
+        self.assertIn("do NOT re-run --field", err)
+
+    def test_a_second_spill_of_identical_content_reports_unchanged(self):
+        src = _persisted({"description": BODY})
+        _invoke(src, "--field", "description", "--spill", str(self.dest))
+        _, _, err = _invoke(src, "--field", "description", "--spill", str(self.dest))
+        self.assertIn("unchanged", err)
+
+    def test_a_changed_payload_overwrites_and_says_written(self):
+        _invoke(_plain("old text"), "--spill", str(self.dest))
+        _, _, err = _invoke(_plain("new text"), "--spill", str(self.dest))
+        self.assertIn("written", err)
+        self.assertEqual(self.dest.read_text(encoding="utf-8"), "new text")
+
+    def test_a_missing_parent_directory_is_created(self):
+        nested = self.dest.parent / "a" / "b" / "spec.md"
+        _invoke(_plain("payload"), "--spill", str(nested))
+        self.assertEqual(nested.read_text(encoding="utf-8"), "payload")
+
+    def test_a_payload_with_no_headings_points_at_grep_instead(self):
+        _, out, err = _invoke(
+            _plain("just prose\nmore prose"), "--spill", str(self.dest)
+        )
+        self.assertEqual(out, "")
+        self.assertIn("No headings", err)
+        self.assertIn("--grep", err)
+
+    def test_the_heading_map_is_bounded(self):
+        many = "\n".join(f"# Heading {i}" for i in range(rr.SPILL_HEADING_MAX + 15))
+        _, out, err = _invoke(_plain(many), "--spill", str(self.dest))
+        self.assertEqual(len(out.splitlines()), rr.SPILL_HEADING_MAX)
+        self.assertIn("15 not listed", err)
+
+    def test_an_unwritable_destination_is_a_clean_error(self):
+        with self.assertRaises(ReadResultError) as caught:
+            _invoke(_plain("payload"), "--spill", "/nonexistent-root/x/spec.md")
+        self.assertIn("cannot write", str(caught.exception))
+
+    def test_spill_is_exclusive_with_another_mode(self):
+        with self.assertRaises(SystemExit):
+            _invoke(_plain("x"), "--spill", str(self.dest), "--count")
+
+
 class mock_argv:  # noqa: N801 — a tiny context manager, not a class API
     def __init__(self, argv):
         self.argv = argv

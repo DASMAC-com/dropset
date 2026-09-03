@@ -328,8 +328,35 @@ def summarize(result: dict) -> str:
         parts.append(f"{len(result['unrecognized_identifier'])} unrecognized")
     if result.get("opened") is not None:
         parts.append(f"{result['opened']} opened")
-        if result.get("unmarked"):
-            parts.append(f"{result['unmarked']} could not be marked")
+        unmarked = result.get("unmarked") or []
+        if unmarked:
+            # NAME them, and count them correctly. This used to interpolate the
+            # list itself into a slot reading "N could not be marked", so the
+            # summary printed a raw Python list repr where a count belonged.
+            parts.append(f"{len(unmarked)} could not be marked: {', '.join(unmarked)}")
+        # The silent path, and the one that actually bit: tabs opened but no
+        # tty came back, so nothing was marked and `unmarked` was empty too —
+        # a clean-looking summary over a total mark failure. Report the
+        # shortfall on its own, because an empty `unmarked` is otherwise
+        # indistinguishable from complete success.
+        missing = result.get("no_tty") or []
+        if missing:
+            # Phrased against what was REQUESTED, not asserted as "opened".
+            # Absence from `pairs` covers two cases — a tab that opened but
+            # whose tty did not parse, and a tab that never opened at all
+            # (osascript aborted, or returned nothing) — and this line cannot
+            # tell them apart. Claiming "opened" would also contradict the
+            # "N opened" it sits beside, which counts only what parsed.
+            # Omit the denominator when it is unknown rather than defaulting it
+            # to the numerator — "N of N requested" would assert that EVERY
+            # requested tab failed, which is the same species of unverified
+            # claim this rewording removed from the previous version.
+            requested = result.get("requested")
+            scope = f" of {requested} requested" if requested else ""
+            parts.append(
+                f"{len(missing)}{scope} produced no tty, so "
+                f"nothing was marked for: {', '.join(missing)}"
+            )
     return " | ".join(parts)
 
 
@@ -358,9 +385,20 @@ def run(argv: list[str]) -> int:
         unmarked = [tag for tag, tty in pairs if not mark_attention(tty)]
         result["opened"] = len(pairs)
         result["unmarked"] = unmarked
+        # A tab whose tty never came back is unreachable for marking, and its
+        # absence from `pairs` also kept it out of `unmarked` — so a total
+        # tty-parse failure reported "0 opened" and no mark complaint at all,
+        # over a window full of freshly opened tabs. Track the shortfall
+        # explicitly against what was REQUESTED rather than inferring it from
+        # what parsed.
+        resolved = {tag for tag, _ in pairs}
+        result["no_tty"] = [tag for tag in tags if tag not in resolved]
+        result["requested"] = len(tags)
     elif args.apply:
         result["opened"] = 0
         result["unmarked"] = []
+        result["no_tty"] = []
+        result["requested"] = 0
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")

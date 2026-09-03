@@ -1,5 +1,7 @@
 <!-- cspell:word Toolsets -->
 
+<!-- cspell:word DOCKERHUB -->
+
 # GitHub via MCP
 
 All GitHub operations — opening PRs, updating titles and bodies,
@@ -294,3 +296,83 @@ resolved through worktrees to the main checkout** — so firming them
 once makes them live in every worktree, with nothing to propagate
 (see `local-integrations.md` → "How settings files resolve across
 worktrees"). `firm-perms` writes them at session end.
+
+## Actions: secrets, variables, and required checks
+
+Nothing governed GitHub Actions configuration before this section, and
+the absence was the finding rather than any specific drift. It is
+deliberately **inventory-shaped**: the job is that the *next* secret or
+required check gets added against a stated rule instead of extending
+per-PR folklore.
+
+### Repository secrets
+
+Three are configured, and the whole set is worth naming because a
+secret is invisible from the checkout:
+
+| Secret                | Consumed by          | For                |
+| --------------------- | -------------------- | ------------------ |
+| `DOCKERHUB_USERNAME`  | `explorer-image.yml` | Docker Hub login   |
+| `DOCKERHUB_TOKEN`     | `explorer-image.yml` | Docker Hub login   |
+| `PLATFORM_FEE_WALLET` | `frontend.yml`       | the fee-vault gate |
+
+Values obviously never appear here. `secrets.GITHUB_TOKEN` also appears
+in the workflows (`semantic-pr.yml`) but is **not** one of these: Actions
+provides it automatically per run, so it needs no configuration and
+cannot be inventoried alongside the three above.
+
+The fee wallet is a secret **by operator direction** — the address stays
+out of version control.
+
+### Secret vs variable vs committed constant
+
+The rule, hoisted from where it was previously recorded only in a
+`frontend.yml` comment:
+
+- **A secret** when the value must be **masked in logs**. This is the
+  operative test, and it is about log exposure rather than
+  confidentiality: the fee-vault step's script *echoes* the address, and
+  **Actions masks only secrets**, so a repository *variable* would
+  print it in plain text. A value that is merely non-public but never
+  echoed does not need this.
+- **A repository variable** for non-sensitive configuration that
+  differs by environment and is never echoed.
+- **A committed constant** for anything the repo can legitimately
+  publish — the default, since it is reviewable in a diff and needs no
+  out-of-band setup for a fresh clone or a fork.
+
+Scope a secret to the **step** that needs it, not the job or the
+workflow — the fee-vault step does exactly this, and it keeps the
+credential out of every build step that has no business seeing it.
+
+### Required status checks
+
+Nine contexts gate `main`, via a repository **ruleset** (not classic
+branch protection — the branch-protection REST endpoint returns 404, so
+read them with `gh api repos/{owner}/{repo}/rulesets/{id}`):
+
+`Semantic PR`, `Lint`, `Detect changes`, `Tests`,
+`Tests (no teardown)`, `Tests (asm parity)`, `Tests (Postgres)`, `SDK`,
+`Frontend`.
+
+### Forks get no secrets — so a secret-dependent required check is fork-hostile
+
+A `pull_request` run from a fork receives **no secrets**. This is a
+GitHub security property, not a setting, and it interacts badly with the
+required-checks list above: any required check with a secret dependency
+**cannot pass on a fork PR**, and the contributor cannot fix it.
+
+`Frontend` is the first required check to acquire such a dependency, via
+the fee-vault step. The failure is **safe** — the secret is absent, so
+nothing leaks, and the step fails closed — but it is unfixable from the
+fork side and its message will not explain why.
+
+**Dormant while the repo has no external contributors**, which is why
+this is recorded rather than fixed. The revisit condition is the first
+fork PR, and the two shapes available then are to guard the step on
+`github.event.pull_request.head.repo.fork` (skipping the gate for fork
+PRs, which weakens it exactly where review is least trusted), or to
+split the fee-vault gate into its own non-required check. Prefer the
+split: it keeps the gate's coverage on the merge path, where the
+motivating failure actually occurred, without making a required check
+unsatisfiable.

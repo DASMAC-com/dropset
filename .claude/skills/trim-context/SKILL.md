@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` Backlog task — always ONE task, whatever the lever count or surface spread, with one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line — then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
+description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` task — always ONE task, whatever the lever count or surface spread, with one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line — filed PARKED itself (Todo plus the `Claude meta` milestone, so the planning bootstrap's batch assembly consumes it rather than it sitting unblocked in Next), then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -12,8 +12,9 @@ The **consumer** half of the context-economy feedback loop.
 trim lever as its own small **parked issue**, stamped with the
 `Trim levers` project milestone and keyed by a `**Fingerprint**:`.
 `trim-context` is the periodic **fold**: it sweeps that milestone, folds
-the parked levers into a single aggregated propose-only Backlog task, and
-closes the originals.
+the parked levers into a single aggregated propose-only **parked** task
+(state `Todo` plus the `Claude meta` milestone, so the next planning
+bootstrap's batch assembly consumes it), and closes the originals.
 
 It runs identically whether invoked standalone or by `housekeeping` —
 there is **no** propose-only vs. apply split, because filing a task *is*
@@ -51,7 +52,8 @@ machine, on the pattern the `Audit findings` milestone already proved.
 
 ## Linear destination
 
-This skill sweeps a milestone and **files** one Backlog task, so it needs
+This skill sweeps a milestone and **files** one parked task — `Todo`
+plus the `Claude meta` milestone, not Backlog — so it needs
 the env-resolved filing destination (the same one `linear-task` /
 `housekeeping` use). Resolve each variable with its **own** bare
 `printenv` (one `Bash(printenv:*)` allow-rule covers them all) — never a
@@ -134,10 +136,20 @@ is what keeps later dedup matching each lever individually, and it is the
 reason one task loses nothing.
 
 **4. File the aggregated task, propose-only.** The fold's output is one
-`Claude:` Backlog task. A trim lever always edits a
+**parked** `Claude:` task. A trim lever always edits a
 skill or convention doc, so the task is meta-work — prepend the
 **`Claude:`** prefix to its title, per `CLAUDE.md` → "Claude: meta-work
-prefix". Its body is **one `# Part N — <title>` section per lever**, and
+prefix".
+
+**It parks rather than going to Backlog:** state **`Todo` plus the
+`Claude meta` milestone**, in the creating call. The next planning
+bootstrap sweeps that milestone and consumes this task as a part of its
+batch, so it reaches a session that way rather than by sitting unblocked
+in the operator's Next view. The `Trim levers` milestone, this skill's
+own writer, and the per-lever fold below are all unchanged — only where
+the *output* lands moved.
+
+Its body is **one `# Part N — <title>` section per lever**, and
 carries:
 
 - one **`**Fingerprint**: <domain>:<lever-slug>`** line **per lever**,
@@ -159,7 +171,8 @@ mcp__claude_ai_Linear__save_issue(
   team: "<$LINEAR_TEAM_ID>",
   project: "<$LINEAR_PROJECT_ID>",
   assignee: "<$LINEAR_ASSIGNEE_ID>",
-  state: "Backlog",
+  state: "Todo",
+  milestone: "Claude meta",
   title: "Claude: <umbrella summary of this fold's trim levers>",
   description: "<one `# Part N — <title>` section per lever — each the
     lever, the sessions that motivate it, the concrete skill /
@@ -282,12 +295,14 @@ and can come out of the environment.
 ## Notes
 
 - **No source edits.** This skill writes only to Linear — the filed
-  Backlog task and the parked levers' closures — and never authors a code
+  parked task and the parked levers' closures — and never authors a code
   or skill diff, never commits, never pushes. The improvements it
   proposes are applied later by a human through a normal PR.
-- **No relations, ever.** Folding places no blocking edge; parked levers
-  are exempt from the meta batch and its edge until folded, and the
-  aggregated task the fold produces is what that edge governs. Blocking
+- **No relations, ever.** Folding places no blocking edge. A parked
+  lever sits outside the meta batch until folded, and the aggregated
+  task the fold produces parks under `Claude meta` to be consumed by the
+  next batch assembly — which carries **no edge at all**, its assembly
+  precondition having replaced the one it used to need. Blocking
   edges are human-curated in a planning session (`CLAUDE.md` →
   "Blocking relations").
 - **Runs standalone or as housekeeping's step.** `housekeeping` delegates

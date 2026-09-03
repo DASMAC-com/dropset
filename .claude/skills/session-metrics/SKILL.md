@@ -1,6 +1,6 @@
 ---
 name: session-metrics
-description: Capture where a session spent its tokens and recommend concrete trims. The deterministic core — resolve the session's on-disk transcript, read it (and its sub-agent transcripts) in its own process so the huge file never enters context, and rank the costliest tools / largest single results / per-sub-agent rollup plus the repeated command shapes worth hardening into a tool (ranked by result size, not call count, each labeled context / context (failures) / wall-clock / prompt-churn) — runs as the committed `session_metrics.py` tool under `.claude/tools/` (`make session-metrics SESSION=<uuid>`). The skill drives that tool, then files each trim lever it identifies as its own parked Linear issue under the `Trim levers` milestone, fingerprinted and written through the zero-echo `trim_levers.py` writer (appending this session's evidence to a lever that already exists rather than duplicating it), which `trim-context` later folds into propose-only skill-improvement tasks. Runs at the end of a `review-pr` session (its handoff offers it) or standalone for any session id.
+description: Capture where a session spent its tokens and recommend concrete trims. The deterministic core — resolve the session's on-disk transcript, read it (and its sub-agent transcripts) in its own process so the huge file never enters context, and rank the costliest tools / largest single results / per-sub-agent rollup plus the repeated command shapes worth hardening into a tool (ranked by result size, not call count, each labeled context / context (failures) / wall-clock / prompt-churn) — runs as the committed `session_metrics.py` tool under `.claude/tools/` (`make session-metrics SESSION=<uuid>`). The skill drives that tool, then files each trim lever it identifies as its own parked Linear issue under the `Trim levers` milestone, fingerprinted and written through the zero-echo `trim_levers.py` writer (appending this session's evidence to a lever that already exists rather than duplicating it), which `trim-context` later folds into ONE propose-only skill-improvement task, parked under the `Claude meta` milestone rather than filed to Backlog. Runs at the end of a `review-pr` session (its handoff offers it) or standalone for any session id.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -27,7 +27,8 @@ complementary halves:
 Each recommendation lands as **its own parked Linear issue** —
 one lever, one issue, stamped with the `Trim levers` milestone
 and keyed by a `**Fingerprint**:` — which `trim-context` later
-folds into propose-only skill-improvement Backlog tasks, on its
+folds into **one** propose-only skill-improvement task, parked
+under the `Claude meta` milestone, on its
 own or as `housekeeping`'s Session Metrics step. This is the
 feedback loop that systematizes, every session, the by-hand
 analysis that motivated this work.
@@ -326,9 +327,11 @@ Compactness is a discipline from day one here — the document
 this replaced grew past the tool-result cap precisely because
 nothing bounded per-entry length.
 
-**No relations, no blocking edges.** Parked levers are exempt
-from the meta batch and its edge until `trim-context` folds
-them; the writer has no relation mutation at all.
+**No relations, no blocking edges.** A parked lever is outside
+the meta batch until `trim-context` folds it, and the batch
+itself now carries no edge at all — its assembly precondition
+replaced it (`CLAUDE.md` → "Blocking relations"). Either way
+the writer has no relation mutation at all.
 
 **A re-run is safe.** The probe makes this idempotent: a second
 run for the same session finds each lever already filed and
