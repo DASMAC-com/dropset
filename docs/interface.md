@@ -405,11 +405,13 @@ math-core kernels. It carries three parts: `market_data`, the primary
 market's account bytes; `markets`, a map of additional named buffers
 (a `far_out` book resting an unaffordable level behind an honest one on each
 side, and a `flush` book whose vault materializes its levels from a relative
-profile instead of from `remaining`); and `books`, the expected resting book
-per market at one clock. Each case names the buffer it quotes against —
-`"primary"` means `market_data`, anything else is a key in `markets`.
+profile instead of from `remaining`); and `books`, five expected resting
+books — one at a live clock for each of the three markets, plus the primary
+book at each expiry domain's deadline, where both sides come back empty.
+Each case names the buffer it quotes against — `"primary"` means
+`market_data`, anything else is a key in `markets`.
 
-It has three readers, one per matcher:
+It has three readers, spanning four matchers:
 
 - `sdk/interface/tests/wasm_conformance.rs`, gated to the `wasm32` target
   and run under `wasm-pack test --node`, drives the **compiled binding** —

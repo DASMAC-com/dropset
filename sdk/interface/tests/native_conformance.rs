@@ -230,6 +230,43 @@ fn the_fixture_still_carries_the_flush_expiry_cases() {
     for (name, out) in &flush {
         assert_eq!(*out, 0, "{name}: a `_dead` flush case must fill nothing");
     }
+
+    // And pin the *live* pair, or the loss is worse in the other direction:
+    // drop those two and the profile-to-level materialization is exercised
+    // only at dead clocks, where it correctly produces nothing — so the
+    // arithmetic this market exists to cover (price from `reference` plus a
+    // ppm offset, size from `size_bps` of inventory) would go untested with
+    // a green suite.
+    let filling: Vec<(&str, u64)> = v["cases"]
+        .as_array()
+        .expect("cases is an array")
+        .iter()
+        .filter(|c| c["market"].as_str() == Some("flush"))
+        .map(|c| {
+            (
+                c["name"].as_str().expect("case name"),
+                u64_at(&c["expected"], "out_amount"),
+            )
+        })
+        .filter(|(n, _)| !n.starts_with("flush_expiry_"))
+        .collect();
+
+    assert_eq!(
+        filling.len(),
+        2,
+        "expected one filling flush case per side; found {filling:?}"
+    );
+    assert!(
+        filling.iter().any(|f| f.0.starts_with("flush_buy"))
+            && filling.iter().any(|f| f.0.starts_with("flush_sell")),
+        "expected a filling flush case on each side; found {filling:?}"
+    );
+    for (name, out) in &filling {
+        assert!(
+            *out > 0,
+            "{name}: a flush case at a live clock must materialize a fill"
+        );
+    }
 }
 
 /// The equal-price tie-break must be ordered by **nonce**, asserted against
