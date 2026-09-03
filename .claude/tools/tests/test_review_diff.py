@@ -213,6 +213,60 @@ class SliceForTests(unittest.TestCase):
         self.assertEqual(rd.slice_for("programs/dropset/src/swap.rs"), "source")
 
 
+class CrateRollupTests(unittest.TestCase):
+    """The tier decision's crate inputs. The multi-crate trigger weighed the
+    PRESENCE of a second crate rather than what changed in it, so a seven-line
+    doc fix in a second tree escalated a diff to the full fan-out."""
+
+    @staticmethod
+    def _files(*pairs):
+        return [{"path": p, "changes": c} for p, c in pairs]
+
+    def test_a_docs_only_second_crate_does_not_count_as_code(self):
+        rollup = rd.crate_rollup(
+            self._files(("sdk/rs/src/lib.rs", 40), ("docs/interface.md", 7))
+        )
+        self.assertTrue(rollup["sdk"]["has_source"])
+        self.assertFalse(rollup["docs"]["has_source"])
+
+    def test_two_source_crates_both_count(self):
+        rollup = rd.crate_rollup(
+            self._files(("sdk/rs/src/lib.rs", 4), ("programs/x/src/lib.rs", 9))
+        )
+        self.assertEqual(sum(1 for b in rollup.values() if b["has_source"]), 2)
+
+    def test_changed_lines_are_attributed_per_slice(self):
+        rollup = rd.crate_rollup(
+            self._files(
+                ("feeds/src/http.rs", 10),
+                ("feeds/README.md", 3),
+                ("feeds/tests/it.rs", 5),
+            )
+        )
+        self.assertEqual(rollup["feeds"]["source"], 10)
+        self.assertEqual(rollup["feeds"]["docs"], 3)
+        self.assertEqual(rollup["feeds"]["tests"], 5)
+        self.assertTrue(rollup["feeds"]["has_source"])
+
+    def test_a_zero_change_entry_still_registers_the_crate(self):
+        """A rename or mode change reports no line delta, and dropping it would
+        under-count the tree it touched."""
+        rollup = rd.crate_rollup(self._files(("sdk/rs/src/lib.rs", 0)))
+        self.assertTrue(rollup["sdk"]["has_source"])
+
+    def test_a_root_level_file_gets_its_own_bucket(self):
+        rollup = rd.crate_rollup(self._files(("CLAUDE.md", 2)))
+        self.assertIn("CLAUDE.md", rollup)
+        self.assertFalse(rollup["CLAUDE.md"]["has_source"])
+
+    def test_a_doc_comment_only_source_change_still_reads_as_source(self):
+        """The stated bound: classification is by PATH, so this over-counts
+        rather than under-reviewing. Pinned so the limitation is deliberate
+        rather than discovered."""
+        rollup = rd.crate_rollup(self._files(("sdk/rs/src/lib.rs", 7)))
+        self.assertTrue(rollup["sdk"]["has_source"])
+
+
 class DiffHeaderPathTests(unittest.TestCase):
     """Slicing keys on the destination path in each ``diff --git`` header."""
 

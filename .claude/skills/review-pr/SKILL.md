@@ -2388,6 +2388,25 @@ already being asked to start the review.
    or multi-crate** diffs, where the blast radius is exactly
    what the extra lenses and the adversarial pass exist for.
 
+   **"Multi-crate" means multiple crates with a SOURCE change
+   — read `code_crates`, not the crate count.** The trigger
+   used to weigh a second crate's *presence*, so a seven-line
+   doc-comment fix in a second tree escalated a diff to the
+   full fan-out on its own. `review_diff.py` now reports
+   `code_crates` (trees with an actual source change) and a
+   per-crate `crates` rollup of source / docs / tests lines;
+   take `code_crates == 1` as single-crate for tier purposes.
+
+   Two things to preserve. This discounts a docs-only crate
+   from the **crate count and nothing else** — the change is
+   still fully reviewed, and the seven-line doc fix that
+   prompted this was itself a real finding from an earlier PR
+   that had gone stale, so the docs and completeness lenses
+   must still see it. And the rollup classifies by **path**, so
+   a `.rs` change that happens to be all doc comments still
+   reads as source: it over-counts crates rather than
+   under-reviewing one, which is the safe direction.
+
    **Gate the two freshness lenses on the diff's touched
    surfaces.** The four substantive lenses below
    (correctness, security, style, completeness) are
@@ -4161,7 +4180,7 @@ already being asked to start the review.
      looks wrong, the way to tell them apart is one
      `gh run list --branch <branch>` filtered to the head SHA,
      the same evidence the merge-queue probe uses for its own
-     all-null ambiguity.
+     all-null ambiguous case.
 
    - **`conclusion: "timeout"`** means the watch hit its bound
      (default one hour), or exhausted its re-watch rounds, with
@@ -4199,10 +4218,52 @@ already being asked to start the review.
    - **`fail`** → the PR is not actually clean, so don't leave
      it reading as merge-ready. Catalogue each entry of the
      verdict's `failing` array as **blocking**, naming the check
-     and its `link`. Each entry already carries the `run_id`, so
-     fetch every failed job's log together over the MCP without
-     parsing a URL (this failure path stays on the MCP —
-     `get_job_logs` already caps its output with `tail_lines`):
+     and its `link`.
+
+     **Read the failing job's STEP CONCLUSIONS first — before
+     fetching any log.** One field-selected call, bounded by
+     the number of steps rather than by log volume:
+
+     ```sh
+     gh api repos/DASMAC-com/dropset/actions/runs/<run_id>/jobs \
+       --jq '.jobs[] | "\(.conclusion)\t\(.id)\t\(.name)"'
+     ```
+
+     ```sh
+     gh api repos/DASMAC-com/dropset/actions/jobs/<job_id> \
+       --jq '.steps[] | "\(.conclusion)\t\(.name)"'
+     ```
+
+     A tail is an **offset guess**, and a job's post-steps
+     epilogue reliably occupies the last several dozen lines, so
+     a small tail lands in cleanup rather than in the failure.
+     Measured: a `tail_lines: 22` fetch cost 813 tokens and
+     returned **only** post-job cleanup — git credential
+     unsetting, submodule config, "Cleaning up orphan
+     processes" — with zero lines of the failing step. The
+     steps read costs ~100 tokens and identified the failing
+     step first try. (Reproduced again while writing this: a
+     45-line tail on a `make tools-tests` failure returned
+     nothing but the epilogue.)
+
+     Three things follow from having the step's **name**:
+
+     1. Often the name alone is the diagnosis and no log is
+        needed — "Platform-fee vaults exist" failing with
+        everything before it green was complete on its own, and
+        `make tools-tests` failing while every hook step was
+        skipped said immediately that the failure was *not a
+        hook*.
+     1. When a log **is** needed, the name says whether it is
+        cascade-shaped (a per-file lint cascade, where the rule
+        below applies) or a single-command step whose tail is
+        genuinely where the error lives.
+     1. It distinguishes "the step ran and failed" from "the
+        step never ran", which a tail cannot show.
+
+     Then, with the step known, fetch the log over the MCP
+     (this failure path stays on the MCP — `get_job_logs` caps
+     its output with `tail_lines`):
 
      ```txt
      mcp__github__get_job_logs(
@@ -4577,12 +4638,43 @@ already being asked to start the review.
      **And expect no output at all.** Under this harness
      `gh pr merge --auto` prints **nothing** — stdout is not a
      TTY, so the "Merge when ready" confirmation `gh` shows
-     interactively never appears. The exit status is genuinely
-     the *whole* signal: there is no reply text to read back,
-     and one run read the silence as a failed enqueue. If you
-     want positive confirmation beyond exit 0, take it from a
-     `mergeQueueEntry` probe after the settle delay — not from
-     anything the command said.
+     interactively never appears. There is no reply text to
+     read back, and one run read the silence as a failed
+     enqueue.
+
+     **But exit 0 is NOT proof of enqueue — verify once.** It
+     confirms auto-merge was *enabled*, which is not the same
+     as a queue entry existing. Measured: a session followed
+     this step exactly, CI went 9/9 green, the enqueue exited 0
+     with no output — the documented success
+     shape — and the PR was **never queued**:
+     `mergeQueueEntry: null` on two probes minutes apart, **no**
+     `gh-readonly-queue/main/pr-374-*` branch ever created, and
+     REST independently reporting `auto_merge: null` with
+     `mergeable_state: "clean"`. It sat idle until enqueued a
+     second way, and without a verification step this would
+     have been reported to the operator as queued.
+
+     So after the documented settle delay, probe once for
+     `mergeQueueEntry`, and treat a null entry **with no
+     queue-branch run** as *the enqueue did not take* rather
+     than as the registration race. The skill already owns both
+     halves of that reasoning — the settle window and the
+     `gh run list` check, a few steps down — it simply
+     never applied them to a **fresh** enqueue, only to a
+     suspected dequeue.
+
+     **The already-clean remedy, which is not a bypass.** On a
+     repo where `merge_queue` is an active branch rule —
+     checkable once with
+     `gh api repos/{owner}/{repo}/rules/branches/main --jq '[.[] | .type]'`
+     — a plain `gh pr merge <n>` **enqueues** rather than
+     merging directly, because the rule forbids a non-queue
+     merge. That is the correct fallback for an already-clean
+     PR whose `--auto` did not take. Worth naming because this
+     step previously warned only that the MCP
+     `merge_pull_request` bypasses the queue, which left a
+     reader with no safe non-`--auto` option at all.
 
    - **If the user declines**, leave the PR ready and the
      issue In Review, and note that they can merge it (or
@@ -4975,6 +5067,29 @@ already being asked to start the review.
      flow finishes and the notification sits until morning.
 
      If no notification matches (already cleared), skip it.
+
+     **The merge probe IS the confirmation — do not re-read a
+     file to check the change landed.** The probe already
+     returned `merged: true` / `state: "MERGED"`, which is the
+     authoritative answer to "did it land"; re-opening a file
+     at the merge ref adds no information over it, and is the
+     same re-fetch-what-you-already-know shape the conventions
+     name elsewhere.
+
+     If you genuinely want the landed content — to inspect a
+     merge resolution, say — slice it:
+     `python3 .claude/tools/show_at_ref.py <ref> <path>`, or
+     grep it. **Never `git show <ref>:<path>`**, which prints
+     the whole blob (~3.8k measured); `--no-patch` suppresses a
+     *diff*, not a blob dump.
+
+     Worth noting the general shape, because it recurred three
+     times in one session: a correct rule stated in one phase
+     of a long skill fails to fire in another where it is
+     needed. The cheap structural answer is to restate the
+     narrow form **at the call site**, which is what the
+     paragraph above is, rather than adding another general
+     statement next to the existing ones.
 
      Finally, **reclaim this worktree's disk**. Now the PR
      has landed, its worktree is dead weight until
