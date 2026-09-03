@@ -199,10 +199,16 @@ class WaitTests(unittest.TestCase):
     def _stub(self, checks, settled=True):
         wfc_real_watch = wfc.watch_checks
         wfc_real_read = wfc.read_checks
+        # Neutralize the inter-round pacing. It is real seconds in production,
+        # and a `none` read now re-enters the watch (the registration race), so
+        # without this every check-less case here would sleep through its cap.
+        real_sleep = wfc.time.sleep
         wfc.watch_checks = lambda pr, repo, interval, timeout, log: settled
         wfc.read_checks = lambda pr, repo: checks
+        wfc.time.sleep = lambda _s: None
         self.addCleanup(setattr, wfc, "watch_checks", wfc_real_watch)
         self.addCleanup(setattr, wfc, "read_checks", wfc_real_read)
+        self.addCleanup(setattr, wfc.time, "sleep", real_sleep)
 
     def test_green_build(self):
         self._stub([check("a", "pass")])
@@ -365,10 +371,13 @@ class CliTests(unittest.TestCase):
     def _stub(self, checks):
         wfc_real_watch = wfc.watch_checks
         wfc_real_read = wfc.read_checks
+        real_sleep = wfc.time.sleep
         wfc.watch_checks = lambda pr, repo, interval, timeout, log: True
         wfc.read_checks = lambda pr, repo: checks
+        wfc.time.sleep = lambda _s: None
         self.addCleanup(setattr, wfc, "watch_checks", wfc_real_watch)
         self.addCleanup(setattr, wfc, "read_checks", wfc_real_read)
+        self.addCleanup(setattr, wfc.time, "sleep", real_sleep)
 
     def _capture(self, argv):
         buf = io.StringIO()
@@ -596,12 +605,16 @@ class ConflictingPrTests(unittest.TestCase):
 
     def _stub(self, checks, merge_payload=None, code=0):
         real_watch, real_read, real_gh = wfc.watch_checks, wfc.read_checks, wfc._gh
+        real_sleep = wfc.time.sleep
         wfc.watch_checks = lambda pr, repo, interval, timeout, log: True
         wfc.read_checks = lambda pr, repo: checks
         wfc._gh = lambda args: (code, json.dumps(merge_payload or {}), "boom")
+        # Every case in this class reads `none`, which now re-enters the watch.
+        wfc.time.sleep = lambda _s: None
         self.addCleanup(setattr, wfc, "watch_checks", real_watch)
         self.addCleanup(setattr, wfc, "read_checks", real_read)
         self.addCleanup(setattr, wfc, "_gh", real_gh)
+        self.addCleanup(setattr, wfc.time, "sleep", real_sleep)
 
     def test_no_checks_plus_conflicting_reports_conflicting(self):
         self._stub([], {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"})
@@ -616,6 +629,54 @@ class ConflictingPrTests(unittest.TestCase):
         verdict = wfc.wait(285, repo="o/r")
         self.assertEqual(verdict["conclusion"], "none")
         self.assertFalse(verdict["blocked_by_conflict"])
+
+    def test_a_persistent_none_is_re_read_before_being_believed(self):
+        """`none` fails OPEN — it declares a commit CI-clean — where `pending`
+        fails safe. A wait started right after a push returned in 1 second with
+        `none`, `counts: {}`, `settled: true` while four runs were already
+        starting. So it is re-read rather than believed."""
+        self._stub([], {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"})
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertEqual(verdict["watch_rounds"], wfc.MAX_NONE_ROUNDS)
+
+    def test_an_exhausted_none_reports_none_not_timeout(self):
+        """The rounds established an ABSENCE, which is an answer. Reporting
+        `timeout` would claim a wedged run that never existed."""
+        self._stub([], {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"})
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertEqual(verdict["conclusion"], "none")
+        # Honest about not having settled, while still naming the cause.
+        self.assertFalse(verdict["settled"])
+
+    def test_a_check_that_registers_late_is_caught_rather_than_missed(self):
+        """The whole point: the second read sees what the first could not."""
+        reads = [[], [check("Tests", "pass")]]
+        real_watch, real_read = wfc.watch_checks, wfc.read_checks
+        real_sleep = wfc.time.sleep
+        wfc.watch_checks = lambda pr, repo, interval, timeout, log: True
+        wfc.read_checks = lambda pr, repo: reads.pop(0) if len(reads) > 1 else reads[0]
+        wfc.time.sleep = lambda _s: None
+        self.addCleanup(setattr, wfc, "watch_checks", real_watch)
+        self.addCleanup(setattr, wfc, "read_checks", real_read)
+        self.addCleanup(setattr, wfc.time, "sleep", real_sleep)
+
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertEqual(verdict["conclusion"], "pass")
+        self.assertTrue(verdict["settled"])
+        self.assertEqual(verdict["watch_rounds"], 2)
+
+    def test_a_none_that_is_really_a_conflict_still_reports_conflicting(self):
+        """The conflict probe must survive the re-read, since a CONFLICTING PR
+        produces no run at all and would otherwise look like the race."""
+        self._stub([], {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"})
+        verdict = wfc.wait(285, repo="o/r")
+        self.assertEqual(verdict["conclusion"], "conflicting")
+
+    def test_the_none_cap_is_smaller_than_the_pending_cap(self):
+        """A registration race is seconds-scale; a CI run is not. Reusing the
+        pending pacing would add minutes to every check-less PR."""
+        self.assertLess(wfc.MAX_NONE_ROUNDS, wfc.MAX_WATCH_ROUNDS)
+        self.assertLess(wfc.NONE_SETTLE_SECONDS, wfc.DEFAULT_INTERVAL)
 
     def test_the_probe_is_skipped_when_checks_exist(self):
         # It answers a question only `none` raises; asking always would be a

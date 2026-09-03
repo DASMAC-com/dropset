@@ -647,6 +647,14 @@ SINGLE_FILE_CONTEXT_LIMIT = 2
 # a genuine adjudication read — a handful of regions — untouched.
 CONTEXT_DEGRADE_LINES = 100
 
+# How many files an UNSCOPED `--context` sweep may touch before it degrades to
+# `--files-only` regardless of size. Spread — not scope alone, and not printed
+# lines — is what identifies a caller who does not yet know where the thing is,
+# and that caller is asking WHERE. Three is deliberately permissive: a genuine
+# unscoped adjudication read usually lands in one or two files, and the
+# line-count degrade above still catches anything merely large.
+UNSCOPED_SPREAD_FILES = 3
+
 
 def single_file_scope(globs, dirs) -> str | None:
     """The one file this invocation can possibly search, or ``None``.
@@ -949,6 +957,44 @@ def run(argv: list[str]) -> int:
                 f"WHERE. To read what the code does, slice-read the region with "
                 f"Read offset/limit, or re-run with --force-context."
             )
+
+    # DEGRADE an UNSCOPED context sweep that SPREADS across files.
+    #
+    # The degrade above is keyed on printed lines, so a first, blind `--context`
+    # sweep is only caught once it is already expensive — and a location
+    # question asked that way is the most recurring lever in mined sessions.
+    # The rule "a pattern you have not searched before starts --files-only" is
+    # documented and gets skipped, because an advisory can only arrive *with* a
+    # payload already paid for.
+    #
+    # Keyed on SPREAD rather than on scope alone, deliberately. "Unscoped" on
+    # its own over-fires: a narrow unscoped read of two files is cheap and may
+    # genuinely be an adjudication, and refusing it would cost a re-run to buy
+    # nothing the size degrade was not already catching. Spread is the actual
+    # signal that the caller did not know where to look, which is the case
+    # where surrounding lines cannot yet be the question.
+    #
+    # (The lever behind this proposed tracking first-time *patterns* per
+    # session instead. That is not implementable here: this tool has no way to
+    # identify its session — `CLAUDE_SESSION_ID` is not set in a Bash tool call
+    # — and guessing by newest-mtime is the same race `firm_last.py` documents.)
+    if (
+        args.context
+        and not files_only
+        and result["total"]
+        and not globs
+        and dirs is None
+        and not args.force_context
+        and len(result["files"]) > UNSCOPED_SPREAD_FILES
+    ):
+        files_only = True
+        notes.append(
+            f"NOTE: --context {args.context} was dropped because this sweep is "
+            f"UNSCOPED and spread across {len(result['files'])} files — that "
+            "shape is a WHERE question, and the files below are the complete "
+            "answer to it. Narrow with --glob/--dir and ask again if you then "
+            "need the surrounding lines, or re-run with --force-context."
+        )
 
     print_result(result, files_only, args.context, notes)
     # 0 when something matched, 1 when nothing did — grep's convention, so a

@@ -1170,6 +1170,47 @@ class ContextDegradeTests(unittest.TestCase):
         _, printed = self._run(["needle", "--context", "1"])
         self.assertRegex(printed, r"would have printed \d+ lines")
 
+    def test_an_unscoped_sweep_that_spreads_degrades_regardless_of_size(self):
+        """The line-count degrade only fires once a sweep is already expensive,
+        so a first, blind `--context` sweep is caught after it has been paid
+        for. Spread is the signal that the caller did not know where to look —
+        which makes it a WHERE question, whatever it costs."""
+        # One match per file across eight files: few printed lines, wide spread.
+        for n in range(8):
+            (self.root / f"g{n}.rs").write_text("fn marker() {}\n", encoding="utf-8")
+        _, printed = self._run(["marker", "--context", "1"])
+        self.assertIn("UNSCOPED", printed)
+        self.assertIn("g0.rs", printed)
+
+    def test_a_narrow_unscoped_context_sweep_is_left_alone(self):
+        """Scope alone would over-fire: a two-file unscoped read is cheap and
+        may genuinely be an adjudication, so refusing it would cost a re-run to
+        buy nothing the size degrade was not already catching."""
+        (self.root / "one.rs").write_text("fn solo() {}\n", encoding="utf-8")
+        (self.root / "two.rs").write_text("fn solo() {}\n", encoding="utf-8")
+        _, printed = self._run(["solo", "--context", "1"])
+        self.assertNotIn("UNSCOPED", printed)
+        self.assertIn("fn solo", printed)
+
+    def test_scoping_the_spread_sweep_restores_context(self):
+        """The answer the note hands back is what makes context available
+        again, so the loop terminates in one extra call rather than in a
+        standoff."""
+        for n in range(8):
+            (self.root / f"h{n}.rs").write_text("fn tag() {}\n", encoding="utf-8")
+        _, printed = self._run(["tag", "--context", "1", "--glob", "h0.rs"])
+        self.assertNotIn("UNSCOPED", printed)
+        self.assertIn("fn tag", printed)
+
+    def test_force_context_overrides_the_spread_degrade(self):
+        """Unlike the single-file clamp, this one IS overridable — an unscoped
+        adjudication read is unusual rather than impossible."""
+        for n in range(8):
+            (self.root / f"k{n}.rs").write_text("fn ovr() {}\n", encoding="utf-8")
+        _, printed = self._run(["ovr", "--context", "1", "--force-context"])
+        self.assertNotIn("UNSCOPED", printed)
+        self.assertIn("fn ovr", printed)
+
     def test_an_explicit_files_only_is_not_relabelled_a_degrade(self):
         # --files-only was already the cheap form; reporting it back as DEGRADED
         # would describe the caller's own choice as the tool overriding them.

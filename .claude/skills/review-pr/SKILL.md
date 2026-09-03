@@ -4064,6 +4064,28 @@ already being asked to start the review.
      This corrected an earlier version of this step which said
      `none` means treat-as-green unconditionally. It does not.
 
+     **A third situation, now handled in the tool: the
+     registration race.** Started in the tool call right after
+     a push, the wait once returned in **1 second** with
+     `none`, `counts: {}`, `settled: true` and
+     `mergeable: "MERGEABLE"` — while four runs were in fact
+     already starting and `Semantic PR` had completed on that
+     exact SHA. Following the guidance literally would have
+     treated a CI-unverified commit as green.
+
+     `none` is the **more dangerous** of the two retryable
+     reads: `pending` fails safe (keep waiting) while `none`
+     fails **open** (declare green). So the tool now re-reads a
+     `none` over a few short rounds before believing it, the
+     way it already did for `pending`, and an exhausted `none`
+     still reports `none` rather than `timeout` — the rounds
+     established an absence, which is an answer. You should
+     therefore not see the race any more; if a `none` ever
+     looks wrong, the way to tell them apart is one
+     `gh run list --branch <branch>` filtered to the head SHA,
+     the same evidence the merge-queue probe uses for its own
+     all-null ambiguity.
+
    - **`conclusion: "timeout"`** means the watch hit its bound
      (default one hour), or exhausted its re-watch rounds, with
      the checks still unsettled. It reports the counts it
