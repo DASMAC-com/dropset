@@ -115,7 +115,28 @@ def normalize_tag(raw: str) -> str:
     tag = raw.strip().lower()
     if not tag:
         raise ResolveSessionError("--tag was empty")
-    return tag if tag.startswith("eng-") else f"eng-{tag.removeprefix('eng-')}"
+    # A path separator or a `..` segment would escape the worktrees directory
+    # when joined below. `worktree.is_dir()` gates the traversal off in
+    # practice, but rejecting it here keeps the tag a tag.
+    if "/" in tag or os.sep in tag or tag in (".", "..") or ".." in tag.split("-"):
+        raise ResolveSessionError(f"--tag must name a single worktree: {raw!r}")
+    return tag if tag.startswith("eng-") else f"eng-{tag}"
+
+
+def _mtime(path: Path) -> float:
+    """``path``'s mtime, or 0.0 if it cannot be read.
+
+    Guarded because `is_file()` / `is_dir()` swallow errors but `stat()` does
+    not, and this tree is written concurrently by live sessions and
+    hard-deleted from by ``prune_conversations.py --apply``. A file vanishing
+    between the glob and the sort would otherwise raise an ``OSError`` that
+    ``main`` does not catch — a raw traceback out of a tool whose whole error
+    contract is a clean message and exit 2.
+    """
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def transcripts_in(slug_dir: Path) -> list[Path]:
@@ -128,7 +149,7 @@ def transcripts_in(slug_dir: Path) -> list[Path]:
     if not slug_dir.is_dir():
         return []
     files = [p for p in slug_dir.glob("*.jsonl") if p.is_file()]
-    return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+    return sorted(files, key=_mtime, reverse=True)
 
 
 def stamps_into(transcript: Path, target: Path) -> bool:
@@ -213,7 +234,7 @@ def resolve(tag: str, repo: Path) -> dict:
     others = (
         sorted(
             (p for p in projects.iterdir() if p.is_dir() and p != base_slug),
-            key=lambda p: p.stat().st_mtime,
+            key=_mtime,
             reverse=True,
         )
         if projects.is_dir()

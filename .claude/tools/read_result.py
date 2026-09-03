@@ -356,10 +356,15 @@ def spill(text: str, dest: Path) -> tuple[bool, str]:
     try:
         if dest.exists() and dest.read_text(encoding="utf-8") == text:
             return False, "unchanged"
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         # An unreadable existing file is no reason to refuse the write — the
         # write below surfaces any real permission problem with a better message
         # than a read failure would.
+        #
+        # `UnicodeDecodeError` is caught explicitly because it is a subclass of
+        # `ValueError`, not of `OSError`: an existing file holding invalid UTF-8
+        # would otherwise escape uncaught and produce a traceback, which is the
+        # exact opposite of the fall-through-and-overwrite this comment claims.
         pass
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)

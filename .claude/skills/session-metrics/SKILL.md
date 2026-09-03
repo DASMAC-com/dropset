@@ -27,7 +27,8 @@ complementary halves:
 Each recommendation lands as **its own parked Linear issue** —
 one lever, one issue, stamped with the `Trim levers` milestone
 and keyed by a `**Fingerprint**:` — which `trim-context` later
-folds into propose-only skill-improvement Backlog tasks, on its
+folds into **one** propose-only skill-improvement task, parked
+under the `Claude meta` milestone, on its
 own or as `housekeeping`'s Session Metrics step. This is the
 feedback loop that systematizes, every session, the by-hand
 analysis that motivated this work.

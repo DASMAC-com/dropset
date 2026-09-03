@@ -71,7 +71,9 @@ unless you ask for it. When the flag is set, the pass
 adds a step: run `cspell-audit` read-only and **file** any
 drift — a `cfg/dictionary.txt` entry to move, or a file
 whose inline escapes need regrouping into a top block — as
-a Backlog task to fix later.
+a task to fix later. Whether that task goes to Backlog or
+parks under `Claude meta` depends on where its escapes land;
+`cspell-audit` states the rule.
 
 ## Input
 
@@ -152,13 +154,13 @@ Batch these, each **only when non-empty**:
 
 - the **allowlist cruft** approved for removal in step 7;
 - the **stale memories** approved for purge in step 8;
-- the **inbox size** only when `trim-context` reports the
-  body still growing *despite* draining on file — which
-  should be impossible, so it means something is wrong with
-  the drain rather than that a clear is owed. (Do **not**
-  batch a "clear the inbox?" question: `trim-context` now
-  drains every consumed entry unconditionally, so there is
-  no such decision left for a human to authorize.)
+  There is deliberately **no inbox category**. The Session
+  Metrics inbox document is retired — `trim-context` sweeps a
+  project milestone and reads no document at all — so there is
+  no body that can grow and no clear for a human to authorize.
+  An earlier version batched an inbox-size question here; if one
+  ever reappears, something has re-grown the document this
+  pipeline replaced.
 
 Three constraints on it:
 
@@ -254,9 +256,11 @@ clean up on demand.
 
 ## Linear destination
 
-Steps 3–6 file Backlog issues and sweep the
+Steps 3–5 file issues and sweep the
 `Trim levers` milestone, so they use the
 same env-resolved Linear destination as `linear-task`.
+(Step 6 is retired and files nothing; step 4's fold now parks
+its output under `Claude meta` rather than filing to Backlog.)
 Resolve each variable with its **own**
 bare `printenv` (one `Bash(printenv:*)` allow-rule
 covers them all) — never a combined `printenv A B C`,
@@ -590,8 +594,10 @@ skill (via the Skill tool) — the consumer half of the
 `session-metrics` producer. It sweeps the `Trim levers`
 project milestone (**not** a document — that inbox is
 retired), folds the parked levers into a **single aggregated
-propose-only** skill-improvement Backlog task per coherent
-PR — one section per lever, each keeping its own
+propose-only** skill-improvement task — always ONE, whatever
+the lever count or surface spread, parked under the
+`Claude meta` milestone rather than filed to Backlog, with one
+section per lever each keeping its own
 `**Fingerprint**:` line — and
 then **closes the parked originals**, so the milestone
 lifecycle is the state machine and nothing needs draining.
@@ -1001,9 +1007,8 @@ this skill deliberately dropped.
 
 **12. Fire the closing gate.** With the report printed, batch
 every deferred decision into the single `AskUserQuestion`
-described in "The closing gate" above — the allowlist cruft,
-the stale memories,
-the inbox size — including only the categories that are
+described in "The closing gate" above — the allowlist cruft
+and the stale memories — including only the categories that are
 non-empty. This runs in **both** modes.
 
 **Nothing about auditing rides this gate**, because this

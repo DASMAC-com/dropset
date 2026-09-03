@@ -26,12 +26,24 @@ skip reading the merge.
 **Which files this is for.** Any shared file whose content is an ordered or
 keyed list that several branches append to:
 
-* ``cfg/dictionary.txt`` — the sharpest case. It carries a ``merge=union``
-  attribute, so git keeps both sides automatically and a *deleted* word can be
-  resurrected by the union; the ``--unique`` sorter then re-sorts it and the
-  resurrection never heals.
+* ``cfg/dictionary.txt``, for a hand-resolved conflict in it.
 * The alphabetically-keyed YAML under ``cfg/`` and ``infra/aws/``, which have no
   structural escape from this class.
+
+**What it does NOT cover, stated plainly because the obvious guess is wrong.**
+This checks that every line each parent *added* survives. It is therefore blind
+to the ``merge=union`` **resurrection** hazard on the dictionary: a resurrected
+word is a *base* line reappearing after one side deleted it, so it is in
+neither parent's added set, is never examined, and always reports COMPLETE.
+Union merge needs no hand resolution anyway — git keeps both sides — so the two
+concerns barely overlap; the tool is for the files you resolve *by hand*, and
+the resurrection case is covered by the next spelling-hygiene pass instead.
+
+Also bounded to files where **line multiplicity is not meaningful**. Comparison
+is set-based over normalized lines, so "ours added this line twice and the
+resolution kept one" reports as survived. That is sound for a ``--unique``
+sorted word list and for YAML (which forbids duplicate keys), and it is a real
+gap for prose — including, ironically, the doc-comment case in the story above.
 
 The central schema-fence relation list — the file that originally motivated the
 tool — was retired when each migration moved to its own fence sidecar, so that

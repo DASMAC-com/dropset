@@ -285,6 +285,62 @@ class GitTests(unittest.TestCase):
         # shape and must not abort the check.
         self.assertEqual(mc.git_show(self.base_sha, "nope.txt", self.repo), "")
 
+    def test_resolve_theirs_finds_MERGE_HEAD_during_a_conflicted_merge(self):
+        # The SUCCESS branch of resolve_theirs had no coverage, so the tool's
+        # own documented default invocation (`--path X` with no revisions) was
+        # never exercised. A real conflicted merge is what creates MERGE_HEAD.
+        merge = subprocess.run(
+            ["git", "-C", str(self.repo), "merge", "side"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(merge.returncode, 0, "expected a conflicted merge")
+        self.assertEqual(mc.resolve_theirs(self.repo), "MERGE_HEAD")
+
+    def test_a_resolution_still_holding_conflict_markers_is_refused(self):
+        # An unresolved file contains BOTH sides by construction, so it would
+        # score COMPLETE and exit 0 — the strongest possible green at the
+        # exact moment nothing has been resolved.
+        subprocess.run(
+            ["git", "-C", str(self.repo), "merge", "side"],
+            capture_output=True,
+            check=False,
+        )
+        with self.assertRaises(mc.MergeCompletenessError) as caught:
+            self._invoke(
+                "--repo",
+                str(self.repo),
+                "--path",
+                "list.txt",
+                "--base",
+                self.base_sha,
+                "--ours",
+                "main",
+                "--theirs",
+                "side",
+            )
+        self.assertIn("conflict markers", str(caught.exception))
+
+    def test_a_path_in_no_revision_is_refused_rather_than_vacuously_complete(self):
+        (self.repo / "other.txt").write_text("x\n", encoding="utf-8")
+        with self.assertRaises(mc.MergeCompletenessError) as caught:
+            self._invoke(
+                "--repo",
+                str(self.repo),
+                "--path",
+                "nope.txt",
+                "--base",
+                self.base_sha,
+                "--ours",
+                "main",
+                "--theirs",
+                "side",
+                "--resolution",
+                str(self.repo / "other.txt"),
+            )
+        self.assertIn("check the revisions and the path", str(caught.exception))
+
     def test_no_merge_in_progress_is_a_clean_error(self):
         with self.assertRaises(mc.MergeCompletenessError) as caught:
             mc.resolve_theirs(self.repo)

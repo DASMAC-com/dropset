@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog), the parked `Claude meta` milestone swept and folded into one batch issue by default at bootstrap — assembled only when no meta issue is In Progress or In Review, which is what lets the batch carry no blocking edge at all — and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
+description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog, except a meta-flavored finding, which is promoted by swapping its milestone to `Claude meta` and stays parked), the parked `Claude meta` milestone — plus any open unpulled batch — swept and folded into one batch issue by default at bootstrap — assembled only when no meta issue is In Progress or In Review, which is what lets the batch carry no blocking edge at all — and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -240,12 +240,30 @@ is not urgent merely for being old.
 **Sweep the `Claude meta` milestone and assemble one batch —
 by default, unprompted.** Every `Claude:` filing lands
 **parked** (state `Todo` plus the `Claude meta` milestone), so
-the pool to fold is that milestone rather than a title scan of
-Backlog. Fold **every** issue in it into the lowest-numbered
-survivor via `/merge-tasks`, and put the survivor in
-**Backlog, Urgent** — it is the one meta issue meant to be
-pulled. Routine bookkeeping; it does **not** need a per-fold
-proposal.
+that milestone is the bulk of the pool. Fold **every** issue in
+it into the lowest-numbered survivor via `/merge-tasks`, and
+put the survivor in **Backlog, Urgent** — it is the one meta
+issue meant to be pulled. Routine bookkeeping; it does **not**
+need a per-fold proposal.
+
+**The pool also includes any open, UNPULLED batch — that
+clause is load-bearing.** Sweep the milestone **plus** every
+open `Claude:`-prefixed Backlog issue that is not In Progress
+or In Review. Lowest number still survives, so a batch
+assembled yesterday and never pulled is swallowed by today's
+assembly.
+
+Without that clause the "exactly one meta issue unblocked in
+Next" property below silently breaks, and it is worth knowing
+why rather than rediscovering it. The pool used to be a title
+scan of Backlog, which swallowed a prior unpulled batch as a
+side effect. Narrowing the pool to the milestone lost that,
+and the assembly precondition does not cover the gap either —
+an unpulled batch sits in **Backlog**, which is neither In
+Progress nor In Review. So two bootstraps with no pull in
+between would produce **two** unblocked meta issues, exactly
+what the retired edge existed to prevent. Restoring the batch
+to the pool fixes it without adding a state to check.
 
 It is a default because the alternative demonstrably does not
 hold: one bootstrap found **five** open meta tasks — three of

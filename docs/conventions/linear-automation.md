@@ -538,6 +538,19 @@ each finding's `**Fingerprint**:` line preserved, and **no size bound**
 writer, one rhythm: `housekeeping`'s propose-merges-among-meta step is
 **retired**, so nothing else proposes meta merges.
 
+**The pool is the milestone PLUS any open, unpulled batch** — every
+open `Claude:`-prefixed Backlog issue that is not In Progress or In
+Review. Lowest number survives, so yesterday's un-pulled batch is
+swallowed by today's assembly rather than sitting beside it.
+
+That clause is what keeps "exactly one meta issue unblocked in Next"
+true. The pool was once a title scan of Backlog, which swallowed a prior
+batch incidentally; narrowing it to the milestone lost that, and the
+assembly precondition does not cover the gap, because an unpulled batch
+is in **Backlog** — neither In Progress nor In Review. Two bootstraps
+with no pull between them would otherwise leave two unblocked meta
+issues, which is the condition the retired edge existed to prevent.
+
 **A new batch is assembled only when no meta issue is In Progress or In
 Review.** Both states mean a session is still working it. While a batch
 is in flight, strays simply accumulate parked — which is what retires

@@ -225,9 +225,18 @@ not only to the sub-agents you brief:
   whole-read condition applied. The same session sliced
   correctly whenever the purpose *was* editing, which is what
   identifies the culprit: the size trigger is not what failed,
-  the purpose framing is. **Reading to learn is always a
-  slice, at any size**; keep ~300 lines as a secondary
-  backstop for edit-shaped reads.
+  the purpose framing is. **Reading to learn — types,
+  conventions, an exemplar you will not imitate N times — is
+  always a slice, at any size**; keep ~300 lines as a
+  secondary backstop for edit-shaped reads.
+
+  That enumeration is load-bearing, not decoration. Without
+  it "reading to learn is always a slice" reads as forbidding
+  the fourth whole-read condition below, which licenses a
+  whole read precisely in order to *learn* that something is
+  absent. The two compose only because "to learn" here means
+  those three cases, and proving an absence is not one of
+  them.
 
   **Anchor at column zero; never add a leading-space
   alternative.** This bullet used to offer `^fn |^impl |^pub`,

@@ -341,9 +341,16 @@ def summarize(result: dict) -> str:
         # indistinguishable from complete success.
         missing = result.get("no_tty") or []
         if missing:
+            # Phrased against what was REQUESTED, not asserted as "opened".
+            # Absence from `pairs` covers two cases — a tab that opened but
+            # whose tty did not parse, and a tab that never opened at all
+            # (osascript aborted, or returned nothing) — and this line cannot
+            # tell them apart. Claiming "opened" would also contradict the
+            # "N opened" it sits beside, which counts only what parsed.
+            requested = result.get("requested") or len(missing)
             parts.append(
-                f"{len(missing)} opened WITHOUT a resolvable tty, so it could "
-                f"not be marked: {', '.join(missing)}"
+                f"{len(missing)} of {requested} requested produced no tty, so "
+                f"nothing was marked for: {', '.join(missing)}"
             )
     return " | ".join(parts)
 

@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -35,16 +36,28 @@ def _record(cwd):
 
 
 class Fixture:
-    """A throwaway `~/.claude/projects` tree plus a repo with one worktree."""
+    """A throwaway `~/.claude/projects` tree plus a repo with one worktree.
 
-    def __init__(self):
+    Takes the TestCase so the `CLAUDE_CONFIG_DIR` override is registered for
+    cleanup. Mutating `os.environ` unguarded leaked the temp path into every
+    module loaded after this one in the single `make tools-tests` process —
+    and `resolve_session` itself names two other readers of that variable
+    (`firm_last.py`, `prune_conversations.py`), so a green suite was only
+    green by alphabetical load order rather than by isolation.
+    """
+
+    def __init__(self, case: unittest.TestCase):
         root = Path(tempfile.mkdtemp())
         self.home = root / "home"
         self.repo = root / "repos" / "dropset"
         self.projects = self.home / ".claude" / "projects"
         self.projects.mkdir(parents=True)
         self.repo.mkdir(parents=True)
-        os.environ["CLAUDE_CONFIG_DIR"] = str(self.home / ".claude")
+        patch = mock.patch.dict(
+            os.environ, {"CLAUDE_CONFIG_DIR": str(self.home / ".claude")}
+        )
+        patch.start()
+        case.addCleanup(patch.stop)
 
     def worktree(self, tag):
         wt = self.repo / ".claude" / "worktrees" / tag
@@ -81,7 +94,7 @@ class SlugAndTagTests(unittest.TestCase):
 
 class StampsIntoTests(unittest.TestCase):
     def setUp(self):
-        self.fx = Fixture()
+        self.fx = Fixture(self)
         self.wt = self.fx.worktree("eng-1")
 
     def test_a_matching_cwd_is_detected(self):
@@ -135,7 +148,7 @@ class StampsIntoTests(unittest.TestCase):
 
 class ResolveTests(unittest.TestCase):
     def setUp(self):
-        self.fx = Fixture()
+        self.fx = Fixture(self)
 
     def test_a_worktree_with_its_own_transcript_uses_continue(self):
         wt = self.fx.worktree("eng-1024")
@@ -187,6 +200,21 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(v["mode"], "picker")
         self.assertIn("never have started", v["reason"])
 
+    def test_a_nested_sub_agent_transcript_is_not_offered(self):
+        # `transcripts_in` globs TOP-LEVEL *.jsonl only, and its docstring
+        # states that as a safety property — a sub-agent transcript is not a
+        # session a human can resume, so offering one is a wrong answer rather
+        # than a missing one. Nothing pinned it: switching `glob` to `rglob`
+        # kept every test green while `raps` began offering sub-agent ids.
+        wt = self.fx.worktree("eng-14")
+        slug = self.fx.projects / slugify(wt)
+        nested = slug / "subagents"
+        nested.mkdir(parents=True)
+        (nested / "sub.jsonl").write_text(_record(str(wt)) + "\n", encoding="utf-8")
+        v = resolve("eng-14", self.fx.repo)
+        self.assertNotEqual(v["session_id"], "sub")
+        self.assertEqual(v["mode"], "picker")
+
     def test_the_newest_matching_transcript_wins(self):
         wt = self.fx.worktree("eng-13")
         old = self.fx.transcript(self.fx.repo, "older", [str(wt)])
@@ -198,7 +226,7 @@ class ResolveTests(unittest.TestCase):
 
 class CliTests(unittest.TestCase):
     def setUp(self):
-        self.fx = Fixture()
+        self.fx = Fixture(self)
 
     def _invoke(self, *argv):
         out, err = io.StringIO(), io.StringIO()
@@ -223,6 +251,33 @@ class CliTests(unittest.TestCase):
         rc, out, _ = self._invoke("--tag", "21", "--repo", symlinked)
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(out)["session_id"], "sid21")
+
+    def test_the_lines_format_prints_three_fields_in_order(self):
+        # `--format lines` is the format the shipping caller (`raps`) reads
+        # positionally, and it had no coverage at all: swapping the print
+        # order, or dropping the `or ""`, left every test green while `raps`
+        # resumed from the wrong directory or with a literal "None".
+        wt = self.fx.worktree("eng-22")
+        self.fx.transcript(self.fx.repo, "sid22", [str(wt)])
+        rc, out, _ = self._invoke(
+            "--tag", "22", "--repo", str(self.fx.repo), "--format", "lines"
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.splitlines(), ["resume", "sid22", str(self.fx.repo)])
+
+    def test_the_lines_format_keeps_three_lines_when_there_is_no_id(self):
+        # The line count must be CONSTANT, or a caller doing three reads has
+        # its third read consume a missing second.
+        self.fx.worktree("eng-23")
+        rc, out, _ = self._invoke(
+            "--tag", "23", "--repo", str(self.fx.repo), "--format", "lines"
+        )
+        self.assertEqual(rc, 1)
+        self.assertEqual(out.splitlines(), ["picker", "", str(self.fx.repo)])
+
+    def test_a_tag_with_a_path_separator_is_refused(self):
+        with self.assertRaises(ResolveSessionError):
+            normalize_tag("../../etc")
 
     def test_an_unresolvable_tag_exits_one(self):
         rc, out, _ = self._invoke("--tag", "404", "--repo", str(self.fx.repo))

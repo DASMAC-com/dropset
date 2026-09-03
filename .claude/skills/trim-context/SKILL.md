@@ -12,8 +12,9 @@ The **consumer** half of the context-economy feedback loop.
 trim lever as its own small **parked issue**, stamped with the
 `Trim levers` project milestone and keyed by a `**Fingerprint**:`.
 `trim-context` is the periodic **fold**: it sweeps that milestone, folds
-the parked levers into a single aggregated propose-only Backlog task, and
-closes the originals.
+the parked levers into a single aggregated propose-only **parked** task
+(state `Todo` plus the `Claude meta` milestone, so the next planning
+bootstrap's batch assembly consumes it), and closes the originals.
 
 It runs identically whether invoked standalone or by `housekeeping` —
 there is **no** propose-only vs. apply split, because filing a task *is*
@@ -51,7 +52,8 @@ machine, on the pattern the `Audit findings` milestone already proved.
 
 ## Linear destination
 
-This skill sweeps a milestone and **files** one Backlog task, so it needs
+This skill sweeps a milestone and **files** one parked task — `Todo`
+plus the `Claude meta` milestone, not Backlog — so it needs
 the env-resolved filing destination (the same one `linear-task` /
 `housekeeping` use). Resolve each variable with its **own** bare
 `printenv` (one `Bash(printenv:*)` allow-rule covers them all) — never a
@@ -293,7 +295,7 @@ and can come out of the environment.
 ## Notes
 
 - **No source edits.** This skill writes only to Linear — the filed
-  Backlog task and the parked levers' closures — and never authors a code
+  parked task and the parked levers' closures — and never authors a code
   or skill diff, never commits, never pushes. The improvements it
   proposes are applied later by a human through a normal PR.
 - **No relations, ever.** Folding places no blocking edge. A parked

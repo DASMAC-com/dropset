@@ -256,7 +256,7 @@ class Summary(unittest.TestCase):
                 "no_tty": ["889", "1042"],
             }
         )
-        self.assertIn("2 opened WITHOUT a resolvable tty", line)
+        self.assertIn("2 of 2 requested produced no tty", line)
         self.assertIn("889, 1042", line)
 
     def test_a_fully_marked_run_stays_quiet(self):
@@ -271,8 +271,12 @@ class Summary(unittest.TestCase):
                 "no_tty": [],
             }
         )
+        # A positive assertion too, so the test cannot pass on an empty
+        # summary — both checks below are negative, and `return ""` would
+        # satisfy them on its own.
+        self.assertIn("1 opened", line)
         self.assertNotIn("could not be marked", line)
-        self.assertNotIn("WITHOUT a resolvable tty", line)
+        self.assertNotIn("produced no tty", line)
 
     def test_unrecognized_identifiers_are_surfaced_when_present(self):
         """The one branch of `summarize` nothing else covers.
@@ -436,7 +440,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(parsed["unmarked"], [])
         self.assertEqual(parsed["no_tty"], ["889"])
         self.assertEqual(parsed["requested"], 1)
-        self.assertIn("WITHOUT a resolvable tty", err)
+        self.assertIn("1 of 1 requested produced no tty", err)
 
     def test_a_partial_tty_shortfall_is_reported(self):
         with (
