@@ -633,16 +633,36 @@ skill pointing at something that no longer exists, so this
 read-only pass flags that drift the same way `review-pr`'s
 freshness lens does on the PR path — here, periodically.
 
-- **Collect the targets.** List the headings in
-  `CLAUDE.md` and the files under `docs/conventions/`
-  (Read / Glob; never a shell `find … | …` pipe).
-- **Scan the skills.** Grep `.claude/skills/**` for
-  references to `CLAUDE.md` section names and
-  `docs/conventions/…` paths (the Grep tool, or a bare
-  single `grep` where it's absent — never `git grep`).
-- **Flag dangling references** — a skill that cites a
-  `CLAUDE.md` section heading that no longer exists, or a
-  `docs/conventions/<file>.md` path that isn't present.
+**One call does the whole check:**
+
+```sh
+python3 .claude/tools/convention_refs.py
+```
+
+It prints one line when everything resolves, or one line per
+dangling citation naming the citer, the target, the anchor and
+the **kind** — `missing-file` (the doc was renamed) or
+`missing-anchor` (the section was) — and exits 1 so a caller
+can branch on the status. `--json` for the machine-readable
+form. Same shape and exit convention as the `hook_wiring.py`
+and `allowlist.py cruft` calls in steps 7a/7b.
+
+**This used to be four prose bullets, and executing them took
+eight greps** — a 101-line citation sweep to yield a 12-name
+set, a 25-line one for a 6-name set, four heading listings,
+and a targeted grep to confirm one anchor by hand — ~1.2k per
+pass to print one line. Every input is mechanical (the anchor
+sets, the citation forms, the set difference), which is the
+skill-tooling test, and step 5 was the odd one out in a skill
+whose neighbors already call tools.
+
+Two behaviors the prose never settled and the tool now does,
+both of which arose in practice: a citation may target a
+**bolded paragraph** rather than a heading (anchoring on
+headings alone reports false drift), and a citation inside a
+**fenced example** is documenting the form rather than making
+a claim, so it is not checked.
+
 - **File propose-only**, to the same env-resolved
   destination as step 4 (`save_issue`,
   `state: "Backlog"`, priority 3), one aggregated task per

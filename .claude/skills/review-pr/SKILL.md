@@ -2473,6 +2473,26 @@ already being asked to start the review.
      finding when the main loop establishes it, and a
      six-figure sweep when a sub-agent does.
 
+   - **Run the citation check in the main loop first — it is
+     mechanical, so it is not lens work at all.**
+
+     ```sh
+     python3 .claude/tools/convention_refs.py
+     ```
+
+     It reports every skill/doc citation whose target file or
+     anchor no longer resolves, distinguishing `missing-file`
+     from `missing-anchor`, and exits 1 when any dangle. Fold
+     the result into the catalogue and hand the lens the
+     *judgement* half only — whether the prose still
+     describes what the code does — rather than asking it to
+     rediscover dangling pointers by sweeping.
+
+     This is the same tool `housekeeping` step 5 calls, which
+     is the point: the PR path and the periodic path cannot
+     drift about what counts as a dangling reference if they
+     ask the same question of the same code.
+
    - **Cap the freshness lens at two named sections, and hand
      their excerpts inline — not their names.** Not "read
      `CLAUDE.md` and the relevant convention doc(s)", and not

@@ -93,10 +93,25 @@ gives you each lever's identifier, title and state. Decide from the
 titles which levers this pass folds, then fetch those bodies through the
 tool rather than one MCP `get_issue` per lever:
 
+**One call is the fold's whole read of the pool:**
+
 ```sh
-python3 .claude/tools/trim_levers.py list --fingerprints
-python3 .claude/tools/trim_levers.py list --bodies-out <scratchpad>/levers.md
+python3 .claude/tools/trim_levers.py list \
+  --fingerprints --bodies-out <scratchpad>/levers.md
 ```
+
+The flags compose, and `--bodies-out` prints **only** the size line — its
+output is the file. This used to be prescribed as two commands on
+consecutive lines, on top of the bare `list` in step 1, and read
+literally that is three full listings: a pass following it bought the
+same 41 rows three times for **~4.3k**, ranks 4, 5 and 7 of that
+session's largest results, together beating every read the fold actually
+consumed. The worst of the three re-printed the listing it had just been
+asked to spill.
+
+Keep the bare `list` only for the is-anything-parked check — and note
+the combined call answers that too (its size line reports the body
+count), so a fold that intends to proceed never needs the bare form.
 
 `--fingerprints` adds each lever's dedup key to the listing — the thing a
 sibling lookup actually needs, and the one field the plain listing omits.
@@ -227,20 +242,34 @@ Set `state`, `priority` and any relations in the **creating** call — a
 follow-up write buys a second full body echo for nothing (same convention
 doc → "Relations and state belong in the CREATING call").
 
-```txt
-mcp__claude_ai_Linear__save_issue(
-  team: "<$LINEAR_TEAM_ID>",
-  project: "<$LINEAR_PROJECT_ID>",
-  assignee: "<$LINEAR_ASSIGNEE_ID>",
-  state: "Todo",
-  milestone: "Claude meta",
-  title: "Claude: <umbrella summary of this fold's trim levers>",
-  description: "<one `# Part N — <title>` section per lever — each the
-    lever, the sessions that motivate it, the concrete skill /
-    convention-doc edit it implies, and its own **Fingerprint**: line>",
-  priority: 3,
-)
+**File it through the zero-echo writer, not `save_issue`:**
+
+```sh
+python3 .claude/tools/linear_issue.py create \
+  --title 'Claude: <umbrella summary of this fold>' \
+  --body-file <scratchpad>/folded.md \
+  --state Todo --milestone 'Claude meta' --priority 3
 ```
+
+Team, project and assignee resolve from the `LINEAR_*` environment.
+
+**This is the worst instance of the MCP echo in the whole pipeline, not
+an average one.** The fold task's body is *by construction* the largest
+the pipeline produces — one `# Part N` per lever, with the operator
+ruling putting every lever in one task and **no size bound** — and
+`housekeeping` files exactly one every pass, so the cost scales with the
+parked pool on a fixed cadence. Measured: creating a 12-lever fold task
+cost **~6.0k in one `save_issue`**, the session's largest single result
+of any kind, ~19% of that pass's tool results, and larger than every
+read the fold performed to compose it.
+
+The existing zero-echo writers missed it because both are
+**producer-side** — they write *levers*. This is the consumer side, and
+`linear_issue.py create` is the general filer for it: state, milestone
+and priority are parameters, so the same writer serves this fold,
+`audit-scope`'s parked findings, and `housekeeping`'s aggregated
+convention-drift and cspell tasks, which are the same
+one-aggregated-`Claude:`-task-per-pass shape.
 
 **Autonomy bound:** filing a task *proposes* a fix — this skill **never**
 edits a skill, a convention doc, or `CLAUDE.md`; that lands later through

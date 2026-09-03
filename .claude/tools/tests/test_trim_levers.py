@@ -1067,6 +1067,36 @@ class BodiesBearingReadTests(unittest.TestCase):
         self.assertNotIn("BODY-ONE", out + err)
         self.assertIn("chars to", err)
 
+    def test_bodies_out_suppresses_the_row_listing(self):
+        """`--bodies-out`'s output IS the file. Printing the rows too meant a
+        fold following step 2 as written bought the same 41-row listing three
+        times — ~4.3k for one listing's worth of information, ranks 4, 5 and 7
+        of that session's largest results."""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bodies.md")
+            _, out, err = self._run(["list", "--bodies-out", path])
+            self.assertNotIn("ENG-1", out)
+            self.assertNotIn("ENG-2", out)
+            # The size line still reports what happened.
+            self.assertIn("body(ies)", err)
+
+    def test_fingerprints_composes_with_bodies_out_in_one_call(self):
+        """One call is meant to serve the fold's whole read of the pool, so the
+        flags must not have to be spent on separate invocations."""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bodies.md")
+            _, out, _err = self._run(["list", "--fingerprints", "--bodies-out", path])
+            self.assertNotIn("ENG-1", out)
+            written = open(path, encoding="utf-8").read()
+            # The keys ride the file, inside each lever's own body.
+            self.assertIn("BODY-ONE", written)
+
+    def test_the_bare_listing_still_prints_rows(self):
+        """The is-anything-parked check is the one job the rows are for."""
+        _, out, _err = self._run(["list"])
+        self.assertIn("ENG-1", out)
+        self.assertIn("ENG-2", out)
+
     def test_the_written_document_carries_one_heading_per_lever(self):
         # `read_result.py --headings` / `--section` is the intended next call.
         rendered = tl.render_bodies(self.NODES)

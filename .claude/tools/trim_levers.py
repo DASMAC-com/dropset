@@ -1035,13 +1035,28 @@ def run(argv: list[str]) -> int:
             if wants_bodies
             else parked(api_key, project_id)
         )
-        for m in sorted(levers, key=lambda m: str(m.get("identifier"))):
-            state = (m.get("state") or {}).get("name")
-            line = f"{m.get('identifier')} [{state}] {m.get('url')} | {m.get('title')}"
-            if args.fingerprints:
-                keys = field_values(m.get("description") or "", "Fingerprint")
-                line += f" | {', '.join(keys) if keys else '(no fingerprint)'}"
-            print(line)
+        # `--bodies-out`'s OUTPUT IS THE FILE, so the rows are suppressed. They
+        # used to print anyway, which meant a fold following the skill's own
+        # step-2 wording bought the same 41-row listing three times — a plain
+        # `list` (~1.3k), a `list --fingerprints` (~1.7k, the same rows plus a
+        # column), and a `list --bodies-out` (~1.3k, one size line and then the
+        # same rows again). ~4.3k for one listing's worth of information, ranks
+        # 4, 5 and 7 of that session's largest results, beating every read the
+        # fold actually consumed. The third was the clearest waste: it
+        # re-printed the listing it had just been asked to spill.
+        #
+        # `--fingerprints` composes with it, so one call serves the whole read
+        # of the pool: the keys ride each `## <identifier>` section in the file.
+        if not args.bodies_out:
+            for m in sorted(levers, key=lambda m: str(m.get("identifier"))):
+                state = (m.get("state") or {}).get("name")
+                line = (
+                    f"{m.get('identifier')} [{state}] {m.get('url')} | {m.get('title')}"
+                )
+                if args.fingerprints:
+                    keys = field_values(m.get("description") or "", "Fingerprint")
+                    line += f" | {', '.join(keys) if keys else '(no fingerprint)'}"
+                print(line)
         if args.bodies_out:
             rendered = render_bodies(levers)
             try:

@@ -80,6 +80,11 @@ read-then-compare pair left a gap no sanctioned shell form could bridge
 and re-emitting the listing put every PR's file list through context;
 `--others <file>.json` remains for a caller that already holds the
 inventory and keeps the compare network-free),
+`convention_refs.py` (reports skill/doc citations whose target file or
+anchor no longer resolves, distinguishing the two — it replaced four
+prose bullets that took eight greps and ~1.2k per housekeeping pass to
+print one line, and both `housekeeping` step 5 and `review-pr`'s
+freshness lens call it so the periodic and PR paths cannot drift),
 `planning_doc.py` (a scoped reader for the Planning document — the MCP
 `get_document` has no slice accessor and returns a document that only
 grows, so one measured read was a session's largest main-loop result at
