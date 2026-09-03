@@ -20,11 +20,22 @@ Two carve-outs let the legitimate base writes through:
 
 * the base `.claude/settings.json` / `settings.local.json` — `firm-perms`
   and `firm_last.py` write the base allowlist on purpose; and
-* the env escape `ALLOW_BASE_REPO_EDITS=1`, for a rare deliberate base edit.
+* the env escape `ALLOW_BASE_REPO_EDITS`, for a rare deliberate base edit.
+  It requires an **explicit affirmative** (`1` / `true` / `yes` / `on`).
+  Testing the variable for mere truthiness disabled the guard for `0`,
+  `false` and `no` — the spellings someone reaches for believing they are
+  turning the escape *off*.
 
 The guard fails *open*: any missing field or parse problem returns 0 rather
-than wedging the session. Relative paths are always allowed (they resolve
-against the worktree cwd, so they can't be a stray base edit).
+than wedging the session.
+
+A `~`-prefixed path is **expanded before the absoluteness test**. It used
+to fail `os.path.isabs` and so fell into the relative-path allowance, while
+the harness itself expands `~` and happily performs the edit — so a
+tilde-spelled base-repo path was both accepted by `Edit` and waved through
+by the guard, landing exactly the slip this exists to stop. Genuinely
+relative paths are still allowed: those resolve against the worktree cwd,
+so they cannot be a stray base edit.
 
 Run the built-in cases with `--self-test` (no stdin needed).
 """
@@ -40,8 +51,20 @@ EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 # Marker in the checkout root that identifies a worktree checkout.
 WORKTREE_MARKER = os.sep + os.path.join(".claude", "worktrees") + os.sep
 
-# Env var that disables the guard for a deliberate base edit.
+# Env var that disables the guard for a deliberate base edit, and the only
+# values that count as turning it on. A bare truthiness test would honor `0`,
+# `false` and `no` as "escape enabled", which inverts the operator's intent.
 ESCAPE_ENV = "ALLOW_BASE_REPO_EDITS"
+ESCAPE_AFFIRMATIVE = frozenset({"1", "true", "yes", "on"})
+
+
+def _escape_enabled(env):
+    """True only for an explicit affirmative spelling of the escape var."""
+    value = env.get(ESCAPE_ENV)
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower() in ESCAPE_AFFIRMATIVE
+
 
 DENY_MESSAGE = (
     "Blocked: this edit targets the base-repo path\n"
@@ -54,7 +77,8 @@ DENY_MESSAGE = (
     "instead:\n"
     "  {suggested}\n\n"
     "If you truly mean to write the base checkout, set "
-    "{escape}=1 in the environment to bypass this guard."
+    "{escape}=1 in the environment to bypass this guard (only `1`, `true`, "
+    "`yes` or `on` enable it)."
 )
 
 # A sibling worktree has no sensible worktree-local equivalent path, so its
@@ -68,7 +92,8 @@ SIBLING_DENY_MESSAGE = (
     "Edits to a sibling worktree are invisible to this one's build. Make the "
     "edit from a session rooted in that worktree instead.\n\n"
     "If you truly mean to write it from here, set "
-    "{escape}=1 in the environment to bypass this guard."
+    "{escape}=1 in the environment to bypass this guard (only `1`, `true`, "
+    "`yes` or `on` enable it)."
 )
 
 
@@ -115,7 +140,7 @@ def evaluate(payload, project_dir, env):
         return 0, ""
     if payload.get("tool_name") not in EDIT_TOOLS:
         return 0, ""
-    if env.get(ESCAPE_ENV):
+    if _escape_enabled(env):
         return 0, ""
     if not project_dir:
         return 0, ""
@@ -129,8 +154,13 @@ def evaluate(payload, project_dir, env):
     target = _target_path(payload)
     if target is None:
         return 0, ""
-    # A relative path resolves against the worktree cwd, so it can't be a
-    # stray base edit — allow it untouched.
+    # Expand `~` FIRST. A tilde path is not `isabs`, so it used to fall into
+    # the relative-path allowance below — while the harness expands it and
+    # performs the edit, making it a live hole rather than a theoretical one.
+    target = os.path.expanduser(target)
+
+    # A genuinely relative path resolves against the worktree cwd, so it can't
+    # be a stray base edit — allow it untouched.
     if not os.path.isabs(target):
         return 0, ""
 
@@ -190,8 +220,18 @@ def _self_test():
         (payload("Write", base + "/.claude/settings.json"), wt, {}, False),
         # Relative path (resolves against worktree cwd) → allowed.
         (payload("Edit", "program/src/lib.rs"), wt, {}, False),
-        # Escape env set → allowed even for a base path.
+        # Escape env set affirmatively → allowed even for a base path.
         (payload("Edit", base + "/a.rs"), wt, {ESCAPE_ENV: "1"}, False),
+        (payload("Edit", base + "/a.rs"), wt, {ESCAPE_ENV: "true"}, False),
+        (payload("Edit", base + "/a.rs"), wt, {ESCAPE_ENV: "YES"}, False),
+        (payload("Edit", base + "/a.rs"), wt, {ESCAPE_ENV: " on "}, False),
+        # A NEGATIVE spelling must not enable the escape — someone writing
+        # `0` / `false` / `no` means the guard stays on.
+        (payload("Edit", base + "/a.rs"), wt, {ESCAPE_ENV: "0"}, True),
+        (payload("Edit", base + "/a.rs"), wt, {ESCAPE_ENV: "false"}, True),
+        (payload("Edit", base + "/a.rs"), wt, {ESCAPE_ENV: "no"}, True),
+        (payload("Edit", base + "/a.rs"), wt, {ESCAPE_ENV: "off"}, True),
+        (payload("Edit", base + "/a.rs"), wt, {ESCAPE_ENV: ""}, True),
         # Not a worktree checkout (base session) → guard is a no-op.
         (payload("Edit", base + "/a.rs"), base, {}, False),
         # A Read of a base path is never blocked.
@@ -207,6 +247,33 @@ def _self_test():
             failures.append(
                 "  %-50s expected block=%s got block=%s"
                 % (_target_path(pl), should_block, blocked)
+            )
+
+    # Tilde paths. These need a home-derived base so `expanduser` actually
+    # lands on it — the synthetic `/Users/x/...` base above cannot express a
+    # `~` case, which is part of why this hole survived the first self-test.
+    home = os.path.expanduser("~")
+    home_base = os.path.join(home, "repos", "dropset")
+    home_wt = os.path.join(home_base, ".claude", "worktrees", "eng-690")
+    tilde_cases = [
+        # A tilde-spelled base-repo path is the hole: blocked now.
+        ("~/repos/dropset/program/src/lib.rs", True),
+        ("~/repos/dropset/README.md", True),
+        # A tilde path inside THIS worktree is still exactly right.
+        ("~/repos/dropset/.claude/worktrees/eng-690/a.rs", False),
+        # A tilde path outside the base tree is not our concern.
+        ("~/other-repo/a.rs", False),
+    ]
+    for spelled, should_block in tilde_cases:
+        code, _ = evaluate(
+            {"tool_name": "Edit", "tool_input": {"file_path": spelled}},
+            home_wt,
+            {},
+        )
+        if (code == 2) != should_block:
+            failures.append(
+                "  %-50s expected block=%s got block=%s"
+                % (spelled, should_block, code == 2)
             )
 
     # Message-body checks. A base-repo target's message names the
@@ -227,7 +294,7 @@ def _self_test():
     if failures:
         sys.stderr.write("self-test FAILED:\n" + "\n".join(failures) + "\n")
         return 1
-    sys.stdout.write("self-test OK (%d cases)\n" % len(cases))
+    sys.stdout.write("self-test OK (%d cases)\n" % (len(cases) + len(tilde_cases)))
     return 0
 
 

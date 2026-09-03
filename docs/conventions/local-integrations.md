@@ -1,7 +1,5 @@
 <!-- cspell:word zshrc -->
 
-<!-- cspell:word reorderer -->
-
 <!-- cspell:word venv -->
 
 <!-- cspell:word repoint -->

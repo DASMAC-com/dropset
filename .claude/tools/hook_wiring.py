@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""hook_wiring.py — report committed guard hooks that nothing wires.
+"""hook_wiring.py — report committed guard hooks that cannot fire.
+
+Scope is the **guard** hooks: every ``.py`` under ``.claude/hooks/``. The
+iTerm2 tab-color scripts live in ``.claude/scripts/`` and are deliberately
+outside it, so read every "every committed hook" claim about this tool — here
+or in the conventions — as *every committed guard hook*.
 
 A guard script under ``.claude/hooks/`` does **nothing** until a ``PreToolUse``
 entry in a settings file points at it. The scripts are committed; the wiring
@@ -9,11 +14,24 @@ is exactly the condition under which a guard sits committed and inert
 indefinitely with nobody noticing — the repo documents a protection, the script
 is right there, and **nothing anywhere checks that the two are connected**.
 
-It happened: as of 2026-08-14 all three guards were committed and only
+It happened: as of 2026-08-14, of the guards committed at the time only
 ``no_compound_bash.py`` was wired. The worktree edit-path guard — which exists
 to stop a worktree session mutating a base-repo path, a slip the conventions
 call recurring and expensive — had been documented as active protection while
-providing none.
+providing none. (That is history, not current state; the guard set has grown
+since. ``make hook-wiring`` is the only statement of what is live on a given
+machine, which is the whole reason this tool exists.)
+
+**Wired is not the same as able to fire**, which is the second thing this
+reports. A hook entry carries a ``matcher`` naming the tools it applies to, so
+``worktree_edit_guard.py`` filed under ``"matcher": "Bash"`` is pointed at
+tools it can never see — the likeliest operator slip, because each guard's
+documented paste block invites copying the compound guard's ``Bash`` block and
+swapping the script path. A command path that resolves to nothing is inert the
+same way. Both used to report ``wired``. They now report ``MISMATCHED`` and
+``MISDIRECTED``, and matching is anchored to the command's **executable
+position** so a script merely *mentioned* in an argument (the shape a guard
+disabled by commenting it into an ``echo`` takes) no longer counts as wiring.
 
 CI cannot catch this. The settings files are git-ignored, so a PR cannot
 install wiring and a CI runner has none to inspect; the check has to run on the
@@ -31,10 +49,11 @@ Usage::
     python3 .claude/tools/hook_wiring.py --json     # machine-readable
 
 Exit status is grep-shaped, so a caller can branch on it without parsing:
-``0`` when every committed hook is wired, ``1`` when at least one is not, and
-``2`` when the scan itself could not run (no main checkout, unreadable
-settings). A clean scan and a broken scan must never look alike — that is the
-failure this tool exists to prevent, and it would be ironic to reproduce it.
+``0`` when every committed guard hook can fire, ``1`` when at least one cannot
+(unwired, mismatched, or misdirected), and ``2`` when the scan itself could
+not run (no main checkout, unreadable settings). A clean scan and a broken
+scan must never look alike — that is the failure this tool exists to prevent,
+and it would be ironic to reproduce it.
 
 Standard library only. A Python skill-tool under ``.claude/tools/`` —
 deliberately **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill
@@ -46,6 +65,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -79,33 +101,128 @@ HOOK_EVENTS = (
 )
 
 
+# The tools each guard must be able to see. A guard filed under a matcher that
+# selects none of these is inert however correct its path is — and unlike the
+# deliberately-loose path matching below, this is cheaply checkable, because
+# each guard's required tool set is knowable from what the guard inspects.
+#
+# A script not listed here is unconstrained: a new guard should be added to the
+# table, but until it is, "no expectation" must mean "don't cry wolf" rather
+# than a spurious MISMATCHED.
+EXPECTED_TOOLS = {
+    "no_compound_bash.py": frozenset({"Bash"}),
+    "no_git_grep.py": frozenset({"Bash"}),
+    "no_destructive_bash.py": frozenset({"Bash"}),
+    "worktree_edit_guard.py": frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"}),
+}
+
+# Programs that run a script passed as an argument. Used only to decide whether
+# a script name sits in executable position, never to validate the interpreter.
+INTERPRETERS = frozenset({"python", "python3", "env", "uv", "sh", "bash", "zsh"})
+
+
 class HookWiringError(Exception):
     """A user-facing failure: surfaced to stderr, exits 2."""
 
 
-def iter_hook_commands(settings: dict) -> list[str]:
-    """Every hook ``command`` string in one settings mapping.
+def matcher_selects(matcher, tools) -> bool:
+    """Whether a hook ``matcher`` can select at least one of ``tools``.
+
+    Claude Code treats the matcher as a regex over the tool name, with an
+    absent or ``*`` matcher meaning every tool. An unparseable matcher is
+    treated as selecting — this tool's job is to catch the operator slip of
+    filing a guard under the wrong tool, not to lint regex syntax, and a false
+    MISMATCHED is exactly the noise that gets a checker ignored.
+    """
+    if not tools:
+        return True
+    if matcher is None:
+        return True
+    if not isinstance(matcher, str) or matcher.strip() in ("", "*"):
+        return True
+    try:
+        pattern = re.compile(matcher)
+    except re.error:
+        return True
+    return any(pattern.search(tool) for tool in tools)
+
+
+def script_reference(command: str, script: str) -> str | None:
+    """The token that would **execute** ``script``, or None for a mere mention.
+
+    This is the tightening that stops ``echo skipping no_compound_bash.py``
+    from reporting three guards wired. A script counts when it is the command
+    itself, or the argument of an interpreter; named anywhere else it is text.
+    """
+    if not isinstance(command, str):
+        return None
+    try:
+        tokens = shlex.split(command, comments=False)
+    except ValueError:
+        # An unbalanced quote is a user-authored typo, not a reason to crash.
+        tokens = command.split()
+    if not tokens:
+        return None
+    named = [t for t in tokens if os.path.basename(t) == script]
+    if not named:
+        return None
+    token = named[0]
+    if tokens[0] == token:
+        return token
+    program = os.path.basename(tokens[0])
+    if program in INTERPRETERS or program.startswith("python"):
+        return token
+    return None
+
+
+def path_status(token: str, repo: Path) -> str:
+    """``ok`` / ``missing`` / ``unknown`` for the script path a command names.
+
+    ``$CLAUDE_PROJECT_DIR`` is the documented spelling and resolves to the
+    scanned checkout. Any *other* unresolved variable yields ``unknown``, which
+    is treated as fine — the loose-path tradeoff the original docstring owned
+    is kept exactly where it was earned, and narrowed only where the answer is
+    knowable.
+    """
+    expanded = token
+    for var in ("${CLAUDE_PROJECT_DIR}", "$CLAUDE_PROJECT_DIR"):
+        expanded = expanded.replace(var, str(repo))
+    if "$" in expanded:
+        return "unknown"
+    path = Path(os.path.expanduser(expanded))
+    if not path.is_absolute():
+        path = repo / path
+    return "ok" if path.is_file() else "missing"
+
+
+def iter_hook_entries(settings: dict) -> list[tuple[object, str]]:
+    """Every ``(matcher, command)`` pair in one settings mapping.
+
+    The matcher rides along because a command alone cannot say whether the
+    guard can ever fire. It is returned raw (possibly ``None``, possibly not a
+    string) and interpreted by ``matcher_selects``.
 
     Shape-tolerant on purpose: this walks a user-authored, git-ignored file
     that no schema validates, so anything unexpected is skipped rather than
     raised on. A malformed entry should cost one missed match, not a crashed
     upkeep run.
     """
-    commands: list[str] = []
+    entries: list[tuple[object, str]] = []
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
-        return commands
+        return entries
     for event in HOOK_EVENTS:
         for matcher_entry in hooks.get(event) or []:
             if not isinstance(matcher_entry, dict):
                 continue
+            matcher = matcher_entry.get("matcher")
             for hook in matcher_entry.get("hooks") or []:
                 if not isinstance(hook, dict):
                     continue
                 command = hook.get("command")
                 if isinstance(command, str):
-                    commands.append(command)
-    return commands
+                    entries.append((matcher, command))
+    return entries
 
 
 def load_settings(path: Path) -> dict:
@@ -146,70 +263,117 @@ def committed_hooks(repo: Path) -> list[str]:
 def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
     """Report which committed hooks are wired, and by which settings file.
 
-    Matching is by **base name** appearing anywhere in a hook's command string.
-    That is deliberately loose: the wiring in this repo is
+    Matching is by **base name in executable position** within a hook's command
+    string. The path *spelling* stays deliberately loose: the wiring in this
+    repo is
     ``python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py"``, and an
-    operator may reasonably spell the path absolutely, relatively, or through a
+    operator may reasonably spell it absolutely, relatively, or through a
     different variable. A loose match risks calling a guard wired when a typo'd
     path means it never runs; a strict one risks crying wolf on every valid
     spelling. Between a rare false negative and routine false positives, the
     false positives are worse — they are what makes a checker get ignored.
+
+    Three outcomes are separated out from the old binary, each because the
+    answer *is* knowable and reporting ``wired`` for it was false assurance:
+
+    * ``MISMATCHED`` — a reference filed under a matcher that selects none of
+      the tools the guard inspects, so it can never fire.
+    * ``MISDIRECTED`` — a reference whose script path resolves to nothing.
+    * ``UNWIRED`` — no reference at all (a bare mention in an argument is not
+      a reference).
     """
-    sources: dict[str, list[str]] = {}
+    sources: dict[str, list[tuple[object, str]]] = {}
     for name in REPO_SETTINGS:
-        sources[f".claude/{name}"] = iter_hook_commands(
+        sources[f".claude/{name}"] = iter_hook_entries(
             load_settings(repo / ".claude" / name)
         )
-    sources[str(user_settings)] = iter_hook_commands(load_settings(user_settings))
+    sources[str(user_settings)] = iter_hook_entries(load_settings(user_settings))
 
     wired: dict[str, list[str]] = {}
+    mismatched: dict[str, list[str]] = {}
+    misdirected: dict[str, list[str]] = {}
     unwired: list[str] = []
+
     for script in committed_hooks(repo):
-        by = [
-            source
-            for source, commands in sources.items()
-            if any(script in command for command in commands)
-        ]
-        if by:
-            wired[script] = by
+        expected = EXPECTED_TOOLS.get(script, frozenset())
+        ok: list[str] = []
+        bad_path: list[str] = []
+        bad_matcher: list[str] = []
+        for source, entries in sources.items():
+            for matcher, command in entries:
+                token = script_reference(command, script)
+                if token is None:
+                    continue
+                if not matcher_selects(matcher, expected):
+                    bad_matcher.append(source)
+                elif path_status(token, repo) == "missing":
+                    bad_path.append(source)
+                else:
+                    ok.append(source)
+        # One good reference is enough — a guard wired correctly once fires,
+        # whatever else also names it.
+        if ok:
+            wired[script] = sorted(set(ok))
+        elif bad_path:
+            misdirected[script] = sorted(set(bad_path))
+        elif bad_matcher:
+            mismatched[script] = sorted(set(bad_matcher))
         else:
             unwired.append(script)
 
     return {
         "repo": str(repo),
         "wired": wired,
+        "mismatched": mismatched,
+        "misdirected": misdirected,
         "unwired": unwired,
-        "scanned_settings": [
-            source for source, commands in sources.items() if commands
-        ],
+        "scanned_settings": [source for source, entries in sources.items() if entries],
     }
 
 
+def inert_count(result: dict) -> int:
+    """How many committed guards cannot fire, for any of the three reasons."""
+    return (
+        len(result["unwired"]) + len(result["mismatched"]) + len(result["misdirected"])
+    )
+
+
 def render(result: dict) -> str:
-    """The human report. Names the unwired scripts; prints no settings diff."""
+    """The human report. Names the affected scripts; prints no settings diff."""
     lines = []
     for script, sources in sorted(result["wired"].items()):
         lines.append(f"  wired    {script}  ({', '.join(sources)})")
+    for script, sources in sorted(result["mismatched"].items()):
+        expected = "/".join(sorted(EXPECTED_TOOLS.get(script, ())))
+        lines.append(
+            f"  MISMATCHED  {script}  ({', '.join(sources)}) — wired under a "
+            f"matcher that never selects {expected}, so it cannot fire"
+        )
+    for script, sources in sorted(result["misdirected"].items()):
+        lines.append(
+            f"  MISDIRECTED {script}  ({', '.join(sources)}) — the command's "
+            "script path resolves to nothing"
+        )
     for script in result["unwired"]:
         lines.append(f"  UNWIRED  {script}  — committed, but nothing points at it")
     if not lines:
         lines.append("  no committed hooks found under .claude/hooks/")
 
-    if result["unwired"]:
+    inert = inert_count(result)
+    if inert:
         # Say what to do about it. A report that only states a fact gets read
         # as noise; the whole point is that the operator, not this tool, wires
         # it — so name where the block to copy lives.
         lines.append("")
         lines.append(
-            f"hook-wiring | {len(result['unwired'])} committed guard(s) never "
-            "fire. Each guard's section in "
-            "docs/conventions/local-integrations.md carries the PreToolUse "
-            "block to paste into the main checkout's settings; wiring is the "
-            "operator's call, so nothing was written."
+            f"hook-wiring | {inert} committed guard(s) never fire. Each "
+            "guard's section in docs/conventions/local-integrations.md "
+            "carries the PreToolUse block to paste into the main checkout's "
+            "settings; wiring is the operator's call, so nothing was written."
         )
     else:
         lines.append("")
-        lines.append("hook-wiring | every committed hook is wired")
+        lines.append("hook-wiring | every committed guard hook is wired")
     return "\n".join(lines)
 
 
@@ -246,7 +410,7 @@ def run(argv: list[str]) -> int:
     # wired". This module's whole premise is that those two must never look
     # alike, so refusing here is not defensive padding; it is the tool declining
     # to reproduce the exact bug it was written to catch.
-    if not result["wired"] and not result["unwired"]:
+    if not result["wired"] and not inert_count(result):
         raise HookWiringError(
             f"no hook scripts found under {repo}/.claude/hooks/ — nothing was "
             "checked, which is not the same answer as everything being wired"
@@ -256,7 +420,7 @@ def run(argv: list[str]) -> int:
         print(json.dumps(result, indent=2))
     else:
         print(render(result))
-    return 1 if result["unwired"] else 0
+    return 1 if inert_count(result) else 0
 
 
 def main() -> int:

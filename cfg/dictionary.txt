@@ -193,6 +193,7 @@ reauthored
 refspec
 regclass
 rels
+reorderer
 repeg
 repr
 reqwest
