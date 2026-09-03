@@ -1,0 +1,22 @@
+[
+  {
+    "ParameterKey": "BudgetAlertEmail",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "BudgetLimitUsd",
+    "ParameterValue": "10000"
+  },
+  {
+    "ParameterKey": "EnvironmentName",
+    "ParameterValue": "dropset-dev"
+  },
+  {
+    "ParameterKey": "FallbackModelId",
+    "ParameterValue": "anthropic.claude-opus-5"
+  },
+  {
+    "ParameterKey": "WorkerModelId",
+    "ParameterValue": "anthropic.claude-fable-5-1"
+  }
+]

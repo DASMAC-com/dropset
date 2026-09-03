@@ -1,0 +1,163 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Conditions:
+  HasBudgetAlertEmail: !Not
+  - !Equals
+    - !Ref 'BudgetAlertEmail'
+    - ''
+Description: >-
+  Dropset Bedrock worker identity: the IAM user that backs the long-term
+  Amazon Bedrock API key used by unattended worker sessions, a managed policy
+  scoped to model invocation alone, and an optional monthly spend ALERT that
+  fires if credits stop covering the charge. No credential value is created or
+  stored by this template - the API key is minted out of band and kept in
+  1Password (see infra/aws/README.md).
+Outputs:
+  BedrockWorkerPolicyArn:
+    Description: 'ARN of the invoke-only managed policy.'
+    Export:
+      Name: !Sub '${EnvironmentName}-bedrock-worker-policy-arn'
+    Value: !Ref 'BedrockWorkerInvokePolicy'
+  BedrockWorkerUserName:
+    Description: >-
+      Name of the IAM user the long-term Bedrock API key is minted against.
+    Export:
+      Name: !Sub '${EnvironmentName}-bedrock-worker-user'
+    Value: !Ref 'BedrockWorkerUser'
+  WorkerInferenceProfileId:
+    Description: >-
+      Cross-region inference profile id worker sessions target. Exported so the
+      session launcher reads it rather than hard-coding a model string.
+    Export:
+      Name: !Sub '${EnvironmentName}-bedrock-worker-profile-id'
+    Value: !Sub 'us.${WorkerModelId}'
+Parameters:
+  BudgetAlertEmail:
+    Default: ''
+    Description: >-
+      Address the monthly spend alert notifies. Left empty (the default), no
+      budget is created at all, because a budget with an undeliverable
+      subscriber is a tripwire that silently never fires.
+    Type: 'String'
+  BudgetLimitUsd:
+    Default: '10000'
+    Description: >-
+      Monthly USD threshold for the drift alert. This is an ALERT, never a cap:
+      Budgets cannot stop spend, and the ratified posture is no cap while
+      credits net the charge in full.
+    Type: 'String'
+  EnvironmentName:
+    Default: 'dropset-dev'
+    Description: 'Name prefix applied to resource names, tags, and exports.'
+    Type: 'String'
+  FallbackModelId:
+    Default: 'anthropic.claude-opus-5'
+    Description: >-
+      Foundation model worker sessions fall back to when the primary is
+      unavailable. Granted the same invoke permission as the primary.
+    Type: 'String'
+  WorkerModelId:
+    Default: 'anthropic.claude-fable-5-1'
+    Description: >-
+      Primary foundation model for worker sessions. Invoked through the us.
+      cross-region inference profile, never by bare model id.
+    Type: 'String'
+Resources:
+  BedrockWorkerInvokePolicy:
+    Properties:
+      Description: >-
+        Invoke access to the two worker models through the US cross-region
+        inference profiles, plus the two read-only profile-discovery calls
+        Claude Code makes on a bearer-token deployment. Deliberately excludes
+        every management action, including the account data-retention setting:
+        a worker must not be able to change the retention posture it runs
+        under.
+      ManagedPolicyName: !Sub '${EnvironmentName}-bedrock-worker-invoke'
+      PolicyDocument:
+        Statement:
+        - Action: 'bedrock:ListInferenceProfiles'
+          Effect: 'Allow'
+          Resource: '*'
+          Sid: 'DiscoverInferenceProfiles'
+        - Action:
+          - 'bedrock:GetInferenceProfile'
+          - 'bedrock:InvokeModel'
+          - 'bedrock:InvokeModelWithResponseStream'
+          Effect: 'Allow'
+          Resource: !Sub >-
+            arn:aws:bedrock:us-*:${AWS::AccountId}:inference-profile/us.${WorkerModelId}
+          Sid: 'InvokePrimaryProfile'
+        - Action:
+          - 'bedrock:GetInferenceProfile'
+          - 'bedrock:InvokeModel'
+          - 'bedrock:InvokeModelWithResponseStream'
+          Effect: 'Allow'
+          Resource: !Sub >-
+            arn:aws:bedrock:us-*:${AWS::AccountId}:inference-profile/us.${FallbackModelId}
+          Sid: 'InvokeFallbackProfile'
+        - Action:
+          - 'bedrock:InvokeModel'
+          - 'bedrock:InvokeModelWithResponseStream'
+          Effect: 'Allow'
+          Resource: !Sub >-
+            arn:aws:bedrock:us-*::foundation-model/${WorkerModelId}
+          Sid: 'InvokePrimaryModelInUsRegions'
+        - Action:
+          - 'bedrock:InvokeModel'
+          - 'bedrock:InvokeModelWithResponseStream'
+          Effect: 'Allow'
+          Resource: !Sub >-
+            arn:aws:bedrock:us-*::foundation-model/${FallbackModelId}
+          Sid: 'InvokeFallbackModelInUsRegions'
+        Version: '2012-10-17'
+    Type: 'AWS::IAM::ManagedPolicy'
+  BedrockWorkerUser:
+    Properties:
+      ManagedPolicyArns:
+      - !Ref 'BedrockWorkerInvokePolicy'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-bedrock-worker'
+      UserName: !Sub '${EnvironmentName}-bedrock-worker'
+    Type: 'AWS::IAM::User'
+  WorkerSpendAlertBudget:
+    Condition: 'HasBudgetAlertEmail'
+    Properties:
+      Budget:
+        BudgetLimit:
+          Amount: !Ref 'BudgetLimitUsd'
+          Unit: 'USD'
+        BudgetName: !Sub '${EnvironmentName}-bedrock-worker-spend'
+        BudgetType: 'COST'
+        CostTypes:
+          IncludeCredit: true
+          IncludeDiscount: true
+          IncludeOtherSubscription: true
+          IncludeRecurring: true
+          IncludeRefund: false
+          IncludeSubscription: true
+          IncludeSupport: true
+          IncludeTax: true
+          IncludeUpfront: true
+          UseAmortized: false
+          UseBlended: false
+        TimeUnit: 'MONTHLY'
+      NotificationsWithSubscribers:
+      - Notification:
+          ComparisonOperator: 'GREATER_THAN'
+          NotificationType: 'ACTUAL'
+          Threshold: 80
+          ThresholdType: 'PERCENTAGE'
+        Subscribers:
+        - Address: !Ref 'BudgetAlertEmail'
+          SubscriptionType: 'EMAIL'
+      - Notification:
+          ComparisonOperator: 'GREATER_THAN'
+          NotificationType: 'FORECASTED'
+          Threshold: 100
+          ThresholdType: 'PERCENTAGE'
+        Subscribers:
+        - Address: !Ref 'BudgetAlertEmail'
+          SubscriptionType: 'EMAIL'
+    Type: 'AWS::Budgets::Budget'
+...
