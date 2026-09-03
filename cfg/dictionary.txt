@@ -84,6 +84,7 @@ eurozone
 eurøp
 exfiltration
 faps
+fchmod
 fieldless
 fintech
 firmable

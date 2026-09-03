@@ -124,6 +124,32 @@ class Spill(_Stubbed):
             self._run("--out", path)
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
+    def test_a_re_spill_narrows_an_existing_permissive_file(self):
+        """`O_CREAT`'s mode argument applies only when the file is CREATED, so
+        this test's sibling above — which always writes into a fresh temp dir —
+        could not fail for the reason it names, and the owner-only guarantee
+        held only on first write.
+
+        Re-running `--out <scratchpad>/planning.md` to the same path is exactly
+        the shape this tool recommends, so the guarantee was absent in the case
+        that actually recurs. `fchmod` after open makes it unconditional.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "planning.md")
+            Path(path).write_text("stale\n", encoding="utf-8")
+            os.chmod(path, 0o644)
+            self._run("--out", path)
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+    def test_an_empty_out_path_is_a_clean_error_not_a_traceback(self):
+        """`--out ''` is falsy, so dispatching on truthiness fell through the
+        chain to the terminal `grep` branch with `args.grep is None` — a
+        traceback, where this tool's exception class promises one clean stderr
+        line. Nuisance input, but the promise is the point.
+        """
+        with self.assertRaises((pd.PlanningDocError, OSError)):
+            self._run("--out", "")
+
 
 class Failures(unittest.TestCase):
     def test_empty_content_is_an_error_not_a_silent_empty_read(self):

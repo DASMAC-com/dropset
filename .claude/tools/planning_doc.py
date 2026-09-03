@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# cspell:word fchmod
 """Scoped reader for the Planning Linear document.
 
 **Why this exists.** The MCP `get_document` returns the *entire* content with
