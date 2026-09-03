@@ -1,5 +1,7 @@
 <!-- cspell:word zshrc -->
 
+<!-- cspell:word isabs -->
+
 <!-- cspell:word venv -->
 
 <!-- cspell:word repoint -->
@@ -37,9 +39,9 @@ is *not* the job — half of it is, and it is the half that leaves no
 trace when the other half is missing. A guard with no `PreToolUse` entry
 pointing at it never runs, while the repo goes on documenting it as a
 protection; the script sitting there in `.claude/hooks/` reads as
-evidence that it does. Two of the three guards below spent an unknown
-stretch in exactly that state, discovered only when someone asked an
-unrelated question about hook reach (2026-08-14).
+evidence that it does. Two of the guards below spent an unknown stretch
+in exactly that state, discovered only when someone asked an unrelated
+question about hook reach (2026-08-14).
 
 Because the wiring is git-ignored, **CI cannot check this** — a PR
 cannot install wiring and a CI runner has none to inspect. The check
@@ -50,10 +52,32 @@ machine:
 make hook-wiring
 ```
 
-It names every committed hook nothing points at, and **writes
+It names every committed **guard** hook that cannot fire, and **writes
 nothing** — wiring a hook grants it the right to block tool calls,
 which stays the operator's decision. `housekeeping` runs it each pass
 (its step 7b) so the gap cannot re-open silently.
+
+Its scope is the **guard** hooks — every `.py` under `.claude/hooks/`.
+The iTerm2 tab-color scripts live in `.claude/scripts/` and are outside
+it by design, so a clean report says nothing about them.
+
+**Wired is not the same as able to fire**, and the report separates
+three ways a committed guard stays inert:
+
+- `MISMATCHED` — wired under a `matcher` that never selects the tools
+  the guard inspects, so it can never fire. This is the likeliest slip,
+  because each guard's paste block below invites copying the compound
+  guard's `Bash` block and swapping the script path — and
+  `worktree_edit_guard.py` under `"matcher": "Bash"` is inert.
+- `MISDIRECTED` — the command's script path resolves to nothing.
+- `UNWIRED` — nothing points at it. A script merely *mentioned* in an
+  argument is not wiring, so a guard disabled by commenting it into an
+  `echo` reports `UNWIRED` rather than reading as protected.
+
+All three used to report `wired`. The path *spelling* stays loose on
+purpose (absolute, relative, or through a variable are all valid), so a
+path this check cannot resolve is given the benefit of the doubt — the
+narrowing is only where the answer is knowable.
 
 `housekeeping` deliberately calls
 `python3 .claude/tools/hook_wiring.py` rather than this `make` target:
@@ -78,9 +102,18 @@ fails *open* — any payload it can't parse is allowed — so it never
 wedges a session.
 
 **Escape hatch.** A genuinely-unavoidable compound (rare) is let
-through by adding the literal marker `#compound-ok` anywhere in the
-command. It's deliberately visible in the transcript so the bypass is
-auditable; reach for it only when the work truly can't be split.
+through by adding the literal marker `#compound-ok` as a genuine
+**unquoted comment** — it works mid-command, but only at a word
+boundary, so a quoted or embedded occurrence (grepping for the literal
+string, say) can't silently disable the guard. Reach for it only when
+the work truly can't be split.
+
+**A marked bypass is visible in the transcript, and that is all.** This
+used to say the marker makes the bypass "auditable", which overstated
+it in the one direction that matters: the marker records the bypasses that
+*use* it, and a scan that finds nothing leaves no trace at all. Read the
+transcript as evidence of a deliberate compound, never as a log of
+everything the guard let through.
 
 ### Wiring the compound-shell guard
 
@@ -127,8 +160,13 @@ worktrees to the main checkout.** Per the official Claude Code docs
 written** "at the root of the git repository, resolved through
 worktrees to the main checkout". So:
 
-- A worktree checkout carries **no copy of its own** — verify with
-  `ls .claude/` in any worktree; there is nothing there.
+- A worktree checkout carries **no settings file of its own** — verify
+  with `ls .claude/settings*` in any worktree, which returns nothing.
+  (`ls .claude/` is *not* the check: the `hooks`, `scripts`, `shell`,
+  `skills` and `tools` trees are tracked, so they are present in every
+  worktree and that listing is far from empty. A useful consequence —
+  because the guard **scripts** are tracked, a hook command spelled
+  with `$CLAUDE_PROJECT_DIR` resolves inside a worktree too.)
 - A **"don't ask again" approval inside a worktree session saves to
   the main checkout's file**, and is therefore live in every other
   worktree immediately.
@@ -138,6 +176,14 @@ worktrees to the main checkout". So:
   with no settings file of its own, whose only wiring was the base
   repo's, had a deliberate `echo a && echo b` blocked by
   `no_compound_bash.py`.
+
+**Both repo-scoped files resolve this way**, not just the local one. The
+controlled probe above exercised `settings.local.json`, which is what
+the bullets describe; `.claude/settings.json` is repo-scoped by the same
+documented mechanism, and `hook_wiring.py` reads both from the base
+checkout on that basis. Worth stating explicitly, because a reader who
+sees evidence only for the `.local` file may reasonably assume the plain
+one behaves differently.
 
 `permissions.md`'s line about settings keys loading from the cwd's
 `.claude` with "no parent-directory fallback" describes **directory
@@ -179,23 +225,23 @@ one to the other.
 Reach was never the problem — **wiring** is. All **four** guard scripts
 are committed under `.claude/hooks/`, but a script only runs if a
 `PreToolUse` entry points at it, and a committed-but-unwired guard is a
-documented protection that does not exist. That has happened: as of
+documented protection that does not exist. That has happened: on
 2026-08-14 the main checkout wired **only** `no_compound_bash.py`,
-leaving `no_git_grep.py` and `worktree_edit_guard.py` inert — including
-the worktree edit-path guard, which exists specifically for worktree
-sessions. `no_destructive_bash.py` is the newest and starts unwired
-like the rest. Wire the ones you want using the blocks in each guard's
-section below.
+leaving the others inert — including the worktree edit-path guard, which
+exists specifically for worktree sessions. Wire the ones you want using
+the blocks in each guard's section below.
 
-Don't trust that paragraph's date — **ask**, since the answer is
-per-machine and changes the moment someone edits a git-ignored file:
+**This doc states no per-guard wiring status, deliberately.** The
+paragraph above is history — the incident that prompted the check — not
+a claim about your machine. Wiring lives in a git-ignored file and
+changes the moment someone edits it, so any status written here would be
+stale on arrival, and a stale present-tense claim paired with a note not
+to believe it carries less than nothing. The single statement of current
+state is the check itself:
 
 ```sh
 make hook-wiring
 ```
-
-That is the authority on which guards are live here; the prose above is
-only the finding that prompted the check.
 
 ## The git-grep guard hook
 
@@ -387,10 +433,24 @@ it is left alone.
 
 Two carve-outs pass through: the base `.claude/settings.json` /
 `settings.local.json` files (which `firm-perms` and `firm_last.py` write
-on purpose), and the env escape `ALLOW_BASE_REPO_EDITS=1` for a rare
-deliberate base edit. The guard fails *open* — a missing field or parse
-problem is allowed — so it never wedges a session, and relative paths
-(which resolve against the worktree cwd) are always allowed.
+on purpose), and the env escape `ALLOW_BASE_REPO_EDITS` for a rare
+deliberate base edit. The escape needs an **explicit affirmative** —
+`1`, `true`, `yes` or `on`. It used to test the variable for mere
+truthiness, which disabled the guard for `0`, `false` and `no`, the
+spellings someone reaches for believing they are turning the escape
+*off*.
+
+The guard fails *open* — a missing field or parse problem is allowed —
+so it never wedges a session. Genuinely **relative** paths are always
+allowed, since they resolve against the worktree cwd and so cannot be a
+stray base edit.
+
+**A `~`-spelled path is not one of those**, and used to be treated as
+one. A tilde fails `os.path.isabs`, so it fell into the relative-path
+allowance — while the harness itself expands `~` and performs the edit,
+making a tilde-spelled base-repo path both accepted by `Edit` and waved
+through by the guard, i.e. exactly the slip this exists to stop. Paths
+are now expanded before the absoluteness test.
 
 Like the compound guard, the **script** is committed with a built-in
 self-test —
@@ -452,7 +512,16 @@ All live in `.claude/scripts/` and are dependency-free bash:
 - `iterm-colors.sh` — shared palette and the SetColors emit helpers,
   sourced by the rest. The four states and the `PAINT_WINDOW_BG` toggle
   (off by default: only the tab is tinted) live here; edit this file to
-  recolor everything.
+  recolor everything. Two things propagate differently:
+  `iterm-monitor.sh` re-reads the palette on each state change, so a
+  running session picks up an edit immediately, while
+  `iterm-reorder.py` reads it **once at startup** and needs restarting.
+  (The reorderer used to carry its own hardcoded copies of three state
+  hexes instead, and classifies any unrecognized hex as "neutral" — so
+  recoloring the palette exactly as invited here left the colors correct
+  and silently killed FIFO attention ordering. It reads the palette now;
+  if it cannot find the file it falls back to built-in hexes and says so
+  on stderr rather than degrading quietly.)
 - `iterm-paint.sh` — the hook painter. Every hook calls this one script;
   it reads the hook event on stdin and picks the color itself (see
   below).
@@ -575,9 +644,9 @@ color hooks keep working whether or not the reorderer is running.
 
 ### Wiring the hooks
 
-Add to your `~/.claude/settings.json` (alongside the compound guard
-above). Every event routes to the one painter, except SessionStart /
-SessionEnd which manage the monitor:
+Add to the **project** file, `.claude/settings.json`. Every event routes
+to the one painter, except SessionStart / SessionEnd which manage the
+monitor:
 
 <!-- markdownlint-disable MD013 -->
 
@@ -610,6 +679,15 @@ SessionEnd which manage the monitor:
 ```
 
 <!-- markdownlint-enable MD013 -->
+
+**The file and the path form have to agree**, and this block used to get
+it wrong — it named `~/.claude/settings.json` while pasting
+`$CLAUDE_PROJECT_DIR` paths, which resolve to the active checkout. In
+the user file that means every tool call in every *other* repo runs a
+hook pointing at a path that does not exist there. So: the project file
+takes `$CLAUDE_PROJECT_DIR` (above), and the user file takes absolute
+`~/.claude/scripts/…` paths after a global deploy (see "Deploying to
+`~/.claude`" below). Pick one target per block; don't mix.
 
 Hook changes only take effect in a **new session** — edit the file, then
 start a fresh Claude Code session to pick them up.
@@ -644,6 +722,31 @@ automation needs its ids in the environment. Put all of it in one place:
   tab out from under the integration.
 
 ### Session secrets
+
+**Prerequisite: the 1Password CLI.** This whole mechanism is `op read`
+under the hood, so on a new machine it needs, in order:
+
+1. the `op` CLI installed (`brew install 1password-cli`);
+1. the account whose domain goes in `DS_OP_ACCOUNT` added to it
+   (`op account add --address <account>.1password.com`);
+1. either the desktop app's **CLI integration** enabled (1Password →
+   Settings → Developer → "Integrate with 1Password CLI") or a
+   `op signin` session, so a read can actually authorize.
+
+Verify with a real read before blaming anything else:
+
+```sh
+op read "$DS_OP_LINEAR_REF" --account "$DS_OP_ACCOUNT"
+```
+
+This is worth stating first because the failure is quiet and lands far
+away. The helper calls `op read`, and if it resolves nothing it prints
+one warning and launches anyway — so every Linear-filing skill then runs
+with an empty API key and the first symptom is an opaque MCP error
+mid-session, which is precisely the outcome this section exists to
+prevent. **That warning line is the intended signal**; if you see it at
+launch, fix the credential before working, and do not read a later MCP
+error as the primary fault.
 
 `LINEAR_API_KEY` and `GITHUB_MCP_PAT` are secrets, so unlike the ids
 above they are never written into a config file. A `_ds_secrets` helper
@@ -735,6 +838,17 @@ name, and item titles appear only in the untracked runtime config —
 never in a symlink into a tracked config repo — so substitute your own.
 Naming the real ones here would buy a reader nothing (they have to
 substitute regardless).
+
+**Editing the profile does not reach a running session.** An agent's
+Bash shells initialize from a **snapshot** captured when the session
+started (under the shell-snapshots directory in the Claude home), not
+from a live read of `~/.zshrc` or `~/.zshenv`. So adding or changing a
+`DS_OP_*` coordinate — or any environment variable an agent needs —
+takes effect only in a session launched **after** the edit; a
+mid-session edit reaches the running session not at all. This is stated
+here because this section is exactly where someone looks when a
+variable fails to appear, and it once cost a wrong instruction to the
+operator ("re-source your profile and retry", which cannot work).
 
 ### Session helpers (`.claude/shell/init.zsh`)
 
@@ -879,7 +993,7 @@ branch arrives as `worktree-eng-###`):
   remember which state it is in is the friction the helper removes. An
   `rpaps` twin was considered and rejected for that reason.
 
-  Three things it makes deterministic, each of which used to be a
+  Four things it makes deterministic, each of which used to be a
   manual step the operator could forget:
 
   - **The model.** Planning sessions run the most capable model
@@ -893,6 +1007,15 @@ branch arrives as `worktree-eng-###`):
     itself rather than trusting the shell's cwd.
   - **The bootstrap.** Passing `/plan` as the initial prompt means the
     skill's bootstrap read happens without being asked for.
+  - **The permission mode.** `--permission-mode acceptEdits`, on both
+    the create and the resume path. This is a **permission posture**,
+    not a convenience — the session auto-accepts edits — which is why
+    it belongs in an exhaustive list rather than being left implicit.
+    The shared `settings.local.json` sets no default permission mode,
+    so without the flag a session starts in the default mode and
+    prompts on every edit. `haps` and the worktree helpers pass it for
+    the same reason, so this is the family's posture rather than
+    anything specific to planning sessions.
 
   This **supersedes** `naps planning-<day>` / `rnaps planning-<day>`
   and the older `planning-<day>` session naming. `naps` / `rnaps`

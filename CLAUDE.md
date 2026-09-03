@@ -424,9 +424,11 @@ is opt-in — nothing is enforced on a checkout until you wire it up.
 to the main checkout**, so wiring it once makes it live in every
 worktree. Each guard's **script** is committed; its
 `PreToolUse` **wiring** is not — and a committed guard is **inert until
-wired**, which `make hook-wiring` reports on (it names every hook
-nothing points at, and writes nothing; `housekeeping` runs the same
-check each pass). The **session helpers** (`cdds`, `aps`, `raps`,
+wired**, which `make hook-wiring` reports on (it names every committed
+**guard** hook that cannot fire — unwired, wired under a `matcher` that
+never selects the tools it inspects, or pointed at a path that resolves
+to nothing — and writes nothing; `housekeeping` runs the same check
+each pass). The **session helpers** (`cdds`, `aps`, `raps`,
 `naps`, `rnaps`, `paps`, `haps`, `faps`) are the exception that *is*
 committed, at
 `.claude/shell/init.zsh`, sourced from the base checkout by one guarded
