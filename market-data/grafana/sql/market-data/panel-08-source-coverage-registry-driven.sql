@@ -13,73 +13,25 @@
 -- instrument_liveness answers the same question one level up and
 -- deliberately drops the source, so a product some OTHER collector still
 -- covers reads live and the dead one is masked. That masking is exactly the
--- defect this panel exists to catch.
+-- defect this panel exists to catch, and instrument_source_liveness is the
+-- view that keeps the source.
 --
--- The staleness bounds mirror instrument_liveness rather than inventing new
--- ones, because a single fixed window cannot serve both cadences here: a
--- 15-minute window marks the daily-bar sources (alphavantage) dead on every
--- load, and a window loose enough for them hides a tick feed that died an
--- hour ago. Class picks between them, so an FX pair clears its ~49-hour
--- weekend.
---
--- THE GRANULARITY LIST IS LOAD-BEARING, not a filter. 0009's registry note
--- explains that leaving granularity_secs unconstrained sits it between the
--- equality-qualified prefix and the aggregated column, which defeats
--- Postgres's MIN/MAX index transform and range-scans the entire series.
--- Iterating the granularity vocabulary gives each lookup a full equality
--- prefix, so each is a backward Limit 1 seek. Measured on a populated store:
--- unconstrained, 63.3ms and 7,280 buffers; this form, 0.8ms and 884 --
--- and this one does not degrade as cex_prices grows, which is what matters
--- on a 5s refresh. The list is the Granularity picker's own vocabulary; a
--- collector writing some other bucket width would be invisible here, which
--- is why they are kept in step.
-WITH thresholds AS (
-  SELECT
-    72 * 3600 AS session_bound,
-    48 * 3600 AS always_open
-),
-
-last_seen AS (
-  SELECT
-    r.source,
-    r.product_id,
-    i.asset_class,
-    GREATEST(b.last_at, tk.last_at) AS last_at
-  FROM instrument_registry r
-  LEFT JOIN instruments i ON i.product_id = r.product_id
-  LEFT JOIN LATERAL (
-    SELECT max(g.last_at) AS last_at
-    FROM (VALUES (60), (300), (900), (3600), (21600), (86400)) AS gran (secs)
-    CROSS JOIN LATERAL (
-      SELECT max(c.bucket_start) AS last_at
-      FROM cex_prices c
-      WHERE c.source = r.source
-        AND c.product_id = r.product_id
-        AND c.granularity_secs = gran.secs
-    ) g
-  ) b ON true
-  LEFT JOIN LATERAL (
-    SELECT max(s.observed_at) AS last_at
-    FROM spot_ticks s
-    WHERE s.source = r.source
-      AND s.product_id = r.product_id
-  ) tk ON true
-)
-
+-- READ FROM THE VIEW, do not recompute. This panel first carried its own
+-- copy of the two class-aware staleness bounds, because no per-source view
+-- existed when it was written. One does now, and it defines those constants
+-- once — so a copy here could only drift from them, and the whole reason the
+-- thresholds live in one place is that a silent divergence between two
+-- liveness verdicts is indistinguishable from a real outage. The view also
+-- carries the granularity-vocabulary constraint that keeps the bars lookup
+-- an index seek rather than a range scan, which this panel needs on a 5s
+-- refresh and now inherits rather than restates.
 SELECT
-  l.source,
+  source,
   count(*) AS products,
-  count(l.last_at) AS ever_produced,
-  count(*) FILTER (
-    WHERE l.last_at > extract(epoch FROM now()) - CASE
-      WHEN l.asset_class IN ('stablecoin-pair', 'peg-pair', 'crypto')
-        THEN th.always_open
-      ELSE th.session_bound
-    END
-  ) AS live,
-  to_timestamp(max(l.last_at)) AS latest,
-  (extract(epoch FROM now()) - max(l.last_at))::bigint AS age_secs
-FROM last_seen l
-CROSS JOIN thresholds th
-GROUP BY l.source
-ORDER BY live ASC, l.source ASC
+  count(last_data_at) AS ever_produced,
+  count(*) FILTER (WHERE is_live) AS live,
+  to_timestamp(max(last_data_at)) AS latest,
+  (extract(epoch FROM now()) - max(last_data_at))::bigint AS age_secs
+FROM instrument_source_liveness
+GROUP BY source
+ORDER BY live ASC, source ASC
