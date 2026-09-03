@@ -56,9 +56,17 @@ _RM_RECURSIVE_FORCE = r"\brm\b(?=(?:\s+-\S+)*\s+-\S*[rR])(?=(?:\s+-\S+)*\s+-\S*f
 # The targets that make a recursive delete catastrophic rather than merely
 # destructive. `~/` and `$HOME/` (with the trailing slash) are included because
 # `rm -rf ~/` is a trivially plausible slip and reads as no less final.
+# `/+` rather than `/`, because a REPEATED slash is the same directory to every
+# shell and to `rm`: `rm -rf //` deletes root exactly as `rm -rf /` does, and it
+# reached only the marker-liftable ask tier — a one-character defeat of the
+# anchor, in a spelling the sibling compound guard also passes. The `+` covers
+# `///` and any longer run for free. Longest alternatives come first so the
+# greedy match consumes the whole run rather than stopping after one slash.
 _CATASTROPHIC_CORE = (
-    r"(?:/|/\*|~|~/|~/\*|\$HOME|\$HOME/|\$HOME/\*"
-    r"|\$\{HOME\}|\$\{HOME\}/|\$\{HOME\}/\*)"
+    r"(?:/+\*|/+"
+    r"|~/+\*|~/+|~"
+    r"|\$HOME/+\*|\$HOME/+|\$HOME"
+    r"|\$\{HOME\}/+\*|\$\{HOME\}/+|\$\{HOME\})"
 )
 
 # The same targets, optionally wrapped in **matching** quotes, because that is
@@ -91,20 +99,51 @@ _CATASTROPHIC_TARGET = (
 #     bash -c "sh -c 'rm -rf /'"   # two closing quotes, nested invocations
 #     rm -rf / --no-preserve-root  # the spelling GNU rm actually requires
 #
-# So: any run of whitespace and closing quotes, and any number of trailing
-# FLAGS. Flags rather than arbitrary words is what keeps a search for the
-# literal string from matching — `grep -rn "rm -rf /" notes.txt` has a bare
-# path after the quote, so the anchor still rejects it, and the suppression in
-# `_matches` is then a second independent reason it does not fire.
-_TRAILING_TAIL = r"(?:\s+-\S+)*[\s\"']*$"
+# The tail comes in TWO forms, and which one applies depends on whether the
+# line's program is a shell. That split is the fix for a false positive the
+# single tolerant form created, at the one tier no marker can lift:
+#
+#     git commit -m "Never run rm -rf / --no-preserve-root"
+#     gh pr comment 1 --body "do not rm -rf ~ --force"
+#
+# Both merely QUOTE a destructive spelling as prose, and both were denied.
+# Self-referentially so: `rm -rf / --no-preserve-root` is a literal line in
+# this comment block, so writing a commit message about this guard was dead.
+# That also contradicts this file's own stated doctrine (see `_SQL_CLIENT`):
+# "a guard that blocks `git commit` is a guard that gets turned off, which is a
+# worse security outcome than the one it was defending against."
+#
+# The read-only suppression in `_matches` does not save these — `git` and `gh`
+# are not, and should not be, in `READ_ONLY_PROGRAMS`. What separates
+# `bash -c "rm -rf /"` from `git commit -m "rm -rf /"` is not the quoting but
+# the PROGRAM: one hands the string to a shell, the other stores it. So a
+# trailing closing quote is tolerated only for a shell.
+#
+# Trailing FLAGS are tolerated in both, because `rm -rf / --no-preserve-root`
+# is the spelling GNU rm actually requires and a bare `rm` is not a shell.
+#
+# A trailing flag is `-[^\s"']+`, NOT `-\S+`. `\S` matches a quote, so a greedy
+# `-\S+` swallowed the closing quote as part of the flag token and the strict
+# tail then matched anyway — which is how `git commit -m "… rm -rf /
+# --no-preserve-root"` still denied after the shell split. Excluding quotes from
+# the flag class is what makes the two tails actually differ.
+_RM_TAIL_STRICT = r"(?:\s+-[^\s\"']+)*\s*$"
+_RM_TAIL_SHELL = r"(?:\s+-[^\s\"']+)*[\s\"']*$"
 
+# Programs that hand a quoted argument to a shell for execution. Only these get
+# the quote-tolerant tail. An allowlist, not a denylist of "safe" programs: the
+# executor long tail (`ssh`, `sudo`, `find -exec`, `xargs`, `timeout`) is what
+# a denylist would have to enumerate, and missing one fails open.
+SHELL_PROGRAMS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash", "fish"})
+
+# Denies that apply on EVERY line, whatever the program.
 DENY_PATTERNS = (
     (
         re.compile(
             _RM_RECURSIVE_FORCE
             + r"(?:\s+-\S+)*\s+"
             + _CATASTROPHIC_TARGET
-            + _TRAILING_TAIL
+            + _RM_TAIL_STRICT
         ),
         "a recursive delete of the filesystem root or the home directory",
     ),
@@ -126,6 +165,26 @@ DENY_PATTERNS = (
             r"(?=.*\b(?:main|master)\b)"
         ),
         "a force-push to the default branch",
+    ),
+)
+
+# --------------------------------------------------------------------------
+# Denies that apply only on a line whose program is in ``SHELL_PROGRAMS``. The
+# quote-tolerant tail lives here rather than in `DENY_PATTERNS` because a
+# closing quote after the target means "a shell was handed this string" only
+# when a shell is what is being invoked; for `git commit -m` or `gh pr comment`
+# the same shape is prose being stored, and denying it at the tier no marker
+# lifts was a
+# live false positive. See `_RM_TAIL_SHELL`.
+SHELL_DENY_PATTERNS = (
+    (
+        re.compile(
+            _RM_RECURSIVE_FORCE
+            + r"(?:\s+-\S+)*\s+"
+            + _CATASTROPHIC_TARGET
+            + _RM_TAIL_SHELL
+        ),
+        "a recursive delete of the filesystem root or the home directory",
     ),
 )
 
@@ -527,16 +586,41 @@ def classify(cmd):
           / #destructive-ok
 
     left ``rm -rf \\`` on its own line, which reaches only the marker-liftable
-    ask tier — while the identical un-continued ``rm -rf /`` denies. Collapsing
-    is also the conservative direction: it can only put more of a command in
-    front of a pattern, never less.
+    ask tier — while the identical un-continued ``rm -rf /`` denies.
+
+    Collapsing must **delete** the continuation, not replace it with a space.
+    This used to claim substituting a space was "the conservative direction: it
+    can only put more of a command in front of a pattern, never less", which is
+    false — a space SPLITS a token the shell would have joined, and a split
+    token puts less. ``rm -r\\<newline>f /`` classified clean at every tier
+    while both bash and zsh ran ``rm -rf /``.
     """
-    cmd = _CONTINUATION_RE.sub(" ", cmd)
+    # DELETE the continuation, do not replace it with a space. Every shell
+    # removes `\`+newline and rejoins the surrounding characters into one
+    # token; substituting a space SPLIT the token instead, so the guard saw a
+    # different command than the shell would run:
+    #
+    #     rm -r\<newline>f /     # guard saw `rm -r f /` — unclassified at
+    #                           # EVERY tier, while both bash and zsh run
+    #                           # `rm -rf /`
+    #
+    # One character defeated the whole deny tier, and the sibling compound
+    # guard passes it too (a continuation is a legal single command). The old
+    # docstring claimed collapsing "can only put more of a command in front of
+    # a pattern, never less" — false, because splitting a token puts less.
+    cmd = _CONTINUATION_RE.sub("", cmd)
     lines = [line for line in cmd.splitlines() if line.strip()]
     for pattern, reason in DENY_PATTERNS:
         # The read-only carve-out applies here too — see `_matches`. It has to,
         # now that a trailing quote no longer defeats the end anchor.
         if any(_matches(pattern, line) for line in lines):
+            return "deny", reason
+    # Then the shell-only denies, on shell lines only. A closing quote after
+    # the target is evidence a shell was handed the string — but only when a
+    # shell is what the line invokes.
+    shell_lines = [line for line in lines if program_of(line) in SHELL_PROGRAMS]
+    for pattern, reason in SHELL_DENY_PATTERNS:
+        if any(_matches(pattern, line) for line in shell_lines):
             return "deny", reason
     for pattern, reason in ASK_PATTERNS:
         if any(_matches(pattern, line) for line in lines):
@@ -689,6 +773,34 @@ def _self_test():
         # rather than arbitrary words is what keeps a literal-string search from
         # matching even before suppression is consulted.
         ('grep -rn "rm -rf /" notes.txt', None),
+        # A repeated slash is the same directory to `rm`, so `//` deletes root
+        # exactly as `/` does. It reached only the liftable ask tier — a
+        # one-character defeat of the anchor that the compound guard passes too.
+        ("rm -rf //", "deny"),
+        ("rm -rf ///", "deny"),
+        ('bash -c "rm -rf //"', "deny"),
+        # A line continuation is DELETED by every shell, not replaced with a
+        # space. Collapsing it to a space split the token, so the guard saw
+        # `rm -r f /` — unclassified at every tier — while the shell ran
+        # `rm -rf /`. One character, total deny-tier bypass.
+        ("rm -r\\\nf /", "deny"),
+        ("rm -rf \\\n  /", "deny"),
+        ("rm -r\\\nf \\\n/", "deny"),
+        # PROSE that merely quotes a destructive spelling must never reach the
+        # un-overridable tier. `git` and `gh` are not in READ_ONLY_PROGRAMS and
+        # must not be, so suppression cannot save these — what separates them
+        # from `bash -c "…"` is the PROGRAM, which is why the quote-tolerant
+        # tail is shell-only. Self-referential: `rm -rf / --no-preserve-root` is
+        # a literal line in this file's own comments, so denying these made it
+        # impossible to write a commit message about this guard.
+        ('git commit -m "Never run rm -rf / --no-preserve-root"', "ask"),
+        ('git commit -m "rm -rf ~ -n"', "ask"),
+        ('echo "rm -rf / --no-preserve-root"', "ask"),
+        (
+            "python3 .claude/tools/linear_issue.py append --text 'rm -rf / --force'",
+            "ask",
+        ),
+        ('gh pr comment 1 --body "do not rm -rf ~ --force"', "ask"),
         ('bash -c "git push --force origin main"', "deny"),
         ("grep pattern file; rm -rf /", "deny"),
         # An unterminated quote must not hide a real command behind it: the

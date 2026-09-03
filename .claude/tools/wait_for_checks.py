@@ -38,6 +38,12 @@ watch instead of being believed, bounded by both :data:`MAX_WATCH_ROUNDS` and
 the caller's original ``--timeout`` so it cannot outlive the budget that was
 set, and ``pending_checks`` names whatever is still outstanding.
 
+The two retryable states hold **separate** round counters, so the reported
+``watch_rounds`` is bounded by their SUM (:data:`MAX_WATCH_ROUNDS` +
+:data:`MAX_NONE_ROUNDS`) rather than by either alone — a wait that observes
+`pending` several times and then `none` spends rounds from both budgets. The
+``--timeout`` bound is unaffected and remains the real ceiling.
+
 A second mode, ``--run <id>``, watches **one workflow run** to its terminal
 state instead of a PR's checks. That is the merge-queue half of the same job:
 once ``mergeQueueEntry`` names the queue branch's check run, this blocks on it.
@@ -529,6 +535,12 @@ def wait(
     says pending, bounded by :data:`MAX_WATCH_ROUNDS` and by the caller's
     ``timeout``; exhausting either reports ``timeout``, which is the honest
     answer, rather than a settled pending, which is not an answer at all.
+
+    ``pending`` and ``none`` count their rounds separately, so the loop's own
+    worst case is their sum (8) rather than either cap — still finite, and the
+    ``timeout`` deadline bounds it independently. The returned ``watch_rounds``
+    is that shared total, which is why it can exceed
+    :data:`MAX_WATCH_ROUNDS`.
 
     **``none`` is re-entered on the same footing, and it is the more dangerous
     of the two.** ``pending`` fails *safe* — keep waiting — while ``none`` fails
