@@ -97,11 +97,20 @@ tool rather than one MCP `get_issue` per lever:
 
 ```sh
 python3 .claude/tools/trim_levers.py list \
-  --fingerprints --bodies-out <scratchpad>/levers.md
+  --bodies-out <scratchpad>/levers.md
 ```
 
-The flags compose, and `--bodies-out` prints **only** the size line — its
-output is the file. This used to be prescribed as two commands on
+`--bodies-out` prints **only** the size line — its output is the file.
+
+**Don't add `--fingerprints` to this call.** It is accepted there and it
+does nothing: the flag adds a column to the *row listing*, and
+`--bodies-out` suppresses that listing entirely. Each lever's dedup key
+already travels in the spilled body on its own `**Fingerprint**:` line,
+which is where the fold needs it and where `compose` reads it from.
+Pass `--fingerprints` to the **bare** `list` when you want the keys on
+screen — for a dedup-against-resolved check, say.
+
+This used to be prescribed as two commands on
 consecutive lines, on top of the bare `list` in step 1, and read
 literally that is three full listings: a pass following it bought the
 same 41 rows three times for **~4.3k**, ranks 4, 5 and 7 of that

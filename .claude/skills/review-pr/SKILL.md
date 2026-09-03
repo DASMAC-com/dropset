@@ -2490,24 +2490,37 @@ already being asked to start the review.
    or multi-crate** diffs, where the blast radius is exactly
    what the extra lenses and the adversarial pass exist for.
 
-   **"Multi-crate" means multiple crates with a SOURCE change
-   — read `code_crates`, not the crate count.** The trigger
-   used to weigh a second crate's *presence*, so a seven-line
-   doc-comment fix in a second tree escalated a diff to the
-   full fan-out on its own. `review_diff.py` now reports
-   `code_crates` (trees with an actual source change) and a
-   per-crate `crates` rollup of source / docs / tests lines;
+   **"Multi-crate" means multiple crates with a SOURCE or TEST
+   change — read `code_crates`, not the crate count.** The
+   trigger used to weigh a second crate's *presence*, so a
+   seven-line **docs-path** change in a second tree escalated a
+   diff to the full fan-out on its own. `review_diff.py` now
+   reports `code_crates` (trees with an actual code change) and
+   a per-crate `crates` rollup of source / docs / tests lines;
    take `code_crates == 1` as single-crate for tier purposes.
 
-   Two things to preserve. This discounts a docs-only crate
+   **Docs-PATH, not doc-comment**, and the distinction is the
+   whole boundary: a `///` comment lives in a `.rs` file, which
+   classifies as source, so a doc-comment-only change in a
+   second crate still escalates. This sentence used to say
+   "doc-comment fix", which the bound two paragraphs down
+   contradicts — and a reader tiering a diff takes the
+   motivating example as license, then finds the tool
+   disagreeing.
+
+   Three things to preserve. This discounts a docs-only crate
    from the **crate count and nothing else** — the change is
    still fully reviewed, and the seven-line doc fix that
    prompted this was itself a real finding from an earlier PR
    that had gone stale, so the docs and completeness lenses
-   must still see it. And the rollup classifies by **path**, so
-   a `.rs` change that happens to be all doc comments still
-   reads as source: it over-counts crates rather than
-   under-reviewing one, which is the safe direction.
+   must still see it. **Tests count as code**, so a second
+   crate whose only change is to its tests does escalate: a
+   cross-tree test change is exactly the coupling this trigger
+   is for, and docs are the only discounted slice. And the
+   rollup classifies by **path**, so a `.rs` change that
+   happens to be all doc comments still reads as source: it
+   over-counts crates rather than under-reviewing one, which is
+   the safe direction.
 
    **Gate the two freshness lenses on the diff's touched
    surfaces.** The four substantive lenses below
@@ -3198,7 +3211,8 @@ already being asked to start the review.
 
    If the diff changed, re-run the affected lenses before
    spending the cross-check on a stale picture — and re-run
-   this command with `--split` at that point, since the slices
+   this command **without `--gate-only`**, adding `--split`, at
+   that point, since the slices
    genuinely need regenerating. Not before.
 
    **`--gate-only` is the default for a freshness probe;
@@ -4366,7 +4380,12 @@ already being asked to start the review.
 
    - **`conclusion: "timeout"`** means the watch hit its bound
      (default one hour), or exhausted its re-watch rounds, with
-     the checks still unsettled. It reports the counts it
+     the checks still unsettled. The one exception is an
+     absence observed from the first round onward, which stays
+     `none` — but a `none` that arrives *after* any `pending`
+     round is checks-disappearing rather than checks-absent,
+     and reports `timeout` like everything else unsettled. It
+     reports the counts it
      observed but deliberately never claims `pass` off a
      snapshot it stopped waiting on — treat it as unverified,
      not green. Its `pending_checks` names what was still out.

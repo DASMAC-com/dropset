@@ -59,6 +59,7 @@ dedup
 dedups
 depeg
 deque
+desync
 devnet
 dflow
 discordapp
@@ -139,6 +140,7 @@ memecoins
 metas
 meteora
 milestoned
+mispairing
 mispriced
 moneyness
 mpsc

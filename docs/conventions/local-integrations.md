@@ -227,8 +227,11 @@ are committed under `.claude/hooks/`, but a script only runs if a
 `PreToolUse` entry points at it, and a committed-but-unwired guard is a
 documented protection that does not exist. That has happened: on
 2026-08-14 the main checkout wired **only** `no_compound_bash.py`,
-leaving the others inert — including the worktree edit-path guard, which
-exists specifically for worktree sessions. Wire the ones you want using
+leaving the **two** other guards that existed then inert — including the
+worktree edit-path guard, which exists specifically for worktree
+sessions. (`no_destructive_bash.py` is newer than that incident, which
+is why the count here is two and not three; the inventory above is
+four as of today.) Wire the ones you want using
 the blocks in each guard's section below.
 
 **This doc states no per-guard wiring status, deliberately.** The

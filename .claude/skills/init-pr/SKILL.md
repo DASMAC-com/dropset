@@ -105,8 +105,23 @@ the same half-finished-bootstrap shape this step exists to
 prevent, and it is cheap to rule out first:
 
 ```sh
-git config --get user.signingkey
+ssh-add -l
 ```
+
+**Probe the AGENT, not the config.** The obvious check —
+`git config --get user.signingkey` — reports only that a key is
+*configured*, which is exactly the state a locked agent is in:
+it passes, silently, in the one case this pre-check exists to
+catch, and a green probe then reads as "signing works". Measured
+first-hand: the run that added this pre-check had the probe pass
+and step 6 die anyway, on a locked 1Password agent.
+
+`ssh-add -l` exits non-zero when the agent holds no identities
+(1) or cannot be reached (2), so it fails in the case that
+matters. Its bound, stated rather than assumed: it covers **SSH**
+signing (`gpg.format = ssh`, this repo's setup) and says nothing
+about a GPG key — check `git config --get gpg.format` first if
+that is ever in doubt.
 
 A configured SSH signing key whose agent is locked fails the
 commit with `failed to fill whole buffer`, then

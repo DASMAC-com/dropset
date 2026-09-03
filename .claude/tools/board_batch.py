@@ -219,6 +219,17 @@ UUID_RE = re.compile(
 # Named individually so the refusal below can say which one.
 ID_ONLY_FIELDS = ("milestone", "assignee")
 
+# The two sets must stay disjoint. `apply_fields` dispatches on membership in an
+# if/elif chain, so a name appearing in both silently takes whichever branch is
+# written first — the id-only refusal would stop firing for a field that needs
+# it, or a prose field would be rejected for not looking like a UUID. Neither
+# failure names the real cause, and the chain is where a future field gets
+# added, so the invariant is asserted at import rather than left to a reader.
+assert not set(TEXT_FIELDS) & set(ID_ONLY_FIELDS), (
+    "TEXT_FIELDS and ID_ONLY_FIELDS must be disjoint; "
+    f"overlap: {sorted(set(TEXT_FIELDS) & set(ID_ONLY_FIELDS))}"
+)
+
 
 def _fetch_filtered(api_key: str, issue_filter: dict) -> list[dict]:
     """Every issue matching ``issue_filter``, following the cursor to the end.

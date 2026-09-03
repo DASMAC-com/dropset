@@ -147,14 +147,60 @@ def matcher_selects(matcher, tools) -> bool:
     return any(pattern.search(tool) for tool in tools)
 
 
-def script_reference(command: str, script: str) -> str | None:
+# A leading `VAR=value` is an environment assignment, not the program.
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+# Tokens that end one executable segment and begin another. `shlex.split` does
+# not treat these specially, so they arrive as ordinary tokens.
+_SEGMENT_SEPARATORS = frozenset({"&&", "||", ";", "|", "&"})
+
+
+def _segments(tokens: list[str]) -> list[list[str]]:
+    """``tokens`` split on shell separators into executable segments."""
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in _SEGMENT_SEPARATORS:
+            if current:
+                segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def script_reference(command: str, script: str, _depth: int = 0) -> str | None:
     """The token that would **execute** ``script``, or None for a mere mention.
 
     This is the tightening that stops ``echo skipping no_compound_bash.py``
     from reporting three guards wired. A script counts when it is the command
     itself, or the argument of an interpreter; named anywhere else it is text.
+
+    **Executable position is not the same as token 0, and reading it that way
+    cried wolf.** The first version tested `tokens[0] == token` or
+    `basename(tokens[0])` against the interpreter list, which reports a
+    perfectly good wiring as broken in three ordinary shapes:
+
+    - `VAR=1 python3 .claude/hooks/x.py` — token 0 is the assignment, so the
+      guard read as **unwired**;
+    - `cd "$CLAUDE_PROJECT_DIR" && python3 .claude/hooks/x.py` — token 0 is
+      `cd`, likewise **unwired**;
+    - `sh -c "python3 .claude/hooks/x.py"` — the payload is one token whose
+      *basename* is the script, so it matched, was returned whole, and
+      `path_status` then failed to resolve `python3 .claude/hooks/x.py` as a
+      path — reporting **misdirected**, i.e. accusing a working hook of a typo.
+
+    That last one is the worst of the three: this module's own docstring says a
+    false positive is the outcome to avoid, because an operator who is told a
+    wired guard is broken goes looking for a defect that is not there. So:
+    assignments are skipped, separators split the command into segments that are
+    each considered on their own, and a whitespace-bearing argument to a shell
+    is recursed into rather than mistaken for a path. The returned token is
+    always whitespace-free, which is what `path_status` needs to resolve it.
     """
-    if not isinstance(command, str):
+    if not isinstance(command, str) or _depth > 2:
         return None
     try:
         tokens = shlex.split(command, comments=False)
@@ -163,15 +209,34 @@ def script_reference(command: str, script: str) -> str | None:
         tokens = command.split()
     if not tokens:
         return None
-    named = [t for t in tokens if os.path.basename(t) == script]
-    if not named:
-        return None
-    token = named[0]
-    if tokens[0] == token:
-        return token
-    program = os.path.basename(tokens[0])
-    if program in INTERPRETERS or program.startswith("python"):
-        return token
+
+    for segment in _segments(tokens):
+        index = 0
+        while index < len(segment) and _ASSIGNMENT_RE.match(segment[index]):
+            index += 1
+        segment = segment[index:]
+        if not segment:
+            continue
+
+        # The program itself is the script: `.claude/hooks/x.py` run directly.
+        if os.path.basename(segment[0]) == script:
+            return segment[0]
+
+        program = os.path.basename(segment[0])
+        if program not in INTERPRETERS and not program.startswith("python"):
+            # `echo skipping x.py` lands here — a mention, not an execution.
+            continue
+
+        for arg in segment[1:]:
+            # A shell payload (`sh -c "python3 …"`) is a whole command inside
+            # one token. Recurse rather than treating it as a path.
+            if any(char.isspace() for char in arg):
+                inner = script_reference(arg, script, _depth + 1)
+                if inner is not None:
+                    return inner
+                continue
+            if os.path.basename(arg) == script:
+                return arg
     return None
 
 

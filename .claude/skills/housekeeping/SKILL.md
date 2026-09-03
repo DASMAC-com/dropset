@@ -567,19 +567,25 @@ Dedup and refile so a 30-minute loop never duplicates work:
   they can be hand-consolidated.
 
 - Otherwise **create** one aggregated issue, one bullet per
-  new finding:
+  new finding — through the zero-echo writer, **not**
+  `save_issue`:
 
-  ```txt
-  mcp__claude_ai_Linear__save_issue(
-    team: "<$LINEAR_TEAM_ID>",
-    project: "<$LINEAR_PROJECT_ID>",
-    assignee: "<$LINEAR_ASSIGNEE_ID>",
-    state: "Backlog",
-    title: "cspell hygiene: move words inline / regroup escape blocks",
-    description: "<one bullet per finding, each w/ a **Fingerprint**: line>",
-    priority: 3,
-  )
+  ```sh
+  python3 .claude/tools/linear_issue.py create \
+    --title "cspell hygiene: move words inline / regroup escape blocks" \
+    --body-file <scratchpad>/cspell-findings.md \
+    --state Backlog --priority 3
   ```
+
+  `save_issue` echoes the **whole stored body** back on a
+  create, and that echo is then replayed on every later turn
+  (`CLAUDE.md` → "Context economy"). An aggregated finding
+  body is long by design — one bullet plus a
+  `**Fingerprint**:` line per finding — so this is precisely
+  the shape the echo costs most on, which is why
+  `audit-scope` and `trim-context` already route their
+  filings here. Team, project and assignee come from the
+  `LINEAR_*` environment, so they are not passed.
 
 - If every finding is already open (nothing new), file
   **nothing** — neither create nor append.
@@ -664,8 +670,8 @@ headings alone reports false drift), and a citation inside a
 a claim, so it is not checked.
 
 - **File propose-only**, to the same env-resolved
-  destination as step 4 (`save_issue`,
-  `state: "Backlog"`, priority 3), one aggregated task per
+  destination as step 4 (`linear_issue.py create`,
+  `--state Backlog --priority 3`), one aggregated task per
   pass listing each dangling reference and its fix, with a
   `**Fingerprint**: convention-ref:<skill>:<target>` line
   per finding so later passes dedup; drop any fingerprint

@@ -35,6 +35,10 @@ INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
 # `FileNotFoundError: 'zsh'`, which says nothing about the code under test.
 _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 
+#: Variables this suite asserts about, cleared from the inherited environment so
+#: a case tests the helper rather than the operator's shell profile.
+_SUITE_OWNED_ENV = ("DS_PULL_DEBUG", "_DS_REPO", "_DS_PULL_LAST_OUTCOME")
+
 # Fixture commits must not inherit the operator's signing config: this repo
 # signs every commit, and a fixture has no key requirement.
 GIT_BASE = [
@@ -91,14 +95,27 @@ class PullHarness(unittest.TestCase):
             f"{extra}"
             "_ds_pull; "
             'print -r -- "OUTCOME=$_DS_PULL_LAST_OUTCOME"; '
-            'print -r -- "ERROR=$_DS_PULL_LAST_ERROR"'
+            'print -r -- "ERROR=$_DS_PULL_LAST_ERROR"; '
+            # A probe the arithmetic-evaluation tests can observe: if a garbage
+            # stamp is ever evaluated in math context, an assignment inside it
+            # lands here. Empty is the passing value.
+            'print -r -- "PROBE=$_DS_PROBE"'
         )
+        # Start from the operator's environment, then CLEAR the variables this
+        # suite is about before applying the case's own. Merging `os.environ`
+        # unconditionally meant an operator who exports `DS_PULL_DEBUG=1` — the
+        # very variable the debug tests exist to prove is honored — failed the
+        # silence test on a precondition rather than on behavior.
+        child_env = {**os.environ}
+        for name in _SUITE_OWNED_ENV:
+            child_env.pop(name, None)
+        child_env.update(env or {})
         result = subprocess.run(
             ["zsh", "-c", script],
             capture_output=True,
             text=True,
             check=False,
-            env={**os.environ, **(env or {})},
+            env=child_env,
         )
         outcome = ""
         error = ""
@@ -123,8 +140,15 @@ class Outcomes(PullHarness):
     report unfalsifiable."""
 
     def test_a_non_repository_is_reported_and_writes_no_stamp(self):
-        outcome, _, _ = self._run(self._tmp.name + "/nope")
+        """The name promises two facts and the body used to assert one. The
+        second matters: the early return happens before the stamp is claimed,
+        so a mis-pointed `_DS_REPO` must not leave a throttle file behind that
+        then suppresses a later, correct run.
+        """
+        missing = Path(self._tmp.name) / "nope"
+        outcome, _, _ = self._run(str(missing))
         self.assertEqual(outcome, "not-a-repo")
+        self.assertFalse((missing / ".git" / ".ds-last-pull").exists())
 
     def test_a_fast_forward_reports_ok_and_moves_main(self):
         self._make_origin()
@@ -161,11 +185,27 @@ class Outcomes(PullHarness):
 
     def test_the_stamp_is_claimed_before_pulling(self):
         """Two tabs launched in the same instant would otherwise both read a
-        stale stamp and both pull."""
+        stale stamp and both pull.
+
+        Reading the stamp AFTER a successful run cannot see the ordering — a
+        stamp written after the pull produces the identical observation. What
+        distinguishes them is a run whose pull FAILS: claim-before-pull leaves
+        the stamp written anyway (so the second tab is throttled rather than
+        retrying a broken remote), while claim-after-pull leaves it absent.
+        """
         self._make_origin()
         self._clone()
         self._advance_origin()
-        self._run(self.base)
+        # Break the remote so the pull cannot succeed.
+        shutil.rmtree(self.origin)
+
+        outcome, _, result = self._run(self.base)
+        self.assertNotEqual(outcome, "ok", result.stderr)
+        self.assertTrue(
+            self._stamp().exists(),
+            "the stamp must be claimed BEFORE the pull, so a failing pull "
+            "still throttles the next tab rather than letting every tab retry",
+        )
         written = self._stamp().read_text(encoding="utf-8").strip()
         self.assertTrue(written.isdigit(), written)
         self.assertLessEqual(abs(int(written) - int(time.time())), 120)
@@ -174,14 +214,61 @@ class Outcomes(PullHarness):
         """zsh math context RE-EVALUATES a non-numeric parameter as an
         arithmetic expression, which can assign and can index arrays. The
         all-digits guard removes that class, and the run proceeds rather than
-        throttling on nonsense."""
+        throttling on nonsense.
+
+        **The payload has to be one whose evaluation is OBSERVABLE.** This
+        used to write `not-a-number`, which zsh evaluates as
+        `not - a - number` — three unset parameters — yielding 0. The unguarded
+        code then computes `now - 0 > 60`, finds the stamp stale, and pulls, so
+        `outcome == "ok"` is exactly what the *vulnerable* implementation
+        produces: the assertion pinned nothing and would survive deleting the
+        `<->` guard. The docstring named the real hazard (assignment) and then
+        chose a payload that does not exercise it.
+
+        `x<timestamp>` does not exercise it either — that is a bare identifier,
+        which is *also* unset and *also* yields 0. The payload has to EVALUATE
+        to a number that would throttle while not being all digits, so that the
+        two implementations reach opposite outcomes:
+
+            1+9999999999   →  9999999999, far ahead of `now`
+
+        Unguarded, `now - last < 60` is true and the run THROTTLES. Guarded,
+        `== <->` rejects it, the stamp is disregarded and the run proceeds. The
+        assertion below therefore fails if the guard is removed, which is the
+        property the previous two payloads both lacked.
+
+        Measured directly, rather than reasoned about: evaluating each payload
+        in a bare `(( now - last < 60 ))` gives `not-a-number` → proceed,
+        `x1757000000` → proceed, `1+9999999999` → THROTTLE. The first two are
+        the two vacuous versions of this test; only the third inverts.
+        """
         self._make_origin()
         self._clone()
         self._advance_origin()
-        self._stamp().write_text("not-a-number\n", encoding="utf-8")
+        self._stamp().write_text("1+9999999999\n", encoding="utf-8")
 
         outcome, _, result = self._run(self.base)
         self.assertEqual(outcome, "ok", result.stderr)
+
+    def test_an_assigning_stamp_does_not_execute_in_math_context(self):
+        """The assignment half of the same hazard, stated directly and made
+        OBSERVABLE: `_DS_PROBE=9999999999` in math context both sets the
+        parameter and evaluates to a future timestamp. So the unguarded
+        implementation throttles *and* leaves the probe set, while the guarded
+        one does neither — two independent signals, rather than an outcome that
+        both implementations happen to share.
+        """
+        self._make_origin()
+        self._clone()
+        self._advance_origin()
+        self._stamp().write_text("_DS_PROBE=9999999999\n", encoding="utf-8")
+
+        outcome, _, result = self._run(self.base)
+        self.assertEqual(outcome, "ok", result.stderr)
+        self.assertIn("PROBE=", result.stdout)
+        for line in result.stdout.splitlines():
+            if line.startswith("PROBE="):
+                self.assertEqual(line.partition("=")[2].strip(), "")
 
 
 class NonMainBranch(PullHarness):
@@ -245,12 +332,32 @@ class DebugFlag(PullHarness):
         _, _, result = self._run(self.base, env={"DS_PULL_DEBUG": "1"})
         self.assertIn("pull throttled", result.stderr)
 
+    def test_the_debug_flag_covers_the_other_outcomes_too(self):
+        """ "Every path" in the name above was asserted for the throttled path
+        only. The flag's whole purpose is answering "it didn't pull" without
+        guessing which of the causes it was, so each cause has to name itself.
+        """
+        _, _, missing = self._run(self._tmp.name + "/nope", env={"DS_PULL_DEBUG": "1"})
+        self.assertIn("pull not-a-repo", missing.stderr)
+
+        self._make_origin()
+        self._clone()
+        self._advance_origin()
+        _, _, ok = self._run(self.base, env={"DS_PULL_DEBUG": "1"})
+        self.assertIn("pull ok", ok.stderr)
+
     def test_without_the_flag_a_throttled_skip_is_silent(self):
+        """Silent, and still a throttle. Asserting only the ABSENCE of the word
+        passes against an implementation with no throttle branch at all — it
+        would pull quietly and stderr would likewise not say "throttled". The
+        outcome assertion is what makes the silence meaningful.
+        """
         self._make_origin()
         self._clone()
         self._stamp().write_text(f"{int(time.time())}\n", encoding="utf-8")
 
-        _, _, result = self._run(self.base)
+        outcome, _, result = self._run(self.base)
+        self.assertEqual(outcome, "throttled", result.stderr)
         self.assertNotIn("throttled", result.stderr)
 
 

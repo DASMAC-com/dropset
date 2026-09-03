@@ -573,7 +573,35 @@ def render_bodies(levers: list[dict]) -> str:
 
 
 _DUMP_SECTION_RE = re.compile(r"^## (\S+) \| (.*)$", re.MULTILINE)
-_BARE_URL_RE = re.compile(r"^https://\S+\s*$", re.MULTILINE)
+_BARE_URL_RE = re.compile(r"^https://\S+\s*$")
+
+
+def strip_leading_url(raw: str) -> str:
+    """Drop the issue URL ``render_bodies`` writes under each dump heading.
+
+    Anchored to that **known position** — the first non-blank line of the
+    section — rather than matched anywhere in the body, which is what it used
+    to do (``^https://\\S+\\s*$`` with ``re.MULTILINE``, substituted globally).
+    Two problems with the global form, both of which corrupt a fold silently:
+
+    - it is **fence-blind**, so a URL on its own line inside a fenced example
+      — a `curl` invocation, a documented endpoint, a citation — was deleted
+      from the folded body, and a lever whose whole point is an HTTP surface is
+      exactly the kind that carries one;
+    - ``\\s*`` matches newlines, so a match could swallow the blank lines after
+      it and run two paragraphs together.
+
+    The URL is emitted at one place by one function, so keying on that position
+    is both simpler and strictly more accurate than pattern-matching for it.
+    """
+    lines = raw.split("\n")
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if _BARE_URL_RE.match(line.strip()):
+            del lines[index]
+        break
+    return "\n".join(lines)
 
 
 def demote_headings(body: str) -> str:
@@ -642,6 +670,23 @@ def compose_fold(
             "output of `trim_levers.py list --bodies-out`"
         )
 
+    # A repeated identifier means two dumps were concatenated, or one was
+    # appended to twice. Folding it would emit the same lever as two numbered
+    # parts and then close the single underlying issue once, so the duplicate
+    # part survives in the fold with nothing behind it — and `--exclude` on that
+    # identifier would silently drop BOTH. Cheap to detect, confusing to unpick
+    # afterwards.
+    seen: dict[str, int] = {}
+    for identifier, _, _ in sections:
+        seen[identifier.upper()] = seen.get(identifier.upper(), 0) + 1
+    repeated = sorted(name for name, count in seen.items() if count > 1)
+    if repeated:
+        raise TrimLeversError(
+            f"these identifiers appear more than once in the dump: "
+            f"{', '.join(repeated)} — two dumps concatenated, or one appended "
+            "to twice. Re-run `list --bodies-out` to a fresh file."
+        )
+
     parts: list[str] = []
     folded: list[str] = []
     skipped: list[str] = []
@@ -652,7 +697,7 @@ def compose_fold(
         if identifier.upper() in dropped:
             skipped.append(identifier)
             continue
-        body = _BARE_URL_RE.sub("", raw).strip("\n")
+        body = strip_leading_url(raw).strip("\n")
         if not field_values(body, "Fingerprint"):
             missing.append(identifier)
         parts.append(f"# Part {number} — {title}\n\n{demote_headings(body)}\n")

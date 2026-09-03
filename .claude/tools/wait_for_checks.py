@@ -550,7 +550,17 @@ def wait(
     settled = True
     rounds = 0
     summary: dict | None = None
-    # Which retryable state spent the rounds, so an exhausted `none` can be
+    # Rounds spent PER retryable state, not one shared counter.
+    #
+    # A shared counter plus a per-state cap is a fail-open: a wait that read
+    # `pending` twice and then `none` on the third round would compare
+    # rounds(3) against the `none` cap(3), exit with `exhausted_on == "none"`,
+    # and the terminal branch would then PRESERVE `none` — reporting a PR whose
+    # CI was observed pending twice as having no checks at all. That is exactly
+    # the fail-open this retry was added to close, arriving from the pending
+    # side, so the counters are separated.
+    state_rounds = {state: 0 for state in RETRY_CONCLUSIONS}
+    # Which retryable state spent its own rounds, so an exhausted `none` can be
     # reported as `none` rather than collapsed into `timeout`.
     exhausted_on: str | None = None
 
@@ -567,9 +577,14 @@ def wait(
             break
         # The two retryable states get their own cap and pacing: a `none` is a
         # seconds-scale registration race, a `pending` is a whole CI run.
+        state_rounds[state] += 1
         cap = MAX_NONE_ROUNDS if state == "none" else MAX_WATCH_ROUNDS
-        if rounds >= cap:
-            exhausted_on = state
+        if state_rounds[state] >= cap:
+            # `none` survives the terminal branch only when EVERY round it saw
+            # was `none`. A `none` that followed observed `pending` rounds is a
+            # checks-disappeared anomaly, not an absence, and must not read as
+            # green.
+            exhausted_on = state if state_rounds.get("pending", 0) == 0 else None
             settled = False
             break
         # gh exits immediately when it sees nothing left to wait on, so pace the

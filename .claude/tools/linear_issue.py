@@ -199,11 +199,28 @@ query Milestones($projectId: String!) {
 
 
 def _resolve_named(nodes: list, wanted: str, kind: str) -> str:
-    """An id for ``wanted``, matched case-insensitively by name."""
+    """An id for ``wanted``, matched case-insensitively by name.
+
+    An **ambiguous** name is refused rather than silently resolved to the first
+    hit. Linear does not enforce unique state or milestone names, and the
+    filing skills address both by name — so two milestones called
+    `Audit findings` (a stale one and a live one, say) would have filed every
+    parked finding into whichever the API happened to return first, with no
+    signal at all. Refusing costs one clear error; guessing costs a milestone's
+    worth of misfiled work that only surfaces when a sweep comes up short.
+    """
     lowered = wanted.strip().lower()
-    for node in nodes:
-        if str(node.get("name", "")).strip().lower() == lowered:
-            return str(node["id"])
+    matches = [
+        node for node in nodes if str(node.get("name", "")).strip().lower() == lowered
+    ]
+    if len(matches) > 1:
+        ids = ", ".join(sorted(str(node.get("id")) for node in matches))
+        raise LinearIssueError(
+            f"{len(matches)} {kind}s are named {wanted!r} ({ids}) — resolve the "
+            "duplicate in Linear, or pass an id, rather than letting this pick one"
+        )
+    if matches:
+        return str(matches[0]["id"])
     names = ", ".join(sorted(str(n.get("name")) for n in nodes)) or "(none)"
     raise LinearIssueError(f"no {kind} named {wanted!r} — have: {names}")
 

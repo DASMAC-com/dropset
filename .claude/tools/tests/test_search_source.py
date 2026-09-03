@@ -1195,12 +1195,56 @@ class ContextDegradeTests(unittest.TestCase):
     def test_scoping_the_spread_sweep_restores_context(self):
         """The answer the note hands back is what makes context available
         again, so the loop terminates in one extra call rather than in a
-        standoff."""
+        standoff.
+
+        The glob must still match ALL eight files. This test used to pass
+        `--glob h0.rs`, which narrows the result to one file — already below
+        `UNSCOPED_SPREAD_FILES`, so the spread predicate suppressed the degrade
+        on its own and the `not globs` clause was never exercised. Deleting
+        that clause left the test green, which makes it a confound rather than
+        a check.
+        """
         for n in range(8):
             (self.root / f"h{n}.rs").write_text("fn tag() {}\n", encoding="utf-8")
-        _, printed = self._run(["tag", "--context", "1", "--glob", "h0.rs"])
+        _, printed = self._run(["tag", "--context", "1", "--glob", "h*.rs"])
         self.assertNotIn("UNSCOPED", printed)
         self.assertIn("fn tag", printed)
+
+    def test_scoping_by_dir_also_restores_context(self):
+        """`--dir` is the other half of the same clause and had no test at all."""
+        (self.root / "sub").mkdir()
+        for n in range(8):
+            (self.root / "sub" / f"d{n}.rs").write_text(
+                "fn dtag() {}\n", encoding="utf-8"
+            )
+        _, printed = self._run(["dtag", "--context", "1", "--dir", "sub"])
+        self.assertNotIn("UNSCOPED", printed)
+        self.assertIn("fn dtag", printed)
+
+    def test_the_spread_threshold_is_exclusive_at_its_boundary(self):
+        """`> UNSCOPED_SPREAD_FILES` means 3 files stay verbose and 4 degrade.
+        The existing cases used 8 and 2, so neither touched the one value a
+        future edit is most likely to move by one.
+
+        Both halves must be UNSCOPED. Passing globs to hold the count down
+        would suppress the degrade through the `not globs` clause instead of
+        through the threshold — the same confound as the test above, and the
+        first draft of this one made exactly that mistake.
+        """
+        self.assertEqual(ss.UNSCOPED_SPREAD_FILES, 3)
+        for n in range(3):
+            (self.root / f"c{n}.rs").write_text("fn ctag() {}\n", encoding="utf-8")
+        for n in range(4):
+            (self.root / f"b{n}.rs").write_text("fn etag() {}\n", encoding="utf-8")
+
+        # Exactly at the limit: 3 files, unscoped, context preserved.
+        _, at_limit = self._run(["ctag", "--context", "1"])
+        self.assertNotIn("UNSCOPED", at_limit)
+        self.assertIn("fn ctag", at_limit)
+
+        # One past it: 4 files, unscoped, degraded.
+        _, over = self._run(["etag", "--context", "1"])
+        self.assertIn("UNSCOPED", over)
 
     def test_force_context_overrides_the_spread_degrade(self):
         """Unlike the single-file clamp, this one IS overridable — an unscoped

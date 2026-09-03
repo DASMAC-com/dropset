@@ -241,10 +241,41 @@ class OthersFromGh(unittest.TestCase):
         self.assertEqual(found[0]["pr"], 351)
 
     def test_a_gh_failure_reports_its_last_line(self):
-        with self._gh("", returncode=1, stderr="x\ngh: not authenticated"):
+        """The LAST line, not the whole of stderr — gh prefixes real failures
+        with progress noise, and dumping all of it is the payload this tool
+        exists to avoid. Asserting only that the useful line is present passes
+        equally against an implementation that dumps everything.
+        """
+        with self._gh("", returncode=1, stderr="noise\ngh: not authenticated"):
             with self.assertRaises(mc.MigrationCollisionsError) as ctx:
                 mc.others_from_gh()
-        self.assertIn("not authenticated", str(ctx.exception))
+        message = str(ctx.exception)
+        self.assertIn("not authenticated", message)
+        self.assertNotIn("noise", message)
+
+    def test_a_truncated_pr_list_is_refused_rather_than_reported_clear(self):
+        """`gh pr list` truncates silently at `--limit`, and in a collision
+        checker the dropped PR could be the colliding one — a "clear" verdict
+        resting on an unknown. Exactly at the limit, truncation cannot be ruled
+        out, so the tool refuses instead.
+        """
+        payload = json.dumps(
+            [{"number": n, "files": [{"path": "a.sql"}]} for n in range(mc.GH_PR_LIMIT)]
+        )
+        with self._gh(payload):
+            with self.assertRaises(mc.MigrationCollisionsError) as ctx:
+                mc.others_from_gh()
+        self.assertIn("may be truncated", str(ctx.exception))
+
+    def test_a_list_below_the_limit_is_trusted(self):
+        payload = json.dumps(
+            [
+                {"number": n, "files": [{"path": "a.sql"}]}
+                for n in range(mc.GH_PR_LIMIT - 1)
+            ]
+        )
+        with self._gh(payload):
+            self.assertEqual(len(mc.others_from_gh()), mc.GH_PR_LIMIT - 1)
 
     def test_non_json_output_is_a_clean_error(self):
         with self._gh("not json"):

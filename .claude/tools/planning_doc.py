@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word fchmod
 """Scoped reader for the Planning Linear document.
 
 **Why this exists.** The MCP `get_document` returns the *entire* content with
@@ -123,10 +124,21 @@ def run(argv: list[str]) -> int:
     title, content = fetch(api_key, doc_id)
     lines = content.splitlines()
 
-    if args.out:
+    # `is not None`, matching its siblings below. Dispatching on truthiness sent
+    # `--out ''` down the chain to the terminal `grep` branch with
+    # `args.grep is None`, producing a traceback instead of the one clean stderr
+    # line this tool's exception class promises.
+    if args.out is not None:
         try:
             handle = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(handle, "w", encoding="utf-8") as fh:
+                # `O_CREAT`'s mode applies only when the file is CREATED, so a
+                # re-spill over an existing world-readable file left its mode
+                # untouched — and `--out <scratchpad>/planning.md` is exactly
+                # the re-run-to-the-same-path shape this tool recommends, so the
+                # owner-only guarantee held precisely in the case that does not
+                # recur. `fchmod` makes it unconditional.
+                os.fchmod(handle, 0o600)
                 fh.write(content)
         except OSError as exc:
             raise PlanningDocError(f"cannot write {args.out}: {exc}") from exc

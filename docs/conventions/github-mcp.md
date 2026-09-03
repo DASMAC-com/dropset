@@ -283,6 +283,7 @@ writes to confirm-on-use:
 - **Pre-approve (reads):** `pull_request_read`, `list_pull_requests`,
   `actions_list`, `actions_get`, `get_job_logs`, `get_me`, and the
   `search_*` family.
+
 - **Pre-approve (the companion `gh` reads, as `Bash(…)` rules):**
   `Bash(gh pr checks:*)`, `Bash(gh pr view:*)`,
   `Bash(gh api graphql:*)`, and `Bash(gh pr list:*)` — the polled /
@@ -297,6 +298,27 @@ writes to confirm-on-use:
   of its own. These are
   Bash globs, not `mcp__github__*` entries, but they're pre-approved on
   the same rationale (routine, low-blast-radius calls).
+
+- **Pre-approve (the `gh api` REST reads):** `Bash(gh api repos/:*)` —
+  a third `gh` shape, distinct from `gh api graphql` above and easy to
+  miss because the two share a verb. `review-pr` uses it for two
+  field-selected reads the MCP does not expose compactly: the failing
+  job's id and name from a run
+  (`repos/{owner}/{repo}/actions/runs/<id>/jobs`, then
+  `actions/jobs/<id>`), and the branch ruleset's check list
+  (`repos/{owner}/{repo}/rules/branches/main`). Reads only — the one
+  `gh api` **write** in the skills is `init-pr`'s `updateSubscription`
+  mutation, which rides the GraphQL rule.
+
+  Both call sites pass a `--jq` filter containing a `|`. That is a
+  command **flag**, not a shell pipe, so the compound guard does not
+  fire on it (a quoted separator never reaches its unquoted scan — see
+  [shell commands](shell-commands.md)). Whether the *harness's* own
+  per-subcommand prompt treats a quoted `|` as firmable is a separate
+  question this doc does not settle either way; if these turn out to
+  re-prompt on every run, the fix is to move the filtering into the
+  consuming tool rather than to drop the carve-out.
+
 - **Pre-approve (routine PR-authoring writes):** `create_pull_request`
   (init-pr) and `update_pull_request` (pr-title-description, review-pr).
   The skills call these on every run to open
@@ -307,6 +329,7 @@ writes to confirm-on-use:
   unsubscribe is also a routine write, but it's a GraphQL mutation
   covered by the `Bash(gh api graphql:*)` companion rule above, not a
   dedicated allow-rule.)
+
 - **Confirm-on-use (merges, deletes, pushes, issue/actions
   mutations):** `merge_pull_request`, `delete_file`, `push_files`,
   `create_or_update_file`, `issue_write`, `actions_run_trigger`. These

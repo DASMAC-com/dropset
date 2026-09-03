@@ -159,12 +159,29 @@ def evaluate(payload, project_dir, env):
     # performs the edit, making it a live hole rather than a theoretical one.
     target = os.path.expanduser(target)
 
-    # A genuinely relative path resolves against the worktree cwd, so it can't
-    # be a stray base edit — allow it untouched.
-    if not os.path.isabs(target):
-        return 0, ""
-
-    target = os.path.normpath(target)
+    # Then RESOLVE a relative path against the worktree root rather than
+    # allowing it. This used to early-return on `not os.path.isabs(target)`,
+    # with the comment "a genuinely relative path resolves against the worktree
+    # cwd, so it can't be a stray base edit" — which is false for the one
+    # relative spelling that matters. A worktree sits exactly three levels under
+    # the base (`.claude/worktrees/<name>`), so
+    #
+    #     ../../../CLAUDE.md
+    #
+    # is the BASE checkout's file, is not `isabs`, and was allowed through — the
+    # identical slip the guard exists to stop, in a spelling shorter than the
+    # absolute one it does block.
+    #
+    # Joining first and classifying afterwards keeps the allowance without
+    # asserting it: a genuinely relative `foo.py` becomes `<worktree>/foo.py`,
+    # which the inside-worktree test below returns 0 on anyway. The allowance
+    # now falls out of the classifier rather than bypassing it, which is why
+    # this ordering is the fix and not merely a reshuffle.
+    #
+    # `normpath`, not `realpath`: `..` is resolved lexically, with no stat cost
+    # and no symlink following. A symlinked spelling therefore still slips, and
+    # that bound is deliberate — see the module docstring.
+    target = os.path.normpath(os.path.join(worktree_root, target))
 
     # Editing inside this worktree is exactly right.
     if target == worktree_root or target.startswith(worktree_root + os.sep):
@@ -276,6 +293,40 @@ def _self_test():
                 % (spelled, should_block, code == 2)
             )
 
+    # Dot-dot escapes. A worktree is exactly three levels under the base, so
+    # `../../../<path>` reaches the base checkout without ever being `isabs` —
+    # the shortest spelling of the slip this guard exists to stop, and one the
+    # early relative-path allowance waved straight through.
+    relative_cases = [
+        ("../../../CLAUDE.md", True),
+        ("../../../program/src/lib.rs", True),
+        ("../../../docs/conventions/shell-commands.md", True),
+        # A sibling worktree reached the same way.
+        ("../eng-999/a.rs", True),
+        # ...while an ordinary relative path is still fine, which is the whole
+        # point of resolving instead of early-returning: it lands inside the
+        # worktree and the inside-worktree test allows it.
+        ("a.rs", False),
+        ("./a.rs", False),
+        (".claude/tools/hook_wiring.py", False),
+        ("src/../src/lib.rs", False),
+        # Up and back down inside the worktree is still inside it.
+        (".claude/../a.rs", False),
+        # Out of the base tree entirely is not this guard's concern.
+        ("../../../../other-repo/a.rs", False),
+    ]
+    for spelled, should_block in relative_cases:
+        code, _ = evaluate(
+            {"tool_name": "Edit", "tool_input": {"file_path": spelled}},
+            wt,
+            {},
+        )
+        if (code == 2) != should_block:
+            failures.append(
+                "  %-50s expected block=%s got block=%s"
+                % (spelled, should_block, code == 2)
+            )
+
     # Message-body checks. A base-repo target's message names the
     # worktree-local path to use; a sibling-worktree target's message does not
     # carry a (nonsensical) nested suggestion.
@@ -294,7 +345,8 @@ def _self_test():
     if failures:
         sys.stderr.write("self-test FAILED:\n" + "\n".join(failures) + "\n")
         return 1
-    sys.stdout.write("self-test OK (%d cases)\n" % (len(cases) + len(tilde_cases)))
+    total = len(cases) + len(tilde_cases) + len(relative_cases)
+    sys.stdout.write("self-test OK (%d cases)\n" % total)
     return 0
 
 

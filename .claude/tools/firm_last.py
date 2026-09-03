@@ -80,6 +80,19 @@ def resolve_active_transcript(session_id: str | None = None) -> Path:
     caller reports it) but it is a race, which is why ``firm-perms`` passes
     ``--session-id`` from its own scratchpad path and why the resolved session
     is named in the output.
+
+    **And state the second fallback's real reach, which is wider than that.**
+    When this cwd's slug directory holds no transcript at all, the search
+    widens to ``projects.glob("*/*.jsonl")`` — **every project on the machine**,
+    other repositories included — and the rule it harvests still lands in
+    *this* repo's shared allowlist. That path is rare rather than normal: a
+    worktree session's transcript does live under its own worktree slug
+    (verified — ``slugify(cwd)`` matches the directory the harness writes), so
+    the widening fires only when the slug directory is genuinely absent, as on
+    a brand-new checkout. It is documented here because the narrower wording
+    read as the whole contract, and because the accounting line now prints the
+    transcript's parent directory so a foreign project is legible rather than
+    silent.
     """
     projects = claude_home() / "projects"
     session_id = (session_id or "").strip() or None

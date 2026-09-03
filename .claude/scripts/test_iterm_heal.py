@@ -186,9 +186,22 @@ class ThresholdDefault(unittest.TestCase):
         integration with no measurement behind it. Its correctness rests on the
         harness re-firing permission_prompt MORE OFTEN than the threshold,
         which has never been measured — so this pins the value and its override
-        rather than claiming the value is right."""
-        for env, want in (({}, "120"), ({"ITERM_PERM_WAIT_STALE_SECONDS": "45"}, "45")):
+        rather than claiming the value is right.
+
+        The default case must NOT inherit the operator's own setting. Merging
+        `os.environ` unconditionally meant anyone who exports
+        `ITERM_PERM_WAIT_STALE_SECONDS` — the very variable this test proves is
+        honored — failed the first subTest on a precondition rather than on
+        behavior. This is also the one assertion in this file CI executes, the
+        other eight being darwin-gated, so its ambient dependence mattered more
+        than its position suggests.
+        """
+        override = "ITERM_PERM_WAIT_STALE_SECONDS"
+        for env, want in (({}, "120"), ({override: "45"}, "45")):
             with self.subTest(env=env):
+                child = {**os.environ}
+                child.pop(override, None)
+                child.update(env)
                 result = subprocess.run(
                     [
                         "bash",
@@ -198,7 +211,7 @@ class ThresholdDefault(unittest.TestCase):
                     capture_output=True,
                     text=True,
                     check=False,
-                    env={**os.environ, **env},
+                    env=child,
                 )
                 self.assertEqual(result.stdout.strip(), want)
 

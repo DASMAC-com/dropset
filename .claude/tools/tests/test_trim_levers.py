@@ -1060,7 +1060,7 @@ class BodiesBearingReadTests(unittest.TestCase):
             path = os.path.join(d, "bodies.md")
             code, out, err = self._run(["list", "--bodies-out", path])
             self.assertEqual(code, 0)
-            written = open(path, encoding="utf-8").read()
+            written = Path(path).read_text(encoding="utf-8")
         self.assertIn("BODY-ONE", written)
         self.assertIn("BODY-TWO", written)
         # Zero echo: the payload is in the file, never in the output.
@@ -1080,16 +1080,32 @@ class BodiesBearingReadTests(unittest.TestCase):
             # The size line still reports what happened.
             self.assertIn("body(ies)", err)
 
-    def test_fingerprints_composes_with_bodies_out_in_one_call(self):
-        """One call is meant to serve the fold's whole read of the pool, so the
-        flags must not have to be spent on separate invocations."""
+    def test_fingerprints_alongside_bodies_out_is_accepted_but_inert(self):
+        """What passing both actually does — which is not "compose".
+
+        `--fingerprints` adds a column to the ROW LISTING, and `--bodies-out`
+        suppresses that listing, so the pair is a no-op rather than a
+        combination: stdout is the size line either way. The keys are not lost,
+        because they never depended on the flag — each rides the spilled file
+        inside its own lever's body, which is where `compose` reads them.
+
+        Named for what it verifies. As "composes … in one call" it read as
+        evidence that the flag contributed something to the combined call, and
+        the skill prescribed it on that basis.
+        """
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "bodies.md")
-            _, out, _err = self._run(["list", "--fingerprints", "--bodies-out", path])
-            self.assertNotIn("ENG-1", out)
-            written = open(path, encoding="utf-8").read()
-            # The keys ride the file, inside each lever's own body.
-            self.assertIn("BODY-ONE", written)
+            _, with_flag, _ = self._run(
+                ["list", "--fingerprints", "--bodies-out", path]
+            )
+            written = Path(path).read_text(encoding="utf-8")
+            _, without_flag, _ = self._run(["list", "--bodies-out", path])
+
+        self.assertNotIn("ENG-1", with_flag)
+        self.assertEqual(with_flag, without_flag)
+        # The keys ride the file regardless, inside each lever's own body.
+        self.assertIn("BODY-ONE", written)
+        self.assertIn("alpha:one", written)
 
     def test_the_bare_listing_still_prints_rows(self):
         """The is-anything-parked check is the one job the rows are for."""
@@ -1144,6 +1160,43 @@ class ComposeFoldTests(unittest.TestCase):
         "\n"
         "**Fingerprint**: a:second\n"
     )
+
+    def test_a_url_inside_a_fenced_example_survives_the_fold(self):
+        """The leading-URL strip is anchored to the position `render_bodies`
+        writes, not matched anywhere. Matching globally deleted a URL on its
+        own line inside a fenced example — and a lever about an HTTP surface is
+        exactly the kind that carries one, so the global form corrupted the
+        bodies it was most likely to be folding.
+        """
+        dump = (
+            "## ENG-9 | Redirect lever\n"
+            "\n"
+            "https://linear.app/dasmac/issue/ENG-9\n"
+            "\n"
+            "Probe the endpoint:\n"
+            "\n"
+            "```\n"
+            "https://api.example.com/v1/quotes\n"
+            "```\n"
+            "\n"
+            "**Fingerprint**: feeds-http:redirect\n"
+        )
+        body, report = tl.compose_fold(dump)
+        self.assertIn("https://api.example.com/v1/quotes", body)
+        # ...while the dump's own heading URL is still removed.
+        self.assertNotIn("linear.app/dasmac/issue/ENG-9", body)
+        self.assertEqual(report["folded"], ["ENG-9"])
+
+    def test_a_repeated_identifier_is_refused(self):
+        """Two dumps concatenated, or one appended to twice. Folding it emits
+        the lever as two numbered parts while the single underlying issue is
+        closed once, so the duplicate part survives with nothing behind it —
+        and `--exclude` on that identifier would drop both.
+        """
+        with self.assertRaises(tl.TrimLeversError) as ctx:
+            tl.compose_fold(self.DUMP + self.DUMP)
+        self.assertIn("more than once", str(ctx.exception))
+        self.assertIn("ENG-1", str(ctx.exception))
 
     def test_each_lever_becomes_a_numbered_part_titled_from_the_dump(self):
         body, summary = tl.compose_fold(self.DUMP)

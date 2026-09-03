@@ -57,6 +57,16 @@ CITER_GLOBS = (
     "docs/conventions/*.md",
 )
 
+#: The citer families whose absence is always a fault rather than a choice.
+#: `.claude/shared/*.md` is deliberately excluded — that tree holds optional
+#: shared prose fragments and a repo may legitimately have none, so requiring it
+#: would make the check cry wolf. The other three are structural to this repo.
+REQUIRED_CITER_GLOBS = (
+    "CLAUDE.md",
+    ".claude/skills/*/SKILL.md",
+    "docs/conventions/*.md",
+)
+
 #: Where a bare (directory-less) doc name resolves.
 CONVENTION_DIR = "docs/conventions"
 
@@ -66,6 +76,14 @@ CITATION_RE = re.compile(r"`([A-Za-z0-9_./-]+\.md)`\s*(?:→|->)\s*[\"“]([^\"�
 
 #: A bold span. Anchors legitimately point at these, not only at headings.
 BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+
+#: The same, allowed to span lines — because under MD013 a bold span wraps just
+#: as a citation does. `DOTALL` is what `BOLD_RE` lacks; joining the lines alone
+#: does nothing without it, since `.` does not cross a newline. Captures
+#: containing a blank line are discarded by the caller: a real bold span never
+#: continues across a paragraph break, so that bound keeps one stray `**` from
+#: pairing with another half a document away.
+BOLD_MULTILINE_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 
 FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
 
@@ -87,6 +105,47 @@ def normalize(text: str) -> str:
     return text.strip(" .:;,—–-").lower()
 
 
+def paragraphs(text: str) -> list[str]:
+    """The unfenced paragraphs of ``text``, each joined into one string.
+
+    Both halves of this tool compare constructs that **wrap** — a citation and
+    a bold span alike — so both need to see across a line break, and neither
+    ever spans a *paragraph* break. A paragraph is therefore the right unit,
+    and it is not merely a convenience:
+
+    Matching with `DOTALL` over the whole document is actively worse than
+    per-line matching, which is the trap this function exists to avoid. Bold
+    pairing is positional, so a single unpaired `**` anywhere — a literal shown
+    as an example, an emphasis inside a code span — shifts every pairing after
+    it. Per-line matching *contains* that damage to one line; whole-document
+    DOTALL lets it corrupt the rest of the file. Measured while fixing the wrap
+    blindness here: joining the whole document turned 2 unresolved citations
+    into 5, all of them false, by mispairing spans hundreds of lines away from
+    the stray marker. Per paragraph, a desync cannot outlive its own paragraph.
+    """
+    out: list[str] = []
+    current: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            if current:
+                out.append("\n".join(current))
+                current = []
+            continue
+        if in_fence:
+            continue
+        if not line.strip():
+            if current:
+                out.append("\n".join(current))
+                current = []
+            continue
+        current.append(line)
+    if current:
+        out.append("\n".join(current))
+    return out
+
+
 def anchors(text: str) -> set[str]:
     """Every anchor a citation may legitimately target in one document.
 
@@ -94,18 +153,23 @@ def anchors(text: str) -> set[str]:
     matching gets wrong. Fenced blocks are skipped: a doc that *quotes* a
     heading or a bold field name in an example is not defining an anchor, and
     counting one would let a real dangling citation resolve against a sample.
+
+    **Bold spans are matched over the joined text, symmetrically with
+    ``citations``.** A bold span wraps across lines under MD013 just as a
+    citation does, and matching per line missed those — the mirror image of the
+    same defect, on the other side of the comparison. Fixing only the citation
+    half surfaced two "dangling" citations whose anchors existed perfectly well
+    as multi-line bold spans, so the two halves are one fix.
+
+    Headings stay per line: a heading is a single-line construct by
+    definition, and `^#` on joined text would match a `#` mid-paragraph.
     """
     found: set[str] = set()
-    in_fence = False
-    for line in text.splitlines():
-        if FENCE_RE.match(line):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
-        if line.startswith("#"):
-            found.add(normalize(line.lstrip("#")))
-        for match in BOLD_RE.finditer(line):
+    for paragraph in paragraphs(text):
+        for line in paragraph.splitlines():
+            if line.startswith("#"):
+                found.add(normalize(line.lstrip("#")))
+        for match in BOLD_MULTILINE_RE.finditer(paragraph):
             found.add(normalize(match.group(1)))
     found.discard("")
     return found
@@ -128,7 +192,12 @@ def resolve_target(repo: Path, cited: str) -> Path | None:
 
 
 def iter_citers(repo: Path) -> list[Path]:
-    """Every file that may carry a citation, de-duplicated and sorted."""
+    """Every file that may carry a citation, de-duplicated.
+
+    Sorted **within** each glob and concatenated in ``CITER_GLOBS`` order — so
+    the result is deterministic but not globally sorted. The docstring used to
+    claim "sorted" flatly, which is a different and false statement.
+    """
     seen: dict[Path, None] = {}
     for pattern in CITER_GLOBS:
         for path in sorted(repo.glob(pattern)):
@@ -137,24 +206,53 @@ def iter_citers(repo: Path) -> list[Path]:
     return list(seen)
 
 
+def empty_families(repo: Path) -> list[str]:
+    """The ``CITER_GLOBS`` entries that match no file at all.
+
+    The zero-citation refusal in ``run`` cannot catch a renamed or moved
+    *family*: four globs feed the scan, so losing the whole skills tree still
+    leaves `docs/conventions/*.md` citing and the total non-zero. The count
+    stays healthy, the exit stays 0, and the loss is invisible — which is the
+    one failure the refusal exists to prevent, arriving one level down.
+
+    Checking for matched **files** rather than a citation floor is deliberate:
+    a family may legitimately carry no citations, but one of
+    ``REQUIRED_CITER_GLOBS`` matching no files at all is always a moved tree or
+    a wrong ``--repo``.
+    """
+    return [
+        pattern
+        for pattern in REQUIRED_CITER_GLOBS
+        if not any(path.is_file() for path in repo.glob(pattern))
+    ]
+
+
 def citations(text: str) -> list[tuple[str, str]]:
     """``[(cited_path, anchor), …]`` outside fenced blocks.
 
     Fence-skipping matters on both sides: a skill that shows a citation inside
     a worked example is documenting the *form*, not making a claim that has to
     resolve, and flagging it would train the reader to ignore this tool.
+
+    **Matched over the joined text, not line by line.** Per-line matching
+    required the path, the arrow and the quoted anchor to share one line — and
+    under MD013's 80-column limit they routinely do not. The live tree carries
+    **14** citations whose path and arrow end one line with the anchor on the
+    next, in `review-pr`, `plan`, `audit`, `audit-scope`, `housekeeping`,
+    `linear-task`, `merge-tasks`, `session-metrics`, `trim-context`,
+    `pr-title-description` and `cspell-audit` — the highest-traffic skills,
+    which is to say exactly the drift this tool exists to catch.
+
+    Worse than a static blind spot: `mdformat` re-wrapping a paragraph can move
+    a currently-checked citation across a line boundary, silently dropping it
+    from the count with no signal at all. `CITATION_RE`'s `\\s*` already spans a
+    newline, so joining the surviving lines is the whole fix.
     """
-    out: list[tuple[str, str]] = []
-    in_fence = False
-    for line in text.splitlines():
-        if FENCE_RE.match(line):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
-        for match in CITATION_RE.finditer(line):
-            out.append((match.group(1), match.group(2)))
-    return out
+    return [
+        (match.group(1), match.group(2))
+        for paragraph in paragraphs(text)
+        for match in CITATION_RE.finditer(paragraph)
+    ]
 
 
 def scan(repo: Path) -> dict:
@@ -191,9 +289,26 @@ def scan(repo: Path) -> dict:
                         f"could not read {target}: {exc}"
                     ) from exc
             wanted = normalize(anchor)
+            # An anchor that normalizes away entirely resolves against
+            # EVERYTHING, because `"" in candidate` is always true — the literal
+            # vacuous pass. `normalize` strips emphasis, backticks and trailing
+            # punctuation, so `→ "."` and `→ "**"` both reach here empty. Report
+            # it rather than letting it count as checked and resolving.
+            if not wanted:
+                dangling.append(
+                    {
+                        "citer": rel,
+                        "target": str(target.relative_to(repo)),
+                        "anchor": anchor,
+                        "kind": "empty-anchor",
+                    }
+                )
+                continue
             # Substring, not equality: a citation routinely shortens a long
             # heading, and demanding the whole thing would report drift that is
-            # only abbreviation.
+            # only abbreviation. The floor is that `wanted` is non-empty — a
+            # deliberate looseness with one hard bound, rather than an unbounded
+            # one.
             if not any(wanted in candidate for candidate in anchor_cache[target]):
                 dangling.append(
                     {
@@ -246,10 +361,27 @@ def run(argv: list[str]) -> int:
 
     result = scan(repo)
 
-    # Finding nothing to check is not a clean bill of health: a wrong --repo, a
-    # renamed skills tree or a changed citation form all produce zero
-    # citations, and returning 0 for that is byte-identical — in the one signal
-    # a caller branches on — to "everything resolves".
+    # A moved or renamed citer family is checked FIRST, because it is the more
+    # specific diagnosis: when it fires, the zero-citation refusal below often
+    # fires too, and "nothing was checked" sends the reader looking at the
+    # citation form when the actual fault is a missing tree.
+    #
+    # It is also the case the zero-citation refusal cannot reach on its own.
+    # Four globs feed the scan, so losing the whole skills tree still leaves
+    # `docs/conventions/*.md` citing, the total non-zero and the exit 0 — the
+    # loss invisible behind a healthy-looking count.
+    missing = empty_families(repo)
+    if missing:
+        raise ConventionRefsError(
+            "these citer families matched no files under "
+            f"{repo}: {', '.join(missing)} — a moved tree or a wrong --repo, "
+            "either of which hides real drift behind a healthy-looking count"
+        )
+
+    # Finding nothing to check is not a clean bill of health either: a changed
+    # citation form produces zero citations even with every family present, and
+    # returning 0 for that is byte-identical — in the one signal a caller
+    # branches on — to "everything resolves".
     if not result["checked"]:
         raise ConventionRefsError(
             f"no citations found under {repo} — nothing was checked, which is "

@@ -287,7 +287,14 @@ class WaitTests(unittest.TestCase):
         def fake_read(pr, repo):
             return queue.pop(0) if len(queue) > 1 else queue[0]
 
+        self.sleeps = []
+
         def fake_sleep(seconds):
+            # Recorded, not just discarded: the per-state PACING (a `none`
+            # settles in seconds, a `pending` waits a whole interval) is
+            # otherwise unobservable, and a test that neutralizes sleep without
+            # recording it cannot tell the two apart.
+            self.sleeps.append(seconds)
             if clock is not None:
                 clock[0] += seconds
 
@@ -329,6 +336,57 @@ class WaitTests(unittest.TestCase):
         self.assertFalse(v["settled"])
         self.assertEqual(v["watch_rounds"], wfc.MAX_WATCH_ROUNDS)
         self.assertEqual(v["pending_checks"], ["Explorer image"])
+
+    def test_a_none_that_follows_observed_pending_is_a_timeout_not_an_absence(self):
+        """The fail-open the per-state counters exist to close.
+
+        `none` means "no checks apply to this PR", which the caller reads as
+        nothing to wait for. `pending` means CI is running. A wait that saw
+        pending twice and then `none` has watched checks *disappear* — an
+        anomaly — and must never report that as an absence.
+
+        With one shared round counter and a per-state cap this reported `none`:
+        round 3 read `none`, compared rounds(3) against the `none` cap(3),
+        exited with `exhausted_on == "none"`, and the terminal branch then
+        preserved it. Reachable from the pending side, in the exact place the
+        `none` retry was added to make safe.
+        """
+        self._stub_rounds(
+            [
+                [check("a", "pending")],
+                [check("a", "pending")],
+                [],
+            ]
+        )
+        v = wfc.wait(285, repo="o/r")
+        self.assertEqual(v["conclusion"], "timeout")
+        self.assertFalse(v["settled"])
+
+    def test_a_none_reached_without_any_pending_still_reports_none(self):
+        """The other side of the same guard: an absence observed from the first
+        round is a genuine absence, and must not be collapsed into `timeout`
+        just because the counters were separated.
+        """
+        self._stub_rounds([[]])
+        v = wfc.wait(285, repo="o/r")
+        self.assertEqual(v["conclusion"], "none")
+        self.assertFalse(v["settled"])
+
+    def test_each_retryable_state_gets_its_own_pacing(self):
+        """A `none` is a seconds-scale registration race and a `pending` is a
+        whole CI run, so they must not share a delay. Nothing asserted this —
+        the stubbed sleep discarded its argument.
+        """
+        self._stub_rounds([[]])
+        wfc.wait(285, repo="o/r")
+        self.assertTrue(self.sleeps)
+        self.assertEqual(set(self.sleeps), {wfc.NONE_SETTLE_SECONDS})
+
+        self.sleeps = []
+        self._stub_rounds([[check("a", "pending")]])
+        wfc.wait(285, repo="o/r", interval=17)
+        self.assertTrue(self.sleeps)
+        self.assertEqual(set(self.sleeps), {17})
 
     def test_settled_never_coexists_with_a_pending_conclusion(self):
         """The contradiction the retry exists to prevent: `settled: true` next

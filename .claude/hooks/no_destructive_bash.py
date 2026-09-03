@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # cspell:word pgdata
 # cspell:word fgrep
+# cspell:word spoofable
 """PreToolUse guard: stop catastrophic and hard-to-reverse Bash commands.
 
 The three committed guards cover shell **form** (compounds, `git grep`) and
@@ -75,13 +76,27 @@ _CATASTROPHIC_TARGET = (
     + r"')"
 )
 
-# A closing quote may follow the target at end of line — the quote that ends an
-# enclosing `bash -c "…"` rather than one belonging to the target itself. Without
-# this the end anchor was defeated by a single trailing character: `rm -rf /`
-# denied, while `bash -c "rm -rf /"` reached only the marker-liftable ask tier,
-# which is the one tier a caller can lift. See `_matches` for the read-only
-# suppression that keeps this from denying a search for the literal string.
-_TRAILING_QUOTE = r"[\"']?"
+# What may follow the target at end of line without making the command any less
+# final. Without this the end anchor was defeated by a single trailing
+# character: `rm -rf /` denied, while `bash -c "rm -rf /"` reached only the
+# marker-liftable ask tier — the one tier a caller can lift. See `_matches` for
+# the read-only suppression that keeps this from denying a search for the
+# literal string.
+#
+# Three shapes, and the first version of this tolerated only one closing quote
+# immediately adjacent to the target, which left the anchor one space or one
+# quote from being defeated again:
+#
+#     bash -c "rm -rf / "          # a space before the closing quote
+#     bash -c "sh -c 'rm -rf /'"   # two closing quotes, nested invocations
+#     rm -rf / --no-preserve-root  # the spelling GNU rm actually requires
+#
+# So: any run of whitespace and closing quotes, and any number of trailing
+# FLAGS. Flags rather than arbitrary words is what keeps a search for the
+# literal string from matching — `grep -rn "rm -rf /" notes.txt` has a bare
+# path after the quote, so the anchor still rejects it, and the suppression in
+# `_matches` is then a second independent reason it does not fire.
+_TRAILING_TAIL = r"(?:\s+-\S+)*[\s\"']*$"
 
 DENY_PATTERNS = (
     (
@@ -89,8 +104,7 @@ DENY_PATTERNS = (
             _RM_RECURSIVE_FORCE
             + r"(?:\s+-\S+)*\s+"
             + _CATASTROPHIC_TARGET
-            + _TRAILING_QUOTE
-            + r"\s*$"
+            + _TRAILING_TAIL
         ),
         "a recursive delete of the filesystem root or the home directory",
     ),
@@ -305,11 +319,32 @@ READ_ONLY_PROGRAMS = frozenset(
 
 
 # Text that makes a DOUBLE-quoted span executable rather than literal: command
-# substitution in both spellings, and parameter expansion (which can carry a
-# substitution in a default, as in `${x:-$(…)}`). A bare `$` is included because
-# it is the cheap over-approximation and the failure direction is safe — an
-# excluded span is simply scanned as before.
-_LIVE_IN_DOUBLE_QUOTES = ("$", "`")
+# substitution, in both spellings. `${x:-$(…)}` is covered because it contains
+# `$(` — the substitution is what runs, not the braces around it.
+#
+# **This was a bare `$` and had to be narrowed.** The old comment argued that
+# `$` was a cheap over-approximation whose "failure direction is safe — an
+# excluded span is simply scanned as before". That was true only while the deny
+# tier ignored quoting entirely: a span scanned as before could reach the ask
+# tier at worst. Making the deny tier honor suppression AND letting a target be
+# followed by a closing quote invalidated the argument in the same change,
+# turning the over-approximation into a live regression:
+#
+#     rg "rm -rf $HOME"        # deletes nothing; searches for a literal string
+#
+# `program_of` is `rg`, so suppression is attempted — but the span held a `$`,
+# so it was not inert, and the deny pattern then matched `$HOME` plus the
+# closing quote at end of line. An **un-overridable** deny on a read-only
+# search, and self-referentially so: auditing this guard means grepping the
+# repo for exactly that string.
+#
+# A bare parameter expansion (`$HOME`, `${HOME}`) expands to a *value* and runs
+# nothing, so it does not belong in this tuple. What runs is a substitution, and
+# only these two spellings introduce one. The narrowing cannot weaken a real
+# deny: suppression applies only to `READ_ONLY_PROGRAMS`, where the span is an
+# argument to a search tool, and `rm -rf "$HOME"` is unaffected because `rm` is
+# not on that allowlist.
+_LIVE_IN_DOUBLE_QUOTES = ("$(", "`")
 
 # Constructs that make a quoted span executable no matter WHICH quote it used,
 # by handing it back to a shell later on the same line. Their presence disables
@@ -441,8 +476,8 @@ def _matches(pattern, line, allow_quoted=True):
     before.** The old rationale was that the measured false positive was an
     ask-tier match, so the carve-out bought nothing on deny — true while the
     deny patterns anchored their target at end-of-line, because a search whose
-    quoted pattern ended the line could not match anyway. Allowing a trailing
-    quote (`_TRAILING_QUOTE`, so `bash -c "rm -rf /"` is caught) removes that
+    quoted pattern ended the line could not match anyway. Tolerating a trailing
+    tail (`_TRAILING_TAIL`, so `bash -c "rm -rf /"` is caught) removes that
     accidental protection: without suppression, `grep -rn "rm -rf /"` — a
     search for the literal string, deleting nothing — would become an
     **un-overridable** deny. Closing the shell-invocation hole must not buy
@@ -450,10 +485,22 @@ def _matches(pattern, line, allow_quoted=True):
 
     What keeps this from weakening the deny tier: no shell is in
     ``READ_ONLY_PROGRAMS``, so `bash -c` / `sh -c` payloads are never
-    suppressed; a double-quoted span containing `$` or a backtick is not inert;
-    an unterminated quote yields no spans; and a line that hands content back
-    to a shell disables suppression wholesale. An unquoted destructive command
-    sharing a read-only program's line is still matched.
+    suppressed; a double-quoted span containing a command substitution is not
+    inert; an unterminated quote yields no spans; and a line that hands content
+    back to a shell disables suppression wholesale. An unquoted destructive
+    command sharing a read-only program's line is still matched.
+
+    **The bound worth stating, because it is the one this cannot close.**
+    ``program_of`` reports a *basename*, so the allowlist is spoofable: a file
+    the agent could itself create at `tools/rg` makes
+    `python3 tools/rg 'rm -rf ~'` suppress at both tiers. Trusting the basename
+    is not an oversight — it is what lets `python3 .claude/tools/search_source.py`
+    reach the allowlist at all, which is the carve-out's entire purpose — and no
+    stock program on the list has an exec vector, so a spoof buys silence rather
+    than a delete. This guard is best-effort advisory, not a policy boundary
+    (`CLAUDE.md` → "Local integrations and guard hooks"), and a session that can
+    write arbitrary files and run them is already past it. Recorded so a future
+    round does not mistake it for an unexamined hole.
     """
     if not allow_quoted or program_of(line) not in READ_ONLY_PROGRAMS:
         return bool(pattern.search(line))
@@ -616,6 +663,32 @@ def _self_test():
         ('grep -rn "rm -rf /"', None),
         ("rg 'rm -rf /'", None),
         ("grep -rn \"rm -rf '/'\"", None),
+        # The `$`-bearing half of that same case, which the three cases above
+        # do NOT cover: every one of them is `$`-free, so they proved the safe
+        # half only. A double-quoted span holding `$HOME` was treated as live
+        # (the old `_LIVE_IN_DOUBLE_QUOTES` held a bare `$`), suppression was
+        # therefore skipped, and the tolerated closing quote let the deny fire —
+        # an un-overridable deny on a search that deletes nothing. Parameter
+        # expansion runs no command, so only a substitution makes a span live.
+        ('rg "rm -rf $HOME"', None),
+        ('grep -rn "rm -rf ${HOME}"', None),
+        ('grep -rn "rm -rf $HOME/*"', None),
+        # ...while a substitution in the same position still disables
+        # suppression, because THAT one runs.
+        ('grep "$(git push --force origin main)" f', "deny"),
+        # The end anchor must not be defeated by one space or one extra quote.
+        # Both of these force-delete root and both reached only the ask tier
+        # while the tolerance was a single optional adjacent quote.
+        ('bash -c "rm -rf / "', "deny"),
+        ("bash -c \"sh -c 'rm -rf /'\"", "deny"),
+        # The spelling GNU `rm` actually requires in order to delete root, which
+        # a bare end-anchor never caught at the deny tier at all.
+        ("rm -rf / --no-preserve-root", "deny"),
+        ('bash -c "rm -rf / --no-preserve-root"', "deny"),
+        # But a trailing bare PATH still is not this pattern: tolerating flags
+        # rather than arbitrary words is what keeps a literal-string search from
+        # matching even before suppression is consulted.
+        ('grep -rn "rm -rf /" notes.txt', None),
         ('bash -c "git push --force origin main"', "deny"),
         ("grep pattern file; rm -rf /", "deny"),
         # An unterminated quote must not hide a real command behind it: the

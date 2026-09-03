@@ -194,21 +194,61 @@ class SectionsTests(unittest.TestCase):
     refusal fires and the compliant-looking move becomes reading the whole
     file. One pass spent ~8.5k across 7 slice calls for exactly this."""
 
+    def test_a_nested_match_is_not_emitted_twice(self):
+        """A parent block already contains its children, so a child heading
+        that also matches was emitted a second time — duplicating every line
+        between the two. Payload inflation in the tool whose whole purpose is
+        shrinking a payload.
+        """
+        lines = [
+            "## Levers",
+            "parent prose",
+            "### Levers detail",
+            "child prose",
+            "## After",
+            "tail",
+        ]
+        out, count = rr.sections(lines, "Levers")
+        self.assertEqual(count, 1)
+        self.assertEqual(out, lines[0:4])
+        self.assertEqual(out.count("child prose"), 1)
+
+    def test_two_disjoint_matches_are_both_emitted(self):
+        """The complement, so the de-duplication cannot swallow a real second
+        block: siblings at the same depth are not nested and both belong.
+        """
+        lines = [
+            "## Lever one",
+            "a",
+            "## Unrelated",
+            "b",
+            "## Lever two",
+            "c",
+        ]
+        out, count = rr.sections(lines, "Lever")
+        self.assertEqual(count, 2)
+        self.assertEqual(out, ["## Lever one", "a", "## Lever two", "c"])
+
     def test_every_matching_block_is_returned_in_file_order(self):
         block, count = sections(BODY.splitlines(), "Part 1")
-        self.assertEqual(count, 2)
-        # Both the part and its nested subsection, the pair `--section`
-        # refuses to choose between.
+        # The part and its nested subsection — the pair `--section` refuses to
+        # choose between — arrive as ONE block, because the parent's block
+        # already runs past the child. This asserted `count == 2` and two
+        # `assertIn`s, which stayed green while the child's lines were emitted
+        # a second time: `assertIn` cannot see a duplicate.
+        self.assertEqual(count, 1)
         self.assertIn("# Part 1 — first", block)
         self.assertIn("## Part 1 detail", block)
+        self.assertEqual(block.count("## Part 1 detail"), 1)
 
     def test_it_does_not_refuse_an_ambiguous_pattern(self):
         """The whole point: what `--section` calls ambiguous is what this mode
-        is for."""
+        is for. `--section` still refuses; `--sections` answers — with the
+        nested pair folded into the single block that contains both."""
         with self.assertRaises(ReadResultError):
             section(BODY.splitlines(), "Part 1")
         block, count = sections(BODY.splitlines(), "Part 1")
-        self.assertEqual(count, 2)
+        self.assertEqual(count, 1)
         self.assertTrue(block)
 
     def test_a_single_match_still_works(self):

@@ -309,6 +309,11 @@ def matches_any(path: str, patterns) -> bool:
     return any(matches(path, p) for p in patterns)
 
 
+# The single bucket every repository-root file shares. Angle brackets keep it
+# from ever colliding with a real directory name.
+ROOT_TREE = "<root>"
+
+
 def crate_of(path: str) -> str:
     """The top-level tree a changed path belongs to.
 
@@ -316,26 +321,52 @@ def crate_of(path: str) -> str:
     workspace layout makes it (``programs/…``, ``sdk/rs/…``, ``feeds/…``). It
     exists to answer *how many trees does this diff span*, not to resolve a
     Cargo package, so a coarse answer is the right one.
+
+    **A repository-ROOT file is not a tree, and treating it as one defeated the
+    metric.** `Makefile` and `Cargo.toml` have no first segment, so returning
+    the path itself made each root file its own "crate" and a diff touching two
+    of them read as spanning two crates. Measured on the very diff that added
+    this function: `cfg/dictionary.txt` and `.claude/**` gave `code_crates: 2`,
+    where one of the two was a two-line dictionary entry — the same
+    over-escalation the rollup was written to stop, arriving through the
+    denominator instead of the numerator. Root files therefore share one
+    bucket.
     """
-    head, _, _ = path.partition("/")
-    return head or path
+    head, sep, _ = path.partition("/")
+    if not sep:
+        return ROOT_TREE
+    return head or ROOT_TREE
 
 
 def crate_rollup(files) -> dict:
-    """``{crate: {"source": n, "docs": n, "tests": n, "source_only": bool}}``.
+    """``{crate: {"source": n, "docs": n, "tests": n, "has_source": bool}}``.
 
     Why this exists: the review tier's multi-crate trigger weighed the
     **presence** of a second crate rather than what changed in it, so a
-    seven-line doc-comment fix in a second tree escalated a diff to the full
+    seven-line docs-only change in a second tree escalated a diff to the full
     fan-out. `--split` already separates docs from source per file; what was
     missing was the per-crate rollup that turns that into a predicate.
 
+    Note **docs-only** above means a docs *path* — a `.md` file, or anything
+    under `docs/**`. It used to read "doc-comment fix", which the bound below
+    contradicts four lines later: a `///` comment lives in a `.rs` file, so it
+    classifies as source and still escalates. Stating the motivating case as
+    the tool actually decides it matters more than it sounds, because a reader
+    tiering a diff takes that sentence as license and then the tool disagrees.
+
     ``has_source`` is the field a tier decision wants: a crate with no source
-    changes at all should not count toward "spans crates". Note the deliberate
-    asymmetry — this discounts such a crate from the *crate count* and nothing
-    else. The change is still fully reviewed (one such seven-line doc fix was
-    itself a real finding from an earlier PR that had gone stale), so the docs
-    and completeness lenses must still see it.
+    **or test** changes at all should not count toward "spans crates". Note the
+    deliberate asymmetry — this discounts such a crate from the *crate count*
+    and nothing else. The change is still fully reviewed (one such seven-line
+    doc fix was itself a real finding from an earlier PR that had gone stale),
+    so the docs and completeness lenses must still see it.
+
+    **Tests count as code.** This was `source > 0` alone, which discounted a
+    crate whose only change was to its tests — and a second crate's test change
+    is exactly the kind of cross-tree coupling the multi-crate trigger exists
+    to catch. The docstring justified the discount for the *docs* case only, so
+    excluding tests was scope the rationale never covered, and it failed open on
+    the tier decision. Docs remain the only discounted slice.
 
     **The bound, stated rather than papered over:** this classifies by PATH,
     so it catches a crate whose changes are non-code *files* and not a crate
@@ -352,7 +383,7 @@ def crate_rollup(files) -> dict:
         bucket = rollup.setdefault(crate_of(path), {"source": 0, "docs": 0, "tests": 0})
         bucket[slice_for(path)] += max(1, changes)
     for bucket in rollup.values():
-        bucket["has_source"] = bucket["source"] > 0
+        bucket["has_source"] = bucket["source"] > 0 or bucket["tests"] > 0
     return rollup
 
 

@@ -123,8 +123,11 @@ argument was *not* the reason — see that step for why.)
 
   **`--force-context` lifts the size degrade and NEVER the single-file
   clamp**, and the asymmetry is deliberate rather than an oversight. The
-  degrade fires on size alone, where the surrounding lines may really be
-  the question and nothing substitutes for them. The clamp fires only
+  degrade fires without the caller having named anything — on printed
+  size, or on a sweep spread across more than three files — where the
+  surrounding lines may really be the question and nothing substitutes
+  for them. ("Size alone" overstated it: the spread half never fires
+  under `--dir` or `--glob` at all.) The clamp fires only
   once the caller has *already named one file* — and for that case a
   slice `Read` answers the same question strictly better, so an override
   would buy nothing but a way to pay more.

@@ -10,6 +10,7 @@ documenting the form rather than making a claim.
 from __future__ import annotations
 
 import io
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -78,9 +79,14 @@ class Citations(unittest.TestCase):
         self.assertEqual(cr.citations("just prose about CLAUDE.md\n"), [])
 
 
-class ScanFixture(unittest.TestCase):
-    """An embedded tree, so the assertions are about behavior rather than about
-    whatever the live repo happens to contain."""
+class _Fixture:
+    """The embedded tree, with no test methods of its own.
+
+    Deliberately NOT a ``TestCase``. It used to be, and ``Cli`` subclassed it —
+    which silently re-ran all eight scan tests a second time under the CLI
+    class's name, inflating the count while adding no coverage. A fixture that
+    holds no tests cannot do that.
+    """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -101,6 +107,10 @@ class ScanFixture(unittest.TestCase):
         (self.repo / ".claude" / "skills" / "demo" / "SKILL.md").write_text(
             body, encoding="utf-8"
         )
+
+
+class ScanFixture(_Fixture, unittest.TestCase):
+    """Behavior of `scan` against the embedded tree."""
 
     def test_a_resolving_citation_is_clean(self):
         self._skill('See `docs/conventions/thing.md` → "A real section".\n')
@@ -147,8 +157,80 @@ class ScanFixture(unittest.TestCase):
         result = cr.scan(self.repo)
         self.assertEqual(result["dangling"][0]["citer"], ".claude/skills/demo/SKILL.md")
 
+    def test_a_citation_wrapped_across_two_lines_is_checked(self):
+        """MD013's 80 columns put the path and arrow on one line and the anchor
+        on the next, and per-line matching could not see it. The live tree
+        carried 14 such citations in its highest-traffic skills — 61% of the
+        real population invisible — so the tool's own count was the evidence
+        that looked healthiest.
+        """
+        self._skill('See `docs/conventions/thing.md` →\n"A real section".\n')
+        result = cr.scan(self.repo)
+        self.assertEqual(result["checked"], 1)
+        self.assertEqual(result["dangling"], [])
 
-class Cli(ScanFixture):
+    def test_a_wrapped_citation_that_dangles_is_still_reported(self):
+        """The point is coverage, not silence: a wrapped citation must be able
+        to FAIL, or the fix only moved the blind spot.
+        """
+        self._skill('See `docs/conventions/thing.md` →\n"A section that moved".\n')
+        result = cr.scan(self.repo)
+        self.assertEqual(result["checked"], 1)
+        self.assertEqual(result["dangling"][0]["kind"], "missing-anchor")
+
+    def test_a_bold_anchor_wrapped_across_lines_resolves(self):
+        """The mirror of the same defect, on the other side of the comparison.
+        Fixing only the citation half reported two anchors as missing that
+        existed perfectly well as multi-line bold spans.
+        """
+        (self.repo / "docs" / "conventions" / "wrapped.md").write_text(
+            "# Wrapped\n\n- **An anchor whose bold span runs past the\n"
+            "  eightieth column.** Then prose.\n",
+            encoding="utf-8",
+        )
+        self._skill('See `wrapped.md` → "An anchor whose bold span runs past".\n')
+        result = cr.scan(self.repo)
+        self.assertEqual(result["dangling"], [])
+
+    def test_a_stray_emphasis_marker_cannot_desync_the_next_paragraph(self):
+        """Why matching is per PARAGRAPH and not per document. Bold pairing is
+        positional, so one unpaired `**` shifts every pairing after it —
+        whole-document DOTALL turned 2 unresolved citations into 5, all false,
+        by mispairing spans hundreds of lines away. Per line that damage is
+        contained to a line; per paragraph, to a paragraph.
+        """
+        (self.repo / "docs" / "conventions" / "stray.md").write_text(
+            "# Stray\n\nA paragraph with one ** unpaired marker.\n\n"
+            "- **A clean anchor after the stray.** Prose.\n",
+            encoding="utf-8",
+        )
+        self._skill('See `stray.md` → "A clean anchor after the stray".\n')
+        result = cr.scan(self.repo)
+        self.assertEqual(result["dangling"], [])
+
+    def test_an_anchor_that_normalizes_away_is_refused_not_resolved(self):
+        """`normalize` strips emphasis, backticks and trailing punctuation, so
+        `→ "."` reaches the comparison empty — and `"" in candidate` is always
+        true, resolving against every target that has any anchor at all. The
+        literal vacuous pass.
+        """
+        self._skill('See `thing.md` → ".".\n')
+        result = cr.scan(self.repo)
+        self.assertEqual(result["checked"], 1)
+        self.assertEqual(result["dangling"][0]["kind"], "empty-anchor")
+
+    def test_a_citation_inside_a_fence_is_still_ignored(self):
+        """Paragraph-scoping must not lose the fence rule: a worked example
+        documents the form and is not a claim that has to resolve.
+        """
+        self._skill(
+            'Example:\n\n```\nSee `thing.md` → "Not a real anchor".\n```\n',
+        )
+        result = cr.scan(self.repo)
+        self.assertEqual(result["checked"], 0)
+
+
+class Cli(_Fixture, unittest.TestCase):
     def _run(self, argv):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -160,6 +242,24 @@ class Cli(ScanFixture):
         code, out, _ = self._run([])
         self.assertEqual(code, 0)
         self.assertIn("resolve", out)
+
+    def test_a_moved_citer_family_is_refused_not_reported_clean(self):
+        """The zero-citation refusal cannot catch this: four globs feed the
+        scan, so losing the whole skills tree leaves `docs/conventions/*.md`
+        citing, the total non-zero and the exit 0 — the loss invisible behind a
+        healthy-looking count. That is the one failure the refusal exists to
+        prevent, arriving one level down.
+        """
+        self._skill('See `thing.md` → "A real section".\n')
+        shutil.rmtree(self.repo / ".claude" / "skills")
+        with self.assertRaises(cr.ConventionRefsError) as ctx:
+            self._run([])
+        message = str(ctx.exception)
+        self.assertIn("matched no files", message)
+        self.assertIn(".claude/skills/*/SKILL.md", message)
+        # And specifically NOT the zero-citation message, which is the less
+        # actionable diagnosis of the same tree state.
+        self.assertNotIn("nothing was checked", message)
 
     def test_exits_one_when_something_dangles(self):
         self._skill('See `thing.md` → "nope".\n')

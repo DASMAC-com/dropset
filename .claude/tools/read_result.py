@@ -276,6 +276,15 @@ def sections(lines: list[str], pattern: str) -> tuple[list[str], int]:
 
     Blocks are emitted in file order, each running to the next heading of the
     same or shallower depth — the same bound ``section`` uses.
+
+    **A nested match is not emitted twice.** A parent block runs to the next
+    heading of its own depth, so it already contains its children; a child
+    heading that also matches the pattern was then emitted a second time, and
+    a pattern matching a word that appears at two depths duplicated everything
+    between them. That is payload inflation in the one tool whose entire
+    purpose is shrinking a payload, so a match falling inside an
+    already-emitted block is skipped and the returned count reflects blocks
+    actually emitted rather than headings matched.
     """
     try:
         rx = re.compile(pattern, re.IGNORECASE)
@@ -292,14 +301,23 @@ def sections(lines: list[str], pattern: str) -> tuple[list[str], int]:
         )
 
     out: list[str] = []
+    emitted = 0
+    covered_to = -1
     for start, depth, _ in found:
+        if start < covered_to:
+            # Already inside a block emitted above — a nested heading whose
+            # parent also matched. Emitting it again would duplicate every line
+            # between the two.
+            continue
         end = len(lines)
         for i, d, _ in heads:
             if i > start and d <= depth:
                 end = i
                 break
         out.extend(lines[start:end])
-    return out, len(found)
+        covered_to = end
+        emitted += 1
+    return out, emitted
 
 
 def grep(lines: list[str], pattern: str, context: int) -> list[str]:

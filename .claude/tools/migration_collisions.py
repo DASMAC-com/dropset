@@ -216,6 +216,14 @@ def load_others(path: str) -> list[dict]:
     return data
 
 
+# `gh pr list` defaults to 30 and truncates SILENTLY past its limit, which in a
+# collision checker is a fail-open: the one PR that would have collided is the
+# one dropped, and the tool reports "clear". The limit is therefore set well
+# above any plausible open-PR count, and `others_from_gh` warns when the result
+# comes back exactly at it — at that point truncation cannot be ruled out and
+# "clear" is no longer a claim this tool can make quietly.
+GH_PR_LIMIT = 200
+
 GH_OPEN_PRS = (
     "gh",
     "pr",
@@ -225,7 +233,7 @@ GH_OPEN_PRS = (
     "--json",
     "number,files",
     "--limit",
-    "30",
+    str(GH_PR_LIMIT),
 )
 
 
@@ -269,6 +277,16 @@ def others_from_gh() -> list[dict]:
         ) from exc
     if not isinstance(data, list):
         raise MigrationCollisionsError("`gh pr list` did not return an array")
+    if len(data) >= GH_PR_LIMIT:
+        # Exactly at the limit means gh may have truncated, and the PR it
+        # dropped could be the colliding one. Refuse rather than report a
+        # "clear" that is no longer supported — a silent truncation in a
+        # collision checker fails in the dangerous direction.
+        raise MigrationCollisionsError(
+            f"`gh pr list` returned {len(data)} PRs, at the --limit of "
+            f"{GH_PR_LIMIT}, so the list may be truncated and a dropped PR "
+            "could be the colliding one. Raise GH_PR_LIMIT and re-run."
+        )
 
     # gh spells them `number` and a list of {path: …} objects; normalize to the
     # `--others` shape so exactly one comparison path exists downstream.

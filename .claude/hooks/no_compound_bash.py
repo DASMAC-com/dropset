@@ -101,7 +101,29 @@ def find_violation(cmd):
         # including a newline, which is a line continuation (one command
         # spread over two lines) rather than a separator. Consuming both
         # characters here is what keeps a continuation legal.
+        #
+        # But an escaped NON-newline character is ordinary command content and
+        # must run the same bookkeeping as any other content character. This
+        # branch used to `i += 2; continue` unconditionally, so it skipped past
+        # the `pending_newline` test and never set `seen_content` — which made
+        # an all-escaped line invisible to the newline separator in both
+        # directions:
+        #
+        #     ls\n\p\w\d      # `pending_newline` set, but no character tests it
+        #     \l\s\npwd       # line 1 sets no content, so the newline is inert
+        #
+        # Both are two commands in bash (`\l\s` is `ls`, `\p\w\d` is `pwd`).
+        # Contrived to write by accident — and this is the parser whose own
+        # docstring records being "declared clean twice and wrong twice, both
+        # times about what it was not looking for". This was the third, of the
+        # same shape, so the bookkeeping is now shared rather than duplicated
+        # into a branch that can forget it.
         if c == "\\":
+            escaped = cmd[i + 1] if i + 1 < n else ""
+            if escaped != "\n":
+                if pending_newline:
+                    return "a newline separating two commands (\\n)"
+                seen_content = True
             i += 2
             continue
 
@@ -319,6 +341,18 @@ def _self_test():
         ("# note\nls", False),
         # A backslash-escaped newline is a line continuation: one command.
         ("python3 run_quiet.py -- \\\n  python3 lint_paths.py --changed", False),
+        # An escaped non-newline character is ordinary content, so it both
+        # TRIPS a pending newline and SETS content for the line it sits on.
+        # The escape branch used to skip the bookkeeping entirely, leaving an
+        # all-escaped line invisible to the separator from either side.
+        ("ls\n\\p\\w\\d", True),
+        ("\\l\\s\npwd", True),
+        ("\\l\\s\n\\p\\w\\d", True),
+        # ...while a single escaped command on one line stays one command.
+        ("\\l\\s -la", False),
+        ("printf %s\\n", False),
+        # A continuation whose second line is escaped is still one command.
+        ("\\l\\s \\\n  -la", False),
         # A newline inside quotes is ordinary text.
         ('git commit -m "line one\nline two"', False),
         ("printf 'a\nb'", False),
