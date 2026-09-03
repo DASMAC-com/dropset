@@ -96,7 +96,62 @@ _DS_PULL_THROTTLE_SECONDS=60
 # objection is answered rather than simply overridden: the call is quiet,
 # bounded, throttled and non-fatal, so a bare `cdds` still lands where it says
 # it lands and still looks like it succeeded.
+# The last pull's outcome, for diagnosis. Set on every path so the three
+# indistinguishable-looking cases can be told apart after the fact:
+#
+#   not-a-repo | throttled | fetched | ok | failed
+#
+# This exists because an operator reported that `cdds` "did not pull" and the
+# observation had three candidate causes that all look identical from outside:
+# a stale shell still running pre-pull definitions, a throttled skip (silent by
+# design), and a silent failure whose one-line warning scrolls past above a
+# screen of session output. Recording the outcome makes the second and third
+# distinguishable, and the self-refresh below removes the first.
+_DS_PULL_LAST_OUTCOME=""
+_DS_PULL_LAST_ERROR=""
+
+# Re-source the helpers when a pull moved them, so an operator's already-open
+# terminals pick up verb changes without a new tab. Nothing else refreshed
+# them, which made "my shell is stale" the most likely explanation for any
+# reported verb misbehavior — and the hardest to tell from a real bug.
+#
+# $1 = the pre-pull HEAD. The question "did this pull change init.zsh?" is asked
+# of GIT, not of the filesystem: an mtime comparison was the first attempt and
+# it is wrong, because `stat` reports whole seconds and a fast-forward
+# completing in the same second as the check reads as unchanged. A commit range
+# is exact and costs one more git call on the only path that can need it.
+_ds_reload_init() {
+  local head_before="$1" init="$_DS_REPO/.claude/shell/init.zsh" changed
+  [[ -n "$head_before" && -f "$init" ]] || return 0
+  changed="$(git -C "$_DS_REPO" diff --name-only "$head_before" HEAD \
+    -- .claude/shell/init.zsh 2>/dev/null)"
+  [[ -n "$changed" ]] || return 0
+  # Recursion guard. Sourcing the file redefines these functions while one of
+  # them is executing, which is legal in zsh, but a future top-level statement
+  # in init.zsh that called a verb would re-enter the pull. Cheap insurance
+  # against a change made far from here.
+  [[ -n "$_DS_RELOADING" ]] && return 0
+  _DS_RELOADING=1
+  # shellcheck disable=SC1090
+  source "$init"
+  unset _DS_RELOADING
+  print -u2 "dropset: session helpers reloaded (init.zsh changed)"
+}
+
+# The wrapper exists so the debug line runs on EVERY path, including the early
+# returns. `DS_PULL_DEBUG=1 cdds` is how a "it didn't pull" report gets
+# answered without guessing which of the three causes it was.
 _ds_pull() {
+  _ds_pull_impl
+  if [[ -n "$DS_PULL_DEBUG" ]]; then
+    print -u2 "dropset: pull ${_DS_PULL_LAST_OUTCOME}${_DS_PULL_LAST_ERROR:+ — $_DS_PULL_LAST_ERROR}"
+  fi
+  return 0
+}
+
+_ds_pull_impl() {
+  _DS_PULL_LAST_OUTCOME="not-a-repo"
+  _DS_PULL_LAST_ERROR=""
   [[ -d "$_DS_REPO/.git" ]] || return 0
 
   # Claim the throttle slot BEFORE pulling, not after. Two tabs launched in the
@@ -113,12 +168,20 @@ _ds_pull() {
   if [[ -f "$stamp" ]]; then
     last="$(cat "$stamp" 2>/dev/null)"
     if [[ "$last" == <-> ]] && (( now - last < _DS_PULL_THROTTLE_SECONDS )); then
+      # Silent by design — but RECORDED, because a throttled skip and a
+      # successful quiet pull were previously byte-identical from outside, and
+      # that ambiguity is what made the operator's report unfalsifiable.
+      _DS_PULL_LAST_OUTCOME="throttled"
       return 0
     fi
   fi
   print -r -- "$now" >| "$stamp" 2>/dev/null
 
-  local branch
+  # Captured before the pull so `_ds_reload_init` can ask git what moved.
+  local head_before
+  head_before="$(git -C "$_DS_REPO" rev-parse HEAD 2>/dev/null)"
+
+  local branch err
   branch="$(git -C "$_DS_REPO" symbolic-ref --quiet --short HEAD 2>/dev/null)"
 
   # GIT_TERMINAL_PROMPT=0 is what makes "fatal never" true. The low-speed knobs
@@ -128,17 +191,33 @@ _ds_pull() {
   # runs this, that would hang session startup itself — the one outcome this
   # helper must never produce. With it set, a missing credential fails fast and
   # takes the warning path below.
+  # stderr is CAPTURED rather than discarded, so a failure can report git's own
+  # last line. The previous generic sentence made a diverged base, a dirty
+  # tree, an expired credential and an offline network all read identically —
+  # so the warning told the operator only that something went wrong, which is
+  # the part they could already see.
   if [[ "$branch" != "main" ]]; then
-    GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
-      -C "$_DS_REPO" fetch --quiet origin main 2>/dev/null ||
-      print -u2 "dropset: could not fetch origin/main (offline?) — continuing"
+    if err="$(GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=1000 \
+      -c http.lowSpeedTime=10 -C "$_DS_REPO" fetch --quiet origin main 2>&1)"; then
+      _DS_PULL_LAST_OUTCOME="fetched"
+    else
+      _DS_PULL_LAST_OUTCOME="failed"
+      _DS_PULL_LAST_ERROR="${${err##*$'\n'}:-no detail from git}"
+      print -u2 "dropset: could not fetch origin/main — $_DS_PULL_LAST_ERROR"
+    fi
     return 0
   fi
 
-  GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 \
-    -C "$_DS_REPO" pull --ff-only --quiet 2>/dev/null ||
-    print -u2 "dropset: could not fast-forward main — diverged, dirty or" \
-      "offline. Continuing on the current checkout."
+  if err="$(GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=1000 \
+    -c http.lowSpeedTime=10 -C "$_DS_REPO" pull --ff-only --quiet 2>&1)"; then
+    _DS_PULL_LAST_OUTCOME="ok"
+    _ds_reload_init "$head_before"
+  else
+    _DS_PULL_LAST_OUTCOME="failed"
+    _DS_PULL_LAST_ERROR="${${err##*$'\n'}:-diverged, dirty or offline}"
+    print -u2 "dropset: could not fast-forward main — $_DS_PULL_LAST_ERROR" \
+      "Continuing on the current checkout."
+  fi
 }
 
 # `cd` to the base repo checkout. The starting point for anything that must not

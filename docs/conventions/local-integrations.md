@@ -606,6 +606,28 @@ session, which is worse than the lingering tint being fixed. An
 edit-tool yellow carries no sentinel and is never healed — its lifetime
 is not governed by permission re-fires.
 
+**The heal is tested, and the threshold is pinned rather than
+justified.** `heal_stale_permission` lives in `iterm-colors.sh` rather
+than in the monitor so it can be sourced — the monitor ends in an
+infinite poll loop, so sourcing *that* to reach the function would hang
+— and `.claude/scripts/test_iterm_heal.py` drives the real shell in a
+subprocess, covering the heal, the `-ge` boundary, and each of the four
+cases that must **not** heal. The predicate deliberately stays shell:
+the monitor calls it every ~3s per tab and that file avoids process
+spawns at poll cadence on purpose, so having it call a Python helper
+would undo a decision made for a measured reason. Python driving shell
+also means the coverage lands in `make tools-tests`, which already
+discovers `test_*.py` there, instead of needing a shell test runner the
+repo does not have.
+
+`ITERM_PERM_WAIT_STALE_SECONDS`'s default is the one behavioral constant
+here with **no measurement behind it**: its correctness rests on the
+harness re-firing `permission_prompt` more often than the threshold,
+which has never been measured. The test pins the value and its override
+rather than asserting the value is right; the failure direction is the
+argument for it, and measuring the re-fire interval is the follow-up
+that would actually close it.
+
 ### FIFO attention ordering
 
 Beyond coloring, `iterm-reorder.py` keeps each window's tabs sorted into
@@ -936,6 +958,38 @@ branch arrives as `worktree-eng-###`):
     *before* the pull). Not an optimization: `faps go` opens many tabs
     at once and a pull takes `index.lock`, so without the throttle they
     race and print git errors over each other.
+
+  **Two things exist because "it didn't pull" was unfalsifiable.** An
+  operator ran `cdds`, observed no pull, and the report had three
+  candidate causes that looked identical from outside: a stale shell
+  still running pre-pull definitions, a throttled skip (silent by
+  design), and a silent failure whose one-line warning scrolled past
+  above a screen of session output.
+
+  - **The outcome is recorded**, in `_DS_PULL_LAST_OUTCOME`:
+    `not-a-repo` / `throttled` / `fetched` / `ok` / `failed`, with
+    `_DS_PULL_LAST_ERROR` carrying **git's own last stderr line** rather
+    than a generic sentence — the old warning made a divergence, a dirty
+    tree, an expired credential and a dead network read alike, telling
+    the operator only that something went wrong. `DS_PULL_DEBUG=1 cdds`
+    prints the outcome on every path, including the early returns, which
+    is how such a report gets answered instead of guessed at.
+  - **The helpers self-refresh.** When a pull changes `init.zsh`, it is
+    re-sourced in the same shell, so already-open terminals pick up verb
+    changes without a new tab. Nothing did that before, which is what
+    made "your shell is stale" simultaneously the most likely
+    explanation for any reported verb problem and the hardest to
+    distinguish from a real bug. Whether the file moved is asked of
+    **git** (a commit-range `diff --name-only`), not of the filesystem:
+    an mtime comparison was the first attempt and is wrong, because
+    `stat` reports whole seconds and a fast-forward finishing inside the
+    same second reads as unchanged. A recursion guard keeps a future
+    top-level statement in `init.zsh` from re-entering the pull.
+
+  Both are covered by `.claude/scripts/test_ds_pull.py`, which drives
+  the real function against a two-repository git fixture — the throttle,
+  the ff-only and non-`main` branches, the failure text, the debug flag
+  and the self-refresh. It runs inside `make tools-tests`.
 
 - **`cdds`** — `cd` to the base repo checkout. The starting point for
   anything that must not run inside a worktree (`housekeeping`, a
