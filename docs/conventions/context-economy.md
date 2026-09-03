@@ -812,6 +812,22 @@ argument was *not* the reason — see that step for why.)
   retries and peer-dependency trees: route it through the quiet runner
   (`python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`).
 
+- **After a formatter rewrites a file you are still editing, take ONE
+  bounded read covering all the remaining edits' regions.** A formatter
+  invalidates every line the session holds for that file, so the next
+  anchored `Edit` needs its exact text again — and the
+  "before the third slice, sum what you have read" rule does not fire,
+  because each re-read *feels* individually licensed: something just
+  invalidated the previous one, so it reads as a fresh **first** read
+  rather than a third slice.
+
+  Measured: one source file slice-read **five times** in a session
+  (offsets 210, 160, 418, 226, 486) and a second file twice, together
+  that run's five largest single results and the whole of its Read cost
+  (5.8k) — a round trip per edit. Cheaper still where possible: order
+  the edits **before** the formatter runs, then let the hook reformat
+  once at the end.
+
 - **A DRY RUN or expansion is verbose-on-success too.** The rule above
   is stated by naming runners, and a reader checking `make -n` against
   that list sees `make` and then reasons that `-n` exempts it. It does

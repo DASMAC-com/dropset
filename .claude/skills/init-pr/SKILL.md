@@ -529,6 +529,31 @@ not only to the sub-agents you brief:
   `tail` calls, all empty. Wait for the completion
   notification.
 
+- **Before `replace_all`, check whether the replacement
+  CONTAINS the search string.** If it does, the call is not
+  idempotent: sites already carrying the new name get rewritten
+  again, so a call that looks like a safe mechanical rename
+  corrupts the sites that were already correct. Either scope
+  the edit to the specific occurrences, or rename through a
+  token that is not a substring of its replacement.
+
+  The general form: **`replace_all` is safe only when search
+  and replacement are disjoint** — which makes the trap
+  strongest for the commonest kind of rename, widening an
+  identifier by prefix or suffix.
+
+  Measured: a `replace_all` of `MAX_ATTEMPTS` →
+  `REALIZED_FILL_MAX_ATTEMPTS` rewrote the substring inside an
+  import line that had *already* been written by hand,
+  producing `REALIZED_FILL_REALIZED_FILL_MAX_ATTEMPTS`. It
+  surfaced as **14 failing tests** with
+  `ReferenceError: REALIZED_FILL_MAX_ATTEMPTS is not defined` —
+  a runtime error naming the **correct** symbol, which reads as
+  "the import is missing" rather than "the import is mangled",
+  so the first instinct is to open the wrong file. Cost was a
+  full frontend test run, a slice-read to find the mangling, a
+  corrective edit and a second test run.
+
 - **Verify at checkpoints, not after every edit.** Those 12
   test runs were a fix-verify loop after single-file edits,
   which `review-pr` already forbids; it slipped because that

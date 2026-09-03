@@ -404,6 +404,35 @@ already being asked to start the review.
    session. The gate still runs every round; what changes is
    only what an empty answer entitles you to skip.
 
+   **A HOT-SURFACE diff should expect re-verification in the
+   tail — and that is knowable here, before any of it is
+   spent.** When the diff overlaps a subsystem with several
+   open PRs (which `review_diff.py --overlap` already
+   computes, and which nothing currently consumes for scoping
+   advice), expect repeated rebases, conflict resolutions and
+   re-runs in the review tail, and read it as a signal that a
+   **narrower first PR** would have been cheaper.
+
+   Advisory, not gating: by step 2 the current branch is
+   already written, so this informs scoping on the *next* one.
+   Measured: one review saw `main` gain four issues, three
+   touching the same subsystem, forcing three conflict
+   resolutions — one **semantic**, where a trait the branch
+   referenced had been deleted upstream — plus three full test
+   runs and repeated lints. The freshness machinery worked
+   exactly as documented, including correctly refusing to fan
+   out on a 3,783-line phantom-deletion diff; the cost was
+   structural. Another review saw `main` move four times, three
+   with an empty overlap and cheap, the fourth overlapping on
+   `cfg/dictionary.txt` and forcing a full re-lint — so this is
+   not specific to one subsystem, and the **agent-infra surface
+   is now one of the hot ones**.
+
+   **The bound, so this is not overstated:** it does not argue
+   for splitting every large PR. The second case was 37 files
+   and only one of its four rebases cost anything. The signal
+   is *overlap with open PRs on a hot surface*, not size.
+
    **Bind the assertion to a content fingerprint, so it is
    checkable rather than remembered.** "The prior result still
    stands" is a claim about *content*, and a commit SHA is the
@@ -721,6 +750,28 @@ already being asked to start the review.
    unknown word, so this is not the same lever as "scope the
    lint".
 
+   **The trigger is the SHAPE of what the diff adds, not the
+   file extension.** "When the change authors prose" reads as
+   being about `.md`, so a Rust change skips the pre-flight —
+   including a Rust change that is, in substance, prose. Run it
+   whenever the diff adds substantial natural-language text,
+   **doc comments in source included**. The concrete tell: a
+   diff that adds module headers, item docs, or long
+   explanatory comments is prose-authoring even when every
+   changed file is `.rs`.
+
+   Measured (session a252a9d3, PR #391): five Rust crates plus
+   one doc, adding several hundred lines of doc comments — a
+   rewritten module header, seventeen newly-documented public
+   constants, a new public error enum with per-variant docs,
+   and long comments on two failure modes. It tripped cspell on
+   **two separate full-lint runs** — three unknown words in the
+   first and two more in the second, one of them a British
+   variant — with two of that session's five `make lint` calls
+   being spelling alone. The
+   pre-flight exists to collapse those into one pass and was
+   skipped because the diff did not *look* like a prose change.
+
    **The `Lint` WORKFLOW is not `make lint`.** It also runs,
    as separate steps before the hooks:
 
@@ -1001,6 +1052,27 @@ already being asked to start the review.
      immediate identical re-runs were a meaningful share of
      that session's 3.6k / 10 scoped-lint and 900 / 5
      `make lint` totals.
+
+     **A formatter has also invalidated every line you hold
+     for that file — so plan the remaining edits and take ONE
+     bounded read covering all their regions.** The autofix
+     framing above is about the *hook result*; this is its
+     context consequence, and it is what makes the
+     "before the third slice, sum what you have read" rule
+     fail to fire: each re-read feels individually licensed,
+     because a formatter just invalidated the previous one, so
+     it reads as a fresh **first** read rather than a third
+     slice.
+
+     Measured (PR #396): one source file was slice-read **five
+     times** in a session — offsets 210, 160, 418, 226, 486 —
+     and a second file twice, which together were that
+     session's five largest single results and the whole of its
+     Read cost (5.8k). The pattern is a round trip per edit.
+
+     Cheaper still where it is possible: **order the edits
+     before the formatter runs** — batch them, then let the
+     hook reformat once at the end.
 
      **To SEE what a formatter changed, read the slice
      files — never `git diff` the file.** A formatter that
@@ -2655,7 +2727,29 @@ already being asked to start the review.
      back with ~130 full match lines, most of them one file
      repeating one constant 40 times.
 
-     So ask for the narrowest form the question admits:
+     **So make `--files-only` the DEFAULT for a hoisted
+     sweep whose result becomes a path list in the brief**, and
+     widen only if the lens genuinely needs surrounding code.
+     A default rather than another restatement, because the
+     rule is already stated in three places and the lapse
+     happens at a fourth: hoisting correctly moves the sweep
+     into the main loop, and the width question then has to be
+     asked a **second time**, about the hoisted call. The
+     sentence above — hoisting "does nothing about what the
+     sweep returns" — exists and still did not fire.
+
+     Measured (PR #396): a hoisted `DATABASE_URL` sweep
+     returned 32 matches across 13 files at ≈868 tokens, that
+     session's second-largest single result, to establish a
+     fact that reduced in the brief to a list of **six file
+     paths** — and the very next thing done with it was to
+     compress it into that list by hand. The same session's
+     other hoisted sweeps were shaped correctly (call sites
+     that needed the lines got them; a pure existence question
+     took `--files-only` at ≈200 tokens), so the discipline was
+     present and lapsed on exactly one call.
+
+     Then ask for the narrowest form the question admits:
 
      - **Existence** ("is it still referenced?", "does this
        word appear in ≥ 2 files?") → files or counts:
@@ -3317,6 +3411,30 @@ already being asked to start the review.
 
    The lever here is redirection, not fewer runs — those runs
    were deliberate and worth making.
+
+   **Mutate files with `Edit` / `Write`, never an inline
+   interpreter.** `CLAUDE.md` → "Shell commands" forbids a
+   `python3 -c` one-liner because it cannot reduce to a
+   reusable allow-rule — `firm-perms` classifies the shape as
+   *malformed*, not as missing a glob, so **every repetition is
+   a permission prompt that can never be firmed**. That is why
+   one occurrence is enough to justify the rule.
+
+   It was emitted **six times in one session**, every instance
+   file mutation with a first-class alternative: two
+   multi-occurrence renames (a symbol across 9 call sites, a
+   spelling fix across 3) and four test-perturbation
+   inject/revert pairs. The token cost is negligible — the
+   calls print one line — which is exactly why it never
+   surfaces in a size-ranked sink table: the cost is **prompt
+   churn**, six unfirmable approvals, invisible to the metric
+   that would otherwise catch it.
+
+   Both draws are worth naming, since both are met by the
+   allowed tool. For a rename the draw is the **count** — and
+   `replace_all: true` already reports it. For a perturbation
+   the draw is **symmetry**, inject and revert reading as one
+   scripted pair — and a revert is just the inverse `Edit`.
 
 1. **Re-lint after fixes.** If any fix commits
    were made in the previous step, re-run the lint **scoped

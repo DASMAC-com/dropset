@@ -166,6 +166,13 @@ comment style:
 The lone exception is a file that can't carry a comment (e.g.
 `.json`), where the dictionary is the only option.
 
+**A source file's doc comments are usage sites like any other.** The
+≥ 2 files rule is framed around prose, so a term appearing in two Rust
+module headers reads as "one file" or as not counting at all — it
+counts. The same goes the other way: a `.rs` change that adds module
+headers, item docs or long explanatory comments **is** a prose change
+for spelling purposes, and gets the pre-flight below.
+
 **cspell splits on hyphens and checks each part**, so a hyphenated
 coinage is only as safe as its halves — `pre-empts` is checked as `pre`
 plus `empts`, and fails on the second. Prefer an unhyphenated synonym

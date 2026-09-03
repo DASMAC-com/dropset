@@ -958,6 +958,34 @@ aggregated survivor body. A burst of peer folds is the shape to watch —
 several handoffs for one issue arriving within minutes, each taking its
 own echo. Buffer them and write once.
 
+**Consolidation has a RECURRING cost, not only a one-time saving.**
+Because the echo floor is a function of **body size**, folding issues
+trades a one-time merge saving for a per-session tax on every later
+transition against the survivor — and the survivor's body is by
+construction the largest. Measured: four unavoidable round-trips on one
+consolidated issue cost **≈30k**, the biggest concentrated sink of that
+run, with every individual call compliant — the bootstrap write, one
+justified `get_issue` (a planning session had rewritten the body after
+the snapshot), the checklist-tick write, and the In-Review write. The
+documented lever is "fewer calls", and there were already only four. On
+that body a **state-only** transition cost ≈7.6k.
+
+Scoped honestly, because two of those four have since moved: the
+In-Review transition now goes through `board_batch.py state` and body
+appends through `linear_issue.py append`, both zero-echo. What remains
+size-dependent is the anchored `patch` write and any `get_issue`. So the
+tax is smaller than 30k today, and it still scales with the body.
+
+Two consequences at fold time: a very large survivor body is a reason to
+prefer `patch` over a full-body write, and to **skip any transition
+whose state is already correct**. That second one is prescribed generally
+elsewhere; a consolidated body is where it pays most.
+
+**None of this argues against `/merge-tasks`.** Folding is correct, and
+the one-task ruling makes it *more* common — which is exactly why the
+recurring side belongs in writing rather than being rediscovered per
+session.
+
 **Relations and state belong in the CREATING call.** `blockedBy`,
 `blocks`, `relatedTo`, `parentId` and `state` are all accepted at
 creation, so a filing that sets any of them and then issues a second
