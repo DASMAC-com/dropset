@@ -20,12 +20,22 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
 COLORS = Path(__file__).resolve().parent / "iterm-colors.sh"
+
+# `heal_stale_permission` reads the sentinel's mtime with BSD `stat -f %m`.
+# GNU coreutils spells that `stat -c %Y` and uses `-f` for *filesystem* info, so
+# on Linux the read fails, the function returns early, and every heal assertion
+# below fails with the tab left yellow. That is not a portability bug to fix:
+# this integration is iTerm2 tab coloring, which exists only on macOS, so a
+# Linux code path would be untested code serving no user. CI runs Linux, so the
+# suite skips there rather than being made to pass on a platform it cannot run.
+_DARWIN_ONLY = "iTerm2 tab coloring is macOS-only (BSD `stat -f %m`)"
 
 # Kept in step with iterm-colors.sh deliberately: a test that read the palette
 # out of the file under test could not catch the palette changing.
@@ -34,6 +44,7 @@ STATE_NEUTRAL = "16191e"
 STATE_REPLY = "080c2a"
 
 
+@unittest.skipUnless(sys.platform == "darwin", _DARWIN_ONLY)
 class HealHarness(unittest.TestCase):
     """Each case builds a per-tty state/sentinel pair under a temp STATE_PREFIX
     and asks the real shell function what it does with them."""

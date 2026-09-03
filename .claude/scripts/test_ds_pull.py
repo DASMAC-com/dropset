@@ -19,6 +19,7 @@ two-repository git fixture.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -26,6 +27,13 @@ import unittest
 from pathlib import Path
 
 INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
+
+# The helpers are zsh, and deliberately so — they use zsh-only constructs
+# (`<->` for an all-digits test, `>|` to clobber) that are load-bearing rather
+# than incidental. So the suite needs a real zsh, and the Linux CI runner does
+# not ship one: without this guard every case here fails with
+# `FileNotFoundError: 'zsh'`, which says nothing about the code under test.
+_NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 
 # Fixture commits must not inherit the operator's signing config: this repo
 # signs every commit, and a fixture has no key requirement.
@@ -48,6 +56,7 @@ def git(*args, cwd):
     )
 
 
+@unittest.skipUnless(shutil.which("zsh"), _NEEDS_ZSH)
 class PullHarness(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -285,6 +294,7 @@ class SelfRefresh(PullHarness):
         self.assertNotIn("session helpers reloaded", result.stderr)
 
 
+@unittest.skipUnless(shutil.which("zsh"), _NEEDS_ZSH)
 class Throttle(unittest.TestCase):
     def test_the_throttle_window_is_sixty_seconds(self):
         """A minute is far shorter than a working session and long enough to

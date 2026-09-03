@@ -49,6 +49,7 @@ coingecko
 coinmarketcap
 cooldown
 coprocess
+coreutils
 cpis
 creat
 crossterm

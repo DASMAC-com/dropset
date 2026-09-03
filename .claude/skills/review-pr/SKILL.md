@@ -673,6 +673,45 @@ already being asked to start the review.
    python3 .claude/tools/run_quiet.py -- make lint
    ```
 
+   **The `Lint` WORKFLOW is not `make lint`.** It also runs,
+   as separate steps before the hooks:
+
+   - `make tools-tests`
+   - `make decks-build`
+
+   So a green local lint bounds only what the *hooks* cover,
+   and the hook set is not the CI job. **When the diff touches
+   anything a `.claude/tools/` checker validates — today
+   `.claude/tools/**` itself and `market-data/grafana/**` via
+   `grafana_check.py` — run the suite before pushing:**
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- make tools-tests
+   ```
+
+   It is fast and wrapped, so the cost is one line.
+
+   Two measured instances, and note they fail in *opposite*
+   directions, which is why the rule is the workflow rather
+   than any one checker. A diff added a sixth Grafana alert
+   rule and left two stale counts in the file's own comments;
+   `make lint` passed, CI came back 8 pass / 1 fail on a
+   `tools-tests` checker that had landed on `main` while the
+   branch was in flight. And a branch adding two shell-driving
+   test files passed locally on macOS and failed CI with **14
+   errors and 3 failures** — no `zsh` on the Linux runner, and
+   BSD `stat -f %m` meaning something else entirely under GNU
+   coreutils. In both cases the skill's own advice for a failed
+   `Lint` job ("reproduce the failing hook locally") does not
+   apply, because **the failure was not a hook**.
+
+   The second also names the trap for a new test: that suite
+   runs on **Linux with a much newer Python** (3.14 at the time
+   of writing, against 3.9 locally), so a test that shells out
+   to `zsh`, to BSD `stat`, or to any macOS-only integration
+   needs an explicit `unittest.skipUnless` guard rather than a
+   local green run.
+
    **When you go into the captured log, filter it — never
    `Read` it whole.** A whole-file read of a captured lint log
    is how a 500-line per-file cspell dump became the single
