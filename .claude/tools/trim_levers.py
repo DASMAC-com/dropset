@@ -572,6 +572,114 @@ def render_bodies(levers: list[dict]) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
+_DUMP_SECTION_RE = re.compile(r"^## (\S+) \| (.*)$", re.MULTILINE)
+_BARE_URL_RE = re.compile(r"^https://\S+\s*$", re.MULTILINE)
+
+
+def demote_headings(body: str) -> str:
+    """Push every ATX heading down one level, leaving fenced blocks alone.
+
+    Lever bodies carry their own ``#``-level headings (``# Lever``,
+    ``# Evidence``, ``# Proposed edit``). Pasted unmodified under a ``# Part N``
+    heading they collide at the same level and the aggregated task loses its
+    structure — which is silent damage: the body is all there and merely reads
+    as one flat document.
+
+    Fence-awareness uses the same ``FENCE_RE`` as ``field_values`` on purpose.
+    A lever *about filing conventions* legitimately quotes a fenced markdown
+    example, and demoting a ``#`` inside it would corrupt the quoted material.
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in body.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if not in_fence and line.startswith("#"):
+            out.append("#" + line)
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
+def split_dump(dump: str) -> list[tuple[str, str, str]]:
+    """``[(identifier, title, body), …]`` from a ``list --bodies-out`` dump."""
+    matches = list(_DUMP_SECTION_RE.finditer(dump))
+    sections = []
+    for i, match in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(dump)
+        sections.append(
+            (match.group(1), match.group(2).strip(), dump[match.end() : end])
+        )
+    return sections
+
+
+def compose_fold(
+    dump: str, *, start: int = 1, exclude: tuple[str, ...] = ()
+) -> tuple[str, dict]:
+    """The aggregated fold body, from the ``--bodies-out`` dump.
+
+    ``list --bodies-out`` solved the fold's *fetch*; nothing solved its
+    *composition*. Under the whole-pool ruling a fold carries the entire parked
+    pool — one pass folded 41 levers — so re-authoring by hand stopped being
+    sensible, and the pass that hit it wrote a throwaway script instead. This is
+    that script, committed, because it encodes two rules that are easy to get
+    wrong by hand and damaging when missed: heading demotion (above) and
+    fingerprint preservation (below).
+
+    **Fails loudly on a part with no ``**Fingerprint**:`` line.** Per-lever
+    dedup rests on every part keeping its own key, and a hand fold that
+    summarizes rather than carries the body drops them — a loss invisible until
+    a later pass refiles a lever that was already folded. Silence here would
+    defeat the point of the tool.
+    """
+    dropped = {item.strip().upper() for item in exclude if item.strip()}
+    sections = split_dump(dump)
+    if not sections:
+        raise TrimLeversError(
+            "no '## <identifier> | <title>' sections found — expected the "
+            "output of `trim_levers.py list --bodies-out`"
+        )
+
+    parts: list[str] = []
+    folded: list[str] = []
+    skipped: list[str] = []
+    missing: list[str] = []
+    number = start
+
+    for identifier, title, raw in sections:
+        if identifier.upper() in dropped:
+            skipped.append(identifier)
+            continue
+        body = _BARE_URL_RE.sub("", raw).strip("\n")
+        if not field_values(body, "Fingerprint"):
+            missing.append(identifier)
+        parts.append(f"# Part {number} — {title}\n\n{demote_headings(body)}\n")
+        folded.append(identifier)
+        number += 1
+
+    if missing:
+        raise TrimLeversError(
+            "these levers carry no **Fingerprint**: line, so folding them would "
+            f"silently break per-lever dedup: {', '.join(missing)}"
+        )
+    if not parts:
+        raise TrimLeversError("every section was excluded — nothing to compose")
+
+    # An exclusion naming a lever the dump does not contain is almost always a
+    # typo, and a silent no-op there would fold a lever the caller meant to
+    # drop. Reported rather than raised: the caller may legitimately carry one
+    # exclusion list across two dumps.
+    unknown = dropped - {identifier.upper() for identifier, _, _ in sections}
+    return "\n".join(parts), {
+        "folded": folded,
+        "skipped": skipped,
+        "unknown_exclusions": sorted(unknown),
+        "next_part": number,
+    }
+
+
 def resolve_milestone_id(api_key: str, project_id: str) -> str:
     data = _post(api_key, _MILESTONES_QUERY, {"projectId": project_id})
     nodes = ((data.get("project") or {}).get("projectMilestones") or {}).get(
@@ -833,11 +941,73 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     _add_dry_run(lst, top_level=False)
 
+    comp = sub.add_parser(
+        "compose",
+        help="the aggregated fold body, from a --bodies-out dump",
+    )
+    comp.add_argument(
+        "--bodies-file",
+        required=True,
+        metavar="FILE",
+        help="the dump written by `list --bodies-out`",
+    )
+    comp.add_argument(
+        "--out",
+        required=True,
+        metavar="FILE",
+        help="where to write the composed body; prints a summary only, since "
+        "the body is the payload this pipeline keeps out of a transcript",
+    )
+    comp.add_argument(
+        "--start",
+        type=int,
+        default=1,
+        help="the first `# Part N` number (default 1) — pass the previous "
+        "fold's next_part when a batch is composed in halves",
+    )
+    comp.add_argument(
+        "--exclude",
+        default="",
+        help="comma-separated identifiers to drop (levers already folded)",
+    )
+
     return parser.parse_args(argv[1:])
 
 
 def run(argv: list[str]) -> int:
     args = _parse_args(argv)
+
+    # `compose` is pure local text work — it reads a dump and writes a body,
+    # touching no API. Handled before the credential lookup so it runs in a
+    # shell with no Linear secrets resolved, which is also what makes it
+    # testable without mocking the transport.
+    if args.cmd == "compose":
+        dump = _read_file(args.bodies_file, "bodies file")
+        body, summary = compose_fold(
+            dump,
+            start=args.start,
+            exclude=tuple(args.exclude.split(",")),
+        )
+        try:
+            handle = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(handle, "w", encoding="utf-8") as fh:
+                fh.write(body)
+        except OSError as exc:
+            raise TrimLeversError(f"cannot write {args.out}: {exc}") from exc
+        print(
+            f"trim-levers: composed {len(summary['folded'])} part(s) "
+            f"({len(body)} chars) into {args.out}"
+        )
+        print(f"trim-levers: parts {args.start}..{summary['next_part'] - 1}")
+        if summary["skipped"]:
+            print(f"trim-levers: excluded {', '.join(summary['skipped'])}")
+        if summary["unknown_exclusions"]:
+            print(
+                "trim-levers: WARNING these exclusions matched nothing in the "
+                f"dump (typo?): {', '.join(summary['unknown_exclusions'])}"
+            )
+        return 0
+
     api_key = env_var("LINEAR_API_KEY")
     project_id = env_var("LINEAR_PROJECT_ID")
 

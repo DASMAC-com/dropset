@@ -149,6 +149,41 @@ in the operator's Next view. The `Trim levers` milestone, this skill's
 own writer, and the per-lever fold below are all unchanged — only where
 the *output* lands moved.
 
+**Compose the body with the tool, not by hand:**
+
+```sh
+python3 .claude/tools/trim_levers.py compose \
+  --bodies-file <scratchpad>/levers.md --out <scratchpad>/folded.md
+```
+
+It reads the `--bodies-out` dump from step 2 and emits the aggregated
+body, printing only a summary — the body stays on disk, which is the same
+zero-echo trade as the fetch half. `--exclude ENG-1,ENG-2` drops levers
+already folded; `--start N` continues the numbering when a batch is
+composed in halves (the summary prints the next part number).
+
+**Why this is a tool.** Under the whole-pool ruling a fold carries the
+entire parked pool — one pass folded **41 levers, 101,798 chars** — so
+re-authoring by hand stopped being sensible and that pass wrote a
+throwaway script instead. Two of the rules it encodes are easy to get
+wrong by hand and silently damaging when missed, which is exactly the
+kind of thing that belongs in committed code rather than in prose:
+
+- **Heading demotion.** Lever bodies carry their own `#`-level headings
+  (`# Lever`, `# Evidence`, `# Proposed edit`). Pasted unmodified under a
+  `# Part N` heading they collide at the same level and the task loses
+  its structure — every word present, reading as one flat document. The
+  tool demotes them, leaving fenced examples alone.
+- **Fingerprint preservation.** The tool **fails loudly** if any emitted
+  part carries no `**Fingerprint**:` line, rather than emitting a body
+  that looks right. A hand fold that summarizes instead of carrying the
+  body drops them, and the loss is invisible until a later pass refiles
+  a lever that was already folded.
+
+Read the composed file before filing — the tool guarantees structure and
+fingerprints, not that the umbrella title you write actually describes
+the pool.
+
 Its body is **one `# Part N — <title>` section per lever**, and
 carries:
 

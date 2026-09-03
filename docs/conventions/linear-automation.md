@@ -762,10 +762,28 @@ python3 .claude/tools/board_batch.py fields --updates <file>
 ```
 
 Use it for **every non-body issue field** — priority, state, parent,
-milestone, labels, assignee. (Relations are not issue fields; they are a
-separate mutation pair, so adding or removing a blocking edge is the
-`edges` subcommand below, not `fields`. Passing a relation key to
-`fields` is rejected.) One planning
+milestone, labels, assignee, and **title**. (Relations are not issue
+fields; they are a separate mutation pair, so adding or removing a
+blocking edge is the `edges` subcommand below, not `fields`. Passing a
+relation key to `fields` is rejected.)
+
+**`title` is on that list and did not used to be**, which mattered more
+than it sounds: with `linear_issue.py` offering only `append` and
+`find`, retitling had exactly one route — an MCP `save_issue` that
+echoes the **entire stored body** back in order to write a short string.
+That is structurally worst on precisely the issues most likely to need
+it. Retitling the whole-pool fold task returned **116,512 characters**
+and overflowed the tool-result cap, because a fold body is proportional
+to the whole parked pool and the title is the field that needs
+correcting once the body has outgrown the scope the original title
+described — then cost a second call to verify, since a spilled echo is
+not worth reading to confirm one string. Two notes on its shape: the
+id-shaped refusal does **not** apply (a title is prose, so the
+whitespace heuristic that protects `milestone` and `assignee` would
+reject every real value), and unlike a milestone a title **cannot be
+cleared**, so `null` or blank is refused rather than sent.
+
+One planning
 session made 21 writes of which **17 touched no body at all** (a
 priority change, three parent/state/priority moves, eleven milestone
 stamps, one relation removal) and paid roughly **40k** echoing bodies to

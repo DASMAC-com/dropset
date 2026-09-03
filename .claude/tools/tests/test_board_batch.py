@@ -125,6 +125,35 @@ class UpdateInputTests(unittest.TestCase):
         with self.assertRaises(BoardBatchError):
             build_update_input({"labels": "not-a-list"})
 
+    def test_title_maps_to_title_and_keeps_its_whitespace(self):
+        """The whole point of adding `title` here: retitling otherwise had to
+        go through an MCP save_issue, which echoes the entire stored body back
+        to write a short string — 116,512 characters on the fold task, enough
+        to overflow the tool-result cap.
+
+        The id-shaped refusal must NOT fire on it. A title is human-readable
+        prose, so the whitespace heuristic that protects `milestone` and
+        `assignee` would reject every real value."""
+        self.assertEqual(
+            build_update_input({"title": "Claude: Meta batch — guard fixes"}),
+            {"title": "Claude: Meta batch — guard fixes"},
+        )
+
+    def test_title_cannot_be_cleared(self):
+        """Unlike a milestone, whose `null` is the documented un-park, a title
+        is not clearable — so null/blank is a caller mistake, caught here
+        rather than sent as an opaque Argument Validation Error."""
+        for bad in (None, "", "   "):
+            with self.subTest(value=bad), self.assertRaises(BoardBatchError) as ctx:
+                build_update_input({"title": bad})
+            self.assertIn("non-empty string", str(ctx.exception))
+
+    def test_title_composes_with_other_fields(self):
+        self.assertEqual(
+            build_update_input({"title": "New name", "state": "uuid-state"}),
+            {"title": "New name", "stateId": "uuid-state"},
+        )
+
     def test_a_relation_key_is_rejected(self):
         """Relations are a separate mutation pair and live in `edges`; three
         docs once promised `fields` handled them."""

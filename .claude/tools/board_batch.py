@@ -139,7 +139,20 @@ SCALAR_FIELDS = {
     "milestone": "projectMilestoneId",
     "assignee": "assigneeId",
     "labels": "labelIds",
+    # `title` is here because retitling had exactly one route otherwise — an MCP
+    # `save_issue`, which echoes the ENTIRE stored body back to write a short
+    # string. That is structurally worst on the issues most likely to need it:
+    # retitling the whole-pool fold task returned 116,512 characters and
+    # overflowed the tool-result cap, because a fold body is proportional to the
+    # parked pool and the title is exactly the field that needs correcting once
+    # the body has grown past the scope the original title described.
+    "title": "title",
 }
+
+# Free-text fields: a human-readable value is CORRECT here, so the id-shaped
+# refusal below must not apply to them. Kept as a named set rather than an
+# inline check so the asymmetry with `ID_ONLY_FIELDS` is visible.
+TEXT_FIELDS = ("title",)
 
 
 class BoardBatchError(Exception):
@@ -409,6 +422,19 @@ def build_update_input(fields: dict) -> dict:
                 raise BoardBatchError("labels must be a list of label ids")
             for item in value:
                 _refuse_obvious_name("labels", item)
+            update[arg] = value
+        elif name in TEXT_FIELDS:
+            # No `_refuse_obvious_name` here — a title is human-readable prose
+            # by definition, so the whitespace heuristic would reject every
+            # real value. Instead reject what Linear cannot accept: a title is
+            # not clearable, so `null` or blank is a caller mistake rather than
+            # a documented way to unset it.
+            if not isinstance(value, str) or not value.strip():
+                raise BoardBatchError(
+                    f"{name} must be a non-empty string; unlike a milestone it "
+                    "cannot be cleared, so null/blank is refused rather than "
+                    "sent"
+                )
             update[arg] = value
         elif name in ID_ONLY_FIELDS:
             _refuse_obvious_name(name, value)
