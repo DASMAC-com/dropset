@@ -369,6 +369,36 @@ already being asked to start the review.
    suite results from `<sha>` still stand" — and move on. Any
    **non-empty** overlap re-runs everything as before.
 
+   **An empty overlap does NOT license the skip when the base
+   delta touched the lint configuration.** The premise above is
+   that the two commands examine files the base delta did not
+   touch — and that premise fails for exactly one kind of
+   delta: one that changes *which checks run*. `make lint`
+   executes whatever `cfg/pre-commit-lint.yml` declares, so a
+   base commit that adds a hook changes the check set applied
+   to **this branch's** files, and the prior green becomes
+   evidence about a different hook set however empty the file
+   overlap is.
+
+   So if `base_files` includes `cfg/pre-commit-lint.yml` (or
+   `.pre-commit-config.yaml`), re-run `make lint` regardless of
+   overlap. The trigger is free — `rebase_overlap.py` already
+   prints `base_files`.
+
+   Hit live: a mid-review rebase pulled in a 42-file delta that
+   added a **rustdoc** hook to the lint config, while the
+   branch touched only `decks/**` — so the overlap was empty
+   and the rule as written said assert. That run re-ran lint on
+   judgement and passed; had it not, the PR would have gone to
+   CI red with a local green in hand. This is a **correctness**
+   carve-out to a rule whose whole purpose is to skip work
+   (re-running lint costs wall-clock, not tokens), which is
+   exactly the kind of rule whose exceptions have to be written
+   down rather than re-derived under time pressure — and it has
+   the same shape as the `programs/**` and lockfile carve-outs
+   below: the base delta invalidated something the file overlap
+   cannot see.
+
    This is deliberately **not** a loosening of the freshness
    gate itself, which caught a real defect in that same
    session. The gate still runs every round; what changes is
@@ -3057,9 +3087,20 @@ already being asked to start the review.
    against that:
 
    ```sh
-   python3 .claude/tools/review_diff.py --base origin/<base> \
+   python3 .claude/tools/review_diff.py --base <base> \
      --out <scratchpad>/review-diff.txt --gate-only
    ```
+
+   **`--base <base>`, bare.** The tool prepends `origin/`
+   itself, so `--base origin/main` becomes
+   `origin/origin/main` and it exits 2 with
+   `fatal: ambiguous argument 'HEAD..origin/origin/main'`.
+   This step used to say `origin/<base>` and was the only
+   place that did — steps 5 and 11 and every freshness
+   re-check pass the bare form — so it disagreed with both the
+   tool and the rest of this skill, on a path every
+   non-trivial review takes, right after the fan-out when a
+   session is most likely to copy the line as written.
 
    If the diff changed, re-run the affected lenses before
    spending the cross-check on a stale picture — and re-run
@@ -3253,6 +3294,29 @@ already being asked to start the review.
    run these `cargo` verifications unwrapped; a bare
    `cargo check` cascade has landed ~15k of `Compiling …` in
    context for a green result.
+
+   **A DELIBERATE negative test goes through the wrapper too.**
+   Proving a newly-added guard actually fires — perturb the
+   input, run the suite, confirm it fails, revert — is good
+   practice and worth doing. But it is the one case where the
+   wrapper rule reads as not applying, *because the failure is
+   the point*, so the bare form gets chosen "to see the
+   failure". It still applies: what you want is the assertion
+   message, not every test's copy of it.
+
+   A suite-level guard failure scales with **the number of
+   tests the guard covers**, not with its information content.
+   Measured: a negative test confirming a new parity-oracle
+   guard fires cost **≈2.6k** unwrapped, because the runner
+   printed the *same panic message eleven times* — once per
+   guarded test — plus eleven `test result: FAILED` blocks, of
+   which one instance carried the whole finding. The same
+   session's other two guard verifications *were* wrapped and
+   cost ≈829 across eight calls combined, because the wrapper's
+   failing tail is exactly the one `error[E0080]` line wanted.
+
+   The lever here is redirection, not fewer runs — those runs
+   were deliberate and worth making.
 
 1. **Re-lint after fixes.** If any fix commits
    were made in the previous step, re-run the lint **scoped

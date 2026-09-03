@@ -155,10 +155,20 @@ SEARCH_EXCLUDE_DIRS = (
 # most-specific-first: a path is classified by the first list it matches, so
 # `docs/x.md` is docs and `sdk/rs/tests/y.rs` is tests even though both would
 # also match a broader rule below them.
+# `decks/` is narrowed to its PROSE rather than listed as a whole tree. The
+# whole tree was on the wrong side of this module's own stated rationale — that
+# everything unmatched is source, because a misfiled source file is a *missed
+# review* while a misfiled doc is only a wasted read. Listing `decks/**`
+# traded the safe failure for the unsafe one across a package: one diff of six
+# `.tsx` / `.ts` / `.css` files carrying state, effects, URL parsing and a
+# third-party selector produced `source: 0 lines` / `docs: 224 lines`, so the
+# correctness, security and style lenses were each handed an **empty file** and
+# the run had to notice and pass them the full diff instead. A slide-heavy deck
+# component now lands in source, which costs a lens a little prose to read.
 DOCS_PATTERNS = (
     "**/*.md",
     "docs/**",
-    "decks/**",
+    "decks/**/*.md",
     "**/*.mdx",
 )
 

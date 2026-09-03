@@ -212,6 +212,17 @@ class SliceForTests(unittest.TestCase):
         a documented limitation, asserted so it can't drift silently."""
         self.assertEqual(rd.slice_for("programs/dropset/src/swap.rs"), "source")
 
+    def test_deck_code_is_source_and_only_deck_prose_is_docs(self):
+        """`decks/**` as a whole tree put real application logic on the unsafe
+        side of this module's own rationale: one diff of six `.tsx`/`.ts`/`.css`
+        files produced `source: 0` / `docs: 224`, so the correctness, security
+        and style lenses were each handed an empty file."""
+        self.assertEqual(rd.slice_for("decks/app/DemoDeck.tsx"), "source")
+        self.assertEqual(rd.slice_for("decks/app/page.ts"), "source")
+        self.assertEqual(rd.slice_for("decks/styles/deck.css"), "source")
+        # Deck prose still routes to docs.
+        self.assertEqual(rd.slice_for("decks/demo-v1-spec.md"), "docs")
+
 
 class CrateRollupTests(unittest.TestCase):
     """The tier decision's crate inputs. The multi-crate trigger weighed the
