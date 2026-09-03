@@ -1,3 +1,5 @@
+<!-- cspell:word boto -->
+
 # AWS infrastructure (CloudFormation)
 
 Account foundation for the market-data warehouse and any later AWS
@@ -15,6 +17,7 @@ infra/aws/
   network.yml         VPC, public/private subnets (2 AZs), NAT, routing
   iam-baseline.yml    CFN deployment role, agent role, secrets policy
   cloudtrail.yml      multi-region audit trail + private log bucket
+  bedrock-workers.yml Bedrock worker IAM user, invoke policy, spend alert
   params/             per-stack example parameter files (<stack>.<env>.json)
 ```
 
@@ -70,6 +73,18 @@ create IAM roles, and it cannot pass a role to CloudFormation
      --parameter-overrides file://infra/aws/params/cloudtrail.dev.json
    ```
 
+1. **Bedrock workers — admin, once.** Creates an IAM user, so it needs
+   the same named-IAM capability as the baseline. See "Bedrock worker
+   identity" below for the two out-of-band steps that follow it.
+
+   ```sh
+   aws cloudformation deploy \
+     --template-file infra/aws/bedrock-workers.yml \
+     --stack-name dropset-dev-bedrock-workers \
+     --parameter-overrides file://infra/aws/params/bedrock-workers.dev.json \
+     --capabilities CAPABILITY_NAMED_IAM
+   ```
+
 To let a *restricted* identity provision stacks that do create IAM (the
 warehouse stack's task roles), pass the deployment role so
 CloudFormation — not the caller — holds the permissions, with
@@ -109,6 +124,133 @@ aws s3 rb s3://dropset-dev-cloudtrail-ACCOUNT_ID --force
 Because the one deterministic name is reused each cycle, this never
 accumulates orphan buckets; `Retain` only makes the delete explicit
 rather than automatic.
+
+## Bedrock worker identity
+
+`bedrock-workers.yml` stands up the identity that unattended worker
+sessions authenticate as: an IAM user, a managed policy scoped to
+invoking two model families, and an optional monthly spend alert.
+Operator-attended sessions are unaffected — they keep using the
+subscription and never touch this stack.
+
+Two steps cannot be expressed in CloudFormation and follow the deploy
+by hand. Both are one-time.
+
+### 1. Mint the API key (out of band, on purpose)
+
+A long-term Bedrock API key is an IAM **service-specific credential**
+for `bedrock.amazonaws.com`, and there is no CloudFormation resource
+type for one — `AWS::IAM::ServiceLinkedRole` is the only related type
+CFN exposes. That absence is convenient rather than limiting: a custom
+resource that minted the key would have to surface the secret through
+stack outputs or events, which is strictly worse custody than never
+letting CloudFormation see it at all.
+
+So the template creates the *user*, and the key is minted straight into
+1Password. The pipe is deliberate — it keeps the secret out of the
+terminal scrollback and the shell history:
+
+```sh
+aws iam create-service-specific-credential \
+  --user-name dropset-dev-bedrock-worker \
+  --service-name bedrock.amazonaws.com \
+  --credential-age-days 90 \
+  --query 'ServiceSpecificCredential.ServiceCredentialSecret' \
+  --output text | op item create --category='API Credential' \
+  --title='bedrock' --vault="$DROPSET_OP_VAULT" 'api-key[password]=-'
+```
+
+`ServiceCredentialSecret` is returned **only** at creation — there is no
+way to read it back later, so a lost key is re-minted rather than
+recovered. `--credential-age-days` sets an expiry, which is what puts
+the key on the existing rotation rhythm; re-run the command to rotate,
+then delete the superseded credential by its
+`ServiceSpecificCredentialId`.
+
+The resulting reference is `op://<vault>/bedrock/api-key`, following the
+canonical `<provider>/<secret>` shape the local enclave already uses
+(see `infra/localnet/secrets.local.env.example`).
+
+### 2. Opt the account into `aws_review` retention
+
+**Done on 2026-09-03**; recorded here because it is account-wide and
+invisible in the console. Claude Fable 5 and 5.1 require human review as
+a condition of access, so an account left at the default `inherit` mode
+sees them as `status: "unavailable"` and every request is blocked.
+
+Review is carried out **by AWS, inside the AWS boundary**. Content is
+not shared with the model provider — `provider_data_share` is a legacy
+mode that grants a permission AWS does not exercise today, and new
+configurations use `aws_review`.
+
+There is no console UI for this, and no `aws bedrock` CLI subcommand
+either — it is an API-only setting. It was set here through the Bedrock
+control-plane operations `GetAccountDataRetention` and
+`PutAccountDataRetention` (`GET` and `PUT /data-retention`, body
+`{"mode": "aws_review"}`) signed with SigV4, which is what let it be
+done before any API key existed. Any SigV4 client works; with `boto3`:
+
+```python
+boto3.client('bedrock', region_name='us-east-1').put_account_data_retention(
+    mode='aws_review')
+```
+
+The user guide documents an equivalent bearer-token form, useful once a
+key exists:
+
+```sh
+curl https://bedrock-mantle.us-east-1.api.aws/v1/data_retention \
+  -H "x-api-key: $BEDROCK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "mode": "aws_review" }'
+```
+
+Models whose `allowed_modes` include `none` are unaffected by the
+account setting — a more permissive account mode does not cause their
+content to be retained.
+
+### Why the `us.` inference profile, not `global.`
+
+Both profiles exist and are `ACTIVE` for Fable 5.1. They differ in the
+foundation-model ARNs they route to, which is what settles it:
+
+| Profile                             | Routes to                             |
+| ----------------------------------- | ------------------------------------- |
+| `us.anthropic.claude-fable-5-1`     | `us-east-1`, `us-east-2`, `us-west-2` |
+| `global.anthropic.claude-fable-5-1` | a region-less ARN, i.e. anywhere      |
+
+The global profile's region-less ARN cannot be pinned in an IAM policy,
+so residency could only be asserted, never enforced. The `us.` set is
+three named regions, which the invoke policy pins with a `us-*` resource
+wildcard. Retention follows the destination region, and this account has
+just opted into having that content retained for human review — so
+keeping it inside US regions is the conservative pairing. Revisit only
+if throughput headroom ever justifies it.
+
+### Launching a worker session by hand
+
+Until the launcher learns this (a later phase), a worker session is
+started with these exports:
+
+```sh
+export CLAUDE_CODE_USE_BEDROCK=1
+export AWS_REGION=us-west-2
+export ANTHROPIC_MODEL='us.anthropic.claude-fable-5-1'
+export ENABLE_PROMPT_CACHING_1H=1
+export AWS_BEARER_TOKEN_BEDROCK="$(op read \
+  --account "$DS_OP_ACCOUNT" "op://$DROPSET_OP_VAULT/bedrock/api-key")"
+```
+
+Setting `ANTHROPIC_MODEL` does more than pick the primary model: on
+Bedrock it also routes background tasks (session titles and the like) to
+that same model. That is what keeps the two-model policy sufficient —
+left unset, background tasks default to a Sonnet model this policy does
+not grant, and they would fail. Add any further model to the template's
+parameters before selecting it.
+
+`ENABLE_PROMPT_CACHING_1H` requests the 1-hour cache TTL in place of the
+5-minute default, billed at a higher write rate. If cache token counts
+stay at zero, the cause is regional cache support rather than this flag.
 
 ## Secrets
 
