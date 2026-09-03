@@ -1002,20 +1002,52 @@ branch arrives as `worktree-eng-###`):
     (`model: fable` on the `plan` skill) is belt-and-braces for a
     mid-session `/plan`, not a substitute; whether it switches the
     session going forward is unspecified.
+
   - **The directory.** A planning session touches the board, not a
     branch, so it must run in the base repo. `paps` `cd`s there
     itself rather than trusting the shell's cwd.
+
   - **The bootstrap.** Passing `/plan` as the initial prompt means the
     skill's bootstrap read happens without being asked for.
-  - **The permission mode.** `--permission-mode acceptEdits`, on both
-    the create and the resume path. This is a **permission posture**,
-    not a convenience — the session auto-accepts edits — which is why
-    it belongs in an exhaustive list rather than being left implicit.
-    The shared `settings.local.json` sets no default permission mode,
-    so without the flag a session starts in the default mode and
-    prompts on every edit. `haps` and the worktree helpers pass it for
-    the same reason, so this is the family's posture rather than
-    anything specific to planning sessions.
+
+  - **The permission mode.** `--permission-mode auto`, on both the
+    create and the resume path. This is a **permission posture**, not a
+    convenience, which is why it belongs in an exhaustive list rather
+    than being left implicit. Every session verb passes it, so it is
+    the family's posture rather than anything specific to planning
+    sessions.
+
+    The flag is the only lever available: the shared
+    `settings.local.json` sets no default, and
+    `permissions.defaultMode` is honored **only** in user-level or
+    managed settings — a project file setting it is *silently
+    ignored*.
+
+    **Why `auto` and not `acceptEdits`.** The verbs used to pass
+    `acceptEdits`, which was worse in both directions at once. `auto`
+    is the CLI's own default on this plan tier, so passing
+    `acceptEdits` was actively opting out of it, and nobody decided
+    to — the flag predates auto mode existing. And `auto` is the more
+    supervised of the two: a background classifier reviews each
+    action, approving safe operations and **blocking** dangerous ones
+    (force pushes, mass deletion, secret exfiltration), where
+    `acceptEdits` auto-accepts every edit with no review. It also
+    prompts less, so there was nothing to trade off.
+
+    **Do not expect a fully unattended run.** The classifier still
+    routes to a prompt: explicit `ask` rules apply, `deny` rules
+    apply, and the git and Claude config trees are protected paths
+    that always go through it. The four `PreToolUse` guard hooks fire
+    regardless of permission mode — the policy layers compose rather
+    than substitute, so `auto` is not a way around a guard.
+
+    One interaction worth knowing when reading `firm-perms` output:
+    entering auto mode **drops overly broad allow-rules** (a bare
+    `Bash(*)`, a wildcard interpreter) while keeping narrow ones like
+    `Bash(python3 .claude/tools/*)`, restoring them on exit. A firmed
+    rule that is too broad therefore stops taking effect in the mode
+    every session now runs in, which is one more reason the fast firm
+    refuses to generalize a bare verb.
 
   This **supersedes** `naps planning-<day>` / `rnaps planning-<day>`
   and the older `planning-<day>` session naming. `naps` / `rnaps`

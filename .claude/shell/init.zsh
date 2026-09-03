@@ -311,9 +311,9 @@ _ds_session() {
   transcript="$HOME/.claude/projects/$slug/$sid.jsonl"
 
   if [[ -f "$transcript" ]]; then
-    claude --resume "$sid" --permission-mode acceptEdits "${model_flag[@]}"
+    claude --resume "$sid" --permission-mode auto "${model_flag[@]}"
   else
-    claude --session-id "$sid" -n "$name" --permission-mode acceptEdits \
+    claude --session-id "$sid" -n "$name" --permission-mode auto \
       "${model_flag[@]}" "$prompt"
   fi
 }
@@ -346,9 +346,25 @@ _ds_topic_sid() {
 # committed copy silently did not, so a session started with `aps` differed
 # from one started by hand:
 #
-#   * `--permission-mode acceptEdits`. The shared `settings.local.json` sets no
-#     default permission mode, so without this an implementation session starts
-#     in the default mode and prompts on every edit. This is the gap with teeth.
+#   * `--permission-mode auto`. The shared `settings.local.json` sets no
+#     default permission mode, and `permissions.defaultMode` is honored ONLY in
+#     user-level or managed settings — a project file setting it is silently
+#     ignored — so the launch flag is the only lever the repo actually has.
+#
+#     This was `acceptEdits`, which was worse in both directions at once.
+#     `auto` is the CLI's own default on this plan tier, so passing
+#     `acceptEdits` was actively opting OUT of it, and nobody decided to:
+#     the flag predates auto mode existing. And `auto` is the more supervised
+#     of the two — a background classifier reviews each action, approving safe
+#     ones and BLOCKING dangerous ones (force pushes, mass deletion, secret
+#     exfiltration) — where `acceptEdits` auto-accepts every edit with no
+#     review at all. It also prompts less. The old comment here claimed the
+#     flag was needed or the session would "prompt on every edit", which
+#     inverted the truth once auto became the default.
+#
+#     Explicit ask and deny rules still apply, and the four PreToolUse guard
+#     hooks fire regardless of permission mode — the policy layers compose
+#     rather than substitute.
 #   * `-n "$tag"` — a display name, so the session is identifiable in the
 #     prompt box, the `/resume` picker, and the terminal title. `raps` resolves
 #     by directory, so this is for the human, not the tooling.
@@ -362,7 +378,7 @@ aps() {
   # dropping it was a parity gap rather than a decision — it is the entry point
   # for work that is not tied to a worktree yet.
   if [[ -z "$1" ]]; then
-    claude --permission-mode acceptEdits
+    claude --permission-mode auto
     return
   fi
 
@@ -374,7 +390,7 @@ aps() {
   local tag="$1"
   [[ "$tag" == <-> ]] && tag="eng-$tag"
 
-  claude -w "$tag" -n "$tag" --permission-mode acceptEdits /init-pr
+  claude -w "$tag" -n "$tag" --permission-mode auto /init-pr
 }
 
 # Resume a worktree session by number: `raps 814` resolves to the `eng-814`
@@ -458,10 +474,10 @@ raps() {
 # not a decision, and a quiet one: the session still starts, just somewhere
 # unintended.
 #
-# `--permission-mode acceptEdits` for the same reason as `aps`: the shared
-# settings file sets no default, so omitting it starts every session in the
-# default mode. It is deliberate here too rather than inherited — a named
-# session is a working session, not a read-only one.
+# `--permission-mode auto` for the same reason as `aps` (see that comment for
+# why auto rather than acceptEdits): the shared settings file sets no default
+# and a project file cannot set one. It is deliberate here too rather than
+# inherited — a named session is a working session, not a read-only one.
 naps() {
   if [[ -z "$1" ]]; then
     print -u2 'Usage: naps <name>'
@@ -469,7 +485,7 @@ naps() {
   fi
   _ds_base || return 1
   _ds_secrets
-  claude -n "$1" --permission-mode acceptEdits
+  claude -n "$1" --permission-mode auto
 }
 
 # Resume a named session by the same name — the counterpart to `naps`, as
