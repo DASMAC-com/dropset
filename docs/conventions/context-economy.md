@@ -812,6 +812,37 @@ argument was *not* the reason — see that step for why.)
   retries and peer-dependency trees: route it through the quiet runner
   (`python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`).
 
+- **Verifying a UI change: assert programmatically, screenshot
+  CLIPPED.** A screenshot read back is a top-tier context sink and
+  nothing here said so. Measured: five full-viewport PNGs cost **≈105k
+  of one session's ≈115k total Read cost — 91%** — and took the top five
+  places in its largest-results table (≈37.0k, ≈20.8k, ≈17.7k, ≈15.2k,
+  ≈14.4k), while every other Read in that session combined came to under
+  11k. A 1280×800 capture read back at ≈37k is worth about twenty-five
+  whole-file source reads.
+
+  The same session demonstrates the fix, which is what makes this
+  concrete rather than speculative: two **clipped** screenshots, taken
+  with puppeteer's `clip` against an element's measured bounding box,
+  cost **≈1.4k each** — ~15× cheaper — and answered "does this control
+  look right" completely. So:
+
+  - **Assert first.** A bounding-box query plus an
+    intersection/geometry check is a few hundred bytes and is *stronger*
+    evidence than an image, because it is exact. In that session a
+    programmatic rectangle-intersection test had already proven the
+    overlay did not collide with anything, which is what made the
+    full-frame shots confirmatory.
+  - **Clip by default.** `clip` takes the rect you just measured, so it
+    costs nothing extra to author.
+  - **Reserve a full viewport** for when the composition itself is the
+    question, take **at most one**, and consider a smaller viewport or a
+    reduced `deviceScaleFactor`.
+
+  The lever is *not* "don't screenshot" — those full-frame images were
+  shown to the operator and drove real design decisions. It is that the
+  default should be clipped and the count deliberate.
+
 - **After a formatter rewrites a file you are still editing, take ONE
   bounded read covering all the remaining edits' regions.** A formatter
   invalidates every line the session holds for that file, so the next

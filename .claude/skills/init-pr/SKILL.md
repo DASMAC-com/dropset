@@ -529,6 +529,26 @@ not only to the sub-agents you brief:
   `tail` calls, all empty. Wait for the completion
   notification.
 
+- **Verifying a UI change in a browser: assert
+  programmatically, and screenshot CLIPPED.** This belongs here
+  because browser verification happens in the implement phase,
+  where no skill is driving. A screenshot read back is a
+  top-tier context sink: five full-viewport PNGs were **91% of
+  one session's entire Read cost** (≈105k of ≈115k) and its top
+  five largest results, while two **clipped** captures in the
+  same session cost ≈1.4k each and answered the question
+  completely.
+
+  So: measure the element's bounding box and assert the
+  geometry — an intersection check is a few hundred bytes and
+  is *stronger* evidence than an image because it is exact —
+  then pass that rect to puppeteer's `clip`. Reserve a
+  full-viewport capture for when the composition itself is the
+  question, and take at most one. Not "don't screenshot": the
+  full frames in that session were shown to the operator and
+  drove real decisions. See
+  `docs/conventions/context-economy.md` → "The levers".
+
 - **Before `replace_all`, check whether the replacement
   CONTAINS the search string.** If it does, the call is not
   idempotent: sites already carrying the new name get rewritten
