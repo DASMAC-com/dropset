@@ -8,6 +8,6 @@ SELECT
 FROM cex_prices
 WHERE source = ANY (ARRAY[${source:sqlstring}]::text[])
   AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])
-  AND granularity_secs = $granularity
+  AND granularity_secs = ${granularity:sqlstring}::bigint
 GROUP BY 1
 ORDER BY 1

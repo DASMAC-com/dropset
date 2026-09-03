@@ -59,15 +59,18 @@ worse than showing nothing.
 
 ## The tree
 
-| Path                        | What it is                                |
-| --------------------------- | ----------------------------------------- |
-| `provisioning/datasources/` | The shared Postgres, as a read-only login |
-| `provisioning/dashboards/`  | The loader that points at `dashboards/`   |
-| `provisioning/alerting/`    | Alert rules, as YAML                      |
-| `dashboards/`               | The dashboards themselves, as JSON        |
+| Path                        | What it is                                  |
+| --------------------------- | ------------------------------------------- |
+| `provisioning/datasources/` | The shared Postgres, as a read-only login   |
+| `provisioning/dashboards/`  | The loader that points at `dashboards/`     |
+| `provisioning/alerting/`    | Alert rules, as YAML                        |
+| `dashboards/`               | The dashboards themselves, as JSON          |
+| `sql/`                      | Generated mirror of every query — see below |
 
-All four are bind-mounted **read-only** into the container, so the repo
-is the source of truth and the container cannot edit its way out of it.
+Those **first four** are bind-mounted **read-only** into the container,
+so the repo is the source of truth and the container cannot edit its way
+out of it. `sql/` is generated and is not mounted at all; nothing reads
+it at runtime.
 
 Each of the three `provisioning/` subdirectories is mounted by name,
 never the `provisioning/` parent — and that is load-bearing rather than
@@ -105,6 +108,64 @@ access is `Editor` for exactly this reason, so:
 1. Commit it. If you skip this step the change dies the next time the
    container is recreated (`make grafana-down && make grafana`), which
    is the intended failure direction.
+
+### The SQL mirror, and why a dashboard edit is a two-file commit
+
+Every query in this tree — panel, annotation, template variable, **and
+alert rule** — is mirrored into its own `.sql` file under `sql/` by
+`.claude/tools/dashboard_sql.py`. The JSON and the YAML stay the source
+of truth; nothing writes back to them.
+
+Regenerate with `make dashboard-sql` and **commit the result in the same
+commit as the change**. A pre-commit hook refuses a stale mirror, so this
+is not optional — and it fires on deletes too, which is why it is an
+`always_run` hook rather than a `files`-scoped one.
+
+It earns the extra file three ways: a one-character edit inside a
+1,500-character JSON string becomes a one-line diff; `make lint` runs
+sqlfluff over every query as Postgres, the only mechanical check this SQL
+has; and three silent-in-Grafana failure modes are refused outright — a
+nested paren in a macro argument, which Grafana truncates; a
+`:regex`-formatted variable inside a quoted literal, which does not
+escape quotes; and **any unformatted variable inside a quoted literal**,
+which carries the same exposure for the same reason.
+
+That third guard is why a template variable is written
+`${name:sqlstring}` with **no surrounding quotes** rather than
+`'$name'` — the formatter quotes and escapes the value itself. For a
+multi-select use `= ANY (ARRAY[${name:sqlstring}]::text[])`, which also
+stays valid SQL when nothing is selected, where `IN ()` is a syntax
+error. A variable reaching an integer column takes
+`${name:sqlstring}::bigint`: the cast keeps the type and turns an
+injected value into a cast error rather than a predicate.
+
+**The alert rules are covered, and the reader is deliberately not
+PyYAML.** The `dashboard-sql-lint` hook runs in an environment holding
+only sqlfluff, so importing a YAML library on that shared path would
+break that hook while leaving the mirror check green — a failure in the
+gate least related to the change. The tool instead implements YAML's
+block-scalar rule directly to lift `rawSql`, which is a structural read
+rather than a regex sweep. What keeps it honest is a test, not a
+promise: the suite runs under the ambient interpreter, where PyYAML *is*
+available, and asserts the two agree byte-for-byte on the committed
+files. A rule using YAML the subset reader cannot handle fails that test
+rather than silently mirroring the wrong text. A folded (`>`) `rawSql`
+is refused outright, since folding rewrites newlines.
+
+Mirror filenames are keyed on the **rule `uid`** for alerts, which is a
+stable handle: a rule can be retitled or reordered and its mirror file
+stays put. Dashboard panels are **not** the same — their filename
+carries the panel `id` *and* a slug of the title, so **retitling a panel
+renames its mirror file**. That is why `extract` prunes orphans: a
+renamed panel would otherwise leave its old mirror behind to be linted
+forever, reading as a query that still exists. A duplicate path is
+refused rather than assumed away.
+
+**Do not "fix" what sqlfluff would flag in the quoted aliases.** Grafana
+binds panels by name — `AS "time"`, and the `"open"`/`"high"`/`"low"`/
+`"close"` of the candlestick panels — so renaming one silently empties
+the panel. `cfg/sqlfluff-dashboards.cfg` narrows the rule set for
+exactly this reason; widening it needs browser verification afterwards.
 
 ### The export trap: variable queries must stay plain strings
 
@@ -297,13 +358,18 @@ a panel with no build error anywhere.
 
 ## Alert rules
 
-`provisioning/alerting/maker.yml` carries four rules — dead heartbeat,
-stale feed, degraded-or-halted, and ticks-failing — committed for the
-same reason the dashboards are: the localnet stack and a hosted stack
-then alert on identical conditions.
+`provisioning/alerting/maker.yml` carries six rules — dead heartbeat,
+stale feed, push-transport down, degraded-or-halted, ticks-failing, and
+paused-and-not-quoting — committed for the same reason the dashboards
+are: the localnet stack and a hosted stack then alert on identical
+conditions.
 
-The fourth exists because the first three leave a gap that reads as
-health: a market whose vault read times out every tick still writes a row
+The rule count is checkable rather than remembered: `sql/alerting/` holds
+one mirrored query per rule, named for its uid, and the mirror gate
+refuses to go stale.
+
+The ticks-failing rule exists because the others leave a gap that reads
+as health: a market whose vault read times out every tick still writes a row
 every tick, so the heartbeat is alive; its feeds are fine, so the stale
 rule is quiet; and it never reaches the kill-switch policy, so `degraded`
 is false and `action` is never `Halt`. It quotes nothing and pages

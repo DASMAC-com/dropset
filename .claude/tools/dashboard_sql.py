@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# cspell:word unlinted
+# cspell:word dedented
 """Mirror the Grafana dashboards' SQL into files, so it can be diffed and linted.
 
 The dashboard JSON stays the source of truth. Nothing here writes to it; this
@@ -24,17 +24,38 @@ WHAT THE MIRROR IS FOR.
 2. **Lint.** `lint` substitutes the Grafana macros and template variables and
    runs sqlfluff over the result as Postgres — the only mechanical check this
    SQL has ever had.
-3. **Guards.** Two failure modes are structural rather than stylistic, and both
-   are silent in Grafana, so they are refused outright. See `check_macro_args`
-   and `check_regex_in_literal`.
+3. **Guards.** Three failure modes are structural rather than stylistic, and all
+   are silent in Grafana, so they are refused outright. See `check_macro_args`,
+   `check_regex_in_literal`, and `check_bare_var_in_literal` — the last added
+   after a review observed that closing 24 quoting sites by hand left nothing
+   stopping the 25th.
 
-DELIBERATE SCOPE LIMIT: the alert rules under `provisioning/alerting/*.yml` also
-carry SQL and are NOT covered here. Parsing them needs a YAML reader, this tool
-is stdlib-only by house convention, and PyYAML is not available in the ambient
-interpreter — `grafana_check.py` reads that file with regexes for exactly this
-reason. Their queries carry no template variables, so they lose less by being
-unlinted, but the gap is real: closing it wants either a vendored parser or the
-alert SQL moved into a form this tool can read.
+THE ALERT RULES ARE COVERED TOO, and how they are read is deliberate.
+
+The alert rules under `provisioning/alerting/*.yml` carry SQL in `rawSql` block
+scalars, and they are mirrored and linted alongside the dashboards. This used to
+be a documented exclusion on the grounds that parsing YAML needs a reader this
+stdlib-only tool cannot have — but a stated exclusion is a hole every future
+alert rule widens silently, which is the opposite of what a mirror gate is for.
+
+PyYAML is NOT imported, and the reason is specific rather than dogmatic: the
+`dashboard-sql-lint` hook runs under `language: python` with only sqlfluff in its
+environment, so an `import yaml` on this shared code path would break that hook
+while leaving `check` (a `language: system` hook, ambient interpreter) green. The
+failure would appear in the gate that has nothing to do with the change.
+
+So `rawSql` is lifted STRUCTURALLY rather than by a regex sweep of the file —
+`block_scalar` implements YAML's block-scalar indentation rule, which is what
+decides where such a value ends. A regex cannot do this correctly, and the macro
+regex already taught this codebase that lesson once (see `MACRO_CALL`).
+
+What keeps that reader honest is a test, not this paragraph: the suite runs under
+the ambient interpreter, where PyYAML IS available, and asserts the stdlib reader
+agrees with PyYAML byte-for-byte on the committed alerting files. The equivalence
+is therefore mechanically checked on every run, and the day a rule uses a YAML
+feature the subset reader does not cover, that test fails rather than the mirror
+going quietly wrong. `parse_alerting` refuses a folded (`>`) scalar outright for
+the same reason — folding rewrites newlines, which would corrupt SQL silently.
 """
 
 from __future__ import annotations
@@ -50,6 +71,15 @@ import tempfile
 # The dashboards, and where their extracted SQL lands.
 DASHBOARD_DIR = pathlib.Path("market-data/grafana/dashboards")
 MIRROR_DIR = pathlib.Path("market-data/grafana/sql")
+
+# The provisioned alert rules, whose queries mirror into `alerting/` under the
+# same tree. Keyed on the rule `uid` rather than on the filename or a positional
+# index: a uid is unique across the org by definition (that is what a uid IS),
+# it is the handle Grafana itself uses, and it survives a rule being reordered
+# or moved between group files — none of which is true of a position. The
+# duplicate-path guard in `collect` enforces the uniqueness rather than assuming
+# it, so a copy-pasted uid is refused with a message naming the collision.
+ALERTING_DIR = pathlib.Path("market-data/grafana/provisioning/alerting")
 
 # A generated-file banner, so nobody edits the mirror expecting it to take
 # effect. It names the tool AND the source, because the useful question when
@@ -309,6 +339,58 @@ def check_regex_in_literal(sql: str, where: str) -> None:
             )
 
 
+def check_bare_var_in_literal(sql: str, where: str) -> None:
+    """Refuse an unformatted variable reference inside a single-quoted literal.
+
+    The sibling guard above refuses the `:regex` form specifically, because the
+    regex formatter is the one that provably does not escape quotes. But a
+    BARE reference — `'$venue_source'`, `'${granularity}'` — carries the same
+    exposure for the same reason: Grafana substitutes the raw value, so a value
+    containing an apostrophe terminates the literal.
+
+    That gap was closed by hand once, across 24 sites. A one-time sweep is not
+    a gate: the 25th site would land with the mirror current and the lint hook
+    green, and the shape spreads by being copied from one panel to the next —
+    which is exactly what the sibling guard exists to stop. This makes the
+    invariant hold by construction instead.
+
+    A reference carrying ANY formatter is left alone. `:sqlstring` is the fix
+    this recommends, and the others (`:csv`, `:json`, …) are deliberate choices
+    whose escaping is the author's to reason about; only the unformatted form
+    is unambiguously the copied mistake.
+    """
+    spans = string_literal_spans(sql)
+    for m in VAR_REF.finditer(sql):
+        if m.group("fmt") or not in_literal(m.start(), spans):
+            continue
+        name = m.group("braced") or m.group("bare") or ""
+        # Grafana's own `$__`-prefixed macros are substituted by the datasource
+        # before the query is sent, so they are not user-supplied values and a
+        # quoted one is not this defect.
+        if name.startswith("__"):
+            continue
+        # `VAR_REF`'s bare alternative accepts a LEADING DIGIT, because it is
+        # shared with `substitute` and only ever had to be greedy there. A
+        # guard cannot be: a currency format mask (`to_char(x, '$999.00')`), a
+        # positional marker (`'$1'`), or a regex literal are all ordinary SQL
+        # that contain a dollar-digit run inside a literal, and refusing them
+        # would leave no way past except editing this tool. A Grafana variable
+        # name cannot start with a digit, so requiring a leading letter or
+        # underscore separates the two exactly. Narrowed HERE rather than in
+        # `VAR_REF`, which `substitute` shares and which wants the wide form.
+        if not name[:1].isalpha() and not name.startswith("_"):
+            continue
+        raise ExtractionError(
+            f"{where}: `{m.group(0)}` is an unformatted variable inside a "
+            f"single-quoted literal, so a value containing an apostrophe "
+            f"terminates the literal. Use `${{{name}:sqlstring}}` without the "
+            f"surrounding quotes — that formatter quotes and escapes the value "
+            f"itself — or `= ANY (ARRAY[${{{name}:sqlstring}}]::text[])` for a "
+            f"multi-select, which also stays valid SQL when nothing is "
+            f"selected, unlike `IN ()`."
+        )
+
+
 def substitute(sql: str) -> str:
     """Replace macros and variables with deterministic stand-ins, for linting.
 
@@ -424,30 +506,357 @@ def queries(dashboard: pathlib.Path) -> list[tuple[str, str]]:
     return out
 
 
+# A block-scalar header: `key: |`, `key: |-`, `key: |+`, or the folded `>` forms.
+# The indent is captured because it, not the key, is what bounds the value.
+BLOCK_SCALAR = re.compile(
+    r"^(?P<indent> *)(?P<key>[A-Za-z_][A-Za-z0-9_]*):"
+    r"[ \t]*(?P<style>[|>])(?P<chomp>[-+]?)[ \t]*$"
+)
+
+# A rule's `uid`, anchored to the rule's own key indent. Anchoring matters: a
+# `datasource:` mapping nested deeper inside a rule can carry its own `uid`, and
+# an unanchored search would key the mirror on the DATASOURCE's uid instead —
+# silently, and identically for every rule sharing that datasource, which the
+# duplicate-path guard would then report as a collision naming the wrong cause.
+# The unquoted alternative stops at whitespace rather than running to
+# end-of-line: a trailing YAML comment (`uid: maker-paused # legacy`) would
+# otherwise be captured into the value and slugged into the filename, where
+# PyYAML yields the bare scalar. The quoted alternatives cannot hit this, which
+# is why the asymmetry is worth spelling out.
+RULE_UID = re.compile(r"^ *uid:[ \t]*(?:'([^']*)'|\"([^\"]*)\"|(\S+))[ \t]*(?:#.*)?$")
+
+
+def indent_of(line: str) -> int:
+    """The line's indentation width, in spaces.
+
+    A TAB in the indentation is refused rather than measured. YAML forbids one
+    there, and `lstrip(" ")` would silently measure a tab-indented line as
+    indent 0 — which terminates an enclosing block scalar mid-query and
+    truncates it. Truncation is the wrong direction for a gate: it produces
+    wrong SQL rather than an error.
+    """
+    stripped = line.lstrip(" ")
+    if stripped.startswith("\t"):
+        raise ExtractionError(
+            f"tab in the indentation of {line.strip()[:60]!r}; YAML forbids a "
+            f"tab there, and measuring one would silently truncate the value"
+        )
+    return len(line) - len(stripped)
+
+
+def block_body_end(lines: list[str], i: int, base: int) -> int:
+    """The index just past the block-scalar body that follows `lines[i]`.
+
+    Split out from `block_scalar` because BOTH scans need to SKIP a body
+    without stripping its indentation or checking it against the block's
+    width: a `description: >-` block is prose, and a scan only needs to know
+    where the opaque region ends.
+
+    Not validation-free, and the exception is worth naming rather than
+    discovering: `indent_of` still refuses a TAB. That is deliberately
+    conservative — this cannot tell a tab in the indentation, which YAML
+    forbids, from one opening a content line, which YAML allows, so it refuses
+    both. Refusing is the safe direction, since the alternative is measuring
+    the line as indent 0 and truncating the value silently; the cost is that a
+    legal tab-led content line is rejected rather than mirrored.
+    """
+    j = i + 1
+    while j < len(lines):
+        line = lines[j]
+        if line.strip() and indent_of(line) <= base:
+            break
+        j += 1
+    return j
+
+
+def block_scalar(lines: list[str], i: int) -> tuple[str, int]:
+    """The value of the block scalar whose header is `lines[i]`, and the next index.
+
+    Implements YAML's block-scalar rule for the subset the provisioning files
+    use. The value is every following line indented MORE than the header's own
+    indent, dedented by the first NON-BLANK line's indentation, with blank
+    lines kept as blanks (a blank line inside a block scalar carries no
+    indentation to measure, so it must not be allowed to terminate the value).
+
+    **The first non-blank line, not the first line.** A leading blank line
+    would otherwise measure as indent 0 and leave the entire value carrying its
+    YAML indentation, where PyYAML strips it — a silent divergence in the
+    direction that matters, since the mirror is compared byte-for-byte.
+
+    A line indented LESS than that width is **refused**, not sliced. Slicing it
+    walks past its whitespace and removes a real character from the query, so
+    the mirror would show SQL that is not what Grafana runs — and if the lost
+    character lands somewhere sqlfluff still parses, the lint gate stays green
+    too. PyYAML raises on the same input; refusing keeps the two in step.
+
+    Chomping is honored because it changes the trailing bytes and the mirror is
+    compared byte-for-byte: `-` strips every trailing newline, `+` keeps them
+    all, and the default clips to exactly one.
+    """
+    m = BLOCK_SCALAR.match(lines[i])
+    if not m:  # pragma: no cover - callers match first
+        raise ExtractionError(f"line {i + 1} is not a block scalar header")
+    base = len(m.group("indent"))
+
+    j = block_body_end(lines, i, base)
+    body = lines[i + 1 : j]
+
+    # Trailing blank lines belong to the NEXT construct, not to this value —
+    # except under `+`, which is what "keep" means. Count them rather than
+    # recovering the number by arithmetic over indices later.
+    trailing = 0
+    while body and not body[-1].strip():
+        body.pop()
+        trailing += 1
+
+    chomp = m.group("chomp")
+    if not body:
+        return ("\n" * trailing if chomp == "+" else ""), j
+
+    strip = indent_of(next(line for line in body if line.strip()))
+    for line in body:
+        if line.strip() and indent_of(line) < strip:
+            raise ExtractionError(
+                f"the block scalar at line {i + 1} has a line indented less "
+                f"than the block ({line.strip()[:60]!r}). YAML makes that an "
+                f"error; stripping the block's indentation from it would "
+                f"silently drop a real character from the value."
+            )
+    text = "\n".join(line[strip:] if line.strip() else "" for line in body)
+
+    if chomp == "-":
+        return text, j
+    if chomp == "+":
+        return text + "\n" * (1 + trailing), j
+    return text + "\n", j
+
+
+def parse_alerting(path: pathlib.Path) -> list[tuple[str, str]]:
+    """Every `rawSql` in one alerting file, as (mirror-relative path, sql) pairs.
+
+    Same shape as `queries` above, and worded the same deliberately: both feed
+    the one `add()` closure in `collect`.
+
+    The file is split into rules first and the uid read per rule, because the
+    provisioning files keep their keys alphabetical (a house yamllint rule), so
+    `uid` sorts AFTER `data` and is not available when the query is encountered.
+    Buffering the rule is what lets a single pass key each query correctly.
+    """
+    lines = path.read_text().splitlines()
+
+    # Rule items sit at one indent under `rules:`. Find that list, then treat
+    # every `- ` at its item indent as a rule boundary.
+    #
+    # This tolerates a re-indent only where the dash stays in the same column
+    # as `rules:` — the style these files use. Under `indent-sequences: true`
+    # the dash would land one level deeper, match neither branch, and yield
+    # zero rules; the mirror check then reports drift rather than going quiet,
+    # but the message would name neither cause. The house yamllint config
+    # pins the current style, so this is a stated limit rather than a risk.
+    starts: list[int] = []
+    # Where the rule list enclosing each start ENDS. Without this the LAST rule
+    # of a list runs to end-of-file and absorbs everything after it — a sibling
+    # group key, or a later top-level section such as `contactPoints:` — so a
+    # `rawSql` down there is extracted under that rule's uid, and with the
+    # not-a-literal-block refusal above, an unrelated one raises against the
+    # wrong rule. Found by mutation-testing the reset branch, which closes the
+    # list for the OTHER rules but could not close it for the final one.
+    ends: dict[int, int] = {}
+    open_starts: list[int] = []
+    rules_indent: int | None = None
+
+    def close_list(at: int) -> None:
+        for s in open_starts:
+            ends[s] = at
+        open_starts.clear()
+
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        stripped = line.strip()
+        # Blank lines and comments carry no structure. They must NOT be allowed
+        # to close the rule list: these files comment heavily, and every rule in
+        # the committed set is preceded by a comment block explaining its
+        # thresholds — so treating a comment as a sibling key ended the list
+        # before the first rule and extracted nothing at all, silently.
+        if not stripped or stripped.startswith("#"):
+            idx += 1
+            continue
+        # A block scalar's BODY is opaque content, not structure, so the scan
+        # jumps over it. Walking it line by line lets a QUERY containing a line
+        # reading `rules:`, or a `- ` at the list's own column, fabricate or
+        # close a rule boundary — silently, and yielding a wrong
+        # (uid, sql) pairing rather than an error. The committed files are safe
+        # from that only because their SQL sits at indent 10 while the rule list
+        # sits at 2, which is a numeric coincidence of the current layout and
+        # not a property of the parser.
+        header = BLOCK_SCALAR.match(line)
+        if header:
+            idx = block_body_end(lines, idx, len(header.group("indent")))
+            continue
+        indent = indent_of(line)
+        if stripped == "rules:":
+            close_list(idx)
+            rules_indent = indent
+            idx += 1
+            continue
+        if rules_indent is None:
+            idx += 1
+            continue
+        if stripped.startswith("- ") and indent == rules_indent:
+            starts.append(idx)
+            open_starts.append(idx)
+        elif indent <= rules_indent:
+            close_list(idx)
+            rules_indent = None
+        idx += 1
+    close_list(len(lines))
+
+    out: list[tuple[str, str]] = []
+    for n, start in enumerate(starts):
+        end = ends[start]
+        if n + 1 < len(starts) and starts[n + 1] < end:
+            end = starts[n + 1]
+        rule = lines[start:end]
+        # The rule's key indent: `  - annotations:` puts keys two past the dash.
+        key_indent = (len(rule[0]) - len(rule[0].lstrip(" "))) + 2
+
+        uid = None
+        for line in rule:
+            if len(line) - len(line.lstrip(" ")) != key_indent:
+                continue
+            m = RULE_UID.match(line)
+            if m:
+                uid = m.group(1) or m.group(2) or m.group(3)
+                break
+
+        # The rule's handle for an error message: its uid where it has one,
+        # its title otherwise. Resolved once so every raise below names the
+        # rule the same way — a rule that is BOTH uid-less and malformed
+        # otherwise reports neither handle.
+        handle = uid or rule_title(rule, key_indent)
+
+        found: list[str] = []
+        i = 0
+        while i < len(rule):
+            m = BLOCK_SCALAR.match(rule[i])
+            if not m or m.group("key") != "rawSql":
+                # SKIP ANOTHER KEY'S BLOCK-SCALAR BODY, exactly as the
+                # boundary scan above does. These rules carry prose blocks
+                # (`description: >-`, `summary: |-`), and walking into one
+                # line by line reads its CONTENT as structure: a prose line
+                # shaped like `something: |` would be taken for a header, and
+                # one merely starting `rawSql:` would trip the refusal below
+                # and fail the mirror gate on an annotation. The two scans
+                # have to state the same rule or the asymmetry becomes a bug
+                # the moment either one grows a check.
+                if m:
+                    i = block_body_end(rule, i, len(m.group("indent")))
+                    continue
+                # A `rawSql` that is not a literal block scalar must be
+                # REFUSED, never skipped. Skipping it writes no mirror file, so
+                # `check` stays green and the query is never linted — which is
+                # precisely the silent hole this module's docstring argues
+                # against. Reachable forms: a quoted single-line scalar
+                # (`rawSql: 'SELECT 1'`), an explicit indentation indicator
+                # (`rawSql: |2-`), a trailing comment after the indicator, and
+                # the sequence-item form (`- rawSql: |-`), which the anchored
+                # header pattern does not match either.
+                bare = rule[i].strip()
+                if bare.startswith("rawSql:") or bare.startswith("- rawSql:"):
+                    raise ExtractionError(
+                        f"{path.name}: rule {handle!r} writes its `rawSql` in "
+                        f"a form this reader does not lift "
+                        f"({rule[i].strip()[:60]!r}). Only a plain literal "
+                        f"block (`rawSql: |-`) is mirrored, so any other form "
+                        f"would be silently left out of the mirror, and so "
+                        f"never linted — write it "
+                        f"as a literal block."
+                    )
+                i += 1
+                continue
+            if m.group("style") == ">":
+                raise ExtractionError(
+                    f"{path.name}: rule {handle!r} writes its "
+                    f"`rawSql` as a folded (`>`) scalar. Folding replaces the "
+                    f"newlines with spaces, so the SQL Grafana runs is not the "
+                    f"SQL as written — use a literal (`|-`) block."
+                )
+            sql, i = block_scalar(rule, i)
+            if sql.strip():
+                found.append(sql)
+
+        if found and not uid:
+            raise ExtractionError(
+                f"{path.name}: an alert rule titled {handle!r} carries SQL but "
+                f"has no `uid`. The mirror filename is keyed on the uid, which "
+                f"is the only stable handle a rule has."
+            )
+
+        for idx, sql in enumerate(found):
+            # The index appears only when a rule has more than one query, so the
+            # common case keeps a clean filename — the same idiom the panel
+            # targets use above.
+            suffix = f"-{idx + 1}" if len(found) > 1 else ""
+            out.append((f"alerting/{slug(uid, 'rule')}{suffix}.sql", sql))
+
+    return out
+
+
+def rule_title(rule: list[str], key_indent: int) -> str:
+    """A rule's `title`, for an error message naming a rule that has no uid."""
+    for line in rule:
+        if len(line) - len(line.lstrip(" ")) != key_indent:
+            continue
+        if line.strip().startswith("title:"):
+            return line.split(":", 1)[1].strip().strip("'\"")
+    return "<untitled>"
+
+
 def render(source: str, sql: str) -> str:
     body = sql if sql.endswith("\n") else sql + "\n"
     return BANNER.format(source=source) + "\n" + body
 
 
-def collect(dashboard_dir: pathlib.Path) -> dict[str, str]:
-    """Every mirror file the dashboards imply, as {relative path: content}."""
+def collect(
+    dashboard_dir: pathlib.Path,
+    alerting_dir: pathlib.Path | None = None,
+) -> dict[str, str]:
+    """Every mirror file the dashboards and alert rules imply.
+
+    Returned as {relative path: content}. `alerting_dir` is optional and a
+    missing directory is not an error — the mirror gate must stay usable against
+    a dashboard directory alone, which is what the tests do.
+    """
     found: dict[str, str] = {}
+
+    def add(source: str, rel: str, sql: str) -> None:
+        where = f"{source} -> {rel}"
+        check_macro_args(sql, where)
+        check_regex_in_literal(sql, where)
+        check_bare_var_in_literal(sql, where)
+        if rel in found:
+            raise ExtractionError(
+                f"{where}: two queries claim the mirror path {rel!r}; "
+                f"rename a panel, or give the alert rule its own uid, so the "
+                f"extraction stays one-to-one"
+            )
+        found[rel] = render(source, sql)
+
     for dashboard in sorted(dashboard_dir.glob("*.json")):
         for rel, sql in queries(dashboard):
-            where = f"{dashboard.name} -> {rel}"
-            check_macro_args(sql, where)
-            check_regex_in_literal(sql, where)
-            if rel in found:
-                raise ExtractionError(
-                    f"{where}: two queries claim the mirror path {rel!r}; "
-                    f"rename a panel so the extraction stays one-to-one"
-                )
-            found[rel] = render(dashboard.name, sql)
+            add(dashboard.name, rel, sql)
+
+    if alerting_dir is not None and alerting_dir.is_dir():
+        for rules in sorted(alerting_dir.glob("*.yml")):
+            for rel, sql in parse_alerting(rules):
+                add(rules.name, rel, sql)
+
     return found
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
-    wanted = collect(args.dashboards)
+    wanted = collect(args.dashboards, args.alerting)
     args.mirror.mkdir(parents=True, exist_ok=True)
     written = 0
 
@@ -480,7 +889,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    wanted = collect(args.dashboards)
+    wanted = collect(args.dashboards, args.alerting)
     on_disk = {
         str(p.relative_to(args.mirror)): p.read_text()
         for p in args.mirror.rglob("*.sql")
@@ -509,7 +918,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def cmd_lint(args: argparse.Namespace) -> int:
     """Substitute macros and variables, then lint the result as Postgres."""
-    wanted = collect(args.dashboards)
+    wanted = collect(args.dashboards, args.alerting)
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
         for rel, content in sorted(wanted.items()):
@@ -544,7 +953,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
 
 
 def cmd_summary(args: argparse.Namespace) -> int:
-    wanted = collect(args.dashboards)
+    wanted = collect(args.dashboards, args.alerting)
     print(f"dashboard-sql: {len(wanted)} queries")
     for rel, content in sorted(wanted.items(), key=lambda kv: -len(kv[1])):
         print(f"  {len(content):5d}  {rel}")
@@ -560,6 +969,7 @@ def main(argv: list[str] | None = None) -> int:
         "substitutes macros and runs sqlfluff; summary ranks queries by size",
     )
     ap.add_argument("--dashboards", type=pathlib.Path, default=DASHBOARD_DIR)
+    ap.add_argument("--alerting", type=pathlib.Path, default=ALERTING_DIR)
     ap.add_argument("--mirror", type=pathlib.Path, default=MIRROR_DIR)
     ap.add_argument(
         "--sqlfluff-config",

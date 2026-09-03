@@ -18,10 +18,22 @@
 # `updateIntervalSeconds` is short because the mount is live: editing the
 # committed JSON on the host shows up in the browser within the interval, with
 # no container restart.
+#
+# `folder` names the SAME folder the alert rules provision into, and matching
+# them is the point rather than a tidiness preference. Alert rules must live in
+# a folder, so `provisioning/alerting/maker.yml` creates `Dropset`; this
+# provider previously declared no folder at all, so the dashboards landed in the
+# root listing and `Dropset` appeared beside them holding nothing a dashboard
+# listing can show. An empty folder next to the real one reads as a
+# provisioning fault, and the operator has to open it to learn that it is not.
+# Naming it here puts the dashboards and the alerts that watch the same tables
+# in one place, and the empty folder stops existing because it is no longer
+# empty.
 apiVersion: 1
 providers:
 - allowUiUpdates: true
   disableDeletion: false
+  folder: 'Dropset'
   name: 'dropset'
   options:
     foldersFromFilesStructure: false

@@ -2,4 +2,4 @@
 -- Source: fx-analytics.json
 -- Regenerate: make dashboard-sql
 
-SELECT DISTINCT granularity_secs FROM cex_prices WHERE source = '$venue_source' AND product_id = '$venue_product' ORDER BY 1
+SELECT DISTINCT granularity_secs FROM cex_prices WHERE source = ${venue_source:sqlstring} AND product_id = ${venue_product:sqlstring} ORDER BY 1

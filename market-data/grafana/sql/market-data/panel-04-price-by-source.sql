@@ -18,7 +18,7 @@ FROM cex_prices
 WHERE $__unixEpochFilter(bucket_start)
   AND source = ANY (ARRAY[${source:sqlstring}]::text[])
   AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])
-  AND granularity_secs = $granularity
+  AND granularity_secs = ${granularity:sqlstring}::bigint
 UNION ALL
 SELECT
   to_timestamp(observed_at) AS "time",

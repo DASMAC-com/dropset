@@ -6,9 +6,9 @@ WITH bars AS (
   SELECT bucket_start, close, high, low
   FROM cex_prices
   WHERE $__unixEpochFilter(bucket_start)
-    AND source = '$venue_source'
-    AND product_id = '$venue_product'
-    AND granularity_secs::text = '$granularity'
+    AND source = ${venue_source:sqlstring}
+    AND product_id = ${venue_product:sqlstring}
+    AND granularity_secs::text = ${granularity:sqlstring}
 ),
 regimes AS (
   SELECT
@@ -36,7 +36,7 @@ returns AS (
     high,
     low,
     CASE
-      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF('$granularity', '')::bigint
+      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF(${granularity:sqlstring}, '')::bigint
            AND lag(close) OVER w > 0
            AND close > 0
       THEN ln(close / lag(close) OVER w)

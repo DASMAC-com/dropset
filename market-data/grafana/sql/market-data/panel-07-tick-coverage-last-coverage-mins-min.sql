@@ -13,6 +13,6 @@ SELECT
   to_timestamp(max(observed_at)) AS latest_print,
   (extract(epoch FROM now()) - max(observed_at))::bigint AS age_secs
 FROM spot_ticks
-WHERE observed_at >= extract(epoch FROM now()) - ($coverage_mins * 60)
+WHERE observed_at >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)
 GROUP BY 1, 2
 ORDER BY 1, 2

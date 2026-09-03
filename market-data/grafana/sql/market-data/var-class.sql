@@ -2,4 +2,4 @@
 -- Source: market-data.json
 -- Regenerate: make dashboard-sql
 
-SELECT product_id FROM instruments WHERE asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) ORDER BY 1
+SELECT DISTINCT asset_class FROM instruments ORDER BY 1
