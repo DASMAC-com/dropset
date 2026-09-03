@@ -41,6 +41,17 @@ Subcommands::
 
     linear_issue.py append --id ENG-123 --file notes.md
     linear_issue.py find   --query "reference price" --limit 5
+    linear_issue.py create --title "…" --body-file body.md \
+        --state Todo --milestone "Audit findings"
+
+``create`` is the filer for the **bulk** callers, whose bodies are long by
+design because the fold convention asks for a part and a fingerprint per
+finding — which is exactly where the echo is worst. One audit session's nine
+``save_issue`` calls cost ≈22.8k and supplied six of its eight largest single
+results; a planning session absorbing follow-ups made 27 for ≈30.1k. State,
+milestone and priority are parameters so one filer serves `audit-scope`
+(``Todo`` + ``Audit findings``), a planning follow-up (Backlog + a priority),
+and anything else that files in bulk.
 
 Each prints ONE line of accounting on success; ``find`` prints its rows.
 ``--dry-run`` reports what would happen and writes nothing.
@@ -165,6 +176,121 @@ def find(
     return [f"{n.get('identifier')}  {n.get('title')}" for n in nodes]
 
 
+_CREATE_MUTATION = """
+mutation Create($input: IssueCreateInput!) {
+  issueCreate(input: $input) {
+    success
+    issue { identifier url }
+  }
+}
+"""
+
+_STATES_QUERY = """
+query States($teamId: String!) {
+  team(id: $teamId) { states { nodes { id name } } }
+}
+"""
+
+_MILESTONES_QUERY = """
+query Milestones($projectId: String!) {
+  project(id: $projectId) { projectMilestones { nodes { id name } } }
+}
+"""
+
+
+def _resolve_named(nodes: list, wanted: str, kind: str) -> str:
+    """An id for ``wanted``, matched case-insensitively by name."""
+    lowered = wanted.strip().lower()
+    for node in nodes:
+        if str(node.get("name", "")).strip().lower() == lowered:
+            return str(node["id"])
+    names = ", ".join(sorted(str(n.get("name")) for n in nodes)) or "(none)"
+    raise LinearIssueError(f"no {kind} named {wanted!r} — have: {names}")
+
+
+def create_issue(
+    api_key: str,
+    *,
+    team_id: str,
+    project_id: str,
+    title: str,
+    body: str,
+    state: str | None = None,
+    milestone: str | None = None,
+    priority: int | None = None,
+    assignee_id: str | None = None,
+    dry_run: bool = False,
+) -> str:
+    """File one issue in a single zero-echo call, and return one line.
+
+    **Why a filer belongs here.** The MCP `save_issue` echoes the whole stored
+    body back on a *create* too, which makes it worst for the bulk filers — the
+    ones whose bodies are long by design because the fold convention asks for a
+    part and a fingerprint per finding. Measured: an audit session's 9
+    `save_issue` calls cost ≈22.8k and supplied six of its eight largest single
+    results, roughly half of all main-loop result cost; a planning session
+    absorbing PR follow-ups made 27 calls for ≈30.1k, its top sink, against ≈7k
+    for all 26 planning-document writes combined. In every case the echoed
+    bytes were content the session had **just authored**, so nothing
+    decision-relevant is lost by suppressing them.
+
+    State, milestone and priority are **parameters** rather than constants
+    precisely so one filer serves every bulk caller: `audit-scope` files
+    `Todo` + `Audit findings`, a planning follow-up files Backlog + a
+    priority, and `trim_levers.py` keeps its own lever-specific writer for its
+    fingerprint lifecycle. All of them go in the **creating** call — filing and
+    then amending costs a second full echo and buys nothing.
+
+    Names, not ids, for state and milestone: both are resolved here, which is
+    the one thing `board_batch.py fields` deliberately refuses to do for
+    `milestone`. That refusal is right for a *field write* (a name reaching
+    Linear dies as an unnamed validation error), and a filer that cannot name
+    its own milestone would just push the lookup back into the transcript.
+    """
+    if not title.strip():
+        raise LinearIssueError("--title must not be blank")
+    if not body.strip():
+        raise LinearIssueError("--body-file must not be empty")
+
+    plan = [f"{len(body)} char(s)"]
+    if state:
+        plan.append(f"state {state}")
+    if milestone:
+        plan.append(f"milestone {milestone}")
+    if priority is not None:
+        plan.append(f"priority {priority}")
+    if dry_run:
+        return f"WOULD FILE {title} | {', '.join(plan)}"
+
+    payload: dict = {
+        "teamId": team_id,
+        "projectId": project_id,
+        "title": title,
+        "description": body,
+    }
+    if state:
+        data = _post(api_key, _STATES_QUERY, {"teamId": team_id})
+        nodes = (((data.get("team") or {}).get("states")) or {}).get("nodes") or []
+        payload["stateId"] = _resolve_named(nodes, state, "workflow state")
+    if milestone:
+        data = _post(api_key, _MILESTONES_QUERY, {"projectId": project_id})
+        nodes = (((data.get("project") or {}).get("projectMilestones")) or {}).get(
+            "nodes"
+        ) or []
+        payload["projectMilestoneId"] = _resolve_named(nodes, milestone, "milestone")
+    if priority is not None:
+        payload["priority"] = priority
+    if assignee_id:
+        payload["assigneeId"] = assignee_id
+
+    data = _post(api_key, _CREATE_MUTATION, {"input": payload})
+    result = data.get("issueCreate") or {}
+    if not result.get("success"):
+        raise LinearIssueError(f"issueCreate failed for {title!r}")
+    issue = result.get("issue") or {}
+    return f"FILED {issue.get('identifier')} {issue.get('url')} | {', '.join(plan)}"
+
+
 def _read_file(path: str) -> str:
     try:
         with open(path, encoding="utf-8") as handle:
@@ -214,6 +340,23 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     source.add_argument("--file", help="read the addition from this file")
     source.add_argument("--text", help="the addition, inline")
 
+    create = subs.add_parser("create", help="file one issue, zero echo")
+    _add_dry_run(create, top_level=False)
+    create.add_argument("--title", required=True)
+    create.add_argument("--body-file", required=True, help="the issue description")
+    create.add_argument(
+        "--team", default=None, help="team id (default $LINEAR_TEAM_ID)"
+    )
+    create.add_argument(
+        "--project", default=None, help="project id (default $LINEAR_PROJECT_ID)"
+    )
+    create.add_argument("--state", default=None, help="workflow state NAME")
+    create.add_argument("--milestone", default=None, help="project milestone NAME")
+    create.add_argument("--priority", type=int, default=None, help="0-4")
+    create.add_argument(
+        "--assignee", default=None, help="assignee id (default $LINEAR_ASSIGNEE_ID)"
+    )
+
     find_cmd = subs.add_parser("find", help="title-only search")
     find_cmd.add_argument("--query", required=True, help="text to match in titles")
     find_cmd.add_argument("--project", help="restrict to this project id")
@@ -232,6 +375,39 @@ def run(argv: list[str]) -> int:
     if args.command == "append":
         text = args.text if args.text is not None else _read_file(args.file)
         print(append_body(api_key, args.id, text, dry_run=args.dry_run))
+        return 0
+
+    if args.command == "create":
+        # Resolved from the environment by default, per the standing rule that
+        # team / project / assignee are never hard-coded — and each via its own
+        # bare lookup, since a combined `printenv A B C` returns only the first
+        # on macOS.
+        team = args.team or linear_api.env_var("LINEAR_TEAM_ID", error=LinearIssueError)
+        project = args.project or linear_api.env_var(
+            "LINEAR_PROJECT_ID", error=LinearIssueError
+        )
+        assignee = args.assignee
+        if assignee is None:
+            try:
+                assignee = linear_api.env_var(
+                    "LINEAR_ASSIGNEE_ID", error=LinearIssueError
+                )
+            except LinearIssueError:
+                assignee = None  # Unassigned is a legitimate filing.
+        print(
+            create_issue(
+                api_key,
+                team_id=team,
+                project_id=project,
+                title=args.title,
+                body=_read_file(args.body_file),
+                state=args.state,
+                milestone=args.milestone,
+                priority=args.priority,
+                assignee_id=assignee,
+                dry_run=args.dry_run,
+            )
+        )
         return 0
 
     rows = find(

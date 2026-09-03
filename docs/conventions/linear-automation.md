@@ -370,6 +370,42 @@ has run, and the history lives on the board. The known risk of the
 issue model is cadence decay by neglect; the heartbeat is the guard,
 which is why an unrecorded non-decision counts as a failure of it.
 
+## Reading the Planning document from outside a planning session
+
+A worktree session that wants to check itself against planning direction
+is doing something worth **encouraging**, so the check has to be cheap.
+Two rules, in order:
+
+1. **Ask a live planning session first.** `ListAgents` is the liveness
+   check and `SendMessage` is already the documented channel in the
+   other direction. A peer answers the *question* rather than the text:
+   one session that read the document and then messaged its planning
+   peer got the state of both blockers, the operator's posture, a ruling
+   on the actual question, and an unprompted correction to a figure in
+   the document that had gone stale. The read surfaced none of that,
+   because **a stale line reads exactly like a current one.**
+
+1. **Otherwise use the scoped reader**, never `get_document`:
+
+   ```sh
+   python3 .claude/tools/planning_doc.py --headings
+   python3 .claude/tools/planning_doc.py --section 'Audit state'
+   ```
+
+   It fetches in its own process and prints only what was asked for,
+   resolving `LINEAR_PLANNING_DOC_ID` itself so every form reduces to
+   one allow-rule. `--out <file>` spills the whole content and prints a
+   heading map, for when several sections are wanted.
+
+The MCP `get_document` returns the entire content with **no slice
+accessor**, and this document only grows between close-out rewrites, so
+the cost rises over time. Measured: one such read was a session's
+largest single main-loop result at **≈7.9k**, more than double the next
+non-filing result, consumed for four short passages out of a document
+also covering the board schema, four live tracks, the current phase,
+feeds roster detail, migration numbering, the calendar track,
+session-metrics state, standing decisions and verification debt.
+
 ## Parked findings sit in **Todo**, never Backlog
 
 An issue stamped with a parking milestone — `Audit findings` for audit

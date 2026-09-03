@@ -366,20 +366,40 @@ Optional (ask on a direct run if not provided):
      `mcp__claude_ai_Linear__list_issues` (same
      destination) so a re-run doesn't refile a finding
      already captured — match on the `**Fingerprint**:`
-     line. Then `save_issue` (no `id`):
+     line. Then file through the **zero-echo writer**, one
+     call per finding, body on disk:
 
-     ```txt
-     mcp__claude_ai_Linear__save_issue(
-       team: "<$LINEAR_TEAM_ID>",
-       project: "<$LINEAR_PROJECT_ID>",
-       assignee: "<$LINEAR_ASSIGNEE_ID>",
-       state: "Todo",                 // parked, NOT pullable
-       milestone: "Audit findings",   // parked — see above
-       title: "<file>: <imperative fix, no trailing period>",
-       description: "<markdown body, literal newlines>",
-       priority: 3  // 2 for high-severity security
-     )
+     ```sh
+     python3 .claude/tools/linear_issue.py create \
+       --title '<file>: <imperative fix, no trailing period>' \
+       --body-file <scratchpad>/finding-N.md \
+       --state Todo --milestone 'Audit findings' --priority 3
      ```
+
+     `--priority 2` for a high-severity security finding.
+     Team, project and assignee resolve from the `LINEAR_*`
+     environment by default, so they are never spelled here.
+
+     **Not `save_issue`.** The MCP echoes the entire stored
+     body back on a *create* as well, which makes it worst
+     for precisely this caller: an audit files folded issues
+     with a part and a fingerprint per finding, so the bodies
+     are long **by design** and the cost grows with exactly
+     the thing the fold rule encourages. Measured (session
+     fa6fc519, the ENG-978 seam audit): `save_issue` was the
+     top main-loop sink at **9 calls / ≈22.8k**, supplying
+     six of the session's eight largest single results, while
+     the entire rest of the main loop's tool results came to
+     roughly 23k combined — one shape, about half the cost.
+     Every echoed byte was content the session had just
+     authored, so nothing decision-relevant is lost.
+
+     State, milestone and priority are writer *parameters*,
+     which is what lets one filer serve this skill's
+     `Todo` + `Audit findings` parking and a planning
+     session's Backlog-plus-priority follow-up filings
+     (27 calls / ≈30.1k in one measured pass) without a
+     second implementation.
 
      **Meta-work prefix.** If every path the finding's fix
      will edit sits under the meta surface (`.claude/**`,

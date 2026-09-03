@@ -80,7 +80,12 @@ read-then-compare pair left a gap no sanctioned shell form could bridge
 and re-emitting the listing put every PR's file list through context;
 `--others <file>.json` remains for a caller that already holds the
 inventory and keeps the compare network-free),
-`check_home_paths.py` (the committed-agent-material hygiene guard, wired
+`planning_doc.py` (a scoped reader for the Planning document — the MCP
+`get_document` has no slice accessor and returns a document that only
+grows, so one measured read was a session's largest main-loop result at
+≈7.9k for four short passages; ask a live planning session first, use
+this when none is live), `check_home_paths.py` (the
+committed-agent-material hygiene guard, wired
 as a scoped pre-commit hook), `lens_preamble.py` (composes the standing
 half of a lens brief from the
 [sub-agent brief](sub-agent-brief.md) plus a skill's own committed

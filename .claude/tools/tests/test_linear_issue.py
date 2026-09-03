@@ -181,5 +181,136 @@ class Find(_Stubbed):
         )
 
 
+class CreateIssue(_Stubbed):
+    """The bulk filer. Its reason to exist is that `save_issue` echoes the
+    whole stored body on a *create* too, which is worst for exactly the callers
+    whose bodies are long by design — one audit session's 9 calls cost ≈22.8k
+    and supplied six of its eight largest results."""
+
+    CREATED = {
+        "issueCreate": {
+            "success": True,
+            "issue": {"identifier": "ENG-500", "url": "https://x/ENG-500"},
+        }
+    }
+
+    def test_it_files_in_one_call_and_echoes_no_body(self):
+        rec = self.install([self.CREATED])
+        line = li.create_issue(
+            "k",
+            team_id="team-1",
+            project_id="proj-1",
+            title="Audit: something",
+            body="a long body with FINDINGS in it",
+            dry_run=False,
+        )
+        self.assertEqual(len(rec.calls), 1, "one call — no filing then amending")
+        sent = rec.calls[0][1]["input"]
+        self.assertEqual(sent["title"], "Audit: something")
+        self.assertIn("FINDINGS", sent["description"])
+        # The whole point: the body went to the wire, not to stdout.
+        self.assertNotIn("FINDINGS", line)
+        self.assertIn("ENG-500", line)
+
+    def test_state_and_milestone_are_resolved_from_names(self):
+        """`board_batch.py fields` deliberately refuses a milestone NAME, which
+        is right for a field write; a filer that could not name its own
+        milestone would push the lookup back into the transcript."""
+        rec = self.install(
+            [
+                {"team": {"states": {"nodes": [{"id": "s-todo", "name": "Todo"}]}}},
+                {
+                    "project": {
+                        "projectMilestones": {
+                            "nodes": [{"id": "m-af", "name": "Audit findings"}]
+                        }
+                    }
+                },
+                self.CREATED,
+            ]
+        )
+        li.create_issue(
+            "k",
+            team_id="team-1",
+            project_id="proj-1",
+            title="t",
+            body="b",
+            state="todo",  # case-insensitive
+            milestone="Audit findings",
+            priority=3,
+        )
+        sent = rec.calls[-1][1]["input"]
+        self.assertEqual(sent["stateId"], "s-todo")
+        self.assertEqual(sent["projectMilestoneId"], "m-af")
+        self.assertEqual(sent["priority"], 3)
+
+    def test_everything_rides_the_creating_call(self):
+        """Filing then amending costs a second full echo and buys nothing."""
+        rec = self.install(
+            [
+                {"team": {"states": {"nodes": [{"id": "s", "name": "Todo"}]}}},
+                self.CREATED,
+            ]
+        )
+        li.create_issue(
+            "k",
+            team_id="t",
+            project_id="p",
+            title="t",
+            body="b",
+            state="Todo",
+            assignee_id="me",
+        )
+        create_calls = [c for c in rec.calls if "issueCreate" in c[0]]
+        self.assertEqual(len(create_calls), 1)
+        sent = create_calls[0][1]["input"]
+        self.assertEqual(sent["assigneeId"], "me")
+        self.assertEqual(sent["stateId"], "s")
+
+    def test_an_unknown_state_name_lists_what_is_available(self):
+        self.install([{"team": {"states": {"nodes": [{"id": "s", "name": "Todo"}]}}}])
+        with self.assertRaises(li.LinearIssueError) as ctx:
+            li.create_issue(
+                "k",
+                team_id="t",
+                project_id="p",
+                title="t",
+                body="b",
+                state="Nope",
+            )
+        self.assertIn("Todo", str(ctx.exception))
+
+    def test_a_dry_run_writes_nothing(self):
+        rec = self.install([])
+        line = li.create_issue(
+            "k",
+            team_id="t",
+            project_id="p",
+            title="t",
+            body="b",
+            state="Todo",
+            milestone="Audit findings",
+            dry_run=True,
+        )
+        self.assertEqual(rec.calls, [])
+        self.assertIn("WOULD FILE", line)
+        self.assertIn("Audit findings", line)
+
+    def test_a_blank_title_or_body_is_refused(self):
+        for kwargs in ({"title": "  "}, {"body": ""}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(li.LinearIssueError):
+                li.create_issue(
+                    "k",
+                    team_id="t",
+                    project_id="p",
+                    **{"title": "t", "body": "b", **kwargs},
+                )
+
+    def test_an_unsuccessful_create_is_an_error_not_a_silent_pass(self):
+        self.install([{"issueCreate": {"success": False}}])
+        with self.assertRaises(li.LinearIssueError):
+            li.create_issue("k", team_id="t", project_id="p", title="t", body="b")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -283,6 +283,28 @@ at all**: the edge used to encode *wait for the one in
 flight*, and the precondition now makes that true by
 construction. Say the parked count out loud either way.
 
+**Append to the batch through the zero-echo writer, never
+`save_issue`.** The batch is an **accumulator** by design, and
+the MCP echoes the whole stored body on every write — `patch`
+included — so the cost scales with the issue's accumulated
+size rather than with the size of the append. Measured: a
+~30-line append to an open `Claude:` batch cost **≈6.6k in one
+call**, the single largest result of that session by a factor
+of 3.5 over the next, because the batch had grown to roughly
+6.6k of folded parts and a one-screen addition paid for the
+whole history. Use:
+
+```sh
+python3 .claude/tools/linear_issue.py append \
+  --id <ENG-###> --file <scratchpad>/addition.md
+```
+
+A body **append** has no anchor, so there is nothing for
+`patch`'s ambiguity abort to protect and nothing lost by
+leaving the MCP path — which is exactly the carve-out
+`docs/conventions/linear-automation.md` already licenses.
+Anchored edits still belong on `patch`.
+
 **Assembly consumes the pool as of THIS bootstrap.** A stray
 filed afterwards waits for the next assembly rather than
 joining a batch already born — otherwise a batch has no
