@@ -484,7 +484,16 @@ de-duplicates at the next `make lint` (not at commit time; a deleted
 word it resurrects does not heal at all). A sorted list is a
 merge-conflict generator, which is also why
 each Makefile target declares its own `.PHONY` beside its rule rather
-than in one central sorted block. Full detail:
+than in one central sorted block.
+**Never copy a claim out of an applied migration into prose** — the
+runner hashes the raw bytes, so a shipped migration (comments included)
+can never be corrected, which makes it a permanent anchor for whatever
+it said that day. Reference the migration and state the *current* claim
+in the mutable doc, so a correction has one home; a shipped comment that
+proves wrong gets its correction recorded elsewhere with a
+back-reference. `audit-scope`'s doc-freshness lens carries the
+counterpart: a migration's immutability makes it the **least**
+authoritative statement of current behavior. Full detail:
 `docs/conventions/docs-and-style.md`.
 
 ## Audit registry

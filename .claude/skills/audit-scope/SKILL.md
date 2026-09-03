@@ -153,6 +153,7 @@ Optional (ask on a direct run if not provided):
 
    - **Security / pen-testing** — use the checklist for
      the scope's kind:
+
      - *Program (Rust):* missing signer / owner / PDA /
        `has_one` checks, unchecked arithmetic, CPI to
        unverified programs, slippage / min-out gaps,
@@ -179,19 +180,23 @@ Optional (ask on a direct run if not provided):
        skill or settings file; and a skill step that tells
        an agent to weaken or route around a guard rather
        than satisfy it.
+
    - **Comment accuracy** — comments and doc-comments
      that contradict, overstate, or no longer match the
      code they annotate.
+
    - **Magic numbers / DRY / duplication** — unnamed
      values that should be named or configured; repeated
      logic, parallel branches that should share a helper,
      copy-pasted constants or shapes. Flag the opposite
      too: premature or speculative abstractions with one
      caller that add indirection without payoff.
+
    - **Modularity / extensibility** — coupling,
      abstractions in the wrong layer, hidden
      dependencies, seams that force editing many files to
      extend.
+
    - **Hierarchical organization** — for every directory
      in scope, count the immediate children. A directory
      with, say, more than ~15 files and no subdirectories
@@ -201,6 +206,7 @@ Optional (ask on a direct run if not provided):
      suggest (by-feature, by-layer, by-shape). Applies
      even to directories that aren't growing, when the
      groupings are visible.
+
    - **Naming conventions** — names follow the casing and
      idioms already established in sibling files (don't
      invent a house style); names describe what a thing
@@ -209,12 +215,33 @@ Optional (ask on a direct run if not provided):
      stale-after-refactor names (a `*_temp` / `*_new` /
      `*_v2` that outlived its reason). Flag a rename only
      when it genuinely improves clarity.
+
    - **Doc-freshness vs code** — when the scope is a
      `docs/**` file (or code a doc describes): Grep the
      doc's named symbols (structs / fields / invariants /
      events / endpoints / env vars) against the code and
      flag drift (renamed field, changed size assert,
      dropped event field, stale status line).
+
+     **A quoted MIGRATION inverts the usual instinct.**
+     When a doc quotes or paraphrases a claim from
+     `db-schema/migrations/**`, check it against HEAD
+     *behavior*, never against the migration text. An
+     applied migration is immutable — the runner hashes the
+     raw bytes and rejects any change, so even a comment
+     cannot be reworded — which makes it the **least**
+     authoritative statement of current behavior while
+     looking like the most authoritative one. Measured
+     instances: an asymmetry claim in migrations 0003 and
+     0008 was copied into two prose docs and both went
+     stale silently when the world it described was
+     corrected, and migration 0009 states a false invariant
+     (that a source writes bars or ticks and never both,
+     untrue for the coinbase source) whose correction lives
+     in 0010's text instead. Anything reasoning off a
+     migration's stated invariant may be reasoning off a
+     false premise that can never be fixed in place.
+
    - **Instruction integrity** — when the scope is agent
      infra, this is the dimension that matters most, and it
      replaces the code-facing reading of doc-freshness
@@ -229,6 +256,7 @@ Optional (ask on a direct run if not provided):
      prescribed command against the tool's **argument
      parser**, never against its prose — a docstring and an
      `add_argument` call drift independently.
+
    - **One sub-agent per extra focus area.**
 
    Each sub-agent returns findings with `file`, `line`,

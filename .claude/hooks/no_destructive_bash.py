@@ -55,16 +55,42 @@ _RM_RECURSIVE_FORCE = r"\brm\b(?=(?:\s+-\S+)*\s+-\S*[rR])(?=(?:\s+-\S+)*\s+-\S*f
 # The targets that make a recursive delete catastrophic rather than merely
 # destructive. `~/` and `$HOME/` (with the trailing slash) are included because
 # `rm -rf ~/` is a trivially plausible slip and reads as no less final.
-_CATASTROPHIC_TARGET = (
+_CATASTROPHIC_CORE = (
     r"(?:/|/\*|~|~/|~/\*|\$HOME|\$HOME/|\$HOME/\*"
-    r"|\$\{HOME\}|\$\{HOME\}/|\$\{HOME\}/\*"
-    r"|\"\$HOME\"|'\$HOME'|\"\$HOME/\"|'\$HOME/')"
+    r"|\$\{HOME\}|\$\{HOME\}/|\$\{HOME\}/\*)"
 )
+
+# The same targets, optionally wrapped in **matching** quotes, because that is
+# how they arrive inside a shell invocation string. The quoted `$HOME` forms
+# used to be enumerated by hand, which closed exactly the cases someone thought
+# to list: `rm -rf "$HOME"` was denied while `rm -rf "/"` was not classified at
+# any tier. Deriving the wrap from one core list makes that uniform.
+_CATASTROPHIC_TARGET = (
+    r"(?:"
+    + _CATASTROPHIC_CORE
+    + r"|\""
+    + _CATASTROPHIC_CORE
+    + r"\"|'"
+    + _CATASTROPHIC_CORE
+    + r"')"
+)
+
+# A closing quote may follow the target at end of line — the quote that ends an
+# enclosing `bash -c "…"` rather than one belonging to the target itself. Without
+# this the end anchor was defeated by a single trailing character: `rm -rf /`
+# denied, while `bash -c "rm -rf /"` reached only the marker-liftable ask tier,
+# which is the one tier a caller can lift. See `_matches` for the read-only
+# suppression that keeps this from denying a search for the literal string.
+_TRAILING_QUOTE = r"[\"']?"
 
 DENY_PATTERNS = (
     (
         re.compile(
-            _RM_RECURSIVE_FORCE + r"(?:\s+-\S+)*\s+" + _CATASTROPHIC_TARGET + r"\s*$"
+            _RM_RECURSIVE_FORCE
+            + r"(?:\s+-\S+)*\s+"
+            + _CATASTROPHIC_TARGET
+            + _TRAILING_QUOTE
+            + r"\s*$"
         ),
         "a recursive delete of the filesystem root or the home directory",
     ),
@@ -408,10 +434,26 @@ def program_of(line):
 def _matches(pattern, line, allow_quoted=True):
     """Whether ``pattern`` fires on ``line``.
 
-    ``allow_quoted`` is False on the DENY tier, so no catastrophic match is ever
-    suppressed: the measured false positive was an ask-tier match, so the
-    carve-out buys nothing there, and the deny tier is the one place being wrong
-    cannot be walked back with a marker.
+    ``allow_quoted`` suppresses a match inside an inert quoted span, and only
+    on a line whose program is one of ``READ_ONLY_PROGRAMS``.
+
+    **It now applies on the DENY tier too, which it deliberately did not
+    before.** The old rationale was that the measured false positive was an
+    ask-tier match, so the carve-out bought nothing on deny — true while the
+    deny patterns anchored their target at end-of-line, because a search whose
+    quoted pattern ended the line could not match anyway. Allowing a trailing
+    quote (`_TRAILING_QUOTE`, so `bash -c "rm -rf /"` is caught) removes that
+    accidental protection: without suppression, `grep -rn "rm -rf /"` — a
+    search for the literal string, deleting nothing — would become an
+    **un-overridable** deny. Closing the shell-invocation hole must not buy
+    that, so the two changes are one change.
+
+    What keeps this from weakening the deny tier: no shell is in
+    ``READ_ONLY_PROGRAMS``, so `bash -c` / `sh -c` payloads are never
+    suppressed; a double-quoted span containing `$` or a backtick is not inert;
+    an unterminated quote yields no spans; and a line that hands content back
+    to a shell disables suppression wholesale. An unquoted destructive command
+    sharing a read-only program's line is still matched.
     """
     if not allow_quoted or program_of(line) not in READ_ONLY_PROGRAMS:
         return bool(pattern.search(line))
@@ -445,8 +487,9 @@ def classify(cmd):
     cmd = _CONTINUATION_RE.sub(" ", cmd)
     lines = [line for line in cmd.splitlines() if line.strip()]
     for pattern, reason in DENY_PATTERNS:
-        # allow_quoted=False: the read-only carve-out does not apply here.
-        if any(_matches(pattern, line, allow_quoted=False) for line in lines):
+        # The read-only carve-out applies here too — see `_matches`. It has to,
+        # now that a trailing quote no longer defeats the end anchor.
+        if any(_matches(pattern, line) for line in lines):
             return "deny", reason
     for pattern, reason in ASK_PATTERNS:
         if any(_matches(pattern, line) for line in lines):
@@ -551,14 +594,28 @@ def _self_test():
         # SHELL is shell, and an unquoted destructive command on a read-only
         # program's line is still that command.
         #
-        # These two land on `ask` rather than `deny` for a PRE-EXISTING reason
-        # unrelated to quoted-argument scanning: the deny pattern anchors the
-        # catastrophic target at end-of-line, and the closing quote sits after
-        # it. Pinned at `ask` here so the case still proves the point that
-        # matters — a shell's quoted payload is never suppressed — and so a
-        # later change to that anchor is noticed here rather than silently.
-        ('bash -c "rm -rf /"', "ask"),
-        ("sh -c 'rm -rf $HOME'", "ask"),
+        # A shell's quoted payload is shell. These used to land on `ask` — the
+        # deny pattern anchored the catastrophic target at end-of-line and the
+        # closing quote sat after it, so one trailing character demoted a
+        # recursive delete of root into the one tier a marker can lift. The
+        # anchor now tolerates that quote.
+        ('bash -c "rm -rf /"', "deny"),
+        ("sh -c 'rm -rf $HOME'", "deny"),
+        ('bash -c "rm -rf ~/"', "deny"),
+        ("zsh -c 'rm -rf /'", "deny"),
+        # A directly-quoted target, which the hand-enumerated quoted forms
+        # missed entirely: `rm -rf "$HOME"` denied while `rm -rf "/"` was
+        # unclassified at every tier.
+        ('rm -rf "/"', "deny"),
+        ("rm -rf '/'", "deny"),
+        ('rm -rf "~/"', "deny"),
+        # ...and the flip side of tolerating that quote: a read-only SEARCH for
+        # the literal string, with the pattern ending the line, must NOT become
+        # an un-overridable deny. The end anchor used to protect this case by
+        # accident; the read-only span suppression now protects it on purpose.
+        ('grep -rn "rm -rf /"', None),
+        ("rg 'rm -rf /'", None),
+        ("grep -rn \"rm -rf '/'\"", None),
         ('bash -c "git push --force origin main"', "deny"),
         ("grep pattern file; rm -rf /", "deny"),
         # An unterminated quote must not hide a real command behind it: the

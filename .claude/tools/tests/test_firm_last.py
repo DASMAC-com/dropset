@@ -12,6 +12,63 @@ from unittest import mock
 import firm_last as fl
 
 
+class ResolveActiveTranscript(unittest.TestCase):
+    """The resolution contract. `$CLAUDE_SESSION_ID` used to be consulted here
+    and reads as the primary mechanism, but it is never set in a Bash tool
+    call — so the branch was unreachable and every firm silently resolved by
+    newest-mtime. These assert that the fallback is what actually runs, which
+    is the general class no lint rule catches: a tool reading an environment
+    variable the harness does not supply."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name)
+        self.projects = self.home / "projects"
+        self.slug = self.projects / fl.slugify(Path.cwd())
+        self.slug.mkdir(parents=True)
+
+    def _transcript(self, name, mtime):
+        path = self.slug / f"{name}.jsonl"
+        path.write_text("", encoding="utf-8")
+        import os as _os
+
+        _os.utime(path, (mtime, mtime))
+        return path
+
+    def _resolve(self, session_id=None, env=None):
+        with mock.patch.object(fl, "claude_home", return_value=self.home):
+            with mock.patch.dict("os.environ", env or {}, clear=False):
+                return fl.resolve_active_transcript(session_id)
+
+    def test_an_explicit_session_id_wins(self):
+        self._transcript("newest", mtime=9000)
+        wanted = self._transcript("wanted", mtime=1000)
+        self.assertEqual(self._resolve(session_id="wanted"), wanted)
+
+    def test_without_an_id_the_newest_transcript_is_used(self):
+        self._transcript("older", mtime=1000)
+        newest = self._transcript("newest", mtime=9000)
+        self.assertEqual(self._resolve(), newest)
+
+    def test_the_session_id_env_var_is_not_consulted(self):
+        """It is never set in a Bash tool call, so honoring it would be an
+        apparent mechanism that never runs. Newest-mtime must win instead."""
+        self._transcript("from-env", mtime=1000)
+        newest = self._transcript("newest", mtime=9000)
+        resolved = self._resolve(env={"CLAUDE_SESSION_ID": "from-env"})
+        self.assertEqual(resolved, newest)
+
+    def test_a_blank_explicit_id_falls_back(self):
+        newest = self._transcript("newest", mtime=9000)
+        self.assertEqual(self._resolve(session_id="   "), newest)
+
+    def test_an_unknown_explicit_id_is_an_error_not_a_silent_fallback(self):
+        self._transcript("newest", mtime=9000)
+        with self.assertRaises(FileNotFoundError):
+            self._resolve(session_id="no-such-session")
+
+
 def _use(tid, name, tool_input):
     return json.dumps(
         {

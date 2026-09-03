@@ -117,6 +117,40 @@ line-citing doc gets at least two shift opportunities.
 if this recurs; it is not proposed now — the prose rule is cheap, and
 untested tooling here would need its own accuracy story.)
 
+## Never copy a claim out of an applied migration
+
+An applied migration is **immutable**: the runner hashes the raw file
+bytes and rejects any changed hash, so a shipped migration's text can
+never be corrected — not even a comment. That makes prose inside a
+migration a permanent anchor for whatever it said on the day it landed.
+
+So a claim must have **one home, and it must be a mutable one**:
+
+- **Don't copy a claim out of a migration into prose.** Reference the
+  migration and state the **current** claim in the mutable doc, so a
+  correction has exactly one place to land.
+- **When a shipped migration's comment proves wrong**, record the
+  correction in the schema doc (or the next migration's text) with a
+  back-reference. Never restate the frozen version alongside it as
+  though both were current.
+- **Prefer a sidecar to a SQL comment** for anything expected to
+  evolve. The fence-sidecar design chose separate files over in-SQL
+  comments for exactly this reason, and it is the working precedent.
+
+Three measured instances, two of them the same day. An asymmetry claim
+documented in migrations 0003 and 0008 was copied into two prose docs;
+the world it described was later corrected, the migrations could not be,
+and the prose copies went stale silently. A liveness doc named a helper
+a merged PR had retired. And migration 0009 states that a source writes
+bars or ticks and never both — false for the coinbase source, whose
+candle and ticker binaries share a source label deliberately — with the
+correction stated in 0010 because 0009 cannot be touched.
+
+The auditing counterpart is in `audit-scope`'s doc-freshness dimension:
+a migration's immutability makes it the *least* authoritative statement
+of current behavior, which inverts the usual instinct to trust the
+schema.
+
 ## Spelling (cspell)
 
 `cfg/dictionary.txt` is the **project-wide** spelling allow-list —

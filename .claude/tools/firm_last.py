@@ -58,13 +58,31 @@ def slugify(path: Path) -> str:
 
 
 def resolve_active_transcript(session_id: str | None = None) -> Path:
-    """The transcript file for the running session. Prefers an explicit or
-    ``$CLAUDE_SESSION_ID`` session id; otherwise takes the most recently
-    modified top-level ``*.jsonl`` under this cwd's project slug (the session
-    actively being appended to), scanning every project dir as a fallback.
+    """The transcript file for the running session.
+
+    An explicit ``session_id`` (``--session-id``) is exact and is what callers
+    should pass. Without one, this takes the most recently modified top-level
+    ``*.jsonl`` under this cwd's project slug, scanning every project dir as a
+    fallback.
+
+    **Newest-mtime is a documented contract, not an accident.** This used to
+    also consult ``$CLAUDE_SESSION_ID``, which reads as the primary mechanism
+    and is not one: that variable is **not present in a Bash tool call**
+    (``printenv CLAUDE_SESSION_ID`` exits 1), so the branch was unreachable and
+    every firm resolved by mtime while appearing not to. The branch is gone
+    rather than left as an apparent mechanism.
+
+    Callers should know what mtime costs them. With one planning session plus
+    several implementers writing transcripts concurrently, the most recently
+    touched file is frequently **not** the session that just approved the
+    command — so an unattended firm can harvest another session's approval into
+    the shared allowlist. That is recoverable (the write is additive and the
+    caller reports it) but it is a race, which is why ``firm-perms`` passes
+    ``--session-id`` from its own scratchpad path and why the resolved session
+    is named in the output.
     """
     projects = claude_home() / "projects"
-    session_id = session_id or os.environ.get("CLAUDE_SESSION_ID", "").strip() or None
+    session_id = (session_id or "").strip() or None
     if session_id:
         primary = projects / slugify(Path.cwd()) / f"{session_id}.jsonl"
         if primary.is_file():
@@ -267,8 +285,14 @@ def main(argv: list[str] | None = None) -> int:
         # letting the writer replace it (or dying on a raw traceback).
         print(f"firm-last: {exc}", file=sys.stderr)
         return 1
+    # Name the session the rule was harvested from. Without an explicit
+    # --session-id this is a newest-mtime guess among concurrently-written
+    # transcripts, so a surprising firm needs to be diagnosable from the output
+    # rather than by re-deriving which session the tool happened to pick.
+    provenance = "" if args.session_id else " (resolved by newest transcript)"
     if changed:
         print(f"firm-last: firmed {rule} into {target}.")
+        print(f"firm-last: harvested from {transcript.stem}{provenance}.")
     else:
         print(f"firm-last: {rule} already covered — nothing to firm.")
     return 0
