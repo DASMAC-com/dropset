@@ -79,6 +79,16 @@ jobs:
         cache-dependency-path: '.github/workflows/lint/requirements.txt'
         python-version: '${{ env.PYTHON_VERSION }}'
     - run: 'pip install -r .github/workflows/lint/requirements.txt'
+    # The session helpers are zsh, and `test_ds_pull.py` drives the real
+    # function rather than a Python port of it — the shell branches are the
+    # substance there. This runner image ships no zsh, so without this the whole
+    # suite `skipUnless`-skips and 12 assertions about the base-repo
+    # fast-forward (its three-way outcome, the throttle window, the all-digits
+    # stamp guard, both self-refresh directions) are gated by nothing but the
+    # author happening to run `make tools-tests` on a Mac. The sibling
+    # `test_iterm_heal.py` stays darwin-only and correctly keeps skipping:
+    # iTerm2 and BSD `stat -f %m` have no Linux equivalent to test.
+    - run: 'sudo apt-get install -y --no-install-recommends zsh'
     # Python skill-tool unit tests (stdlib only, reuses the cached Python set up
     # above — no new cache). Folds in the old dedicated stage-backlog-tests job.
     - run: 'make tools-tests'
