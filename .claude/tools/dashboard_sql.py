@@ -363,11 +363,22 @@ def check_bare_var_in_literal(sql: str, where: str) -> None:
     for m in VAR_REF.finditer(sql):
         if m.group("fmt") or not in_literal(m.start(), spans):
             continue
+        name = m.group("braced") or m.group("bare") or ""
         # Grafana's own `$__`-prefixed macros are substituted by the datasource
         # before the query is sent, so they are not user-supplied values and a
         # quoted one is not this defect.
-        name = m.group("braced") or m.group("bare") or ""
         if name.startswith("__"):
+            continue
+        # `VAR_REF`'s bare alternative accepts a LEADING DIGIT, because it is
+        # shared with `substitute` and only ever had to be greedy there. A
+        # guard cannot be: a currency format mask (`to_char(x, '$999.00')`), a
+        # positional marker (`'$1'`), or a regex literal are all ordinary SQL
+        # that contain a dollar-digit run inside a literal, and refusing them
+        # would leave no way past except editing this tool. A Grafana variable
+        # name cannot start with a digit, so requiring a leading letter or
+        # underscore separates the two exactly. Narrowed HERE rather than in
+        # `VAR_REF`, which `substitute` shares and which wants the wide form.
+        if not name[:1].isalpha() and not name.startswith("_"):
             continue
         raise ExtractionError(
             f"{where}: `{m.group(0)}` is an unformatted variable inside a "
@@ -536,11 +547,18 @@ def indent_of(line: str) -> int:
 def block_body_end(lines: list[str], i: int, base: int) -> int:
     """The index just past the block-scalar body that follows `lines[i]`.
 
-    Split out from `block_scalar` because the rule-boundary scan needs to SKIP
-    a body without validating it or stripping its indentation: a
-    `description: >-` block is
-    prose that has no business raising, and the scan only needs to know where
-    the opaque region ends.
+    Split out from `block_scalar` because BOTH scans need to SKIP a body
+    without stripping its indentation or checking it against the block's
+    width: a `description: >-` block is prose, and a scan only needs to know
+    where the opaque region ends.
+
+    Not validation-free, and the exception is worth naming rather than
+    discovering: `indent_of` still refuses a TAB. That is deliberately
+    conservative — this cannot tell a tab in the indentation, which YAML
+    forbids, from one opening a content line, which YAML allows, so it refuses
+    both. Refusing is the safe direction, since the alternative is measuring
+    the line as indent 0 and truncating the value silently; the cost is that a
+    legal tab-led content line is rejected rather than mirrored.
     """
     j = i + 1
     while j < len(lines):
@@ -723,14 +741,29 @@ def parse_alerting(path: pathlib.Path) -> list[tuple[str, str]]:
         while i < len(rule):
             m = BLOCK_SCALAR.match(rule[i])
             if not m or m.group("key") != "rawSql":
+                # SKIP ANOTHER KEY'S BLOCK-SCALAR BODY, exactly as the
+                # boundary scan above does. These rules carry prose blocks
+                # (`description: >-`, `summary: |-`), and walking into one
+                # line by line reads its CONTENT as structure: a prose line
+                # shaped like `something: |` would be taken for a header, and
+                # one merely starting `rawSql:` would trip the refusal below
+                # and fail the mirror gate on an annotation. The two scans
+                # have to state the same rule or the asymmetry becomes a bug
+                # the moment either one grows a check.
+                if m:
+                    i = block_body_end(rule, i, len(m.group("indent")))
+                    continue
                 # A `rawSql` that is not a literal block scalar must be
                 # REFUSED, never skipped. Skipping it writes no mirror file, so
                 # `check` stays green and the query is never linted — which is
                 # precisely the silent hole this module's docstring argues
                 # against. Reachable forms: a quoted single-line scalar
                 # (`rawSql: 'SELECT 1'`), an explicit indentation indicator
-                # (`rawSql: |2-`), and a trailing comment after the indicator.
-                if rule[i].strip().startswith("rawSql:"):
+                # (`rawSql: |2-`), a trailing comment after the indicator, and
+                # the sequence-item form (`- rawSql: |-`), which the anchored
+                # header pattern does not match either.
+                bare = rule[i].strip()
+                if bare.startswith("rawSql:") or bare.startswith("- rawSql:"):
                     raise ExtractionError(
                         f"{path.name}: rule {handle!r} writes its `rawSql` in "
                         f"a form this reader does not lift "

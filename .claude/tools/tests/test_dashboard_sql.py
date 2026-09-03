@@ -584,6 +584,45 @@ groups:
                     self.parse(text)
                 self.assertIn("literal block", str(cm.exception))
 
+    def test_another_keys_block_scalar_body_is_skipped_not_walked(self):
+        # The extraction loop must skip a non-rawSql block-scalar body exactly
+        # as the boundary scan does. Walking it reads prose as structure: a
+        # description line merely starting `rawSql:` would trip the refusal
+        # and fail the mirror gate on an annotation, and one shaped like a
+        # header would be taken for one.
+        # Both body lines are chosen to REACH the hazard, which a plainer
+        # fixture does not: the first strips to a `rawSql:` prefix and trips
+        # the refusal, the second is a well-formed block-scalar header and
+        # would be lifted as a query. Verified by mutation — disabling the
+        # skip makes this fail.
+        text = self.RULES.replace(
+            "  - annotations:\n      summary: 'one'\n",
+            "  - annotations:\n"
+            "      description: |-\n"
+            "        rawSql: is the key this tool mirrors.\n"
+            "        note: |\n"
+            "      summary: 'one'\n",
+        )
+        out = self.parse(text)
+        self.assertEqual(
+            [rel for rel, _ in out],
+            ["alerting/rule-one.sql", "alerting/rule-two.sql"],
+        )
+        self.assertNotIn("is the key this tool mirrors", out[0][1])
+
+    def test_refuses_the_sequence_item_form_of_rawSql(self):
+        # `- rawSql: |-` matches neither the anchored header pattern nor a
+        # bare `rawSql:` prefix, so it was still silently skipped after the
+        # first refusal landed — the same hole one level over.
+        text = self.RULES.replace(
+            "    - model:\n        rawSql: |-\n          SELECT 1\n          FROM t\n",
+            "    - rawSql: |-\n        SELECT 1\n",
+            1,
+        )
+        with self.assertRaises(ds.ExtractionError) as cm:
+            self.parse(text)
+        self.assertIn("literal block", str(cm.exception))
+
     def test_a_query_containing_rules_does_not_fabricate_a_boundary(self):
         # The boundary scan must treat a block-scalar BODY as opaque. A line
         # inside the SQL reading `rules:` or a `- ` at the list's own column
@@ -699,6 +738,21 @@ class BareVarGuard(unittest.TestCase):
         ds.check_bare_var_in_literal(
             "-- do not write '$source' here\nSELECT 1", "where"
         )
+
+    def test_allows_a_dollar_run_that_cannot_be_a_variable_name(self):
+        # THE FALSE POSITIVE THIS GUARD NEARLY SHIPPED. `VAR_REF`'s bare
+        # alternative accepts a leading digit, because `substitute` shares it
+        # and only ever needed it greedy. So an ordinary currency mask or a
+        # positional marker inside a literal read as a variable — and a guard
+        # has no escape hatch short of editing the tool. A Grafana variable
+        # name cannot start with a digit, which separates the two exactly.
+        ds.check_bare_var_in_literal("SELECT to_char(amount, '$999,999.00')", "where")
+        ds.check_bare_var_in_literal("SELECT 1 WHERE tag = '$1'", "where")
+
+    def test_still_rejects_a_leading_underscore_variable(self):
+        # The narrowing must not open a hole: `_` is legal in a variable name.
+        with self.assertRaises(ds.ExtractionError):
+            ds.check_bare_var_in_literal("SELECT 1 WHERE s = '$_internal'", "where")
 
     def test_the_committed_dashboards_pass_the_new_guard(self):
         # The whole point: the tree is clean today, so the guard is a floor

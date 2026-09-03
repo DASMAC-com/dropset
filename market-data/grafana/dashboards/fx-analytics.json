@@ -689,7 +689,7 @@
           "text": "live only",
           "value": "live only"
         },
-        "description": "Whether the Pairs picker offers only pairs currently collecting, or every pair this venue is configured for. Defaults to live only, so the overlay opens on real data rather than on empty series for a pair whose collector is parked - quiet pairs stay reachable, but opt-in. Liveness comes from instrument_liveness, whose staleness bound is chosen by asset class: 72h for a fiat cross so an FX weekend is not mistaken for a dead collector, 48h for the always-open classes. A custom list rather than a query, so it can never be empty.",
+        "description": "Whether the Pairs picker offers only pairs currently collecting, or every pair this venue is configured for. Defaults to live only, so the overlay opens on real data rather than on empty series for a pair whose collector is parked - quiet pairs stay reachable, but opt-in. Liveness comes from instrument_liveness, whose staleness bound is chosen by asset class - looser for a fiat cross so an FX weekend is not mistaken for a dead collector, tighter for the always-open ones. The actual numbers are deliberately not repeated here: they are defined once in the view, and a prose copy is the same drift surface as a SQL copy. A custom list rather than a query, so it can never be empty.",
         "label": "Show",
         "name": "include_quiet",
         "options": [],

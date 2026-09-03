@@ -152,9 +152,14 @@ files. A rule using YAML the subset reader cannot handle fails that test
 rather than silently mirroring the wrong text. A folded (`>`) `rawSql`
 is refused outright, since folding rewrites newlines.
 
-Mirror filenames are keyed on the **rule `uid`** for alerts and the
-**panel `id`** for dashboards — the stable handles, which survive a
-retitle or a reorder. A duplicate is refused rather than assumed away.
+Mirror filenames are keyed on the **rule `uid`** for alerts, which is a
+stable handle: a rule can be retitled or reordered and its mirror file
+stays put. Dashboard panels are **not** the same — their filename
+carries the panel `id` *and* a slug of the title, so **retitling a panel
+renames its mirror file**. That is why `extract` prunes orphans: a
+renamed panel would otherwise leave its old mirror behind to be linted
+forever, reading as a query that still exists. A duplicate path is
+refused rather than assumed away.
 
 **Do not "fix" what sqlfluff would flag in the quoted aliases.** Grafana
 binds panels by name — `AS "time"`, and the `"open"`/`"high"`/`"low"`/
