@@ -812,6 +812,32 @@ argument was *not* the reason — see that step for why.)
   retries and peer-dependency trees: route it through the quiet runner
   (`python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`).
 
+- **A DRY RUN or expansion is verbose-on-success too.** The rule above
+  is stated by naming runners, and a reader checking `make -n` against
+  that list sees `make` and then reasons that `-n` exempts it. It does
+  not. The class by **shape** is *any command whose output is a
+  program's own text rather than its result* — `make -n`, `make -p`,
+  `git config --list`, `docker compose config` — and the follow-up is a
+  grep of the captured log for the one line in question, never a read of
+  the result.
+
+  Why it sticks: you are asking a **targeted** question of a
+  **whole-program** dump, so the ratio of wanted to bought lines is
+  worst precisely when the target is most recursive. Measured:
+  `make -n demo` run four times, the two unwrapped calls landing the
+  entire expanded recipe cascade — one the session's 6th-largest single
+  result at ~972 tokens, ~1.1k across the shape — to learn whether one
+  recipe line still carried a teardown. The same question asked later
+  through the wrapper plus a two-pattern grep of the log cost ~50
+  tokens.
+
+  Two things specific to a dry run, both counterintuitive: `make -n`
+  still **executes** `$(MAKE)` sub-make lines, so it is not
+  side-effect-free either (that run's first `make -n demo` really did
+  tear down the keyless collectors), and the cascade scales with the
+  target's recursion depth rather than with the question — so the
+  cheapest-looking target produced the fattest result.
+
 - **Bound a probe or extraction script's output at both ends.** When
   probing an unfamiliar external API, go **through a filtering script**
   rather than a bare fetch: one bare `curl` of an FX feed catalogue cost

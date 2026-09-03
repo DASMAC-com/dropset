@@ -673,6 +673,24 @@ already being asked to start the review.
    python3 .claude/tools/run_quiet.py -- make lint
    ```
 
+   **On a prose-heavy diff, run the spelling pre-flight
+   first.** One bare command, no arguments:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- \
+     python3 .claude/tools/lint_paths.py --prose
+   ```
+
+   It runs only the cspell hook over the changed files. The
+   point is **fewer failed rounds**: one session's `make lint`
+   failed on spelling in two separate rounds, each surfacing
+   three more British `-our` / `-ise` variants, because the
+   dictionary is US-spelling by construction and a variant
+   fails by construction. Finding them all at once is the only
+   thing that helps — the scoped form fails identically on an
+   unknown word, so this is not the same lever as "scope the
+   lint".
+
    **The `Lint` WORKFLOW is not `make lint`.** It also runs,
    as separate steps before the hooks:
 

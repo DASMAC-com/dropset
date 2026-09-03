@@ -495,6 +495,35 @@ not only to the sub-agents you brief:
   run something whose success output is longer than its
   verdict, wrap it.
 
+  **A DRY RUN or expansion is in this class too, and reads as
+  if it is not.** Naming runners is what lets it slip: a reader
+  checking `make -n` against the list sees `make`, then reasons
+  that `-n` exempts it. It does not. The class by shape is **any
+  command whose output is a program's own text rather than its
+  result** — `make -n`, `make -p`, `git config --list`,
+  `docker compose config` — and the follow-up is a grep of the
+  captured log for the one line in question, never a read of
+  the result.
+
+  The reason it sticks: you are asking a *targeted* question of
+  a *whole-program* dump, so the ratio of wanted to bought
+  lines is worst exactly when the target is most recursive.
+  Measured: `make -n demo` run four times, the two unwrapped
+  calls landing the whole expanded recipe cascade — one the
+  session's 6th-largest single result at ≈972 tokens, ≈1.1k
+  across the shape — to learn whether one recipe line still
+  carried a teardown. Asked later through the wrapper plus a
+  two-pattern grep of the log, the same question cost ~50
+  tokens.
+
+  Two things specific to the dry-run case, both counterintuitive:
+  `make -n` still **executes** `$(MAKE)` sub-make lines, so it is
+  not side-effect-free either — that run's first `make -n demo`
+  really did tear down the keyless collectors. And the cascade
+  scales with the target's recursion depth rather than with the
+  question, so the cheapest-looking target produced the fattest
+  result.
+
   **Nothing prints until the command exits**, so do not poll
   the log of a *backgrounded* run — one session made seven such
   `tail` calls, all empty. Wait for the completion

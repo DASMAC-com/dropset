@@ -174,6 +174,27 @@ dictionary: a fragment is not a word, it would be a permanent entry
 blessing a misspelling repo-wide, and the `--unique` sorter would keep
 it alive.
 
+**The dictionary is US-spelling by construction, so a British variant
+fails by construction — and is never a dictionary candidate.** Both
+halves of that are already true and the failure was still discovered
+one word at a time: one session's lint failed on spelling in **two
+separate rounds**, each surfacing three more `-our` / `-ise` variants.
+So when a change authors much prose, run the spelling pre-flight once
+before the first full round rather than finding them a round at a time:
+
+```sh
+python3 .claude/tools/run_quiet.py -- \
+  python3 .claude/tools/lint_paths.py --prose
+```
+
+`--prose` runs only the cspell hook over this branch's changed files,
+and takes **no arguments** — which is the mechanism, not a convenience.
+The reason the full sweep kept winning is that it needed no arguments
+while the prescribed narrow form needed a hook id and a path list; that
+is the same asymmetry `--changed` exists to remove, one level down. What
+it buys is *fewer failed rounds*, not narrower output — the scoped form
+fails identically on an unknown word.
+
 The failure is invisible until a full lint round-trip spends itself on
 it, which is why this is worth stating rather than discovering. One run
 wrote "it pre-empts every median and pair row below" into a Rust doc

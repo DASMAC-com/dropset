@@ -59,6 +59,36 @@ read used by `housekeeping`:
   loop or a `jq` filter; the failure path still pulls logs via
   `get_job_logs`.
 
+- **Any INVENTORY read** — a few fields across many PRs: which PRs are
+  open, what files they touch, what their heads are. The carve-out above
+  reads as being about *CI polling*, so an open-PR inventory question
+  routes to the MCP by default, and the cost there does not scale with
+  the fields wanted but with the **number of PRs**: an MCP list response
+  carries a full repository object per item, and `minimal_output: true`
+  does **not** remove it. Measured, twice in one session for the same
+  question — checking whether another open PR had claimed a migration
+  number:
+
+  - `mcp__github__list_pull_requests` with `state: "open"`,
+    `perPage: 20` and `minimal_output: true` — **3.7k**, with minimal
+    output set, to answer what one PR body line answered;
+  - `gh pr list --state open --json number,files --limit 30 --jq '…'`
+    filtered to the migrations directory — a two-line result.
+
+  So take the field-selected form, and take `--jq` with it, since that
+  is what makes it cheap and is the part most easily left off:
+
+  ```sh
+  gh pr list --state open --json number,files --limit 30 --jq '<filter>'
+  ```
+
+  `--jq` is a command **flag**, not a shell pipe, so this stays a single
+  bare command under the existing `Bash(gh pr list:*)` rule. (A tool
+  that needs this inventory should do the read **in its own process**
+  instead — see `migration_collisions.py --others-from-gh` and
+  `review_diff.py --overlap`, which exist so the per-PR file lists never
+  reach a transcript at all.)
+
 - **The post-merge notification lookup** (`review-pr`) — reading the
   one thread id whose `subject.url` ends in a PR's number, so the
   merged PR's own notification can be dismissed. Same reasoning as the
