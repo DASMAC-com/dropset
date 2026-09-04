@@ -146,30 +146,33 @@ resource that minted the key would have to surface the secret through
 stack outputs or events, which is strictly worse custody than never
 letting CloudFormation see it at all.
 
-So the template creates the *user*, and the key is minted straight into
-1Password. The pipe is deliberate — it keeps the secret out of the
-terminal scrollback and the shell history:
+So the template creates the *user*, and the key is minted against that
+user in the IAM console, by hand.
 
-```sh
-aws iam create-service-specific-credential \
-  --user-name dropset-dev-bedrock-worker \
-  --service-name bedrock.amazonaws.com \
-  --credential-age-days 90 \
-  --query 'ServiceSpecificCredential.ServiceCredentialSecret' \
-  --output text | op item create --category='API Credential' \
-  --title='bedrock' --vault="$DROPSET_OP_VAULT" 'api-key[password]=-'
-```
+**The key is operator-only.** It is generated in the console, copied
+once, and pasted into 1Password by a person. No tool, script, or agent
+session ever reads, prints, or handles the value — which is why this is
+a console procedure rather than a command this repo could run for you.
 
-`ServiceCredentialSecret` is returned **only** at creation — there is no
-way to read it back later, so a lost key is re-minted rather than
-recovered. `--credential-age-days` sets an expiry, which is what puts
-the key on the existing rotation rhythm; re-run the command to rotate,
-then delete the superseded credential by its
-`ServiceSpecificCredentialId`.
+In the IAM console: **Users** → `dropset-dev-bedrock-worker` →
+**Security credentials** → **API keys** → **Generate API key** → choose
+**Amazon Bedrock** as the service → pick an expiration (90 days keeps it
+on the existing rotation rhythm) → **Generate**, then copy the value.
 
-The resulting reference is `op://<vault>/bedrock/api-key`, following the
-canonical `<provider>/<secret>` shape the local enclave already uses
-(see `infra/localnet/secrets.local.env.example`).
+Two things to know about that dialog:
+
+- The value is shown **once**. There is no way to read it back later, so
+  a lost key is re-minted and the old one deactivated, never recovered.
+- Generating the key **auto-attaches the `AmazonBedrockLimitedAccess`
+  managed policy** to the user. That is broader than this stack intends,
+  so detach it afterwards under the user's **Permissions** tab, leaving
+  only `dropset-dev-bedrock-worker-invoke`. Claude Code needs nothing
+  the invoke policy does not already grant.
+
+Store it in 1Password as item `bedrock`, field `api-key`, giving the
+reference `op://<vault>/bedrock/api-key` — the canonical
+`<provider>/<secret>` shape the local enclave already uses (see
+`infra/localnet/secrets.local.env.example`).
 
 ### 2. Opt the account into `aws_review` retention
 
@@ -238,8 +241,15 @@ export AWS_REGION=us-west-2
 export ANTHROPIC_MODEL='us.anthropic.claude-fable-5-1'
 export ENABLE_PROMPT_CACHING_1H=1
 export AWS_BEARER_TOKEN_BEDROCK="$(op read \
-  --account "$DS_OP_ACCOUNT" "op://$DROPSET_OP_VAULT/bedrock/api-key")"
+  --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")"
 ```
+
+`DS_OP_BEDROCK_REF` is the `op://` coordinate, defined alongside the
+other `DS_OP_*` coordinates in the untracked runtime config — the same
+split the committed shell helpers already use, where anything tracked
+carries placeholder shapes only. Resolving it at launch rather than
+exporting the key into a long-lived shell keeps the value out of every
+process that does not need it.
 
 Setting `ANTHROPIC_MODEL` does more than pick the primary model: on
 Bedrock it also routes background tasks (session titles and the like) to
