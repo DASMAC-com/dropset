@@ -169,6 +169,37 @@ Two things to know about that dialog:
   only `dropset-dev-bedrock-worker-invoke`. Claude Code needs nothing
   the invoke policy does not already grant.
 
+**Rotating it.** The key expires on the date chosen at generation, and
+expiry is silent from this repo's side — nothing here warns you. List
+the current credential, its status and its expiry date with:
+
+```sh
+aws iam list-service-specific-credentials \
+  --user-name dropset-dev-bedrock-worker \
+  --service-name bedrock.amazonaws.com
+```
+
+That returns metadata only — never the secret — including the
+`ServiceSpecificCredentialId` the delete step needs.
+
+Rotate by generating *before* revoking, so there is no window with no
+working key:
+
+1. Generate a new key the same way, in the IAM console.
+1. Update the existing 1Password field in place. Launching resolves the
+   reference fresh each time, so nothing else has to change: no redeploy,
+   no edit to this repo, no change to the runtime config.
+1. Launch a worker session and confirm it makes a real call.
+1. Only then deactivate or delete the old credential, by its
+   `ServiceSpecificCredentialId`.
+
+**Generating a key auto-attaches `AmazonBedrockLimitedAccess` again**, so
+the detach in the previous step is part of *every* rotation, not just the
+first. Check the user's Permissions tab afterwards: it should list only
+`dropset-dev-bedrock-worker-invoke`. A rotation that skips this silently
+re-widens the worker's permissions and leaves the live user out of step
+with what this template declares.
+
 Store it in 1Password as one item per provider with a named field per
 credential, giving a reference of the shape
 `op://<vault>/<item>/credential` — the same shape the other session
