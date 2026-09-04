@@ -64,6 +64,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 from collections.abc import Callable
 
@@ -86,6 +87,17 @@ _NODE_MODULES_REL = os.path.join("frontend", "node_modules")
 # including unset, which git defaults to `openpgp` — is gpg signing, where an
 # ssh-agent listing says nothing at all. See `signing_state`.
 _SSH_FORMAT = "ssh"
+
+# Signer programs that delegate to an ssh AGENT instead of to a backend of
+# their own — so a machine configured with one is agent-based signing, however
+# much the config reads like an external signer.
+#
+# `ssh-keygen` is the case that matters: it is git's own default for
+# `gpg.ssh.program`, and `ssh-keygen -Y sign` reaches `SSH_AUTH_SOCK` for an
+# agent-held key. Treating it as an external signer would skip the agent probe
+# on the one configuration that most needs it, which is the original bug
+# pointing the other way.
+_AGENT_DELEGATING_SIGNERS = frozenset({"ssh-keygen", "ssh-keygen.exe"})
 
 
 def parse_base_repo(porcelain: str) -> str | None:
@@ -207,11 +219,37 @@ def node_modules_state(worktree_root: str) -> str:
     return "absent"
 
 
+def signer_program_exists(program: str) -> bool:
+    """Whether a configured ``gpg.ssh.program`` resolves to something runnable.
+
+    ``gpg.ssh.program`` holds a **command**, not necessarily a path — git's own
+    default for it is the bare name ``ssh-keygen``, and 1Password's
+    ``op-ssh-sign`` sits on ``PATH`` under that bare name on Linux. git runs it
+    through the usual command lookup, so a bare name is a perfectly valid
+    value.
+
+    That makes a plain ``os.path.exists`` the wrong test, and wrong in the
+    expensive direction: it resolves a bare name against the *current working
+    directory*, finds nothing, and reports a working machine as
+    ``"external-signer-missing"`` — which the skill treats as a hard stop. That
+    is the same unclearable-blocker shape this whole module exists to remove,
+    so getting it wrong here would have reintroduced the bug inside its own
+    fix.
+
+    So: a value containing a path separator is checked on disk, and a bare
+    command is resolved through ``PATH``.
+    """
+    separators = [os.sep] + ([os.altsep] if os.altsep else [])
+    if any(sep in program for sep in separators):
+        return os.path.exists(program)
+    return shutil.which(program) is not None
+
+
 def signing_state(
     gpg_format: str | None,
     ssh_program: str | None,
     agent_probe: Callable[[], int] | None = None,
-    program_exists: Callable[[str], bool] = os.path.exists,
+    program_exists: Callable[[str], bool] = signer_program_exists,
 ) -> str:
     """Which commit-signing configuration this machine has, and whether it can
     sign right now. Returns one of five strings.
@@ -225,26 +263,37 @@ def signing_state(
     * **gpg** (``gpg.format`` unset — git defaults to ``openpgp`` — or any
       non-``ssh`` value) → ``"gpg"``. An ssh-agent listing is meaningless here;
       this tool reports the configuration and probes nothing.
-    * **external-signer ssh** (``gpg.format = ssh`` *and* ``gpg.ssh.program``
-      set, e.g. 1Password's ``op-ssh-sign``) → ``"external-signer"``, or
-      ``"external-signer-missing"`` when that program is not on disk. With a
-      signer program configured, git never consults ``SSH_AUTH_SOCK`` or any
-      ssh agent — the signer talks to its own backend over its own IPC. So the
-      agent is not in the signing path and must not be probed.
-    * **agent-based ssh** (``gpg.format = ssh`` and no ``gpg.ssh.program``) →
-      ``"agent-ok"`` or ``"agent-locked"``. Only here does the agent listing
-      mean anything, and here it is the *right* probe: reading
-      ``user.signingkey`` reports merely that a key is configured, which is
-      exactly the state a locked agent is in, so it passes silently in the one
-      case worth catching.
+    * **external-signer ssh** (``gpg.format = ssh`` *and* a ``gpg.ssh.program``
+      that talks to a backend of its own, e.g. 1Password's ``op-ssh-sign``) →
+      ``"external-signer"``, or ``"external-signer-missing"`` when that program
+      does not resolve. Such a signer reaches its backend over its own IPC and
+      never consults ``SSH_AUTH_SOCK``, so the agent is not in the signing path
+      and must not be probed. Note the bound: this is a property of *that kind*
+      of signer, not of every value ``gpg.ssh.program`` can hold — see
+      ``_AGENT_DELEGATING_SIGNERS`` for the exception git itself defaults to.
+    * **agent-based ssh** (``gpg.format = ssh`` and either no
+      ``gpg.ssh.program`` or an agent-delegating one) → ``"agent-ok"`` or
+      ``"agent-locked"``. Only here does the agent listing mean anything, and
+      here it is the *right* probe: reading ``user.signingkey`` reports merely
+      that a key is configured, which is exactly the state a locked agent is
+      in, so it passes silently in the one case worth catching.
 
-    ``gpg.ssh.program`` is the discriminator, and it is read **first**. Getting
-    that order wrong is not a cosmetic bug: on an external-signer machine the
-    agent listing fails unconditionally, so an agent-first pre-check hard-stops
-    every bootstrap with a diagnosis that no operator action can clear. Measured
-    four times on one machine — including by the session that added this
-    function, whose own bootstrap commit then signed successfully in exactly the
-    state the probe had called broken.
+    **``gpg.format`` selects the family and is read first**; within the ssh
+    family, ``gpg.ssh.program`` discriminates external-signer from agent-based.
+    Getting that order wrong is not a cosmetic bug: on an external-signer
+    machine the agent listing fails unconditionally, so an agent-first
+    pre-check hard-stops every bootstrap with a diagnosis that no operator
+    action can clear. Measured four times on one machine — including by the
+    session that added this function, whose own bootstrap commit then signed
+    successfully in exactly the state the probe had called broken.
+
+    **What a verdict does and does not prove.** ``"agent-ok"`` rests on a live
+    probe, so it does say the agent can sign *now*. ``"external-signer"`` rests
+    only on the signer program resolving: a locked 1Password app leaves
+    ``op-ssh-sign`` exactly where it was, so this verdict proves the signing
+    path is *wired*, never that the backend is *unlocked*. That is deliberate —
+    the only check that proves signing works is a signed commit — but it means
+    ``"external-signer"`` must not be read as ruling out a locked backend.
 
     Two probes that look like fixes and are not, both measured: a second
     agent-side probe (``ssh-keygen -Y sign`` under the ambient environment)
@@ -258,15 +307,18 @@ def signing_state(
     1 = none, 2 = unreachable) and is called **only** in the agent-based case,
     so the two configurations that don't use an agent never pay for it or fail
     on it. Exit 1 and 2 collapse into ``"agent-locked"`` because the operator
-    action is the same either way. Injected, along with ``program_exists``, so
-    the tests can cover all three configurations without a real agent.
+    action is the same either way. Omitting it entirely **asserts**
+    ``"agent-locked"`` rather than raising — fail-closed, since the alternative
+    is reporting a machine able to sign on no evidence at all. Injected, along
+    with ``program_exists``, so the tests can cover every configuration without
+    a real agent.
     """
     fmt = (gpg_format or "").strip().lower()
     if fmt != _SSH_FORMAT:
         return "gpg"
 
     program = (ssh_program or "").strip()
-    if program:
+    if program and os.path.basename(program).lower() not in _AGENT_DELEGATING_SIGNERS:
         return (
             "external-signer" if program_exists(program) else "external-signer-missing"
         )
@@ -283,12 +335,19 @@ def _git_config(key: str) -> str | None:
     by necessity: an unset ``gpg.ssh.program`` is the *common* case, not an
     error. Never raises — a signing pre-check that aborts the run would cost
     the skill the tag / base-repo / branch answers this same call carries.
+
+    ``errors="replace"`` is load-bearing for that promise, not decoration:
+    ``text=True`` decodes with the locale encoding and raises
+    ``UnicodeDecodeError`` — a ``ValueError``, which ``except OSError`` does
+    **not** catch — on undecodable output. Rare, and it would escape straight
+    out of the result-dict literal.
     """
     try:
         completed = subprocess.run(
             ["git", "config", "--get", key],
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
         )
     except OSError:
@@ -305,12 +364,16 @@ def _ssh_agent_probe() -> int:
 
     Passed to `signing_state`, which calls it **only** in the agent-based ssh
     configuration — so on an external-signer machine this never runs.
+
+    Never raises, for the same reason and by the same means as `_git_config`:
+    it is evaluated while the result dict is being built.
     """
     try:
         return subprocess.run(
             ["ssh-add", "-l"],
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
         ).returncode
     except OSError:

@@ -112,17 +112,20 @@ symlinks are idempotent and never clobber, so a stop after that
 call leaves nothing to clean up.
 
 **There are three signing configurations and only one of them
-routes through an ssh agent.** That is the whole reason this is
-a config read rather than a probe, and `gpg.ssh.program` is the
-discriminator:
+routes through an ssh agent.** That is why the helper dispatches
+on config *before* deciding whether to probe at all — it still
+probes the agent, but only in the configuration where the agent
+is actually in the signing path. `gpg.format` selects the
+family; within the ssh family, `gpg.ssh.program` discriminates
+external-signer from agent-based:
 
-| `signing`                 | Configuration                                                                     | What to do                                              |
-| ------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `external-signer`         | `gpg.format = ssh` **and** `gpg.ssh.program` set (e.g. 1Password's `op-ssh-sign`) | Proceed. The agent is not in the signing path at all.   |
-| `external-signer-missing` | Same, but the signer program is not on disk                                       | **Stop and ask** — a moved or uninstalled app bundle.   |
-| `agent-ok`                | `gpg.format = ssh`, no signer program, agent holds identities                     | Proceed.                                                |
-| `agent-locked`            | Same, agent holds nothing or is unreachable                                       | **Stop and ask** — the operator unlocks the app.        |
-| `gpg`                     | `gpg.format` unset (git defaults to `openpgp`) or any non-`ssh` value             | Proceed; this check has nothing to say about a GPG key. |
+| `signing`                 | Configuration                                                                                                 | What to do                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `external-signer`         | `gpg.format = ssh` **and** a `gpg.ssh.program` with its own backend (e.g. 1Password's `op-ssh-sign`)          | Proceed. That signer reaches its backend over its own IPC, so the agent is not in the signing path. |
+| `external-signer-missing` | Same, but the signer program resolves neither on disk nor on `PATH`                                           | **Stop and ask** — a moved or uninstalled app bundle.                                               |
+| `agent-ok`                | `gpg.format = ssh`, no signer program (or an agent-delegating one, e.g. `ssh-keygen`), agent holds identities | Proceed.                                                                                            |
+| `agent-locked`            | Same, agent holds nothing or is unreachable                                                                   | **Stop and ask** — the operator unlocks the app.                                                    |
+| `gpg`                     | `gpg.format` unset (git defaults to `openpgp`) or any non-`ssh` value                                         | Proceed; this check has nothing to say about a GPG key.                                             |
 
 **Why not just probe the agent, which is what this step used to
 do.** For **agent-based** ssh signing the agent listing is the
@@ -134,15 +137,25 @@ first-hand on a locked 1Password agent.
 
 But that argument holds *only* for agent-based signing, and
 stating it without its bound is what made this step wrong.
-**With a signer program configured, git never consults
-`SSH_AUTH_SOCK` or any ssh agent** — the signer talks to its own
+**With a signer that has its own backend, git never consults
+`SSH_AUTH_SOCK` or any ssh agent** — the signer reaches that
 backend over its own IPC — so `ssh-add -l` fails
 unconditionally, and an agent-first pre-check hard-stops **every
 bootstrap on that machine** with a diagnosis no operator action
-can clear. Measured four times on one machine, each burning an
+can clear.
+
+Measured four times on one machine, each burning an
 operator round trip; the fourth was the session that fixed it,
 whose own bootstrap commit signed successfully in the state the
 probe had just called broken.
+
+Note the bound on *that* claim in turn, since overstating it is
+the same mistake one level down: it is a property of that kind
+of signer, not of every value `gpg.ssh.program` can hold.
+`ssh-keygen` — git's own default for the setting — signs
+*through* the agent, so a machine configured with it is
+agent-based no matter how the config reads. The helper knows
+this and routes it to the agent branch.
 
 **Two things that look like better probes and are not**, both
 measured: a second agent-side probe (`ssh-keygen -Y sign` under
@@ -167,12 +180,22 @@ commit dying with `failed to fill whole buffer`, then
 
 Keep the standing **"a signing failure is an unpushed-state
 alarm"** rule as well; this adds a pre-check, it does not
-replace the alarm. The gate is deliberately a *configuration*
-check, so state its bound honestly: it rules out the two
-failures that recur here — a locked agent, and a signer path
-that no longer resolves — and proves nothing beyond them. It
-does not validate `user.signingkey`, and it cannot know whether
-the backend will still be unlocked later. Both an ssh agent and
+replace the alarm. State the gate's bound honestly, because the
+two ssh verdicts do **not** prove the same thing:
+
+- **`agent-ok` rests on a live probe**, so it does say the agent
+  can sign right now.
+- **`external-signer` rests only on the signer program
+  resolving.** A locked 1Password app leaves `op-ssh-sign`
+  exactly where it was, so this verdict proves the signing path
+  is *wired*, never that the backend is *unlocked* — and on this
+  repo's own machines that is the common configuration. A
+  locked app will still fail at step 6.
+
+So the gate rules out a misconfigured signing path, and a locked
+agent only in the agent-based case. It does not validate
+`user.signingkey`, and it cannot know whether a backend will
+still be unlocked later. Both an ssh agent and
 a signer's app can lock
 *during* a long unattended wait — which is why `review-pr` gets
 its assurance from an actual **checkpoint commit** before its
