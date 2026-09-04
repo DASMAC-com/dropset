@@ -181,10 +181,26 @@ layout of a personal secret store into permanent git history.
 
 ### 2. Opt the account into `aws_review` retention
 
-**Done on 2026-09-03**; recorded here because it is account-wide and
-invisible in the console. Claude Fable 5 and 5.1 require human review as
-a condition of access, so an account left at the default `inherit` mode
-sees them as `status: "unavailable"` and every request is blocked.
+**Done on 2026-09-03**, in all three routed regions; recorded here
+because it is invisible in the console. Claude Fable 5 and 5.1 require
+human review as a condition of access, so a region left at the default
+`inherit` mode resolves to `default` and blocks every request to them.
+
+**The setting is PER-REGION, despite being called account-wide, and this
+is the trap.** `PutAccountDataRetention` writes only the region it is
+called in. Retention follows the *destination* region, and the `us.`
+inference profile routes across three of them, so all three need it —
+setting only one leaves the others at `inherit`, and a request that
+routes to a missed region fails with
+
+```text
+400 data retention mode 'default' is not available for this model
+```
+
+which names neither a region nor the setting, and looks nothing like a
+retention problem. This was hit for real: the opt-in was made in
+us-east-1 while inference ran in us-west-2. Set it in every region the
+chosen profile routes to, and read each one back.
 
 Review is carried out **by AWS, inside the AWS boundary**. Content is
 not shared with the model provider — `provider_data_share` is a legacy
@@ -199,9 +215,14 @@ control-plane operations `GetAccountDataRetention` and
 done before any API key existed. Any SigV4 client works; with `boto3`:
 
 ```python
-boto3.client('bedrock', region_name='us-east-1').put_account_data_retention(
-    mode='aws_review')
+for region in ('us-east-1', 'us-east-2', 'us-west-2'):
+    boto3.client('bedrock', region_name=region).put_account_data_retention(
+        mode='aws_review')
 ```
+
+Read each region back with `get_account_data_retention` rather than
+trusting the write: a region still reporting `inherit` is the one that
+will fail, and it fails only when a request happens to route there.
 
 The user guide documents an equivalent bearer-token form, useful once a
 key exists:
