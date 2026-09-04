@@ -63,18 +63,19 @@ Resources:
   BedrockWorkerInvokePolicy:
     Properties:
       # NOTE: Description is IMMUTABLE on AWS::IAM::ManagedPolicy. Editing it
-      # forces a replacement, which then collides with the explicit
-      # ManagedPolicyName below and fails the stack update with AlreadyExists.
-      # Change the policy document freely - that updates in place - but leave
-      # this text alone unless you are prepared to rename or recreate.
+      # forces a replacement, which collides with the explicit
+      # ManagedPolicyName below and fails the update with AlreadyExists unless
+      # the name changes too. Change the policy document freely - that updates
+      # in place - but treat this text as costing a rename to edit, and so
+      # keep it free of details that date.
       Description: >-
-        Invoke access to the two worker models through the US cross-region
-        inference profiles, plus the two read-only profile-discovery calls
-        Claude Code makes on a bearer-token deployment. Deliberately excludes
-        every management action, including the account data-retention setting:
-        a worker must not be able to change the retention posture it runs
-        under.
-      ManagedPolicyName: !Sub '${EnvironmentName}-bedrock-worker-invoke'
+        Invoke access to any Bedrock foundation model, but only in the US
+        regions, through cross-region inference profiles - plus the bearer
+        token auth gate an API key needs and the two read-only
+        profile-discovery calls. Deliberately excludes every management
+        action, including the account data-retention setting: a worker must
+        not be able to change the retention posture it runs under.
+      ManagedPolicyName: !Sub '${EnvironmentName}-bedrock-invoke'
       PolicyDocument:
         Statement:
         - Action: 'bedrock:CallWithBearerToken'
