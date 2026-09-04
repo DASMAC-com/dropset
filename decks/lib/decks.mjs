@@ -32,8 +32,7 @@
  *
  *   Optional, and absent is the normal case: a deck exists from the moment it
  *   is written, while a recording only exists once the talk has been given —
- *   and some never are. A card with no `video` shows no badge, and so looks
- *   exactly as every card did before this field existed.
+ *   and some never are. A card with no `video` simply shows no badge.
  * @property {number} pages
  *   How many pages the deck has.
  *

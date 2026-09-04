@@ -85,11 +85,17 @@ export default function Home() {
         {decks.map((deck) => (
           <li
             key={deck.route}
-            className="relative rounded-xl border border-border bg-muted/40 transition-colors hover:border-accent hover:bg-muted/60"
+            className="group relative rounded-xl border border-border bg-muted/40 transition-colors hover:border-accent hover:bg-muted/60"
           >
             <div className="p-6">
-              <div className="flex items-baseline justify-between gap-4">
-                <h2 className="text-xl font-medium text-foreground">
+              {/* Wraps because the badge grew the non-shrinkable right-hand
+                  cluster: with the date alone the title could absorb the
+                  squeeze, but badge-plus-date leaves it too little to read at
+                  phone widths. Wrapping drops the cluster onto its own line
+                  there and changes nothing at desktop widths, where the row
+                  never runs out of room. */}
+              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+                <h2 className="text-xl font-medium text-foreground transition-colors group-hover:text-accent">
                   {deck.title}
                 </h2>
                 {/* The badge sits to the *left* of the date rather than
@@ -102,19 +108,22 @@ export default function Home() {
                     idiom — the same one the eyebrow and the section headings
                     use — rather than introducing a type style for one element.
                     `aria-label` carries the whole destination because the
-                    visible word is put in caps by CSS and is too terse to
-                    stand alone as a link name. */}
+                    visible text is one word and a glyph: "Watch" alone is too
+                    terse to stand as a link name, and the `►` would otherwise
+                    be announced. The CSS `uppercase` has nothing to do with it
+                    — text-transform is presentational, and the accessible name
+                    is computed from the DOM text either way. */}
                 <div className="flex shrink-0 items-baseline gap-3">
                   {deck.video ? (
                     <a
                       href={deck.video}
                       target="_blank"
                       rel="noopener noreferrer"
-                      title="Watch the recording of this talk"
+                      title="Watch the recording — opens in a new tab"
                       aria-label={`Watch the recording of ${deck.title} — opens in a new tab`}
                       className="relative z-20 rounded-full border border-border px-2.5 py-1 font-mono text-xs tracking-widest text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                     >
-                      <span aria-hidden="true">► Watch</span>
+                      ► Watch
                     </a>
                   ) : null}
                   <time className="font-mono text-xs text-muted-fg">
@@ -137,7 +146,16 @@ export default function Home() {
                 clicks meant for it; anything that must stay clickable is
                 lifted back above the link with a higher `z-`, which is what
                 the badge does. The known cost of the pattern is that the
-                covered text can no longer be selected with the mouse. */}
+                covered text can no longer be selected with the mouse.
+
+                The card's hover styles sit on the `li`, not on this link,
+                because a background painted by a stretched link covers the
+                very text it is stretched over. That puts the whole card's
+                hover — border, background and the title's accent — on one
+                trigger, so hovering the badge lights the card too. Accepted
+                deliberately: the alternative is a card that highlights on two
+                thirds of its own hover styles and not the third, and the badge
+                still distinguishes itself with its own border and text. */}
             <Link
               href={`${deck.route}${showNotes ? NOTES_SEARCH : ""}`}
               aria-label={`Open the deck: ${deck.title}`}
