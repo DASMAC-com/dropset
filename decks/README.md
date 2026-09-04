@@ -276,6 +276,13 @@ page showed whenever someone last remembered to bump it; an event date is
 fixed, so it needs no upkeep and answers the question a reader actually
 has.
 
+Once the talk has been recorded, add its URL as `video` and the landing
+page puts a **Watch** badge beside that deck's date, linking to the
+recording in a new tab. The field is optional and stays absent until a
+recording exists — a deck is written before it is given, and some are
+never filmed — so a card without one shows no badge. The card itself
+still opens the deck either way.
+
 ## Check
 
 ```sh

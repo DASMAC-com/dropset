@@ -85,22 +85,64 @@ export default function Home() {
         {decks.map((deck) => (
           <li
             key={deck.route}
-            className="rounded-xl border border-border bg-muted/40 transition-colors hover:border-accent"
+            className="relative rounded-xl border border-border bg-muted/40 transition-colors hover:border-accent hover:bg-muted/60"
           >
-            <Link
-              href={`${deck.route}${showNotes ? NOTES_SEARCH : ""}`}
-              className="group block p-6 transition-colors hover:bg-muted/60"
-            >
+            <div className="p-6">
               <div className="flex items-baseline justify-between gap-4">
-                <h2 className="text-xl font-medium text-foreground transition-colors group-hover:text-accent">
+                <h2 className="text-xl font-medium text-foreground">
                   {deck.title}
                 </h2>
-                <time className="shrink-0 font-mono text-xs text-muted-fg">
-                  {deck.presented}
-                </time>
+                {/* The badge sits to the *left* of the date rather than
+                    outboard of it, so the date stays the rightmost thing on
+                    the row and the dates go on lining up in a column down the
+                    card list — a badge only some decks have would otherwise
+                    push them out of alignment card by card.
+
+                    It borrows the page's existing mono / xs / wide uppercase
+                    idiom — the same one the eyebrow and the section headings
+                    use — rather than introducing a type style for one element.
+                    `aria-label` carries the whole destination because the
+                    visible word is put in caps by CSS and is too terse to
+                    stand alone as a link name. */}
+                <div className="flex shrink-0 items-baseline gap-3">
+                  {deck.video ? (
+                    <a
+                      href={deck.video}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Watch the recording of this talk"
+                      aria-label={`Watch the recording of ${deck.title} — opens in a new tab`}
+                      className="relative z-20 rounded-full border border-border px-2.5 py-1 font-mono text-xs tracking-widest text-muted-fg uppercase transition-colors hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    >
+                      <span aria-hidden="true">► Watch</span>
+                    </a>
+                  ) : null}
+                  <time className="font-mono text-xs text-muted-fg">
+                    {deck.presented}
+                  </time>
+                </div>
               </div>
               <p className="mt-2 text-muted-fg">{deck.subtitle}</p>
-            </Link>
+            </div>
+
+            {/* The deck link is stretched across the card rather than wrapping
+                it, so the card can hold a second link to the recording. The
+                obvious alternative — leaving the card as one big link and
+                putting an anchor inside it — is invalid HTML, and browsers
+                don't merely tolerate it: they lift the inner anchor out of the
+                outer one, so the markup that renders is not the markup that
+                was written.
+
+                Being stretched, it sits above the card's text and takes the
+                clicks meant for it; anything that must stay clickable is
+                lifted back above the link with a higher `z-`, which is what
+                the badge does. The known cost of the pattern is that the
+                covered text can no longer be selected with the mouse. */}
+            <Link
+              href={`${deck.route}${showNotes ? NOTES_SEARCH : ""}`}
+              aria-label={`Open the deck: ${deck.title}`}
+              className="absolute inset-0 z-10 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            />
           </li>
         ))}
       </ul>
