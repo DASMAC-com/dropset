@@ -202,6 +202,124 @@ class NodeModulesState(unittest.TestCase):
         self.assertEqual(ipb.node_modules_state(str(self.root)), "absent")
 
 
+class SigningState(unittest.TestCase):
+    """All three signing configurations, because the bug was covering one.
+
+    The pre-check this replaces ran ``ssh-add -l`` unconditionally. That is the
+    right probe for **agent-based** ssh signing — reading ``user.signingkey``
+    passes for a locked agent, so only the listing catches it — and it is an
+    unclearable false positive for **external-signer** ssh signing, where git
+    never consults an agent at all. Four bootstraps on one machine hard-stopped
+    on it, each burning an operator interaction that provably could not help;
+    the fourth was the session that wrote these tests, whose own bootstrap
+    commit signed fine in the state the probe called broken.
+
+    So the load-bearing assertions here are the two that pin the *dispatch*:
+    ``gpg.ssh.program`` is consulted first, and the agent probe is never called
+    when it is set.
+    """
+
+    def _never(self):  # pragma: no cover - called only if the dispatch breaks
+        raise AssertionError(
+            "the ssh-agent probe must not run when the agent is not in the signing path"
+        )
+
+    def test_external_signer_never_probes_the_agent(self):
+        # The regression. On this configuration the agent listing fails
+        # unconditionally, so probing it at all is what produced the false stop.
+        self.assertEqual(
+            ipb.signing_state(
+                "ssh",
+                "/Applications/1Password.app/Contents/MacOS/op-ssh-sign",
+                agent_probe=self._never,
+                program_exists=lambda _p: True,
+            ),
+            "external-signer",
+        )
+
+    def test_external_signer_with_a_missing_binary_is_distinguished(self):
+        # A configured signer that isn't on disk genuinely cannot sign, so this
+        # is a real catch the old probe never had — a moved app bundle would
+        # otherwise surface as a failed bootstrap commit.
+        self.assertEqual(
+            ipb.signing_state(
+                "ssh",
+                "/nonexistent/op-ssh-sign",
+                agent_probe=self._never,
+                program_exists=lambda _p: False,
+            ),
+            "external-signer-missing",
+        )
+
+    def test_agent_based_ssh_with_identities_is_ok(self):
+        self.assertEqual(
+            ipb.signing_state("ssh", None, agent_probe=lambda: 0),
+            "agent-ok",
+        )
+
+    def test_agent_based_ssh_with_no_identities_is_locked(self):
+        # The original measured case, preserved exactly: `ssh-add -l` exits 1
+        # when the agent holds nothing, which is what a locked 1Password agent
+        # looks like when it *is* in the signing path.
+        self.assertEqual(
+            ipb.signing_state("ssh", None, agent_probe=lambda: 1),
+            "agent-locked",
+        )
+
+    def test_an_unreachable_agent_collapses_into_locked(self):
+        # Exit 2, a different cause with an identical operator action.
+        self.assertEqual(
+            ipb.signing_state("ssh", None, agent_probe=lambda: 2),
+            "agent-locked",
+        )
+
+    def test_an_empty_signer_program_falls_through_to_the_agent(self):
+        # `git config --get` yields None for unset, but a configured-empty or
+        # whitespace value must not read as "an external signer is configured".
+        self.assertEqual(
+            ipb.signing_state("ssh", "   ", agent_probe=lambda: 0),
+            "agent-ok",
+        )
+
+    def test_unset_gpg_format_is_gpg_and_probes_nothing(self):
+        # git defaults `gpg.format` to openpgp, so unset means gpg signing —
+        # where an ssh-agent listing says nothing whatsoever.
+        self.assertEqual(
+            ipb.signing_state(None, None, agent_probe=self._never),
+            "gpg",
+        )
+
+    def test_explicit_openpgp_is_gpg(self):
+        self.assertEqual(
+            ipb.signing_state("openpgp", None, agent_probe=self._never),
+            "gpg",
+        )
+
+    def test_gpg_format_is_matched_case_and_space_insensitively(self):
+        self.assertEqual(
+            ipb.signing_state(" SSH ", None, agent_probe=lambda: 0),
+            "agent-ok",
+        )
+
+    def test_gpg_wins_over_a_stray_signer_program(self):
+        # `gpg.ssh.program` is inert under openpgp signing, so a leftover value
+        # must not flip the verdict to an ssh configuration.
+        self.assertEqual(
+            ipb.signing_state(
+                "openpgp",
+                "/Applications/1Password.app/Contents/MacOS/op-ssh-sign",
+                agent_probe=self._never,
+                program_exists=lambda _p: True,
+            ),
+            "gpg",
+        )
+
+    def test_a_missing_probe_is_treated_as_locked(self):
+        # Defensive: no caller omits it, but defaulting to "can sign" would
+        # reintroduce a silent pass in the one case the probe exists to catch.
+        self.assertEqual(ipb.signing_state("ssh", None), "agent-locked")
+
+
 class MainCli(unittest.TestCase):
     """Drive ``main()`` through its ``--porcelain-file`` / ``--branch``
     overrides so no real git is invoked.

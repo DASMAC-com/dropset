@@ -12,9 +12,20 @@ a tag, it resolves three things the skill no longer has to hand-parse:
 * **tag validation** — the resolved tag must match ``eng-###``
   (case-insensitive), normalized to lowercase.
 
-By default it runs the two **read-only** git reads itself
-(``git worktree list --porcelain`` and ``git branch --show-current``) and prints
-the answers as JSON, so the skill needs a single call and no inline parsing.
+It also reports two **measured facts** the skill would otherwise have to
+predict, each read-only and so present on every run: whether this worktree has
+``frontend/node_modules`` (``frontend_node_modules``), and which commit-signing
+configuration the machine has and whether it can sign right now (``signing``,
+plus the configured signer path as ``signing_program``). The signing field
+replaces an unconditional ``ssh-add -l`` in the skill's prose that was an
+**unclearable false positive** on any machine using an external signer program
+— see `signing_state` for the three configurations and why
+``gpg.ssh.program`` is the discriminator.
+
+By default it runs the **read-only** git reads itself
+(``git worktree list --porcelain``, ``git branch --show-current``, and two
+``git config --get`` reads) and prints the answers as JSON, so the skill needs
+a single call and no inline parsing.
 It performs **no** git mutation — the one mutation, the branch rename, stays the
 skill's ``git branch -m`` call. ``--porcelain-file`` and ``--branch`` override
 the git reads (used by the tests, and handy for a dry run).
@@ -54,6 +65,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Callable
 
 # A worktree tag: `eng-` followed by digits, case-insensitive.
 _TAG_RE = re.compile(r"^eng-\d+$", re.IGNORECASE)
@@ -69,6 +81,11 @@ _WORKTREE_PREFIX = "worktree-"
 _ENV_REL = os.path.join("frontend", ".env.local")
 _SECRETS_ENV_REL = os.path.join("infra", "localnet", "secrets.local.env")
 _NODE_MODULES_REL = os.path.join("frontend", "node_modules")
+
+# The one `gpg.format` value that routes signing through SSH. Anything else —
+# including unset, which git defaults to `openpgp` — is gpg signing, where an
+# ssh-agent listing says nothing at all. See `signing_state`.
+_SSH_FORMAT = "ssh"
 
 
 def parse_base_repo(porcelain: str) -> str | None:
@@ -190,6 +207,116 @@ def node_modules_state(worktree_root: str) -> str:
     return "absent"
 
 
+def signing_state(
+    gpg_format: str | None,
+    ssh_program: str | None,
+    agent_probe: Callable[[], int] | None = None,
+    program_exists: Callable[[str], bool] = os.path.exists,
+) -> str:
+    """Which commit-signing configuration this machine has, and whether it can
+    sign right now. Returns one of five strings.
+
+    The bootstrap needs this because branch protection requires a verified
+    signature on every commit, so a signing setup that cannot sign fails the
+    bootstrap commit *after* the branch has been renamed and rebased. Probing
+    first is cheap; the trap is that **there are three signing configurations
+    and only one of them routes through an ssh agent**:
+
+    * **gpg** (``gpg.format`` unset — git defaults to ``openpgp`` — or any
+      non-``ssh`` value) → ``"gpg"``. An ssh-agent listing is meaningless here;
+      this tool reports the configuration and probes nothing.
+    * **external-signer ssh** (``gpg.format = ssh`` *and* ``gpg.ssh.program``
+      set, e.g. 1Password's ``op-ssh-sign``) → ``"external-signer"``, or
+      ``"external-signer-missing"`` when that program is not on disk. With a
+      signer program configured, git never consults ``SSH_AUTH_SOCK`` or any
+      ssh agent — the signer talks to its own backend over its own IPC. So the
+      agent is not in the signing path and must not be probed.
+    * **agent-based ssh** (``gpg.format = ssh`` and no ``gpg.ssh.program``) →
+      ``"agent-ok"`` or ``"agent-locked"``. Only here does the agent listing
+      mean anything, and here it is the *right* probe: reading
+      ``user.signingkey`` reports merely that a key is configured, which is
+      exactly the state a locked agent is in, so it passes silently in the one
+      case worth catching.
+
+    ``gpg.ssh.program`` is the discriminator, and it is read **first**. Getting
+    that order wrong is not a cosmetic bug: on an external-signer machine the
+    agent listing fails unconditionally, so an agent-first pre-check hard-stops
+    every bootstrap with a diagnosis that no operator action can clear. Measured
+    four times on one machine — including by the session that added this
+    function, whose own bootstrap commit then signed successfully in exactly the
+    state the probe had called broken.
+
+    Two probes that look like fixes and are not, both measured: a second
+    agent-side probe (``ssh-keygen -Y sign`` under the ambient environment)
+    fails for the same reason and merely adds confidence to the wrong answer;
+    and a ``--show-signature`` read of an existing commit demands an
+    ``allowedSignersFile`` and errors when local *verification* is
+    unconfigured, which says nothing about the ability to *sign*. The only
+    forms that hold are this config gate and an actual signed commit.
+
+    ``agent_probe`` returns an ``ssh-add -l`` exit status (0 = identities held,
+    1 = none, 2 = unreachable) and is called **only** in the agent-based case,
+    so the two configurations that don't use an agent never pay for it or fail
+    on it. Exit 1 and 2 collapse into ``"agent-locked"`` because the operator
+    action is the same either way. Injected, along with ``program_exists``, so
+    the tests can cover all three configurations without a real agent.
+    """
+    fmt = (gpg_format or "").strip().lower()
+    if fmt != _SSH_FORMAT:
+        return "gpg"
+
+    program = (ssh_program or "").strip()
+    if program:
+        return (
+            "external-signer" if program_exists(program) else "external-signer-missing"
+        )
+
+    if agent_probe is None:
+        return "agent-locked"
+    return "agent-ok" if agent_probe() == 0 else "agent-locked"
+
+
+def _git_config(key: str) -> str | None:
+    """Read one git config value, or ``None`` when it is unset.
+
+    ``git config --get`` exits 1 for an unset key, so this is ``check=False``
+    by necessity: an unset ``gpg.ssh.program`` is the *common* case, not an
+    error. Never raises — a signing pre-check that aborts the run would cost
+    the skill the tag / base-repo / branch answers this same call carries.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "config", "--get", key],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    value = completed.stdout.strip()
+    return value or None
+
+
+def _ssh_agent_probe() -> int:
+    """Return ``ssh-add -l``'s exit status (0 = identities held, 1 = none,
+    2 = agent unreachable), or 2 if the binary itself is missing.
+
+    Passed to `signing_state`, which calls it **only** in the agent-based ssh
+    configuration — so on an external-signer machine this never runs.
+    """
+    try:
+        return subprocess.run(
+            ["ssh-add", "-l"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).returncode
+    except OSError:
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="init_pr_branch.py",
@@ -252,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
     tag = normalize_tag(args.tag)
     base_repo = parse_base_repo(porcelain)
     normalized_branch, rename_needed = normalize_branch(branch)
+    ssh_program = _git_config("gpg.ssh.program")
 
     result = {
         "tag": tag,
@@ -272,6 +400,14 @@ def main(argv: list[str] | None = None) -> int:
         else None,
         # Read-only, so unconditional: `present` / `absent` / `no-frontend`.
         "frontend_node_modules": node_modules_state(args.worktree_root),
+        # Read-only too. `gpg.ssh.program` is read first and decides whether
+        # the agent is in the signing path at all — see `signing_state`.
+        "signing": signing_state(
+            _git_config("gpg.format"),
+            ssh_program,
+            agent_probe=_ssh_agent_probe,
+        ),
+        "signing_program": ssh_program,
     }
     print(json.dumps(result, indent=2))
     # Exit non-zero on an invalid tag so the skill can stop and ask, without

@@ -7,8 +7,6 @@ user-invocable: true
 
 <!-- cspell:word ETIMEDOUT -->
 
-<!-- cspell:word signingkey -->
-
 # `init-pr`
 
 Bootstrap the current worktree: fetch main, set up the
@@ -97,47 +95,87 @@ If `gh auth status` reports no valid credential, **stop** and
 tell the user to re-authenticate — don't rename, rebase, or
 commit first.
 
-**Pre-check commit signing here too, for the same reason.**
-Branch protection requires a verified signature on every
-commit, so a locked signing agent fails the bootstrap commit at
+**Pre-check commit signing too, for the same reason.** Branch
+protection requires a verified signature on every commit, so a
+signing setup that cannot sign fails the bootstrap commit at
 step 6 — after the branch has been renamed and rebased. That is
 the same half-finished-bootstrap shape this step exists to
-prevent, and it is cheap to rule out first:
+prevent.
 
-```sh
-ssh-add -l
-```
+**Read the verdict from the helper call below — do not probe the
+ssh agent here.** The branch/worktree helper reports it as a
+`signing` field (with the configured signer path as
+`signing_program`), so there is no separate command to run;
+act on it **before step 4's rename**, which is the first thing
+that costs anything to undo. The helper's own `--link-env`
+symlinks are idempotent and never clobber, so a stop after that
+call leaves nothing to clean up.
 
-**Probe the AGENT, not the config.** The obvious check —
-`git config --get user.signingkey` — reports only that a key is
-*configured*, which is exactly the state a locked agent is in:
-it passes, silently, in the one case this pre-check exists to
-catch, and a green probe then reads as "signing works". Measured
-first-hand: the run that added this pre-check had the probe pass
-and step 6 die anyway, on a locked 1Password agent.
+**There are three signing configurations and only one of them
+routes through an ssh agent.** That is the whole reason this is
+a config read rather than a probe, and `gpg.ssh.program` is the
+discriminator:
 
-`ssh-add -l` exits non-zero when the agent holds no identities
-(1) or cannot be reached (2), so it fails in the case that
-matters. Its bound, stated rather than assumed: it covers **SSH**
-signing (`gpg.format = ssh`, this repo's setup) and says nothing
-about a GPG key — check `git config --get gpg.format` first if
-that is ever in doubt.
+| `signing`                 | Configuration                                                                     | What to do                                              |
+| ------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `external-signer`         | `gpg.format = ssh` **and** `gpg.ssh.program` set (e.g. 1Password's `op-ssh-sign`) | Proceed. The agent is not in the signing path at all.   |
+| `external-signer-missing` | Same, but the signer program is not on disk                                       | **Stop and ask** — a moved or uninstalled app bundle.   |
+| `agent-ok`                | `gpg.format = ssh`, no signer program, agent holds identities                     | Proceed.                                                |
+| `agent-locked`            | Same, agent holds nothing or is unreachable                                       | **Stop and ask** — the operator unlocks the app.        |
+| `gpg`                     | `gpg.format` unset (git defaults to `openpgp`) or any non-`ssh` value             | Proceed; this check has nothing to say about a GPG key. |
 
-A configured SSH signing key whose agent is locked fails the
-commit with `failed to fill whole buffer`, then
-`fatal: failed to write commit object`. If step 6 dies that
-way, the fix is an operator one — unlock the 1Password desktop
+**Why not just probe the agent, which is what this step used to
+do.** For **agent-based** ssh signing the agent listing is the
+right probe, and the reasoning is sound: reading
+`git config --get user.signingkey` reports only that a key is
+*configured*, which is exactly the state a locked agent is in,
+so it passes silently in the one case worth catching. Measured
+first-hand on a locked 1Password agent.
+
+But that argument holds *only* for agent-based signing, and
+stating it without its bound is what made this step wrong.
+**With a signer program configured, git never consults
+`SSH_AUTH_SOCK` or any ssh agent** — the signer talks to its own
+backend over its own IPC — so `ssh-add -l` fails
+unconditionally, and an agent-first pre-check hard-stops **every
+bootstrap on that machine** with a diagnosis no operator action
+can clear. Measured four times on one machine, each burning an
+operator round trip; the fourth was the session that fixed it,
+whose own bootstrap commit signed successfully in the state the
+probe had just called broken.
+
+**Two things that look like better probes and are not**, both
+measured: a second agent-side probe (`ssh-keygen -Y sign` under
+the ambient environment) fails for the same reason and only adds
+confidence to the wrong answer — the key really does live in
+1Password's own agent, which git is not using; and a
+`--show-signature` read of an existing commit demands an
+`allowedSignersFile` and errors when local *verification* is
+unconfigured, which says nothing about the ability to *sign*.
+The only forms that hold are this config gate and an actual
+signed commit. So if you are tempted to add a probe here, don't:
+the dispatch above is the fix.
+
+When `agent-locked` or `external-signer-missing` does stop the
+run, the fix is an operator one — unlock the 1Password desktop
 app, which restores its SSH agent — so **stop and ask** rather
-than retrying more than once or trying to work around it.
-Nothing is lost: the rename and rebase are idempotent and no
-commit was written.
+than retrying more than once or working around it. Nothing is
+lost: the rename and rebase are idempotent and no commit was
+written. For the record, the failure it spares you is a step-6
+commit dying with `failed to fill whole buffer`, then
+`fatal: failed to write commit object`.
 
 Keep the standing **"a signing failure is an unpushed-state
 alarm"** rule as well; this adds a pre-check, it does not
-replace the alarm. And note the case a startup-only check
-cannot catch: an agent that locks *during* a long unattended
-wait, which is why `review-pr` re-checks before its fan-out and
-its CI wait rather than trusting a probe from session start.
+replace the alarm. The gate is deliberately a *configuration*
+check, so state its bound honestly: it proves the signing path
+is wired correctly, never that the backend will still be
+unlocked later. Both an ssh agent and a signer's app can lock
+*during* a long unattended wait — which is why `review-pr` gets
+its assurance from an actual **checkpoint commit** before its
+fan-out and its CI wait, rather than from any probe. A signed
+commit is the only check that proves signing works, which is
+also why step 6 is where a real failure surfaces.
 
 ## Input
 
@@ -798,7 +836,9 @@ python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
   "rename_needed": true,     // true iff a `worktree-` prefix is stripped
   "env_link": "created",     // frontend/.env.local
   "secrets_env_link": "exists",  // infra/localnet/secrets.local.env
-  "frontend_node_modules": "absent"  // present / absent / no-frontend
+  "frontend_node_modules": "absent",  // present / absent / no-frontend
+  "signing": "external-signer",   // the step-0b dispatch table
+  "signing_program": "/…/op-ssh-sign"  // null when none is configured
 }
 ```
 
@@ -807,7 +847,19 @@ Both link fields carry the same five-value vocabulary —
 and are reported **separately**, because a machine can
 legitimately have one file and not the other.
 
-Steps 1, 2, 3, and 4 read their answers from this one call.
+Steps 1, 2, 3, and 4 read their answers from this one call — and
+so does step 0b's signing gate, via the `signing` field. Act on
+that field before the step-4 rename: it is the last point where
+stopping costs nothing.
+
+**Two of these fields are measured facts rather than
+predictions**, and that is deliberate in both cases.
+`frontend_node_modules` replaced a conditional that lost
+reliably to "this diff doesn't touch the frontend", and
+`signing` replaced an unconditional `ssh-add -l` that was an
+unclearable false positive on external-signer machines. The
+pattern generalizes: when the skill would otherwise reason its
+way to a fact the tool can just look up, report the fact.
 
 **Why `--link-env` is a flag and not a shell step.** The env
 symlink used to be prose here: two existence checks plus an
