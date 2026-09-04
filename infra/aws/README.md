@@ -243,7 +243,7 @@ started with these exports:
 ```sh
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=us-west-2
-export ANTHROPIC_MODEL='us.anthropic.claude-fable-5-1'
+export ANTHROPIC_MODEL='us.anthropic.claude-fable-5-1[1m]'
 export ENABLE_PROMPT_CACHING_1H=1
 export AWS_BEARER_TOKEN_BEDROCK="$(op read \
   --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")"
@@ -266,6 +266,14 @@ parameters before selecting it.
 `ENABLE_PROMPT_CACHING_1H` requests the 1-hour cache TTL in place of the
 5-minute default, billed at a higher write rate. If cache token counts
 stay at zero, the cause is regional cache support rather than this flag.
+
+**The `[1m]` suffix is not decoration.** Fable 5.1 supports a 1M-token
+context window, but on a third-party provider the window defaults to
+**200k** and the suffix is how you opt in. Claude Code strips it before
+calling Bedrock, so it never reaches the provider as part of the model
+id — which is also why its absence fails silently rather than erroring:
+the session simply runs with a fifth of the context. Confirm it with
+`/context`, which prints the window it actually got.
 
 ## Secrets
 
