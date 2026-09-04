@@ -1,0 +1,163 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Conditions:
+  HasBudgetAlertEmail: !Not
+  - !Equals
+    - !Ref 'BudgetAlertEmail'
+    - ''
+Description: >-
+  Dropset Bedrock worker identity: the IAM user that backs the long-term
+  Amazon Bedrock API key used by unattended worker sessions, a managed policy
+  scoped to model invocation alone, and an optional monthly spend ALERT that
+  fires if credits stop covering the charge. No credential value is created or
+  stored by this template - the API key is minted out of band and kept in
+  1Password (see infra/aws/README.md).
+Outputs:
+  BedrockWorkerPolicyArn:
+    Description: 'ARN of the invoke-only managed policy.'
+    Export:
+      Name: !Sub '${EnvironmentName}-bedrock-worker-policy-arn'
+    Value: !Ref 'BedrockWorkerInvokePolicy'
+  BedrockWorkerUserName:
+    Description: >-
+      Name of the IAM user the long-term Bedrock API key is minted against.
+    Export:
+      Name: !Sub '${EnvironmentName}-bedrock-worker-user'
+    Value: !Ref 'BedrockWorkerUser'
+  WorkerInferenceProfileId:
+    Description: >-
+      Cross-region inference profile id worker sessions target. Exported so the
+      session launcher reads it rather than hard-coding a model string.
+    Export:
+      Name: !Sub '${EnvironmentName}-bedrock-worker-profile-id'
+    Value: !Sub 'us.${WorkerModelId}'
+Parameters:
+  BudgetAlertEmail:
+    Default: ''
+    Description: >-
+      Address the monthly spend alert notifies. Left empty (the default), no
+      budget is created at all, because a budget with an undeliverable
+      subscriber is a tripwire that silently never fires.
+    Type: 'String'
+  BudgetLimitUsd:
+    Default: '10000'
+    Description: >-
+      Monthly USD threshold for the drift alert. This is an ALERT, never a cap:
+      Budgets cannot stop spend, and the ratified posture is no cap while
+      credits net the charge in full.
+    Type: 'String'
+  EnvironmentName:
+    Default: 'dropset-dev'
+    Description: 'Name prefix applied to resource names, tags, and exports.'
+    Type: 'String'
+  WorkerModelId:
+    Default: 'anthropic.claude-opus-5'
+    Description: >-
+      Default foundation model for worker sessions, published as the profile
+      id other tooling reads. It no longer gates the invoke policy, which
+      permits any model in the US regions, so changing it steers the default
+      without widening or narrowing permissions. Invoked through the us.
+      cross-region inference profile, never by bare model id.
+    Type: 'String'
+Resources:
+  BedrockWorkerInvokePolicy:
+    Properties:
+      # NOTE: Description is IMMUTABLE on AWS::IAM::ManagedPolicy. Editing it
+      # forces a replacement, which collides with the explicit
+      # ManagedPolicyName below and fails the update with AlreadyExists unless
+      # the name changes too. Change the policy document freely - that updates
+      # in place - but treat this text as costing a rename to edit, and so
+      # keep it free of details that date.
+      Description: >-
+        Invoke access to any Bedrock foundation model, but only in the US
+        regions, through cross-region inference profiles - plus the bearer
+        token auth gate an API key needs and the two read-only
+        profile-discovery calls. Deliberately excludes every management
+        action, including the account data-retention setting: a worker must
+        not be able to change the retention posture it runs under.
+      ManagedPolicyName: !Sub '${EnvironmentName}-bedrock-invoke'
+      PolicyDocument:
+        Statement:
+        - Action: 'bedrock:CallWithBearerToken'
+          Effect: 'Allow'
+          Resource: '*'
+          Sid: 'AuthenticateWithApiKey'
+        - Action: 'bedrock:ListInferenceProfiles'
+          Effect: 'Allow'
+          Resource: '*'
+          Sid: 'DiscoverInferenceProfiles'
+        # The MODEL dimension is deliberately left open so models can be
+        # swapped without a redeploy (operator decision). The REGION dimension
+        # stays pinned to us-*, which is a separate axis and load-bearing:
+        # data retention is configured PER REGION and is opted in for
+        # us-east-1, us-east-2 and us-west-2 only. A bare * would permit
+        # invoking where retention is still `inherit`, which fails opaquely,
+        # and would let a global. profile route to a region-less destination
+        # this account never opted in. Spend is guarded on the cost side, not
+        # here.
+        - Action:
+          - 'bedrock:GetInferenceProfile'
+          - 'bedrock:InvokeModel'
+          - 'bedrock:InvokeModelWithResponseStream'
+          Effect: 'Allow'
+          Resource: !Sub >-
+            arn:aws:bedrock:us-*:${AWS::AccountId}:inference-profile/*
+          Sid: 'InvokeAnyInferenceProfileInUsRegions'
+        - Action:
+          - 'bedrock:InvokeModel'
+          - 'bedrock:InvokeModelWithResponseStream'
+          Effect: 'Allow'
+          Resource: 'arn:aws:bedrock:us-*::foundation-model/*'
+          Sid: 'InvokeAnyFoundationModelInUsRegions'
+        Version: '2012-10-17'
+    Type: 'AWS::IAM::ManagedPolicy'
+  BedrockWorkerUser:
+    Properties:
+      ManagedPolicyArns:
+      - !Ref 'BedrockWorkerInvokePolicy'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-bedrock-worker'
+      UserName: !Sub '${EnvironmentName}-bedrock-worker'
+    Type: 'AWS::IAM::User'
+  WorkerSpendAlertBudget:
+    Condition: 'HasBudgetAlertEmail'
+    Properties:
+      Budget:
+        BudgetLimit:
+          Amount: !Ref 'BudgetLimitUsd'
+          Unit: 'USD'
+        BudgetName: !Sub '${EnvironmentName}-bedrock-worker-spend'
+        BudgetType: 'COST'
+        CostTypes:
+          IncludeCredit: true
+          IncludeDiscount: true
+          IncludeOtherSubscription: true
+          IncludeRecurring: true
+          IncludeRefund: false
+          IncludeSubscription: true
+          IncludeSupport: true
+          IncludeTax: true
+          IncludeUpfront: true
+          UseAmortized: false
+          UseBlended: false
+        TimeUnit: 'MONTHLY'
+      NotificationsWithSubscribers:
+      - Notification:
+          ComparisonOperator: 'GREATER_THAN'
+          NotificationType: 'ACTUAL'
+          Threshold: 80
+          ThresholdType: 'PERCENTAGE'
+        Subscribers:
+        - Address: !Ref 'BudgetAlertEmail'
+          SubscriptionType: 'EMAIL'
+      - Notification:
+          ComparisonOperator: 'GREATER_THAN'
+          NotificationType: 'FORECASTED'
+          Threshold: 100
+          ThresholdType: 'PERCENTAGE'
+        Subscribers:
+        - Address: !Ref 'BudgetAlertEmail'
+          SubscriptionType: 'EMAIL'
+    Type: 'AWS::Budgets::Budget'
+...

@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "BudgetAlertEmail",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "BudgetLimitUsd",
+    "ParameterValue": "10000"
+  },
+  {
+    "ParameterKey": "EnvironmentName",
+    "ParameterValue": "dropset-dev"
+  },
+  {
+    "ParameterKey": "WorkerModelId",
+    "ParameterValue": "anthropic.claude-opus-5"
+  }
+]
