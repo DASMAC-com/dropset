@@ -401,7 +401,17 @@ above the FX band (exact-bigint precision and `u128` saturation).
 
 A fourth fixture, `simulate_swap_vectors.json`, is scoped narrower than the
 three above: it pins the book simulator rather than exercising the shared
-math-core kernels. It has three readers, one per matcher:
+math-core kernels. It carries three parts: `market_data`, the primary
+market's account bytes; `markets`, a map of additional named buffers
+(a `far_out` book resting an unaffordable level behind an honest one on each
+side, and a `flush` book whose vault materializes its levels from a relative
+profile instead of from `remaining`); and `books`, five expected resting
+books — one at a live clock for each of the three markets, plus the primary
+book at each expiry domain's deadline, where both sides come back empty.
+Each case names the buffer it quotes against — `"primary"` means
+`market_data`, anything else is a key in `markets`.
+
+It has three readers, spanning four matchers:
 
 - `sdk/interface/tests/wasm_conformance.rs`, gated to the `wasm32` target
   and run under `wasm-pack test --node`, drives the **compiled binding** —
@@ -412,11 +422,23 @@ math-core kernels. It has three readers, one per matcher:
   existed the entire Rust workspace was blind to them — dropping a
   conjunct from the native filter left `cargo test` green and surfaced
   only in the TS or wasm job.
-- the TS suite drives the **pure-TS mirror**.
+- the TS suite drives the **pure-TS mirror**, and additionally replays the
+  `books` block through the **committed** `.wasm` binary — the only
+  behavioral gate on that artifact, since CI's byte-diff deliberately skips
+  it (`wasm-opt` is not byte-reproducible across platforms).
 
 Together with `programs/dropset/tests/sdk_conformance.rs` pinning the
 native matcher to the engine in litesvm, that closes the chain
 wasm-binding == native == TS mirror == engine.
+
+One property sits outside that chain and needs its own oracle: the
+equal-price **nonce** tie-break. A `Quote` cannot observe it — two levels at
+one price fill to identical totals in either order — so no case replay and
+no engine differential can see it, and comparing the emitted `books` only
+catches a change once the binary is rebuilt. `native_conformance.rs`
+therefore derives the expected order from the vaults' own nonces rather than
+from the fixture, and the primary market deliberately gives sector 0 the
+*newer* quote so that nonce order, sector order and DLL walk order disagree.
 
 On-chain CPI builders (instruction builders + account layouts for a `no_std`,
 entrypoint-free CPI parser, shared with the engine and any router doing an

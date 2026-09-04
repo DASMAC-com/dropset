@@ -13,12 +13,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { wallSpan } from './clock';
+import { slotSpan, wallSpan } from './clock';
 import {
   LEVEL_BYTES,
   N_LEVELS,
   nativeBookToProfileBytes,
-  NO_SLOT_BOUND,
   QuotingError,
   type NativeBook,
   type NativeLevel,
@@ -28,6 +27,7 @@ type NativeLevelCase = {
   price_bits: number;
   size: number;
   expiry_offset: number;
+  expiry_offset_slots: number;
 };
 type LevelCase = NativeLevelCase & {
   price_offset: number;
@@ -73,14 +73,27 @@ const ERROR_TAGS: Record<string, string> = {
 };
 
 function nativeLevel(c: NativeLevelCase): NativeLevel {
-  // These vectors pin the native→relative translation, not expiry policy,
-  // so their single `expiry_offset` maps to the wall domain and the slot
-  // bound is left open — matching the Rust fork's reading.
+  // The two expiry offsets must differ on every level, or the transposition
+  // half of the assertions below proves nothing: a fork that swapped the
+  // domains would copy equal values and stay green. The generator states
+  // this as an invariant, so assert it rather than trusting the prose.
+  assert.notEqual(
+    c.expiry_offset,
+    c.expiry_offset_slots,
+    'a level whose two expiry domains carry the same value cannot detect a transposition',
+  );
+  // Expiry is dual-domain and both offsets are carried through verbatim, so
+  // the vectors supply one per domain with different values on every level
+  // — matching the Rust fork's reading. Taking the slot bound from the
+  // vector rather than hard-wiring it open is what lets the assertions
+  // below pin it: a fork that zeroed the serialized slot offset (which
+  // on-chain kills every level) or transposed the domains would otherwise
+  // serialize a value nothing checked.
   return {
     price: c.price_bits,
     size: BigInt(c.size),
     expiryOffsetSecs: wallSpan(c.expiry_offset),
-    expiryOffsetSlots: NO_SLOT_BOUND,
+    expiryOffsetSlots: slotSpan(c.expiry_offset_slots),
   };
 }
 
@@ -116,12 +129,14 @@ test('quoting vectors match', () => {
       assert.equal(got.priceOffset, exp.price_offset, `bid[${i}] offset`);
       assert.equal(got.sizeBps, exp.size_bps, `bid[${i}] size_bps`);
       assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `bid[${i}] expiry`);
+      assert.equal(got.expiryOffsetSlots, exp.expiry_offset_slots, `bid[${i}] expiry slots`);
     });
     c.asks.forEach((exp, i) => {
       const got = readLevel(view, N_LEVELS + i);
       assert.equal(got.priceOffset, exp.price_offset, `ask[${i}] offset`);
       assert.equal(got.sizeBps, exp.size_bps, `ask[${i}] size_bps`);
       assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `ask[${i}] expiry`);
+      assert.equal(got.expiryOffsetSlots, exp.expiry_offset_slots, `ask[${i}] expiry slots`);
     });
   }
 });

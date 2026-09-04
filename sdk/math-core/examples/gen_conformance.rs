@@ -57,29 +57,65 @@ fn main() {
     ]);
 
     // Ratio math (saturated to u64 for the JS/wasm boundary).
-    let qfb_cases = [
-        (Price::encode(10_000_000, 0).unwrap(), 1_000_000u64),
-        (Price::encode(10_850_000, 0).unwrap(), 1_000_000),
-        (Price::encode(10_000_000, -2).unwrap(), 1_000_000),
-        (Price::encode(98_700_000, 2).unwrap(), 1_000),
+    //
+    // The spread is the same price x amount cross-product
+    // `roundtrip_never_overcharges_taker` pins in-crate, so the TS fork —
+    // which has no property test of its own — inherits the same rounding
+    // coverage. Both decoders truncate toward zero, and most of these
+    // combinations divide inexactly, so a fork that ceil'd or rounded
+    // half-up disagrees here instead of passing a suite of exact
+    // divisions. The minimal discriminating pairs are `quote_for_base` at
+    // 1.085 with base 3, which must give 3 rather than 4, and
+    // `base_for_quote` at 1.085 with quote 1, which must give 0 rather
+    // than 1.
+    let ratio_prices = [
+        Price::encode(10_000_000, 0).unwrap(),  // 1.0
+        Price::encode(10_850_000, 0).unwrap(),  // 1.085 (EUR/USD)
+        Price::encode(33_333_333, 0).unwrap(),  // ~3.333, never exact
+        Price::encode(98_700_000, 2).unwrap(),  // 987
+        Price::encode(10_000_000, -2).unwrap(), // 0.01
+        Price::encode(99_999_999, 5).unwrap(),  // 999_999.99
     ];
-    let quote_for_base: Vec<Value> = qfb_cases
+    // Every price and amount the six replaced cases used is present in the
+    // two axes — 1_000_000 and 1_000 for `quote_for_base`, 1_000_000 and
+    // 1_085_000 for `base_for_quote` — so the cross-product is a strict
+    // superset and the change only adds coverage.
+    //
+    // Keep both axes small enough that no product exceeds 2^53: `expected`
+    // rides as a JSON number and the TS fork widens it with `BigInt`, which
+    // is lossless only below that. The current maximum is 7_777_777_699_222_222.
+    // A larger price or amount would break the round-trip loudly (TS computes
+    // its own value and would mismatch) but for a reason that reads as
+    // nothing to do with the addition.
+    let ratio_amounts = [
+        1_u64,
+        3,
+        7,
+        999,
+        1_000,
+        1_000_000,
+        1_085_000,
+        1_085_321,
+        7_777_777_777,
+    ];
+
+    let quote_for_base: Vec<Value> = ratio_prices
         .iter()
-        .map(|&(p, base)| {
-            json!({ "bits": p.as_u32(), "base": base,
-                    "expected": p.quote_for_base(base).min(u64::MAX as u128) as u64 })
+        .flat_map(|&p| {
+            ratio_amounts.iter().map(move |&base| {
+                json!({ "bits": p.as_u32(), "base": base,
+                        "expected": p.quote_for_base(base).min(u64::MAX as u128) as u64 })
+            })
         })
         .collect();
 
-    let bfq_cases = [
-        (Price::encode(10_000_000, 0).unwrap(), 1_000_000u64),
-        (Price::encode(10_850_000, 0).unwrap(), 1_085_000),
-    ];
-    let base_for_quote: Vec<Value> = bfq_cases
+    let base_for_quote: Vec<Value> = ratio_prices
         .iter()
-        .map(|&(p, quote)| {
-            json!({ "bits": p.as_u32(), "quote": quote,
-                    "expected": p.base_for_quote(quote).min(u64::MAX as u128) as u64 })
+        .flat_map(|&p| {
+            ratio_amounts.iter().map(move |&quote| {
+                json!({ "bits": p.as_u32(), "quote": quote,
+                        "expected": p.base_for_quote(quote).min(u64::MAX as u128) as u64 })
+            })
         })
         .collect();
 

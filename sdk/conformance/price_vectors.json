@@ -3,13 +3,273 @@
   "base_for_quote": [
     {
       "bits": 2157483648,
+      "expected": 1,
+      "quote": 1
+    },
+    {
+      "bits": 2157483648,
+      "expected": 3,
+      "quote": 3
+    },
+    {
+      "bits": 2157483648,
+      "expected": 7,
+      "quote": 7
+    },
+    {
+      "bits": 2157483648,
+      "expected": 999,
+      "quote": 999
+    },
+    {
+      "bits": 2157483648,
+      "expected": 1000,
+      "quote": 1000
+    },
+    {
+      "bits": 2157483648,
       "expected": 1000000,
+      "quote": 1000000
+    },
+    {
+      "bits": 2157483648,
+      "expected": 1085000,
+      "quote": 1085000
+    },
+    {
+      "bits": 2157483648,
+      "expected": 1085321,
+      "quote": 1085321
+    },
+    {
+      "bits": 2157483648,
+      "expected": 7777777777,
+      "quote": 7777777777
+    },
+    {
+      "bits": 2158333648,
+      "expected": 0,
+      "quote": 1
+    },
+    {
+      "bits": 2158333648,
+      "expected": 2,
+      "quote": 3
+    },
+    {
+      "bits": 2158333648,
+      "expected": 6,
+      "quote": 7
+    },
+    {
+      "bits": 2158333648,
+      "expected": 920,
+      "quote": 999
+    },
+    {
+      "bits": 2158333648,
+      "expected": 921,
+      "quote": 1000
+    },
+    {
+      "bits": 2158333648,
+      "expected": 921658,
       "quote": 1000000
     },
     {
       "bits": 2158333648,
       "expected": 1000000,
       "quote": 1085000
+    },
+    {
+      "bits": 2158333648,
+      "expected": 1000295,
+      "quote": 1085321
+    },
+    {
+      "bits": 2158333648,
+      "expected": 7168458780,
+      "quote": 7777777777
+    },
+    {
+      "bits": 2180816981,
+      "expected": 0,
+      "quote": 1
+    },
+    {
+      "bits": 2180816981,
+      "expected": 0,
+      "quote": 3
+    },
+    {
+      "bits": 2180816981,
+      "expected": 2,
+      "quote": 7
+    },
+    {
+      "bits": 2180816981,
+      "expected": 299,
+      "quote": 999
+    },
+    {
+      "bits": 2180816981,
+      "expected": 300,
+      "quote": 1000
+    },
+    {
+      "bits": 2180816981,
+      "expected": 300000,
+      "quote": 1000000
+    },
+    {
+      "bits": 2180816981,
+      "expected": 325500,
+      "quote": 1085000
+    },
+    {
+      "bits": 2180816981,
+      "expected": 325596,
+      "quote": 1085321
+    },
+    {
+      "bits": 2180816981,
+      "expected": 2333333356,
+      "quote": 7777777777
+    },
+    {
+      "bits": 2514619104,
+      "expected": 0,
+      "quote": 1
+    },
+    {
+      "bits": 2514619104,
+      "expected": 0,
+      "quote": 3
+    },
+    {
+      "bits": 2514619104,
+      "expected": 0,
+      "quote": 7
+    },
+    {
+      "bits": 2514619104,
+      "expected": 1,
+      "quote": 999
+    },
+    {
+      "bits": 2514619104,
+      "expected": 1,
+      "quote": 1000
+    },
+    {
+      "bits": 2514619104,
+      "expected": 1013,
+      "quote": 1000000
+    },
+    {
+      "bits": 2514619104,
+      "expected": 1099,
+      "quote": 1085000
+    },
+    {
+      "bits": 2514619104,
+      "expected": 1099,
+      "quote": 1085321
+    },
+    {
+      "bits": 2514619104,
+      "expected": 7880220,
+      "quote": 7777777777
+    },
+    {
+      "bits": 1889048192,
+      "expected": 100,
+      "quote": 1
+    },
+    {
+      "bits": 1889048192,
+      "expected": 300,
+      "quote": 3
+    },
+    {
+      "bits": 1889048192,
+      "expected": 700,
+      "quote": 7
+    },
+    {
+      "bits": 1889048192,
+      "expected": 99900,
+      "quote": 999
+    },
+    {
+      "bits": 1889048192,
+      "expected": 100000,
+      "quote": 1000
+    },
+    {
+      "bits": 1889048192,
+      "expected": 100000000,
+      "quote": 1000000
+    },
+    {
+      "bits": 1889048192,
+      "expected": 108500000,
+      "quote": 1085000
+    },
+    {
+      "bits": 1889048192,
+      "expected": 108532100,
+      "quote": 1085321
+    },
+    {
+      "bits": 1889048192,
+      "expected": 777777777700,
+      "quote": 7777777777
+    },
+    {
+      "bits": 2918572287,
+      "expected": 0,
+      "quote": 1
+    },
+    {
+      "bits": 2918572287,
+      "expected": 0,
+      "quote": 3
+    },
+    {
+      "bits": 2918572287,
+      "expected": 0,
+      "quote": 7
+    },
+    {
+      "bits": 2918572287,
+      "expected": 0,
+      "quote": 999
+    },
+    {
+      "bits": 2918572287,
+      "expected": 0,
+      "quote": 1000
+    },
+    {
+      "bits": 2918572287,
+      "expected": 1,
+      "quote": 1000000
+    },
+    {
+      "bits": 2918572287,
+      "expected": 1,
+      "quote": 1085000
+    },
+    {
+      "bits": 2918572287,
+      "expected": 1,
+      "quote": 1085321
+    },
+    {
+      "bits": 2918572287,
+      "expected": 7777,
+      "quote": 7777777777
     }
   ],
   "decode": [
@@ -107,9 +367,74 @@
   ],
   "quote_for_base": [
     {
+      "base": 1,
+      "bits": 2157483648,
+      "expected": 1
+    },
+    {
+      "base": 3,
+      "bits": 2157483648,
+      "expected": 3
+    },
+    {
+      "base": 7,
+      "bits": 2157483648,
+      "expected": 7
+    },
+    {
+      "base": 999,
+      "bits": 2157483648,
+      "expected": 999
+    },
+    {
+      "base": 1000,
+      "bits": 2157483648,
+      "expected": 1000
+    },
+    {
       "base": 1000000,
       "bits": 2157483648,
       "expected": 1000000
+    },
+    {
+      "base": 1085000,
+      "bits": 2157483648,
+      "expected": 1085000
+    },
+    {
+      "base": 1085321,
+      "bits": 2157483648,
+      "expected": 1085321
+    },
+    {
+      "base": 7777777777,
+      "bits": 2157483648,
+      "expected": 7777777777
+    },
+    {
+      "base": 1,
+      "bits": 2158333648,
+      "expected": 1
+    },
+    {
+      "base": 3,
+      "bits": 2158333648,
+      "expected": 3
+    },
+    {
+      "base": 7,
+      "bits": 2158333648,
+      "expected": 7
+    },
+    {
+      "base": 999,
+      "bits": 2158333648,
+      "expected": 1083
+    },
+    {
+      "base": 1000,
+      "bits": 2158333648,
+      "expected": 1085
     },
     {
       "base": 1000000,
@@ -117,14 +442,199 @@
       "expected": 1085000
     },
     {
+      "base": 1085000,
+      "bits": 2158333648,
+      "expected": 1177225
+    },
+    {
+      "base": 1085321,
+      "bits": 2158333648,
+      "expected": 1177573
+    },
+    {
+      "base": 7777777777,
+      "bits": 2158333648,
+      "expected": 8438888888
+    },
+    {
+      "base": 1,
+      "bits": 2180816981,
+      "expected": 3
+    },
+    {
+      "base": 3,
+      "bits": 2180816981,
+      "expected": 9
+    },
+    {
+      "base": 7,
+      "bits": 2180816981,
+      "expected": 23
+    },
+    {
+      "base": 999,
+      "bits": 2180816981,
+      "expected": 3329
+    },
+    {
+      "base": 1000,
+      "bits": 2180816981,
+      "expected": 3333
+    },
+    {
       "base": 1000000,
-      "bits": 1889048192,
-      "expected": 10000
+      "bits": 2180816981,
+      "expected": 3333333
+    },
+    {
+      "base": 1085000,
+      "bits": 2180816981,
+      "expected": 3616666
+    },
+    {
+      "base": 1085321,
+      "bits": 2180816981,
+      "expected": 3617736
+    },
+    {
+      "base": 7777777777,
+      "bits": 2180816981,
+      "expected": 25925925664
+    },
+    {
+      "base": 1,
+      "bits": 2514619104,
+      "expected": 987
+    },
+    {
+      "base": 3,
+      "bits": 2514619104,
+      "expected": 2961
+    },
+    {
+      "base": 7,
+      "bits": 2514619104,
+      "expected": 6909
+    },
+    {
+      "base": 999,
+      "bits": 2514619104,
+      "expected": 986013
     },
     {
       "base": 1000,
       "bits": 2514619104,
       "expected": 987000
+    },
+    {
+      "base": 1000000,
+      "bits": 2514619104,
+      "expected": 987000000
+    },
+    {
+      "base": 1085000,
+      "bits": 2514619104,
+      "expected": 1070895000
+    },
+    {
+      "base": 1085321,
+      "bits": 2514619104,
+      "expected": 1071211827
+    },
+    {
+      "base": 7777777777,
+      "bits": 2514619104,
+      "expected": 7676666665899
+    },
+    {
+      "base": 1,
+      "bits": 1889048192,
+      "expected": 0
+    },
+    {
+      "base": 3,
+      "bits": 1889048192,
+      "expected": 0
+    },
+    {
+      "base": 7,
+      "bits": 1889048192,
+      "expected": 0
+    },
+    {
+      "base": 999,
+      "bits": 1889048192,
+      "expected": 9
+    },
+    {
+      "base": 1000,
+      "bits": 1889048192,
+      "expected": 10
+    },
+    {
+      "base": 1000000,
+      "bits": 1889048192,
+      "expected": 10000
+    },
+    {
+      "base": 1085000,
+      "bits": 1889048192,
+      "expected": 10850
+    },
+    {
+      "base": 1085321,
+      "bits": 1889048192,
+      "expected": 10853
+    },
+    {
+      "base": 7777777777,
+      "bits": 1889048192,
+      "expected": 77777777
+    },
+    {
+      "base": 1,
+      "bits": 2918572287,
+      "expected": 999999
+    },
+    {
+      "base": 3,
+      "bits": 2918572287,
+      "expected": 2999999
+    },
+    {
+      "base": 7,
+      "bits": 2918572287,
+      "expected": 6999999
+    },
+    {
+      "base": 999,
+      "bits": 2918572287,
+      "expected": 998999990
+    },
+    {
+      "base": 1000,
+      "bits": 2918572287,
+      "expected": 999999990
+    },
+    {
+      "base": 1000000,
+      "bits": 2918572287,
+      "expected": 999999990000
+    },
+    {
+      "base": 1085000,
+      "bits": 2918572287,
+      "expected": 1084999989150
+    },
+    {
+      "base": 1085321,
+      "bits": 2918572287,
+      "expected": 1085320989146
+    },
+    {
+      "base": 7777777777,
+      "bits": 2918572287,
+      "expected": 7777777699222222
     }
   ]
 }

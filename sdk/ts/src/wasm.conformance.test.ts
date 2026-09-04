@@ -28,6 +28,19 @@
  * `sdk/conformance/simulate_swap_vectors.json` the Rust-side binding test
  * uses, so a layout change landed without `make wasm` fails here.
  *
+ * Both **market-reading** bindings are covered — `simulate_swap` and
+ * `resting_book`. (The module also exports five `price_*` helpers, which
+ * decode no account bytes and so cannot go stale against a layout change;
+ * `sdk/ts/src/conformance.test.ts` pins those against the price vectors.)
+ * This file used to import only `simulate_swap`, which left `resting_book`
+ * — the one the order-book UI actually calls — unverified against the
+ * shipped artifact. Layout drift
+ * would still have been caught, since the two share `MarketView::load` and
+ * the level collector, but the binding-local surface would not: its
+ * `split_side` marshalling and its Buy-to-asks / Sell-to-bids mapping.
+ * Inverting that mapping keeps `simulate_swap` green and hands the UI an
+ * inverted ladder.
+ *
  * Ordering matters: sdk.yml runs `pnpm --filter @dropset/sdk test` *before*
  * its `make wasm` step, so this sees the committed artifact, not a
  * regenerated one.
@@ -39,7 +52,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { initSync, simulate_swap } from './wasm/dropset_interface.js';
+import { initSync, resting_book, simulate_swap } from './wasm/dropset_interface.js';
 
 type ExpectedQuote = {
   in_amount: number;
@@ -50,6 +63,8 @@ type ExpectedQuote = {
 };
 type SwapCase = {
   name: string;
+  /** Which fixture market this case was generated against. */
+  market: string;
   side: number;
   amount_in: number;
   limit_price_bits: number;
@@ -59,9 +74,26 @@ type SwapCase = {
   expected: ExpectedQuote;
 };
 
+/** One expected resting book: the four parallel arrays, at one clock. */
+type BookCase = {
+  name: string;
+  market: string;
+  now_slot: number;
+  now_unix: number;
+  ask_prices: number[];
+  ask_sizes: number[];
+  bid_prices: number[];
+  bid_sizes: number[];
+};
+
 const vectors = JSON.parse(
   readFileSync(new URL('../../conformance/simulate_swap_vectors.json', import.meta.url), 'utf8'),
-) as { market_data: number[]; cases: SwapCase[] };
+) as {
+  market_data: number[];
+  markets: Record<string, number[]>;
+  cases: SwapCase[];
+  books: BookCase[];
+};
 
 // The glue is built `--target web`, whose default init fetches the binary
 // relative to `import.meta.url`. Under Node we hand it the committed bytes
@@ -72,10 +104,24 @@ initSync({
 
 const marketData = Uint8Array.from(vectors.market_data);
 
+/**
+ * The account bytes a case quotes against — `'primary'` is `market_data`,
+ * anything else a key in `markets`. The far-out and flush fixtures carry
+ * books that cannot coexist with the primary one, so they get buffers of
+ * their own; routing the flush fixture through here is what finally sends
+ * the profile-to-level materialization through this committed binary.
+ */
+function marketFor(name: string): Uint8Array {
+  if (name === 'primary') return marketData;
+  const extra = vectors.markets[name];
+  assert.ok(extra !== undefined, `case names unknown market "${name}"`);
+  return Uint8Array.from(extra);
+}
+
 test('committed wasm simulate_swap matches the conformance vectors', () => {
   for (const c of vectors.cases) {
     const q = simulate_swap(
-      marketData,
+      marketFor(c.market),
       c.side,
       BigInt(c.amount_in),
       c.limit_price_bits,
@@ -93,6 +139,49 @@ test('committed wasm simulate_swap matches the conformance vectors', () => {
     );
     assert.equal(q.legs, c.expected.legs, `${c.name}: legs`);
     q.free();
+  }
+});
+
+// The sibling binding. Whole arrays are compared rather than lengths and
+// first prices, because the *order* is the thing only this view can pin: a
+// Quote cannot see it, since two levels at one price fill to the same
+// totals whichever goes first. The primary book's two deepest asks share a
+// price and carry different depths, so an inverted nonce tie-break reorders
+// `ask_sizes` while leaving `ask_prices` untouched — and a transposed side
+// mapping swaps the ask and bid arrays wholesale.
+test('committed wasm resting_book matches the conformance books', () => {
+  // Pin the set, not a floor: with `length > 0`, four of the five books
+  // could vanish on a regeneration and this would still pass — including
+  // `far_out_live`, the only place the far-out level's *resting* presence is
+  // observed. Two of the five are captured at a dead clock and so compare
+  // empty arrays, which is signal only because the live siblings are here
+  // to contrast with.
+  assert.deepEqual(
+    vectors.books.map((b) => b.name).sort(),
+    ['far_out_live', 'flush_live', 'primary_live', 'primary_slot_dead', 'primary_wall_dead'],
+    'expected book set',
+  );
+  for (const b of vectors.books) {
+    const book = resting_book(marketFor(b.market), b.now_slot, b.now_unix);
+    try {
+      assert.deepEqual(Array.from(book.ask_prices), b.ask_prices, `${b.name}: ask_prices`);
+      assert.deepEqual(Array.from(book.bid_prices), b.bid_prices, `${b.name}: bid_prices`);
+      // Sizes cross the boundary as u64. The generator keeps every expected
+      // depth inside the exactly-representable range, so widening the JSON
+      // numbers to BigInt is lossless.
+      assert.deepEqual(
+        Array.from(book.ask_sizes),
+        b.ask_sizes.map(BigInt),
+        `${b.name}: ask_sizes`,
+      );
+      assert.deepEqual(
+        Array.from(book.bid_sizes),
+        b.bid_sizes.map(BigInt),
+        `${b.name}: bid_sizes`,
+      );
+    } finally {
+      book.free();
+    }
   }
 });
 

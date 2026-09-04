@@ -24,16 +24,33 @@ fn u32_of(v: &Value, k: &str) -> u32 {
     v[k].as_u64().unwrap() as u32
 }
 
+/// The two expiry offsets must differ on every level, or the transposition
+/// half of the assertions below proves nothing: a fork that swapped the
+/// domains would copy equal values and stay green. The generator states this
+/// as an invariant, so assert it rather than trusting the prose.
+fn assert_domains_differ(v: &Value) {
+    assert_ne!(
+        u32_of(v, "expiry_offset"),
+        u32_of(v, "expiry_offset_slots"),
+        "a level whose two expiry domains carry the same value cannot \
+         detect a transposition"
+    );
+}
+
 fn native_level(v: &Value) -> NativeLevel {
+    assert_domains_differ(v);
     NativeLevel {
         price: Price::from_bits(u32_of(v, "price_bits")),
         size: v["size"].as_u64().unwrap(),
-        // These vectors pin the native→relative *translation* (ppm offsets
-        // and bps sizes), not expiry policy, so the single `expiry_offset`
-        // they carry maps to the wall domain and the slot bound is left
-        // open. Both are copied through `to_profile` untouched.
+        // Expiry is dual-domain, and `to_profile` copies both offsets
+        // through untouched, so the vectors carry one per domain and every
+        // level gives them different values. Reading the slot bound from
+        // the vector rather than hard-wiring it open is what lets the
+        // assertions below pin it: a fork that zeroed the slot offset —
+        // which on-chain kills every level — or transposed the two domains
+        // would otherwise pass.
         expiry_offset_secs: WallSpan::new(u32_of(v, "expiry_offset")),
-        expiry_offset_slots: SlotSpan::UNBOUNDED,
+        expiry_offset_slots: SlotSpan::new(u32_of(v, "expiry_offset_slots")),
     }
 }
 
@@ -73,6 +90,11 @@ fn quoting_vectors() {
                 u32_of(v, "expiry_offset"),
                 "ask[{i}] expiry"
             );
+            assert_eq!(
+                lvl.expiry_offset_slots.get(),
+                u32_of(v, "expiry_offset_slots"),
+                "ask[{i}] expiry slots"
+            );
         }
         for (i, v) in bids.iter().enumerate() {
             let lvl = &profile.bids[i];
@@ -90,6 +112,11 @@ fn quoting_vectors() {
                 lvl.expiry_offset_secs.get(),
                 u32_of(v, "expiry_offset"),
                 "bid[{i}] expiry"
+            );
+            assert_eq!(
+                lvl.expiry_offset_slots.get(),
+                u32_of(v, "expiry_offset_slots"),
+                "bid[{i}] expiry slots"
             );
         }
     }

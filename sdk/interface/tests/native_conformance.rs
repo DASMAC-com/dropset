@@ -39,7 +39,7 @@
 
 use dropset_interface::clock::{SlotTime, WallTime};
 use dropset_interface::layout::{MarketView, N_LEVELS};
-use dropset_interface::matching::{simulate_swap, SwapSide};
+use dropset_interface::matching::{resting_levels, simulate_swap, SwapSide};
 use dropset_interface::price::Price;
 use serde_json::Value;
 
@@ -53,12 +53,30 @@ fn vectors() -> Value {
 }
 
 fn market_data(v: &Value) -> Vec<u8> {
-    v["market_data"]
-        .as_array()
-        .expect("market_data is an array")
+    byte_array(&v["market_data"], "market_data")
+}
+
+fn byte_array(v: &Value, what: &str) -> Vec<u8> {
+    v.as_array()
+        .unwrap_or_else(|| panic!("{what} is an array"))
         .iter()
-        .map(|b| b.as_u64().expect("market_data byte") as u8)
+        .map(|b| b.as_u64().unwrap_or_else(|| panic!("{what} byte")) as u8)
         .collect()
+}
+
+/// The account bytes a case quotes against. `"primary"` is the top-level
+/// `market_data`; every other name is a key in `markets` — the far-out and
+/// flush fixtures, which need their own buffers because their books cannot
+/// coexist with the primary one (a far-out level behind ample honest depth
+/// would be reached by the cases that deliberately dwarf that depth, and a
+/// flush-armed vault reads its levels from somewhere else entirely).
+fn market_for(v: &Value, name: &str) -> Vec<u8> {
+    if name == "primary" {
+        return market_data(v);
+    }
+    let m = &v["markets"][name];
+    assert!(!m.is_null(), "case names unknown market `{name}`");
+    byte_array(m, name)
 }
 
 fn u64_at(v: &Value, k: &str) -> u64 {
@@ -69,14 +87,16 @@ fn u64_at(v: &Value, k: &str) -> u64 {
 #[test]
 fn native_simulate_swap_matches_vectors() {
     let v = vectors();
-    let data = market_data(&v);
-    let view = MarketView::load(&data).expect("fixture market decodes");
-
     let cases = v["cases"].as_array().expect("cases is an array");
     assert!(!cases.is_empty(), "fixture carries no cases");
 
     for c in cases {
         let name = c["name"].as_str().expect("case name");
+        // Each case names its own market, so a far-out or flush case is
+        // quoted against the buffer it was generated from rather than
+        // against the primary book.
+        let data = market_for(&v, c["market"].as_str().expect("case market"));
+        let view = MarketView::load(&data).expect("fixture market decodes");
         let side = match u64_at(c, "side") {
             0 => SwapSide::Buy,
             1 => SwapSide::Sell,
@@ -165,6 +185,230 @@ fn the_fixture_still_carries_both_expiry_domains() {
          domain: the cross case, plus its boundary live and dead); found \
          {expiry:?}"
     );
+}
+
+/// The flush market must keep carrying its own two expiry cases, for the
+/// same reason the primary market's six are pinned above.
+///
+/// The flush path computes each deadline from the profile's offsets plus
+/// the reference datum, where `remaining` carries absolute deadlines, so it
+/// is separate expiry arithmetic reached by separate cases. Losing them
+/// would leave the flush materialization pinned only at a live clock, with
+/// a green suite — the failure mode this whole file guards against.
+#[test]
+fn the_fixture_still_carries_the_flush_expiry_cases() {
+    let v = vectors();
+    let flush: Vec<(&str, u64)> = v["cases"]
+        .as_array()
+        .expect("cases is an array")
+        .iter()
+        .filter(|c| c["market"].as_str() == Some("flush"))
+        .map(|c| {
+            (
+                c["name"].as_str().expect("case name"),
+                u64_at(&c["expected"], "out_amount"),
+            )
+        })
+        .filter(|(n, _)| n.starts_with("flush_expiry_"))
+        .collect();
+
+    assert_eq!(
+        flush.len(),
+        2,
+        "expected each domain to kill the flush-materialized book on its \
+         own; found {flush:?}"
+    );
+    assert!(
+        flush.iter().any(|n| n.0.contains("slot_dead"))
+            && flush.iter().any(|n| n.0.contains("wall_dead")),
+        "expected one slot-led and one wall-led flush expiry case; found \
+         {flush:?}"
+    );
+    // Names alone would pass a regeneration that turned one of these live
+    // while keeping its `_dead` name, so assert the outcome too — the same
+    // defense the primary six get from the independent-oracle test below.
+    for (name, out) in &flush {
+        assert_eq!(*out, 0, "{name}: a `_dead` flush case must fill nothing");
+    }
+
+    // And pin the *live* pair, or the loss is worse in the other direction:
+    // drop those two and the profile-to-level materialization is exercised
+    // only at dead clocks, where it correctly produces nothing — so the
+    // arithmetic this market exists to cover (price from `reference` plus a
+    // ppm offset, size from `size_bps` of inventory) would go untested with
+    // a green suite.
+    let filling: Vec<(&str, u64)> = v["cases"]
+        .as_array()
+        .expect("cases is an array")
+        .iter()
+        .filter(|c| c["market"].as_str() == Some("flush"))
+        .map(|c| {
+            (
+                c["name"].as_str().expect("case name"),
+                u64_at(&c["expected"], "out_amount"),
+            )
+        })
+        .filter(|(n, _)| !n.starts_with("flush_expiry_"))
+        .collect();
+
+    assert_eq!(
+        filling.len(),
+        2,
+        "expected one filling flush case per side; found {filling:?}"
+    );
+    assert!(
+        filling.iter().any(|f| f.0.starts_with("flush_buy"))
+            && filling.iter().any(|f| f.0.starts_with("flush_sell")),
+        "expected a filling flush case on each side; found {filling:?}"
+    );
+    for (name, out) in &filling {
+        assert!(
+            *out > 0,
+            "{name}: a flush case at a live clock must materialize a fill"
+        );
+    }
+}
+
+/// The equal-price tie-break must be ordered by **nonce**, asserted against
+/// an oracle read from the vaults rather than from the emitted book.
+///
+/// This is the one property in the fixture with no other home. A `Quote`
+/// cannot see it — two levels at one price fill to identical totals in
+/// either order — so every `cases` replay is blind to it, and the `books`
+/// block is compared only by the TS test against the *committed* wasm
+/// binary. That leaves a source-level change to the tie-break invisible
+/// until someone runs `make wasm`: measured, keying the sort on `sector`
+/// ahead of `nonce` left both this crate's suite and the TS suite green.
+///
+/// So derive the expectation independently: walk the vaults, group each
+/// side's live levels by price, and for any price two vaults both quote,
+/// the older nonce must come first in the collected book. Sector index is
+/// deliberately not consulted — the fixture gives sector 0 the *newer*
+/// quote precisely so that nonce order, sector order and DLL walk order
+/// disagree.
+#[test]
+fn equal_price_levels_are_ordered_by_nonce_not_by_sector() {
+    let v = vectors();
+    let data = market_data(&v);
+    let view = MarketView::load(&data).expect("fixture market decodes");
+    // The live clock every fill case quotes at, taken from a live case so
+    // this cannot drift from the fixture.
+    let live = v["cases"]
+        .as_array()
+        .expect("cases is an array")
+        .iter()
+        .find(|c| c["name"].as_str() == Some("buy_multi_level"))
+        .expect("the fixture carries buy_multi_level");
+    let now_slot = SlotTime::new(u64_at(live, "now_slot") as u32);
+    let now_unix = WallTime::new(u64_at(live, "now_unix") as u32);
+
+    let mut checked = 0usize;
+    for (side, is_buy) in [(SwapSide::Buy, true), (SwapSide::Sell, false)] {
+        // The oracle: (price bits, nonce, raw size) for every live level,
+        // read straight off the vaults.
+        let mut quoted: Vec<(u32, u64, u64)> = Vec::new();
+        for (_sector, vault) in view.active_vaults() {
+            let nonce = vault.reference_price.nonce();
+            for i in 0..N_LEVELS {
+                let lvl = if is_buy {
+                    vault.remaining.asks[i]
+                } else {
+                    vault.remaining.bids[i]
+                };
+                if lvl.size.get() == 0 {
+                    continue;
+                }
+                quoted.push((lvl.price.get(), nonce, lvl.size.get()));
+            }
+        }
+
+        let book = resting_levels(&view, side, now_slot, now_unix);
+        for window in book.windows(2) {
+            let (a, b) = (&window[0], &window[1]);
+            if a.price.as_u32() != b.price.as_u32() {
+                continue;
+            }
+            // Two entries at one price: find each one's nonce by matching
+            // the raw size the vault quoted. Asks are reported at their raw
+            // size; bids are converted to base, so match on the converted
+            // value the same way the collector does.
+            let nonce_of = |size: u64| -> u64 {
+                quoted
+                    .iter()
+                    .find(|(p, _, s)| {
+                        *p == a.price.as_u32()
+                            && if is_buy {
+                                *s == size
+                            } else {
+                                a.price.base_for_quote(*s).min(u64::MAX as u128) as u64 == size
+                            }
+                    })
+                    .map(|(_, n, _)| *n)
+                    .unwrap_or_else(|| panic!("no vault quotes size {size} at this price"))
+            };
+            assert!(
+                nonce_of(a.size) < nonce_of(b.size),
+                "equal-priced levels are out of nonce order: the entry sized \
+                 {} (nonce {}) precedes the one sized {} (nonce {})",
+                a.size,
+                nonce_of(a.size),
+                b.size,
+                nonce_of(b.size)
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(
+        checked, 2,
+        "expected one equal-price pair per side to adjudicate; found {checked}"
+    );
+}
+
+/// The far-out cases must keep *ending the walk* rather than filling.
+///
+/// Their whole point is that a level the taker cannot afford one output atom
+/// at takes nothing, leaving the unspent budget with the taker. The case
+/// replay cannot notice if that stops being true — a regeneration moves the
+/// expectation along with the outcome — and it cannot notice a mis-route
+/// either, since a far-out case emitted against the primary market
+/// degenerates into an ordinary fill under the same name. Pin both.
+#[test]
+fn the_fixture_still_carries_the_far_out_cases() {
+    let v = vectors();
+    let far: Vec<(&str, u64, u64)> = v["cases"]
+        .as_array()
+        .expect("cases is an array")
+        .iter()
+        .filter(|c| c["market"].as_str() == Some("far_out"))
+        .map(|c| {
+            (
+                c["name"].as_str().expect("case name"),
+                u64_at(c, "amount_in"),
+                u64_at(&c["expected"], "in_amount"),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        far.len(),
+        2,
+        "expected one far-out case per side; found {far:?}"
+    );
+    assert!(
+        far.iter().any(|f| f.0.starts_with("buy_")) && far.iter().any(|f| f.0.starts_with("sell_")),
+        "expected a far-out case on each side; found {far:?}"
+    );
+    for (name, amount_in, in_amount) in &far {
+        assert!(
+            *in_amount > 0,
+            "{name}: the honest leg must still fill something"
+        );
+        assert!(
+            in_amount * 100 < *amount_in,
+            "{name}: consumed {in_amount} of a {amount_in} budget — a \
+             far-out level must end the walk, not absorb the remainder"
+        );
+    }
 }
 
 /// Each expiry conjunct must bind **on its own** — asserted against an
