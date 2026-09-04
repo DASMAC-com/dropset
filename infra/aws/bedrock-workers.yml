@@ -65,6 +65,11 @@ Parameters:
 Resources:
   BedrockWorkerInvokePolicy:
     Properties:
+      # NOTE: Description is IMMUTABLE on AWS::IAM::ManagedPolicy. Editing it
+      # forces a replacement, which then collides with the explicit
+      # ManagedPolicyName below and fails the stack update with AlreadyExists.
+      # Change the policy document freely - that updates in place - but leave
+      # this text alone unless you are prepared to rename or recreate.
       Description: >-
         Invoke access to the two worker models through the US cross-region
         inference profiles, plus the two read-only profile-discovery calls
@@ -75,6 +80,10 @@ Resources:
       ManagedPolicyName: !Sub '${EnvironmentName}-bedrock-worker-invoke'
       PolicyDocument:
         Statement:
+        - Action: 'bedrock:CallWithBearerToken'
+          Effect: 'Allow'
+          Resource: '*'
+          Sid: 'AuthenticateWithApiKey'
         - Action: 'bedrock:ListInferenceProfiles'
           Effect: 'Allow'
           Resource: '*'
