@@ -18,7 +18,8 @@ makers, routers, and indexers.
 - **Quoting** (`quoting`) — the native-CLOB direction: translate a full book
   of absolute price levels and atom sizes into the relative `profile_bytes`
   argument `set_liquidity_profile` expects. This is where the profile builder
-  lives, which the top-level SDK README sends readers here to find.
+  `quoting::NativeBook::to_profile` lives — the Rust half of the pair the
+  top-level SDK README names when it describes that translation.
 - **Events** (`events`) — decode the `emit_cpi!` event payloads an indexer
   extracts from inner instructions. `try_decode_event_payload` is the strict
   form: it requires the body to be fully consumed and reports

@@ -30,8 +30,9 @@ ______________________________________________________________________
 
 ## 1. Event contract
 
-Events are emitted on the cold paths (open / deposit / withdraw / realize) and
-on the **taker hot path**; the **maker** hot path
+Events are emitted on the cold paths (open / deposit / withdraw / realize, plus
+the treasury / admin records below) and on the **taker hot path**; the **maker**
+hot path
 (`SetReferencePrice`/`SetLiquidityProfile`) emits nothing (see
 **architecture.md → Events and emission**). A single take can match many levels
 across many vaults; **every leg is recorded — full fidelity, never dropped**,
@@ -42,8 +43,10 @@ level-blasting sweep would hit). A single combined **`FillEvent`** is emitted
 heap-pop (match) order. Each leg carries both the per-leg fill *and* the
 take-level context (`market` / `taker` / `side`), so the indexer reconstructs a
 take by grouping the legs of one transaction. Note that `taker_fee_atoms` is
-**per-leg**, not take-level — summing it across the legs is the take's total
-fee, and treating it as take-level over-counts it by the number of legs.
+**per-leg**, not take-level: the take's total fee is the **sum** across its
+legs. An indexer that mistakes it for a take-level field — one whose value
+repeats identically on every leg, as `market` / `taker` / `side` do — will take
+a single leg's value for the whole take and **under-report** the fee.
 
 There **is** one take-level event: **`PlatformFeeEvent`**, emitted at most once
 per swap, after the legs it was skimmed from. It is absent on the
@@ -109,9 +112,12 @@ walk absorbed. That residue is credited to no vault and to neither accrued-fee
 counter, and it appears in **no `FillEvent` field**, so summing the legs
 reports *less* input volume than was actually transferred, and an average price
 derived from them flatters the taker's real execution. The residue is
-recoverable only from the instruction's own `amount_in` argument (the debit is
-`amount_in` less the unfilled remainder), or later in aggregate from
-`SweepResidualEvent`. This is also why the treasury's custody invariant is
+not recoverable from the events alone: the taker's real debit is `amount_in`
+less the walk's unfilled remainder, and that remainder is a local of the
+matching walk that no event carries. The two practical paths are the swap's own
+input **token transfer** — one per side, riding the same inner-instruction
+stream the events do — or, later and in aggregate, `SweepResidual`. This is
+also why the treasury's custody invariant is
 `>=` rather than `==` against the vault and fee counters.
 
 ### Lifecycle / liquidity events
@@ -346,7 +352,11 @@ aggregate falls short, the engine **soft-reverts**: it rolls back every
 mutation, transfers nothing, emits no events, and returns **success**, so the
 surrounding transaction survives. A **partial fill commits only when it clears
 `min_out`** — a partial below the floor is rolled back in full, not committed.
-`min_out == 0` opts out of the check. The book lives in a
+`min_out == 0` opts out of *that comparison*, but not out of the soft revert: a
+**zero fill soft-reverts regardless**, so a zero-`min_out` swap that matches
+nothing still commits nothing. The one path that does **not** return success is
+a **nonce overflow**, which restores state and then returns a hard error. The
+book lives in a
 **single market account** (vaults are inside it), so the take is **not
 account-hungry** — its list doesn't grow with the levels or vaults a fill
 crosses. What a multi-hop route does budget for is the fixed tail: the **+2

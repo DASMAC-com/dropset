@@ -29,10 +29,10 @@ builders, account/event codecs, PDA helpers. Regenerate with
 `IdlType`, so it surfaces as a fieldless struct), and
 `set_liquidity_profile`'s `profile_bytes` is restored to `[u8; 224]`
 (anchor-next can't const-eval `PROFILE_BYTES`). That width is asserted on
-chain as `PROFILE_SIZE` and derived independently in `codama/generate.mjs`;
-it has moved once already (160 → 224, when per-level expiry gained its second
-domain), and a stale literal here is a silent wire-format mismatch rather than
-a build break.
+chain as `PROFILE_SIZE` and derived — not hard-coded — in
+`codama/generate.mjs`; it has moved once already (160 → 224, when per-level
+expiry gained its second domain), so treat any literal restatement of it,
+this sentence included, as something to re-check against the on-chain assert.
 
 **B. Book math (`math-core` + `interface`).** The consensus arithmetic —
 the `Price` codec, the pure matcher math, and the share/NAV/PnL kernels —
@@ -69,8 +69,10 @@ languages — Rust and TS:
   verified by `math-core/tests/share_conformance.rs` and
   `ts/src/share.conformance.test.ts`.
 - `simulate_swap_vectors.json` — the swap simulator, via
-  `gen_simulate_swap`; verified in TS by `ts/src/simulate.conformance.test.ts`
-  and `ts/src/wasm.conformance.test.ts`.
+  `gen_simulate_swap`; verified by `interface/tests/native_conformance.rs` and
+  `interface/tests/wasm_conformance.rs` in Rust, and by
+  `ts/src/simulate.conformance.test.ts` and `ts/src/wasm.conformance.test.ts`
+  in TS.
 
 Run all SDK tests with `make sdk-test`. The Rust `simulate_swap` is
 additionally pinned to the engine by
