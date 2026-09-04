@@ -408,6 +408,21 @@ read them with `gh api repos/{owner}/{repo}/rulesets/{id}`):
 `Tests (no teardown)`, `Tests (asm parity)`, `Tests (Postgres)`, `SDK`,
 `Frontend`.
 
+Note these are **job** names, not step names. A workflow can therefore
+add or remove a *step* inside a required job with no ruleset change at
+all, and adding a whole new **job** leaves the required set untouched
+unless someone also adds its context here. Both directions have bitten:
+the token-icon liveness check was assumed to be a required check needing
+a ruleset edit to relax, when it was a step inside `Frontend` — relaxing
+it was a workflow edit and nothing more.
+
+**`Token icon upstream audit` is deliberately absent** from the list
+above. It fetches issuer URLs to check the committed token icons for
+drift, and it is advisory by three independent layers: it is not in this
+set, it does not trigger on `merge_group`, and its script exits 0
+whatever it finds. Keep it out of this list — putting it in would
+recreate the exact merge-queue exposure it was built to remove.
+
 ### Forks get no secrets — so a secret-dependent required check is fork-hostile
 
 A `pull_request` run from a fork receives **no secrets**. This is a

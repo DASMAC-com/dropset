@@ -1,17 +1,26 @@
 // cspell:word ftypavif
-// Shared engine behind fetch-token-icons.mjs and fetch-wallet-icons.mjs.
-// Both mirror third-party images into public/ at build time so the browser
-// hits our own origin instead of an issuer CDN, and both write a manifest
-// (key → /<prefix>/<file>) that the corresponding data module reads alongside
-// the canonical remote URLs. Both consume it the same way: as a lookup that
-// leaves the canonical URL reachable, so a mirrored file that is missing or
-// unreadable at runtime still has somewhere to fall back to.
+// The shared icon-fetching engine. Two consumers, and they now use different
+// amounts of it:
 //
-// The two scripts were byte-identical in shape but not in rigor: the token
-// one grew timeouts, retries, a body-size floor and magic-byte sniffing
+//   fetch-wallet-icons.mjs   uses `mirrorIcons` whole — it still mirrors
+//                            third-party images into public/ at build time so
+//                            the browser hits our own origin, and writes a
+//                            manifest (key → /<prefix>/<file>) that its data
+//                            module reads alongside the canonical remote URLs,
+//                            as a lookup that leaves the remote URL reachable.
+//   audit-token-icons.mjs    uses `fetchWithRetry` only. Token icons are
+//                            COMMITTED (brand-assets/token-icons/), so nothing
+//                            mirrors them at build time; the fetch is used to
+//                            audit the committed bytes against upstream, out
+//                            of band and advisory.
+//
+// The two scripts were once byte-identical in shape but not in rigor: the
+// token one grew timeouts, retries, a body-size floor and magic-byte sniffing
 // while the wallet one kept trusting `res.ok` plus the content-type header.
-// They live here together so that gap cannot reopen — a hardening added for
-// one asset set now applies to both by construction.
+// Keeping the FETCH here is what stops that gap reopening, and it survives the
+// split above intact — the token side stopped mirroring but still fetches
+// through this module, so a hardening added for either asset set still applies
+// to both. Only the mirror-and-manifest half became wallet-specific.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -130,7 +139,16 @@ const fetchOnce = async (url) => {
 // Retry before declaring a URL dead: under --strict a single transient
 // blip would otherwise fail the build and read as link rot. Only a URL
 // that fails every attempt is treated as broken.
-const fetchWithRetry = async (url) => {
+//
+// Exported for audit-token-icons.mjs, which needs the fetch — timeout,
+// retry, body-size floor, magic-byte sniffing — without the mirroring.
+// Token icons are committed to the repo now, so their side compares bytes
+// against a committed file instead of writing one; the wallet set still
+// mirrors through `mirrorIcons` below. Returning the raw buffer is what
+// makes byte-identity auditing possible: nothing here re-encodes or
+// optimizes, so a comparison against upstream is exact rather than
+// approximate.
+export const fetchWithRetry = async (url) => {
   let lastError;
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     if (attempt > 0) await sleep(BACKOFF_MS * 2 ** (attempt - 1));

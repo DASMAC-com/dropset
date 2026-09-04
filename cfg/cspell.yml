@@ -9,4 +9,13 @@ ignorePaths:
 - '**/pnpm-lock.yaml'
 # Generated wasm-pack glue (make wasm) — its identifiers aren't ours to check.
 - '**/sdk/ts/src/wasm/**'
+# Committed issuer artwork, stored byte-for-byte as upstream serves it. The
+# SVGs among them are text, so cspell reads their markup and flags
+# presentation-attribute values, the XML namespace prefix, and whatever
+# watermark the issuer's drawing tool left behind. None of that is this
+# repo's vocabulary, and it cannot be escaped where it appears: an inline
+# directive would edit the bytes, which is exactly what token-icon-audit.yml
+# checks against upstream. (Naming the offending words here would only move
+# the same failure into this file.)
+- '**/brand-assets/token-icons/**'
 ...
