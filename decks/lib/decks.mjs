@@ -26,6 +26,13 @@
  *   touch it, and a wrong date is worse than no date — it invites the reader
  *   to wonder whether the deck is current. An event date is fixed, so it
  *   needs no maintenance and answers the question the reader actually has.
+ * @property {string} [video]
+ *   A recording of the talk, linked from a badge beside the date on the
+ *   deck's card on the landing page.
+ *
+ *   Optional, and absent is the normal case: a deck exists from the moment it
+ *   is written, while a recording only exists once the talk has been given —
+ *   and some never are. A card with no `video` simply shows no badge.
  * @property {number} pages
  *   How many pages the deck has.
  *
@@ -44,6 +51,7 @@ export const decks = [
     subtitle:
       "The ~2-minute pitch: the gap, what's live today, the eCLOB, and why FX is next.",
     presented: "2026-08-26",
+    video: "https://youtu.be/XgwowVEFqco",
     pages: 11,
   },
 ];
