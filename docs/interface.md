@@ -4,6 +4,8 @@
 
 <!-- cspell:word rollups -->
 
+<!-- cspell:word undercount -->
+
 # Dropset Interface Spec
 
 The **consumer/client contract** for Dropset: the on-chain events the indexer
@@ -28,7 +30,9 @@ ______________________________________________________________________
 
 ## 1. Event contract
 
-Events are emitted on cold paths only; the hot path
+Events are emitted on the cold paths (open / deposit / withdraw / realize, plus
+the treasury / admin records below) and on the **taker hot path**; the **maker**
+hot path
 (`SetReferencePrice`/`SetLiquidityProfile`) emits nothing (see
 **architecture.md → Events and emission**). A single take can match many levels
 across many vaults; **every leg is recorded — full fidelity, never dropped**,
@@ -37,9 +41,18 @@ which is why fills ride as `emit_cpi!` inner-instruction data rather than logs
 level-blasting sweep would hit). A single combined **`FillEvent`** is emitted
 **per matched `(sector_idx, level_idx)` leg** — one `emit_cpi!` per leg, in
 heap-pop (match) order. Each leg carries both the per-leg fill *and* the
-take-level context (`market` / `taker` / `side` / `taker_fee_atoms`), so the
-indexer reconstructs a take by grouping the legs of one transaction; there is
-**no separate take-level event**.
+take-level context (`market` / `taker` / `side`), so the indexer reconstructs a
+take by grouping the legs of one transaction. Note that `taker_fee_atoms` is
+**per-leg**, not take-level: the take's total fee is the **sum** across its
+legs. An indexer that mistakes it for a take-level field — one whose value
+repeats identically on every leg, as `market` / `taker` / `side` do — will take
+a single leg's value for the whole take and **under-report** the fee.
+
+There **is** one take-level event: **`PlatformFeeEvent`**, emitted at most once
+per swap, after the legs it was skimmed from. It is absent on the
+no-integrator path, on a soft revert, and when the declared rate rounds to
+zero atoms — so its presence is conditional, but when present it is the
+integrator's only on-chain receipt for the fee they were paid.
 
 ### `FillEvent` — one per matched (sector_idx, level_idx) leg
 
@@ -62,16 +75,52 @@ gaps are bytemuck alignment padding and carry no data):
 | `nonce_after`                            | `market.nonce` after this leg's per-leg bump (price-time priority / dedupe ordering)                            |
 | `taker_fee_atoms`                        | protocol taker fee charged on this leg, in the output asset — accrued to the market, not to the vault           |
 
-### Take-level aggregation — derived, not emitted
+### `PlatformFeeEvent` — at most one per swap
 
-There is no take-level event. The indexer recovers per-take figures by grouping
-the `FillEvent` legs of one transaction (they share `market` / `taker` / `side`
-and the transaction coordinates below):
+Emitted only when a caller declared a non-zero platform fee that rounds to at
+least one atom. Standard `#[event]` (borsh).
+
+| field              | meaning                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| `market`           | the market account                                                                             |
+| `taker`            | the transaction initiator                                                                      |
+| `fee_authority`    | owner of the destination token account — the integrator being paid                             |
+| `mint`             | the mint the fee was paid in: the swap's **output** leg (base on a Buy, quote on a Sell)       |
+| `atoms`            | atoms transferred, computed on the aggregate output **after** the taker fee, rounded down      |
+| `platform_fee_bps` | the rate the caller declared, in bps — recorded alongside `atoms` so the rounding is auditable |
+
+It is deliberately **not** folded into `FillEvent`: the fee is computed once on
+the aggregate output, not per `(vault, level)` leg. A multi-leg swap emits N
+`FillEvent`s and at most one of these.
+
+### Take-level aggregation — mostly derived
+
+Apart from `PlatformFeeEvent` above, the indexer recovers per-take figures by
+grouping the `FillEvent` legs of one transaction (they share `market` /
+`taker` / `side` and the transaction coordinates below):
 
 - `total_fill_base` / `total_fill_quote` — sum `fill_base` / `fill_quote` across
   the take's legs;
 - total taker fee — sum `taker_fee_atoms` across the legs;
-- `avg_price` — derived (`total_fill_quote / total_fill_base`).
+- `avg_price` — derived (`total_fill_quote / total_fill_base`). Note this is the
+  **vault-side** price, not the taker's effective one; see the residue caveat
+  below.
+
+**The exact-in residue caveat — a volume undercount.** Under exact-in the taker
+is debited the sum of the priced input legs **plus** the residue the matching
+walk absorbed. That residue is credited to no vault and to neither accrued-fee
+counter, and it appears in **no `FillEvent` field**, so summing the legs
+reports *less* input volume than was actually transferred, and an average price
+derived from them flatters the taker's real execution. The residue is
+not recoverable from the events alone: the taker's real debit is `amount_in`
+less the walk's unfilled remainder, and that remainder is a local of the
+matching walk that no event carries. The two practical paths are the swap's own
+input **token transfer** — one per side, riding the same inner-instruction
+stream the events do, but a **Token-program** instruction rather than a Dropset
+event, so the `__event_authority` recognizer in §2 will not match it — or,
+later and in aggregate, `SweepResidual`. This is
+also why the treasury's custody invariant is
+`>=` rather than `==` against the vault and fee counters.
 
 ### Lifecycle / liquidity events
 
@@ -84,6 +133,25 @@ and the transaction coordinates below):
 - **`FreezeVault`** — an admin freezes a vault: it stays on the active DLL
   (existing levels still match until expiry) but can no longer be re-quoted.
 - **`Realize`** — performance-fee accrual (leader economics).
+
+### Treasury / admin events
+
+Cold-path records an indexer needs for revenue reconciliation and for auditing
+config changes. All are standard `#[event]` (borsh).
+
+- **`SweepResidual`** — collects the treasury's unattributed residual: the
+  difference between the treasury balance and the sum of vault inventory plus
+  accrued fees. Exact-in makes this bucket accrue routinely (see the residue
+  caveat above), so it is the aggregate recovery path for volume the
+  `FillEvent` legs do not carry.
+- **`CloseMarketTreasury`** / **`CloseRegistryFeeVault`** — teardown of the
+  market treasury and the registry fee vault.
+- **`SetTakerFee`** / **`SetMarketFeeConfig`** / **`SetDefaultFeeConfig`** —
+  fee-schedule changes at market and registry-default scope.
+- **`SetMaxPlatformFee`** — the ceiling a caller-declared platform fee is
+  clamped to.
+- **`SetMinLeaderShare`** — the floor on a leader's share.
+- **`SetRegistryDefaults`** — registry-wide default parameters.
 
 ### Dedupe / primary key
 
@@ -127,6 +195,18 @@ Dropset's `__event_authority` PDA**; an event inner instruction is recognized by
 **walks inner instructions** to locate and strip the `[tag][discriminator]`
 envelope; the Codama-generated struct codec then decodes the borsh body
 (**Codama supplies only the post-extraction codec**, not the extraction).
+
+**Decode strictness differs between the two SDKs** — an indexer should know
+which behavior it is relying on. The Rust `try_decode_event_payload` requires
+the body to be **fully consumed** and returns `DecodeError::TrailingBytes`
+otherwise, so a field appended on chain makes an event stop decoding rather
+than silently decoding as its old, narrower shape; `decode_event_payload` runs
+the same check and discards the reason via `.ok()`. The TypeScript
+`decodeFillEventPayload` does **not** enforce this: it slices the body to the
+decoder's fixed size and tolerates trailing bytes, yielding `null` only on a
+short payload, a discriminator mismatch, or a decode throw. An indexer that
+wants wire-format drift to surface loudly rather than pass silently wants the
+Rust `try_` form.
 
 **Why inner-instruction, not logs.** Full fidelity. Inner-instruction data is
 not subject to the runtime's ~10 KB cumulative log-bytes-per-tx limit, so a
@@ -248,8 +328,8 @@ below), never the REST surface.
   `quote()` in-process against cached account bytes — network calls are
   forbidden inside it. The gate is code health, an independent security
   audit, demonstrated traction, and a reputable team; no fee. It leans
-  entirely on the on-chain take ix exposing a real `Price` limit, a
-  deterministic revert, and a stable `AccountMeta` set — exactly the
+  entirely on the on-chain take ix exposing a real `Price` limit, an aggregate
+  `min_out` floor, and a stable `AccountMeta` set — exactly the
   "Routers (B1)" note below.
 - **DFlow.** An aggregator that treats venues as interchangeable liquidity
   sources (AMMs, prop AMMs, order-book venues alike); becoming a routable
@@ -267,9 +347,18 @@ The take instruction's limit
 argument is a **regular 8-significant-figure `Price`** (the worst acceptable
 fill). The reserved encodings `0x0` and `0xFFFFFFFF` are **no-bound sentinels**
 (see **architecture.md → Price**), so a router must pass a real `Price` to get
-slippage protection; the engine **deterministically reverts** when the book
-cannot fill within it. **Partial fills commit** (emit their legs + a partial
-take envelope); only a zero-fill-below-minimum reverts. The book lives in a
+slippage protection. Slippage protection proper is the separate `min_out`
+argument, checked **once against the aggregate output net of both the taker fee
+and the platform fee** — what actually lands in the taker's ATA. When that
+aggregate falls short, the engine **soft-reverts**: it rolls back every
+mutation, transfers nothing, emits no events, and returns **success**, so the
+surrounding transaction survives. A **partial fill commits only when it clears
+`min_out`** — a partial below the floor is rolled back in full, not committed.
+`min_out == 0` opts out of *that comparison*, but not out of the soft revert: a
+**zero fill soft-reverts regardless**, so a zero-`min_out` swap that matches
+nothing still commits nothing. The one path that does **not** return success is
+a **nonce overflow**, which restores state and then returns a hard error. The
+book lives in a
 **single market account** (vaults are inside it), so the take is **not
 account-hungry** — its list doesn't grow with the levels or vaults a fill
 crosses. What a multi-hop route does budget for is the fixed tail: the **+2

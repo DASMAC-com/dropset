@@ -11,11 +11,18 @@ byte-identical code.
 
 ## Contents
 
-- **`Price` codec** — the canonical `u32` price encoding, where unsigned
-  integer order matches price order.
-- **Matcher arithmetic** — the pure ratio math (`quote_for_base` /
-  `base_for_quote`) the on-chain engine fills against.
-- **Share / NAV / PnL kernels** — the vault accounting primitives.
+- **`Price` codec** (`price`) — the canonical `u32` price encoding, where
+  unsigned integer order matches price order. The ratio math
+  (`quote_for_base` / `base_for_quote`) lives here too, as methods on
+  `Price`.
+- **Matcher arithmetic** (`matching_math`) — the pure fee and fill
+  arithmetic the on-chain engine matches with, including the platform-fee
+  computation and its rounding.
+- **Clock** (`clock`) — the level-expiry domains. Expiry is **dual-domain**:
+  a level is live only while *both* its slot deadline and its wall-clock
+  deadline hold, and neither domain alone is sufficient. Every off-chain
+  consumer that judges liveness needs this module.
+- **Share / NAV / PnL kernels** (`share`) — the vault accounting primitives.
 
 Correctness is pinned to the on-chain engine by the shared conformance
 vectors under [`sdk/conformance`](../conformance).

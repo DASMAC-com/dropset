@@ -27,8 +27,12 @@ builders, account/event codecs, PDA helpers. Regenerate with
 `make idl && make sdk`. Two codegen fix-ups live in `codama/generate.mjs`:
 `Price` is remapped to its real `u32` wire form (the on-chain type isn't
 `IdlType`, so it surfaces as a fieldless struct), and
-`set_liquidity_profile`'s `profile_bytes` is restored to `[u8; 160]`
-(anchor-next can't const-eval `PROFILE_BYTES`).
+`set_liquidity_profile`'s `profile_bytes` is restored to `[u8; 224]`
+(anchor-next can't const-eval `PROFILE_BYTES`). That width is asserted on
+chain as `PROFILE_SIZE` and derived — not hard-coded — in
+`codama/generate.mjs`; it has moved once already (160 → 224, when per-level
+expiry gained its second domain), so treat any literal restatement of it,
+this sentence included, as something to re-check against the on-chain assert.
 
 **B. Book math (`math-core` + `interface`).** The consensus arithmetic —
 the `Price` codec, the pure matcher math, and the share/NAV/PnL kernels —
@@ -42,31 +46,42 @@ currently ships a thin hand-written mirror of the `Price` codec +
 native-quoting math, kept in exact integer lockstep with the Rust engine by
 the conformance vectors below. `make wasm` compiles `dropset-interface`
 (which turns on math-core's `wasm` feature) to one WASM package exporting
-both binding sets; wiring it into `@dropset/sdk` to retire the TS mirror
-(interface.md §6B) is a tracked follow-up.
+both binding sets. That package **is wired into `@dropset/sdk`**: the
+market reader reads the resting book through the WASM binding rather than
+through a TypeScript re-implementation of the slab layout. That covers the
+slab and the book only — the hand-written `Price` codec and native-quoting
+mirror named above are a separate surface and are still live.
 
 ## Conformance
 
-Three checked-in vector sets under `sdk/conformance/`, each generated from
+Four checked-in vector sets under `sdk/conformance/`, each generated from
 its Rust reference (`make conformance-vectors`) and replayed in **both**
 languages — Rust and TS:
 
 - `price_vectors.json` — the `Price` codec + ratio math (`quote_for_base` /
   `base_for_quote`), via `gen_conformance`; verified by
-  `math-core/tests/conformance.rs` and `ts/src/conformance.test.ts`.
+  `math-core/tests/conformance.rs`, `ts/src/conformance.test.ts`, and
+  `programs/dropset/tests/price_conformance.rs` — the last being the
+  strongest pin of the three, since it replays the vectors against the
+  on-chain reader itself.
 - `quoting_vectors.json` — the native↔relative book translation, via
   `gen_quoting`; verified by `rs/tests/quoting_conformance.rs` and
   `ts/src/quoting.conformance.test.ts`.
 - `share_vectors.json` — the share/NAV/PnL kernels, via `gen_share`;
   verified by `math-core/tests/share_conformance.rs` and
   `ts/src/share.conformance.test.ts`.
+- `simulate_swap_vectors.json` — the swap simulator, via
+  `gen_simulate_swap`; verified by `interface/tests/native_conformance.rs` and
+  `interface/tests/wasm_conformance.rs` in Rust, and by
+  `ts/src/simulate.conformance.test.ts` and `ts/src/wasm.conformance.test.ts`
+  in TS.
 
 Run all SDK tests with `make sdk-test`. The Rust `simulate_swap` is
 additionally pinned to the engine by
 `programs/dropset/tests/sdk_conformance.rs` (litesvm — see Verification
-below); the genuinely-remaining follow-up is the **TS/WASM** `simulate_swap`,
-which lands when the WASM client retires the hand-written TS mirror
-(interface.md §6B).
+below), and the TS/WASM `simulate_swap` conformance work has landed: both
+`simulate.conformance.test.ts` and `wasm.conformance.test.ts` are wired into
+the package test script and CI.
 
 ## Quoting: native vs relative
 
