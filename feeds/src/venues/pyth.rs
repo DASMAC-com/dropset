@@ -128,11 +128,23 @@ pub struct PythHermesSource {
 impl PythHermesSource {
     /// Build the source over `base_url` (e.g. `https://hermes.pyth.network`),
     /// batching every feed in `feeds` into each poll.
-    pub fn new(base_url: &str, feeds: Vec<PythFeed>) -> Result<Self> {
-        Ok(Self {
-            http: HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL),
-            feeds,
-        })
+    ///
+    /// `api_key` is the Pyth bearer token ([`SECRET_NAME`]), taken as an
+    /// argument rather than read from the environment here
+    /// (docs/data-feeds.md §4) — the caller decides where the secret came
+    /// from.
+    ///
+    /// `None` builds an unauthenticated client. Upstream Hermes has answered
+    /// those with 401 since the Core upgrade on 2026-08-26, so it is not a
+    /// working configuration against `hermes.pyth.network` — it stays
+    /// expressible because `base_url` may name a self-hosted instance, which
+    /// reads the Pyth network and Wormhole directly and needs no credential.
+    pub fn new(base_url: &str, api_key: Option<&str>, feeds: Vec<PythFeed>) -> Result<Self> {
+        let mut http = HttpClient::new(base_url)?.with_min_interval(MIN_REQUEST_INTERVAL);
+        if let Some(api_key) = api_key {
+            http = http.with_secret_header("Authorization", &format!("Bearer {api_key}"))?;
+        }
+        Ok(Self { http, feeds })
     }
 
     /// Fetch every feed this source was built with, in one request.
@@ -154,6 +166,15 @@ impl PythHermesSource {
         Ok(parse_pyth(&body, &self.feeds))
     }
 }
+
+/// The canonical name of this venue's credential ([`crate::secrets`]) — the
+/// Pyth bearer token issued by Pyth Terminal.
+///
+/// Keyed only since the Core upgrade on 2026-08-26: Hermes served this feed
+/// without a credential for its whole life before that, which is why the
+/// collector had no secret to resolve and went dark rather than failing to
+/// start.
+pub const SECRET_NAME: &str = "pyth/api-key";
 
 /// This source's [`Source::name`] — the key its liveness is recorded under by
 /// [`crate::HealthReporter`], and therefore the value a consumer must join on
@@ -288,6 +309,57 @@ mod tests {
              documented 10 — a breach costs a 429 for the next 60s on the \
              primary anchor"
         );
+    }
+
+    #[test]
+    fn the_secret_name_matches_the_canonical_two_part_shape() {
+        // The name is what derives PYTH_API_KEY in the environment and
+        // op://<vault>/pyth/api-key in the enclave, so a rename here silently
+        // re-points both. `validate_name` is the same check the provider runs.
+        let (provider, secret) = crate::secrets::validate_name(SECRET_NAME).unwrap();
+        assert_eq!(provider, "pyth");
+        assert_eq!(secret, "api-key");
+        assert_eq!(crate::secrets::env_var(SECRET_NAME), "PYTH_API_KEY");
+    }
+
+    #[test]
+    fn a_key_becomes_a_bearer_authorization_header() {
+        // The one line this whole change exists for, and the only assertion
+        // that can reach it: there is no key to test end-to-end against, so
+        // without this the header name, the scheme, and the separating space
+        // could each be wrong and every other test would still pass.
+        let source = PythHermesSource::new("https://example.test", Some("a-token"), vec![])
+            .expect("a well-formed token is accepted");
+        assert_eq!(
+            source.http.header_value("authorization"),
+            Some("Bearer a-token")
+        );
+    }
+
+    #[test]
+    fn a_malformed_token_is_rejected_at_construction_rather_than_at_the_venue() {
+        // A newline would smuggle a second header line, so it must fail here.
+        // Deliberately NOT asserted as a redaction test: the error comes from
+        // header parsing, whose rendering never carries the offending value,
+        // so a "token does not appear" assertion would hold with every
+        // redaction mechanism in the crate deleted. `http.rs` owns that
+        // property, against a value that actually reaches a rendered string.
+        let err = PythHermesSource::new("https://example.test", Some("token\ntail"), vec![])
+            .err()
+            .expect("a newline in the token is rejected at construction");
+        assert!(format!("{err:?}").contains("Authorization"), "{err:?}");
+    }
+
+    #[test]
+    fn a_keyless_client_sends_no_authorization_header() {
+        // Not a working configuration against upstream Hermes since the
+        // 2026-08-26 gate, but it must stay expressible: a self-hosted instance
+        // reads the Pyth network directly and takes no credential. Asserted as
+        // the ABSENCE of the header rather than merely that construction
+        // succeeded, so an empty or malformed one cannot pass as keyless.
+        let source = PythHermesSource::new("https://example.test", None, vec![])
+            .expect("a keyless client builds");
+        assert_eq!(source.http.header_value("authorization"), None);
     }
 
     /// A captured Hermes response: EUR/USD direct, USD/ZAR inverted.

@@ -506,7 +506,11 @@ fn spawn_price_feeds(
 ) -> Result<FeedReceivers> {
     let pyth = spawn_feed(
         rt,
-        PythHermesSource::new(&cfg.pyth_base_url, roster.pyth.clone())?,
+        // Keyless on purpose: the bot resolves no secrets, and wiring a
+        // credential into it is deliberately out of scope here. Against
+        // upstream Hermes this tier therefore 401s and the cascade prices
+        // without it; against a self-hosted instance it works unchanged.
+        PythHermesSource::new(&cfg.pyth_base_url, None, roster.pyth.clone())?,
         RunConfig {
             poll_interval: cfg.pyth_poll,
             error_backoff: FEED_ERROR_BACKOFF,
@@ -635,7 +639,8 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let pyth = if drop("pyth") {
         Default::default()
     } else {
-        rt.block_on(PythHermesSource::new(&cfg.feeds.pyth_base_url, roster.pyth)?.poll())
+        // Keyless for the same reason as the live path above.
+        rt.block_on(PythHermesSource::new(&cfg.feeds.pyth_base_url, None, roster.pyth)?.poll())
             .unwrap_or_default()
     };
     let kraken = if drop("kraken") {

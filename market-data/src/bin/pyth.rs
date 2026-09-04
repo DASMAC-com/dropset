@@ -11,6 +11,10 @@
 //! see [`dropset_market_data::pyth_roster`] for why the deployment target
 //! decides that. Read once, at startup, and logged; restart to apply a change.
 //!
+//! Hermes has required a bearer credential since the Pyth Core upgrade on
+//! 2026-08-26; before that it was keyless, which is why this collector once
+//! had no secret to resolve and so had nothing to fail on.
+//!
 //! `observed_at` is Hermes' own `publish_time`, not the poll second. That is
 //! what makes a re-poll idempotent: the publishers agreed on that instant, so
 //! re-fetching the same reading lands on the primary key instead of writing a
@@ -18,10 +22,14 @@
 
 use dropset_feeds::{
     connect, run,
-    venues::{pyth::FxQuote, PythHermesSource},
+    venues::{
+        pyth::{self, FxQuote},
+        PythHermesSource,
+    },
     RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
+    fx::secret,
     instruments::register as register_instruments,
     pyth_roster,
     ticks::{SilenceWatch, Tick, TickConfig, TickDefaults, TickSource, TickWriter},
@@ -53,6 +61,12 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = TickConfig::from_env(&DEFAULTS)?;
+    // Resolved before anything connects, so a missing credential kills the
+    // process at startup instead of leaving it polling into a 401 forever.
+    // That distinction is the whole lesson of this collector's outage: it ran
+    // for days looking healthy — container up, no restarts, no error state —
+    // while writing nothing, because a failing poll only warns and backs off.
+    let api_key = secret(pyth::SECRET_NAME)?;
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;
 
@@ -86,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
         "pyth tick collector starting"
     );
 
-    let source = PythHermesSource::new(&cfg.base_url, feeds)?;
+    let source = PythHermesSource::new(&cfg.base_url, Some(&api_key), feeds)?;
     let source = TickSource::new(
         source,
         move |quotes: &HashMap<String, FxQuote>, poll_secs| {

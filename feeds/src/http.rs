@@ -287,6 +287,19 @@ impl HttpClient {
         Ok(self)
     }
 
+    /// The value of a header this client will send, for tests only.
+    ///
+    /// A venue builds its credential header by string-formatting a scheme onto
+    /// a token (`Bearer {api_key}`), and nothing else in the crate can observe
+    /// the result without a live request — so a wrong header name, a missing
+    /// space, or a dropped scheme is invisible to every other test. Marking
+    /// the value sensitive affects `Debug`, not `to_str`, so the assertion is
+    /// still possible here.
+    #[cfg(test)]
+    pub(crate) fn header_value(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|value| value.to_str().ok())
+    }
+
     /// Validate a header `name` / `value` pair for the two constructors above.
     ///
     /// The error context names only the header *name*, never the value: a
@@ -552,12 +565,33 @@ impl HttpClient {
                 response.status()
             );
         }
-        let response = response
-            .error_for_status()
-            .map_err(|err| self.redact_query(err))
-            .with_context(|| format!("GET {url} returned an error status"))?;
+        let response = self.check_status(response, &url)?;
         let body = self.read_capped(response, &url).await?;
         serde_json::from_slice(&body).with_context(|| format!("decode JSON from {url}"))
+    }
+
+    /// Turn a non-success response into an error whose **own** message names
+    /// the status code.
+    ///
+    /// `error_for_status` already records the status, but only inside the error
+    /// it builds — and once that is wrapped, the runner logs the outermost
+    /// context alone, so the code never reaches the log an operator reads. The
+    /// status is therefore read off the response first and interpolated here.
+    ///
+    /// The cost of not doing so is not hypothetical: the Pyth collector answered
+    /// every poll with `returned an error status` for a week while the actual
+    /// response was a 401 from a newly-introduced credential gate. An auth
+    /// failure and a venue outage were the same line, so the log gave no reason
+    /// to suspect a configuration change.
+    ///
+    /// Split out of [`Self::get_json`] rather than left inline so it can be
+    /// exercised against a response built in-process, with no live venue.
+    fn check_status(&self, response: reqwest::Response, url: &str) -> Result<reqwest::Response> {
+        let status = response.status();
+        response
+            .error_for_status()
+            .map_err(|err| self.redact_query(err))
+            .with_context(|| format!("GET {url} returned {status}"))
     }
 
     /// Buffer the body, refusing one that outruns the cap. A declared
@@ -1072,6 +1106,57 @@ mod tests {
     fn response_with_body(body: Vec<u8>) -> reqwest::Response {
         let builder = http::Response::builder().header(http::header::CONTENT_LENGTH, body.len());
         reqwest::Response::from(builder.body(body).unwrap())
+    }
+
+    /// Build a response carrying `status` and no body.
+    fn response_with_status(status: u16) -> reqwest::Response {
+        let builder = http::Response::builder().status(status);
+        reqwest::Response::from(builder.body(Vec::new()).unwrap())
+    }
+
+    #[test]
+    fn a_failed_status_is_named_in_the_error_itself() {
+        // The regression this pins: the message used to read "returned an
+        // error status" for every code alike, leaving the actual status only
+        // in the error's source — which the runner does not log. A credential
+        // gate was therefore indistinguishable from an outage.
+        let client = HttpClient::new("https://example.test").unwrap();
+        let err = client
+            .check_status(response_with_status(401), "https://example.test/v2")
+            .unwrap_err();
+        // The top-level message alone must carry it: `to_string` on an
+        // `anyhow::Error` renders the outermost context and nothing beneath,
+        // which is exactly what the runner logs.
+        let top = err.to_string();
+        assert!(top.contains("401"), "{top}");
+        assert!(top.contains("https://example.test/v2"), "{top}");
+    }
+
+    #[test]
+    fn distinct_failure_codes_produce_distinct_messages() {
+        // Naming *a* status is not enough — the point is that two different
+        // failures no longer read alike, which a hard-coded string would still
+        // satisfy.
+        let client = HttpClient::new("https://example.test").unwrap();
+        let unauthorized = client
+            .check_status(response_with_status(401), "https://example.test/v2")
+            .unwrap_err()
+            .to_string();
+        let server_error = client
+            .check_status(response_with_status(500), "https://example.test/v2")
+            .unwrap_err()
+            .to_string();
+        assert_ne!(unauthorized, server_error);
+        assert!(server_error.contains("500"), "{server_error}");
+    }
+
+    #[test]
+    fn a_success_status_passes_the_response_through() {
+        let client = HttpClient::new("https://example.test").unwrap();
+        let response = client
+            .check_status(response_with_status(200), "https://example.test/v2")
+            .expect("a 2xx must not be an error");
+        assert_eq!(response.status(), 200);
     }
 
     #[tokio::test]

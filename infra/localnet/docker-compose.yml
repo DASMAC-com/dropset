@@ -513,7 +513,28 @@ services:
     # and every row is logged, so the effective set is legible without querying
     # the database it came from.
     #
-    # Keyless and batched: one request per poll for the whole roster.
+    # Batched: one request per poll for the whole roster. Keyed since
+    # 2026-08-26, when the Pyth Core upgrade put Hermes behind a bearer token.
+    #
+    # **Opt-in, off by default**, which is why the `pyth` profile keeps it out
+    # of a plain `docker compose up` and out of `make collectors-up`. Pyth
+    # sells no usable free API tier (docs/data-feeds.md §9), so in practice
+    # nobody running this stack holds a key. Left in the default set the
+    # service would exit at startup and restart forever, and a permanently
+    # crash-looping container teaches operators to ignore a red container,
+    # which is the habit that let the original outage run for a week.
+    #
+    # To start it once a key IS held: uncomment PYTH_API_KEY in your
+    # secrets.local.env (it ships commented out, because a reference to a
+    # vault item you do not have can fail the whole enclave), then go through
+    # `op run` the way the keyed collectors do. A bare
+    # `docker compose --profile pyth up pyth` runs outside the enclave, so
+    # PYTH_API_KEY interpolates to empty from the ambient shell and the
+    # container exits naming it:
+    #
+    #   op run --env-file=infra/localnet/secrets.local.env -- \
+    #     docker compose -f infra/localnet/docker-compose.yml \
+    #     --profile pyth up pyth
     build:
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
@@ -525,7 +546,15 @@ services:
     environment:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
+      # Required since the Pyth Core upgrade of 2026-08-26 put Hermes behind a
+      # bearer token. Empty, the collector names this variable and exits at
+      # startup rather than polling into a 401 — the failure has to be a
+      # process that dies, because the one that stayed up wrote nothing for a
+      # week and looked healthy throughout.
+      PYTH_API_KEY: '${PYTH_API_KEY:-}'
       RUST_LOG: 'info'
+    profiles:
+    - 'pyth'
     restart: 'unless-stopped'
   taker-bot:
     # The benign flow taker: stochastic swaps so the book moves and the maker
