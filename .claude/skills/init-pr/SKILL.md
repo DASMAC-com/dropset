@@ -168,9 +168,12 @@ commit dying with `failed to fill whole buffer`, then
 Keep the standing **"a signing failure is an unpushed-state
 alarm"** rule as well; this adds a pre-check, it does not
 replace the alarm. The gate is deliberately a *configuration*
-check, so state its bound honestly: it proves the signing path
-is wired correctly, never that the backend will still be
-unlocked later. Both an ssh agent and a signer's app can lock
+check, so state its bound honestly: it rules out the two
+failures that recur here — a locked agent, and a signer path
+that no longer resolves — and proves nothing beyond them. It
+does not validate `user.signingkey`, and it cannot know whether
+the backend will still be unlocked later. Both an ssh agent and
+a signer's app can lock
 *during* a long unattended wait — which is why `review-pr` gets
 its assurance from an actual **checkpoint commit** before its
 fan-out and its CI wait, rather than from any probe. A signed
