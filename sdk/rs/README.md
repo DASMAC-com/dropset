@@ -15,6 +15,19 @@ makers, routers, and indexers.
   (`adapters::amm::DropsetAmm`: load → quote via `simulate_swap` → swap
   instruction, no network calls) with thin per-router mappings (Jupiter,
   DFlow, Titan).
+- **Quoting** (`quoting`) — the native-CLOB direction: translate a full book
+  of absolute price levels and atom sizes into the relative `profile_bytes`
+  argument `set_liquidity_profile` expects. This is where the profile builder
+  lives, which the top-level SDK README sends readers here to find.
+- **Events** (`events`) — decode the `emit_cpi!` event payloads an indexer
+  extracts from inner instructions. `try_decode_event_payload` is the strict
+  form: it requires the body to be fully consumed and reports
+  `DecodeError::TrailingBytes` otherwise, so an on-chain field addition
+  surfaces as a decode failure rather than as a silently narrower record.
+  `decode_event_payload` is the same check with the reason discarded.
+- **Time** (`time`) — the slot and wall-clock domains used to judge level
+  expiry, which is dual-domain (a level is live only while both deadlines
+  hold).
 
 ## Features
 

@@ -18,12 +18,18 @@ market makers, routers, and indexers.
   `dropset-sdk`'s `quoting` module.
 - **Market reader** — decode the on-chain market slab (opaque to the IDL)
   and reconstruct the resting order book.
-  `fetchDropsetMarketView(rpc, address, { nowUnix })` is a
-  one-`getAccountInfo` live poll returning `{ header, bids, asks }`.
-  Level expiry is dual-domain, so `nowUnix` is required — the engine
-  judges that deadline against cluster time, and a caller that cannot
-  bound its own clock must pass a chain-read one. The TypeScript port of
-  the `dropset-interface` crate's `layout` + `matching` modules.
+  `fetchDropsetMarketView(rpc, address, { nowUnix, nowSlot? })` returns
+  `{ header, bids, asks }`. It is **not** a single-account poll: it issues
+  `getAccountInfo` and, unless `nowSlot` is pinned by the caller, a
+  `getSlot` alongside it. Level expiry is **dual-domain** — a level is live
+  only while *both* its slot and wall-clock deadlines hold — so `nowUnix` is
+  required and `nowSlot` defaults to a chain read rather than to a local
+  clock. The book itself comes from the **WASM binding compiled from
+  `dropset-interface`**, not from a TypeScript re-implementation: the
+  hand-mirrored slab offsets and matching logic that used to live here were
+  deliberately deleted, because restating the on-chain layout in a second
+  language let it drift silently as the `Vault` layout grew. There is now one
+  implementation of the book, and it is the one the chain runs.
 - **Share / NAV / PnL kernels** — the scalar deposit, withdraw, and
   perf-fee formulas that run on-chain, mirrored in `bigint` so the frontend
   can preview NAV and share value without an indexer. Pinned to the engine
@@ -35,10 +41,13 @@ market makers, routers, and indexers.
 import { encodePrice, getSwapInstruction } from "@dropset/sdk";
 ```
 
-The root export re-exports the generated client alongside the hand-written
-`Price`, quoting, and share modules; the generated client is also available
-on its own at `@dropset/sdk/generated`. Regenerate the `generated/` tree
-with `make sdk` after `make idl`.
+The root export re-exports the generated client alongside every hand-written
+module — `clock`, `dflow`, `events`, `market`, `price`, `quoting`, `route`,
+`router`, `share`, and `simulate`. Note in particular the **simulator**
+(`simulate`) and the **router** (`router` / `route`), the package's headline
+quoting path, which earlier revisions of this list omitted. The generated
+client is also available on its own at `@dropset/sdk/generated`. Regenerate
+the `generated/` tree with `make sdk` after `make idl`.
 
 ## License
 
