@@ -169,10 +169,15 @@ Two things to know about that dialog:
   only `dropset-dev-bedrock-worker-invoke`. Claude Code needs nothing
   the invoke policy does not already grant.
 
-Store it in 1Password as item `bedrock`, field `api-key`, giving the
-reference `op://<vault>/bedrock/api-key` — the canonical
-`<provider>/<secret>` shape the local enclave already uses (see
-`infra/localnet/secrets.local.env.example`).
+Store it in 1Password as one item per provider with a named field per
+credential, giving a reference of the shape
+`op://<vault>/<item>/credential` — the same shape the other session
+secrets use, and a valid Secrets Manager id under the `dropset/` prefix
+if one is ever needed there (see
+`infra/localnet/secrets.local.env.example`). Only the placeholder shape
+belongs in tracked files: the real vault and item names stay in the
+untracked runtime config, because committing them would publish the
+layout of a personal secret store into permanent git history.
 
 ### 2. Opt the account into `aws_review` retention
 
