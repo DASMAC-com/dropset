@@ -12,11 +12,7 @@
     "ParameterValue": "dropset-dev"
   },
   {
-    "ParameterKey": "FallbackModelId",
-    "ParameterValue": "anthropic.claude-opus-5"
-  },
-  {
     "ParameterKey": "WorkerModelId",
-    "ParameterValue": "anthropic.claude-fable-5-1"
+    "ParameterValue": "anthropic.claude-opus-5"
   }
 ]

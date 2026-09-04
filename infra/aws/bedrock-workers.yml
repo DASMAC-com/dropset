@@ -50,16 +50,13 @@ Parameters:
     Default: 'dropset-dev'
     Description: 'Name prefix applied to resource names, tags, and exports.'
     Type: 'String'
-  FallbackModelId:
+  WorkerModelId:
     Default: 'anthropic.claude-opus-5'
     Description: >-
-      Foundation model worker sessions fall back to when the primary is
-      unavailable. Granted the same invoke permission as the primary.
-    Type: 'String'
-  WorkerModelId:
-    Default: 'anthropic.claude-fable-5-1'
-    Description: >-
-      Primary foundation model for worker sessions. Invoked through the us.
+      Default foundation model for worker sessions, published as the profile
+      id other tooling reads. It no longer gates the invoke policy, which
+      permits any model in the US regions, so changing it steers the default
+      without widening or narrowing permissions. Invoked through the us.
       cross-region inference profile, never by bare model id.
     Type: 'String'
 Resources:
@@ -88,36 +85,29 @@ Resources:
           Effect: 'Allow'
           Resource: '*'
           Sid: 'DiscoverInferenceProfiles'
+        # The MODEL dimension is deliberately left open so models can be
+        # swapped without a redeploy (operator decision). The REGION dimension
+        # stays pinned to us-*, which is a separate axis and load-bearing:
+        # data retention is configured PER REGION and is opted in for
+        # us-east-1, us-east-2 and us-west-2 only. A bare * would permit
+        # invoking where retention is still `inherit`, which fails opaquely,
+        # and would let a global. profile route to a region-less destination
+        # this account never opted in. Spend is guarded on the cost side, not
+        # here.
         - Action:
           - 'bedrock:GetInferenceProfile'
           - 'bedrock:InvokeModel'
           - 'bedrock:InvokeModelWithResponseStream'
           Effect: 'Allow'
           Resource: !Sub >-
-            arn:aws:bedrock:us-*:${AWS::AccountId}:inference-profile/us.${WorkerModelId}
-          Sid: 'InvokePrimaryProfile'
-        - Action:
-          - 'bedrock:GetInferenceProfile'
-          - 'bedrock:InvokeModel'
-          - 'bedrock:InvokeModelWithResponseStream'
-          Effect: 'Allow'
-          Resource: !Sub >-
-            arn:aws:bedrock:us-*:${AWS::AccountId}:inference-profile/us.${FallbackModelId}
-          Sid: 'InvokeFallbackProfile'
+            arn:aws:bedrock:us-*:${AWS::AccountId}:inference-profile/*
+          Sid: 'InvokeAnyInferenceProfileInUsRegions'
         - Action:
           - 'bedrock:InvokeModel'
           - 'bedrock:InvokeModelWithResponseStream'
           Effect: 'Allow'
-          Resource: !Sub >-
-            arn:aws:bedrock:us-*::foundation-model/${WorkerModelId}
-          Sid: 'InvokePrimaryModelInUsRegions'
-        - Action:
-          - 'bedrock:InvokeModel'
-          - 'bedrock:InvokeModelWithResponseStream'
-          Effect: 'Allow'
-          Resource: !Sub >-
-            arn:aws:bedrock:us-*::foundation-model/${FallbackModelId}
-          Sid: 'InvokeFallbackModelInUsRegions'
+          Resource: 'arn:aws:bedrock:us-*::foundation-model/*'
+          Sid: 'InvokeAnyFoundationModelInUsRegions'
         Version: '2012-10-17'
     Type: 'AWS::IAM::ManagedPolicy'
   BedrockWorkerUser:
