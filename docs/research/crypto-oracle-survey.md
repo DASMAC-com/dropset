@@ -28,7 +28,7 @@
 
 # Crypto-native oracles as Pyth-tier alternatives
 
-Research survey, 2026-09-04. Wires nothing; the deliverable is the
+Research survey, 2026-09-03. Wires nothing; the deliverable is the
 ranked comparison below plus the follow-ups named at the end.
 
 Context: the Pyth Hermes key gate closed our only wired oracle's free
@@ -106,38 +106,58 @@ not against marketing pages.
 Totals out of 14: **Chainlink 13, Supra 11, Stork 10, Band 10,
 Redstone 7.**
 
-Not in the table, having failed on coverage alone: **Switchboard 0**
-(the maintained Surge catalogue is 18,743 symbols with zero FX),
-**DIA 2** (only EUR and GBP resolve; the documented others 404), and
-**Chronicle**, where no roster currency could be confirmed at all.
+The cells are not all the same kind of evidence. Band's are
+live-confirmed as actively priced; **Stork's are registry presence
+only** — its public dashboard shows no FX, and confirming liveness needs
+a token — so read that column as catalogue coverage, not proven
+liveness.
 
-**MXN and MYR are the scarce currencies.** MXN exists only on Chainlink;
-MYR only on Band and Redstone. Every other roster currency is carried by
-at least three candidates.
+Not in the table: **Switchboard 0** (the maintained Surge catalogue is
+18,743 symbols with zero FX) and **DIA 2** (only EUR and GBP resolve;
+the documented others 404), both failing on coverage alone. **Chronicle**
+is excluded on different grounds — **read-gating**, not coverage: its
+feeds cannot be read at all without whitelisting, and its coverage
+finding is explicitly an absence of evidence rather than proof of
+absence, so it is not a coverage failure this survey can assert.
+
+**MXN, MYR and ZAR are the scarce currencies.** MXN exists only on
+Chainlink; MYR only on Band and Redstone; ZAR only on Chainlink and
+Stork. Every other roster currency is carried by at least three
+candidates.
 
 ## Ranked comparison
 
 ### 1. Chainlink — strongest overall
 
-Best coverage (13/14), a genuinely free keyless read, and the only
-candidate whose redistribution position is structurally clean.
+Best coverage (13/14), a genuinely free keyless read, and the cleanest
+redistribution position of any candidate here.
 
 The read path is `eth_call latestRoundData()` against any EVM RPC —
 no signup, roughly 200ms, and Multicall batches the whole roster into
 one call. Because feed values are **public chain state rather than a
 vendor-served endpoint**, the terms binding our warehouse and Grafana
-panels are the RPC provider's, not Chainlink's. That is materially
-better than every other candidate here and sidesteps the redistribution
-risk that gates Stork and Redstone.
+panels are the RPC provider's, not Chainlink's. That sidesteps the
+redistribution risk gating Stork and Redstone — a property it shares
+with Band, and with nothing else surveyed.
 
 **Liveness is chain-dependent, and this is the finding that matters.** A
 probe of 13 feeds during FX open hours returned data on all of them, at
 ages that split the product in two: Polygon EUR/USD 0 minutes and Base
 EUR/USD 31, against Ethereum EUR/USD **502** and SGD **717**. Cross-chain
 EUR/USD agreed to about 0.04%. Ethereum's FX feeds are live but
-hours-stale by design and are **not quotable**; Polygon, Base, Arbitrum
-and Optimism are. Treating "Chainlink has EUR/USD" as a single fact
-would be wrong.
+hours-stale by design and are **not quotable**. Polygon and Base were
+measured fresh; other deployments were not probed and need their
+configured cadence checked rather than assumed. Treating "Chainlink has
+EUR/USD" as a single fact would be wrong.
+
+**The 13/14 is counted roster-wide across networks, and the quotable
+subset is NOT established.** Coverage was enumerated over eight
+networks, while the recommendation below quotes only from feeds whose
+configured cadence is fast enough — and nothing here shows that all 13
+currencies have such a deployment. The one thin-currency reading taken
+points the wrong way: SGD was probed on Ethereum, at 717 minutes. So
+effective quotable coverage may be materially below 13, and pinning it
+down per currency is the first task of any wiring work.
 
 Cadence is deviation-plus-heartbeat configured per feed and per chain —
 Ethereum FX at 0.15-0.5% / 24h, Polygon FX at 0.01-0.1% / 27-60s. Forex
@@ -245,6 +265,18 @@ A genuinely free keyless gateway returning signed FX values with no
 wallet, transaction or key; a reader takes one field and may optionally
 verify signatures. Sub-second, trivial effort.
 
+**Cadence.** The pull model has no deviation threshold or heartbeat at
+all: gateway packages are re-signed continuously (sub-minute) and the
+reader triggers the read, so freshness is whatever the signers last
+published. The on-chain push feeds do carry deviation-plus-heartbeat,
+but none of those are fiat FX.
+
+**Uncertainty (fact).** None published. The EUR response carried five
+independent signed packages with no confidence, interval or standard
+deviation field — so dispersion across the five signers is computable
+by the reader, the same kind of calibration material Stork offers, from
+fewer publishers.
+
 It fails on three counts. Coverage is 7/14 and **AUD is absent**, which
 is the first-customer pair. Provenance is measurably poor: the legacy
 source map for EUR was a basket of crypto venues — Kraken, Binance,
@@ -322,9 +354,13 @@ independent of any terms.
 ## Peers triaged, not surveyed
 
 **Supra** is the highest-value follow-up: 11/14 as live 24x5 forex
-feeds, and the **only** candidate covering both IDR and NGN. Its REST and
-history APIs are Early Access behind a form, so it classifies
-credentialed and was not surveyed to depth. On-chain push feeds are
+feeds, the broadest coverage of any candidate not already recommended.
+Note what it does **not** buy — it carries none of MXN, MYR or ZAR, so it
+relieves none of the scarcity above. Its value is a second independent
+source for currencies that already have several, not a fix for the
+single-point-of-failure ones. Its REST and history APIs are Early Access
+behind a form, so it classifies credentialed and was not surveyed to
+depth. On-chain push feeds are
 readable via public RPC on many chains; that effort is unverified, as is
 whether any uncertainty field exists.
 
@@ -341,26 +377,57 @@ markets itself on outlier detection rather than a published interval.
 ## Recommendation
 
 **Chainlink as the primary oracle input, with Band closing the gap.**
-Their union covers all 14 non-USD roster currencies, both are free and
-keyless, and both are public chain state — so neither carries the
-redistribution exposure that gates Stork and Redstone, on the live read
-path or in the warehouse.
+Their union covers all 14 non-USD roster currencies on paper, and both
+are public chain state rather than a vendor-served endpoint — so
+neither carries the redistribution exposure that gates Stork and
+Redstone, on the live read path or in the warehouse.
 
-Three conditions on that recommendation:
+Four conditions on that recommendation:
 
-1. **Read Chainlink from the fast chains only.** Polygon, Base,
-   Arbitrum or Optimism. Ethereum's FX feeds are hours-stale by design
-   and must not be quoted from.
-1. **Treat Band as a ~60s cross-check, not a quoting source**, given the
-   50bps deviation trigger is far too coarse for FX and the aggregate
-   floor is a single surviving source.
+1. **Select each Chainlink feed by its configured cadence, not by
+   chain.** Chainlink is a price network read directly over RPC; a
+   chain is where a given feed's deviation and heartbeat parameters
+   are configured, not the oracle's identity. Take the deployment whose
+   configured band meets the quoting requirement — Polygon's EUR/USD at
+   0.01% / 27s is the measured example — and never quote Ethereum's FX
+   feeds, which run a 24h heartbeat and measured 502 and 717 minutes
+   stale. Any deployment not probed here needs its cadence read from the
+   feed directory rather than assumed.
+1. **Read Band from a third-party or self-hosted endpoint, never its
+   own public node.** This condition is load-bearing, not hygiene: that
+   node publishes no terms and no rate limit, which is precisely the
+   shape this survey's own free-first rule classifies as
+   **credentialed** — the same rule applied against DIA. Band is free
+   and clean *as public chain state*, read from an endpoint we control
+   or from several; it is not free by virtue of Band operating a public
+   LCD.
+1. **Treat Band as a ~60s cross-check, not a quoting source** — on
+   aggregation integrity, not cadence. Its 60s heartbeat is in fact a
+   *tighter* staleness bound than most Chainlink deployments, and its
+   50bps deviation trigger is inert (the body shows it never fires for
+   FX). The reasons to demote it are that its aggregate carries a
+   minimum cumulative weight of 1, so it can silently collapse to a
+   single unnamed publisher, and that its three proxies' upstream
+   vendors are undisclosed — which makes it a cross-check whose
+   independence from the sources being checked is unverifiable.
 1. **Neither publishes uncertainty**, so both enter the fusion at an
    assigned class noise fraction. Chainlink's per-feed deviation band is
-   the most defensible basis for calibrating it.
+   the most defensible basis for calibrating it — but that band is
+   published per feed, so it must be read per deployment rather than
+   assumed from the two configs quoted here.
 
-MXN and MYR each rest on a single candidate — MXN on Chainlink, MYR on
-Band — so both are single points of failure until Supra or another peer
-is qualified.
+**Redundancy within the recommended pair is worse than the roster-wide
+scarcity above suggests.** Five currencies are carried by only one of
+the two: **IDR, MXN, NGN and ZAR** on Chainlink alone, and **MYR** on
+Band alone. Roster-wide scarcity is the wrong statistic once a pair has
+been chosen; this is the operative one.
+
+Qualifying Supra would second **IDR and NGN** — two of those five — and
+nothing else, since it carries none of MXN, MYR or ZAR. **MXN, MYR and
+ZAR have no identified path to a second usable carrier at all.** MYR is
+the sharpest case: its only other carrier is Redstone, which this
+survey rules out on terms, so it rests on one source with no candidate
+behind it.
 
 ## Not verified
 
@@ -371,6 +438,10 @@ on the recommendation:
   data providers are undisclosed, so independence is unproven either
   way; the liveness probe is a single point in time, not a monitored
   series; the terms page would not render.
+- **Chainlink**: the rate limits and quota of a public EVM RPC are
+  unquantified here, and that is the read path we would poll per feed
+  on a standing cadence against a shared egress IP. Multicall batching
+  and provider fungibility mitigate it; neither measures it.
 - **Band**: upstream FX vendors are opaque by construction.
 - **Stork**: FX feed liveness, history backfill depth, redistribution
   and storage terms, publisher identities, and whether any free tier or
