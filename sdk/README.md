@@ -48,7 +48,9 @@ the conformance vectors below. `make wasm` compiles `dropset-interface`
 (which turns on math-core's `wasm` feature) to one WASM package exporting
 both binding sets. That package **is wired into `@dropset/sdk`**: the
 market reader reads the resting book through the WASM binding rather than
-through a TypeScript re-implementation of the slab layout.
+through a TypeScript re-implementation of the slab layout. That covers the
+slab and the book only — the hand-written `Price` codec and native-quoting
+mirror named above are a separate surface and are still live.
 
 ## Conformance
 

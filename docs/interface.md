@@ -116,7 +116,9 @@ not recoverable from the events alone: the taker's real debit is `amount_in`
 less the walk's unfilled remainder, and that remainder is a local of the
 matching walk that no event carries. The two practical paths are the swap's own
 input **token transfer** — one per side, riding the same inner-instruction
-stream the events do — or, later and in aggregate, `SweepResidual`. This is
+stream the events do, but a **Token-program** instruction rather than a Dropset
+event, so the `__event_authority` recognizer in §2 will not match it — or,
+later and in aggregate, `SweepResidual`. This is
 also why the treasury's custody invariant is
 `>=` rather than `==` against the vault and fee counters.
 
@@ -326,9 +328,9 @@ below), never the REST surface.
   `quote()` in-process against cached account bytes — network calls are
   forbidden inside it. The gate is code health, an independent security
   audit, demonstrated traction, and a reputable team; no fee. It leans
-  entirely on the on-chain take ix exposing a real `Price` limit, a `min_out`
-  floor that soft-reverts rather than erroring, and a stable `AccountMeta`
-  set — exactly the "Routers (B1)" note below.
+  entirely on the on-chain take ix exposing a real `Price` limit, an aggregate
+  `min_out` floor, and a stable `AccountMeta` set — exactly the
+  "Routers (B1)" note below.
 - **DFlow.** An aggregator that treats venues as interchangeable liquidity
   sources (AMMs, prop AMMs, order-book venues alike); becoming a routable
   venue is the same off-chain-quote + on-chain-swap shape as Jupiter, plus
