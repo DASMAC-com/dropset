@@ -295,7 +295,7 @@ started with these exports:
 ```sh
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=us-west-2
-export ANTHROPIC_MODEL='us.anthropic.claude-fable-5-1[1m]'
+export ANTHROPIC_MODEL='us.anthropic.claude-opus-5[1m]'
 export ENABLE_PROMPT_CACHING_1H=1
 export AWS_BEARER_TOKEN_BEDROCK="$(op read \
   --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")"
@@ -319,7 +319,24 @@ parameters before selecting it.
 5-minute default, billed at a higher write rate. If cache token counts
 stay at zero, the cause is regional cache support rather than this flag.
 
-**The `[1m]` suffix is not decoration.** Fable 5.1 supports a 1M-token
+**Enabling a model the account has never used.** Serverless foundation
+models activate on first invocation, but a model served through AWS
+Marketplace additionally needs one invocation by a principal holding
+`aws-marketplace:Subscribe` and `ViewSubscriptions` — which the worker
+deliberately does not have. So a model new to the account is enabled by
+invoking it once as an administrator; afterwards every principal can use
+it. The console's model-access page has been retired and no longer does
+this.
+
+The first such call fails with an `AccessDeniedException` naming the
+Marketplace actions, even for an administrator who demonstrably holds
+them. That first call is what starts the subscription; retrying a few
+minutes later succeeds. Treat the initial denial as expected rather than
+as a permissions fault, and confirm with
+`get-foundation-model-availability`, whose `agreementAvailability` flips
+from `NOT_AVAILABLE` to `AVAILABLE`.
+
+**The `[1m]` suffix is not decoration.** Opus 5 supports a 1M-token
 context window, but on a third-party provider the window defaults to
 **200k** and the suffix is how you opt in. Claude Code strips it before
 calling Bedrock, so it never reaches the provider as part of the model
