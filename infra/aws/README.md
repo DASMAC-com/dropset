@@ -166,7 +166,7 @@ Two things to know about that dialog:
 - Generating the key **auto-attaches the `AmazonBedrockLimitedAccess`
   managed policy** to the user. That is broader than this stack intends,
   so detach it afterwards under the user's **Permissions** tab, leaving
-  only `dropset-dev-bedrock-worker-invoke`. Claude Code needs nothing
+  only `dropset-dev-bedrock-invoke`. Claude Code needs nothing
   the invoke policy does not already grant.
 
 **Rotating it.** The key expires on the date chosen at generation, and
@@ -196,7 +196,7 @@ working key:
 **Generating a key auto-attaches `AmazonBedrockLimitedAccess` again**, so
 the detach in the previous step is part of *every* rotation, not just the
 first. Check the user's Permissions tab afterwards: it should list only
-`dropset-dev-bedrock-worker-invoke`. A rotation that skips this silently
+`dropset-dev-bedrock-invoke`. A rotation that skips this silently
 re-widens the worker's permissions and leaves the live user out of step
 with what this template declares.
 
