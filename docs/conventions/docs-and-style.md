@@ -166,6 +166,25 @@ comment style:
 The lone exception is a file that can't carry a comment (e.g.
 `.json`), where the dictionary is the only option.
 
+**A third placement exists for files whose BYTES are fixed by something
+outside the repo: `ignorePaths` in `cfg/cspell.yml`, by path.** The two
+placements above both assume the file can host an escape. That fails
+when the file's exact bytes are the thing under test — adding a comment
+would change them and break the check. The live case is
+`brand-assets/token-icons/**`: committed issuer artwork stored
+byte-for-byte as upstream serves it, audited for byte-identity against
+that upstream by `.github/workflows/token-icon-audit.yml`. Three of
+those files are SVG, so cspell reads their markup and flags attribute
+values and a drawing tool's watermark — none of it this repo's
+vocabulary, and none of it escapable in place.
+
+Note this is **not** the can't-carry-a-comment exception: an SVG can
+carry one perfectly well. The trigger is narrower — the bytes are
+externally pinned — so keep it that way rather than reaching for
+`ignorePaths` as a general convenience for an inconvenient file. The
+other members of the class would be vendored or generated-and-diffed
+artifacts under the same kind of byte-exact gate.
+
 **A source file's doc comments are usage sites like any other.** The
 ≥ 2 files rule is framed around prose, so a term appearing in two Rust
 module headers reads as "one file" or as not counting at all — it

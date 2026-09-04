@@ -40,17 +40,24 @@ const entries = listCommitted();
 // must not hide the verdict for the other 24 tokens — the whole point of the
 // audit is the full picture, and a `Promise.all` would report the first
 // rejection and abandon the rest.
+// ONLY the fetch happens in here. `committedIconFor` used to be called in this
+// callback too, and because it is the one helper that THROWS (a symbol with two
+// committed icons), its rejection was indistinguishable from a fetch rejection:
+// a purely local, deterministic repo problem got reported as
+// `declared upstream source unreachable`, pointing the reader at the issuer's
+// host instead of at the stale file in their own checkout — and on --write it
+// counted toward "N fetch(es) failed" for a token no fetch was attempted for.
+// Resolving the committed file in the loop below keeps local and network
+// failures in separate buckets.
 const results = await Promise.allSettled(
-  tokens.map(async (token) => {
-    const committed = committedIconFor(token.symbol, entries);
-    const { ext, buf } = await fetchWithRetry(token.icon);
-    return { token, committed, ext, buf };
-  }),
+  tokens.map((token) => fetchWithRetry(token.icon)),
 );
 
-const identical = [];
+const matched = [];
+const wrote = [];
 const drifted = [];
 const uncommitted = [];
+const conflicts = [];
 const unreachable = [];
 
 for (let i = 0; i < results.length; i++) {
@@ -59,21 +66,39 @@ for (let i = 0; i < results.length; i++) {
   const label = `${token.symbol} (${token.mint})`;
 
   if (result.status === "rejected") {
-    unreachable.push(`${label}: ${result.reason.message}`);
+    // Collapse newlines: this string reaches stdout behind a `::warning::`
+    // prefix, and GitHub parses a workflow command only at the start of a line.
+    // The message is built from our own templates, one of which interpolates a
+    // response header, so a line break here is the only thing that could forge
+    // a second annotation. Cheaper to remove than to rely on the HTTP client
+    // rejecting it.
+    unreachable.push(
+      `${label}: ${String(result.reason.message).replace(/[\r\n]+/g, " ")}`,
+    );
     continue;
   }
 
-  const { committed, ext, buf } = result.value;
+  const { ext, buf } = result.value;
+
+  let committed;
+  try {
+    committed = committedIconFor(token.symbol, entries);
+  } catch (err) {
+    conflicts.push(`${label}: ${err.message}`);
+    continue;
+  }
 
   if (write) {
     // Write under the extension upstream's bytes actually sniff as, so a
     // format change upstream lands as a new filename rather than a `.png`
-    // holding an SVG. The old file is left in place on purpose: the
-    // duplicate then trips committedIconFor's two-icons error, which is a
-    // louder and more accurate signal than silently shadowing it.
+    // holding an SVG. The old file is left in place on purpose, so the
+    // duplicate is noticed rather than silently shadowed — it surfaces as a
+    // `token icon committed twice` warning here, and as a reported conflict
+    // (not a crash) from build-token-manifest.mjs. Deleting the stale file is
+    // the reviewer's job when they commit the refresh.
     const filename = `${token.symbol}.${ext}`;
     writeFileSync(join(ICON_DIR, filename), buf);
-    identical.push(`${label}: wrote ${filename} (${buf.length}B)`);
+    wrote.push(`${label}: wrote ${filename} (${buf.length}B)`);
     continue;
   }
 
@@ -84,11 +109,14 @@ for (let i = 0; i < results.length; i++) {
     continue;
   }
 
-  if (readFileSync(committed.path).equals(buf)) {
-    identical.push(`${label}: ${committed.filename}`);
+  // Read once. Comparing one read and reporting the length of a second made the
+  // reported size not provably the size of what was compared.
+  const committedBytes = readFileSync(committed.path);
+  if (committedBytes.equals(buf)) {
+    matched.push(`${label}: ${committed.filename}`);
   } else {
     drifted.push(
-      `${label}: ${committed.filename} differs from ${token.icon} (committed ${readFileSync(committed.path).length}B, upstream ${buf.length}B)`,
+      `${label}: ${committed.filename} differs from ${token.icon} (committed ${committedBytes.length}B, upstream ${buf.length}B)`,
     );
   }
 }
@@ -98,24 +126,26 @@ for (let i = 0; i < results.length; i++) {
 // identical set so a green run still shows what was checked.
 const warn = (message) => console.log(`::warning::${message}`);
 
-if (write) {
-  console.log(
-    `Wrote ${identical.length}/${tokens.length} token icon(s) into brand-assets/token-icons.`,
-  );
-  for (const line of identical) console.log(`  - ${line}`);
-} else {
-  console.log(
-    `Byte-identical: ${identical.length}/${tokens.length} committed token icon(s) match their declared upstream source.`,
-  );
-  for (const line of identical) console.log(`  - ${line}`);
-}
+console.log(
+  write
+    ? `Wrote ${wrote.length}/${tokens.length} token icon(s) into brand-assets/token-icons.`
+    : `Byte-identical: ${matched.length}/${tokens.length} committed token icon(s) match their declared upstream source.`,
+);
+for (const line of write ? wrote : matched) console.log(`  - ${line}`);
 
 for (const line of drifted) warn(`token icon drift — ${line}`);
 for (const line of uncommitted) warn(`token icon not committed — ${line}`);
+for (const line of conflicts) warn(`token icon committed twice — ${line}`);
 for (const line of unreachable)
   warn(`declared upstream source unreachable — ${line}`);
 
-if (!write && (drifted.length || uncommitted.length || unreachable.length)) {
+if (
+  !write &&
+  (drifted.length ||
+    uncommitted.length ||
+    conflicts.length ||
+    unreachable.length)
+) {
   // The follow-up task the redesign calls for is communicated by this job
   // rather than filed by it: CI holds no Linear credential, and a
   // GitHub-issue filer was declined in favor of the job saying its piece.
@@ -128,6 +158,7 @@ if (!write && (drifted.length || uncommitted.length || unreachable.length)) {
       "Follow-up needed. For each token above:",
       "  - upstream changed deliberately → `pnpm --filter dropset-frontend audit-token-icons --write`, review the diff, commit it",
       "  - the URL is dead or now serves the wrong artwork → update `icon` in frontend/lib/data/currencies.json",
+      "  - committed twice → a past --write left the pre-format-change file behind; delete the stale one",
       "  - the host was merely down → re-run this job; nothing is blocked meanwhile",
     ].join("\n"),
   );

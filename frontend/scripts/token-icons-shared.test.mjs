@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { committedIconFor } from "./token-icons-shared.mjs";
+import {
+  committedIconFor,
+  listCommitted,
+  readTokens,
+  URL_PREFIX,
+} from "./token-icons-shared.mjs";
 
 // Resolving a symbol to its committed file is the join that replaced a
 // network fetch, so it is now the only thing standing between a listed
@@ -47,5 +52,29 @@ describe("committedIconFor", () => {
   it("compares a dotless entry whole rather than dropping a character", () => {
     expect(committedIconFor("USDC", ["USDCx"])).toBeUndefined();
     expect(committedIconFor("USDCx", ["USDCx"])?.filename).toBe("USDCx");
+  });
+});
+
+// The condition the REQUIRED `Frontend` job gates on, asserted here so it fails
+// in `pnpm test` before it fails in CI. The currencies suite cannot substitute:
+// its manifest assertion is a `.some(...)` (one populated entry passes) and its
+// per-symbol assertion resolves through the remote-URL fallback, so a currency
+// added with no committed icon leaves that suite green. Until this existed, the
+// only verification of the gate was one hand-run mutation CI cannot repeat.
+describe("committed icon coverage", () => {
+  it("has a committed icon for every listed currency", () => {
+    const entries = listCommitted();
+    const missing = readTokens()
+      .filter((token) => !committedIconFor(token.symbol, entries))
+      .map((token) => token.symbol);
+    expect(missing).toEqual([]);
+  });
+
+  // Guards the coupling that has no other enforcement: copy-brand-assets.mjs
+  // serves the committed directory under its own basename, so a rename of
+  // ICON_DIR silently 404s every icon while leaving the manifest strings — the
+  // only thing the currencies suite checks — perfectly well-formed.
+  it("derives the served prefix from the committed directory name", () => {
+    expect(URL_PREFIX).toBe("/token-icons");
   });
 });

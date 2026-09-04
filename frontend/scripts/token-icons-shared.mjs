@@ -17,7 +17,7 @@
 // subdirectories whole, so this subtree reaches every app's public/ with no
 // edit to that script.
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -27,7 +27,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 // this directory's basename have to stay the same string.
 export const ICON_DIR = resolve(here, "../../brand-assets/token-icons");
 
-export const URL_PREFIX = "/token-icons";
+// DERIVED from ICON_DIR, never written out as a literal, because the two have
+// to agree and nothing else checks that they do: copy-brand-assets.mjs copies
+// the directory into each app's public/ under its own basename, so the served
+// prefix IS that basename by construction. Spelled as a literal, renaming the
+// committed directory would keep every test and every gate green while serving
+// 404s for all 25 icons — the manifest strings are what the tests assert on,
+// and no test opens the path they name.
+export const URL_PREFIX = `/${basename(ICON_DIR)}`;
 
 // Every listed stablecoin, flattened across the currency groupings.
 export const readTokens = () => {
@@ -69,9 +76,16 @@ export const committedIconFor = (symbol, entries) => {
 // Missing entirely is reported as empty rather than thrown: the manifest
 // builder's own completeness check produces a far better message than an
 // ENOENT trace, and it is the next thing every caller runs.
+// Regular files only. A subdirectory whose name stems to a symbol would
+// otherwise be returned as that symbol's icon, and the read of it would throw
+// EISDIR from outside the audit's `allSettled` region — breaking the audit's
+// exit-0-whatever-it-finds guarantee, which is one of the three layers keeping
+// that job from ever blocking a merge.
 export const listCommitted = () => {
   try {
-    return readdirSync(ICON_DIR).filter((name) => !name.startsWith("."));
+    return readdirSync(ICON_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
+      .map((entry) => entry.name);
   } catch (err) {
     if (err.code === "ENOENT") return [];
     throw err;
