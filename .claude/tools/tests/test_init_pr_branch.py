@@ -6,10 +6,14 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
+import sys
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 import init_pr_branch as ipb
 
@@ -202,6 +206,247 @@ class NodeModulesState(unittest.TestCase):
         self.assertEqual(ipb.node_modules_state(str(self.root)), "absent")
 
 
+class SigningState(unittest.TestCase):
+    """All three signing configurations, because the bug was covering one.
+
+    The pre-check this replaces ran ``ssh-add -l`` unconditionally. That is the
+    right probe for **agent-based** ssh signing — reading ``user.signingkey``
+    passes for a locked agent, so only the listing catches it — and it is an
+    unclearable false positive for **external-signer** ssh signing, where git
+    never consults an agent at all. Four bootstraps on one machine hard-stopped
+    on it, each burning an operator interaction that provably could not help;
+    the fourth was the session that wrote these tests, whose own bootstrap
+    commit signed fine in the state the probe called broken.
+
+    So the load-bearing assertions here are the ones that pin the *dispatch*:
+    ``gpg.format`` selects the family first, and within the ssh family the
+    agent probe is never called for a signer with its own backend. Note the
+    deliberate exception, pinned by
+    ``test_an_agent_delegating_signer_still_probes_the_agent`` below: an
+    agent-delegating signer such as ``ssh-keygen`` routes BACK to the agent
+    branch, so "a set ``gpg.ssh.program`` means no probe" is not the rule and
+    must not be asserted as one.
+    """
+
+    def _never(self):  # pragma: no cover - called only if the dispatch breaks
+        raise AssertionError(
+            "the ssh-agent probe must not run when the agent is not in the signing path"
+        )
+
+    def test_external_signer_never_probes_the_agent(self):
+        # The regression. On this configuration the agent listing fails
+        # unconditionally, so probing it at all is what produced the false stop.
+        self.assertEqual(
+            ipb.signing_state(
+                "ssh",
+                "/Applications/1Password.app/Contents/MacOS/op-ssh-sign",
+                agent_probe=self._never,
+                program_exists=lambda _p: True,
+            ),
+            "external-signer",
+        )
+
+    def test_external_signer_with_a_missing_binary_is_distinguished(self):
+        # A configured signer that isn't on disk genuinely cannot sign, so this
+        # is a real catch the old probe never had — a moved app bundle would
+        # otherwise surface as a failed bootstrap commit.
+        self.assertEqual(
+            ipb.signing_state(
+                "ssh",
+                "/nonexistent/op-ssh-sign",
+                agent_probe=self._never,
+                program_exists=lambda _p: False,
+            ),
+            "external-signer-missing",
+        )
+
+    def test_agent_based_ssh_with_identities_is_ok(self):
+        self.assertEqual(
+            ipb.signing_state("ssh", None, agent_probe=lambda: 0),
+            "agent-ok",
+        )
+
+    def test_agent_based_ssh_with_no_identities_is_locked(self):
+        # The original measured case, preserved exactly: `ssh-add -l` exits 1
+        # when the agent holds nothing, which is what a locked 1Password agent
+        # looks like when it *is* in the signing path.
+        self.assertEqual(
+            ipb.signing_state("ssh", None, agent_probe=lambda: 1),
+            "agent-locked",
+        )
+
+    def test_an_unreachable_agent_collapses_into_locked(self):
+        # Exit 2, a different cause with an identical operator action.
+        self.assertEqual(
+            ipb.signing_state("ssh", None, agent_probe=lambda: 2),
+            "agent-locked",
+        )
+
+    def test_an_empty_signer_program_falls_through_to_the_agent(self):
+        # `git config --get` yields None for unset, but a configured-empty or
+        # whitespace value must not read as "an external signer is configured".
+        self.assertEqual(
+            ipb.signing_state("ssh", "   ", agent_probe=lambda: 0),
+            "agent-ok",
+        )
+
+    def test_unset_gpg_format_is_gpg_and_probes_nothing(self):
+        # git defaults `gpg.format` to openpgp, so unset means gpg signing —
+        # where an ssh-agent listing says nothing whatsoever.
+        self.assertEqual(
+            ipb.signing_state(None, None, agent_probe=self._never),
+            "gpg",
+        )
+
+    def test_explicit_openpgp_is_gpg(self):
+        self.assertEqual(
+            ipb.signing_state("openpgp", None, agent_probe=self._never),
+            "gpg",
+        )
+
+    def test_gpg_format_is_matched_case_and_space_insensitively(self):
+        self.assertEqual(
+            ipb.signing_state(" SSH ", None, agent_probe=lambda: 0),
+            "agent-ok",
+        )
+
+    def test_gpg_wins_over_a_stray_signer_program(self):
+        # `gpg.ssh.program` is inert under openpgp signing, so a leftover value
+        # must not flip the verdict to an ssh configuration.
+        self.assertEqual(
+            ipb.signing_state(
+                "openpgp",
+                "/Applications/1Password.app/Contents/MacOS/op-ssh-sign",
+                agent_probe=self._never,
+                program_exists=lambda _p: True,
+            ),
+            "gpg",
+        )
+
+    def test_a_missing_probe_is_treated_as_locked(self):
+        # Defensive: no caller omits it, but defaulting to "can sign" would
+        # reintroduce a silent pass in the one case the probe exists to catch.
+        self.assertEqual(ipb.signing_state("ssh", None), "agent-locked")
+
+    def test_an_agent_delegating_signer_still_probes_the_agent(self):
+        # `ssh-keygen` is git's own default for gpg.ssh.program, and
+        # `ssh-keygen -Y sign` reaches SSH_AUTH_SOCK -- so this machine IS
+        # agent-based however much the config reads like an external signer.
+        # Classifying it as external-signer would skip the probe on the one
+        # configuration that most needs it.
+        self.assertEqual(
+            ipb.signing_state("ssh", "ssh-keygen", agent_probe=lambda: 1),
+            "agent-locked",
+        )
+        self.assertEqual(
+            ipb.signing_state("ssh", "/usr/bin/ssh-keygen", agent_probe=lambda: 0),
+            "agent-ok",
+        )
+
+    def test_program_exists_receives_the_stripped_path(self):
+        # The truthiness test uses the stripped value; passing the unstripped
+        # one to program_exists would be invisible to a lambda that ignores
+        # its argument, which every other test here uses.
+        seen: list[str] = []
+
+        def record(path: str) -> bool:
+            seen.append(path)
+            return True
+
+        ipb.signing_state("ssh", "  /opt/op-ssh-sign  ", program_exists=record)
+        self.assertEqual(seen, ["/opt/op-ssh-sign"])
+
+    def test_the_default_program_check_is_wired(self):
+        # Without this, program_exists could be defaulted to a constant-True
+        # stub and every other test in this class would still pass.
+        self.assertEqual(
+            ipb.signing_state("ssh", "/definitely/not/here/op-ssh-sign"),
+            "external-signer-missing",
+        )
+
+
+class SignerProgramExists(unittest.TestCase):
+    """`gpg.ssh.program` holds a COMMAND, not necessarily a path.
+
+    git runs it through the usual command lookup, so a bare name on ``PATH``
+    is valid. A plain ``os.path.exists`` resolves a bare name against the
+    current working directory, finds nothing, and reports a working machine as
+    ``external-signer-missing`` -- which the skill treats as a hard stop. That
+    is the same unclearable-blocker shape this module exists to remove, so
+    getting it wrong here reintroduces the bug inside its own fix.
+
+    Tested directly rather than through `signing_state`, because the example
+    that motivated it -- git's default, the bare ``ssh-keygen`` -- is now
+    intercepted by ``_AGENT_DELEGATING_SIGNERS`` and never reaches this
+    function that way. Any OTHER bare-named signer still does.
+    """
+
+    def test_a_bare_command_resolves_through_path(self):
+        # `sh` is on PATH on every platform this repo runs on. Assert the
+        # mechanism rather than `not os.path.exists("sh")`, which would be an
+        # assertion about whatever directory the runner happens to sit in.
+        self.assertIsNotNone(shutil.which("sh"))
+        self.assertTrue(ipb.signer_program_exists("sh"))
+
+    def test_a_bare_command_not_on_path_is_missing(self):
+        self.assertFalse(ipb.signer_program_exists("definitely-not-a-real-binary-xyz"))
+
+    def test_an_absolute_path_is_checked_on_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            signer = Path(tmp) / "op-ssh-sign"
+            signer.write_text("", encoding="utf-8")
+            self.assertTrue(ipb.signer_program_exists(str(signer)))
+            self.assertFalse(ipb.signer_program_exists(str(Path(tmp) / "gone")))
+
+    def test_a_relative_path_is_not_treated_as_a_bare_command(self):
+        # Contains a separator, so it must be checked on disk rather than
+        # resolved through PATH -- `./sh` is not the same request as `sh`.
+        self.assertFalse(ipb.signer_program_exists(os.path.join(".", "sh")))
+
+
+class GitConfigRead(unittest.TestCase):
+    """`_git_config` must never raise: it is evaluated while the result dict
+    is being built, so an escaping exception aborts the JSON print and costs
+    the skill the tag / base-repo / branch answers riding in the same call.
+    """
+
+    def test_unset_key_is_none_not_an_error(self):
+        self.assertIsNone(ipb._git_config("dropset.definitely.unset.key"))
+
+    def test_a_missing_git_binary_returns_none(self):
+        def boom(*_args, **_kwargs):
+            raise FileNotFoundError("git")
+
+        with mock.patch.object(ipb.subprocess, "run", boom):
+            self.assertIsNone(ipb._git_config("gpg.ssh.program"))
+
+    def test_an_empty_value_reads_as_unset(self):
+        completed = types.SimpleNamespace(returncode=0, stdout="   \n")
+        with mock.patch.object(ipb.subprocess, "run", lambda *a, **k: completed):
+            self.assertIsNone(ipb._git_config("gpg.ssh.program"))
+
+    def test_a_value_is_stripped(self):
+        completed = types.SimpleNamespace(returncode=0, stdout="/opt/signer\n")
+        with mock.patch.object(ipb.subprocess, "run", lambda *a, **k: completed):
+            self.assertEqual(ipb._git_config("gpg.ssh.program"), "/opt/signer")
+
+
+class SshAgentProbe(unittest.TestCase):
+    def test_a_missing_ssh_add_reports_unreachable(self):
+        def boom(*_args, **_kwargs):
+            raise FileNotFoundError("ssh-add")
+
+        with mock.patch.object(ipb.subprocess, "run", boom):
+            # 2 is the "cannot reach the agent" code, which collapses to
+            # agent-locked -- never 0, which would assert the agent can sign.
+            self.assertEqual(ipb._ssh_agent_probe(), 2)
+
+    def test_the_exit_status_is_passed_through(self):
+        completed = types.SimpleNamespace(returncode=1)
+        with mock.patch.object(ipb.subprocess, "run", lambda *a, **k: completed):
+            self.assertEqual(ipb._ssh_agent_probe(), 1)
+
+
 class MainCli(unittest.TestCase):
     """Drive ``main()`` through its ``--porcelain-file`` / ``--branch``
     overrides so no real git is invoked.
@@ -304,6 +549,55 @@ class MainCli(unittest.TestCase):
             self.assertIsNone(out["secrets_env_link"])
             self.assertFalse((frontend / ".env.local").exists())
             self.assertFalse((localnet / "secrets.local.env").exists())
+
+    def test_signing_fields_are_emitted_and_wired_to_the_right_config_keys(self):
+        # The two config reads are passed POSITIONALLY to signing_state, so a
+        # swap would make `fmt` the signer path -- never "ssh" -- and every
+        # machine on earth would report "gpg". The unit tests for
+        # signing_state cannot catch that, because none of them goes through
+        # main(). This is the only test that pins the wiring, and it also pins
+        # the two JSON key names, which are a prose-level contract with the
+        # skill (the skill is the tool's only consumer).
+        # `sys.executable` stands in for the signer binary: an absolute path
+        # that really exists, so the genuine `signer_program_exists` runs
+        # rather than a stub. (Patching that default would not have worked
+        # anyway -- it is bound at function-definition time, so rebinding the
+        # module attribute leaves `signing_state`'s default untouched.)
+        values = {"gpg.format": "ssh", "gpg.ssh.program": sys.executable}
+        with mock.patch.object(ipb, "_git_config", lambda key: values.get(key)):
+            code, out = self._run("eng-603", "eng-603", PORCELAIN)
+        self.assertEqual(code, 0)
+        self.assertEqual(out["signing"], "external-signer")
+        self.assertEqual(out["signing_program"], sys.executable)
+
+    def test_signing_program_is_null_when_unconfigured(self):
+        with mock.patch.object(ipb, "_git_config", lambda _key: None):
+            code, out = self._run("eng-603", "eng-603", PORCELAIN)
+        self.assertEqual(code, 0)
+        # gpg.format unset -> openpgp -> the agent is irrelevant.
+        self.assertEqual(out["signing"], "gpg")
+        self.assertIsNone(out["signing_program"])
+
+    def test_signing_is_reported_even_without_link_env(self):
+        # Read-only, so unlike the two symlink fields it must not ride the
+        # flag -- step 0b reads it on every bootstrap. `_git_config` is patched
+        # so this holds to the class invariant that no real git is invoked;
+        # the state is asserted by membership, which is what makes the check
+        # about the FIELD's presence rather than this machine's config.
+        with mock.patch.object(ipb, "_git_config", lambda _key: None):
+            code, out = self._run("eng-603", "eng-603", PORCELAIN)
+        self.assertEqual(code, 0)
+        self.assertIn("signing", out)
+        self.assertIn(
+            out["signing"],
+            {
+                "gpg",
+                "external-signer",
+                "external-signer-missing",
+                "agent-ok",
+                "agent-locked",
+            },
+        )
 
 
 if __name__ == "__main__":

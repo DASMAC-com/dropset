@@ -115,6 +115,7 @@ kalman
 kapsule
 kargil
 keybinds
+keygen
 keypair
 keypairs
 killswitch
@@ -158,6 +159,7 @@ ohlc
 ohlcv
 oneline
 onramps
+openpgp
 openxmlformats
 osacompile
 osascript
@@ -228,6 +230,7 @@ shellcheck
 shfmt
 shlex
 significand
+signingkey
 société
 solana
 solflare
@@ -266,6 +269,8 @@ tsup
 twelvedata
 txns
 uncaptioned
+unclearable
+unconfigured
 unfetched
 unfillable
 unfirmable
