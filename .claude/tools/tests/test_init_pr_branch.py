@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import types
@@ -217,9 +218,14 @@ class SigningState(unittest.TestCase):
     the fourth was the session that wrote these tests, whose own bootstrap
     commit signed fine in the state the probe called broken.
 
-    So the load-bearing assertions here are the two that pin the *dispatch*:
-    ``gpg.ssh.program`` is consulted first, and the agent probe is never called
-    when it is set.
+    So the load-bearing assertions here are the ones that pin the *dispatch*:
+    ``gpg.format`` selects the family first, and within the ssh family the
+    agent probe is never called for a signer with its own backend. Note the
+    deliberate exception, pinned by
+    ``test_an_agent_delegating_signer_still_probes_the_agent`` below: an
+    agent-delegating signer such as ``ssh-keygen`` routes BACK to the agent
+    branch, so "a set ``gpg.ssh.program`` means no probe" is not the rule and
+    must not be asserted as one.
     """
 
     def _never(self):  # pragma: no cover - called only if the dispatch breaks
@@ -362,20 +368,25 @@ class SigningState(unittest.TestCase):
 class SignerProgramExists(unittest.TestCase):
     """`gpg.ssh.program` holds a COMMAND, not necessarily a path.
 
-    git's own default for it is the bare name ``ssh-keygen``, and 1Password's
-    ``op-ssh-sign`` sits on ``PATH`` under a bare name on Linux. A plain
-    ``os.path.exists`` resolves a bare name against the current working
-    directory, finds nothing, and reports a working machine as
+    git runs it through the usual command lookup, so a bare name on ``PATH``
+    is valid. A plain ``os.path.exists`` resolves a bare name against the
+    current working directory, finds nothing, and reports a working machine as
     ``external-signer-missing`` -- which the skill treats as a hard stop. That
     is the same unclearable-blocker shape this module exists to remove, so
     getting it wrong here reintroduces the bug inside its own fix.
+
+    Tested directly rather than through `signing_state`, because the example
+    that motivated it -- git's default, the bare ``ssh-keygen`` -- is now
+    intercepted by ``_AGENT_DELEGATING_SIGNERS`` and never reaches this
+    function that way. Any OTHER bare-named signer still does.
     """
 
     def test_a_bare_command_resolves_through_path(self):
-        # `sh` is on PATH on every platform this repo runs on, and is not in
-        # the current working directory -- so os.path.exists would say False.
+        # `sh` is on PATH on every platform this repo runs on. Assert the
+        # mechanism rather than `not os.path.exists("sh")`, which would be an
+        # assertion about whatever directory the runner happens to sit in.
+        self.assertIsNotNone(shutil.which("sh"))
         self.assertTrue(ipb.signer_program_exists("sh"))
-        self.assertFalse(os.path.exists("sh"))
 
     def test_a_bare_command_not_on_path_is_missing(self):
         self.assertFalse(ipb.signer_program_exists("definitely-not-a-real-binary-xyz"))
@@ -569,8 +580,12 @@ class MainCli(unittest.TestCase):
 
     def test_signing_is_reported_even_without_link_env(self):
         # Read-only, so unlike the two symlink fields it must not ride the
-        # flag -- step 0b reads it on every bootstrap.
-        code, out = self._run("eng-603", "eng-603", PORCELAIN)
+        # flag -- step 0b reads it on every bootstrap. `_git_config` is patched
+        # so this holds to the class invariant that no real git is invoked;
+        # the state is asserted by membership, which is what makes the check
+        # about the FIELD's presence rather than this machine's config.
+        with mock.patch.object(ipb, "_git_config", lambda _key: None):
+            code, out = self._run("eng-603", "eng-603", PORCELAIN)
         self.assertEqual(code, 0)
         self.assertIn("signing", out)
         self.assertIn(

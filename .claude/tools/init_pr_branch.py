@@ -19,8 +19,8 @@ configuration the machine has and whether it can sign right now (``signing``,
 plus the configured signer path as ``signing_program``). The signing field
 replaces an unconditional ``ssh-add -l`` in the skill's prose that was an
 **unclearable false positive** on any machine using an external signer program
-— see `signing_state` for the three configurations and why
-``gpg.ssh.program`` is the discriminator.
+— see `signing_state` for the three configurations, and for why ``gpg.format``
+selects the family while ``gpg.ssh.program`` discriminates within the ssh one.
 
 By default it runs the **read-only** git reads itself
 (``git worktree list --porcelain``, ``git branch --show-current``, and two
@@ -222,11 +222,18 @@ def node_modules_state(worktree_root: str) -> str:
 def signer_program_exists(program: str) -> bool:
     """Whether a configured ``gpg.ssh.program`` resolves to something runnable.
 
-    ``gpg.ssh.program`` holds a **command**, not necessarily a path — git's own
-    default for it is the bare name ``ssh-keygen``, and 1Password's
-    ``op-ssh-sign`` sits on ``PATH`` under that bare name on Linux. git runs it
-    through the usual command lookup, so a bare name is a perfectly valid
-    value.
+    ``gpg.ssh.program`` holds a **command**, not necessarily a path: git runs
+    it through the usual command lookup, so a bare name on ``PATH`` is a
+    perfectly valid value, and operators do write one (a signer installed by a
+    package manager, or a wrapper script on ``PATH``).
+
+    Note the example NOT to use here, because it no longer reaches this
+    function: git's own default, the bare ``ssh-keygen``, is intercepted by
+    `_AGENT_DELEGATING_SIGNERS` and routed to the agent branch before
+    `signing_state` ever asks whether the program resolves. It motivated this
+    function and then stopped being reachable through it, in the same round of
+    fixes — so the case that keeps this function honest is any *other*
+    bare-named signer.
 
     That makes a plain ``os.path.exists`` the wrong test, and wrong in the
     expensive direction: it resolves a bare name against the *current working
@@ -463,8 +470,10 @@ def main(argv: list[str] | None = None) -> int:
         else None,
         # Read-only, so unconditional: `present` / `absent` / `no-frontend`.
         "frontend_node_modules": node_modules_state(args.worktree_root),
-        # Read-only too. `gpg.ssh.program` is read first and decides whether
-        # the agent is in the signing path at all — see `signing_state`.
+        # Read-only too. `gpg.format` selects the family and is read first;
+        # within the ssh family `gpg.ssh.program` decides whether the agent is
+        # in the signing path — except for an agent-delegating signer, which
+        # routes back to the agent. See `signing_state`.
         "signing": signing_state(
             _git_config("gpg.format"),
             ssh_program,

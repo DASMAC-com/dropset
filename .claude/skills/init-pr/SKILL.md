@@ -119,13 +119,13 @@ is actually in the signing path. `gpg.format` selects the
 family; within the ssh family, `gpg.ssh.program` discriminates
 external-signer from agent-based:
 
-| `signing`                 | Configuration                                                                                                 | What to do                                                                                          |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `external-signer`         | `gpg.format = ssh` **and** a `gpg.ssh.program` with its own backend (e.g. 1Password's `op-ssh-sign`)          | Proceed. That signer reaches its backend over its own IPC, so the agent is not in the signing path. |
-| `external-signer-missing` | Same, but the signer program resolves neither on disk nor on `PATH`                                           | **Stop and ask** — a moved or uninstalled app bundle.                                               |
-| `agent-ok`                | `gpg.format = ssh`, no signer program (or an agent-delegating one, e.g. `ssh-keygen`), agent holds identities | Proceed.                                                                                            |
-| `agent-locked`            | Same, agent holds nothing or is unreachable                                                                   | **Stop and ask** — the operator unlocks the app.                                                    |
-| `gpg`                     | `gpg.format` unset (git defaults to `openpgp`) or any non-`ssh` value                                         | Proceed; this check has nothing to say about a GPG key.                                             |
+| `signing`                 | Configuration                                                                                                     | What to do                                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `external-signer`         | `gpg.format = ssh` **and** a `gpg.ssh.program` that is anything but `ssh-keygen` (e.g. 1Password's `op-ssh-sign`) | Proceed. Such a signer reaches its own backend over its own IPC, so the agent is not in the signing path. |
+| `external-signer-missing` | Same, but the signer resolves neither on disk nor on `PATH`                                                       | **Stop and ask** — moved, uninstalled, or a stale setting.                                                |
+| `agent-ok`                | `gpg.format = ssh`, no signer program (or an agent-delegating one, e.g. `ssh-keygen`), agent holds identities     | Proceed.                                                                                                  |
+| `agent-locked`            | Same, agent holds nothing or is unreachable                                                                       | **Stop and ask** — the operator unlocks the app.                                                          |
+| `gpg`                     | `gpg.format` unset (git defaults to `openpgp`) or any non-`ssh` value                                             | Proceed; this check has nothing to say about a GPG key.                                                   |
 
 **Why not just probe the agent, which is what this step used to
 do.** For **agent-based** ssh signing the agent listing is the
@@ -169,10 +169,20 @@ The only forms that hold are this config gate and an actual
 signed commit. So if you are tempted to add a probe here, don't:
 the dispatch above is the fix.
 
-When `agent-locked` or `external-signer-missing` does stop the
-run, the fix is an operator one — unlock the 1Password desktop
-app, which restores its SSH agent — so **stop and ask** rather
-than retrying more than once or working around it. Nothing is
+When one of the two stopping verdicts fires, the fix is an
+operator one either way — but they are **different** fixes, so
+name the right one:
+
+- **`agent-locked`** — unlock the 1Password desktop app, which
+  restores its SSH agent.
+- **`external-signer-missing`** — the configured signer resolves
+  neither on disk nor on `PATH`, so unlocking anything will not
+  help: the app has moved or been uninstalled, or
+  `gpg.ssh.program` points somewhere stale. Reinstall it, or
+  update the setting to where the signer now lives.
+
+Either way **stop and ask** rather than retrying more than once
+or working around it. Nothing is
 lost: the rename and rebase are idempotent and no commit was
 written. For the record, the failure it spares you is a step-6
 commit dying with `failed to fill whole buffer`, then
