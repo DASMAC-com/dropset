@@ -214,6 +214,7 @@ CODE_FILTER_EXCLUDES = (
     ".github/workflows/lint.yml",
     ".github/workflows/sdk.yml",
     ".github/workflows/semantic-pr.yml",
+    ".github/workflows/token-icon-audit.yml",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
     "cfg/**",
