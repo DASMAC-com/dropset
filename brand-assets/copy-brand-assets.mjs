@@ -18,6 +18,14 @@
 // (the "one answer to where does this asset live" property above depends on
 // there being no such filter), so weigh it rather than reaching for it.
 //
+// If you DO add one: it must never exclude token-icons/ from the frontend.
+// This copy is the only thing that puts those files on the frontend's origin,
+// and nothing downstream would catch their absence — the manifest is built
+// from brand-assets/ rather than from public/, so it stays fully populated,
+// the --strict gate reads the same source and still passes, and the unit
+// tests only ever compare manifest strings. Every check would stay green
+// while all 25 token icons 404.
+//
 // Usage: node brand-assets/copy-brand-assets.mjs <dest-dir>
 //   where <dest-dir> is the app's public/ dir relative to the repo root,
 //   e.g. `frontend/public` or `decks/public`.

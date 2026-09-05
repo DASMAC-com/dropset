@@ -36,9 +36,10 @@ jobs:
     - run: 'pnpm install --frozen-lockfile'
     # Token icons are COMMITTED (brand-assets/token-icons/), so this gate
     # dials nothing: it checks that every currency listed in currencies.json
-    # has a committed icon, by reading a directory. Deterministic, so it is
-    # safe in a required job — it cannot flake and cannot be red-lined by a
-    # third party.
+    # has exactly one committed icon — none is a missing asset, and two is
+    # what an upstream format change leaves behind — by reading a directory.
+    # Deterministic, so it is safe in a required job: it cannot flake and
+    # cannot be red-lined by a third party.
     #
     # It replaces a strict fetch of ~25 issuer URLs that ran here. That gate
     # produced six merge-queue dequeues across three PRs on a dweb.link 429,
@@ -61,7 +62,7 @@ jobs:
     # unchanged exposure, not new, and narrowing it is the wallet pipeline's
     # own call — the committed-icon redesign scoped itself to the token set
     # and left the wallet and flag pipelines alone.
-    - name: 'Every listed currency has a committed icon'
+    - name: 'Every listed currency has exactly one committed icon'
       run: 'node frontend/scripts/build-token-manifest.mjs --strict'
     - name: 'Wallet icon URLs are live'
       run: 'node frontend/scripts/fetch-wallet-icons.mjs --strict'

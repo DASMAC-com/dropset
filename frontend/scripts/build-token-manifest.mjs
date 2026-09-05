@@ -24,7 +24,8 @@
 // before treating a post-install tree as servable.
 //
 // Pass --strict (CI does) to exit non-zero when a listed currency has no
-// committed icon. Unlike the strict gate this replaces, that condition is
+// committed icon, or has MORE THAN ONE. Unlike the strict gate this replaces,
+// either condition is
 // purely LOCAL and deterministic: it reads a directory, dials nothing, and
 // so cannot flake. It keeps the original gate's intent — a token whose
 // artwork is missing blocks the merge — while dropping the third-party
@@ -110,9 +111,19 @@ if (conflicts.length) {
 }
 
 if (strict && (missing.length || conflicts.length)) {
-  console.error(
-    `\n--strict: ${missing.length}/${tokens.length} listed currency(s) have no committed token icon, ${conflicts.length} have more than one.`,
-  );
+  // Only the non-zero clauses. Printing both unconditionally leads with a
+  // literal `0/25` on a conflict-only failure, and this is the first line
+  // someone reads when a REQUIRED gate fails.
+  const reasons = [];
+  if (missing.length) {
+    reasons.push(`${missing.length}/${tokens.length} have no committed icon`);
+  }
+  if (conflicts.length) {
+    reasons.push(
+      `${conflicts.length}/${tokens.length} have more than one committed icon`,
+    );
+  }
+  console.error(`\n--strict: ${reasons.join("; ")}.`);
   // Set the code rather than calling process.exit(): under CI both streams
   // are pipes and an explicit exit can truncate the reasons above.
   process.exitCode = 1;

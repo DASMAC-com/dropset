@@ -62,12 +62,24 @@ describe("committedIconFor", () => {
 // added with no committed icon leaves that suite green. Until this existed, the
 // only verification of the gate was one hand-run mutation CI cannot repeat.
 describe("committed icon coverage", () => {
-  it("has a committed icon for every listed currency", () => {
+  // Both failure modes are bucketed rather than thrown. `committedIconFor`
+  // throws on a two-icon symbol, so calling it bare inside the filter would
+  // surface a conflict as an uncaught stack trace instead of a named
+  // assertion — the exact diagnostic the two callers go out of their way to
+  // avoid. Failing is right; failing legibly is the point.
+  it("has exactly one committed icon for every listed currency", () => {
     const entries = listCommitted();
-    const missing = readTokens()
-      .filter((token) => !committedIconFor(token.symbol, entries))
-      .map((token) => token.symbol);
-    expect(missing).toEqual([]);
+    const missing = [];
+    const conflicted = [];
+    for (const token of readTokens()) {
+      try {
+        if (!committedIconFor(token.symbol, entries))
+          missing.push(token.symbol);
+      } catch {
+        conflicted.push(token.symbol);
+      }
+    }
+    expect({ missing, conflicted }).toEqual({ missing: [], conflicted: [] });
   });
 
   // Guards the coupling that has no other enforcement: copy-brand-assets.mjs

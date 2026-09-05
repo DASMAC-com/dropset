@@ -301,7 +301,8 @@ inventory, the secret-vs-variable-vs-constant rule (**a secret when the
 value must be masked in logs**, since Actions masks only secrets), the
 nine required status checks and the ruleset they come from, the
 **job-vs-step distinction** that decides whether a workflow change needs
-a ruleset edit at all (and which of the two is the gate), and the
+a ruleset edit at all — and the fact that the **ruleset** is the gate
+while the list recorded in the doc is only a mirror of it — and the
 standing consequence that **a fork `pull_request` run receives no
 secrets**, so any required check with a secret dependency cannot pass
 on a fork PR. Add — or deliberately withhold — the next secret or

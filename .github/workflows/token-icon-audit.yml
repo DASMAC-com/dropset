@@ -11,8 +11,10 @@
 #      contexts this deliberately does not join).
 #   2. It does not trigger on `merge_group`, so it never runs as a
 #      merge-queue check at all and cannot dequeue anything.
-#   3. The script exits 0 whatever it finds, so it reports green and puts
-#      drift in annotations rather than in a red check.
+#   3. The script's AUDIT path exits 0 whatever it finds, so it reports green
+#      and puts drift in annotations rather than in a red check. (Its --write
+#      refresh mode can fail, deliberately — but that mode is human-invoked
+#      and this job never passes the flag.)
 #
 # This exists because the inverse arrangement failed badly: a strict fetch of
 # the same URLs ran as a step inside the REQUIRED `Frontend` job and produced
