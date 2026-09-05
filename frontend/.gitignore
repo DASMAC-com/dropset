@@ -15,9 +15,10 @@
 
 # public/ is generated in full by the predev / prebuild hooks — nothing under
 # it is committed. Brand assets are copied from the repo-root brand-assets/
-# (../brand-assets/copy-brand-assets.mjs), the flags are mirrored out of
-# node_modules (scripts/copy-flags.mjs), and the token / wallet icons are
-# fetched (scripts/fetch-token-icons.mjs, scripts/fetch-wallet-icons.mjs).
+# (../brand-assets/copy-brand-assets.mjs), which is also how the committed
+# token icons in brand-assets/token-icons/ arrive as public/token-icons/;
+# the flags are mirrored out of node_modules (scripts/copy-flags.mjs); and
+# the wallet icons are fetched (scripts/fetch-wallet-icons.mjs).
 # Ignoring the directory keeps that invariant self-maintaining: a new brand
 # asset needs no edit here, and a file committed into public/ by hand is
 # caught. A brand asset belongs in brand-assets/ whether one app renders it

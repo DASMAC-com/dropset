@@ -72,8 +72,9 @@
 **/.next
 
 # Generated in full by the frontend's predev/prebuild hooks — brand assets
-# copied in, flags mirrored out of node_modules, token and wallet icons
-# fetched. Nothing under it is committed (frontend/.gitignore says so).
+# copied in (token icons among them, committed under brand-assets/), flags
+# mirrored out of node_modules, wallet icons fetched. Nothing under it is
+# committed (frontend/.gitignore says so).
 frontend/public
 
 # === Node / pnpm (the rest) ===

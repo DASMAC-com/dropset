@@ -1,4 +1,5 @@
 ---
+# cspell:word dweb
 # cspell:word prerenders
 # cspell:word Vercel
 env:
@@ -33,35 +34,36 @@ jobs:
         cache-dependency-path: 'pnpm-lock.yaml'
         node-version: '${{ env.NODE_VERSION }}'
     - run: 'pnpm install --frozen-lockfile'
-    # Every icon URL must resolve, on every run — not just on PRs that touch
-    # the icon inputs. The point is that a reference which has gone stale
-    # blocks merges until someone updates it, so the committed URLs always
-    # describe where the issuer actually serves the asset today. A check
-    # scoped to icon-touching PRs would never fire for the case that
-    # matters most: an issuer moving an asset long after the URL was added.
+    # Token icons are COMMITTED (brand-assets/token-icons/), so this gate
+    # dials nothing: it checks that every currency listed in currencies.json
+    # has exactly one committed icon — none is a missing asset, and two is
+    # what an upstream format change leaves behind — by reading a directory.
+    # Deterministic, so it is safe in a required job: it cannot flake and
+    # cannot be red-lined by a third party.
     #
-    # This runs before the build so the network check fails fast, and is
-    # deliberately not cached — a cache hit would defeat it. The retry and
-    # timeout inside the script are what keep it from tripping on a blip;
-    # only a URL that fails every attempt fails the job. Note the icons are
-    # actually fetched three times per run: `postinstall` above, this step,
-    # and `prebuild` inside the build below. Only this one can fail the job.
+    # It replaces a strict fetch of ~25 issuer URLs that ran here. That gate
+    # produced six merge-queue dequeues across three PRs on a dweb.link 429,
+    # and then its own interim fix failed on a different host in a different
+    # mode (a ~32s timeout on shared hosting) and passed clean on re-run —
+    # two hosts, two failure modes, one evening. Because it gated merge_group,
+    # where a PR-path check cannot see it, none of that could be caught
+    # before the queue.
     #
-    # Tradeoff, accepted knowingly: because this also gates merge_group, a
-    # sustained outage at a third-party CDN can block unrelated merges until
-    # it recovers or the URL is pointed somewhere else. A live asset served
-    # under an odd content-type does NOT block — the script falls back to
-    # sniffing the bytes, so only genuinely unusable responses fail.
+    # What is deliberately NOT gated here any more: whether the committed
+    # bytes still match what the issuer serves. That is genuine drift
+    # detection and it needs the network, so it moved to the non-required
+    # token-icon-audit.yml, which warns and never blocks. The intent the old
+    # gate served — a stale reference does not sit unnoticed — is preserved;
+    # only its ability to stop merges is gone.
     #
-    # Both asset sets are gated, on the same reasoning and through the same
-    # engine (frontend/scripts/mirror-icons.mjs). Wallet icons add five more
-    # externally-controlled URLs that can red-line the queue, which is a real
-    # widening of the exposure described above; they are gated anyway because
-    # leaving a set unchecked is exactly how the token icons came to carry a
-    # silently broken mirror in the first place. The issuers are also a smaller
-    # and more stable set than the stablecoin ones, so the added risk is modest.
-    - name: 'Token icon URLs are live'
-      run: 'node frontend/scripts/fetch-token-icons.mjs --strict'
+    # Wallet icons still mirror at build time through the shared engine
+    # (frontend/scripts/mirror-icons.mjs) and are still gated strictly, so
+    # five externally-controlled URLs can still red-line the queue. That is
+    # unchanged exposure, not new, and narrowing it is the wallet pipeline's
+    # own call — the committed-icon redesign scoped itself to the token set
+    # and left the wallet and flag pipelines alone.
+    - name: 'Every listed currency has exactly one committed icon'
+      run: 'node frontend/scripts/build-token-manifest.mjs --strict'
     - name: 'Wallet icon URLs are live'
       run: 'node frontend/scripts/fetch-wallet-icons.mjs --strict'
     # Every listed currency must have a platform-fee vault — its ATA under
@@ -101,11 +103,13 @@ jobs:
     # price. Runs before the build because a logic failure is faster to
     # report and easier to read than a build log.
     #
-    # Keep this AFTER the icon steps above. The currencies suite asserts the
-    # mirror manifest is populated, and it is the strict token step that
-    # guarantees that — `postinstall` writes the manifest either way, empty
-    # included. Moving the fast deterministic tests first looks like an
-    # obvious cleanup and would break them.
+    # The currencies suite asserts the icon manifest is populated. That no
+    # longer depends on step order: `postinstall` builds the manifest from
+    # the committed icons, with no network, so it is fully populated before
+    # any step below runs. The strict step above is what keeps it that way
+    # as currencies are added, but the tests no longer need it to have run
+    # first — this used to be a hard ordering constraint and is now only a
+    # preference for reporting a logic failure before a build log.
     - name: 'Frontend unit tests'
       run: 'pnpm --filter dropset-frontend test'
     # Nothing else in CI runs the frontend's `next build`: lint.yml stops at

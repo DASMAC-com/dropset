@@ -6,12 +6,21 @@
 // while keeping that URL reachable as a render-side fallback.
 //
 // Pass --strict (CI does, for the icon-liveness job) to also exit non-zero
-// when any wallet is missing from the manifest, on the same reasoning as the
-// token script: the icons and the manifest are both gitignored, so without a
-// failing exit a dead issuer URL leaves no committed baseline to diff.
+// when any wallet is missing from the manifest: the icons and the manifest are
+// both gitignored, so without a failing exit a dead issuer URL leaves no
+// committed baseline to diff.
+//
+// Wallet icons are the LAST asset set still fetched on the build path. Token
+// icons used to work this way too and no longer do — they are committed under
+// brand-assets/token-icons/ and audited against upstream out of band, because
+// a strict fetch of ~25 issuer URLs inside the required Frontend job kept
+// dequeuing the merge queue. The same argument applies here in principle; it
+// is five URLs from a more stable set, and moving them was deliberately left
+// out of that change's scope.
 //
 // The fetching itself — timeout, retry, body-size floor, magic-byte format
-// detection — lives in mirror-icons.mjs, shared with the token script.
+// detection — lives in mirror-icons.mjs, whose fetch half is now shared with
+// the token-icon audit rather than with a token mirror.
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

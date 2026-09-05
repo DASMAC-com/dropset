@@ -299,11 +299,14 @@ in `docs/conventions/github-mcp.md`.
 **Actions configuration lives there too** — the repository-secrets
 inventory, the secret-vs-variable-vs-constant rule (**a secret when the
 value must be masked in logs**, since Actions masks only secrets), the
-nine required status checks and the ruleset they come from, and the
+nine required status checks and the ruleset they come from, the
+**job-vs-step distinction** that decides whether a workflow change needs
+a ruleset edit at all — and the fact that the **ruleset** is the gate
+while the list recorded in the doc is only a mirror of it — and the
 standing consequence that **a fork `pull_request` run receives no
 secrets**, so any required check with a secret dependency cannot pass
-on a fork PR. Add the next secret or required check against those,
-rather than per-PR.
+on a fork PR. Add — or deliberately withhold — the next secret or
+required check against those, rather than per-PR.
 
 ## AWS infrastructure
 

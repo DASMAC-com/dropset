@@ -1,0 +1,49 @@
+---
+# Audit the committed token icons against the upstream sources
+# currencies.json declares for them. Advisory only: this workflow reports
+# drift and never blocks anything.
+#
+# Three independent layers keep it that way, because "non-required" alone is
+# a setting someone can change by accident:
+#
+#   1. It is NOT in the repository ruleset's required-check set (see
+#      docs/conventions/github-mcp.md → "Required status checks", whose nine
+#      contexts this deliberately does not join).
+#   2. It does not trigger on `merge_group`, so it never runs as a
+#      merge-queue check at all and cannot dequeue anything.
+#   3. The script's AUDIT path exits 0 whatever it finds, so it reports green
+#      and puts drift in annotations rather than in a red check. (Its --write
+#      refresh mode can fail, deliberately — but that mode is human-invoked
+#      and this job never passes the flag.)
+#
+# This exists because the inverse arrangement failed badly: a strict fetch of
+# the same URLs ran as a step inside the REQUIRED `Frontend` job and produced
+# six merge-queue dequeues across three PRs on one third-party 429, then a
+# ~32s timeout on a second host in a single evening. The dependency is
+# inverted now — the repo owns the bytes and upstream is audited.
+#
+# Unscoped by paths on purpose, matching the reasoning on the gates in
+# frontend.yml: a filter on currencies.json edits would fire on the listing
+# PR and never again, so it could never catch the case that matters most —
+# an issuer moving or replacing artwork long after the URL was added.
+#
+# No `pnpm install`: the audit script imports only node builtins and two
+# sibling scripts, so the job needs a checkout and a node, nothing else.
+jobs:
+  audit:
+    name: 'Token icon upstream audit'
+    permissions:
+      contents: 'read'
+    runs-on: 'ubuntu-latest'
+    steps:
+    - uses: 'actions/checkout@v6'
+    - uses: 'actions/setup-node@v6'
+      with:
+        node-version: '25'
+    - name: 'Committed icons match their declared upstream sources'
+      run: 'node frontend/scripts/audit-token-icons.mjs'
+name: 'Token icon audit'
+'on':
+  pull_request: null
+  workflow_dispatch: null
+...

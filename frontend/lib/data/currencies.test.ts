@@ -26,15 +26,18 @@ describe("token icon resolution", () => {
     // Without this the loop below is vacuous: an empty manifest makes every
     // fallback "", the body never runs, and the test passes asserting nothing.
     //
-    // This is the one assertion here that is not hermetic. `postinstall` runs
-    // the fetch scripts WITHOUT --strict, so an offline or proxied install
-    // still writes the manifest — just empty. The message matters more than
-    // usual because the bare failure would read as a logic bug rather than as
-    // "your install could not reach the issuer CDNs".
+    // This assertion is now hermetic, which it previously was not. The
+    // manifest is built from the icons committed under
+    // brand-assets/token-icons/ with no network access, so an offline or
+    // proxied install produces the same populated manifest as any other. An
+    // empty one therefore means committed files are missing — not that the
+    // install could not reach an issuer CDN, which is what it used to mean
+    // and what the old message said.
     expect(
       symbols.some((s) => tokenIconFallbackUrl(s) !== ""),
-      "icon-manifest.gen.json is empty — run `pnpm --dir frontend install` " +
-        "with network access so the mirror is populated",
+      "icon-manifest.gen.json is empty — run " +
+        "`pnpm --filter dropset-frontend build-token-manifest`; if it stays " +
+        "empty, brand-assets/token-icons/ is missing its committed icons",
     ).toBe(true);
     for (const symbol of symbols) {
       const fallback = tokenIconFallbackUrl(symbol);
