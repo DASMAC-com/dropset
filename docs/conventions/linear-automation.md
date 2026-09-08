@@ -19,12 +19,15 @@ export LINEAR_ASSIGNEE_ID=…
 # Used by the plan skill — the "Planning" document a planning
 # session bootstraps from and writes its decisions back into:
 export LINEAR_PLANNING_DOC_ID=…
-# NOTE: LINEAR_API_KEY belongs here by rights — the Python board
-# tools need it, because a script can't use the OAuth-based
-# claude.ai Linear MCP and must authenticate with a personal key
-# sent as the Authorization header. It is NOT set here, though: it
-# is a secret, so it is resolved from 1Password at session launch.
-# See local-integrations.md, "Session secrets".
+# NOTE: LINEAR_API_KEY belongs here by rights — it has two
+# consumers. The Python board tools need it because a script
+# cannot drive an MCP server at all, and must authenticate to the
+# GraphQL API with a personal key sent BARE in the Authorization
+# header. The locally configured Linear MCP server needs the same
+# key, but prefixed with `Bearer` — see "Two ways to reach
+# Linear's MCP" below; the bare form 401s there. It is NOT set
+# here, though: it is a secret, so it is resolved from 1Password
+# at session launch. See local-integrations.md, "Session secrets".
 #
 # RETIRED: LINEAR_SESSION_METRICS_DOC_ID. The "Session Metrics"
 # inbox document is gone — trim levers are parked issues under the
@@ -97,6 +100,70 @@ the merge-group proposals and the scheduling smells the tool used to
 report. The `**Touches**:` field it consumed went with it — see
 "Structured filing fields" below. Relations already on the board are
 left alone as inert history: nothing deletes a relation.
+
+## Two ways to reach Linear's MCP, and the credential each takes
+
+`https://mcp.linear.app/mcp` is **one server reachable two ways**, and
+which way a session gets decides whether it has Linear at all.
+
+- **The hosted `claude.ai Linear` connector** rides claude.ai account
+  authentication. A session holding no claude.ai session — a **Bedrock**
+  session authenticates to AWS — does not receive it, and no config edit
+  changes that. Verified by the Bedrock spike: such a session receives
+  every locally configured server and neither claude.ai connector, and
+  `claude mcp list` prints the matching "Managed settings (remote): not
+  fetched" line.
+- **A locally configured server** at the same URL, authenticated with a
+  personal API key in a `Bearer` header. Locally configured servers
+  reach every session whatever the model substrate, so this is the form
+  that gives a Bedrock session first-class Linear access.
+
+Register it exactly the way the GitHub server is registered
+(`github-mcp.md` → "Authentication (PAT header, not OAuth)") — user
+scope, the credential referenced by **variable**, never written into a
+committed file or `~/.claude.json`:
+
+```sh
+claude mcp add --transport http --scope user linear \
+  https://mcp.linear.app/mcp \
+  --header 'Authorization: Bearer ${LINEAR_API_KEY}'
+```
+
+`LINEAR_API_KEY` already resolves into every session from 1Password
+(local-integrations.md → "Session secrets"), so this adds no secret,
+no new coordinate, and no custody question.
+
+### The `Bearer` prefix is the whole trick
+
+Its absence is a **convincing false negative**, which is why it gets its
+own heading. Linear's GraphQL API takes the key **bare** —
+`Authorization: <key>`, which is what `linear_api.post` sends — but the
+MCP endpoint rejects that same form with
+
+```txt
+401  WWW-Authenticate: Bearer realm="OAuth", …, error="invalid_token"
+```
+
+An OAuth challenge naming no usable key path reads exactly like the
+wall the GitHub server hit, and would justify concluding that no
+key-based path exists and a bespoke tool must be built instead. It does
+exist: the identical key sent as `Bearer <key>` returns a clean
+`initialize`. Measured 2026-09-08.
+
+Two further facts from that probe. The legacy `/sse` endpoint is **gone**
+(404 under either header form), so `/mcp` is the only endpoint. And the
+locally configured server is the *same server* the hosted connector
+points at, so the tool surface is identical — `list_comments` included,
+which is the one gap a Bedrock session would otherwise have had.
+
+**What this verification does and does not establish.** The registration
+above was confirmed `✔ Connected` at user scope, which proves the
+credential, the endpoint and the `${LINEAR_API_KEY}` expansion. It was
+confirmed from a **subscription** session, not a Bedrock one; that
+Bedrock sessions receive it follows from the spike's established fact
+that they receive all locally configured servers, and is an inference
+rather than a direct observation. Confirm it on the next Bedrock
+session — it costs one `claude mcp list`.
 
 ## Structured filing fields
 
