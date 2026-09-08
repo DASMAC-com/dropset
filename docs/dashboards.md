@@ -326,6 +326,12 @@ with no owner yet.
    not being collected at candle granularity — but §4 has no rendering
    that distinguishes "true and expected" from "faulted", so today it
    reads as the same ambiguous blank as the Fusion-weight panel below.
+1. **The spread figure disagrees with `docs/market-making.md`.** §3 states
+   20–30 pips (~17–26 bps), which is the lean-MVP figure ratified
+   2026-09-07; `docs/market-making.md` commits to 100 bps, which predates
+   the pivot. One of the two is stale and this document does not have the
+   standing to decide which — the panel §3 specifies is sized by the
+   answer, so it needs settling before that panel is built.
 1. **A panel can render an ambiguous blank.** `Fusion weight by source`
    reads `maker_leg_contributions`, which is empty whenever no maker is
    running — the ordinary state on a collectors-only stack. It renders
