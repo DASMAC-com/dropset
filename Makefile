@@ -697,11 +697,17 @@ grafana-down: check-docker
 FX_ENV = infra/localnet/secrets.local.env
 -include $(FX_ENV)
 OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account '$(DROPSET_OP_ACCOUNT)',)
+# The three keyed services, named once. `FX_UP` starts exactly these and
+# `KEYED_PROBE` inspects exactly these: a probe that checked a service the
+# bring-up never started, or missed one it did, would report the opposite of
+# the truth. `FX_COMPOSE` is shared for the same reason — `ps -q` resolves a
+# service only under the same compose file and profile that started it.
+KEYED_SERVICES = oanda twelvedata alphavantage
+FX_COMPOSE = docker compose -f infra/localnet/docker-compose.yml --profile fx
 # `--build` for the same reason as `collectors-up` above: without it these
 # services keep whichever image another worktree last built.
-FX_UP = docker compose -f infra/localnet/docker-compose.yml \
-	--profile fx up -d --build --quiet-pull postgres migrate oanda \
-	twelvedata alphavantage
+FX_UP = $(FX_COMPOSE) up -d --build --quiet-pull postgres migrate \
+	$(KEYED_SERVICES)
 # A keyed bring-up that does not happen is LOUD, and it does not abort the
 # run. Loud because the failure is otherwise invisible in exactly the way that
 # matters: the keyless feeds are up, Grafana is green, and the three keyed
@@ -725,27 +731,43 @@ FX_UP = docker compose -f infra/localnet/docker-compose.yml \
 # diagnosing a cause it cannot actually distinguish; the underlying error
 # prints immediately above the banner.
 #
-# A third mode is NOT covered, and the gap is recorded here rather than
-# papered over. `docker compose up -d` returns as soon as the containers
-# start, and the compose file passes each credential as `${VAR:-}` rather
-# than the required form — so an enclave that resolves but is MISSING one of
-# the three references starts a collector that names its variable and dies.
-# That exits 0 and prints no banner.
+# A third mode routes through it as well, and it is the one that needed a
+# probe rather than a return code. `docker compose up -d` returns as soon as
+# the containers START, and the compose file passes each credential as
+# `${VAR:-}` rather than the required form — so an enclave that resolves
+# while MISSING one of the three references satisfies `op run`, starts that
+# collector, and the collector names the variable it wanted and dies. The
+# bring-up exits 0, the other two record normally, and Grafana stays green.
+# `KEYED_PROBE` below is what sees it.
 #
 # That `${VAR:-}` is not an unforced choice: the explorer-image workflow runs
 # `docker compose config` over this file with no environment at all, and the
 # required form fails that parse for every service (docker-compose.yml, the
-# alphavantage comment). So the fix is not to tighten it.
+# alphavantage comment). So the fix is not to tighten it — it is to look at
+# the containers again once they have had a moment to fall over.
 #
-# `--wait` is the candidate — it was measured to exit 0 here despite the
+# `KEYED_PROBE` is now a SECOND reason that form cannot change: its `ps -q`
+# calls run outside `op run`, so they parse this file with none of the enclave
+# values set. The required form would fail there too, on every bring-up.
+#
+# `--wait` was the other candidate and is still not adopted, because it
+# answers a weaker question. It was measured to exit 0 here despite the
 # one-shot `migrate`, which `depends_on: service_completed_successfully`
-# covers — but it is not adopted yet: these services are
-# `restart: unless-stopped`, so a crash-looping container can read as
-# running, and an unbounded `--wait` would hang `make demo` rather than warn
-# it. Adopting it wants a `--wait-timeout` and its own verification.
+# covers, so the obstacle is not that one: no collector here declares a
+# healthcheck, so `--wait` returns the moment each service is *running* —
+# which is exactly the state a container about to die of a missing credential
+# is already in — and `restart: unless-stopped` then keeps a crash-looping
+# container reading as running for as long as it loops. An unbounded `--wait`
+# would also hang `make demo` rather than warn it. Adopting it would still
+# want a `--wait-timeout`, a restart-count check, and its own verification —
+# which is `KEYED_PROBE` plus a flag, so the flag buys nothing.
 #
-# `KEYED_WARN` is not self-contained: it reads a `reason` shell variable its
-# caller must set in the same shell. `KEYED_UP` below is that caller.
+# `KEYED_WARN` is not self-contained: it reads a `reason` and an `affected`
+# shell variable that its caller must set in the same shell. `KEYED_UP` below
+# is that caller. The two are set differently, and the asymmetry is
+# deliberate: `reason` is set by each branch that warns, because each has its
+# own; `affected` is defaulted once to all three venues and overridden only on
+# the probe branch, which is the only one that can narrow it.
 # `demo` passes `KEYED_PAUSE=1`, which holds the terminal after the banner
 # until the operator acknowledges it. That target is the whole reason the
 # banner has to be loud and the only place it is not: `demo` opens a Grafana
@@ -759,16 +781,94 @@ FX_UP = docker compose -f infra/localnet/docker-compose.yml \
 KEYED_PAUSE =
 KEYED_WARN = printf '\n%s\n%s\n%s\n%s\n%s\n\n' \
 	'=====================================================================' \
-	'  WARNING — the keyed venues are NOT running.' \
+	'  WARNING — keyed recording is INCOMPLETE.' \
 	"  Reason: $$reason" \
-	'  OANDA, Twelve Data and Alpha Vantage will record nothing.' \
+	"  Recording nothing: $$affected" \
 	'====================================================================='; \
 	if [ -n '$(KEYED_PAUSE)' ] && [ -t 0 ]; then \
 	printf '  press enter to continue… '; read -r _; printf '\n'; fi
-KEYED_UP = if [ ! -f "$(FX_ENV)" ]; then \
+# The bounded liveness probe, run after a bring-up that exited 0. It sets
+# `dead` to a space-separated list of the services that did not stay up across
+# the window, and leaves it empty when all three did — so it is not
+# self-contained either, and `KEYED_UP` below reads that variable in the same
+# shell.
+#
+# Note what that does and does not say. The probe reads liveness, not
+# recording: a collector holding a WRONG credential rather than a missing one
+# starts, stays up, 401s every poll, and reads clean here. The banner it feeds
+# is honest about the same distance (see the enclave example file) — this
+# closes the started-then-died hole, not the records-nothing-while-up one,
+# which is what the dashboards' staleness bounds are for.
+#
+# It samples the restart counts, waits, then looks again, and a service fails
+# on either of two conditions: its status is not `running` (dead, or inside a
+# restart backoff), or its restart count MOVED during the window. It has to
+# be the delta rather than the count itself, and this is the subtle part: a
+# `restart: unless-stopped` collector that died once weeks ago and recovered
+# carries a non-zero count for the rest of the container's life, and
+# `collectors-up` is idempotent, so a re-run that changes nothing leaves that
+# container — and its count — exactly as it found it. Reading the count as
+# an absolute would warn about a healthy venue on every bring-up from then
+# on, and a banner that cries wolf on the demo path is worse than no banner.
+#
+# The status is read only from the SECOND sample, deliberately. Reading it
+# from the first would race the start: `up -d` can return with a container
+# still `created` for a few milliseconds, which is indistinguishable from a
+# start that failed.
+#
+# The restart count is immune to that race, but only because both samples
+# resolve the container with `ps -aq` rather than `ps -q`. Plain `ps -q`
+# lists RUNNING containers only, so it would hand the first sample an empty
+# id for a container still `created` — the count would come back empty, fail
+# to match the `svc:0` the second sample reads, and flag a perfectly healthy
+# service. The `-a` is what makes the two samples comparable; it is not
+# tidiness.
+#
+# It waits before looking rather than polling, because the question is
+# whether the services are STILL up, and that has no early answer: a pass has
+# to spend the whole window. There is no early exit on failure either, and
+# deliberately — the window is short enough that another round trip through
+# `docker` would cost more than it saves.
+#
+# Keep the window short. It sits on the `demo` path, where a few seconds are
+# noise beside the `--build` cache check, and lengthening it buys little: a
+# collector that cannot resolve its credential dies within a second of
+# starting and Docker restarts it after 100ms, doubling — so several restarts
+# land inside a 5s window, while the failure this is aimed at needs only one.
+# What the window does NOT cover is a collector that runs for a minute and
+# then dies; that is a live-monitoring question, and the dashboards' staleness
+# bounds are what answer it (docs/dashboards.md).
+#
+# A service with no container at all reads as failed too, via the status
+# check — `docker inspect` on an empty id says nothing and is silenced,
+# because compose has already printed whatever went wrong.
+KEYED_PROBE_SECONDS = 5
+KEYED_PROBE = dead=''; before=''; \
+	for svc in $(KEYED_SERVICES); do \
+	cid="$$($(FX_COMPOSE) ps -aq "$$svc")"; \
+	before="$$before $$svc:$$(docker inspect -f '{{.RestartCount}}' \
+	"$$cid" 2>/dev/null)"; \
+	done; \
+	sleep $(KEYED_PROBE_SECONDS); \
+	for svc in $(KEYED_SERVICES); do \
+	cid="$$($(FX_COMPOSE) ps -aq "$$svc")"; \
+	status="$$(docker inspect -f '{{.State.Status}}' "$$cid" 2>/dev/null)"; \
+	restarts="$$(docker inspect -f '{{.RestartCount}}' "$$cid" 2>/dev/null)"; \
+	unchanged=''; \
+	case " $$before " in *" $$svc:$$restarts "*) unchanged=y;; esac; \
+	if [ "$$status" != 'running' ] || [ -z "$$unchanged" ]; then \
+	if [ -z "$$dead" ]; then dead="$$svc"; else dead="$$dead $$svc"; fi; fi; \
+	done
+KEYED_UP = affected='OANDA, Twelve Data and Alpha Vantage'; \
+	if [ ! -f "$(FX_ENV)" ]; then \
 	reason='no $(FX_ENV) (cp its .example)'; $(KEYED_WARN); \
 	elif ! op run $(OP_ACCT) --env-file=$(FX_ENV) -- $(FX_UP); then \
-	reason='the keyed bring-up failed (see the error above)'; $(KEYED_WARN); fi
+	reason='the keyed bring-up failed (see the error above)'; $(KEYED_WARN); \
+	else $(KEYED_PROBE); \
+	if [ -n "$$dead" ]; then affected="$$dead"; \
+	reason="started, then stopped or restarted — try: \
+	$(FX_COMPOSE) logs $$dead"; \
+	$(KEYED_WARN); fi; fi
 
 # Localnet bot stack: the maker bot (infra/localnet). It signs with the repo
 # keys/ keypairs and reaches the host-run validator at

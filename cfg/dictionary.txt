@@ -79,6 +79,7 @@ econia
 elif
 equi
 erapi
+esac
 etherfuse
 eurau
 eurc
@@ -106,6 +107,7 @@ gyen
 générale
 headshot
 headshots
+healthcheck
 heredocs
 hexdigit
 hpack
