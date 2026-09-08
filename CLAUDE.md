@@ -44,12 +44,11 @@ change of model substrate: the hosted `claude.ai Linear` connector
 needs a claude.ai session, so a **Bedrock** session never receives it,
 while a **locally configured** server at the same URL —
 `Authorization: Bearer ${LINEAR_API_KEY}`, user scope, the GitHub PAT
-pattern — reaches every session. Note the header shapes differ: the
-GraphQL API that the Python board tools use takes the key **bare**,
-and the bare form 401s against the MCP endpoint with an OAuth challenge
-that convincingly reads as OAuth-only.
-Full detail — every env var, which skill reads it, and the registration:
-`docs/conventions/linear-automation.md`.
+pattern — is expected to reach every session. The GraphQL API the Python
+board tools use takes that same key **bare**, and confusing the two forms
+produces a convincing false negative.
+Full detail — every env var, which skill reads it, the registration, and
+that trap: `docs/conventions/linear-automation.md`.
 
 ### Planning sessions
 

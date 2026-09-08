@@ -20,14 +20,14 @@ export LINEAR_ASSIGNEE_ID=…
 # session bootstraps from and writes its decisions back into:
 export LINEAR_PLANNING_DOC_ID=…
 # NOTE: LINEAR_API_KEY belongs here by rights — it has two
-# consumers. The Python board tools need it because a script
-# cannot drive an MCP server at all, and must authenticate to the
-# GraphQL API with a personal key sent BARE in the Authorization
-# header. The locally configured Linear MCP server needs the same
-# key, but prefixed with `Bearer` — see "Two ways to reach
-# Linear's MCP" below; the bare form 401s there. It is NOT set
-# here, though: it is a secret, so it is resolved from 1Password
-# at session launch. See local-integrations.md, "Session secrets".
+# consumers. The Python board tools are not MCP clients: they
+# talk to the GraphQL API directly, with a personal key sent
+# BARE in the Authorization header. The locally configured
+# Linear MCP server needs the same key, but prefixed with
+# `Bearer` — see "Two ways to reach Linear's MCP" below; the
+# bare form 401s there. It is NOT set here, though: it is a
+# secret, so it is resolved from 1Password at session launch.
+# See local-integrations.md, "Session secrets".
 #
 # RETIRED: LINEAR_SESSION_METRICS_DOC_ID. The "Session Metrics"
 # inbox document is gone — trim levers are parked issues under the
@@ -109,10 +109,10 @@ which way a session gets decides whether it has Linear at all.
 - **The hosted `claude.ai Linear` connector** rides claude.ai account
   authentication. A session holding no claude.ai session — a **Bedrock**
   session authenticates to AWS — does not receive it, and no config edit
-  changes that. Verified by the Bedrock spike: such a session receives
-  every locally configured server and neither claude.ai connector, and
-  `claude mcp list` prints the matching "Managed settings (remote): not
-  fetched" line.
+  makes the hosted connector appear. Verified by the Bedrock spike: such a
+  session receives every locally configured server and neither claude.ai
+  connector, with the matching "Managed settings (remote): not fetched"
+  line in its MCP status output.
 - **A locally configured server** at the same URL, authenticated with a
   personal API key in a `Bearer` header. Locally configured servers
   reach every session whatever the model substrate, so this is the form
@@ -144,19 +144,26 @@ MCP endpoint rejects that same form with
 401  WWW-Authenticate: Bearer realm="OAuth", …, error="invalid_token"
 ```
 
-An OAuth challenge naming no usable key path reads exactly like the
-wall the GitHub server hit, and would justify concluding that no
-key-based path exists and a bespoke tool must be built instead. It does
-exist: the identical key sent as `Bearer <key>` returns a clean
-`initialize`. Measured 2026-09-08.
+An OAuth challenge naming no usable key path reads like the wall the
+GitHub server hit — a different mechanism (there, OAuth failing for lack
+of dynamic client registration), but the same impression — and would
+justify concluding that no key-based path exists and a bespoke tool must
+be built instead. It does exist: the identical key sent as `Bearer <key>`
+returns a clean `initialize`. Measured 2026-09-08.
 
 Two further facts from that probe. The legacy `/sse` endpoint is **gone**
 (404 under either header form), so `/mcp` is the only endpoint. And the
 tool surface is identical rather than merely similar: a `tools/list` over
 the API-key session returns **73** tools, one-for-one the same set the
-hosted connector exposes — `list_comments` included, which is the one gap
-a Bedrock session would otherwise have had. That is the same server
-answering, reached with a different credential.
+hosted connector exposes. That is the same server answering, reached with
+a different credential.
+
+`list_comments` is the one worth naming. The committed zero-echo tools
+already cover state transitions and body edits, so a session without
+Linear MCP can run most of the flow — but none of them reads comments,
+and acceptance criteria sometimes live in an anchored comment rather than
+the issue body. Such a session can therefore believe it holds the whole
+spec while missing a criterion, with nothing signalling the omission.
 
 **What this verification does and does not establish.** The registration
 above was confirmed `✔ Connected` at user scope, which proves the
