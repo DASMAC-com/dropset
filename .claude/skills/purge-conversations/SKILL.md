@@ -55,7 +55,7 @@ protection.
    `session_metrics.py`). Five keep-rules are tried in order —
    current session, open PR, **live worktree**, **recent prompt
    activity**, then the age grace period — and only a slug that
-   passes all of them is deleted. A slug whose **worktree still
+   **fails** all of them is deleted. A slug whose **worktree still
    exists** is therefore kept unconditionally, whatever its age
    and whatever its PR says. The CLI cache also carries stale
    slugs for dead repos — good reclaim.
@@ -100,7 +100,7 @@ session.
 Be precise about how much it adds, because the obvious
 stronger claim is false: the tool builds the protected set
 and the live set from the **same** worktree list, so the
-protected set is a strict subset. The open-PR rule therefore
+protected set is a subset of it. The open-PR rule therefore
 changes no keep/delete outcome today — only the reason
 string. In particular it does **not** rescue a branch whose
 worktree is already gone: such a branch contributes no
@@ -168,10 +168,14 @@ operator approved bore no resemblance to what was lost.
 Two failures, both now closed in the tool:
 
 - **The invocation drifted.** Earlier runs passed the repo;
-  that one did not. The argument is now **defaulted** from the
-  working directory, and the run **aborts** when no repo
-  resolves — there is no longer an invocation that silently
-  protects nothing.
+  that one did not. The argument is now **defaulted from the
+  tool's own committed location** — deliberately *not* from
+  the working directory, which would only move the hole: run
+  from inside any unrelated checkout and the cwd resolves
+  fine, to the wrong repo. The run **aborts** when no repo
+  resolves, and an explicit path naming a *different*
+  repository is refused too, so there is no longer an
+  invocation that silently protects nothing.
 - **The tool degraded silently.** An empty worktree list now
   aborts rather than sweeping.
 
@@ -265,12 +269,25 @@ different facts: one is work in flight, the other is a grace
 period, and only the first is a reason not to reclaim the
 space.
 
-The breakout now names **five** reasons, not two, and they
-carry very different weight. `current session`, `open PR`,
-`live worktree` and `session of a kept project` all mean work
-someone can still come back to; only `within age` is the blunt
-grace period. A run whose kept count is mostly the age rule
-is reclaimable; one dominated by the first four is correctly
+The breakout now names more than those two, and they carry
+very different weight. Five reasons mean work someone can
+still come back to:
+
+- `current session`
+- `open PR`
+- `live worktree`
+- `recent session activity`
+- `session of a kept project`
+
+Only the age rule is the blunt grace period, and it prints as
+more than one string:
+
+- `within age`
+- `worktree gone, within age`
+- `non-dropset, within age`
+
+A run whose kept count is mostly age-rule reasons is
+reclaimable; one dominated by the other five is correctly
 protected.
 
 **Read the named tags before approving anything.** Each
@@ -280,8 +297,14 @@ have caught the 2026-09-07 loss, and it only works if it is
 actually read: **check every named tag against the worktrees
 and issues you know are still live**, and if any one of them
 is work you recognize as unfinished, answer **no** and
-investigate before re-running. A group line with no tags
-under it is genuinely repo-foreign and needs no such check.
+investigate before re-running.
+
+**Every** directory is named, not only the tagged ones — an
+entry with no tag prints its directory name instead, because
+a wrongly resolved repo would otherwise strand real sessions
+in an anonymous bulk line. Tags are never truncated; only a
+long tail of *untagged* entries is ever summarized away, so a
+remainder line never conceals a dropset session.
 
 **4. Approve, then apply.** Show the manifest and ask via
 **`AskUserQuestion`** whether to hard-delete it (recommended

@@ -39,8 +39,10 @@ and hard-deleted a live worktree session's transcript; the approval prompt read
 what was lost. Three guards close that hole, and they are deliberately
 belt-and-braces because the failure is unrecoverable:
 
-1. the repo is **defaulted** from the working directory and the run **aborts**
-   when it cannot be resolved, rather than proceeding with an empty set;
+1. the repo is **defaulted from this tool's own committed location** — never
+   from the working directory, which would only move the hole — and the run
+   **aborts** when it cannot be resolved, rather than proceeding with an
+   empty set;
 2. an existing worktree protects its slug **whatever the PR state** — an
    existing worktree means a session someone intends to resume;
 3. the **prompt history** (``~/.claude/history.jsonl``) is cross-checked, so a
@@ -170,8 +172,9 @@ def dropset_slug_sets(
     reported — ``git worktree list`` enumerates worktrees that exist, so
     membership in the first set is itself proof that a checkout is on disk.
 
-    **``protected`` is a strict subset of ``live`` by construction here**, since
-    both are built from the same loop over the same worktree list. So with this
+    **``protected`` is a subset of ``live`` by construction here** (equal when
+    every branch has an open PR), since both are built from the same loop over
+    the same worktree list. So with this
     caller the open-PR rule can never change a keep/delete outcome — it only
     supplies the more informative reason string. It is kept because it is the
     rule that would still hold if protected slugs ever came from a source other
@@ -535,9 +538,16 @@ CATEGORY_LABELS = {
 }
 
 
-# How many entries a manifest group names individually before summarizing the
-# rest. Bounds an approval prompt on a machine with many stale foreign slugs,
-# without hiding a dropset session: tagged entries sort ahead of untagged ones.
+# How many UNTAGGED entries a manifest group names individually before
+# summarizing the rest. Bounds an approval prompt on a machine with many stale
+# foreign slugs.
+#
+# The cap deliberately does **not** apply to tagged entries. Sorting tagged
+# first is not enough on its own: a repo accumulates per-issue worktrees, so a
+# group can hold more than this many *tagged* entries, and truncating those
+# would drop real session names — in lexical tag order, which is arbitrary —
+# from a hard-delete approval prompt. That is the precise hole naming entries
+# was added to close, so every tagged entry is always named.
 MANIFEST_NAME_CAP = 20
 
 
@@ -577,8 +587,11 @@ def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
     this names all of them: a tag exists only for a slug matching the worktree
     prefix, so precisely the entries a wrongly resolved repo strands in
     ``non-dropset`` — the shape of the original loss — would print as an
-    anonymous bulk line again. Tagged entries sort first so the cap below can
-    never hide a dropset session behind a crowd of foreign slugs.
+    anonymous bulk line again.
+
+    **Every tagged entry is named, with no cap**; only the untagged remainder
+    is truncated. See ``MANIFEST_NAME_CAP`` for why sorting tagged first is not
+    a sufficient substitute.
     """
     lines = ["purge-conversations — dry run (nothing deleted)\n"]
     total = 0
@@ -589,13 +602,14 @@ def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
         size = sum(r.size for r in recs)
         total += size
         lines.append(f"  {label}: {len(recs)} dir(s), {_mb(size)}")
-        named = sorted(
-            recs, key=lambda rec: (rec.tag is None, rec.tag or rec.path.name)
-        )
-        for r in named[:MANIFEST_NAME_CAP]:
-            lines.append(f"    - {r.tag or r.path.name} ({_mb(r.size)})")
-        if len(named) > MANIFEST_NAME_CAP:
-            lines.append(f"    … and {len(named) - MANIFEST_NAME_CAP} more")
+        tagged = sorted((r for r in recs if r.tag), key=lambda rec: rec.tag)
+        untagged = sorted((r for r in recs if not r.tag), key=lambda r: r.path.name)
+        for r in tagged:
+            lines.append(f"    - {r.tag} ({_mb(r.size)})")
+        for r in untagged[:MANIFEST_NAME_CAP]:
+            lines.append(f"    - {r.path.name} ({_mb(r.size)})")
+        if len(untagged) > MANIFEST_NAME_CAP:
+            lines.append(f"    … and {len(untagged) - MANIFEST_NAME_CAP} more")
     lines.append(f"  TOTAL to free: {_mb(total)}")
     # Header and breakout from ONE source. `protected` arrives as a
     # caller-computed scalar, and a header that can disagree with the lines
@@ -649,6 +663,32 @@ def repo_root_from_tool() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def git_common_dir(repo: str) -> str | None:
+    """A repo's shared git directory, resolved absolute — the identity every
+    worktree of one repository shares and no two repositories do. ``None`` when
+    it cannot be read, so callers can skip a comparison rather than guess."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo, "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    out = proc.stdout.strip()
+    if not out:
+        return None
+    path = Path(out)
+    # git may answer relative to the repo it was asked about.
+    if not path.is_absolute():
+        path = Path(repo) / path
+    try:
+        return str(path.resolve())
+    except OSError:
+        return None
+
+
 def resolve_dropset_repo(explicit: str | None) -> str:
     """The repo whose worktrees are protected: ``--dropset-repo`` when given,
     otherwise this tool's own repo (see :func:`repo_root_from_tool`).
@@ -659,11 +699,23 @@ def resolve_dropset_repo(explicit: str | None) -> str:
     cannot, rather than treating "I don't know the worktrees" as "there are
     none".
 
-    Both paths are then sanity-checked for a ``.claude`` directory. That gate
-    is cheap and it is the only thing standing behind an explicit
-    ``--dropset-repo`` typo: the caller's intent is honored, but a path that
-    cannot be the repo this tool protects is refused rather than used to
-    compute protections that would match nothing.
+    Both paths are then sanity-checked for a ``.claude`` directory, and an
+    **explicit** path must additionally name *this* repository — compared by
+    ``--git-common-dir``, which every worktree of a repo shares and no other
+    repo does.
+
+    That second gate exists because the explicit path is the **mandated** one:
+    the skill tells operators to always pass ``--dropset-repo``, so it is the
+    path most likely to carry a typo, and a ``.claude`` check alone accepts any
+    other Claude-using checkout — after which every protection is computed for
+    the wrong repo and every dropset slug lands in ``non-dropset``. That is the
+    original failure exactly, reached through the flag meant to prevent it.
+
+    A second clone of this repo is refused too, and the remedy is in the error:
+    run *that* checkout's own copy of the tool, whose default resolves it
+    correctly. If either side's common dir cannot be read the comparison is
+    skipped rather than guessed — the ``.claude`` gate still applies, and the
+    defaulted path does not depend on it.
     """
     candidate = explicit if explicit else str(repo_root_from_tool())
     try:
@@ -677,12 +729,33 @@ def resolve_dropset_repo(explicit: str | None) -> str:
     except (OSError, subprocess.CalledProcessError):
         root = ""
     if not root:
+        # Name the right remedy for the path actually taken: telling a caller
+        # who passed --dropset-repo to pass --dropset-repo reads as a bug in
+        # the tool.
+        remedy = (
+            "Check the path you passed."
+            if explicit
+            else "Pass --dropset-repo <path> explicitly."
+        )
         raise PruneError(
             f"cannot resolve the dropset repo: {candidate!r} is not inside a "
-            "git worktree. Pass --dropset-repo <path> explicitly. Refusing "
-            "rather than running with an empty worktree set, which would "
-            "age-delete live sessions' transcripts as 'non-dropset'."
+            f"git worktree. {remedy} Refusing rather than running with an "
+            "empty worktree set, which would age-delete live sessions' "
+            "transcripts as 'non-dropset'."
         )
+    if explicit:
+        mine = git_common_dir(str(repo_root_from_tool()))
+        theirs = git_common_dir(root)
+        if mine and theirs and mine != theirs:
+            raise PruneError(
+                f"--dropset-repo {explicit!r} resolves to a different "
+                f"repository than this tool belongs to ({root!r} vs "
+                f"{repo_root_from_tool()!r}). Refusing: every protection would "
+                "be computed for the wrong repo and every slug of the intended "
+                "one would age-delete as 'non-dropset'. To prune for that "
+                "checkout, run its own copy of this tool — the default "
+                "resolves it correctly."
+            )
     if not (Path(root) / ".claude").is_dir():
         raise PruneError(
             f"resolved repo {root!r} has no .claude directory, so it cannot be "
@@ -733,9 +806,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dropset-repo",
         help="path to a dropset checkout (any worktree will do); every existing "
-        "worktree's slug is kept. Defaults to the working directory's repo "
-        "root; the run ABORTS if neither resolves, rather than protecting "
-        "nothing.",
+        "worktree's slug is kept. Defaults to THIS TOOL'S OWN repo, not the "
+        "working directory — so the cwd never affects what is protected. A "
+        "path naming a different repository is refused, as is one that does "
+        "not resolve; the run ABORTS rather than protecting nothing.",
     )
     p.add_argument(
         "--protected-branch",

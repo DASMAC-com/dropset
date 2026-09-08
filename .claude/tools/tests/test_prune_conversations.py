@@ -555,21 +555,52 @@ class RunWiringTests(unittest.TestCase):
             os.utime(path, (self.AGED, self.AGED))
         return home, cache
 
-    def _run(self, tmp):
+    def _run(self, tmp, argv=(), keep_mocks=False):
         home, cache = self._tree(tmp)
         buf = io.StringIO()
         with (
             mock.patch.object(pc, "claude_home", return_value=home),
             mock.patch.object(pc, "cli_cache_root", return_value=cache),
-            mock.patch.object(pc, "resolve_dropset_repo", return_value=self.BASE),
-            mock.patch.object(pc, "read_worktrees", return_value=self.WORKTREES),
+            mock.patch.object(
+                pc, "resolve_dropset_repo", return_value=self.BASE
+            ) as resolve,
+            mock.patch.object(
+                pc, "read_worktrees", return_value=self.WORKTREES
+            ) as read,
             redirect_stdout(buf),
         ):
             code = pc.run(
-                ["prune_conversations.py", "--age-days", "0", "--now", str(self.NOW)]
+                [
+                    "prune_conversations.py",
+                    "--age-days",
+                    "0",
+                    "--now",
+                    str(self.NOW),
+                    *argv,
+                ]
             )
         self.assertEqual(code, 0)
-        return buf.getvalue()
+        return (buf.getvalue(), resolve, read) if keep_mocks else buf.getvalue()
+
+    def test_the_resolved_repo_is_what_reaches_the_worktree_lookup(self):
+        """The one wiring link the rest of this class cannot see.
+
+        Both endpoints are stubbed, so asserting only on the printed manifest
+        leaves this link untested — and it is the link the 2026-09-07 loss ran
+        through. Reverting ``read_worktrees(repo)`` to
+        ``read_worktrees(args.dropset_repo)``, or dropping the
+        ``resolve_dropset_repo`` call entirely, reproduces the incident
+        invocation exactly while every output assertion here still passes. So
+        assert the call arguments, not just the output.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _out, resolve, read = self._run(
+                tmp, argv=("--dropset-repo", "/passed/explicitly"), keep_mocks=True
+            )
+        # The parsed flag reaches the resolver...
+        resolve.assert_called_once_with("/passed/explicitly")
+        # ...and the RESOLVED value, not the raw flag, reaches the lookup.
+        read.assert_called_once_with(self.BASE)
 
     def test_a_live_worktrees_transcript_and_file_history_both_survive(self):
         # The whole point of the fix, asserted through the wiring rather than
@@ -739,11 +770,39 @@ class InvocationGuardTests(unittest.TestCase):
                 resolve_dropset_repo(tmp)
         self.assertIn(".claude", str(caught.exception))
 
+    def test_an_explicit_path_naming_a_different_repo_is_refused(self):
+        # The mandated path is the less-guarded one: the skill tells operators
+        # to always pass --dropset-repo, so it is where a typo lands, and a
+        # .claude check alone accepts any other Claude-using checkout. Compare
+        # by --git-common-dir, which every worktree of a repo shares.
+        with tempfile.TemporaryDirectory() as tmp:
+            other = Path(tmp) / "other"
+            (other / ".claude").mkdir(parents=True)
+            subprocess.run(["git", "-C", str(other), "init", "-q"], check=True)
+            with self.assertRaises(PruneError) as caught:
+                resolve_dropset_repo(str(other))
+        message = str(caught.exception)
+        self.assertIn("different repository", message)
+        # The remedy has to be actionable, since a second clone hits this too.
+        self.assertIn("run its own copy", message)
+
+    def test_a_worktree_of_this_repo_is_accepted_explicitly(self):
+        # The gate must not reject the legitimate case it most resembles: this
+        # session runs from a linked worktree, whose common dir is the base
+        # repo's, so passing either must work.
+        root = str(pc.repo_root_from_tool())
+        self.assertTrue(resolve_dropset_repo(root))
+
     def test_an_explicit_non_repo_path_aborts(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(PruneError) as caught:
                 resolve_dropset_repo(tmp)
-        self.assertIn("--dropset-repo", str(caught.exception))
+        message = str(caught.exception)
+        self.assertIn("not inside a git worktree", message)
+        # The remedy must match the path taken: telling a caller who passed
+        # --dropset-repo to pass --dropset-repo reads as a bug in the tool.
+        self.assertIn("Check the path you passed", message)
+        self.assertNotIn("Pass --dropset-repo", message)
 
     def test_a_path_that_is_not_a_repo_aborts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -798,6 +857,24 @@ class ManifestNamingTests(unittest.TestCase):
         }
         out = render_manifest(groups, 0)
         self.assertLess(out.index("- eng-1192"), out.index("- aaa"))
+
+    def test_tagged_entries_are_never_capped(self):
+        # Sorting tagged first is NOT sufficient on its own: a repo accumulates
+        # per-issue worktrees, so a group can hold more tagged entries than the
+        # cap, and truncating those drops real session names — in arbitrary
+        # lexical order — from a hard-delete approval prompt. That is the exact
+        # hole naming entries was added to close.
+        count = pc.MANIFEST_NAME_CAP + 5
+        groups = {
+            "dropset-old": [
+                Record(Path(f"/p/w{i:03d}"), "dropset-old", True, "aged", 1, f"eng-{i}")
+                for i in range(count)
+            ]
+        }
+        out = render_manifest(groups, 0)
+        for i in range(count):
+            self.assertIn(f"- eng-{i} ", out)
+        self.assertNotIn("more", out.split("TOTAL")[0])
 
     def test_a_long_group_is_capped_with_a_remainder_line(self):
         count = pc.MANIFEST_NAME_CAP + 3
