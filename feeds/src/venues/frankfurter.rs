@@ -4,8 +4,15 @@
 //! The API quotes `<ccy>` per USD; each reading is **inverted** to USD per
 //! `<ccy>`, which is the peg a stablecoin tracks and the unit the fair-value
 //! engine's anchor leg expects. It is the spec's designated anchor *fallback*
-//! tier — daily ECB reference rates, not a streaming primary — so it carries
-//! the anchor until Pyth Hermes / OANDA land (docs/data-feeds.md §9).
+//! tier — daily ECB reference rates, not a streaming primary
+//! (docs/data-feeds.md §9).
+//!
+//! **A permanent fallback, not a stand-in.** This used to say it carried the
+//! anchor "until Pyth Hermes / OANDA land"; both have, and the role did not
+//! change — a once-a-business-day administered fix is breadth and corroboration
+//! by nature, so it must never be a live-quote lead however many streaming
+//! sources exist. OANDA in particular does not supersede it everywhere: that
+//! venue's instrument list is direction-fixed and cannot serve CAD/USD at all.
 
 use super::Quotes;
 use crate::time::parse_civil_utc;

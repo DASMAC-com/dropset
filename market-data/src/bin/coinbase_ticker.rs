@@ -35,11 +35,24 @@ const SOURCE: &str = "coinbase";
 
 /// The two demo-roster tokens Coinbase lists against USDC.
 ///
-/// `AUDD-USDC` stopped producing on 2026-08-17 and was de-rostered by config;
-/// it is back because the venue never dropped it — the product is still
-/// `online` with `trading_disabled: false`, so the silence was ours. It quotes
-/// `limit_only`, which constrains trading on the venue and not this collector:
-/// the ticker publishes either way.
+/// `AUDD-USDC` stopped producing on 2026-08-17 and was then de-rostered by
+/// config. Note the order: the venue went quiet **first** and the de-rostering
+/// followed, so the original silence was not ours — what was ours is that the
+/// product then became invisible rather than merely dark, which is the defect
+/// §6 of docs/dashboards.md describes.
+///
+/// It is back because the listing never went away: re-checked 2026-09-08, the
+/// product is `online` with `trading_disabled: false`. That is a weaker claim
+/// than "it will produce" — it is thinly traded, and a ticker poll returns the
+/// last print whether or not one happened recently. `limit_only` constrains
+/// trading on the venue, not this collector.
+///
+/// Worth distinguishing from the NGN decision in the sibling Frankfurter
+/// collector, which refuses to roster a currency for fear of a permanently
+/// silent series. The cases differ in kind: the ECB set does **not carry**
+/// NGN, so that series could never arrive, whereas this product is listed and
+/// tradable and will produce whenever it trades. A listed-but-quiet pair is
+/// worth recording; an unlisted one is not.
 const DEFAULT_PRODUCTS: &str = "EURC-USDC,AUDD-USDC";
 
 const DEFAULTS: TickDefaults = TickDefaults {

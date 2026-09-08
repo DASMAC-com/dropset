@@ -558,8 +558,9 @@ indexer-down: check-docker
 # also daily, and the one source that is deliberately never a live-quote
 # lead). The two daily tiers overlap everywhere except NGN, which the ECB
 # set does not carry — so er-api remains its only keyless source.
-# er-api takes the slot Pyth vacated —
-# the paragraph below is about a different, earlier fourth.
+# er-api took the slot Pyth vacated, and Frankfurter is the fifth added
+# on top; the paragraph below is about that earlier fourth, not either
+# of them.
 #
 # Pyth Hermes used to be the fourth and is no longer started here. It went
 # from keyless to keyed on 2026-08-26 and Pyth sells no usable free API tier,

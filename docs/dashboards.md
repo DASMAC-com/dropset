@@ -46,16 +46,16 @@ Only these venues. No Chainlink, Band, Supra or new surveys for the
 MVP. **Every feed that exists in the stack appears on the dashboard**,
 including ones that carry no MVP pair — visibility is the point.
 
-| Venue         | Why it is here                              | Cadence | Stale after |
-| ------------- | ------------------------------------------- | ------- | ----------- |
-| Coinbase      | The venue leg: real EURC and AUDD basis     | 15 s    | 48 h        |
-| Kraken        | Peg truth (EURC/EUR, EURC/USD, USDC/USD)    | 15 s    | 48 h        |
-| OANDA         | The FX anchor; deepest, treated as truth    | 60 s    | 72 h        |
-| Twelve Data   | Second independent FX anchor for redundancy | 60 s    | 72 h        |
-| Alpha Vantage | Third FX anchor, daily — a slow cross-check | 24 h    | 72 h        |
-| Frankfurter   | Keyless ECB rates; a composite input        | 24 h    | 72 h        |
-| er-api        | Widest keyless table; sole NGN source       | 24 h    | 72 h        |
-| Kraken QCAD   | The §3.1 CAD-stablecoin tripwire, not a peg | 15 s    | 48 h        |
+| Venue         | Why it is here                                       | Cadence | Stale after |
+| ------------- | ---------------------------------------------------- | ------- | ----------- |
+| Coinbase      | The venue leg: real EURC and AUDD basis              | 15 s    | 48 h        |
+| Kraken        | Peg truth (USDC/USD, EURC/USD, EURC/EUR) + EURC/USDC | 15 s    | 48 h        |
+| OANDA         | The FX anchor; deepest, treated as truth             | 60 s    | 72 h        |
+| Twelve Data   | Second independent FX anchor for redundancy          | 60 s    | 72 h        |
+| Alpha Vantage | Third FX anchor, daily — a slow cross-check          | 24 h    | 72 h        |
+| Frankfurter   | Keyless ECB rates; a composite input                 | 24 h    | 72 h        |
+| er-api        | Widest keyless table; sole NGN source                | 24 h    | 72 h        |
+| Kraken QCAD   | The §3.1 CAD-stablecoin tripwire, not a peg          | 15 s    | 48 h        |
 
 **Frankfurter is the ECB fix.** One name, always this one; the two are
 never wired as separate sources.
@@ -345,13 +345,20 @@ and it is exactly the rendering class the sentence describes.)
    which a Friday fix would read as fresh on Sunday night. The
    maker's cascade still consumes the bare map, unchanged.
 
-1. **AUDD/USDC stopped on 2026-08-17** and was de-rostered by config.
-   *Closed.* Coinbase still lists it `online` with trading enabled —
-   re-verified 2026-09-08 — so this was a roster change, not a
-   delisting. Both Coinbase collectors now default to
-   `EURC-USDC,AUDD-USDC`. The product is `limit_only`, which constrains
-   trading on the venue and not the collectors: the candles and the
-   ticker publish either way.
+1. **AUDD/USDC stopped on 2026-08-17** and was then de-rostered by
+   config. *Closed.* Coinbase still lists it `online` with trading
+   enabled — re-verified 2026-09-08 — so this was never a delisting,
+   and both collectors now default to `EURC-USDC,AUDD-USDC`.
+
+   Two honest limits on that. The order was venue-first: it went quiet,
+   *then* we de-rostered, so the original silence was not ours — what
+   was ours is that it became invisible rather than dark (item 6).
+   And re-rostering is verified on the **ticker** leg only, which
+   returned a print at 0.71805; the **candle** leg is asserted, not
+   measured, because candles come from trades and the pair is thinly
+   traded. Expect its `cex_prices` series to stay empty until it trades
+   again — a true-and-expected blank, which §4 still cannot render
+   distinctly (item 10).
 
 1. **A de-rostered product is invisible, not dark.** The registry is
    written at collector start, so dropping a product from the roster
@@ -404,11 +411,14 @@ and it is exactly the rendering class the sentence describes.)
 
    The same ruling settled the **unit**: bps everywhere, never pips —
    see the note in §3 for why a level-drifting increment is the wrong
-   denomination for a maker's relative spread. §3's two pip forms were
-   the only ones in the docs tree bar one, a bps→pip conversion in
-   `docs/research/crypto-oracle-survey.md` that illustrates a third
-   party's oracle threshold; that one is bps-primary already and was
-   left alone.
+   denomination for a maker's relative spread. A tree-wide sweep found
+   pips in exactly three places: §3's two *spread figures*, both now
+   bps, and a bps→pip conversion in
+   `docs/research/crypto-oracle-survey.md` illustrating a third party's
+   oracle threshold, which is bps-primary already and was left alone.
+   Note §3 still mentions pips — the ruling bans them as a
+   **denomination**, not as a word, and the note explaining why quotes
+   the conversion it rejects.
 
 1. **A panel can render an ambiguous blank.** `Fusion weight by source`
    reads `maker_leg_contributions`, which is empty whenever no maker is

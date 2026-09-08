@@ -11,8 +11,10 @@
 #   `market-data-pyth` (batched FX with a published confidence),
 #   `market-data-coinbase-ticker` (the prints between candle closes), and the
 #   two keyless daily FX references `market-data-erapi` /
-#   `-frankfurter`, which stamp each reading with the provider's own
-#   refresh instant rather than the poll second.
+#   `-frankfurter`, which attribute each reading to the day it describes
+#   rather than to the poll second — er-api from the provider's own refresh
+#   instant, Frankfurter from midnight UTC of the ECB reference date, which
+#   is a derived convention rather than a published instant.
 #
 # One binary serves a **venue**, not a pair: each takes a product roster, so
 # covering another pair is configuration rather than another service.

@@ -174,20 +174,23 @@ maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   single product, so there is nothing to batch). Those three are the
   reason "every price Source is a batched quote venue" is NOT an
   invariant of this seam — the batched-poll convention does not reach
-  them, and a change to Source reaches all eight of these. Counted
-  properly the blast radius is wider still: feeds/src/venues holds
-  TWELVE impl Source blocks, because the four candle adapters (oanda,
-  twelvedata, alphavantage, and coinbase's second impl) implement the
-  same trait. The eight are this seam's price Sources; a Source trait
-  change reaches the candle four as well. The eighth is
-  frankfurter.rs's FrankfurterSnapshots, and it makes that file the
-  first to sit on BOTH sides of the convention: FrankfurterSource still
-  yields the bare Quotes map the maker consumes, while
-  FrankfurterSnapshots yields a FrankfurterSnapshot carrying the ECB
-  reference date for the store. So "which side of the convention is
-  this adapter on" is now a per-Source question rather than a per-file
-  one, and the maker-bot's half of this seam is unchanged by that
-  addition — only market-data constructs the snapshot Source. It
+  them, and a change to Source reaches all seven of this seam's price
+  Sources. Three counts are in play here and conflating them is the
+  standing trap: SEVEN price Sources cross this seam; feeds/src/venues
+  holds TWELVE impl Source blocks, because the four candle adapters
+  (oanda, twelvedata, alphavantage, and coinbase's second impl)
+  implement the same trait and never touch the maker; and a Source
+  TRAIT change reaches all twelve. Quote the number that matches the
+  question being asked.
+  frankfurter.rs now hosts an EIGHTH venue Source that is deliberately
+  NOT on this seam — FrankfurterSnapshotSource, which yields a
+  FrankfurterSnapshot carrying the ECB reference date and is
+  constructed only by market-data's collector. That makes it the first
+  venue file to sit on both sides of the batched-poll convention at
+  once: FrankfurterSource still yields the bare Quotes map the maker
+  consumes and is unchanged, so "which side of the convention is this
+  adapter on" is now a per-Source question rather than a per-file one.
+  The maker-bot's half of this seam did not move. It
   implements
   Source itself only for the logs-subscription fill socket bridged
   through ChannelSource (bots/maker-bot/src/fills.rs), driving both with

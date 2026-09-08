@@ -884,7 +884,7 @@ derived convention rather than a published instant — er-api stamps the
 provider's `last_update`, while Frankfurter publishes only a civil
 reference **date** (the ECB's own fix lands ~16:00 CET) and the
 collector floors it to midnight UTC. For them the stamp matters more
-than idempotency: These fixes change once a
+than idempotency: these fixes change once a
 *business* day, so the poll second is not merely imprecise — it would
 record a Friday fix as fresh on Sunday night, and `max(observed_at)` is
 what the instruments view reports as feed freshness. Kraken and
@@ -1198,10 +1198,12 @@ instants rather than a bare `Quotes` map, so it does not drop into the
 maker's fair-value cascade the way Frankfurter's does — the instants
 want a store that keys on them. Frankfurter reaches the same place from
 the other side: its `Source` still yields the bare map the cascade
-consumes, and a second source type (`FrankfurterSnapshots`) carries the
-ECB reference date for the store. Both stores therefore key on the
-provider's own instant rather than the poll second; neither quoting
-path moved.
+consumes, and a second source type (`FrankfurterSnapshotSource`) carries the
+ECB reference date for the store. Both stores therefore key on the day
+the reading describes rather than on the poll second — er-api on the
+provider's own instant, Frankfurter on midnight UTC of a civil date it
+publishes without a time, which is a derived convention and not an
+instant the venue states. Neither quoting path moved.
 
 *License — internal use only.* The open-access endpoint permits caching
 and commercial currency-conversion use, **prohibits re-distribution**,
