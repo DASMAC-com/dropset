@@ -730,6 +730,10 @@ FX_UP = $(FX_COMPOSE) up -d --build --quiet-pull postgres migrate \
 # alphavantage comment). So the fix is not to tighten it — it is to look at
 # the containers again once they have had a moment to fall over.
 #
+# `KEYED_PROBE` is now a SECOND reason that form cannot change: its `ps -q`
+# calls run outside `op run`, so they parse this file with none of the enclave
+# values set. The required form would fail there too, on every bring-up.
+#
 # `--wait` was the other candidate and is still not adopted, because it
 # answers a weaker question. It was measured to exit 0 here despite the
 # one-shot `migrate`, which `depends_on: service_completed_successfully`
@@ -744,7 +748,10 @@ FX_UP = $(FX_COMPOSE) up -d --build --quiet-pull postgres migrate \
 #
 # `KEYED_WARN` is not self-contained: it reads a `reason` and an `affected`
 # shell variable that its caller must set in the same shell. `KEYED_UP` below
-# is that caller, and it sets both on every branch that warns.
+# is that caller. The two are set differently, and the asymmetry is
+# deliberate: `reason` is set by each branch that warns, because each has its
+# own; `affected` is defaulted once to all three venues and overridden only on
+# the probe branch, which is the only one that can narrow it.
 # `demo` passes `KEYED_PAUSE=1`, which holds the terminal after the banner
 # until the operator acknowledges it. That target is the whole reason the
 # banner has to be loud and the only place it is not: `demo` opens a Grafana
@@ -758,16 +765,24 @@ FX_UP = $(FX_COMPOSE) up -d --build --quiet-pull postgres migrate \
 KEYED_PAUSE =
 KEYED_WARN = printf '\n%s\n%s\n%s\n%s\n%s\n\n' \
 	'=====================================================================' \
-	'  WARNING — keyed venues are NOT recording.' \
+	'  WARNING — keyed recording is INCOMPLETE.' \
 	"  Reason: $$reason" \
 	"  Recording nothing: $$affected" \
 	'====================================================================='; \
 	if [ -n '$(KEYED_PAUSE)' ] && [ -t 0 ]; then \
 	printf '  press enter to continue… '; read -r _; printf '\n'; fi
 # The bounded liveness probe, run after a bring-up that exited 0. It sets
-# `dead` to a space-separated list of the services that are not recording and
-# leaves it empty when all three are — so it is not self-contained either,
-# and `KEYED_UP` below reads that variable in the same shell.
+# `dead` to a space-separated list of the services that did not stay up across
+# the window, and leaves it empty when all three did — so it is not
+# self-contained either, and `KEYED_UP` below reads that variable in the same
+# shell.
+#
+# Note what that does and does not say. The probe reads liveness, not
+# recording: a collector holding a WRONG credential rather than a missing one
+# starts, stays up, 401s every poll, and reads clean here. The banner it feeds
+# is honest about the same distance (see the enclave example file) — this
+# closes the started-then-died hole, not the records-nothing-while-up one,
+# which is what the dashboards' staleness bounds are for.
 #
 # It samples the restart counts, waits, then looks again, and a service fails
 # on either of two conditions: its status is not `running` (dead, or inside a
@@ -815,9 +830,9 @@ KEYED_PROBE = dead=''; before=''; \
 	cid="$$($(FX_COMPOSE) ps -q "$$svc")"; \
 	status="$$(docker inspect -f '{{.State.Status}}' "$$cid" 2>/dev/null)"; \
 	restarts="$$(docker inspect -f '{{.RestartCount}}' "$$cid" 2>/dev/null)"; \
-	still=''; \
-	case " $$before " in *" $$svc:$$restarts "*) still=y;; esac; \
-	if [ "$$status" != running ] || [ -z "$$still" ]; then \
+	unchanged=''; \
+	case " $$before " in *" $$svc:$$restarts "*) unchanged=y;; esac; \
+	if [ "$$status" != 'running' ] || [ -z "$$unchanged" ]; then \
 	if [ -z "$$dead" ]; then dead="$$svc"; else dead="$$dead $$svc"; fi; fi; \
 	done
 KEYED_UP = affected='OANDA, Twelve Data and Alpha Vantage'; \
@@ -827,7 +842,7 @@ KEYED_UP = affected='OANDA, Twelve Data and Alpha Vantage'; \
 	reason='the keyed bring-up failed (see the error above)'; $(KEYED_WARN); \
 	else $(KEYED_PROBE); \
 	if [ -n "$$dead" ]; then affected="$$dead"; \
-	reason='started, then stopped — check its credential and its logs'; \
+	reason='started, then stopped or restarted — check their logs'; \
 	$(KEYED_WARN); fi; fi
 
 # Localnet bot stack: the maker bot (infra/localnet). It signs with the repo
