@@ -1112,15 +1112,15 @@
       {
         "current": {
           "selected": true,
-          "text": "coinbase",
-          "value": "coinbase"
+          "text": "oanda",
+          "value": "oanda"
         },
         "datasource": {
           "type": "postgres",
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
-        "description": "The single source the candlestick panel draws. Candles from two venues cannot share one set of bars. The committed default is the only source that exists today, so the panel paints on first load without waiting on this query.",
+        "description": "The single source the candlestick panel draws. Candles from two venues cannot share one set of bars. This default is paired with the Product default and must stay paired: the panel filters on BOTH, so a source that carries none of the defaulted products paints nothing at all. oanda carries EUR-USD and AUD-USD, two of the three MVP anchors, so the panel paints on first load; coinbase, the previous default, carries candles for EURC-USDC alone and would leave every repeat empty. CAD-USD renders empty against any source until it joins the keyed venues' roster, and that emptiness is a true signal rather than a fault.",
         "includeAll": false,
         "label": "Candle source",
         "multi": false,

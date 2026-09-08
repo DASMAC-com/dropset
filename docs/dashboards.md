@@ -64,35 +64,51 @@ including ones that carry no MVP pair — visibility is the point.
 **Frankfurter is the ECB fix.** One name, always this one; the two are
 never wired as separate sources.
 
+**Three of those rows are the target state, not today's.** The table is
+what the dashboard must show once the roster is complete, so read it
+with §8: **Frankfurter** has no collector at all (§8 item 4);
+**Coinbase's AUDD** leg has collected nothing since 2026-08-17 (§8 item
+5); and **Kraken QCAD** is not collected yet (§8 item 9). Everything
+else in the table is live and fresh. A roster table that quietly mixed
+the two would be the exact no-data-reads-as-healthy trap this document
+exists to close.
+
 The 72 h / 48 h split is the class-aware staleness bound already
-implemented in `instrument_source_liveness`. Panels **read that view**
-rather than restating the constants, so a liveness verdict can never
-silently diverge between two places.
+implemented in `instrument_source_liveness`. Panels **must read that
+view** rather than restate the constants, so that two liveness verdicts
+cannot silently diverge. Today only the registry-driven coverage panel
+does; the rest query the measurement tables directly, which is part of
+what §8 item 1 is about.
 
 ### Cadence is not interchangeable with freshness
 
 A daily source is not a slow real-time source; it is a different kind
 of claim. Measured 2026-09-07: er-api's CAD/USD read 0.723025 while
-Kraken's live USD/CAD implied 0.724013 — **13.6 bp apart**, entirely
+Kraken's live USD/CAD of 1.381190 implied a CAD/USD of 0.724013 —
+**13.6 bp apart**, entirely
 explained by er-api's once-daily snapshot. A daily venue is a breadth
 and sanity input. It must never be the sole input to a live quote, and
 the dashboard must make its cadence legible so nobody mistakes the one
 for the other.
 
-**A gap in a daily series is usually permanent.** A feed cursor is an
-inclusive lower bound at `next_start` — a bar landing exactly on it is
-still written — but nothing ever rewinds it. So a bar that arrives
-*after* the cursor has passed its timestamp is skipped for good, and
-the hole never heals on a later poll. Alpha Vantage carries two such
-holes (2026-08-25 and 09-01). Coverage panels must therefore count
+**A gap in a daily series is usually permanent.** The FX collectors'
+cursor is an inclusive lower bound at `next_start` — a bar landing
+exactly on it is still written — but nothing ever rewinds it. So a bar
+that arrives *after* the cursor has passed its timestamp is skipped for
+good, and the hole never heals on a later poll. Alpha Vantage carries
+two such holes (2026-08-25 and 09-01). Measured on that collector; the
+paged-backfill resume cursor is a different thing with different
+semantics, so do not read this as a statement about every cursor.
+Coverage panels must therefore count
 what is *present* over a window rather than infer health from the
 latest timestamp, which a permanent hole leaves looking perfectly
 fresh.
 
 ## 3. Redundancy — the criterion the maker actually needs
 
-The maker must keep quoting at a **20–30 pip spread with any one or two
-venues dark**. The dashboard shows this *directly*, not by implication:
+The maker must keep quoting at a **20–30 pip spread (roughly 17–26 bps
+on a ~1.17 quote) with any one or two venues dark**. The dashboard shows
+this *directly*, not by implication:
 
 > **live venues per pair, against the minimum that pair needs.**
 
@@ -130,7 +146,11 @@ the failure mode this dashboard exists to prevent.
 - **Parked** — deliberately not producing. Quiet, legible, never red.
 
 Parked is a real state with real occupants, and it must be visibly
-*chosen*: Pyth is dark by decision (keyed since 2026-08-26); CADC's
+*chosen*: Pyth is dark by decision — Hermes now requires a Bearer key,
+and we hold none, which is why it stays parked. Note that is the reason
+it is *not restarted*, not a diagnosis of the original outage: our
+collector's failure was never pinned to a status code, because the log
+line omits one. CADC's
 basis is an assumed peg, not a broken feed. A parked source rendered as
 a fault trains the operator to ignore red, which costs more than the
 outage it was meant to surface.
@@ -237,18 +257,24 @@ one missing.
 Recorded here because a spec that hides its own unmet requirements is
 worse than no spec. Each is a defect against a rule above.
 
-1. **A tick-only venue is invisible on the "by source" panels.** This
-   is the one that bites now. `rows per minute by source` and
-   `source × product coverage` both query `cex_prices` alone, so every
-   venue that writes only `spot_ticks` — **Kraken**, **er-api**,
-   **Pyth** — is missing from panels whose names promise every source.
-   `var-candle-source` compounds it: it is
-   `SELECT DISTINCT source FROM cex_prices`, so a tick-only venue can
-   never even be *selected*. Kraken has been live and fresh throughout
-   and still reads as absent, which is exactly the every-wired-feed
-   rule failing. The registry-driven coverage panel is the one that
-   gets this right, and is the model for the fix — these panels must
-   read across both tables, not one.
+**What closed here, and what did not.** The PR carrying this spec closes
+item 3 outright and the naming half of item 1. The four roster changes
+are items 2, 5, 7 and 9, and item 4 is the Frankfurter collector: those
+five land together in the following feeds PR, deliberately, so the
+dashboard is arranged once against a complete feed set rather than
+twice. Items 6, 8, 10 and 11, and the selector half of item 1, are open
+with no owner yet.
+
+1. **A tick-only venue is still unreachable in the selector.** The
+   *naming* half of this is closed: `Candle rows per minute by source`
+   and `Candle coverage` now say which tier they cover, which is the
+   second remedy §6.1 allows. What remains open is the selector —
+   `var-candle-source` is `SELECT DISTINCT source FROM cex_prices`, so
+   a tick-only venue (**Kraken**, **er-api**, **Pyth**) can never be
+   *selected* at all. The registry-driven coverage panel is the model
+   for the fix: populate selectors from the registry, which knows every
+   source by construction. Making the two candle panels read across
+   both tables is the fuller remedy and remains open too.
 1. **CAD/USD was not collected at all** until 2026-09-07, so §1's
    mandatory anchor was missing for CADC. Now supplied by er-api at a
    daily cadence, which per §2 is breadth and not a live-quote input:
@@ -260,7 +286,10 @@ worse than no spec. Each is a defect against a rule above.
    its binary, so it failed at start with
    `executable file not found in $PATH`. Both are now corrected. It is
    the only keyless CAD/USD and the only NGN source, and starting it
-   took live source-product pairs from 10 to 24.
+   added 14 live source-product pairs, 10 to 24. The observed total that
+   evening was 25: Alpha Vantage published its Monday bar during the
+   same window, which is unrelated to er-api and is counted separately
+   here so the 14 stays attributable.
 1. **Frankfurter has no market-data collector.** Ratified as a real
    price feed and an input to the composite at its honest daily
    cadence, so this is required work, not a cut. It exists today only
@@ -287,3 +316,19 @@ worse than no spec. Each is a defect against a rule above.
    parked-versus-faulted rendering is the front half of that fix — it
    is what makes the state legible; the back half is noticing the
    process at all, which no panel does today.
+1. **The §3.1 QCAD tripwire is specified but not collected.** It is one
+   product-id line on the Kraken collector, and it lands with the other
+   roster changes rather than here — but until it does, §2's row for it
+   describes a target rather than a feed.
+1. **CAD/USD has no candles from any source**, only er-api ticks, so the
+   OHLC panel's CAD/USD repeat is empty by construction until item 2
+   lands. That emptiness is a *true* signal — the anchor genuinely is
+   not being collected at candle granularity — but §4 has no rendering
+   that distinguishes "true and expected" from "faulted", so today it
+   reads as the same ambiguous blank as the Fusion-weight panel below.
+1. **A panel can render an ambiguous blank.** `Fusion weight by source`
+   reads `maker_leg_contributions`, which is empty whenever no maker is
+   running — the ordinary state on a collectors-only stack. It renders
+   "No data", indistinguishable from a broken query. This is §4's rule
+   with nothing implementing it, and it is the generalization of the
+   item above.

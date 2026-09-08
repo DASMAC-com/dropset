@@ -591,7 +591,9 @@ into a privilege — a dashboard cannot write a table by accident. Grafana
 (`market-data/grafana/`) is the first such consumer. It is one shared
 reader rather than a role per consumer on purpose: every reader needs
 exactly the same grants, so splitting them would multiply bookkeeping
-without buying isolation.
+without buying isolation. What those dashboards show, and why, is
+specified in `docs/dashboards.md` — the JSON stays the source of truth
+for rendering, that document for intent.
 
 | Table                                                              | Writer              | Contents                                                                                       |
 | ------------------------------------------------------------------ | ------------------- | ---------------------------------------------------------------------------------------------- |

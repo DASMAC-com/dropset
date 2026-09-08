@@ -554,7 +554,8 @@ indexer-down: check-docker
 # (the prints between candle closes), Kraken (batched peg truth — a real
 # market print of `USDC/USD`), and er-api (the widest keyless table, one
 # daily snapshot priced across the whole roster, and the only source of
-# several thin-roster currencies).
+# several thin-roster currencies). er-api takes the slot Pyth vacated —
+# the paragraph below is about a different, earlier fourth.
 #
 # Pyth Hermes used to be the fourth and is no longer started here. It went
 # from keyless to keyed on 2026-08-26 and Pyth sells no usable free API tier,
