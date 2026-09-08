@@ -152,9 +152,11 @@ exist: the identical key sent as `Bearer <key>` returns a clean
 
 Two further facts from that probe. The legacy `/sse` endpoint is **gone**
 (404 under either header form), so `/mcp` is the only endpoint. And the
-locally configured server is the *same server* the hosted connector
-points at, so the tool surface is identical — `list_comments` included,
-which is the one gap a Bedrock session would otherwise have had.
+tool surface is identical rather than merely similar: a `tools/list` over
+the API-key session returns **73** tools, one-for-one the same set the
+hosted connector exposes — `list_comments` included, which is the one gap
+a Bedrock session would otherwise have had. That is the same server
+answering, reached with a different credential.
 
 **What this verification does and does not establish.** The registration
 above was confirmed `✔ Connected` at user scope, which proves the
