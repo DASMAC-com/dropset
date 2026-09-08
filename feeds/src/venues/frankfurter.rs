@@ -41,12 +41,17 @@ const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
 
 /// A Frankfurter reading together with the ECB reference date it belongs to.
 ///
-/// The bare [`Quotes`] map [`FrankfurterSource`] yields is what the maker's
-/// fair-value cascade consumes, and it is deliberately unchanged. A *store*
-/// needs more than the rates: these are daily reference rates, so the instant a
-/// reading was fetched is not the instant it describes, and stamping at fetch
-/// time would record a value up to a business day old — over a weekend,
-/// longer — as fresh to the second. This type carries the missing half.
+/// These are daily reference rates, so the instant a reading was fetched is not
+/// the instant it describes: stamping at fetch time records a value up to a
+/// business day old — over a weekend, longer — as fresh to the second. This
+/// type carries the missing half.
+///
+/// Both a *store* keying readings on the reference date and the *maker's*
+/// fair-value cascade consume this, the latter to age the fix from publication
+/// rather than receipt. The bare [`Quotes`] map [`FrankfurterSource`] yields
+/// remains for callers that want the rates and no stamp — the one-shot dry-run
+/// path is one — and that source stays free of the date parse deliberately.
+#[derive(Clone, Debug, PartialEq)]
 pub struct FrankfurterSnapshot {
     /// Currency code → USD per unit of that currency.
     pub rates: Quotes<String>,

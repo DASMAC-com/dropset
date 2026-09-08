@@ -385,7 +385,10 @@ mod tests {
             },
             ..Default::default()
         };
-        assert_eq!(c.validate(), Err(ConfigError::ZeroDuration("leg_stale.tape")));
+        assert_eq!(
+            c.validate(),
+            Err(ConfigError::ZeroDuration("leg_stale.tape"))
+        );
 
         let c = FairValueConfig {
             leg_stale: LegStaleness {

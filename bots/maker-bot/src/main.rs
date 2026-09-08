@@ -25,8 +25,8 @@ use dropset_fair_value::{
     Candidates, ClockCtx, ConsensusState, FairValueEngine, LegReport, Reading, Regime,
 };
 use dropset_feeds::venues::{
-    CmcSource, CoinGeckoSource, CoinbaseTicker, ErApiSource, FrankfurterSource, KrakenSource,
-    PythFeed, PythHermesSource,
+    CmcSource, CoinGeckoSource, CoinbaseTicker, ErApiSource, FrankfurterSnapshotSource,
+    FrankfurterSource, KrakenSource, PythFeed, PythHermesSource,
 };
 use dropset_feeds::{
     forward_channel, run_until, run_until_with_metrics, HttpClient, RunConfig, Sink, Source,
@@ -578,7 +578,11 @@ fn spawn_price_feeds(
     };
     let frankfurter = spawn_feed(
         rt,
-        FrankfurterSource::new(&cfg.frankfurter_base_url, roster.currencies.clone())?,
+        // The snapshot variant, so the ECB reference date reaches the maker and
+        // the fix can be aged from publication rather than receipt. The plain
+        // `FrankfurterSource` stays parse-free and is still what the one-shot
+        // dry-run below uses, which wants rates and no stamp.
+        FrankfurterSnapshotSource::new(&cfg.frankfurter_base_url, roster.currencies.clone())?,
         RunConfig {
             poll_interval: cfg.fx_poll,
             error_backoff: FEED_ERROR_BACKOFF,

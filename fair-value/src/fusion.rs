@@ -104,21 +104,37 @@
 //!
 //! ## Why the interval is configured rather than observed
 //!
-//! Observing would need each reading's own publication instant, and no such
-//! instant reaches this crate for the class that needs it. [`crate::Reading`]
-//! carries an `age`, and for the reference roster that age is stamped at
-//! **receipt**: the maker-bot's cache re-stamps every drain, and the Frankfurter
-//! source re-emits the ECB fix on every poll, so a fix published this morning
-//! still arrives claiming to be a second old. Deriving a publication instant
-//! from that age would mark every tick as a fresh publication and change
-//! nothing.
+//! Observing would need each reading's own publication instant, and this used
+//! to be impossible: [`crate::Reading`] carries an `age`, and for the reference
+//! roster that age was stamped at **receipt** — the maker-bot's cache
+//! re-stamped every drain and the Frankfurter source re-emits the ECB fix on
+//! every poll, so a fix published this morning arrived claiming to be a second
+//! old. Deriving a publication instant from that age would have marked every
+//! tick as a fresh publication and changed nothing.
 //!
-//! That upstream receipt-stamping is a defect in its own right — it is equally
-//! why the age inflation below cannot bite on a reference source, and why the
-//! bot suppresses Frankfurter over the weekend by hand rather than letting it
-//! age out. Repairing it is a feeds-and-transport change, not this filter's,
-//! and it would let [`FusionConfig::reference_publish_interval`] be replaced by
-//! the observed instant.
+//! **That upstream defect is fixed.** Both daily reference tiers now age from
+//! publication — Frankfurter from the ECB reference date, er-api from the
+//! provider's snapshot instant — with the receipt age kept as a floor so a dead
+//! poller still ages a leg out. Two consequences for this filter, and only one
+//! of them has been acted on:
+//!
+//! * The age inflation below **does** now bite on a reference source. It was
+//!   inert for exactly the class it was written for, because no reference
+//!   reading ever carried an age above a poll interval.
+//! * Observing the publication instant is now *possible* — an honest age makes
+//!   `now - age` the publication instant, so a repeat of the same fix shows as
+//!   a growing age rather than as a fresh print. Replacing
+//!   [`FusionConfig::reference_publish_interval`] with the observed instant is
+//!   therefore unblocked, but has deliberately **not** been done here; the
+//!   interval stays configured until someone wants that change on its own
+//!   merits.
+//!
+//! One thing the fix did *not* remove: the bot still suppresses the daily
+//! references over the weekend by hand. That is not a leftover workaround. The
+//! reference staleness bound has to clear a holiday-length publication gap, so
+//! a Friday fix is honestly live all weekend and would still stand in on a shut
+//! market — ageing-out cannot enforce the crypto-only regime at any bound that
+//! also lets the fix survive Easter.
 //!
 //! Being told the interval mainly gives up **phase**: the filter absorbs once
 //! per `T` from an arbitrary offset rather than at the true publication moment.
