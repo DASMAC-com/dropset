@@ -25,7 +25,7 @@ Every per-pair panel shows **all three MVP FX pairs**, always:
 | --------- | -------------------- | --------------------------- |
 | EURC/USDC | EUR/USD              | observed — Coinbase, Kraken |
 | AUDD/USDC | AUD/USD              | observed — Coinbase         |
-| CADC/USDC | CAD/USD              | **assumed 1.0** — no venue  |
+| CADC/USDC | CAD/USD              | **assumed 1.0** — see §3.1  |
 
 Two rules follow, and they are deliberately not the same rule:
 
@@ -59,6 +59,7 @@ including ones that carry no MVP pair — visibility is the point.
 | Alpha Vantage | Third FX anchor, daily — a slow cross-check | 24 h    | 72 h        |
 | Frankfurter   | Keyless ECB breadth; powers the demo maker  | 24 h    | 72 h        |
 | er-api        | Widest keyless table; sole NGN source       | 24 h    | 72 h        |
+| Kraken QCAD   | The §3.1 CAD-stablecoin tripwire, not a peg | 15 s    | 48 h        |
 
 **Frankfurter is the ECB fix.** One name, always this one; the two are
 never wired as separate sources.
@@ -88,6 +89,26 @@ venues dark**. The dashboard shows this *directly*, not by implication:
 Not "sources configured". Not a row count. The number that answers
 "can we still quote if OANDA drops right now". A pair at or below its
 minimum is the loudest thing on the page.
+
+### 3.1 The CAD-stablecoin tripwire
+
+CADC quotes off the FX anchor times an assumed 1.0 peg, at roughly
+**30 bps**. An assumption nobody watches is a liability, so one panel
+watches it: **QCAD/USD against the CAD/USD composite, with the
+threshold drawn on it.**
+
+QCAD is a *different issuer's* Canadian stablecoin, which is precisely
+what makes it useful and precisely why it can never be the peg. It is a
+**class-level** check: if Canadian stablecoins generally drift off par,
+the assumption underneath CADC is no longer safe, whoever the issuer
+is. Divergence past a coarse **1–2%** band marks the CAD-stablecoin
+class suspect, which widens or halts CADC.
+
+Coarse on purpose. QCAD traded 14 times in the 24 h to 2026-09-07, so a
+tight band would fire on its own thinness; measured that day it sat
+4.0 bp rich to the CAD rate, well inside the band. This is a tripwire
+for a regime change, not a pricing input, and it costs one product-id
+line on the Kraken collector already in the roster — no new venue.
 
 ## 4. Healthy, faulted, parked
 
@@ -146,14 +167,12 @@ one missing.
 - **Order-book depth and fills.** The maker's own surface; this is an
   ingestion dashboard. Writes and command safety live in the TUI.
 - **Aerodrome (or any DEX) CADC price.** Aerodrome carries most real
-  CADC volume, so this is where genuine price discovery happens — and
-  it is a post-MVP candidate basis venue, recorded on 765. Excluded
-  now only because the MVP wires no new venues.
+  CADC volume, so it is where genuine CADC price discovery happens.
+  **Rejected for the MVP** — it would be a new venue, and the tripwire
+  in §3.1 covers the risk it would have addressed.
 - **QCAD as a price.** QCAD is a *different issuer's* Canadian
-  stablecoin, so it can never be CADC's peg. It may appear as a
-  wide-band **sanity check** that Canadian stablecoins are near par —
-  measured 2026-09-07 at 4.0 bp rich to the CAD rate, on 14 trades a
-  day. A sanity check, never an input.
+  stablecoin, so it can never be CADC's peg. It appears only as the
+  §3.1 tripwire.
 - **Per-request logs and CU counts.** Not observability; noise.
 - **Anything Pyth-shaped** beyond its parked row, while it stays
   parked.
@@ -163,13 +182,30 @@ one missing.
 Recorded here because a spec that hides its own unmet requirements is
 worse than no spec. Each is a defect against a rule above.
 
-1. **CAD/USD is not collected at all**, so §1's mandatory anchor is
-   missing for CADC. The keyed roster (`FX_PRODUCT_IDS`) is the three
-   pairs those vendors are paid for and does not include it.
-1. **er-api has never run.** It is wired into the compose file but
-   appears **nowhere in the Makefile**, so no target starts it — while
-   its own comment claims it "comes up with `make collectors-up`". It
-   is the only keyless CAD/USD and the only NGN source.
+1. **A tick-only venue is invisible on the "by source" panels.** This
+   is the one that bites now. `rows per minute by source` and
+   `source × product coverage` both query `cex_prices` alone, so every
+   venue that writes only `spot_ticks` — **Kraken**, **er-api**,
+   **Pyth** — is missing from panels whose names promise every source.
+   `var-candle-source` compounds it: it is
+   `SELECT DISTINCT source FROM cex_prices`, so a tick-only venue can
+   never even be *selected*. Kraken has been live and fresh throughout
+   and still reads as absent, which is exactly the every-wired-feed
+   rule failing. The registry-driven coverage panel is the one that
+   gets this right, and is the model for the fix — these panels must
+   read across both tables, not one.
+1. **CAD/USD was not collected at all** until 2026-09-07, so §1's
+   mandatory anchor was missing for CADC. Now supplied by er-api at a
+   daily cadence, which per §2 is breadth and not a live-quote input:
+   the keyed roster (`FX_PRODUCT_IDS`) is the three pairs those vendors
+   are paid for, and adding CAD/USD there is what closes this properly.
+1. **er-api had never run — fixed 2026-09-07.** It was wired into the
+   compose file but reached neither place that makes a collector run:
+   no Makefile target listed it, and the collectors image never copied
+   its binary, so it failed at start with
+   `executable file not found in $PATH`. Both are now corrected. It is
+   the only keyless CAD/USD and the only NGN source, and starting it
+   took live source-product pairs from 10 to 24.
 1. **Frankfurter has no market-data collector.** It exists as a feeds
    venue the demo maker consumes live, so it writes nothing to the
    store and cannot appear on any panel. Specified here, not cut.
