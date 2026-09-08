@@ -549,10 +549,13 @@ indexer-down: check-docker
 # localnet up, and they share the one `dropset` database with the indexer.
 # Stopping them leaves the recorded history on the volume.
 #
-# Three keyless feeds, across both tiers. Candles into `cex_prices`: the
+# Four keyless feeds, across both tiers. Candles into `cex_prices`: the
 # Coinbase reference price. Spot ticks into `spot_ticks`: the Coinbase ticker
-# (the prints between candle closes) and Kraken (batched peg truth — a real
-# market print of `USDC/USD`).
+# (the prints between candle closes), Kraken (batched peg truth — a real
+# market print of `USDC/USD`), and er-api (the widest keyless table, one
+# daily snapshot priced across the whole roster, and the only source of
+# several thin-roster currencies). er-api takes the slot Pyth vacated —
+# the paragraph below is about a different, earlier fourth.
 #
 # Pyth Hermes used to be the fourth and is no longer started here. It went
 # from keyless to keyed on 2026-08-26 and Pyth sells no usable free API tier,
@@ -598,12 +601,12 @@ indexer-down: check-docker
 collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --build --quiet-pull postgres migrate coinbase coinbase-ticker \
-		kraken grafana
+		kraken erapi grafana
 	@$(KEYED_UP)
 .PHONY: collectors-down
 collectors-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml --profile fx \
-		rm -sf coinbase coinbase-ticker kraken pyth grafana oanda \
+		rm -sf coinbase coinbase-ticker kraken erapi pyth grafana oanda \
 		twelvedata alphavantage
 
 # Grafana alone, on http://localhost:3200, serving the provisioned

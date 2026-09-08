@@ -38,6 +38,7 @@ cargobill
 cdds
 cdylib
 cfgs
+chainlink
 clickhouse
 clippy
 clob
