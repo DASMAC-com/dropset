@@ -55,9 +55,10 @@ const SOURCE: &str = "kraken";
 /// it exists because the store sink is built around a feed identity.
 const FEED: &str = "ticks:kraken";
 
-/// The roster polled when nothing overrides it: the legs the maker's
-/// fair-value model needs corroborated, followed by the `EURC-EUR` redemption
-/// proxy, then two pairs recorded for the store rather than read by the maker.
+/// The roster polled when nothing overrides it: the two legs the maker's
+/// fair-value model needs corroborated, then three pairs recorded for the store
+/// rather than read by the maker — `EURC-EUR`, the redemption proxy;
+/// `EURC-USDC`; and `QCAD-USD`.
 ///
 /// `EURC-USDC` is free redundancy on the exact MVP pair — Kraken lists it
 /// directly, so a second venue's print of the pair Coinbase already carries

@@ -879,9 +879,12 @@ one**, else the poll second. Pyth does, so a re-polled reading carries the
 same instant and lands on the primary key — the re-fetch a restart causes
 is genuinely idempotent rather than a second row for one observation.
 
-The two daily references do too, and for them it matters more than
-idempotency: er-api stamps the provider's `last_update`, and Frankfurter
-midnight UTC of the ECB reference date. These fixes change once a
+The two daily references carry one too, though Frankfurter's is a
+derived convention rather than a published instant — er-api stamps the
+provider's `last_update`, while Frankfurter publishes only a civil
+reference **date** (the ECB's own fix lands ~16:00 CET) and the
+collector floors it to midnight UTC. For them the stamp matters more
+than idempotency: These fixes change once a
 *business* day, so the poll second is not merely imprecise — it would
 record a Friday fix as fresh on Sunday night, and `max(observed_at)` is
 what the instruments view reports as feed freshness. Kraken and

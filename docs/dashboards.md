@@ -60,14 +60,23 @@ including ones that carry no MVP pair — visibility is the point.
 **Frankfurter is the ECB fix.** One name, always this one; the two are
 never wired as separate sources.
 
-**Three of those rows are the target state, not today's.** The table is
-what the dashboard must show once the roster is complete, so read it
-with §8: **Frankfurter** has no collector at all (§8 item 4);
-**Coinbase's AUDD** leg has collected nothing since 2026-08-17 (§8 item
-5); and **Kraken QCAD** is not collected yet (§8 item 9). Everything
-else in the table is live and fresh. A roster table that quietly mixed
-the two would be the exact no-data-reads-as-healthy trap this document
-exists to close.
+**Every row is now wired.** Three rows used to be target state and are
+not any more: **Frankfurter**, which had no collector; **Coinbase's
+AUDD** leg, silent since 2026-08-17; and **Kraken QCAD**, specified but
+uncollected. All three landed together in the feeds PR — §8 items 4, 5
+and 9 respectively, each now marked closed there — so the table
+describes today rather than an intention. Keeping that distinction
+visible matters:
+a roster table that quietly mixed the two would be the exact
+no-data-reads-as-healthy trap this document exists to close, so if a
+row ever goes back to being aspirational, say so here.
+
+**One caveat on the OANDA row**, and it is a coverage fact rather than
+an outage: OANDA's v20 instrument list is direction-fixed and has no
+`CAD_USD` (measured 2026-09-08 — only `USD_CAD`, the reciprocal), so
+that venue carries AUD/USD, EUR/USD and GBP/USD but **not** the CADC
+anchor. CAD/USD's keyed coverage is Twelve Data intraday plus Alpha
+Vantage daily. See §3.
 
 The 72 h / 48 h split is the class-aware staleness bound already
 implemented in `instrument_source_liveness`. Panels **must read that
@@ -280,9 +289,11 @@ item 3 outright and the naming half of item 1. The four roster changes
 together in the following feeds PR, deliberately, so the dashboard is
 arranged once against a complete feed set rather than twice. That PR
 also settled item 11, on an operator ruling rather than by building
-anything. Items 6, 8 and 10, and the selector half of item 1, remain
-open with no owner yet; each is a *rendering* defect rather than a
-missing feed, which is why the feed work did not touch them.
+anything. Items 6, 8, 10 and 12, and the selector half of item 1,
+remain open with no owner yet; each is a *rendering* defect rather than
+a missing feed, which is why the feed work did not touch them. (Item 12
+was missing from this list before — the omission predates the feeds PR,
+and it is exactly the rendering class the sentence describes.)
 
 1. **A tick-only venue is still unreachable in the selector.** The
    *naming* half of this is closed: `Candle rows per minute by source`
@@ -325,8 +336,10 @@ missing feed, which is why the feed work did not touch them.
    now exists, with the Makefile target and image COPY line er-api
    needed. The adapter's shape did **not** match er-api's after all:
    er-api yields a struct carrying the provider's refresh instant while
-   Frankfurter yielded a bare `Quotes` map, so the collector could not
-   simply copy it. The response's `date` field is now plumbed through an
+   Frankfurter yielded a bare `Quotes` map, so the copy needed a new
+   snapshot type before it would fit — the collector binary itself is
+   close to er-api's, guard shape included. The response's `date` field
+   is now plumbed through an
    additive snapshot type and each reading is stamped at **midnight UTC
    of the ECB reference date** rather than the poll second — without
    which a Friday fix would read as fresh on Sunday night. The
@@ -343,7 +356,11 @@ missing feed, which is why the feed work did not touch them.
 1. **A de-rostered product is invisible, not dark.** The registry is
    written at collector start, so dropping a product from the roster
    removes it from the coverage panel entirely — the exact defect that
-   panel exists to prevent, one level up. AUDD is the live instance.
+   panel exists to prevent, one level up. **AUDD was the live instance
+   and is no longer**, having been re-rostered when item 5 closed. The
+   defect stands with nothing currently demonstrating it, which makes it
+   easier to forget and no less real: the next de-rostering reproduces
+   it silently.
 
 1. **Kraken lists EURC/USDC directly** and we did not collect it.
    *Closed* — `EURC-USDC` is on the Kraken roster. It is free
@@ -364,15 +381,19 @@ missing feed, which is why the feed work did not touch them.
    feed rather than a target. Kraken keys the pair `QCADUSD`, which
    plain concatenation derives, so it needed no pinned spelling.
 
-1. **CAD/USD has no candles from any source**, only er-api ticks, so the
+1. **CAD/USD had no candles from any source**, only er-api ticks, so the
    OHLC panel's CAD/USD repeat was empty by construction until item 2
    landed. **Item 2 has landed**, so the emptiness itself is resolved:
-   OANDA and Twelve Data now carry `CAD-USD`. What this item was
-   *really* about is untouched and stays open — §4 still has no
-   rendering that distinguishes "true and expected" from "faulted", so
-   any genuinely-empty repeat reads as the same ambiguous blank as the
-   Fusion-weight panel below. The live example moved; the defect did
-   not.
+   **Twelve Data** now carries `CAD-USD` intraday and **Alpha Vantage**
+   daily, and both write candles into `cex_prices`. **Not OANDA** — it
+   cannot serve this pair at all (see item 2 and §3), which is why the
+   candle coverage here is thinner than for the other two MVP anchors.
+   The tick side gained a source too: Frankfurter now writes CAD/USD
+   alongside er-api. What this item was *really* about is untouched and
+   stays open — §4 still has no rendering that distinguishes "true and
+   expected" from "faulted", so any genuinely-empty repeat reads as the
+   same ambiguous blank as the Fusion-weight panel below. The live
+   example moved; the defect did not.
 
 1. **The spread figure disagrees with `docs/market-making.md`.**
    *Closed by operator ruling, 2026-09-08.* **100 bps stands** as the

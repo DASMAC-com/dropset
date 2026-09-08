@@ -47,7 +47,7 @@
 
 use dropset_feeds::{
     connect, run,
-    venues::{FrankfurterSnapshot, FrankfurterSnapshots},
+    venues::{FrankfurterSnapshot, FrankfurterSnapshotSource},
     RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
@@ -77,7 +77,7 @@ const FEED: &str = "ticks:frankfurter";
 /// whole table in one request, so the roster costs nothing to widen and there
 /// is no reason to carry less than all of it.
 ///
-/// Thirteen currencies — the fourteen fiats seeded in `currency_kinds`, less
+/// Thirteen currencies — the fifteen fiats seeded in `currency_kinds`, less
 /// `USD` itself (the quote leg here rather than a product) and less **NGN**,
 /// which this venue does not carry at all. See the module note: the omission is
 /// measured, not assumed.
@@ -197,7 +197,7 @@ async fn main() -> anyhow::Result<()> {
         "frankfurter daily collector starting"
     );
 
-    let source = FrankfurterSnapshots::new(&cfg.base_url, currencies)?;
+    let source = FrankfurterSnapshotSource::new(&cfg.base_url, currencies)?;
     let source = TickSource::new(source, move |snap: &FrankfurterSnapshot, poll_secs| {
         // Resolved once per poll, not per currency: the date is a property of
         // the fix, and so is the warning below.
@@ -316,9 +316,20 @@ mod tests {
         // this feed's last-seen instant permanently and could never be
         // superseded by the correct later fix.
         assert_eq!(observation_instant(Some(poll + 10_000_000), poll), poll);
-        // `i64::MAX` is the case the saturating subtraction exists for: a plain
-        // `-` would overflow here.
+        // A far-future stamp is rejected on magnitude alone. Note this case
+        // does NOT exercise `saturating_sub` — `poll` is ~1.79e9, so
+        // `i64::MAX - poll` is representable and a plain `-` would pass here
+        // too. The saturation is load-bearing only against a NEGATIVE
+        // `poll_secs`, which the next assertion covers.
         assert_eq!(observation_instant(Some(i64::MAX), poll), poll);
+        // THE case `saturating_sub` exists for: a host clock before 1970 makes
+        // `i64::MAX - poll_secs` overflow, and under the release profile's
+        // `overflow-checks = true` a plain `-` would panic rather than degrade.
+        // Were it to wrap instead, the difference would come back negative,
+        // compare `<= 60`, and ACCEPT the far-future date — pinning
+        // `max(observed_at)` permanently, the one outcome this guard exists to
+        // prevent. Swap `saturating_sub` for `-` and this line fails.
+        assert_eq!(observation_instant(Some(i64::MAX), -1), -1);
         // `i64::MIN` is caught by the `> 0` arm, which short-circuits before
         // the subtraction runs — so this pins the guard, not the arithmetic.
         assert_eq!(observation_instant(Some(i64::MIN), poll), poll);

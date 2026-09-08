@@ -549,12 +549,16 @@ indexer-down: check-docker
 # localnet up, and they share the one `dropset` database with the indexer.
 # Stopping them leaves the recorded history on the volume.
 #
-# Four keyless feeds, across both tiers. Candles into `cex_prices`: the
+# Five keyless feeds, across both tiers. Candles into `cex_prices`: the
 # Coinbase reference price. Spot ticks into `spot_ticks`: the Coinbase ticker
 # (the prints between candle closes), Kraken (batched peg truth — a real
-# market print of `USDC/USD`), and er-api (the widest keyless table, one
+# market print of `USDC/USD`), er-api (the widest keyless table, one
 # daily snapshot priced across the whole roster, and the only source of
-# several thin-roster currencies). er-api takes the slot Pyth vacated —
+# several thin-roster currencies), and Frankfurter (the ECB reference fix,
+# also daily, and the one source that is deliberately never a live-quote
+# lead). The two daily tiers overlap everywhere except NGN, which the ECB
+# set does not carry — so er-api remains its only keyless source.
+# er-api takes the slot Pyth vacated —
 # the paragraph below is about a different, earlier fourth.
 #
 # Pyth Hermes used to be the fourth and is no longer started here. It went
