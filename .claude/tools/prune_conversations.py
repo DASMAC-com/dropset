@@ -743,19 +743,10 @@ def resolve_dropset_repo(explicit: str | None) -> str:
             "empty worktree set, which would age-delete live sessions' "
             "transcripts as 'non-dropset'."
         )
-    if explicit:
-        mine = git_common_dir(str(repo_root_from_tool()))
-        theirs = git_common_dir(root)
-        if mine and theirs and mine != theirs:
-            raise PruneError(
-                f"--dropset-repo {explicit!r} resolves to a different "
-                f"repository than this tool belongs to ({root!r} vs "
-                f"{repo_root_from_tool()!r}). Refusing: every protection would "
-                "be computed for the wrong repo and every slug of the intended "
-                "one would age-delete as 'non-dropset'. To prune for that "
-                "checkout, run its own copy of this tool — the default "
-                "resolves it correctly."
-            )
+    # Cheapest and most specific first: a repo with no `.claude` at all cannot
+    # be this one, and saying so beats the subprocess comparison below telling
+    # the caller it is "a different repository" — true but less useful, and it
+    # buys two `git rev-parse` calls to reach a worse message.
     if not (Path(root) / ".claude").is_dir():
         raise PruneError(
             f"resolved repo {root!r} has no .claude directory, so it cannot be "
@@ -763,6 +754,19 @@ def resolve_dropset_repo(explicit: str | None) -> str:
             "worktree protections for the wrong repo — every slug would then "
             "age-delete as 'non-dropset'."
         )
+    if explicit:
+        mine = git_common_dir(str(repo_root_from_tool()))
+        theirs = git_common_dir(root)
+        if mine and theirs and mine != theirs:
+            raise PruneError(
+                f"--dropset-repo {explicit!r} resolves to a different "
+                f"repository than this tool belongs to ({root!r} vs "
+                f"{str(repo_root_from_tool())!r}). Refusing: every protection "
+                "would be computed for the wrong repo and every slug of the "
+                "intended one would age-delete as 'non-dropset'. To prune for "
+                "that checkout, run its own copy of this tool — the default "
+                "resolves it correctly."
+            )
     return root
 
 
