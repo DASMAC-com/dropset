@@ -1,0 +1,174 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Conditions:
+  HasBudgetAlertEmail: !Not
+  - !Equals
+    - !Ref 'BudgetAlertEmail'
+    - ''
+Description: >-
+  Dropset Bedrock worker identity: the IAM user that backs the long-term
+  Amazon Bedrock API key used by unattended worker sessions, a managed policy
+  scoped to model invocation alone, and an optional monthly spend ALERT that
+  fires once uncredited spend reaches its threshold - a coarse tripwire, not
+  a prompt signal that credit coverage lapsed. No credential value is created
+  or stored by this template - the API key is minted out of band and kept in
+  1Password (see infra/aws/README.md).
+Outputs:
+  BedrockWorkerPolicyArn:
+    Description: 'ARN of the invoke-only managed policy.'
+    Export:
+      Name: !Sub '${EnvironmentName}-bedrock-worker-policy-arn'
+    Value: !Ref 'BedrockWorkerInvokePolicy'
+  BedrockWorkerUserName:
+    Description: >-
+      Name of the IAM user the long-term Bedrock API key is minted against.
+    Export:
+      Name: !Sub '${EnvironmentName}-bedrock-worker-user'
+    Value: !Ref 'BedrockWorkerUser'
+  WorkerInferenceProfileId:
+    Description: >-
+      Cross-region inference profile id worker sessions target. Exported so a
+      session launcher can read it rather than hard-coding a model string.
+      This is the profile id alone: a consumer that sets ANTHROPIC_MODEL must
+      append the context-window suffix itself (see infra/aws/README.md),
+      whose absence is silent rather than an error.
+    Export:
+      Name: !Sub '${EnvironmentName}-bedrock-worker-profile-id'
+    Value: !Sub 'us.${WorkerModelId}'
+Parameters:
+  BudgetAlertEmail:
+    Default: ''
+    Description: >-
+      Address the monthly spend alert notifies. Left empty (the default), no
+      budget is created at all, because a budget with an undeliverable
+      subscriber is a tripwire that silently never fires.
+    Type: 'String'
+  BudgetLimitUsd:
+    Default: '10000'
+    Description: >-
+      Monthly USD threshold for the spend alert. This is an ALERT, never a
+      cap: Budgets cannot stop spend, and the ratified posture is no cap
+      while credits net the charge in full. At the ratified 10000 it is a
+      runaway alarm, not a fine-grained signal that credit coverage lapsed.
+    Type: 'String'
+  EnvironmentName:
+    Default: 'dropset-dev'
+    Description: 'Name prefix applied to resource names, tags, and exports.'
+    Type: 'String'
+  WorkerModelId:
+    Default: 'anthropic.claude-opus-5'
+    Description: >-
+      Default foundation model for worker sessions, published as the profile
+      id other tooling reads. It does not gate the invoke policy, which
+      permits any model in the US regions, so changing it steers the default
+      without widening or narrowing permissions. Invoked through the us.
+      cross-region inference profile, never by bare model id.
+    Type: 'String'
+Resources:
+  BedrockWorkerInvokePolicy:
+    Properties:
+      # NOTE: Description is IMMUTABLE on AWS::IAM::ManagedPolicy. Editing it
+      # forces a replacement, which collides with the explicit
+      # ManagedPolicyName below and fails the update with AlreadyExists unless
+      # the name changes too. Change the policy document freely - that updates
+      # in place - but treat this text as costing a rename to edit, and so
+      # keep it free of details that date.
+      Description: >-
+        Invoke access to any Bedrock foundation model, but only in the US
+        regions, through cross-region inference profiles - plus the bearer
+        token auth gate an API key needs and the two read-only
+        profile-discovery calls. Deliberately excludes every management
+        action, including the account data-retention setting: a worker must
+        not be able to change the retention posture it runs under.
+      ManagedPolicyName: !Sub '${EnvironmentName}-bedrock-invoke'
+      PolicyDocument:
+        Statement:
+        - Action: 'bedrock:CallWithBearerToken'
+          Effect: 'Allow'
+          Resource: '*'
+          Sid: 'AuthenticateWithApiKey'
+        - Action: 'bedrock:ListInferenceProfiles'
+          Effect: 'Allow'
+          Resource: '*'
+          Sid: 'DiscoverInferenceProfiles'
+        # The MODEL dimension is deliberately left open so models can be
+        # swapped without a redeploy (operator decision). The REGION dimension
+        # stays pinned to us-*, which is a separate axis and load-bearing:
+        # it keeps inference on US soil, and data retention is configured
+        # PER REGION and follows the DESTINATION region. Note us-* is a
+        # prefix match, so it NARROWS TO BUT DOES NOT EQUAL the three
+        # regions opted in (us-east-1, us-east-2, us-west-2) - us-west-1
+        # matches too. A bare * would additionally let a global. profile
+        # route to a region-less destination this account never opted in.
+        # Spend is guarded on the cost side, not here.
+        - Action:
+          - 'bedrock:GetInferenceProfile'
+          - 'bedrock:InvokeModel'
+          - 'bedrock:InvokeModelWithResponseStream'
+          Effect: 'Allow'
+          Resource: !Sub >-
+            arn:aws:bedrock:us-*:${AWS::AccountId}:inference-profile/*
+          Sid: 'InvokeAnyInferenceProfileInUsRegions'
+        - Action:
+          - 'bedrock:InvokeModel'
+          - 'bedrock:InvokeModelWithResponseStream'
+          Effect: 'Allow'
+          Resource: 'arn:aws:bedrock:us-*::foundation-model/*'
+          Sid: 'InvokeAnyFoundationModelInUsRegions'
+        Version: '2012-10-17'
+    Type: 'AWS::IAM::ManagedPolicy'
+  BedrockWorkerUser:
+    Properties:
+      ManagedPolicyArns:
+      - !Ref 'BedrockWorkerInvokePolicy'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-bedrock-worker'
+      UserName: !Sub '${EnvironmentName}-bedrock-worker'
+    Type: 'AWS::IAM::User'
+  WorkerSpendAlertBudget:
+    Condition: 'HasBudgetAlertEmail'
+    Properties:
+      Budget:
+        BudgetLimit:
+          Amount: !Ref 'BudgetLimitUsd'
+          Unit: 'USD'
+        BudgetName: !Sub '${EnvironmentName}-bedrock-worker-spend'
+        BudgetType: 'COST'
+        CostTypes:
+          # Every flag here is at its AWS default except IncludeRefund, which
+          # is off so a late refund cannot retroactively pull a month back
+          # under a threshold that already alerted. IncludeCredit being on is
+          # what makes this track spend NET of credits - the whole point,
+          # since while credits cover the charge the figure stays near zero.
+          IncludeCredit: true
+          IncludeDiscount: true
+          IncludeOtherSubscription: true
+          IncludeRecurring: true
+          IncludeRefund: false
+          IncludeSubscription: true
+          IncludeSupport: true
+          IncludeTax: true
+          IncludeUpfront: true
+          UseAmortized: false
+          UseBlended: false
+        TimeUnit: 'MONTHLY'
+      NotificationsWithSubscribers:
+      - Notification:
+          ComparisonOperator: 'GREATER_THAN'
+          NotificationType: 'ACTUAL'
+          Threshold: 80
+          ThresholdType: 'PERCENTAGE'
+        Subscribers:
+        - Address: !Ref 'BudgetAlertEmail'
+          SubscriptionType: 'EMAIL'
+      - Notification:
+          ComparisonOperator: 'GREATER_THAN'
+          NotificationType: 'FORECASTED'
+          Threshold: 100
+          ThresholdType: 'PERCENTAGE'
+        Subscribers:
+        - Address: !Ref 'BudgetAlertEmail'
+          SubscriptionType: 'EMAIL'
+    Type: 'AWS::Budgets::Budget'
+...
