@@ -33,7 +33,7 @@ use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
 use crate::telemetry::{self, MarketId, Outcome, Record, SampleBuilder};
 use anyhow::Result;
-use dropset_fair_value::{Candidates, ClockCtx, Legs, Reading};
+use dropset_fair_value::{Candidates, ClockCtx, LegStaleness, Legs, Reading};
 use dropset_feeds::venues::{ErApiSnapshot, FxQuote};
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
@@ -252,19 +252,25 @@ impl FeedHub {
         // crypto-only regime (§1 fm2); only one of them does so because its
         // clock lies.
         //
-        // Aged from receipt rather than from `last_update`, matching the sibling
-        // tier. The honest vintage is hours old and `leg_stale` is one bound
-        // shared by every leg, so an honestly-aged fix is dropped before the
-        // fusion estimator — whose variance model is built for exactly such a
-        // fix — ever sees it. Reconciling those two is the per-leg staleness
-        // split the config's `leg_stale` comment defers to analytics; until then
-        // the provider stall guard below is what keeps the receipt age from
-        // being a blank cheque.
+        // Aged from the provider's own `last_update`, not from receipt — see
+        // [`erapi_reading`]. This is what makes the reference class's
+        // timestamped wide-variance semantics actually fire: the fusion
+        // estimator inflates a measurement's variance by its age, and until the
+        // vintage was honest every fix arrived claiming to be one poll old, so
+        // the inflation could not bite.
+        //
+        // The honest age is safe here only because the staleness bound is now
+        // split by source class: one shared bound would drop an hours-old fix
+        // before fusion ever saw it. Note the provider stall guard binds well
+        // before the reference bound does — er-api republishes daily, so 48h
+        // without the snapshot advancing is a broken provider, whereas the
+        // six-day reference bound exists for a source that legitimately gaps
+        // that long (the ECB fix across a holiday closure).
         let fx_erapi = (!tick.weekend)
             .then(|| self.erapi.get(market.currency))
             .flatten()
             .filter(|(_, last_update, _)| !erapi_provider_stalled(*last_update, tick.now_unix))
-            .map(|(v, _, t)| Reading::new(*v, now.duration_since(*t)));
+            .map(|(v, last_update, t)| erapi_reading(*v, *last_update, *t, now, tick.now_unix));
 
         let fx = Candidates::none()
             .push_trusted(SOURCE_PYTH, fx_pyth)
@@ -398,7 +404,7 @@ struct TickCtx {
     /// The engine's per-leg staleness bound, so the one place that has to
     /// resolve a leg early (the peg leg, to convert a USD-quoted candidate)
     /// applies the same rule the engine will.
-    leg_stale: Duration,
+    leg_stale: LegStaleness,
     /// The engine's dispersion band, for that same early resolution.
     leg_dispersion: f64,
     /// Whether the FX session is closed (§1 fm2) — suppresses the receipt-aged
@@ -488,6 +494,32 @@ fn pyth_reading(q: &FxQuote, read_at: Instant, now: Instant, now_unix: i64) -> R
         Some(conf) => Reading::with_confidence(q.value, age, conf),
         None => Reading::new(q.value, age),
     }
+}
+
+/// Turn a cached er-api rate into a [`Reading`], aged from the **provider's**
+/// snapshot instant rather than from when this process received it.
+///
+/// The reference-class counterpart to [`pyth_reading`], and the same argument:
+/// a fix is authoritative for the moment it names, so ageing it from receipt
+/// reports this morning's rate as seconds old and reports Friday's rate the
+/// same way on Sunday. That lie is what made the fusion estimator's age
+/// inflation inert for the one class it was written for — the variance model
+/// reasons about a six-hour-old daily fix, and never saw an age above a poll
+/// interval.
+///
+/// **The receipt age is still a floor**, exactly as for Pyth: if the poller
+/// dies the leg has to go stale even though the last snapshot instant it cached
+/// stays where it was. Without the floor a dead collector would hold the leg
+/// permanently fresh at whatever age the provider last claimed.
+///
+/// No forward-skew branch is needed here, unlike [`pyth_reading`]: an
+/// implausibly-ahead stamp is already dropped by [`erapi_provider_stalled`]
+/// before a reading is built, so the subtraction below cannot be negative for
+/// any value that reaches it.
+fn erapi_reading(rate: f64, last_update: i64, read_at: Instant, now: Instant, now_unix: i64) -> Reading {
+    let published = Duration::from_secs(now_unix.saturating_sub(last_update).max(0) as u64);
+    let received = now.duration_since(read_at);
+    Reading::new(rate, published.max(received))
 }
 
 /// How long er-api's own snapshot may go without advancing before the tier is

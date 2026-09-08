@@ -13,7 +13,7 @@
 //! currency the keyless FX-rate tier pegs to — plus the mock-mint keypair and
 //! decimals the localnet bootstrap and inventory valuation need.
 
-use dropset_fair_value::FairValueConfig;
+use dropset_fair_value::{FairValueConfig, LegStaleness};
 use dropset_sdk::clock::{SlotSpan, WallSpan};
 use std::time::Duration;
 
@@ -617,21 +617,51 @@ impl Default for BotConfig {
             kill: KillSwitchConfig::default(),
             invalidate: InvalidateConfig::default(),
             fair_value: FairValueConfig {
-                // One bound has to cover legs whose cadences differ by orders
+                // One bound used to cover legs whose cadences differ by orders
                 // of magnitude: Pyth republishes every second or so, while the
                 // Frankfurter fallback behind it is a once-a-working-day ECB
-                // reference. The bound is therefore set by the *slowest* leg —
-                // anything tighter would drop the fallback out of the
-                // composition permanently, which is the tier that keeps the six
-                // CEX-less exotics quoting at all.
+                // reference. It was therefore set by the *slowest* leg —
+                // anything tighter dropped the fallback out of the composition
+                // permanently, which is the tier that keeps the six CEX-less
+                // exotics quoting at all.
                 //
-                // The cost is that a dead Pyth feed is not caught for 15 min on
-                // its own; in practice the weekend flip is what this governs,
-                // and Pyth ages from its `publish_time` (not from receipt), so
-                // a frozen FX session does go stale here rather than reading as
-                // perpetually fresh. TBD(analytics): split per leg, which is
-                // the real fix and belongs to the analytics.
-                leg_stale: Duration::from_secs(15 * 60),
+                // That is now split by source class rather than by leg, which
+                // is the only split that can express it: a daily fix and a live
+                // Pyth tape sit on the *same* FX leg, so the leg never
+                // identified the convention. See `LegStaleness`.
+                leg_stale: LegStaleness {
+                    // Held at 15 min rather than tightened, on measurement.
+                    //
+                    // Splitting the classes made a tighter tape bound possible,
+                    // and the measured tail does not support one. Inter-tick
+                    // gaps over the stored history are 15s at the median, but
+                    // the fat tail is dominated by *stack-wide* outages — of 15
+                    // gaps past 300s in the window where all three tape sources
+                    // were live, 12 hit all three at once. Those are caught
+                    // whatever this value is, since every leg goes stale
+                    // together; the bound's discriminating job is a single
+                    // source dying while the others answer.
+                    //
+                    // Excluding the stack-wide events, the worst single-source
+                    // gap measured is 439s (Kraken), with Pyth showing one of
+                    // 4440s. A bound under ~10 min would reject readings during
+                    // gaps that actually happened, so 15 min keeps roughly 2x
+                    // margin over the measured tail.
+                    //
+                    // The standing cost is unchanged and worth restating: a
+                    // dead Pyth is not caught for 15 min. Pyth ages from its
+                    // `publish_time` rather than from receipt, so a frozen FX
+                    // session does go stale here rather than reading as
+                    // perpetually fresh. Recalibratable — and these are
+                    // dev-stack figures, so post-validation analytics owns the
+                    // real number.
+                    tape: Duration::from_secs(15 * 60),
+                    // The reference bound is the crate default: six days, sized
+                    // to clear the longest gap between two published fixes
+                    // rather than the longest one this roster happens to have
+                    // observed. See `FairValueConfig::default`.
+                    reference: FairValueConfig::default().leg_stale.reference,
+                },
                 ..FairValueConfig::default()
             },
         }

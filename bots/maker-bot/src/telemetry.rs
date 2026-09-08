@@ -48,7 +48,7 @@ use crate::model::killswitch::Action;
 use crate::model::ladder::Side;
 use anyhow::Result;
 use async_trait::async_trait;
-use dropset_fair_value::{Candidates, FairValue, FusionReport, Legs};
+use dropset_fair_value::{Candidates, FairValue, FusionReport, LegStaleness, Legs};
 // `MAX_ERROR_CHARS` bounds the tick-error text a sample carries. Taken from
 // the framework rather than restated, so the two error columns cannot drift
 // apart — see its own doc there for why the bound is a character count.
@@ -743,7 +743,7 @@ pub fn leg_samples(
     ts: i64,
     market: &str,
     legs: &Legs,
-    stale_after: std::time::Duration,
+    stale_after: LegStaleness,
     dispersion_frac: f64,
     fair: &FairValue,
 ) -> Vec<LegSample> {
@@ -764,7 +764,21 @@ pub fn leg_samples(
             value: r.value,
             age_secs: r.age.as_secs_f64(),
             confidence: r.confidence,
-            fresh: r.fresh(stale_after),
+            // Checked against the widest bound among the sources that actually
+            // contributed, not against the tape bound unconditionally. A leg
+            // resolved off its reference tier carries a reference-class age by
+            // construction, and measuring that against the tape bound would
+            // report a perfectly live daily fix as stale in the operator's
+            // telemetry while the engine was quoting off it.
+            fresh: r.fresh(
+                resolved
+                    .healthy()
+                    .iter()
+                    .flatten()
+                    .map(|c| stale_after.for_class(c.class))
+                    .max()
+                    .unwrap_or(stale_after.tape),
+            ),
             consensus_state: format!("{:?}", resolved.state),
             contributor_count: i32::try_from(resolved.n).unwrap_or(i32::MAX),
             dispersion_outlier: resolved.outlier.map(str::to_string),
@@ -1660,7 +1674,7 @@ mod tests {
     }
 
     const BAND: f64 = 0.01;
-    const STALE: std::time::Duration = Duration::from_secs(15);
+    const STALE: LegStaleness = LegStaleness::uniform(Duration::from_secs(15));
 
     #[test]
     fn leg_samples_record_the_consensus_and_skip_legs_that_resolved_to_nothing() {

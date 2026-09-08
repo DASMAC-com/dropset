@@ -102,6 +102,55 @@ impl SourceClass {
     }
 }
 
+/// The staleness bound for each [`SourceClass`].
+///
+/// # Why one bound per class rather than one per leg
+///
+/// A single shared bound has to cover publication conventions that differ by
+/// orders of magnitude, so it is set by the slowest source on the roster and is
+/// then simultaneously too loose for a tape (a dead feed is not caught until
+/// the slow bound elapses) and too tight for a daily fix (whose honest age
+/// exceeds it within hours, dropping the reference class out of the composition
+/// entirely).
+///
+/// The split cannot be *per leg*: a daily reference fix and a live tape sit on
+/// the same FX leg, so the leg does not identify the convention. The
+/// [`SourceClass`] does, and every candidate already carries one — which is why
+/// this is keyed by class and lives beside it.
+///
+/// Both values are **recalibratable**; see `FairValueConfig`'s defaults for the
+/// derivation behind each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LegStaleness {
+    /// Bound for a [`SourceClass::Tape`] source — one that publishes
+    /// continuously and whose age is a statement about now.
+    pub tape: Duration,
+    /// Bound for a [`SourceClass::Reference`] source — one published on a slow
+    /// schedule, authoritative for the moment it names. Must exceed the longest
+    /// gap between publications, holidays included, or the class drops out of
+    /// the roster on a closure nobody is watching.
+    pub reference: Duration,
+}
+
+impl LegStaleness {
+    /// One bound for every class — the pre-split behavior, and the shape a test
+    /// wants when staleness is not what it is exercising.
+    pub const fn uniform(bound: Duration) -> Self {
+        Self {
+            tape: bound,
+            reference: bound,
+        }
+    }
+
+    /// The bound governing `class`.
+    pub fn for_class(self, class: SourceClass) -> Duration {
+        match class {
+            SourceClass::Tape => self.tape,
+            SourceClass::Reference => self.reference,
+        }
+    }
+}
+
 /// One source's reading for a leg, tagged so a disagreement can name who
 /// diverged.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -231,9 +280,9 @@ impl Candidates {
 
     /// Whether some source answered promptly but with an unusable value. Lets a
     /// caller tell a live feed publishing garbage from a dead one.
-    pub fn any_invalid(&self, stale: Duration) -> bool {
+    pub fn any_invalid(&self, stale: LegStaleness) -> bool {
         self.iter()
-            .any(|c| c.reading.young(stale) && !c.reading.valid())
+            .any(|c| c.reading.young(stale.for_class(c.class)) && !c.reading.valid())
     }
 
     /// Every healthy candidate's value, in offer order.
@@ -243,9 +292,9 @@ impl Candidates {
     /// rather than "what is this leg worth?". Those are different questions, and
     /// answering the first from the consensus is how a guard gets silenced by
     /// the very disagreement it exists to catch.
-    pub fn healthy_values(&self, stale: Duration) -> impl Iterator<Item = f64> + '_ {
+    pub fn healthy_values(&self, stale: LegStaleness) -> impl Iterator<Item = f64> + '_ {
         self.iter()
-            .filter(move |c| c.reading.fresh(stale))
+            .filter(move |c| c.reading.fresh(stale.for_class(c.class)))
             .map(|c| c.reading.value)
     }
 
@@ -274,7 +323,7 @@ impl Candidates {
     /// the dispersion gate — is therefore a statement about the fast set. That
     /// is the honest reading: `n` is how many sources corroborate the fast
     /// signal, and a reference fix does not corroborate it.
-    pub fn resolve(&self, stale: Duration, dispersion_frac: f64) -> Consensus {
+    pub fn resolve(&self, stale: LegStaleness, dispersion_frac: f64) -> Consensus {
         // Both fills zip against the destination array. Note this is *not*
         // guarding an overflow here: `iter()` walks a fixed
         // `[Option<Candidate>; MAX_CANDIDATES]`, so it can never yield more than
@@ -283,10 +332,10 @@ impl Candidates {
         // over the same fixed width. (`Fusion::update` takes an arbitrary public
         // slice and does need the guard — see the comment there.)
         let mut all = [None; MAX_CANDIDATES];
-        for (slot, c) in all
-            .iter_mut()
-            .zip(self.iter().filter(|c| c.reading.fresh(stale)))
-        {
+        for (slot, c) in all.iter_mut().zip(
+            self.iter()
+                .filter(|c| c.reading.fresh(stale.for_class(c.class))),
+        ) {
             *slot = Some(*c);
         }
 
@@ -853,7 +902,7 @@ mod tests {
         Reading::new(v, secs(1))
     }
 
-    const STALE: Duration = Duration::from_secs(300);
+    const STALE: LegStaleness = LegStaleness::uniform(Duration::from_secs(300));
     /// A 2% dispersion band, tight enough that the cases below are unambiguous.
     const BAND: f64 = 0.02;
 
