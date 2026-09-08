@@ -48,30 +48,30 @@ class RenderTests(unittest.TestCase):
     def test_an_empty_region_is_filled_from_the_source(self):
         path = self._skill(
             "a",
-            "# A\n\n<!-- render:begin guard verb=paps -->\n<!-- render:end guard -->\n",
+            "# A\n\n<!-- render:begin guard verb=plan -->\n<!-- render:end guard -->\n",
         )
         self._run(["--write"])
         text = path.read_text(encoding="utf-8")
-        self.assertIn("Shared prose about paps.", text)
+        self.assertIn("Shared prose about plan.", text)
         self.assertIn("A second paragraph.", text)
 
     def test_the_substitution_differs_per_call_site(self):
         a = self._skill(
             "a",
-            "<!-- render:begin guard verb=paps -->\n<!-- render:end guard -->\n",
+            "<!-- render:begin guard verb=plan -->\n<!-- render:end guard -->\n",
         )
         b = self._skill(
             "b",
             "<!-- render:begin guard verb=caps -->\n<!-- render:end guard -->\n",
         )
         self._run(["--write"])
-        self.assertIn("about paps.", a.read_text(encoding="utf-8"))
+        self.assertIn("about plan.", a.read_text(encoding="utf-8"))
         self.assertIn("about caps.", b.read_text(encoding="utf-8"))
 
     def test_rendering_is_idempotent(self):
         path = self._skill(
             "a",
-            "<!-- render:begin guard verb=paps -->\n<!-- render:end guard -->\n",
+            "<!-- render:begin guard verb=plan -->\n<!-- render:end guard -->\n",
         )
         self._run(["--write"])
         once = path.read_text(encoding="utf-8")
@@ -81,7 +81,7 @@ class RenderTests(unittest.TestCase):
     def test_check_passes_when_in_sync(self):
         self._skill(
             "a",
-            "<!-- render:begin guard verb=paps -->\n<!-- render:end guard -->\n",
+            "<!-- render:begin guard verb=plan -->\n<!-- render:end guard -->\n",
         )
         self._run(["--write"])
         code, _ = self._run(["--check"])
@@ -91,7 +91,7 @@ class RenderTests(unittest.TestCase):
         # The regression the gate exists for.
         path = self._skill(
             "a",
-            "<!-- render:begin guard verb=paps -->\n<!-- render:end guard -->\n",
+            "<!-- render:begin guard verb=plan -->\n<!-- render:end guard -->\n",
         )
         self._run(["--write"])
         path.write_text(
@@ -105,7 +105,7 @@ class RenderTests(unittest.TestCase):
     def test_check_FAILS_when_the_source_changed_and_the_skill_did_not(self):
         self._skill(
             "a",
-            "<!-- render:begin guard verb=paps -->\n<!-- render:end guard -->\n",
+            "<!-- render:begin guard verb=plan -->\n<!-- render:end guard -->\n",
         )
         self._run(["--write"])
         (self.root / rs.SHARED_DIR / "guard.md").write_text(
@@ -118,7 +118,7 @@ class RenderTests(unittest.TestCase):
     def test_check_does_not_write(self):
         path = self._skill(
             "a",
-            "<!-- render:begin guard verb=paps -->\n<!-- render:end guard -->\n",
+            "<!-- render:begin guard verb=plan -->\n<!-- render:end guard -->\n",
         )
         before = path.read_text(encoding="utf-8")
         self._run(["--check"])
@@ -132,7 +132,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(before, path.read_text(encoding="utf-8"))
 
     def test_an_unclosed_marker_is_an_error(self):
-        self._skill("a", "<!-- render:begin guard verb=paps -->\nbody\n")
+        self._skill("a", "<!-- render:begin guard verb=plan -->\nbody\n")
         with self.assertRaises(rs.RenderError) as caught:
             self._run(["--check"])
         self.assertIn("unclosed", str(caught.exception))
@@ -146,7 +146,7 @@ class RenderTests(unittest.TestCase):
     def test_a_mismatched_end_is_an_error(self):
         self._skill(
             "a",
-            "<!-- render:begin guard verb=paps -->\n<!-- render:end other -->\n",
+            "<!-- render:begin guard verb=plan -->\n<!-- render:end other -->\n",
         )
         with self.assertRaises(rs.RenderError) as caught:
             self._run(["--check"])
@@ -157,7 +157,7 @@ class RenderTests(unittest.TestCase):
         # unwired guard hook, so it must be loud.
         self._skill(
             "a",
-            "<!-- render:begin absent verb=paps -->\n<!-- render:end absent -->\n",
+            "<!-- render:begin absent verb=plan -->\n<!-- render:end absent -->\n",
         )
         with self.assertRaises(rs.RenderError) as caught:
             self._run(["--check"])
@@ -174,7 +174,7 @@ class RenderTests(unittest.TestCase):
     def test_a_malformed_marker_argument_is_refused(self):
         self._skill(
             "a",
-            "<!-- render:begin guard paps -->\n<!-- render:end guard -->\n",
+            "<!-- render:begin guard plan -->\n<!-- render:end guard -->\n",
         )
         with self.assertRaises(rs.RenderError) as caught:
             self._run(["--check"])
@@ -183,13 +183,13 @@ class RenderTests(unittest.TestCase):
     def test_indentation_is_carried_onto_every_rendered_line(self):
         self._skill(
             "a",
-            "   <!-- render:begin guard verb=paps -->\n   <!-- render:end guard -->\n",
+            "   <!-- render:begin guard verb=plan -->\n   <!-- render:end guard -->\n",
         )
         self._run(["--write"])
         text = (self.root / rs.SKILLS_DIR / "a" / "SKILL.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("   Shared prose about paps.", text)
+        self.assertIn("   Shared prose about plan.", text)
 
     def test_the_region_is_padded_with_a_blank_line_on_each_side(self):
         # mdformat inserts a blank line between an HTML comment and an adjacent
@@ -198,11 +198,11 @@ class RenderTests(unittest.TestCase):
         # --check reports the file stale forever, which makes the gate useless.
         path = self._skill(
             "a",
-            "<!-- render:begin guard verb=paps -->\n<!-- render:end guard -->\n",
+            "<!-- render:begin guard verb=plan -->\n<!-- render:end guard -->\n",
         )
         self._run(["--write"])
         lines = path.read_text(encoding="utf-8").splitlines()
-        begin = lines.index("<!-- render:begin guard verb=paps -->")
+        begin = lines.index("<!-- render:begin guard verb=plan -->")
         end = lines.index("<!-- render:end guard -->")
         self.assertEqual(lines[begin + 1], "")
         self.assertEqual(lines[end - 1], "")
@@ -213,7 +213,7 @@ class RenderTests(unittest.TestCase):
         # construction.
         self._skill(
             "a",
-            "   <!-- render:begin guard verb=paps -->\n   <!-- render:end guard -->\n",
+            "   <!-- render:begin guard verb=plan -->\n   <!-- render:end guard -->\n",
         )
         self._run(["--write"])
         text = (self.root / rs.SKILLS_DIR / "a" / "SKILL.md").read_text(

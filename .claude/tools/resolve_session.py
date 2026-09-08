@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Resolve which Claude Code session belongs to a worktree tag, and how to reach
-it — the addressing `raps` needs and `--continue` alone cannot supply.
+it — the addressing `task resume` needs and `--continue` alone cannot supply.
 
-**The bug this exists to fix.** `raps <n>` used to `cd` into the `eng-<n>`
+**The bug this exists to fix.** `task resume <n>` used to `cd` into the `eng-<n>`
 worktree and run `claude --continue`, on the reasonable assumption that
 `--continue`'s per-directory addressing selects that worktree's session. It does
-not, for a session started by `aps`: `aps` runs `claude -w <tag>` **from the base
+not, for a session started by `task`: `task` runs `claude -w <tag>` **from the base
 repo**, so Claude Code files the transcript under the *base* repo's project slug
 even though every one of its `cwd` stamps points into the worktree. No project
 directory for the worktree ever exists, `--continue` finds nothing there, and
-`raps` reports "no conversation found" while the session sits intact under
+`task resume` reports "no conversation found" while the session sits intact under
 another slug.
 
 Measured: one session's transcript was recovered by hand at
@@ -19,7 +19,7 @@ some point did have a worktree-slug transcript, which masked the gap — so the
 failure looks intermittent and tracks launch history rather than anything the
 caller did.
 
-`faps` types `raps`, so fleet resume inherits the same miss for every
+`fleet` types `task resume`, so fleet resume inherits the same miss for every
 `-w`-launched session that has never been resumed from inside its worktree.
 
 Usage::
@@ -109,7 +109,7 @@ def slugify(path: Path) -> str:
 def normalize_tag(raw: str) -> str:
     """``1051``, ``eng-1051`` and ``ENG-1051`` all name the same worktree.
 
-    Matches what ``raps`` and ``cdds`` already accept, so the tool and the verbs
+    Matches what ``task resume`` and ``cdds`` already accept, so the tool and the verbs
     agree on what a tag is.
     """
     tag = raw.strip().lower()
@@ -227,7 +227,7 @@ def resolve(tag: str, repo: Path) -> dict:
         return verdict
 
     # The miss this tool exists for. Check the base slug first — that is where
-    # `aps` files a `-w` session — then every other project dir, since a session
+    # `task` files a `-w` session — then every other project dir, since a session
     # could have been launched from somewhere else entirely.
     base_slug = projects / slugify(repo)
     searched = [base_slug]

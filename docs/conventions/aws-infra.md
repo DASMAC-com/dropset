@@ -41,6 +41,34 @@ cfn-lint infra/aws/network.yml
 yamllint -c cfg/yamllint.yml infra/aws/network.yml
 ```
 
+## Resource naming: the `EnvironmentName` prefix
+
+Every stack takes an `EnvironmentName` parameter and prefixes its
+resource names, tags, and exports with it. The sibling stacks pass
+**`dropset-dev`**, giving `dropset-dev-<thing>`.
+
+**`bedrock-agent.yml` deliberately passes a bare `dropset`**, so its
+resources are `dropset-bedrock-agent` and `dropset-bedrock-invoke` with
+no environment segment. That is a ratified naming decision — the agent
+identity is not per-environment, and there is exactly one of it — and it
+is recorded here so the divergence reads as a decision rather than as
+drift the next reader should "fix".
+
+Note *how* it diverges: it reuses the shared prefix mechanism with a
+different value rather than hard-coding literals into that one template.
+Both were available; the parameter keeps one idiom across every
+template, so a reader who knows how the others are named can still
+predict this one from its parameter file.
+
+**Renaming a resource is a replacement, and sometimes a stack rename.**
+IAM users and managed policies carry explicit names, so changing one
+forces CloudFormation to replace the resource — and anything hanging off
+it, such as a service-specific credential, dies with it. When the
+**stack name** changes too, `deploy` cannot update in place at all: the
+old stack must be deleted first, or the new one collides on the
+duplicate name. `infra/aws/README.md` carries the worked sequence for
+the worker-to-agent rename.
+
 ## Agent Toolkit for AWS
 
 CloudFormation authoring, deployment, and troubleshooting are

@@ -166,7 +166,7 @@ def in_flight(api_key: str, project_id: str) -> list[dict]:
 
 
 def tag_of(identifier: str) -> str | None:
-    """``ENG-889`` → ``889``, the argument ``raps`` takes.
+    """``ENG-889`` → ``889``, the argument ``task resume`` takes.
 
     Returns ``None`` for anything that is not an ``ENG-###`` identifier, so a
     differently-shaped one is skipped rather than turned into a bad command.

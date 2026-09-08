@@ -55,7 +55,7 @@ that trap: `docs/conventions/linear-automation.md`.
 Board work — staging issues, keeping the Queue honest, placing
 blocking edges, carrying direction across days — happens in a
 **planning session**, the complement to a worktree implementation
-session. It runs in the base repo (started and resumed with `paps`,
+session. It runs in the base repo (started and resumed with `plan`,
 never a worktree), bootstraps from the
 "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), and writes its
 decisions back there. The `plan` skill is its method; the document is
@@ -68,7 +68,7 @@ Long-horizon **design** conversations run in their own session, not
 in a planning session: `plan` keeps the board coherent, `architect`
 asks whether the thing on the board is the right thing to build. Same
 seat quality, different job — so different sessions, not a mode
-toggle. Launched with **`caps <topic>`** (base repo, model-pinned,
+toggle. Launched with **`architect <topic>`** (base repo, model-pinned,
 idempotent, one resumable session per design thread, named
 `ceo-<topic>`). It bootstraps minimally — the Planning document and
 the track umbrellas, nothing else — and writes **nothing to the
@@ -440,8 +440,8 @@ wired**, which `make hook-wiring` reports on (it names every committed
 **guard** hook that cannot fire — unwired, wired under a `matcher` that
 never selects the tools it inspects, or pointed at a path that resolves
 to nothing — and writes nothing; `housekeeping` runs the same check
-each pass). The **session helpers** (`cdds`, `aps`, `raps`,
-`naps`, `rnaps`, `paps`, `haps`, `faps`) are the exception that *is*
+each pass). The **session helpers** (`cdds`, `task`, `explore`, `plan`,
+`housekeeping`, `architect`, `fleet`) are the exception that *is*
 committed, at
 `.claude/shell/init.zsh`, sourced from the base checkout by one guarded
 line in the shell profile; only their 1Password coordinates stay
@@ -449,6 +449,36 @@ untracked — defined as env vars in the runtime config, or in an optional
 file outside the repo. Full detail — every hook's
 wiring, the helper family, and the iTerm setup:
 `docs/conventions/local-integrations.md`.
+
+### Session substrate: capability, not attendance
+
+A session runs on **Bedrock** unless it needs something Bedrock lacks —
+web search, web fetch, deep research — or it is a **seat session by
+role** (`plan`, `architect`, `housekeeping`, `explore`). Sub-agents are
+not a differentiator. `task <n>` is Bedrock, `task local <n>` is the
+seat escape for work needing web research, and `housekeeping` stays on
+the seat deliberately because the operator uses it to open the 5-hour
+subscription window.
+
+A launch **records its substrate** in an untracked marker, and the
+resume verbs re-export it, because the slip is silent in both
+directions — a Bedrock session resumed onto the seat eats the
+subscription window; the reverse spends credits on attended work. An
+absent marker reads as **seat**. The seat pin IS the absence of
+`CLAUDE_CODE_USE_BEDROCK`, so a seat verb **clears** inherited Bedrock
+exports rather than only warning about them: these helpers export into
+the calling shell, so a tab that ran `task` stays a Bedrock tab. The
+model string lives in the untracked runtime config
+(`DS_BEDROCK_MODEL`); the launcher's fallback appends the **`[1m]`**
+window suffix, whose absence costs four fifths of the context and is
+never reported. Detail, and the verb table:
+`docs/conventions/local-integrations.md`.
+
+A planning session may **dispatch** a ready task — `session_dispatch.py`
+opens a new iTerm window and types the verb, authorized by the
+operator's yes exactly as `fleet go` is. iTerm is driven through its
+Python API via `.claude/tools/iterm_api.py`, the one owner of that
+automation; **AppleScript is retired** from the toolbox.
 
 ## What a skill may decide alone
 

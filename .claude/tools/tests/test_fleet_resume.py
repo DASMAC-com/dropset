@@ -55,7 +55,7 @@ class TagOf(unittest.TestCase):
         self.assertEqual(fr.tag_of("  ENG-7  "), "7")
 
     def test_a_non_eng_identifier_yields_none(self):
-        # Skipped rather than turned into a bad `raps` argument.
+        # Skipped rather than turned into a bad `task resume` argument.
         self.assertIsNone(fr.tag_of("OPS-4"))
         self.assertIsNone(fr.tag_of("ENG-"))
         self.assertIsNone(fr.tag_of(""))
