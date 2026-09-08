@@ -16,7 +16,7 @@
 # hand-copied into an untracked ~/.zshrc — the same failure class as a guard
 # hook with no wiring: documented, executable nowhere, drifting silently with
 # nobody able to see the drift. One of those copies had been wrong the whole
-# time (see `paps` below). Committing the functions makes the doc describe
+# time (see `plan` below). Committing the functions makes the doc describe
 # something that actually runs.
 #
 # WHAT CANNOT RIDE THIS FILE: the guard hooks' settings.json wiring. That is
@@ -51,7 +51,7 @@ fi
 _DS_REPO="${${(%):-%x}:A:h:h:h}"
 
 # Sourcing a WORKTREE's copy would make every helper below treat that worktree
-# as the base repo — `cdds` lands in it, `raps` looks for worktrees nested
+# as the base repo — `cdds` lands in it, `task resume` looks for worktrees nested
 # inside it. It fails quietly and plausibly, which is the worst way to fail, so
 # say it out loud. (The file is identical in every checkout; only which copy
 # gets sourced matters.)
@@ -62,7 +62,7 @@ fi
 
 # How recently a fast-forward must have happened for the next one to be skipped.
 #
-# This is not a micro-optimization. `faps go` opens many tabs at once and each
+# This is not a micro-optimization. `fleet go` opens many tabs at once and each
 # runs a session verb, so without a throttle they race for the base repo's
 # `index.lock` and print git errors over one another — a pull is a checkout, not
 # just a fetch, so it takes the lock. A minute is far shorter than a working
@@ -234,7 +234,7 @@ _ds_pull_impl() {
 # base repo, which is the worst way to fail: every later edit then targets the
 # base copy the worktree build never sees, the exact slip the worktree
 # edit-path guard exists to catch downstream. Accepts `1077` or `eng-1077`,
-# matching `raps`.
+# matching `task resume`.
 cdds() {
   cd "$_DS_REPO" || return 1
   _ds_pull
@@ -356,7 +356,7 @@ _ds_daily_sid() {
 # planning session is reopened many times a day. Passing it only on create
 # would honor the pin on the day's FIRST launch and quietly drop to the saved
 # default on every reopen after it, which is exactly the "still works, so
-# nobody notices" slip `paps` exists to remove.
+# nobody notices" slip `plan` exists to remove.
 _ds_daily_session() {
   _ds_session "$(_ds_daily_sid "$1")" "$2" "$3" "$4"
 }
@@ -364,7 +364,7 @@ _ds_daily_session() {
 # Internal: the start-or-resume core, given an already-computed session id.
 #
 # Split out from `_ds_daily_session` so a session keyed by something other than
-# the date can reuse it unchanged. `paps` and `haps` key on the day; `caps` keys
+# the date can reuse it unchanged. `plan` and `housekeeping` key on the day; `architect` keys
 # on a TOPIC, because a design thread outlives a day and resuming it tomorrow is
 # the whole point. Everything below the id — the idempotency, the model pin
 # riding both branches, the permission mode — is identical for both, and the
@@ -416,13 +416,198 @@ _ds_topic_sid() {
     "${raw:0:8}-${raw:8:4}-${raw:12:4}-${raw:16:4}-${raw:20:12}"
 }
 
-# Start a WORKTREE session. Creates the `eng-###` worktree directory whose
-# branch arrives named `worktree-eng-###` — there is no CLI flag to drop the
-# prefix, so `init-pr` renames it. The implementation-session entry point.
+# ---------------------------------------------------------------------------
+# Substrate: which provider a session runs against.
+#
+# THE RULE IS CAPABILITY, NOT ATTENDANCE. A session runs on Bedrock unless it
+# needs something Bedrock lacks — web search, web fetch, deep research — or it
+# is a seat session by role (`plan`, `architect`, `housekeeping`, `explore`).
+# Sub-agents are NOT a differentiator: Opus-spawning-Opus sub-agents are
+# verified working on Bedrock.
+#
+# An earlier framing split on attendance (unattended work goes to Bedrock) and
+# was superseded: who is watching says nothing about which tools the session
+# needs, and the verbs that actually broke on Bedrock broke on capability.
+# ---------------------------------------------------------------------------
+
+# The profile id to fall back on when `DS_BEDROCK_MODEL` is unset.
+#
+# This MIRRORS the `AgentModelId` default published by `infra/aws/bedrock-agent.yml`
+# as the `dropset-bedrock-agent-profile-id` export, rather than reading that
+# export. Reading it would cost a CloudFormation round trip on every single
+# session launch, for a value that changes about once a year — so the mirror is
+# the deliberate trade, and the stack remains the source of truth. If the two
+# ever disagree the stack wins, and the symptom is a session on last year's
+# model rather than a failure.
+_DS_BEDROCK_PROFILE_FALLBACK='us.anthropic.claude-opus-5'
+
+# The fast tier, pinned so background sub-turns (session titles, the auto-mode
+# classifier) bill to Bedrock credits alongside the primary model instead of
+# silently falling back to the subscription.
+_DS_BEDROCK_FAST_FALLBACK='us.anthropic.claude-haiku-4-5-20251001'
+
+# Where a session's substrate choice is recorded. See `_ds_substrate_write`.
+_DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
+
+# Compose the model string a Bedrock launch exports as `ANTHROPIC_MODEL`.
+#
+# `DS_BEDROCK_MODEL` in the untracked runtime config wins and is used VERBATIM,
+# suffix included — so switching model or context window is a one-line personal
+# config edit with no repo change. Unset, this composes the fallback profile id
+# above with the `[1m]` suffix.
+#
+# **The suffix is the whole reason this is a function.** The stack exports a
+# bare profile id, Bedrock defaults a model with no suffix to the 200k window, and
+# nothing anywhere reports the difference — so the failure is a session running
+# at one fifth of its intended context, indistinguishable from a session that
+# simply filled up. Appending it here rather than in the export keeps the
+# stack's value honest (it really is just the profile id) and puts the
+# composition somewhere a test can assert on.
+#
+# A configured string carrying no window suffix WARNS and is still used. The
+# override is the operator's to make — refusing it would make the escape hatch
+# unusable for exactly the deliberate case it exists for.
+_ds_bedrock_model() {
+  local model="$DS_BEDROCK_MODEL"
+  if [[ -n "$model" ]]; then
+    if [[ "$model" != *'[1m]' && "$model" != *'[200k]' ]]; then
+      print -u2 "dropset: DS_BEDROCK_MODEL ('$model') has no context-window" \
+        "suffix — Bedrock will use 200k, not 1M, and will not say so."
+    fi
+    print -r -- "$model"
+    return 0
+  fi
+  print -r -- "${_DS_BEDROCK_PROFILE_FALLBACK}[1m]"
+}
+
+# Record the substrate a session launched on, keyed by tag (worktree sessions)
+# or by session id (base-repo sessions).
+#
+# WHY A MARKER AT ALL: a resume must land on the substrate its session started
+# on, and the slip is silent in BOTH directions. A Bedrock session resumed onto
+# the seat quietly eats the 5-hour subscription window; a seat session resumed
+# onto Bedrock quietly spends credits on attended work. Neither errors, so
+# neither gets noticed until the bill or the window does the telling.
+#
+# Best-effort by design — an unwritable state directory must not fail a launch,
+# so every path returns 0. The cost of a missing marker is one conservative
+# default, which is the next function.
+_ds_substrate_write() {
+  local key="$1" substrate="$2"
+  mkdir -p "$_DS_SUBSTRATE_DIR" 2>/dev/null || return 0
+  print -r -- "$substrate" >| "$_DS_SUBSTRATE_DIR/$key" 2>/dev/null
+  return 0
+}
+
+# Read back a recorded substrate. Prints `bedrock` or `seat`.
+#
+# **Absent means seat**, deliberately: every session that existed before markers
+# did was a seat session, and the conservative error is spending the
+# subscription window rather than spending credits on something unintended. A
+# garbage value reads as seat for the same reason.
+_ds_substrate_read() {
+  local marker="$_DS_SUBSTRATE_DIR/$1" recorded=''
+  [[ -f "$marker" ]] && recorded="$(cat "$marker" 2>/dev/null)"
+  if [[ "$recorded" == 'bedrock' ]]; then
+    print -r -- 'bedrock'
+  else
+    print -r -- 'seat'
+  fi
+}
+
+# Export the Bedrock environment, or fail loudly. Non-zero means DO NOT LAUNCH.
+#
+# This is the hard gate the substrate rule needs on the Bedrock side: launching
+# with `CLAUDE_CODE_USE_BEDROCK=1` and no bearer token produces an opaque
+# provider error several turns in, long after the operator has started working.
+# Failing here costs one line and names the fix.
+#
+# **What this gate does NOT do is call the provider.** A live probe would cost a
+# round trip on every launch to answer a question the session's own first turn
+# answers for free, so the ratified "provider answering" half is served by
+# making that first failure legible rather than by pre-flighting it. Set
+# `DS_BEDROCK_PROBE=1` to pay for the pre-flight when diagnosing a launch.
+_ds_bedrock_env() {
+  local model
+  model="$(_ds_bedrock_model)"
+
+  export CLAUDE_CODE_USE_BEDROCK=1
+  export AWS_REGION="${DS_BEDROCK_REGION:-us-west-2}"
+  export ANTHROPIC_MODEL="$model"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="${DS_BEDROCK_FAST_MODEL:-$_DS_BEDROCK_FAST_FALLBACK}"
+  export ENABLE_PROMPT_CACHING_1H=1
+
+  # Resolved at launch, never held in a long-lived shell — the same lazy shape
+  # and the same `${VAR:-…}` override as `_ds_secrets`, for the same reasons.
+  if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_BEDROCK_REF" ]]; then
+    export AWS_BEARER_TOKEN_BEDROCK="${AWS_BEARER_TOKEN_BEDROCK:-$(op read \
+      --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")}"
+  fi
+
+  if [[ -z "$AWS_BEARER_TOKEN_BEDROCK" ]]; then
+    print -u2 'dropset: no Bedrock bearer token — cannot start a Bedrock session.'
+    print -u2 '         Set DS_OP_ACCOUNT and DS_OP_BEDROCK_REF in the runtime'
+    print -u2 '         config, or run `task local <n>` for a seat session.'
+    _ds_substrate_unset
+    return 1
+  fi
+
+  if [[ -n "$DS_BEDROCK_PROBE" ]]; then
+    if ! aws bedrock list-inference-profiles --region "$AWS_REGION" \
+      --max-results 1 >/dev/null 2>&1; then
+      print -u2 'dropset: Bedrock pre-flight failed (DS_BEDROCK_PROBE=1).' \
+        'Check the key and the region.'
+      _ds_substrate_unset
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# Clear every Bedrock export from the calling shell.
+#
+# THIS IS NOT TIDINESS, IT IS THE SEAT PIN. These helpers export into the
+# CALLING shell — they have to, since a subshell could not set the environment
+# `claude` inherits — so the variables outlive the session that set them. Run
+# `task 1234`, quit it, and that tab is still a Bedrock tab: the next `plan` in
+# it would silently run against credits with the Fable pin dropped. The absence
+# of `CLAUDE_CODE_USE_BEDROCK` IS how a seat launch is expressed, so a seat verb
+# has to make that absence true rather than merely assert it.
+_ds_substrate_unset() {
+  unset CLAUDE_CODE_USE_BEDROCK ANTHROPIC_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
+  unset ENABLE_PROMPT_CACHING_1H AWS_BEARER_TOKEN_BEDROCK
+}
+
+# Seat verbs call this: warn if the shell arrived carrying Bedrock exports, then
+# clear them. $1 is the verb name, for the message.
+#
+# Warning alone was the ratified behavior and is not sufficient on its own — it
+# tells the operator about a slip it then allows to happen. The warning is kept
+# because a silent correction hides that the tab was in an unexpected state.
+_ds_seat_guard() {
+  if [[ -n "$CLAUDE_CODE_USE_BEDROCK" ]]; then
+    print -u2 "$1: this shell carried Bedrock exports (a previous \`task\` in" \
+      "the same tab); clearing them — $1 is a seat verb."
+  fi
+  _ds_substrate_unset
+}
+
+# Start a WORKTREE session on one Linear task. THE implementation entry point.
+#
+#   task <n>          on Bedrock (the default substrate for implementation work)
+#   task local <n>    on the seat, for work that needs web research
+#   task resume <n>   resume by number, on the substrate it launched with
+#
+# `local` is a literal first word rather than a flag: these helpers do no flag
+# parsing today, and the word reads better at the call site than `-l` would.
+#
+# Creates the `eng-###` worktree directory whose branch arrives named
+# `worktree-eng-###` — there is no CLI flag to drop the prefix, so `init-pr`
+# renames it.
 #
 # Three things ride the launch, and each was a parity gap when this helper was
 # committed — the operator's own profile had been passing all three, and the
-# committed copy silently did not, so a session started with `aps` differed
+# committed copy silently did not, so a session started by verb differed
 # from one started by hand:
 #
 #   * `--permission-mode auto`. The shared `settings.local.json` sets no
@@ -445,43 +630,73 @@ _ds_topic_sid() {
 #     hooks fire regardless of permission mode — the policy layers compose
 #     rather than substitute.
 #   * `-n "$tag"` — a display name, so the session is identifiable in the
-#     prompt box, the `/resume` picker, and the terminal title. `raps` resolves
+#     prompt box, the `/resume` picker, and the terminal title. `task resume` resolves
 #     by directory, so this is for the human, not the tooling.
 #   * `/init-pr` as the initial prompt, so the bootstrap runs without being
-#     asked for — the same trick `paps` and `haps` use for their own skills.
-aps() {
+#     asked for — the same trick `plan` and `housekeeping` use for their own skills.
+task() {
+  case "$1" in
+    local)
+      shift
+      _ds_task_start "$1" seat
+      ;;
+    resume)
+      shift
+      _ds_task_resume "$1"
+      ;;
+    '')
+      print -u2 'Usage: task <n> | task local <n> | task resume [n]'
+      return 1
+      ;;
+    *)
+      _ds_task_start "$1" bedrock
+      ;;
+  esac
+}
+
+# Internal: the worktree launch itself. $1 tag-or-number, $2 substrate.
+_ds_task_start() {
+  local tag="$1" substrate="$2"
+
+  if [[ -z "$tag" ]]; then
+    print -u2 'Usage: task <n> | task local <n>'
+    return 1
+  fi
+
+  # A bare number gets the `eng-` prefix, so `task 882` and `task eng-882`
+  # agree and the start/resume pair composes: `task resume` resolves `eng-<n>`,
+  # so without this `task 882` would create a worktree named `882` that
+  # `task resume 882` then reports as missing. Only an all-digit argument is
+  # rewritten — a deliberate non-`eng` worktree name still passes through.
+  [[ "$tag" == <-> ]] && tag="eng-$tag"
+
   _ds_base || return 1
   _ds_secrets
 
-  # No tag: a plain session in the base repo. This form is the operator's, and
-  # dropping it was a parity gap rather than a decision — it is the entry point
-  # for work that is not tied to a worktree yet.
-  if [[ -z "$1" ]]; then
-    claude --permission-mode auto
-    return
+  if [[ "$substrate" == 'bedrock' ]]; then
+    _ds_bedrock_env || return 1
+  else
+    _ds_seat_guard 'task local'
   fi
 
-  # A bare number gets the `eng-` prefix, so `aps 882` and `aps eng-882` agree
-  # and the aps→raps pair composes: `raps` resolves `eng-<n>`, so without this
-  # `aps 882` would create a worktree named `882` that `raps 882` then reports
-  # as missing. Only an all-digit argument is rewritten — a deliberate non-`eng`
-  # worktree name still passes through untouched.
-  local tag="$1"
-  [[ "$tag" == <-> ]] && tag="eng-$tag"
+  # Recorded BEFORE the launch, not after: `claude` blocks for the life of the
+  # session, so an after-the-fact write would land whenever the operator
+  # happened to quit — and never at all if the terminal were closed instead.
+  _ds_substrate_write "$tag" "$substrate"
 
   claude -w "$tag" -n "$tag" --permission-mode auto /init-pr
 }
 
-# Resume a worktree session by number: `raps 814` resolves to the `eng-814`
-# worktree and continues its most recent conversation there. The
-# number-to-worktree resolution is the whole point — you resume a number, not
-# a UUID.
+# Resume a worktree session by number: `task resume 814` resolves to the
+# `eng-814` worktree and continues its most recent conversation there, on the
+# substrate that session launched with. The number-to-worktree resolution is
+# the whole point — you resume a number, not a UUID.
 #
 # **Where the session actually lives is not guessable from the directory**, which
-# is why this delegates. `aps` runs `claude -w <tag>` from the BASE repo, so
+# is why this delegates. `task` runs `claude -w <tag>` from the BASE repo, so
 # Claude Code files that session's transcript under the base repo's project slug
 # even though every `cwd` stamp in it points into the worktree — and no project
-# directory for the worktree ever exists. This helper used to `cd` into the
+# directory for the worktree ever exists. This used to `cd` into the
 # worktree and run `claude --continue` on the assumption that per-directory
 # addressing selects the session; for a `-w`-launched session it selects nothing
 # and reports "no conversation found" while the session sits intact under
@@ -490,12 +705,13 @@ aps() {
 # look intermittent.
 #
 # `resolve_session.py` decides which of the three addressing forms reaches the
-# session; this verb only launches. `faps` types `raps`, so fleet resume
-# inherits the fix.
-raps() {
+# session; this verb only launches. `fleet` types `task resume`, so fleet
+# resume inherits the fix.
+_ds_task_resume() {
   # No number: the picker, from wherever the shell already is. The operator's
   # form, and worth keeping for a reason the tag form cannot cover — a session
-  # whose worktree has already been pruned is still reachable this way.
+  # whose worktree has already been pruned is still reachable this way. It gets
+  # no substrate treatment because the picker spans both.
   if [[ -z "$1" ]]; then
     _ds_secrets
     claude --resume
@@ -515,11 +731,19 @@ raps() {
   # Fall back to the base repo rather than returning: `${...:-}` guards an EMPTY
   # run_from, not a STALE one. A transcript's cwd stamps outlive the worktree
   # they name, so a pruned worktree yields a path that no longer exists — and a
-  # bare `|| return 1` would make `raps` exit silently with no session and no
+  # bare `|| return 1` would make this exit silently with no session and no
   # picker, which is worse than every pre-change failure path.
   cd "${run_from:-$_DS_REPO}" || cd "$_DS_REPO" || return 1
   _ds_pull
   _ds_secrets
+
+  # Re-export whatever this session launched with. Absent marker = seat, so a
+  # session that predates markers resumes exactly as it always did.
+  if [[ "$(_ds_substrate_read "$tag")" == 'bedrock' ]]; then
+    _ds_bedrock_env || return 1
+  else
+    _ds_seat_guard 'task resume'
+  fi
 
   case "$mode" in
     continue)
@@ -542,46 +766,60 @@ raps() {
   esac
 }
 
-# Start a NAMED session in the BASE REPO (no worktree). The general-purpose
-# named-session entry point.
+# Start a base-repo session, optionally named. The general-purpose
+# not-tied-to-a-worktree entry point.
 #
-# It runs `_ds_base` first, so `naps <name>` is `cdds` plus a named session.
-# That is the operator's behavior and the intended one: a named session is for
-# board or repo-wide work, which belongs in the base checkout, not in whatever
-# worktree the shell happened to be sitting in. An earlier committed revision
-# omitted the `_ds_base` and so inherited the caller's directory — a parity gap,
-# not a decision, and a quiet one: the session still starts, just somewhere
-# unintended.
+#   explore                base-repo session, unnamed
+#   explore <name>         base-repo session, named
+#   explore resume <name>  resume a named one
 #
-# `--permission-mode auto` for the same reason as `aps` (see that comment for
+# This folds two older verbs into one: the unnamed form and the named form were
+# separate launchers with identical bodies bar one flag.
+#
+# **SEAT-ONLY, and Fable-pinned.** Both halves are ratified and they are the
+# same decision. Base-repo work is thinking-heavy, so it runs the top tier like
+# `plan` and `architect` do — and a Fable-class model on Bedrock falls under
+# the account's standing AWS human-review retention opt-in, which the seat is
+# free of. There is deliberately no `explore local`: seat is the only
+# substrate, so the word would be a no-op.
+#
+# It runs `_ds_base` first, so `explore <name>` is `cdds` plus a named session.
+# That is intended: a base-repo session is for board or repo-wide work, which
+# belongs in the base checkout, not in whatever worktree the shell happened to
+# be sitting in. An earlier committed revision omitted the `_ds_base` and so
+# inherited the caller's directory — a parity gap, not a decision, and a quiet
+# one: the session still starts, just somewhere unintended.
+#
+# `--permission-mode auto` for the same reason as `task` (see that comment for
 # why auto rather than acceptEdits): the shared settings file sets no default
-# and a project file cannot set one. It is deliberate here too rather than
-# inherited — a named session is a working session, not a read-only one.
-naps() {
-  if [[ -z "$1" ]]; then
-    print -u2 'Usage: naps <name>'
-    return 1
+# and a project file cannot set one. It is deliberate here rather than
+# inherited — a base-repo session is a working session, not a read-only one.
+explore() {
+  if [[ "$1" == 'resume' ]]; then
+    shift
+    if [[ -z "$1" ]]; then
+      print -u2 'Usage: explore resume <name>'
+      return 1
+    fi
+    _ds_base || return 1
+    _ds_seat_guard 'explore'
+    _ds_secrets
+    # CAVEAT: a bare name PRE-FILTERS THE INTERACTIVE PICKER rather than
+    # resuming deterministically — `-r/--resume` matches on session ID, and a
+    # name is not one. Expect to pick from a list. `plan`, `housekeeping` and
+    # `architect` avoid this entirely by computing their own id; a free-form
+    # name has nothing to compute from.
+    claude --resume "$1"
+    return
   fi
-  _ds_base || return 1
-  _ds_secrets
-  claude -n "$1" --permission-mode auto
-}
 
-# Resume a named session by the same name — the counterpart to `naps`, as
-# `raps` is to `aps`, so a long-running session survives a closed terminal.
-#
-# CAVEAT, and it is the same one that made the old `paps` wrong: a bare name
-# here PRE-FILTERS THE INTERACTIVE PICKER rather than resuming deterministically
-# — `-r/--resume` matches on session ID, and a name is not one. Expect to pick
-# from a list. `paps`/`haps` avoid this entirely by computing their own id.
-rnaps() {
-  if [[ -z "$1" ]]; then
-    print -u2 'Usage: rnaps <name>'
-    return 1
-  fi
+  local -a name_flag
+  [[ -n "$1" ]] && name_flag=(-n "$1")
+
   _ds_base || return 1
+  _ds_seat_guard 'explore'
   _ds_secrets
-  claude --resume "$1"
+  claude "${name_flag[@]}" --permission-mode auto --model claude-fable-5
 }
 
 # Start OR resume today's PLANNING session. Takes no argument: the name is
@@ -604,70 +842,82 @@ rnaps() {
 #     bootstrap read happens without being asked for.
 #
 # `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not `plan-05`.
-paps() {
+plan() {
   if [[ -n "$1" ]]; then
-    print -u2 'Usage: paps   (no arguments; the name is derived from the date)'
+    print -u2 'Usage: plan   (no arguments; the name is derived from the date)'
     return 1
   fi
+  _ds_seat_guard 'plan'
   _ds_daily_session plan "plan-$(date +%-d)" /plan claude-fable-5
 }
 
-# Start OR resume today's HOUSEKEEPING session — the same contract as `paps`,
+# Start OR resume today's HOUSEKEEPING session — the same contract as `plan`,
 # so a day's upkeep is one verb rather than a hand-started session.
 #
 # No model pin, deliberately: housekeeping is upkeep, not board decisions, so
 # it does not inherit the planning tier. It runs on the saved default.
-haps() {
+#
+# **Seat, deliberately, and this one is not a capability call.** Housekeeping
+# could run on Bedrock perfectly well; the operator uses it to OPEN the 5-hour
+# subscription window at the start of a day, which only a seat session does.
+# Moving it to Bedrock would silently retire that.
+housekeeping() {
   if [[ -n "$1" ]]; then
-    print -u2 'Usage: haps   (no arguments; the name is derived from the date)'
+    print -u2 'Usage: housekeeping   (no arguments; name derived from the date)'
     return 1
   fi
+  _ds_seat_guard 'housekeeping'
   _ds_daily_session housekeeping "housekeeping-$(date +%-d)" /housekeeping ''
 }
 
 # Start OR resume an ARCHITECT session on one topic — the CEO hat. Same seat
-# quality as `paps` and the same idempotency; a different job.
+# quality as `plan` and the same idempotency; a different job.
 #
 # Takes a TOPIC and keys the session on it, so each long-horizon design thread
 # gets its own resumable session and parallel threads never share context:
 #
-#   caps volatility-telemetry
+#   architect volatility-telemetry
 #
 # The name is `ceo-<topic>`, which makes the fleet listing read by role —
 # `eng-*` implementers, `plan-*` planning, `ceo-*` architecture.
 #
-# Model-pinned like `paps` for the same reason: this session argues strategy,
+# Model-pinned like `plan` for the same reason: this session argues strategy,
 # and fidelity beats tokens. It writes nothing to the board — see the skill.
-caps() {
+architect() {
   local topic="$1"
   if [[ -z "$topic" || -n "$2" ]]; then
-    print -u2 'Usage: caps <topic>   (e.g. caps volatility-telemetry)'
+    print -u2 'Usage: architect <topic>   (e.g. architect volatility-telemetry)'
     return 1
   fi
   # A topic reaches a session name and a filename, so keep it to the shape a
   # branch would take rather than sanitizing something surprising later.
   if [[ ! "$topic" =~ '^[a-z0-9][a-z0-9-]*$' ]]; then
-    print -u2 'caps: topic must be lowercase letters, digits and dashes'
+    print -u2 'architect: topic must be lowercase letters, digits and dashes'
     return 1
   fi
+  _ds_seat_guard 'architect'
   _ds_session "$(_ds_topic_sid architect "$topic")" \
     "ceo-$topic" /architect claude-fable-5
 }
 
 # Resume the whole FLEET: one iTerm tab per in-flight Linear issue, each with
 # its session resumed and flagged green for attention. The batch counterpart to
-# `raps`, for after a machine restart.
+# `task resume`, for after a machine restart.
 #
-# `faps` prints the plan and opens nothing; `faps go` applies it. The default is
-# read-only deliberately — this one verb can open many tabs and resume many
+# `fleet` prints the plan and opens nothing; `fleet go` applies it. The default
+# is read-only deliberately — this one verb can open many tabs and resume many
 # sessions, so seeing the list first is worth one extra word.
 #
 # It resolves the fleet itself (state type `started`, so In Progress *and* In
 # Review) and skips any issue whose tab is already open, so it is safe to run
 # twice. The deterministic work — the Linear query, the tag derivation, the
-# already-live check, the AppleScript — lives in the committed tool; this is the
-# thin verb over it, per the skill-tooling convention.
-faps() {
+# already-live check, the window driving — lives in the committed tool; this is
+# the thin verb over it, per the skill-tooling convention.
+#
+# Each tab it opens types `task resume <n>`, which reads that session's own
+# substrate marker — so a mixed fleet of Bedrock and seat sessions comes back
+# on the right provider per session, with no substrate knowledge here.
+fleet() {
   _ds_base || return 1
   _ds_secrets
   if [[ "$1" == "go" ]]; then
@@ -675,7 +925,7 @@ faps() {
   elif [[ -z "$1" ]]; then
     python3 "$_DS_REPO/.claude/tools/fleet_resume.py"
   else
-    print -u2 'Usage: faps [go]   (no argument = show the plan; `go` = open the tabs)'
+    print -u2 'Usage: fleet [go]   (no argument = show the plan; `go` = open the tabs)'
     return 1
   fi
 }

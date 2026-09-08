@@ -1,5 +1,9 @@
 [
   {
+    "ParameterKey": "AgentModelId",
+    "ParameterValue": "anthropic.claude-opus-5"
+  },
+  {
     "ParameterKey": "BudgetAlertEmail",
     "ParameterValue": ""
   },
@@ -9,10 +13,6 @@
   },
   {
     "ParameterKey": "EnvironmentName",
-    "ParameterValue": "dropset-dev"
-  },
-  {
-    "ParameterKey": "WorkerModelId",
-    "ParameterValue": "anthropic.claude-opus-5"
+    "ParameterValue": "dropset"
   }
 ]
