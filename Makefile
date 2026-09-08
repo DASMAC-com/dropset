@@ -404,7 +404,7 @@ decks-build: check-pnpm
 # quit that runs those destructors instead of bypassing them.
 #
 # What is left when the demo ends is therefore the collectors it started —
-# every one, or the keyless four if the enclave gate declined — plus
+# every one, or the keyless five if the enclave gate declined — plus
 # Grafana. They are deliberately left running: they are a standing
 # recording service, not a demo fixture. Every minute they are down is a hole
 # in the stored history that no later run can backfill at tick resolution, and
@@ -574,7 +574,7 @@ indexer-down: check-docker
 # aged badly the first time a keyed venue published something other than FX.
 #
 # The gate is what keeps this target working on a machine with no credentials
-# at all: the keyless four come up regardless, and a keyed half that cannot
+# at all: the keyless five come up regardless, and a keyed half that cannot
 # start warns loudly without failing the run (see `KEYED_WARN` below for why
 # it is loud and why it is non-fatal). A machine holding its keys as plain
 # exported environment variables rather than in the enclave has no target
@@ -601,13 +601,13 @@ indexer-down: check-docker
 collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --build --quiet-pull postgres migrate coinbase coinbase-ticker \
-		kraken erapi grafana
+		kraken erapi frankfurter grafana
 	@$(KEYED_UP)
 .PHONY: collectors-down
 collectors-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml --profile fx \
-		rm -sf coinbase coinbase-ticker kraken erapi pyth grafana oanda \
-		twelvedata alphavantage
+		rm -sf coinbase coinbase-ticker kraken erapi frankfurter pyth grafana \
+		oanda twelvedata alphavantage
 
 # Grafana alone, on http://localhost:3200, serving the provisioned
 # market-data ingestion dashboard (market-data/grafana/, docs/data-feeds.md
@@ -631,7 +631,7 @@ grafana-down: check-docker
 # The credentialed half of `collectors-up` — the free-tier FX venues
 # (docs/data-feeds.md §9, "The free-tier FX roster"). No target of its own:
 # `collectors-up` runs `KEYED_UP` behind the enclave gate, and
-# `collectors-down` removes these three alongside the keyless four. Each
+# `collectors-down` removes these three alongside the keyless five. Each
 # service reads its credential from the environment and refuses to start
 # without one, naming the variable it wanted.
 #
@@ -649,7 +649,7 @@ grafana-down: check-docker
 # the hosted deploy has with Secrets Manager.
 #
 # The enclave is optional, hence the gate rather than a hard dependency: a
-# checkout without 1Password access still gets the keyless four. (No CI
+# checkout without 1Password access still gets the keyless five. (No CI
 # workflow runs any collector target, so CI is not a consumer of that
 # path — it is there for a fresh checkout.) `op run` resolves eagerly, so a
 # bad reference stops the stack here instead of starting a collector that
@@ -695,7 +695,7 @@ FX_UP = docker compose -f infra/localnet/docker-compose.yml \
 #
 # Non-fatal because this is now the default bring-up and sits on the `demo`
 # path: a 1Password hiccup should cost the keyed venues, not the whole stack.
-# The keyless four are unaffected by anything that goes wrong here, so the
+# The keyless five are unaffected by anything that goes wrong here, so the
 # useful thing to do is start them, say plainly what is missing, and continue.
 # The alternative — exit non-zero on a bad `op://` reference, treating it as
 # the config bug it usually is — was the road not taken; it would have made

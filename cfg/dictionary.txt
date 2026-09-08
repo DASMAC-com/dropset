@@ -3,6 +3,8 @@ CFLAGS
 EURCUSD
 PGUSER
 POSIXLY
+QCAD
+QCADUSD
 USDTZUSD
 addrs
 affordance
@@ -215,6 +217,7 @@ rlib
 rnaps
 rollup
 rollups
+rostered
 rpaps
 rposition
 rsplit

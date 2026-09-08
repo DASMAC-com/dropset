@@ -70,7 +70,7 @@ impl Config {
         Ok(Self {
             database_url,
             coinbase_base_url: env_or("COINBASE_BASE_URL", "https://api.exchange.coinbase.com"),
-            products: roster_from_env("EURC-USDC")?,
+            products: roster_from_env("EURC-USDC,AUDD-USDC")?,
             granularity_secs,
             backfill_start_secs,
             max_buckets_per_request,

@@ -107,7 +107,7 @@ pub use coinmarketcap::CmcSource;
 #[cfg(feature = "http")]
 pub use erapi::{ErApiSnapshot, ErApiSource};
 #[cfg(feature = "http")]
-pub use frankfurter::FrankfurterSource;
+pub use frankfurter::{FrankfurterSnapshot, FrankfurterSnapshots, FrankfurterSource};
 #[cfg(feature = "http")]
 pub use kraken::KrakenSource;
 #[cfg(feature = "http")]

@@ -79,7 +79,8 @@ services:
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       PRODUCT_IDS: >-
-        ${ALPHAVANTAGE_PRODUCT_IDS:-${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}}
+        ${ALPHAVANTAGE_PRODUCT_IDS:-${FX_PRODUCT_IDS:-AUD-USD,CAD-USD,
+        EUR-USD,GBP-USD}}
       RUST_LOG: 'info'
     profiles:
     - 'fx'
@@ -107,7 +108,7 @@ services:
     environment:
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
-      PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC}'
+      PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC,AUDD-USDC}'
       RUST_LOG: 'info'
     restart: 'unless-stopped'
   coinbase-ticker:
@@ -129,7 +130,7 @@ services:
     environment:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
-      PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC}'
+      PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC,AUDD-USDC}'
       RUST_LOG: 'info'
     restart: 'unless-stopped'
   erapi:
@@ -198,6 +199,48 @@ services:
     # Prefer a locally-cached image, else pull the tag above; the `build:`
     # falls in only when that pull is unavailable.
     pull_policy: 'missing'
+    restart: 'unless-stopped'
+  frankfurter:
+    # The ECB / Frankfurter daily FX collector: one batched keyless request
+    # prices every roster currency into `spot_ticks`, stamped with midnight UTC
+    # of the ECB reference date rather than the poll second
+    # (docs/data-feeds.md §9).
+    #
+    # This is the roster's reference fix and deliberately not a lead — a single
+    # administered daily rate, not a market tape. It is also *the* ECB fix:
+    # nothing else here may be wired as a second ECB source, because two
+    # renders of one fix would read to the consensus filter as two agreeing
+    # venues. Keyless, so it comes up with `make collectors-up`.
+    #
+    # **`POLL_INTERVAL_SECS` is hourly and does NOT read
+    # `TICK_POLL_INTERVAL_SECS`**, for the same reason as `erapi` above: a fix
+    # refreshed once a business day does not repay a 15 s cadence, and the
+    # idempotent insert absorbs the redundant polls that remain.
+    #
+    # **`FRANKFURTER_PRODUCT_IDS` deliberately does not chain to
+    # `FX_PRODUCT_IDS`**, matching `erapi`. That shared roster is the pairs the
+    # keyed vendors are paid for; this venue prices its whole table in one
+    # request, so narrowing it to that set would discard the breadth that is
+    # the reason to run it.
+    #
+    # **NGN is absent from the default and that is the venue, not a typo.** The
+    # ECB reference set does not carry it — a live probe of all 14 roster
+    # currencies returns 13 — so `erapi` is the only keyless source for it.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/collectors.Dockerfile'
+    command:
+    - 'market-data-frankfurter'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      POLL_INTERVAL_SECS: '${FRANKFURTER_POLL_INTERVAL_SECS:-3600}'
+      PRODUCT_IDS: >-
+        ${FRANKFURTER_PRODUCT_IDS:-AUD-USD,BRL-USD,CAD-USD,CHF-USD,EUR-USD,
+        GBP-USD,IDR-USD,JPY-USD,MXN-USD,MYR-USD,SGD-USD,TRY-USD,ZAR-USD}
+      RUST_LOG: 'info'
     restart: 'unless-stopped'
   grafana:
     # Data observability over the shared database: the provisioned
@@ -376,7 +419,9 @@ services:
     environment:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
-      PRODUCT_IDS: '${KRAKEN_PRODUCT_IDS:-USDC-USD,EURC-USD,EURC-EUR}'
+      PRODUCT_IDS: >-
+        ${KRAKEN_PRODUCT_IDS:-USDC-USD,EURC-USD,EURC-EUR,EURC-USDC,
+        QCAD-USD}
       RUST_LOG: 'info'
     restart: 'unless-stopped'
   maker-bot:
@@ -460,7 +505,8 @@ services:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       OANDA_API_KEY: '${OANDA_API_KEY:-}'
       PRODUCT_IDS: >-
-        ${OANDA_PRODUCT_IDS:-${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}}
+        ${OANDA_PRODUCT_IDS:-${FX_PRODUCT_IDS:-AUD-USD,CAD-USD,
+        EUR-USD,GBP-USD}}
       RUST_LOG: 'info'
     profiles:
     - 'fx'
@@ -608,7 +654,8 @@ services:
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       PRODUCT_IDS: >-
-        ${TWELVEDATA_PRODUCT_IDS:-${FX_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}}
+        ${TWELVEDATA_PRODUCT_IDS:-${FX_PRODUCT_IDS:-AUD-USD,CAD-USD,
+        EUR-USD,GBP-USD}}
       RUST_LOG: 'info'
       TWELVEDATA_API_KEY: '${TWELVEDATA_API_KEY:-}'
     profiles:

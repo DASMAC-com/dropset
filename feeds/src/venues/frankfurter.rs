@@ -8,6 +8,7 @@
 //! the anchor until Pyth Hermes / OANDA land (docs/data-feeds.md §9).
 
 use super::Quotes;
+use crate::time::parse_civil_utc;
 use crate::{Batch, HttpClient, Source};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -31,6 +32,30 @@ use std::time::Duration;
 /// public instance's goodwill.
 const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
 
+/// A Frankfurter reading together with the ECB reference date it belongs to.
+///
+/// The bare [`Quotes`] map [`FrankfurterSource`] yields is what the maker's
+/// fair-value cascade consumes, and it is deliberately unchanged. A *store*
+/// needs more than the rates: these are daily reference rates, so the instant a
+/// reading was fetched is not the instant it describes, and stamping at fetch
+/// time would record a value up to a business day old — over a weekend,
+/// longer — as fresh to the second. This type carries the missing half.
+pub struct FrankfurterSnapshot {
+    /// Currency code → USD per unit of that currency.
+    pub rates: Quotes<String>,
+    /// **Midnight UTC of the ECB reference date** these rates belong to, in
+    /// epoch seconds — the true instant of the observation, and what a store
+    /// should key on. `None` when the provider omitted the field or sent one
+    /// that does not parse, which is a caller's cue to fall back rather than
+    /// to attribute the reading to the epoch.
+    ///
+    /// Midnight rather than the nominal 16:00 CET fix, deliberately: it is
+    /// conservative in the only direction that is safe — the reading can look
+    /// staler than it is, never fresher — and it avoids encoding an ECB
+    /// schedule constant and its DST dependency for no decision value.
+    pub reference_date: Option<i64>,
+}
+
 /// A poll [`Source`] over Frankfurter's batched latest-rates endpoint, keyed by
 /// ISO currency code.
 pub struct FrankfurterSource {
@@ -51,13 +76,51 @@ impl FrankfurterSource {
     /// Currencies the ECB set does not carry are **omitted** rather than
     /// erroring, per the batched-poll convention in [`venues`](super).
     pub async fn poll(&self) -> Result<Quotes<String>> {
+        Ok(self.poll_snapshot().await?.rates)
+    }
+
+    /// The same request as [`poll`](Self::poll), keeping the reference date the
+    /// response carries alongside the rates.
+    ///
+    /// Both methods issue one identical request; they differ only in how much
+    /// of the response survives. A consumer that stores readings wants this
+    /// one — see [`FrankfurterSnapshot`].
+    pub async fn poll_snapshot(&self) -> Result<FrankfurterSnapshot> {
         let csv = self.currencies.join(",");
         let body: Value = self
             .http
             .get_json("/latest", &[("base", "USD"), ("symbols", &csv)])
             .await?;
         let currencies: Vec<&str> = self.currencies.iter().map(String::as_str).collect();
-        Ok(parse_frankfurter(&body, &currencies))
+        Ok(parse_frankfurter_snapshot(&body, &currencies))
+    }
+}
+
+/// A poll [`Source`] yielding [`FrankfurterSnapshot`] rather than a bare
+/// [`Quotes`] map — the same venue, the same single request, for a consumer
+/// that keys stored readings on the reference date.
+///
+/// A separate type rather than a change to [`FrankfurterSource`] because that
+/// source's `Record` is what the maker's fair-value cascade receives over its
+/// broadcast channel; moving it would ripple into the quoting path for a
+/// benefit only the store path can use.
+pub struct FrankfurterSnapshots(FrankfurterSource);
+
+impl FrankfurterSnapshots {
+    /// Build the source over `base_url`, batching `currencies` in every poll.
+    pub fn new(base_url: &str, currencies: Vec<String>) -> Result<Self> {
+        Ok(Self(FrankfurterSource::new(base_url, currencies)?))
+    }
+}
+
+#[async_trait]
+impl Source for FrankfurterSnapshots {
+    type Record = FrankfurterSnapshot;
+    fn name(&self) -> &str {
+        FEED_NAME
+    }
+    async fn next(&mut self) -> Result<Batch<Self::Record>> {
+        Ok(Batch::new(vec![self.0.poll_snapshot().await?]))
     }
 }
 
@@ -92,6 +155,28 @@ pub fn parse_frankfurter(body: &Value, currencies: &[&str]) -> Quotes<String> {
         }
     }
     out
+}
+
+/// Decode the same response as [`parse_frankfurter`], additionally reading the
+/// `date` field the endpoint returns (`{"date":"2026-09-08","rates":{…}}`) into
+/// midnight UTC of that day.
+///
+/// The date is a **civil calendar date with no zone** — the day the ECB
+/// reference fix belongs to, not a timestamp — so resolving it to midnight UTC
+/// is an interpretation this function makes rather than a conversion it reads
+/// off the wire. See [`FrankfurterSnapshot::reference_date`] for why midnight.
+///
+/// A missing or unparseable date yields `None` rather than an error: the rates
+/// in such a response are still good, and a caller that can fall back to its
+/// own clock should not lose the whole poll over a stamp.
+pub fn parse_frankfurter_snapshot(body: &Value, currencies: &[&str]) -> FrankfurterSnapshot {
+    FrankfurterSnapshot {
+        rates: parse_frankfurter(body, currencies),
+        reference_date: body
+            .get("date")
+            .and_then(Value::as_str)
+            .and_then(|date| parse_civil_utc(date).ok()),
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +216,46 @@ mod tests {
         let out = parse_frankfurter(&body, &["EUR", "ZAR"]);
         assert!(out.contains_key("EUR"));
         assert!(!out.contains_key("ZAR"));
+    }
+
+    #[test]
+    fn the_reference_date_resolves_to_midnight_utc() {
+        // The shape the live endpoint returns, captured 2026-09-08.
+        let body = json!({
+            "amount": 1.0,
+            "base": "USD",
+            "date": "2026-09-08",
+            "rates": { "AUD": 1.3861, "CAD": 1.3805, "EUR": 0.86103 }
+        });
+        let snap = parse_frankfurter_snapshot(&body, &["AUD", "CAD", "EUR"]);
+        // Midnight, not the 16:00 CET fix: the stamp must be divisible by a
+        // whole day. Asserting the remainder rather than the literal is what
+        // makes this a test of the *rule* rather than of one date's arithmetic.
+        let stamp = snap.reference_date.expect("a well-formed date parses");
+        assert_eq!(stamp.rem_euclid(86_400), 0);
+        assert_eq!(stamp, crate::time::civil_to_epoch_secs(2026, 9, 8, 0, 0, 0));
+        // The rates ride along unchanged — this parse is the other one plus a
+        // stamp, and a divergence between the two would be silent.
+        assert_eq!(snap.rates, parse_frankfurter(&body, &["AUD", "CAD", "EUR"]));
+    }
+
+    #[test]
+    fn a_missing_or_bogus_date_costs_the_stamp_not_the_rates() {
+        // Absent entirely.
+        let body = json!({ "rates": { "EUR": 0.88 } });
+        let snap = parse_frankfurter_snapshot(&body, &["EUR"]);
+        assert_eq!(snap.reference_date, None);
+        // The reading itself must survive: a caller with its own clock can
+        // still record this, and dropping it would lose a day's observation
+        // over a field that is not the observation.
+        assert!(snap.rates.contains_key("EUR"));
+        // Present but not a date. `2026-13-08` is the case a permissive
+        // field-splitting parse would otherwise wave through as month 13.
+        for bad in ["", "not-a-date", "2026-13-08", "2026-09"] {
+            let body = json!({ "date": bad, "rates": { "EUR": 0.88 } });
+            let snap = parse_frankfurter_snapshot(&body, &["EUR"]);
+            assert_eq!(snap.reference_date, None, "{bad:?} must not parse");
+            assert!(snap.rates.contains_key("EUR"));
+        }
     }
 }

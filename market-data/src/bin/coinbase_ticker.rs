@@ -33,10 +33,14 @@ use std::time::Duration;
 /// is what distinguishes a print from a bucket.
 const SOURCE: &str = "coinbase";
 
-/// Coinbase lists only the one demo-roster token, so the default is a roster of
-/// one — but it is a roster, and adding a product is now a config change rather
-/// than a second service.
-const DEFAULT_PRODUCTS: &str = "EURC-USDC";
+/// The two demo-roster tokens Coinbase lists against USDC.
+///
+/// `AUDD-USDC` stopped producing on 2026-08-17 and was de-rostered by config;
+/// it is back because the venue never dropped it — the product is still
+/// `online` with `trading_disabled: false`, so the silence was ours. It quotes
+/// `limit_only`, which constrains trading on the venue and not this collector:
+/// the ticker publishes either way.
+const DEFAULT_PRODUCTS: &str = "EURC-USDC,AUDD-USDC";
 
 const DEFAULTS: TickDefaults = TickDefaults {
     base_url: "https://api.exchange.coinbase.com",
