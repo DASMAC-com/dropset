@@ -57,7 +57,7 @@ including ones that carry no MVP pair — visibility is the point.
 | OANDA         | The FX anchor; deepest, treated as truth    | 60 s    | 72 h        |
 | Twelve Data   | Second independent FX anchor for redundancy | 60 s    | 72 h        |
 | Alpha Vantage | Third FX anchor, daily — a slow cross-check | 24 h    | 72 h        |
-| Frankfurter   | Keyless ECB breadth; powers the demo maker  | 24 h    | 72 h        |
+| Frankfurter   | Keyless ECB rates; a composite input        | 24 h    | 72 h        |
 | er-api        | Widest keyless table; sole NGN source       | 24 h    | 72 h        |
 | Kraken QCAD   | The §3.1 CAD-stablecoin tripwire, not a peg | 15 s    | 48 h        |
 
@@ -78,6 +78,16 @@ explained by er-api's once-daily snapshot. A daily venue is a breadth
 and sanity input. It must never be the sole input to a live quote, and
 the dashboard must make its cadence legible so nobody mistakes the one
 for the other.
+
+**A gap in a daily series is usually permanent.** A feed cursor is an
+inclusive lower bound at `next_start` — a bar landing exactly on it is
+still written — but nothing ever rewinds it. So a bar that arrives
+*after* the cursor has passed its timestamp is skipped for good, and
+the hole never heals on a later poll. Alpha Vantage carries two such
+holes (2026-08-25 and 09-01). Coverage panels must therefore count
+what is *present* over a window rather than infer health from the
+latest timestamp, which a permanent hole leaves looking perfectly
+fresh.
 
 ## 3. Redundancy — the criterion the maker actually needs
 
@@ -132,6 +142,20 @@ against a wall-clock bound. Sessions come from the market calendar
 
 ## 5. What each panel means
 
+**About ten panels on the market-data dashboard. This is a hard
+constraint, not a target.** Breadth belongs in the drop-downs, not in
+more panels: pick the pair, the source, the granularity, and the same
+ten panels answer the question. A dashboard nobody can take in at once
+does not get read, and an unread dashboard is worse than none, because
+it is trusted without being looked at.
+
+Panel *count* is not the whole of it, and it is the half that misleads.
+A repeating panel is one panel in the JSON and N charts on the screen,
+so the constraint is on **rendered charts**: a panel that repeats over
+a variable defaulted to All silently breaks this rule while the JSON
+still looks compliant. Repeat over a deliberately narrow default —
+never over All — and let the drop-down widen it on demand.
+
 One sentence each; if a panel needs more, the panel is doing two jobs.
 
 - **Source coverage (registry-driven)** — every source the collectors
@@ -144,8 +168,9 @@ One sentence each; if a panel needs more, the panel is doing two jobs.
   from, and which inputs composed it.
 - **Feed health / staleness** — age against the class bound, per
   source and product.
-- **Rows per minute by source** — cadence actually observed, against
-  the cadence claimed in §2.
+- **Candle rows per minute by source** — cadence actually observed,
+  against the cadence claimed in §2. Candles only; the tick tier is a
+  separate panel, and the name has to say so.
 - **OHLC candles** — price action for one product at one granularity.
 - **Feed cursor age** — how far behind its own watermark a feed is.
 
@@ -158,6 +183,26 @@ One sentence each; if a panel needs more, the panel is doing two jobs.
   quoting the full roster; only the engine depth differs. A roster
   currency with no visible source is a defect at this tier too, even
   though it gets no per-pair panels.
+
+### 6.1 A tick-only venue must not be able to vanish
+
+Sources land in **two tiers by storage**, and this is the seam every
+visibility bug so far has fallen through. Candle venues write
+`cex_prices`; tick venues write `spot_ticks`. Today the tick-only class
+is **Kraken, er-api and Pyth** — and it grows, so no panel may assume
+it away.
+
+The rule: **a panel whose name says "by source" must cover both
+tables, or its name must say which tier it covers.** A query over
+`cex_prices` alone is not wrong, but calling its output "every source"
+is, and it fails silently — the venue does not error, it is simply
+absent, which is indistinguishable from not existing.
+
+The same applies to any variable that *populates from* a measurement
+table. A source drop-down built as `DISTINCT source FROM cex_prices`
+can never offer a tick-only venue, so the venue becomes unreachable
+even on panels that would happily show it. Populate selectors from the
+registry, which knows every source by construction.
 
 ## 7. What is deliberately not shown
 
@@ -206,9 +251,14 @@ worse than no spec. Each is a defect against a rule above.
    `executable file not found in $PATH`. Both are now corrected. It is
    the only keyless CAD/USD and the only NGN source, and starting it
    took live source-product pairs from 10 to 24.
-1. **Frankfurter has no market-data collector.** It exists as a feeds
-   venue the demo maker consumes live, so it writes nothing to the
-   store and cannot appear on any panel. Specified here, not cut.
+1. **Frankfurter has no market-data collector.** Ratified as a real
+   price feed and an input to the composite at its honest daily
+   cadence, so this is required work, not a cut. It exists today only
+   as a feeds-crate venue adapter the demo maker consumes live: there
+   is no `market-data-frankfurter` binary, so unlike er-api this is new
+   code rather than wiring — the adapter's shape matches er-api's
+   source, so the collector is close to a copy, plus the same Makefile
+   and image COPY lines er-api needed.
 1. **AUDD/USDC stopped on 2026-08-17** and is de-rostered by config
    (`PRODUCT_IDS` defaults to `EURC-USDC`). Coinbase still lists it
    `online` with trading enabled, so this is a roster change, not a
