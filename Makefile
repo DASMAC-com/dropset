@@ -798,7 +798,15 @@ KEYED_WARN = printf '\n%s\n%s\n%s\n%s\n%s\n\n' \
 # The status is read only from the SECOND sample, deliberately. Reading it
 # from the first would race the start: `up -d` can return with a container
 # still `created` for a few milliseconds, which is indistinguishable from a
-# start that failed. The restart count has no such ambiguity.
+# start that failed.
+#
+# The restart count is immune to that race, but only because both samples
+# resolve the container with `ps -aq` rather than `ps -q`. Plain `ps -q`
+# lists RUNNING containers only, so it would hand the first sample an empty
+# id for a container still `created` — the count would come back empty, fail
+# to match the `svc:0` the second sample reads, and flag a perfectly healthy
+# service. The `-a` is what makes the two samples comparable; it is not
+# tidiness.
 #
 # It waits before looking rather than polling, because the question is
 # whether the services are STILL up, and that has no early answer: a pass has
@@ -821,13 +829,13 @@ KEYED_WARN = printf '\n%s\n%s\n%s\n%s\n%s\n\n' \
 KEYED_PROBE_SECONDS = 5
 KEYED_PROBE = dead=''; before=''; \
 	for svc in $(KEYED_SERVICES); do \
-	cid="$$($(FX_COMPOSE) ps -q "$$svc")"; \
+	cid="$$($(FX_COMPOSE) ps -aq "$$svc")"; \
 	before="$$before $$svc:$$(docker inspect -f '{{.RestartCount}}' \
 	"$$cid" 2>/dev/null)"; \
 	done; \
 	sleep $(KEYED_PROBE_SECONDS); \
 	for svc in $(KEYED_SERVICES); do \
-	cid="$$($(FX_COMPOSE) ps -q "$$svc")"; \
+	cid="$$($(FX_COMPOSE) ps -aq "$$svc")"; \
 	status="$$(docker inspect -f '{{.State.Status}}' "$$cid" 2>/dev/null)"; \
 	restarts="$$(docker inspect -f '{{.RestartCount}}' "$$cid" 2>/dev/null)"; \
 	unchanged=''; \
@@ -842,7 +850,8 @@ KEYED_UP = affected='OANDA, Twelve Data and Alpha Vantage'; \
 	reason='the keyed bring-up failed (see the error above)'; $(KEYED_WARN); \
 	else $(KEYED_PROBE); \
 	if [ -n "$$dead" ]; then affected="$$dead"; \
-	reason='started, then stopped or restarted — check their logs'; \
+	reason="started, then stopped or restarted — try: \
+	$(FX_COMPOSE) logs $$dead"; \
 	$(KEYED_WARN); fi; fi
 
 # Localnet bot stack: the maker bot (infra/localnet). It signs with the repo
