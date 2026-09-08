@@ -323,9 +323,12 @@ and it is exactly the rendering class the sentence describes.)
    adds a second daily reference. The anchor is a live-quote input at
    last.
 
-   **OANDA cannot serve it**, which is why the roster there is
-   separate — see §3's redundancy note and the comment on the `oanda`
-   service. This is the one MVP anchor with a single intraday source.
+   **OANDA now serves it too**, via intake inversion — it quotes only
+   `USD_CAD`, which the adapter fetches and flips, so the pair has a
+   second intraday source and is no longer the one MVP anchor short of
+   the §3 criterion. OANDA's roster stays a separate variable even so,
+   for a reason that outlives the mechanism: see §3's redundancy note
+   and the comment on the `oanda` service.
 
 1. **er-api had never run — fixed 2026-09-07.** It was wired into the
    compose file but reached neither place that makes a collector run:

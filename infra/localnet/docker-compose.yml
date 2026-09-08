@@ -509,13 +509,25 @@ services:
     # mechanism and the roster refuses one for such a pair: a pin fixes a
     # spelling, and the reciprocal is a different value.
     #
-    # The variable stays unchained because the *direction* of each pair is a
-    # measured fact the code has to know — `OANDA_REVERSED_PAIRS` in
-    # market-data/src/fx.rs. A pair added to the shared roster but missing
-    # from that table would be requested in the canonical direction and 400
-    # on every poll. That failure is loud rather than silent (as is the
-    # opposite mistake), so widening the table is cheap — but it is a code
-    # change, so widen the shared roster freely and OANDA's deliberately.
+    # The variable stays unchained even so, and the reason is about how the
+    # dashboard *renders* rather than about the 400. Which pairs are reversed
+    # is a measured table in the code (`OANDA_REVERSED_PAIRS` in
+    # market-data/src/fx.rs), so a pair added to the shared roster but
+    # missing from that table would be registered here and then 400 on every
+    # poll — present but not producing, which the coverage panel renders as
+    # **faulted**. That is a false outage for what is really a config gap,
+    # and not conflating those two is the whole thesis of §4 of
+    # docs/dashboards.md. Unchained, such a pair simply has no OANDA row:
+    # the venue reads as deliberately **not** covering it, which is the
+    # truthful rendering. So widen the shared roster freely; widen OANDA's
+    # deliberately.
+    #
+    # The residual, recorded rather than fixed: nothing forces someone
+    # widening `FX_PRODUCT_IDS` to think about OANDA at all. The change that
+    # would make re-chaining safe is to *derive* the reversed set from the
+    # venue's own instrument list at startup and delete the table — which
+    # trades a maintained constant for a boot-time network dependency, so it
+    # is not obviously right.
     build:
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
