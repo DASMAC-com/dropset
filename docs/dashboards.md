@@ -111,6 +111,19 @@ Not "sources configured". Not a row count. The number that answers
 "can we still quote if OANDA drops right now". A pair at or below its
 minimum is the loudest thing on the page.
 
+**CAD/USD is the thin one, and the panel must show it.** Measured
+2026-09-08: OANDA's v20 instrument list is direction-fixed and has no
+`CAD_USD` (only `USD_CAD`, the reciprocal), so the CADC anchor's
+intraday coverage is **Twelve Data alone**, against two intraday
+sources each for EUR/USD and AUD/USD. Alpha Vantage, Frankfurter and
+er-api all carry it, but daily — breadth, not a live-quote input, per
+§2. So CAD/USD does **not** meet this section's
+"any one or two venues dark" criterion at intraday cadence today, and
+the minimum-venues panel should render that rather than average it
+away. Closing it needs either a venue that quotes the pair in the
+canonical direction or candle inversion in the OANDA adapter, which
+swaps high and low and is not written.
+
 **Spreads are stated in bps here and everywhere, never in pips.** A pip
 is a fixed absolute increment, so what it is *worth* in relative terms
 drifts with the quote level — 1 pip is about 0.855 bp at EUR/USD 1.17
@@ -283,11 +296,17 @@ missing feed, which is why the feed work did not touch them.
    both tables is the fuller remedy and remains open too.
 
 1. **CAD/USD was not collected at all** until 2026-09-07, so §1's
-   mandatory anchor was missing for CADC. *Closed.* er-api supplied it
-   first at a daily cadence, which per §2 is breadth and not a
-   live-quote input; `CAD-USD` is now also on the keyed roster
-   (`FX_PRODUCT_IDS`, four pairs), so OANDA and Twelve Data carry it at
-   their own cadences and the anchor is a live-quote input at last.
+   mandatory anchor was missing for CADC. *Closed, with a caveat worth
+   reading.* er-api supplied it first at a daily cadence, which per §2
+   is breadth and not a live-quote input; `CAD-USD` is now also on the
+   keyed roster (`FX_PRODUCT_IDS`, four pairs), so **Twelve Data**
+   carries it intraday and **Alpha Vantage** daily, and Frankfurter
+   adds a second daily reference. The anchor is a live-quote input at
+   last.
+
+   **OANDA cannot serve it**, which is why the roster there is
+   separate — see §3's redundancy note and the comment on the `oanda`
+   service. This is the one MVP anchor with a single intraday source.
 
 1. **er-api had never run — fixed 2026-09-07.** It was wired into the
    compose file but reached neither place that makes a collector run:

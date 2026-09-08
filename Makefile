@@ -669,9 +669,20 @@ grafana-down: check-docker
 # derived from them. It replaces the singular FX_PRODUCT_ID, which the compose
 # file no longer reads — a roster of one is just a list with one entry.
 #
+# **OANDA does not read FX_PRODUCT_IDS**, though the other two do. Its v20
+# instrument list is direction-fixed — one instrument per pair, in market
+# convention — so a canonical id OANDA lists the other way round (`CAD-USD`;
+# measured 2026-09-08, `CAD_USD` 400s and only `USD_CAD` exists) would 400 on
+# every poll. It takes OANDA_PRODUCT_IDS alone, defaulting to the three pairs
+# it can actually serve. Widen the shared roster freely; widen OANDA's
+# deliberately.
+#
 # **A pinned spelling (`CANONICAL=VENUE`) must go in a per-venue variable**, not
 # in the shared one: OANDA_PRODUCT_IDS, TWELVEDATA_PRODUCT_IDS, or
-# ALPHAVANTAGE_PRODUCT_IDS, each falling back to FX_PRODUCT_IDS when unset. A
+# ALPHAVANTAGE_PRODUCT_IDS — the latter two falling back to FX_PRODUCT_IDS
+# when unset. Note a pin cannot rescue the OANDA case above: it fixes a
+# *spelling*,
+# and the reciprocal direction is a different *value*. A
 # pin is inherently venue-specific — the three vendors spell one pair three
 # ways — so putting one in the shared variable would hand a spelling meant for
 # one venue to all three. Alpha Vantage derives no single symbol at all (it

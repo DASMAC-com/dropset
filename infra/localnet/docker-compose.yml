@@ -492,6 +492,24 @@ services:
     # A weekend window legitimately returns no candles — real FX is closed — and
     # the adapter advances its cursor past the window anyway, so an idle
     # Saturday is not a stall.
+    #
+    # **`OANDA_PRODUCT_IDS` deliberately does not chain to `FX_PRODUCT_IDS`,
+    # unlike the other two keyed venues.** OANDA's v20 instrument list is
+    # **direction-fixed**: it lists one instrument per pair, in market
+    # convention, and rejects the other direction outright rather than
+    # inverting it. Measured 2026-09-08 — `CAD_USD` returns
+    # `400 Invalid value specified for 'instrument'` while `USD_CAD` returns
+    # 1.37838 — so putting `CAD-USD` on the shared roster would give this
+    # service an instrument that 400s on every poll forever, and the canonical
+    # id means USD per CAD, which is the reciprocal of the only series OANDA
+    # will serve. Storing `USD_CAD` under `CAD-USD` would be a silent
+    # off-by-a-reciprocal, so pinning the spelling is not the fix either;
+    # inverting a candle (which also swaps high and low) is adapter work
+    # nobody has done. Twelve Data and Alpha Vantage both quote `CAD/USD`
+    # directly and carry it through the shared roster.
+    #
+    # The consequence for §3 of docs/dashboards.md: CAD/USD has **one**
+    # intraday keyed source where EUR/USD and AUD/USD have two.
     build:
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
@@ -505,8 +523,7 @@ services:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       OANDA_API_KEY: '${OANDA_API_KEY:-}'
       PRODUCT_IDS: >-
-        ${OANDA_PRODUCT_IDS:-${FX_PRODUCT_IDS:-AUD-USD,CAD-USD,
-        EUR-USD,GBP-USD}}
+        ${OANDA_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}
       RUST_LOG: 'info'
     profiles:
     - 'fx'
