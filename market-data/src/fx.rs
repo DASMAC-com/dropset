@@ -10,7 +10,7 @@
 //! matching the hyphenated style the Coinbase rows already use, and each
 //! adapter is handed the spelling it wants at construction.
 
-use crate::roster::{roster_from_env, RosterEntry};
+use crate::roster::{roster_from_env, RosterEntry, VenueSymbol};
 use anyhow::{anyhow, Context, Result};
 use dropset_feeds::{now_secs, secrets::SecretProvider};
 use std::collections::HashMap;
@@ -199,10 +199,49 @@ pub fn split_canonical(product_id: &str) -> Result<(&str, &str)> {
     Ok((base, quote))
 }
 
-/// `AUD-USD` → `AUD_USD`, the v20 instrument spelling.
-pub fn oanda_instrument(product_id: &str) -> Result<String> {
+/// Canonical ids whose OANDA instrument runs the **other** way round, so the
+/// adapter fetches the reciprocal series and inverts every reading at intake.
+///
+/// **An explicit table rather than a convention, for the same reason
+/// `granularity_code` uses an allowlist: the rule is real but this file is not
+/// where it can be verified.** FX market convention does fix the direction —
+/// USD is the quote currency for EUR, GBP, AUD and NZD and the base for
+/// essentially everything else — so the direction of an unlisted pair is
+/// *predictable*, and encoding that prediction would silently commit every
+/// future pair to it. Each entry here is measured against the live venue
+/// instead.
+///
+/// **Extending it is safe because a wrong entry fails loudly, in either
+/// direction.** OANDA lists exactly one instrument per pair and rejects the
+/// other with `400 Invalid value specified for 'instrument'`, so a pair
+/// wrongly listed here asks for a nonexistent reciprocal and a pair wrongly
+/// omitted asks for a nonexistent direct — both 400 on the first poll rather
+/// than storing a plausible wrong number. That is what makes measurement the
+/// cheap step: add the pair, start the collector, read the log.
+///
+/// Measured 2026-09-08: `CAD_USD` → `400`, `USD_CAD` → `200` at 1.37838,
+/// against Twelve Data's `CAD/USD` at 0.7255 (= 1 / 1.37838).
+const OANDA_REVERSED_PAIRS: &[&str] = &["CAD-USD"];
+
+/// `AUD-USD` → `AUD_USD`, the v20 instrument spelling — and for a pair OANDA
+/// quotes the other way round, `CAD-USD` → `USD_CAD` marked inverted.
+///
+/// The direction is decided here, from the canonical id alone, because it is a
+/// fact about the venue rather than a deployment choice: see
+/// `OANDA_REVERSED_PAIRS` in this module, and [`VenueSymbol`].
+pub fn oanda_instrument(product_id: &str) -> Result<VenueSymbol> {
     let (base, quote) = split_canonical(product_id)?;
-    Ok(format!("{base}_{quote}"))
+    let canonical = format!("{base}-{quote}").to_ascii_uppercase();
+    if OANDA_REVERSED_PAIRS.contains(&canonical.as_str()) {
+        return Ok(VenueSymbol {
+            symbol: format!("{quote}_{base}"),
+            inverted: true,
+        });
+    }
+    Ok(VenueSymbol {
+        symbol: format!("{base}_{quote}"),
+        inverted: false,
+    })
 }
 
 /// `AUD-USD` → `AUD/USD`, the Twelve Data symbol spelling.
@@ -281,9 +320,33 @@ mod tests {
 
     #[test]
     fn each_venue_gets_its_own_spelling_of_one_canonical_pair() {
-        assert_eq!(oanda_instrument("AUD-USD").unwrap(), "AUD_USD");
+        let oanda = oanda_instrument("AUD-USD").unwrap();
+        assert_eq!(oanda.symbol, "AUD_USD");
+        assert!(!oanda.inverted);
         assert_eq!(twelvedata_symbol("AUD-USD").unwrap(), "AUD/USD");
         assert_eq!(split_canonical("AUD-USD").unwrap(), ("AUD", "USD"));
+    }
+
+    #[test]
+    fn a_pair_oanda_quotes_backwards_resolves_to_the_reciprocal_marked_inverted() {
+        // The measured case (2026-09-08): `CAD_USD` 400s and only `USD_CAD`
+        // exists, so the roster's canonical `CAD-USD` has to reach the venue as
+        // `USD_CAD` *and* carry the flag that makes the adapter invert it. The
+        // flag is the load-bearing half: the spelling alone would store USD per
+        // CAD's reciprocal under a canonical id meaning USD per CAD.
+        let reversed = oanda_instrument("CAD-USD").unwrap();
+        assert_eq!(reversed.symbol, "USD_CAD");
+        assert!(reversed.inverted);
+
+        // ...and the direction is per-pair, not a property of naming USD: the
+        // other MVP anchors are quoted the canonical way round and must not be
+        // inverted.
+        for direct in ["EUR-USD", "AUD-USD", "GBP-USD"] {
+            assert!(
+                !oanda_instrument(direct).unwrap().inverted,
+                "{direct} is quoted in the canonical direction"
+            );
+        }
     }
 
     #[test]

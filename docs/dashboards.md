@@ -71,12 +71,14 @@ a roster table that quietly mixed the two would be the exact
 no-data-reads-as-healthy trap this document exists to close, so if a
 row ever goes back to being aspirational, say so here.
 
-**One caveat on the OANDA row**, and it is a coverage fact rather than
-an outage: OANDA's v20 instrument list is direction-fixed and has no
-`CAD_USD` (measured 2026-09-08 — only `USD_CAD`, the reciprocal), so
-that venue carries AUD/USD, EUR/USD and GBP/USD but **not** the CADC
-anchor. CAD/USD's keyed coverage is Twelve Data intraday plus Alpha
-Vantage daily. See §3.
+**One note on the OANDA row**, and it is a mapping fact rather than an
+outage: OANDA's v20 instrument list is direction-fixed and has no
+`CAD_USD` (measured 2026-09-08 — only `USD_CAD`, the reciprocal). The
+adapter inverts such a pair at intake, so the venue does carry the CADC
+anchor — `CAD-USD` is fetched as `USD_CAD` and stored in the canonical
+direction, alongside AUD/USD, EUR/USD and GBP/USD. What lands in
+`cex_prices` is therefore always canonical, and no consumer needs to
+know which rows came from a reversed instrument. See §3.
 
 The 72 h / 48 h split is the class-aware staleness bound already
 implemented in `instrument_source_liveness`. Panels **must read that
@@ -120,18 +122,24 @@ Not "sources configured". Not a row count. The number that answers
 "can we still quote if OANDA drops right now". A pair at or below its
 minimum is the loudest thing on the page.
 
-**CAD/USD is the thin one, and the panel must show it.** Measured
-2026-09-08: OANDA's v20 instrument list is direction-fixed and has no
-`CAD_USD` (only `USD_CAD`, the reciprocal), so the CADC anchor's
-intraday coverage is **Twelve Data alone**, against two intraday
-sources each for EUR/USD and AUD/USD. Alpha Vantage, Frankfurter and
-er-api all carry it, but daily — breadth, not a live-quote input, per
-§2. So CAD/USD does **not** meet this section's
-"any one or two venues dark" criterion at intraday cadence today, and
-the minimum-venues panel should render that rather than average it
-away. Closing it needs either a venue that quotes the pair in the
-canonical direction or candle inversion in the OANDA adapter, which
-swaps high and low and is not written.
+**CAD/USD was the thin one, and it is the reason the panel exists.**
+Measured 2026-09-08: OANDA's v20 instrument list is direction-fixed and
+has no `CAD_USD` (only `USD_CAD`, the reciprocal), which left the CADC
+anchor on **Twelve Data alone** intraday, against two intraday sources
+each for EUR/USD and AUD/USD. Alpha Vantage, Frankfurter and er-api all
+carry it, but daily — breadth, not a live-quote input, per §2.
+
+*Closed.* The OANDA adapter now inverts a reversed pair **at intake**:
+it fetches `USD_CAD` and flips each candle before the sink, high and
+low included, since inverting reverses their order. So CAD/USD has two
+intraday sources and meets this section's "any one or two venues dark"
+criterion at intraday cadence, like the other two MVP pairs.
+
+The panel is not retired by that, and this episode is the argument for
+it: the criterion is met by a **count**, and the count fell to one
+without a single feed failing — a mapping fact, invisible to every
+staleness bound in §2. So it must still render the per-pair minimum
+rather than average it away.
 
 **Spreads are stated in bps here and everywhere, never in pips.** A pip
 is a fixed absolute increment, so what it is *worth* in relative terms
@@ -392,9 +400,10 @@ and it is exactly the rendering class the sentence describes.)
    OHLC panel's CAD/USD repeat was empty by construction until item 2
    landed. **Item 2 has landed**, so the emptiness itself is resolved:
    **Twelve Data** now carries `CAD-USD` intraday and **Alpha Vantage**
-   daily, and both write candles into `cex_prices`. **Not OANDA** — it
-   cannot serve this pair at all (see item 2 and §3), which is why the
-   candle coverage here is thinner than for the other two MVP anchors.
+   daily, and both write candles into `cex_prices`. **OANDA too**, now
+   that the adapter inverts a reversed pair at intake and serves
+   `CAD-USD` via `USD_CAD` (see §3) — so candle coverage here matches
+   the other two MVP anchors rather than trailing them.
    The tick side gained a source too: Frankfurter now writes CAD/USD
    alongside er-api. What this item was *really* about is untouched and
    stays open — §4 still has no rendering that distinguishes "true and

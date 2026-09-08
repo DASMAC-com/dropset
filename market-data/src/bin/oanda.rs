@@ -64,9 +64,22 @@ async fn main() -> anyhow::Result<()> {
     // Both lists, because a pinned `CANONICAL=VENUE` override is honoured here:
     // without the resolved instruments in the log, a mis-pinned one is visible
     // nowhere at startup.
+    //
+    // `inverted` is here for the same reason and matters more: an inverted pair
+    // is fetched under a symbol that reads as a *different* pair (`CAD-USD` via
+    // `USD_CAD`), so the two lists above look mismatched to anyone who does not
+    // know which entries are reciprocals. Naming them is what makes the pairing
+    // legible — and it is the one place an operator can confirm the direction
+    // the venue rule chose without reading the code.
     tracing::info!(
         products = %instruments.iter().map(|p| p.product_id.as_str()).collect::<Vec<_>>().join(","),
         instruments = %instruments.iter().map(|p| p.venue_symbol.as_str()).collect::<Vec<_>>().join(","),
+        inverted = %instruments
+            .iter()
+            .filter(|p| p.inverted)
+            .map(|p| p.product_id.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
         granularity = cfg.granularity_secs,
         poll_secs = cfg.poll_interval_secs,
         "oanda collector starting"
@@ -89,6 +102,10 @@ async fn main() -> anyhow::Result<()> {
             cfg.max_buckets_per_request,
             resume,
             cfg.backfill_start_secs,
+            // A pair OANDA quotes the other way round: the adapter fetches the
+            // reciprocal instrument and inverts each candle, so what reaches
+            // the sink is already in `product_id`'s direction.
+            resolved.inverted,
         )?;
         let writer = CexWriter::new(SOURCE, &product_id, cfg.granularity_secs);
         let sinks: Vec<Box<dyn Sink<Candle>>> =

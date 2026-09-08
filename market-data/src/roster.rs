@@ -43,19 +43,78 @@ pub struct RosterEntry {
 }
 
 impl RosterEntry {
-    /// The venue's spelling: the pinned one if the entry carried it, else
-    /// whatever `derive` makes of the canonical id.
+    /// The venue's spelling and quote direction: the pinned spelling if the
+    /// entry carried one, else whatever `derive` makes of the canonical id —
+    /// but the **direction is always the venue rule's**, never the pin's.
     ///
     /// Taking a closure rather than a rule keeps this type ignorant of any
     /// particular venue: each collector passes its own mapping and the
     /// override precedence lives in one place instead of once per venue.
-    pub fn venue_symbol_or_else<F>(&self, derive: F) -> Result<String>
+    ///
+    /// **A pin may not stand in for an inversion, and saying so is the whole
+    /// reason `derive` runs even when a pin is present.** A pin fixes a
+    /// *spelling*; a direction-fixed venue quoting the other way round is a
+    /// different *value*. The two look interchangeable at the roster: `CAD-USD`
+    /// means USD per CAD (~0.7254), OANDA serves only `USD_CAD` (~1.37838),
+    /// and `CAD-USD=USD_CAD` parses cleanly — so without this refusal an
+    /// operator reaching for the documented escape hatch would wire the
+    /// reciprocal into a canonical product id, storing 1.37838 where 0.7254
+    /// belongs with nothing failing. Refusing is safe because a pin is never
+    /// *needed* for such a pair: the venue rule already derives its spelling.
+    pub fn resolve_with<F, T>(&self, derive: F) -> Result<VenueSymbol>
     where
-        F: FnOnce(&str) -> Result<String>,
+        F: FnOnce(&str) -> Result<T>,
+        T: Into<VenueSymbol>,
     {
-        match &self.venue_symbol {
-            Some(pinned) => Ok(pinned.clone()),
-            None => derive(&self.product_id),
+        let derived: VenueSymbol = derive(&self.product_id)?.into();
+        let Some(pinned) = &self.venue_symbol else {
+            return Ok(derived);
+        };
+        if derived.inverted {
+            return Err(anyhow!(
+                "{:?} pins the venue symbol {pinned:?}, but this venue quotes \
+                 that pair in the opposite direction (as {:?}) and the adapter \
+                 inverts it at intake. A pin fixes a spelling, not a \
+                 reciprocal, so honouring it would store the inverse of \
+                 {:?} under that id. Drop the pin and let the direction be \
+                 derived.",
+                self.product_id,
+                derived.symbol,
+                self.product_id
+            ));
+        }
+        Ok(VenueSymbol {
+            symbol: pinned.clone(),
+            inverted: false,
+        })
+    }
+}
+
+/// What a venue rule makes of one canonical id: the venue's own spelling, and
+/// whether that series runs the *other* way round.
+///
+/// **`inverted` is a venue fact, not an operator choice.** A venue whose
+/// instrument list is direction-fixed lists exactly one of `BASE_QUOTE` and
+/// `QUOTE_BASE` and rejects the other outright, so which one exists is a
+/// property of the venue and the pair — knowable from the canonical id alone,
+/// and therefore derived rather than configured. See
+/// [`crate::fx::oanda_instrument`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VenueSymbol {
+    /// The symbol to send to the venue.
+    pub symbol: String,
+    /// Whether the venue's series is the reciprocal of the canonical pair, so
+    /// the adapter must invert every reading before it is stored.
+    pub inverted: bool,
+}
+
+/// A venue rule that derives a spelling and nothing else — the common case, and
+/// the reason adding inversion changed no existing rule's signature.
+impl From<String> for VenueSymbol {
+    fn from(symbol: String) -> Self {
+        Self {
+            symbol,
+            inverted: false,
         }
     }
 }
@@ -76,6 +135,14 @@ pub struct VenueProduct {
     pub venue_symbol: String,
     /// The canonical id the reading is stored under.
     pub product_id: String,
+    /// Whether [`Self::venue_symbol`] is the reciprocal of
+    /// [`Self::product_id`], so the adapter must invert each reading at intake.
+    ///
+    /// The store only ever holds canonical-direction values, which is why this
+    /// travels to the adapter rather than being applied downstream: a raw
+    /// reciprocal in `cex_prices` is indistinguishable from a real price, and
+    /// every consumer would have to know which rows to flip.
+    pub inverted: bool,
 }
 
 /// Resolve a whole roster against one venue's spelling rule.
@@ -94,13 +161,15 @@ pub struct VenueProduct {
 /// pair's price stored as another's, with the loser reported as a roster typo
 /// by the silence watch. That is corrupt data rather than missing data, so it
 /// fails startup.
-pub fn resolve_venue<F>(products: &[RosterEntry], derive: F) -> Result<Vec<VenueProduct>>
+pub fn resolve_venue<F, T>(products: &[RosterEntry], derive: F) -> Result<Vec<VenueProduct>>
 where
-    F: Fn(&str) -> Result<String>,
+    F: Fn(&str) -> Result<T>,
+    T: Into<VenueSymbol>,
 {
     let mut out: Vec<VenueProduct> = Vec::with_capacity(products.len());
     for entry in products {
-        let venue_symbol = entry.venue_symbol_or_else(&derive)?;
+        let VenueSymbol { symbol, inverted } = entry.resolve_with(&derive)?;
+        let venue_symbol = symbol;
         if let Some(clash) = out.iter().find(|p| p.venue_symbol == venue_symbol) {
             // Worded for both caller shapes. A collector that indexes a batched
             // response by venue symbol would file the venue's single answer
@@ -121,6 +190,7 @@ where
         out.push(VenueProduct {
             venue_symbol,
             product_id: entry.product_id.clone(),
+            inverted,
         });
     }
     Ok(out)
@@ -331,15 +401,87 @@ mod tests {
     #[test]
     fn a_pinned_symbol_wins_over_the_derived_one() {
         let roster = parse_roster("USDT-USD=USDTZUSD").unwrap();
-        let derived = roster[0].venue_symbol_or_else(|_| Ok("USDTUSD".to_string()));
-        assert_eq!(derived.unwrap(), "USDTZUSD");
+        let derived = roster[0].resolve_with(|_| Ok("USDTUSD".to_string()));
+        assert_eq!(derived.unwrap().symbol, "USDTZUSD");
+    }
+
+    #[test]
+    fn a_pin_cannot_stand_in_for_an_inversion() {
+        // The trap this closes, and it is a live one: the roster grammar
+        // happily parses `CAD-USD=USD_CAD`, so an operator reaching for the
+        // documented spelling escape hatch would wire OANDA's USD_CAD series
+        // (1.37838) into a canonical id meaning USD per CAD (0.7255). A pin
+        // fixes a spelling; that is a different *value*, and nothing
+        // downstream would notice the difference.
+        let roster = parse_roster("CAD-USD=USD_CAD").unwrap();
+        let err = roster[0]
+            .resolve_with(|_| {
+                Ok(VenueSymbol {
+                    symbol: "USD_CAD".to_string(),
+                    inverted: true,
+                })
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("opposite direction"), "{err}");
+        assert!(err.contains("not a reciprocal"), "{err}");
+    }
+
+    #[test]
+    fn a_pin_is_still_honoured_for_a_pair_quoted_the_canonical_way() {
+        // The refusal above must be narrow: it is inversion that a pin cannot
+        // express, not pinning as such. Kraken's legacy `USDTZUSD` spelling is
+        // the reason the feature exists and has to keep working.
+        let roster = parse_roster("USDT-USD=USDTZUSD").unwrap();
+        let resolved = roster[0]
+            .resolve_with(|_| Ok("USDTUSD".to_string()))
+            .unwrap();
+        assert_eq!(resolved.symbol, "USDTZUSD");
+        assert!(!resolved.inverted);
+    }
+
+    #[test]
+    fn an_inverted_pair_carries_its_flag_through_the_resolve() {
+        // The flag has to survive `resolve_venue`, not merely exist on the
+        // venue rule: the collector reads it from the resolved product to
+        // decide whether the adapter inverts.
+        let roster = parse_roster("AUD-USD,CAD-USD").unwrap();
+        let resolved = resolve_venue(&roster, |p| {
+            Ok(if p == "CAD-USD" {
+                VenueSymbol {
+                    symbol: "USD_CAD".to_string(),
+                    inverted: true,
+                }
+            } else {
+                VenueSymbol {
+                    symbol: p.replace('-', "_"),
+                    inverted: false,
+                }
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            resolved,
+            vec![
+                VenueProduct {
+                    venue_symbol: "AUD_USD".to_string(),
+                    product_id: "AUD-USD".to_string(),
+                    inverted: false,
+                },
+                VenueProduct {
+                    venue_symbol: "USD_CAD".to_string(),
+                    product_id: "CAD-USD".to_string(),
+                    inverted: true,
+                },
+            ]
+        );
     }
 
     #[test]
     fn an_unpinned_entry_derives_its_symbol() {
         let roster = parse_roster("EURC-USD").unwrap();
-        let derived = roster[0].venue_symbol_or_else(|p| Ok(p.replace('-', "")));
-        assert_eq!(derived.unwrap(), "EURCUSD");
+        let derived = roster[0].resolve_with(|p| Ok(p.replace('-', "")));
+        assert_eq!(derived.unwrap().symbol, "EURCUSD");
     }
 
     #[test]
@@ -349,7 +491,7 @@ mod tests {
         // derivation would masquerade as an unquoted pair.
         let roster = parse_roster("AUD-USD").unwrap();
         assert!(roster[0]
-            .venue_symbol_or_else(|_| Err(anyhow!("nope")))
+            .resolve_with(|_| Err::<String, _>(anyhow!("nope")))
             .is_err());
     }
 
@@ -392,6 +534,7 @@ mod tests {
                 VenueProduct {
                     venue_symbol: "EURCUSD".to_string(),
                     product_id: "EURC-USD".to_string(),
+                    inverted: false,
                 },
                 // The pinned spelling is what the venue answers under, but the
                 // canonical id is still what gets stored — the whole point of
@@ -399,6 +542,7 @@ mod tests {
                 VenueProduct {
                     venue_symbol: "USDTZUSD".to_string(),
                     product_id: "USDT-USD".to_string(),
+                    inverted: false,
                 },
             ]
         );
@@ -423,7 +567,7 @@ mod tests {
         // One entry's derivation failing takes the whole resolve down, rather
         // than yielding a roster quietly short of a pair.
         let roster = parse_roster("AUD-USD,EUR-USD").unwrap();
-        assert!(resolve_venue(&roster, |_| Err(anyhow!("no spelling"))).is_err());
+        assert!(resolve_venue(&roster, |_| Err::<String, _>(anyhow!("no spelling"))).is_err());
     }
 
     #[test]
