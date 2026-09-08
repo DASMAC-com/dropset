@@ -269,6 +269,17 @@ Two gotchas, both learned the hard way:
   header change), relaunch and start a fresh chat before the
   `mcp__github__*` tools appear.
 
+**This pattern generalizes — reach for it before building around a
+server.** Linear is registered the same way, user scope with the key in
+an `Authorization` header, which is what is expected to give a Bedrock
+session first-class Linear access; see `linear-automation.md` → "Two ways
+to reach Linear's MCP". Both **MCP** endpoints take the credential the
+same way, as `Bearer <credential>`; what differs is that Linear's *other*
+surface does not — its GraphQL API takes the key bare, and sending that
+bare form to its MCP endpoint returns an OAuth challenge indistinguishable
+from OAuth-only. So try both shapes before concluding a server has no
+key-based path.
+
 The `X-MCP-Toolsets: all` header exposes the `actions` toolset (check
 runs, job logs) alongside the defaults. The tradeoff: it also surfaces
 write tools across every toolset (Dependabot, secret-scanning,

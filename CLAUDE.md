@@ -38,8 +38,17 @@ assignee and the Planning document id from **environment variables**
 (`LINEAR_*`), never hard-coded UUIDs — each via its **own** bare
 `printenv` (a combined `printenv A B C` returns only the first on macOS
 / BSD). A worktree branch and its Linear issue share one `ENG-###`.
-Full detail — every env var and which skill reads it:
-`docs/conventions/linear-automation.md`.
+
+Linear's MCP is reached **two ways**, and only one of them survives a
+change of model substrate: the hosted `claude.ai Linear` connector
+needs a claude.ai session, so a **Bedrock** session never receives it,
+while a **locally configured** server at the same URL —
+`Authorization: Bearer ${LINEAR_API_KEY}`, user scope, the GitHub PAT
+pattern — is expected to reach every session. The GraphQL API the Python
+board tools use takes that same key **bare**, and confusing the two forms
+produces a convincing false negative.
+Full detail — every env var, which skill reads it, the registration, and
+that trap: `docs/conventions/linear-automation.md`.
 
 ### Planning sessions
 
