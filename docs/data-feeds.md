@@ -733,10 +733,11 @@ runs, that row still reads live. Closing the last one needs a distinct
 source per collector, which is a change to the collectors.
 
 Two things a panel author needs before building on any of this. The
-four fusion-input venues with no tick collector — er-api, CoinGecko,
-CMC, Frankfurter — have **no rows at all** in either liveness view,
-because only the market-data collector binaries write the registry
-those views read; a filter on one of them returns nothing, and nothing
+fusion-input venues with no tick collector — **CoinGecko and CMC**, the
+two that remain now that er-api and Frankfurter both have one — have
+**no rows at all** in either liveness view, because only the
+market-data collector binaries write the registry those views read; a
+filter on one of them returns nothing, and nothing
 looks exactly like healthy. And adding a migration advances the schema
 version the fence checks, so the shared database has to be migrated
 *before* any binary built from that change will start.
@@ -868,14 +869,27 @@ live.
 | `market-data-pyth`            | Batched, roster from store | A published **confidence** half-width and a publisher timestamp |
 | `market-data-kraken`          | Batched, roster from env   | A real market print of `USDC/USD` — peg truth, wired            |
 | `market-data-coinbase-ticker` | One feed per product       | The prints **between** candle closes on the reference venue     |
+| `market-data-erapi`           | Batched, roster from env   | The only keyless **NGN**, and a blend of ≥3 upstreams per code  |
+| `market-data-frankfurter`     | Batched, roster from env   | The ECB reference fix itself — breadth, at a daily cadence      |
 
 Three things about this tier are load-bearing.
 
 **`observed_at` is the venue's publish time where the venue publishes
 one**, else the poll second. Pyth does, so a re-polled reading carries the
 same instant and lands on the primary key — the re-fetch a restart causes
-is genuinely idempotent rather than a second row for one observation. The
-others do not, so their attribution is the poll.
+is genuinely idempotent rather than a second row for one observation.
+
+The two daily references carry one too, though Frankfurter's is a
+derived convention rather than a published instant — er-api stamps the
+provider's `last_update`, while Frankfurter publishes only a civil
+reference **date** (the ECB's own fix lands ~16:00 CET) and the
+collector floors it to midnight UTC. For them the stamp matters more
+than idempotency: these fixes change once a
+*business* day, so the poll second is not merely imprecise — it would
+record a Friday fix as fresh on Sunday night, and `max(observed_at)` is
+what the instruments view reports as feed freshness. Kraken and
+Coinbase's ticker publish no instant, so their attribution is the poll,
+which is harmless at a 15 s cadence on a live tape.
 
 **A confidence of `NULL` means "no confidence notion", never zero.** Zero
 would read as *perfect certainty* and silently satisfy a fresh-but-uncertain
@@ -1172,16 +1186,24 @@ it blends central-bank and commercial sources and will not list a code
 without at least three of them. It is a differently-built estimate, not
 another render of a fix the roster already carries.
 
-*Status — adapter only.* `feeds/src/venues/erapi.rs` has landed and is
-registered, but **nothing constructs it**: there is no collector, no
-sink, and no stored reading. So this source ingests nothing today and
-the roster's live coverage is unchanged. The consumer is deliberately
-separate work — unlike Frankfurter, this adapter yields a struct
-carrying the provider's refresh instants rather than a bare `Quotes`
-map, so it cannot simply drop into the maker's fair-value cascade, and
-the instants want a store that keys on them. Read every coverage claim
-about this source as a property of the *source*, not of what the
-roster currently records.
+*Status — collected.* `feeds/src/venues/erapi.rs` landed first as an
+adapter nothing constructed; `market-data-erapi` followed on
+2026-09-07 and added 14 live source-product pairs. The coverage claims
+in this section are now properties of what the roster records, not only
+of the source.
+
+*How the two daily references are wired, since they differ.* This
+adapter's `Source` yields a struct carrying the provider's refresh
+instants rather than a bare `Quotes` map, so it does not drop into the
+maker's fair-value cascade the way Frankfurter's does — the instants
+want a store that keys on them. Frankfurter reaches the same place from
+the other side: its `Source` still yields the bare map the cascade
+consumes, and a second source type (`FrankfurterSnapshotSource`) carries the
+ECB reference date for the store. Both stores therefore key on the day
+the reading describes rather than on the poll second — er-api on the
+provider's own instant, Frankfurter on midnight UTC of a civil date it
+publishes without a time, which is a derived convention and not an
+instant the venue states. Neither quoting path moved.
 
 *License — internal use only.* The open-access endpoint permits caching
 and commercial currency-conversion use, **prohibits re-distribution**,

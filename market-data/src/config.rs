@@ -70,7 +70,14 @@ impl Config {
         Ok(Self {
             database_url,
             coinbase_base_url: env_or("COINBASE_BASE_URL", "https://api.exchange.coinbase.com"),
-            products: roster_from_env("EURC-USDC")?,
+            // `AUDD-USDC` re-rostered alongside the ticker leg — see that
+            // collector's `DEFAULT_PRODUCTS` for why the listing, not the
+            // recent volume, is what justifies it. Candles come from trades,
+            // so unlike the ticker this leg genuinely produces nothing until
+            // the pair trades again; an empty window here is expected rather
+            // than faulted, and is the same shape as the documented weekend
+            // gap on the FX venues.
+            products: roster_from_env("EURC-USDC,AUDD-USDC")?,
             granularity_secs,
             backfill_start_secs,
             max_buckets_per_request,

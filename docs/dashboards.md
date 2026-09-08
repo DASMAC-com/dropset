@@ -1,7 +1,3 @@
-<!-- cspell:word QCAD -->
-
-<!-- cspell:word rostered -->
-
 <!-- cspell:word delisting -->
 
 # Dropset Dashboards — What They Show and Why
@@ -50,28 +46,37 @@ Only these venues. No Chainlink, Band, Supra or new surveys for the
 MVP. **Every feed that exists in the stack appears on the dashboard**,
 including ones that carry no MVP pair — visibility is the point.
 
-| Venue         | Why it is here                              | Cadence | Stale after |
-| ------------- | ------------------------------------------- | ------- | ----------- |
-| Coinbase      | The venue leg: real EURC and AUDD basis     | 15 s    | 48 h        |
-| Kraken        | Peg truth (EURC/EUR, EURC/USD, USDC/USD)    | 15 s    | 48 h        |
-| OANDA         | The FX anchor; deepest, treated as truth    | 60 s    | 72 h        |
-| Twelve Data   | Second independent FX anchor for redundancy | 60 s    | 72 h        |
-| Alpha Vantage | Third FX anchor, daily — a slow cross-check | 24 h    | 72 h        |
-| Frankfurter   | Keyless ECB rates; a composite input        | 24 h    | 72 h        |
-| er-api        | Widest keyless table; sole NGN source       | 24 h    | 72 h        |
-| Kraken QCAD   | The §3.1 CAD-stablecoin tripwire, not a peg | 15 s    | 48 h        |
+| Venue         | Why it is here                                       | Cadence | Stale after |
+| ------------- | ---------------------------------------------------- | ------- | ----------- |
+| Coinbase      | The venue leg: real EURC and AUDD basis              | 15 s    | 48 h        |
+| Kraken        | Peg truth (USDC/USD, EURC/USD, EURC/EUR) + EURC/USDC | 15 s    | 48 h        |
+| OANDA         | The FX anchor; deepest, treated as truth             | 60 s    | 72 h        |
+| Twelve Data   | Second independent FX anchor for redundancy          | 60 s    | 72 h        |
+| Alpha Vantage | Third FX anchor, daily — a slow cross-check          | 24 h    | 72 h        |
+| Frankfurter   | Keyless ECB rates; a composite input                 | 24 h    | 72 h        |
+| er-api        | Widest keyless table; sole NGN source                | 24 h    | 72 h        |
+| Kraken QCAD   | The §3.1 CAD-stablecoin tripwire, not a peg          | 15 s    | 48 h        |
 
 **Frankfurter is the ECB fix.** One name, always this one; the two are
 never wired as separate sources.
 
-**Three of those rows are the target state, not today's.** The table is
-what the dashboard must show once the roster is complete, so read it
-with §8: **Frankfurter** has no collector at all (§8 item 4);
-**Coinbase's AUDD** leg has collected nothing since 2026-08-17 (§8 item
-5); and **Kraken QCAD** is not collected yet (§8 item 9). Everything
-else in the table is live and fresh. A roster table that quietly mixed
-the two would be the exact no-data-reads-as-healthy trap this document
-exists to close.
+**Every row is now wired.** Three rows used to be target state and are
+not any more: **Frankfurter**, which had no collector; **Coinbase's
+AUDD** leg, silent since 2026-08-17; and **Kraken QCAD**, specified but
+uncollected. All three landed together in the feeds PR — §8 items 4, 5
+and 9 respectively, each now marked closed there — so the table
+describes today rather than an intention. Keeping that distinction
+visible matters:
+a roster table that quietly mixed the two would be the exact
+no-data-reads-as-healthy trap this document exists to close, so if a
+row ever goes back to being aspirational, say so here.
+
+**One caveat on the OANDA row**, and it is a coverage fact rather than
+an outage: OANDA's v20 instrument list is direction-fixed and has no
+`CAD_USD` (measured 2026-09-08 — only `USD_CAD`, the reciprocal), so
+that venue carries AUD/USD, EUR/USD and GBP/USD but **not** the CADC
+anchor. CAD/USD's keyed coverage is Twelve Data intraday plus Alpha
+Vantage daily. See §3.
 
 The 72 h / 48 h split is the class-aware staleness bound already
 implemented in `instrument_source_liveness`. Panels **must read that
@@ -106,15 +111,35 @@ fresh.
 
 ## 3. Redundancy — the criterion the maker actually needs
 
-The maker must keep quoting at a **20–30 pip spread (roughly 17–26 bps
-on a ~1.17 quote) with any one or two venues dark**. The dashboard shows
-this *directly*, not by implication:
+The maker must keep quoting at a **100 bps spread with any one or two
+venues dark**. The dashboard shows this *directly*, not by implication:
 
 > **live venues per pair, against the minimum that pair needs.**
 
 Not "sources configured". Not a row count. The number that answers
 "can we still quote if OANDA drops right now". A pair at or below its
 minimum is the loudest thing on the page.
+
+**CAD/USD is the thin one, and the panel must show it.** Measured
+2026-09-08: OANDA's v20 instrument list is direction-fixed and has no
+`CAD_USD` (only `USD_CAD`, the reciprocal), so the CADC anchor's
+intraday coverage is **Twelve Data alone**, against two intraday
+sources each for EUR/USD and AUD/USD. Alpha Vantage, Frankfurter and
+er-api all carry it, but daily — breadth, not a live-quote input, per
+§2. So CAD/USD does **not** meet this section's
+"any one or two venues dark" criterion at intraday cadence today, and
+the minimum-venues panel should render that rather than average it
+away. Closing it needs either a venue that quotes the pair in the
+canonical direction or candle inversion in the OANDA adapter, which
+swaps high and low and is not written.
+
+**Spreads are stated in bps here and everywhere, never in pips.** A pip
+is a fixed absolute increment, so what it is *worth* in relative terms
+drifts with the quote level — 1 pip is about 0.855 bp at EUR/USD 1.17
+and about 0.952 bp at 1.05. A maker quoting a relative spread would
+have its target silently move with the market, which is the wrong
+behavior; bps is level-invariant and is what
+`docs/market-making.md` commits to.
 
 ### 3.1 The CAD-stablecoin tripwire
 
@@ -133,8 +158,9 @@ class suspect, which widens or halts CADC.
 Coarse on purpose. QCAD traded 14 times in the 24 h to 2026-09-07, so a
 tight band would fire on its own thinness; measured that day it sat
 4.0 bp rich to the CAD rate, well inside the band. This is a tripwire
-for a regime change, not a pricing input, and it costs one product-id
+for a regime change, not a pricing input, and it cost one product-id
 line on the Kraken collector already in the roster — no new venue.
+`QCAD-USD` is now on that roster.
 
 ## 4. Healthy, faulted, parked
 
@@ -257,13 +283,17 @@ one missing.
 Recorded here because a spec that hides its own unmet requirements is
 worse than no spec. Each is a defect against a rule above.
 
-**What closed here, and what did not.** The PR carrying this spec closes
+**What closed here, and what did not.** The PR carrying this spec closed
 item 3 outright and the naming half of item 1. The four roster changes
-are items 2, 5, 7 and 9, and item 4 is the Frankfurter collector: those
-five land together in the following feeds PR, deliberately, so the
-dashboard is arranged once against a complete feed set rather than
-twice. Items 6, 8, 10 and 11, and the selector half of item 1, are open
-with no owner yet.
+— items 2, 5, 7 and 9 — and item 4, the Frankfurter collector, landed
+together in the following feeds PR, deliberately, so the dashboard is
+arranged once against a complete feed set rather than twice. That PR
+also settled item 11, on an operator ruling rather than by building
+anything. Items 6, 8, 10 and 12, and the selector half of item 1,
+remain open with no owner yet; each is a *rendering* defect rather than
+a missing feed, which is why the feed work did not touch them. (Item 12
+was missing from this list before — the omission predates the feeds PR,
+and it is exactly the rendering class the sentence describes.)
 
 1. **A tick-only venue is still unreachable in the selector.** The
    *naming* half of this is closed: `Candle rows per minute by source`
@@ -275,11 +305,20 @@ with no owner yet.
    for the fix: populate selectors from the registry, which knows every
    source by construction. Making the two candle panels read across
    both tables is the fuller remedy and remains open too.
+
 1. **CAD/USD was not collected at all** until 2026-09-07, so §1's
-   mandatory anchor was missing for CADC. Now supplied by er-api at a
-   daily cadence, which per §2 is breadth and not a live-quote input:
-   the keyed roster (`FX_PRODUCT_IDS`) is the three pairs those vendors
-   are paid for, and adding CAD/USD there is what closes this properly.
+   mandatory anchor was missing for CADC. *Closed, with a caveat worth
+   reading.* er-api supplied it first at a daily cadence, which per §2
+   is breadth and not a live-quote input; `CAD-USD` is now also on the
+   keyed roster (`FX_PRODUCT_IDS`, four pairs), so **Twelve Data**
+   carries it intraday and **Alpha Vantage** daily, and Frankfurter
+   adds a second daily reference. The anchor is a live-quote input at
+   last.
+
+   **OANDA cannot serve it**, which is why the roster there is
+   separate — see §3's redundancy note and the comment on the `oanda`
+   service. This is the one MVP anchor with a single intraday source.
+
 1. **er-api had never run — fixed 2026-09-07.** It was wired into the
    compose file but reached neither place that makes a collector run:
    no Makefile target listed it, and the collectors image never copied
@@ -290,24 +329,51 @@ with no owner yet.
    evening was 25: Alpha Vantage published its Monday bar during the
    same window, which is unrelated to er-api and is counted separately
    here so the 14 stays attributable.
-1. **Frankfurter has no market-data collector.** Ratified as a real
-   price feed and an input to the composite at its honest daily
-   cadence, so this is required work, not a cut. It exists today only
-   as a feeds-crate venue adapter the demo maker consumes live: there
-   is no `market-data-frankfurter` binary, so unlike er-api this is new
-   code rather than wiring — the adapter's shape matches er-api's
-   source, so the collector is close to a copy, plus the same Makefile
-   and image COPY lines er-api needed.
-1. **AUDD/USDC stopped on 2026-08-17** and is de-rostered by config
-   (`PRODUCT_IDS` defaults to `EURC-USDC`). Coinbase still lists it
-   `online` with trading enabled, so this is a roster change, not a
-   delisting.
+
+1. **Frankfurter has no market-data collector.** *Closed.* Ratified as
+   a real price feed and an input to the composite at its honest daily
+   cadence, so this was required work, not a cut. `market-data-frankfurter`
+   now exists, with the Makefile target and image COPY line er-api
+   needed. The adapter's shape did **not** match er-api's after all:
+   er-api yields a struct carrying the provider's refresh instant while
+   Frankfurter yielded a bare `Quotes` map, so the copy needed a new
+   snapshot type before it would fit — the collector binary itself is
+   close to er-api's, guard shape included. The response's `date` field
+   is now plumbed through an
+   additive snapshot type and each reading is stamped at **midnight UTC
+   of the ECB reference date** rather than the poll second — without
+   which a Friday fix would read as fresh on Sunday night. The
+   maker's cascade still consumes the bare map, unchanged.
+
+1. **AUDD/USDC stopped on 2026-08-17** and was then de-rostered by
+   config. *Closed.* Coinbase still lists it `online` with trading
+   enabled — re-verified 2026-09-08 — so this was never a delisting,
+   and both collectors now default to `EURC-USDC,AUDD-USDC`.
+
+   Two honest limits on that. The order was venue-first: it went quiet,
+   *then* we de-rostered, so the original silence was not ours — what
+   was ours is that it became invisible rather than dark (item 6).
+   And re-rostering is verified on the **ticker** leg only, which
+   returned a print at 0.71805; the **candle** leg is asserted, not
+   measured, because candles come from trades and the pair is thinly
+   traded. Expect its `cex_prices` series to stay empty until it trades
+   again — a true-and-expected blank, which §4 still cannot render
+   distinctly (item 10).
+
 1. **A de-rostered product is invisible, not dark.** The registry is
    written at collector start, so dropping a product from the roster
    removes it from the coverage panel entirely — the exact defect that
-   panel exists to prevent, one level up. AUDD is the live instance.
-1. **Kraken lists EURC/USDC directly** and we do not collect it. It is
-   free redundancy on the exact MVP pair, against §3's criterion.
+   panel exists to prevent, one level up. **AUDD was the live instance
+   and is no longer**, having been re-rostered when item 5 closed. The
+   defect stands with nothing currently demonstrating it, which makes it
+   easier to forget and no less real: the next de-rostering reproduces
+   it silently.
+
+1. **Kraken lists EURC/USDC directly** and we did not collect it.
+   *Closed* — `EURC-USDC` is on the Kraken roster. It is free
+   redundancy on the exact MVP pair, against §3's criterion, and the
+   poll is batched so it costs no extra request.
+
 1. **A crash-looping collector is invisible after bring-up**, which is
    the standing issue 1128 and now has a live instance to point at: on
    2026-09-07 the parked Pyth collector was found retrying an erroring
@@ -316,22 +382,44 @@ with no owner yet.
    parked-versus-faulted rendering is the front half of that fix — it
    is what makes the state legible; the back half is noticing the
    process at all, which no panel does today.
-1. **The §3.1 QCAD tripwire is specified but not collected.** It is one
-   product-id line on the Kraken collector, and it lands with the other
-   roster changes rather than here — but until it does, §2's row for it
-   describes a target rather than a feed.
-1. **CAD/USD has no candles from any source**, only er-api ticks, so the
-   OHLC panel's CAD/USD repeat is empty by construction until item 2
-   lands. That emptiness is a *true* signal — the anchor genuinely is
-   not being collected at candle granularity — but §4 has no rendering
-   that distinguishes "true and expected" from "faulted", so today it
-   reads as the same ambiguous blank as the Fusion-weight panel below.
-1. **The spread figure disagrees with `docs/market-making.md`.** §3 states
-   20–30 pips (~17–26 bps), which is the lean-MVP figure ratified
-   2026-09-07; `docs/market-making.md` commits to 100 bps, which predates
-   the pivot. One of the two is stale and this document does not have the
-   standing to decide which — the panel §3 specifies is sized by the
-   answer, so it needs settling before that panel is built.
+
+1. **The §3.1 QCAD tripwire is specified but not collected.** *Closed* —
+   `QCAD-USD` is on the Kraken roster, so §2's row for it describes a
+   feed rather than a target. Kraken keys the pair `QCADUSD`, which
+   plain concatenation derives, so it needed no pinned spelling.
+
+1. **CAD/USD had no candles from any source**, only er-api ticks, so the
+   OHLC panel's CAD/USD repeat was empty by construction until item 2
+   landed. **Item 2 has landed**, so the emptiness itself is resolved:
+   **Twelve Data** now carries `CAD-USD` intraday and **Alpha Vantage**
+   daily, and both write candles into `cex_prices`. **Not OANDA** — it
+   cannot serve this pair at all (see item 2 and §3), which is why the
+   candle coverage here is thinner than for the other two MVP anchors.
+   The tick side gained a source too: Frankfurter now writes CAD/USD
+   alongside er-api. What this item was *really* about is untouched and
+   stays open — §4 still has no rendering that distinguishes "true and
+   expected" from "faulted", so any genuinely-empty repeat reads as the
+   same ambiguous blank as the Fusion-weight panel below. The live
+   example moved; the defect did not.
+
+1. **The spread figure disagrees with `docs/market-making.md`.**
+   *Closed by operator ruling, 2026-09-08.* **100 bps stands** as the
+   MVP top-of-book spread: `docs/market-making.md` is current and its
+   figure is structural there (50 bps each side, plus a worked
+   inventory table), while §3's lean figure was the stale side. §3 now
+   states 100 bps, which is what sizes its redundancy panel.
+
+   The same ruling settled the **unit**: bps everywhere, never pips —
+   see the note in §3 for why a level-drifting increment is the wrong
+   denomination for a maker's relative spread. A tree-wide sweep found
+   pips in exactly three places: §3's two *spread figures*, both now
+   bps, and a bps→pip conversion in
+   `docs/research/crypto-oracle-survey.md` illustrating a third party's
+   oracle threshold, which is bps-primary already and was left alone.
+   Note §3 still mentions pips — the ruling bans them as a
+   **denomination**, not as a word, and the note explaining why quotes
+   the conversion it rejects.
+
 1. **A panel can render an ambiguous blank.** `Fusion weight by source`
    reads `maker_leg_contributions`, which is empty whenever no maker is
    running — the ordinary state on a collectors-only stack. It renders

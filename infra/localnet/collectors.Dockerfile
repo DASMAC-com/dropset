@@ -58,6 +58,7 @@ COPY --from=builder /app/target/release/market-data-alphavantage \
 # ...and the tick collectors, writing `spot_ticks`.
 COPY --from=builder /app/target/release/market-data-coinbase-ticker \
     /app/target/release/market-data-erapi \
+    /app/target/release/market-data-frankfurter \
     /app/target/release/market-data-kraken \
     /app/target/release/market-data-pyth \
     /usr/local/bin/

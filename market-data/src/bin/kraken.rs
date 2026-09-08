@@ -1,3 +1,4 @@
+// cspell:word ZUSD
 //! The Kraken spot-tick collector: one batched `/0/public/Ticker` request
 //! prices the whole roster, and each reading lands in `spot_ticks`
 //! (docs/data-feeds.md §9).
@@ -9,11 +10,13 @@
 //! watched live.
 //!
 //! The default roster collects the two legs the maker already subscribes to —
-//! `USDC-USD` and `EURC-USD` — plus `EURC-EUR`, token against its own fiat,
-//! which is the closest live keyless stand-in for an issuer redemption rate.
-//! Nothing consumes that third pair yet, and it is collected anyway: the poll
-//! is batched, so it costs no extra request, and what it records cannot be
-//! reconstructed after the fact. Kraken's keyless OHLC serves only a rolling
+//! `USDC-USD` and `EURC-USD` — plus three the store wants and no consumer
+//! reads yet: `EURC-EUR`, token against its own fiat and the closest live
+//! keyless stand-in for an issuer redemption rate; `EURC-USDC`, a second
+//! venue's print of the MVP pair; and `QCAD-USD`, the CAD-stablecoin
+//! class tripwire. They are collected anyway because the poll is batched, so
+//! they cost no extra request, and what they record cannot be reconstructed
+//! after the fact. Kraken's keyless OHLC serves only a rolling
 //! window — about 12 hours of 1-minute bars, 30 days of hourly ones — so this
 //! collector's 15-second series, and any minute resolution older than half a
 //! day, exist only where something was already recording. Recording ahead of
@@ -52,11 +55,23 @@ const SOURCE: &str = "kraken";
 /// it exists because the store sink is built around a feed identity.
 const FEED: &str = "ticks:kraken";
 
-/// The roster polled when nothing overrides it: the legs the maker's
-/// fair-value model needs corroborated — also the only two of the demo roster
-/// Kraken lists — followed by the `EURC-EUR` redemption proxy, which is
-/// recorded for the store rather than read by the maker.
-const DEFAULT_PRODUCTS: &str = "USDC-USD,EURC-USD,EURC-EUR";
+/// The roster polled when nothing overrides it: the two legs the maker's
+/// fair-value model needs corroborated, then three pairs recorded for the store
+/// rather than read by the maker — `EURC-EUR`, the redemption proxy;
+/// `EURC-USDC`; and `QCAD-USD`.
+///
+/// `EURC-USDC` is free redundancy on the exact MVP pair — Kraken lists it
+/// directly, so a second venue's print of the pair Coinbase already carries
+/// costs nothing on a batched poll.
+///
+/// `QCAD-USD` is the CAD-stablecoin tripwire input. It is a **class-level
+/// sanity check at a coarse 1–2% band, never the peg**: QCAD is a different
+/// issuer's token, so it says whether CAD-stablecoins as a class have
+/// dislocated, and it must not be read as CADC's own peg. Kraken quotes it
+/// against `ZUSD` internally but keys the pair `QCADUSD`, which is what plain
+/// concatenation derives — so unlike the legacy `X`/`Z` assets it needs no
+/// pinned spelling.
+const DEFAULT_PRODUCTS: &str = "USDC-USD,EURC-USD,EURC-EUR,EURC-USDC,QCAD-USD";
 
 /// How many polls a configured pair may stay unpriced before it is reported as
 /// a roster mistake rather than a venue gap.

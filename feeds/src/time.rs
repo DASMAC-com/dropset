@@ -125,7 +125,29 @@ pub fn parse_civil_utc(datetime: &str) -> Result<i64> {
             .with_context(|| format!("civil timestamp {datetime:?} has a bad second"))?,
         None => 0,
     };
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    // Every field is range-checked, not just month and day, and the reason is
+    // arithmetic rather than tidiness: the workspace sets
+    // `overflow-checks = true` on the release profile, and
+    // `civil_to_epoch_secs` multiplies unchecked (`days_from_civil(…) * 86_400`,
+    // `hour * 3_600`, and `era * 146_097` inside the day count). An unbounded
+    // `year` or `hour` parsed straight off a venue's response therefore
+    // **panics the process** rather than returning an error — and this function
+    // is reached from three venue adapters with a remote body as its input, so
+    // that is a hostile-or-buggy-upstream availability bug, not a theoretical
+    // one. Bounding here keeps every product of those multiplications far
+    // inside `i64` and turns the panic back into the `Result` the signature
+    // already promises.
+    //
+    // The year bound is the 4-digit ISO-8601 range: no venue in this roster
+    // quotes outside it, and a value beyond it is a decode error by any
+    // reading. Seconds admit 60 for a leap second.
+    let out_of_range = !(1..=9999).contains(&year)
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second);
+    if out_of_range {
         return Err(anyhow!("civil timestamp {datetime:?} is not a real date"));
     }
     Ok(civil_to_epoch_secs(year, month, day, hour, minute, second))
@@ -200,6 +222,38 @@ mod tests {
         assert!(parse_civil_utc("not-a-time").is_err());
         assert!(parse_civil_utc("").is_err());
         assert!(parse_civil_utc("2026-13-01").is_err());
+    }
+
+    #[test]
+    fn rejects_a_field_large_enough_to_overflow_the_epoch_arithmetic() {
+        // These are the inputs that used to PANIC rather than return an error.
+        // `civil_to_epoch_secs` multiplies unchecked and the release profile
+        // sets `overflow-checks = true`, so before the range check covered
+        // every field, each of these aborted the process — reachable from a
+        // venue response body, since three adapters parse remote strings with
+        // this function.
+        //
+        // Asserting `is_err()` is what makes them regression-proof: delete any
+        // one of the new bounds and that line panics instead of returning,
+        // which fails the test rather than silently passing.
+
+        // `days_from_civil(…) * 86_400` overflows above year ~2.9e11.
+        assert!(parse_civil_utc("1000000000000-01-01").is_err());
+        // `era * 146_097`, inside the day count, overflows around 2.5e16.
+        assert!(parse_civil_utc("100000000000000000-01-01").is_err());
+        // `hour * 3_600` — the time half is optional, so an unbounded hour
+        // rides in on an otherwise ordinary-looking date.
+        assert!(parse_civil_utc("2026-01-01 9223372036854775807:00:00").is_err());
+        // The remaining two time fields, for the same reason.
+        assert!(parse_civil_utc("2026-01-01 00:9223372036854775807:00").is_err());
+        assert!(parse_civil_utc("2026-01-01 00:00:9223372036854775807").is_err());
+        // Negative fields reach the same multiplications from the other side.
+        assert!(parse_civil_utc("-9223372036854775808-01-01").is_err());
+
+        // The bounds must not have become so tight that real venue data is
+        // rejected: the widest plausible values still parse.
+        assert!(parse_civil_utc("0001-01-01").is_ok());
+        assert!(parse_civil_utc("9999-12-31 23:59:60").is_ok());
     }
 
     #[test]

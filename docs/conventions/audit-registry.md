@@ -174,7 +174,24 @@ maker-bot <-> feeds: the maker bot is the first consumer of the feeds
   single product, so there is nothing to batch). Those three are the
   reason "every price Source is a batched quote venue" is NOT an
   invariant of this seam — the batched-poll convention does not reach
-  them, and a change to Source reaches all seven. It implements
+  them, and a change to Source reaches all seven of this seam's price
+  Sources. Three counts are in play here and conflating them is the
+  standing trap: SEVEN price Sources cross this seam; feeds/src/venues
+  holds TWELVE impl Source blocks, because the four candle adapters
+  (oanda, twelvedata, alphavantage, and coinbase's second impl)
+  implement the same trait and never touch the maker; and a Source
+  TRAIT change reaches all twelve. Quote the number that matches the
+  question being asked.
+  frankfurter.rs now hosts an EIGHTH venue Source that is deliberately
+  NOT on this seam — FrankfurterSnapshotSource, which yields a
+  FrankfurterSnapshot carrying the ECB reference date and is
+  constructed only by market-data's collector. That makes it the first
+  venue file to sit on both sides of the batched-poll convention at
+  once: FrankfurterSource still yields the bare Quotes map the maker
+  consumes and is unchanged, so "which side of the convention is this
+  adapter on" is now a per-Source question rather than a per-file one.
+  The maker-bot's half of this seam did not move. It
+  implements
   Source itself only for the logs-subscription fill socket bridged
   through ChannelSource (bots/maker-bot/src/fills.rs), driving both with
   run_until onto a ForwardSink its synchronous tick loop drains through
