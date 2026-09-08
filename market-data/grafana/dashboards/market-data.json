@@ -641,7 +641,7 @@
           "refId": "A"
         }
       ],
-      "title": "Rows per minute by source",
+      "title": "Candle rows per minute by source",
       "type": "timeseries"
     },
     {
@@ -744,7 +744,7 @@
           "refId": "A"
         }
       ],
-      "title": "Source x product coverage (last $coverage_mins min)",
+      "title": "Candle coverage (last $coverage_mins min)",
       "type": "table"
     },
     {
@@ -1025,10 +1025,14 @@
         "current": {
           "selected": true,
           "text": [
-            "All"
+            "EUR-USD",
+            "AUD-USD",
+            "CAD-USD"
           ],
           "value": [
-            "$__all"
+            "EUR-USD",
+            "AUD-USD",
+            "CAD-USD"
           ]
         },
         "datasource": {
@@ -1036,7 +1040,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT product_id FROM instruments WHERE asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) ORDER BY 1",
-        "description": "Every product any collector is configured to poll, from the instruments dimension, narrowed to the selected Class. Registry-driven rather than a scan of the measurement tables, which matters three ways: it covers both tiers by construction - most of the roster is tick-only, since only EURC reaches a CEX candle endpoint - a newly added pair appears before its first row lands, and it costs one small-table read instead of a DISTINCT over two unbounded tables on every dashboard load. The class filter uses the sqlstring formatter inside an ARRAY, not a regex inside a quoted literal: the regex formatter does not escape quotes, and ARRAY[] stays valid SQL when nothing is selected where IN () is a syntax error.",
+        "description": "Every product any collector is configured to poll, from the instruments dimension, narrowed to the selected Class. Registry-driven rather than a scan of the measurement tables, which matters three ways: it covers both tiers by construction - most of the roster is tick-only, since only EURC reaches a CEX candle endpoint - a newly added pair appears before its first row lands, and it costs one small-table read instead of a DISTINCT over two unbounded tables on every dashboard load. The class filter uses the sqlstring formatter inside an ARRAY, not a regex inside a quoted literal: the regex formatter does not escape quotes, and ARRAY[] stays valid SQL when nothing is selected where IN () is a syntax error. Defaults to the three MVP FX pairs rather than All, and that default is load-bearing rather than taste: the OHLC panel repeats over this variable at full width, so All renders one full-width chart per instrument. At 33 instruments that is 33 stacked charts pushing roughly 330 grid rows between the top of the dashboard and everything under it - including Tick coverage and Source coverage, which are the only two panels where a tick-only venue such as Kraken appears at all. Most of those charts are also empty, since the default candle source carries candles for a single product. Drill-down is unaffected: the drop-down still offers every product and All.",
         "includeAll": true,
         "label": "Product",
         "multi": true,
