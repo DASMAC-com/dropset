@@ -128,13 +128,18 @@ rather than automatic.
 ## Bedrock worker identity
 
 `bedrock-workers.yml` stands up the identity that unattended worker
-sessions authenticate as: an IAM user, a managed policy scoped to
-invoking two model families, and an optional monthly spend alert.
-Operator-attended sessions are unaffected — they keep using the
+sessions authenticate as: an IAM user, a managed policy scoped to model
+invocation in the US regions, and an optional monthly spend alert that
+the committed parameter file deliberately leaves uncreated — it sets no
+alert address, and a budget with an undeliverable subscriber is a
+tripwire that silently never fires. Deploying exactly as described below
+therefore gives you no spend alerting; supply `BudgetAlertEmail` to get
+it. Operator-attended sessions are unaffected — they keep using the
 subscription and never touch this stack.
 
 Two steps cannot be expressed in CloudFormation and follow the deploy
-by hand. Both are one-time.
+by hand. Both are one-time as deploy steps — but note that step 1's
+policy detach recurs on every key rotation, as that step explains.
 
 ### 1. Mint the API key (out of band, on purpose)
 
@@ -256,7 +261,12 @@ trusting the write: a region still reporting `inherit` is the one that
 will fail, and it fails only when a request happens to route there.
 
 The user guide documents an equivalent bearer-token form, useful once a
-key exists:
+key exists. It is quoted verbatim below — including its single hardcoded
+region, which is exactly the trap above: run it once per routed region,
+not once. Note also that the user guide's example omits `-X PUT`, so as
+written `curl` sends POST, while the API reference documents the
+operation as `PUT /data-retention`; the `boto3` form above is the one
+this account was actually configured with.
 
 ```sh
 curl https://bedrock-mantle.us-east-1.api.aws/v1/data_retention \
@@ -267,7 +277,12 @@ curl https://bedrock-mantle.us-east-1.api.aws/v1/data_retention \
 
 Models whose `allowed_modes` include `none` are unaffected by the
 account setting — a more permissive account mode does not cause their
-content to be retained.
+content to be retained. **That includes the Opus family this stack now
+defaults to.** The opt-in was made when Fable 5.1 was the ratified
+worker model, and it is kept because the model is a parameter: a
+Fable-class model has to keep working without an infrastructure change.
+So read the opt-in as removing a constraint on which models are
+selectable, not as a statement about what happens to Opus traffic.
 
 ### Why the `us.` inference profile, not `global.`
 
@@ -281,8 +296,11 @@ foundation-model ARNs they route to, which is what settles it:
 
 The global profile's region-less ARN cannot be pinned in an IAM policy,
 so residency could only be asserted, never enforced. The `us.` set is
-three named regions, which the invoke policy pins with a `us-*` resource
-wildcard. Retention follows the destination region, and this account has
+three named regions, which the invoke policy approximates with a `us-*`
+resource wildcard — a prefix match, so it also admits `us-west-1` and
+any future `us-` region. That is wider than the set opted into
+retention, and still US-only, which is the property at issue
+here. Retention follows the destination region, and this account has
 just opted into having that content retained for human review — so
 keeping it inside US regions is the conservative pairing. Revisit only
 if throughput headroom ever justifies it.
@@ -310,10 +328,13 @@ process that does not need it.
 
 Setting `ANTHROPIC_MODEL` does more than pick the primary model: on
 Bedrock it also routes background tasks (session titles and the like) to
-that same model. That is what keeps the two-model policy sufficient —
-left unset, background tasks default to a Sonnet model this policy does
-not grant, and they would fail. Add any further model to the template's
-parameters before selecting it.
+that same model. That matters for cost attribution, not for permissions
+— the invoke policy grants any foundation model in the US regions, so
+nothing fails for want of a grant. The Sonnet auto-mode classifier is
+the case in point: Claude Code invokes it regardless of the model
+selected here, and the policy covers it. Switching models needs no
+template edit and no redeploy; `WorkerModelId` only steers the default
+this stack publishes.
 
 `ENABLE_PROMPT_CACHING_1H` requests the 1-hour cache TTL in place of the
 5-minute default, billed at a higher write rate. If cache token counts
