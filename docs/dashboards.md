@@ -135,6 +135,16 @@ basis is an assumed peg, not a broken feed. A parked source rendered as
 a fault trains the operator to ignore red, which costs more than the
 outage it was meant to surface.
 
+**Parked means not running.** A parked venue whose container is still
+up is not parked — it is a fault wearing the label, and it burns
+requests against a venue that has already refused us. Pyth is gated
+behind a compose profile precisely so that it stays stopped, and on
+2026-09-07 a stray start had it retrying an erroring host every five
+seconds while the board recorded it as parked. The dashboard must be
+able to tell those two apart, because the whole value of the parked
+state is that it is quiet, and a quiet fault is the worst thing this
+page can render.
+
 **A weekend is not a fault either.** Alpha Vantage produces weekday
 daily bars, so on any Sunday it is correctly silent while reading dark
 against a wall-clock bound. Sessions come from the market calendar
@@ -269,3 +279,11 @@ worse than no spec. Each is a defect against a rule above.
    panel exists to prevent, one level up. AUDD is the live instance.
 1. **Kraken lists EURC/USDC directly** and we do not collect it. It is
    free redundancy on the exact MVP pair, against §3's criterion.
+1. **A crash-looping collector is invisible after bring-up**, which is
+   the standing issue 1128 and now has a live instance to point at: on
+   2026-09-07 the parked Pyth collector was found retrying an erroring
+   host every five seconds, having been started outside any bring-up
+   target, with nothing on any dashboard saying so. The §4
+   parked-versus-faulted rendering is the front half of that fix — it
+   is what makes the state legible; the back half is noticing the
+   process at all, which no panel does today.
