@@ -598,12 +598,12 @@ indexer-down: check-docker
 collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
 		up -d --build --quiet-pull postgres migrate coinbase coinbase-ticker \
-		kraken grafana
+		kraken erapi grafana
 	@$(KEYED_UP)
 .PHONY: collectors-down
 collectors-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml --profile fx \
-		rm -sf coinbase coinbase-ticker kraken pyth grafana oanda \
+		rm -sf coinbase coinbase-ticker kraken erapi pyth grafana oanda \
 		twelvedata alphavantage
 
 # Grafana alone, on http://localhost:3200, serving the provisioned
