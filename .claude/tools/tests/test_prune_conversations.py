@@ -103,6 +103,60 @@ class DropsetSlugSetsTests(unittest.TestCase):
         self.assertNotIn(slugify(Path("/repos/dropset-beta")), live)
 
 
+class DraftPrWorktreeFixtureTests(unittest.TestCase):
+    """End-to-end over the real fixture shape: porcelain → slug sets → decision.
+
+    The filed requirement names a worktree list plus a **draft** PR, so this
+    walks the whole path rather than calling ``decide_slug`` directly — the
+    2026-09-07 loss happened between those stages (an empty worktree list meant
+    the protected branch mapped to no slug), which a unit test of the decision
+    alone cannot reach.
+
+    Note what "draft" contributes here: nothing at this layer, deliberately.
+    The REST ``state`` filter is open/closed only, with ``draft`` a separate
+    field, so a draft PR reaches the tool as an ordinary protected branch —
+    verified against a live draft PR. The original filing's theory that drafts
+    were being excluded was wrong, and the test that would have caught the real
+    bug is the second one below: no PR at all, and the slug still survives.
+    """
+
+    PORCELAIN = (
+        "worktree /repos/dropset\n"
+        "HEAD abc\n"
+        "branch refs/heads/main\n"
+        "\n"
+        "worktree /repos/dropset/.claude/worktrees/eng-1192\n"
+        "HEAD def\n"
+        "branch refs/heads/eng-1192\n"
+    )
+    SLUG = slugify(Path("/repos/dropset/.claude/worktrees/eng-1192"))
+
+    def _decide(self, protected_branches):
+        worktrees = parse_worktrees(self.PORCELAIN)
+        live, protected = dropset_slug_sets(worktrees, protected_branches)
+        return decide_slug(
+            self.SLUG,
+            OLD,
+            live_slugs=live,
+            protected_slugs=protected,
+            current_slug=None,
+            cutoff_ts=CUTOFF,
+            former_prefix=former_worktree_prefix(base_worktree(worktrees)),
+        )
+
+    def test_a_branch_with_a_draft_pr_is_kept(self):
+        decision = self._decide({"eng-1192"})
+        self.assertFalse(decision.delete)
+        self.assertEqual(decision.reason, "open PR")
+
+    def test_the_slug_survives_even_when_the_pr_lookup_returns_nothing(self):
+        # The actual 2026-09-07 shape: the protection list arrives empty. Under
+        # the old rule this deleted; the live worktree now carries it alone.
+        decision = self._decide(set())
+        self.assertFalse(decision.delete)
+        self.assertEqual(decision.reason, "live worktree")
+
+
 class DecideSlugTests(unittest.TestCase):
     def _decide(self, slug, mtime, live, protected, current):
         return decide_slug(
