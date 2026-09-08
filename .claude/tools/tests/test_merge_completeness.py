@@ -190,8 +190,20 @@ class GitTests(unittest.TestCase):
         self._git("commit", "--quiet", "-am", "main")
 
     def _git(self, *args):
+        # `-c commit.gpgsign=false` isolates these fixtures from the user's
+        # global git config. This repo's branch protection requires signed
+        # commits, so every developer here has `commit.gpgsign = true` set
+        # globally — which these throwaway repos inherit, sending each fixture
+        # commit to a signer that has no business being in a unit test. When
+        # the signing backend is locked or absent the whole class fails with
+        # `exit status 128` and takes minutes to do it, which reads as a broken
+        # test rather than a locked app. CI never saw it: the runners have no
+        # signing configured, so the tests pass there and fail only locally,
+        # for exactly the people the repo requires to configure signing.
         subprocess.run(
-            ["git", "-C", str(self.repo), *args], check=True, capture_output=True
+            ["git", "-C", str(self.repo), "-c", "commit.gpgsign=false", *args],
+            check=True,
+            capture_output=True,
         )
 
     def _out(self, *args):

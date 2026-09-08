@@ -6,13 +6,17 @@ invocation guards that refuse an unprotected run, and the destructive
 tools-tests``.
 """
 
+import io
 import json
 import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
+
+import prune_conversations as pc
 
 from prune_conversations import (
     PruneError,
@@ -313,8 +317,15 @@ class DecideSlugTests(unittest.TestCase):
     def test_an_open_pr_protects_a_slug_even_outside_the_live_set(self):
         # The open-PR check sits above the live-worktree branch, so the
         # guarantee is "an open PR is never pruned" rather than "…if we also
-        # recognized its worktree". This is the case that keeps an open PR
-        # whose worktree has already been pruned away.
+        # recognized its worktree".
+        #
+        # A NO-OP with today's caller, asserted so the ordering is deliberate
+        # rather than an accident: `dropset_slug_sets` builds `protected` as a
+        # strict subset of `live` from one loop, so this state is unreachable
+        # through `run()`. It would matter only if protected slugs ever came
+        # from a source other than the worktree list. Do not re-describe this as
+        # protecting a pruned-away worktree — such a branch contributes no
+        # worktree entry, so it cannot reach `protected` either.
         d = self._decide("x", OLD, set(), {"x"}, None)
         self.assertFalse(d.delete)
         self.assertEqual(d.reason, "open PR")
@@ -486,6 +497,118 @@ class SessionUuidsInTests(unittest.TestCase):
             self.assertEqual(session_uuids_in(Path(tmp) / "nope"), set())
 
 
+class RunWiringTests(unittest.TestCase):
+    """End-to-end over ``run()`` against a synthetic ``~/.claude`` tree.
+
+    Every other test here exercises a pure function in isolation. That is not
+    enough for this diff, because the 2026-09-07 loss did not happen inside a
+    decision function — it happened in the **wiring**, where an omitted argument
+    meant the worktree list never reached the decisions at all. Each helper can
+    be individually correct while nothing connects them, and a unit-only suite
+    stays green through exactly that.
+
+    So this pins the connections: worktree list -> live/protected slug sets ->
+    former-worktree prefix -> per-entry tag -> kept projects -> the session
+    UUIDs those projects hold -> file-history protection -> the manifest.
+    Reverting any one of those wiring lines fails this test.
+    """
+
+    BASE = "/repos/dropset"
+    LIVE = "/repos/dropset/.claude/worktrees/eng-1192"
+    WORKTREES = [(BASE, "main"), (LIVE, "eng-1192")]
+    NOW = 2_000_000.0
+    AGED = NOW - 10_000  # older than a zero-day cutoff
+
+    def _tree(self, tmp):
+        """Build the three roots, all aged well past any cutoff."""
+        home = Path(tmp) / "claude"
+        cache = Path(tmp) / "cache"
+        projects = home / "projects"
+        history = home / "file-history"
+        for d in (projects, history, cache):
+            d.mkdir(parents=True)
+
+        prefix = pc.former_worktree_prefix(Path(self.BASE))
+        made = {
+            "live": projects / slugify(Path(self.LIVE)),
+            "gone": projects / f"{prefix}eng-999",
+            "foreign": projects / "-repos-elsewhere",
+            "busy": projects / "-repos-busy",
+        }
+        for path in made.values():
+            path.mkdir()
+        # The live worktree's transcript — this is what joins it to file-history.
+        (made["live"] / "live-session.jsonl").write_text("{}\n", encoding="utf-8")
+        (history / "live-session").mkdir()
+        (history / "orphan-session").mkdir()
+
+        # A prompt in "busy" newer than the cutoff, so the activity guard fires.
+        (home / "history.jsonl").write_text(
+            json.dumps({"project": "/repos/busy", "timestamp": self.NOW * 1000}) + "\n",
+            encoding="utf-8",
+        )
+
+        for path in list(made.values()) + [
+            history / "live-session",
+            history / "orphan-session",
+        ]:
+            os.utime(path, (self.AGED, self.AGED))
+        return home, cache
+
+    def _run(self, tmp):
+        home, cache = self._tree(tmp)
+        buf = io.StringIO()
+        with (
+            mock.patch.object(pc, "claude_home", return_value=home),
+            mock.patch.object(pc, "cli_cache_root", return_value=cache),
+            mock.patch.object(pc, "resolve_dropset_repo", return_value=self.BASE),
+            mock.patch.object(pc, "read_worktrees", return_value=self.WORKTREES),
+            redirect_stdout(buf),
+        ):
+            code = pc.run(
+                ["prune_conversations.py", "--age-days", "0", "--now", str(self.NOW)]
+            )
+        self.assertEqual(code, 0)
+        return buf.getvalue()
+
+    def test_a_live_worktrees_transcript_and_file_history_both_survive(self):
+        # The whole point of the fix, asserted through the wiring rather than
+        # through decide_slug/decide_history in isolation.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = self._run(tmp)
+        self.assertIn("live worktree: 1", out)
+        self.assertIn("session of a kept project: 1", out)
+
+    def test_the_activity_guard_reaches_the_decision(self):
+        # Pins `read_active_slugs(cutoff_ts)` actually being computed and passed
+        # through; dropping either leaves this slug aged and deletable.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = self._run(tmp)
+        self.assertIn("recent session activity: 1", out)
+
+    def test_a_pruned_away_worktree_is_named_by_its_tag_in_the_manifest(self):
+        # Pins the tag being assigned in scan_slug_root, not merely rendered by
+        # render_manifest from a hand-built Record.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = self._run(tmp)
+        self.assertIn("dropset transcripts (worktree gone, aged)", out)
+        self.assertIn("- eng-999", out)
+
+    def test_an_untagged_deletion_is_still_named_in_the_manifest(self):
+        # The security-lens gap: naming only tagged entries would leave exactly
+        # the wrongly-resolved-repo case printing as an anonymous bulk line.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = self._run(tmp)
+        self.assertIn("- -repos-elsewhere", out)
+
+    def test_an_orphan_file_history_dir_still_ages_out(self):
+        # The protection must be a join, not a blanket keep: a session UUID with
+        # no kept project behind it is still reclaimable.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = self._run(tmp)
+        self.assertIn("- orphan-session", out)
+
+
 class BaseWorktreeTests(unittest.TestCase):
     def test_the_first_entry_is_the_main_worktree(self):
         worktrees = [
@@ -578,18 +701,48 @@ class ReadActiveSlugsTests(unittest.TestCase):
 class InvocationGuardTests(unittest.TestCase):
     """The two guards that close the hole an omitted --dropset-repo opened."""
 
-    def test_an_explicit_repo_is_taken_as_given(self):
-        self.assertEqual(resolve_dropset_repo("/repos/dropset"), "/repos/dropset")
+    def test_an_explicit_repo_is_honored(self):
+        # It is still resolved through git (so a worktree normalizes to its own
+        # root) and still sanity-checked, but the caller's choice is what is
+        # looked up — the default is never substituted for it.
+        root = str(pc.repo_root_from_tool())
+        self.assertEqual(
+            Path(resolve_dropset_repo(root)).resolve(), Path(root).resolve()
+        )
 
-    def test_a_non_repo_working_directory_aborts_rather_than_protecting_nothing(self):
+    def test_the_default_ignores_the_working_directory_entirely(self):
+        # The security-lens finding: defaulting from the cwd meant running from
+        # inside ANY other git checkout resolved the wrong repo, silently, and
+        # classified every dropset slug as "non-dropset, older than threshold" —
+        # the exact label that made the original loss approvable. Deriving the
+        # default from the tool's own committed location cannot be wrong about
+        # which repo is meant, so the cwd must not affect it.
+        expected = str(pc.repo_root_from_tool())
         with tempfile.TemporaryDirectory() as tmp:
             cwd = os.getcwd()
             os.chdir(tmp)
             try:
-                with self.assertRaises(PruneError) as caught:
-                    resolve_dropset_repo(None)
+                from_tempdir = resolve_dropset_repo(None)
             finally:
                 os.chdir(cwd)
+        from_repo = resolve_dropset_repo(None)
+        self.assertEqual(from_tempdir, from_repo)
+        self.assertEqual(Path(from_tempdir).resolve(), Path(expected).resolve())
+
+    def test_a_repo_without_a_claude_directory_is_refused(self):
+        # The sanity gate behind an explicit --dropset-repo typo: honor the
+        # caller's intent, but refuse a path that cannot be the repo this tool
+        # protects rather than computing protections that would match nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(["git", "-C", tmp, "init", "-q"], check=True)
+            with self.assertRaises(PruneError) as caught:
+                resolve_dropset_repo(tmp)
+        self.assertIn(".claude", str(caught.exception))
+
+    def test_an_explicit_non_repo_path_aborts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(PruneError) as caught:
+                resolve_dropset_repo(tmp)
         self.assertIn("--dropset-repo", str(caught.exception))
 
     def test_a_path_that_is_not_a_repo_aborts(self):
@@ -625,7 +778,7 @@ class ManifestNamingTests(unittest.TestCase):
         self.assertIn("eng-1192", out)
         self.assertIn("eng-800", out)
 
-    def test_an_untagged_deletion_adds_no_line(self):
+    def test_an_untagged_deletion_is_named_by_its_directory(self):
         groups = {
             "non-dropset": [
                 Record(Path("/p/x"), "non-dropset", True, "aged", 1_000_000)
@@ -633,7 +786,31 @@ class ManifestNamingTests(unittest.TestCase):
         }
         out = render_manifest(groups, 0)
         self.assertIn("non-dropset transcripts: 1 dir(s)", out)
-        self.assertNotIn("    - ", out)
+        self.assertIn("    - x ", out)
+
+    def test_tagged_entries_sort_ahead_of_untagged_ones(self):
+        # So the cap can never hide a dropset session behind foreign slugs.
+        groups = {
+            "non-dropset": [
+                Record(Path("/p/aaa"), "non-dropset", True, "aged", 1, None),
+                Record(Path("/p/zzz"), "non-dropset", True, "aged", 1, "eng-1192"),
+            ]
+        }
+        out = render_manifest(groups, 0)
+        self.assertLess(out.index("- eng-1192"), out.index("- aaa"))
+
+    def test_a_long_group_is_capped_with_a_remainder_line(self):
+        count = pc.MANIFEST_NAME_CAP + 3
+        groups = {
+            "non-dropset": [
+                Record(Path(f"/p/slug{i:03d}"), "non-dropset", True, "aged", 1)
+                for i in range(count)
+            ]
+        }
+        out = render_manifest(groups, 0)
+        self.assertIn("… and 3 more", out)
+        self.assertIn("- slug000", out)
+        self.assertNotIn(f"- slug{count - 1:03d}", out)
 
 
 if __name__ == "__main__":

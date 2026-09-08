@@ -1190,6 +1190,17 @@ class NormalizeBodyHeadingsTests(unittest.TestCase):
         self.assertIn("### Lever", out)
         self.assertIn("\n# Quoted sample\n", out)
 
+    def test_an_unbalanced_fence_leaves_the_remainder_alone(self):
+        # Pins the documented agreement with read_result.py's iter_headings:
+        # both toggle on the same fence syntax, so a heading this function
+        # declines to shift is also one the slicer declines to see. They cannot
+        # disagree about what a heading is, which is why "does nothing" is the
+        # right behavior here rather than a silent half-normalization.
+        out = tl.normalize_body_headings("# Lever\n\n```md\nnever closed\n\n# Later\n")
+        self.assertIn("### Lever", out)
+        self.assertIn("\n# Later", out)
+        self.assertNotIn("### Later", out)
+
     def test_depth_is_clamped_at_h6(self):
         # `iter_headings` only recognizes `#{1,6}`; pushing past it would stop
         # the line being a heading at all — silently un-sliceable.

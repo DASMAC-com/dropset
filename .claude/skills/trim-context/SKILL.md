@@ -156,11 +156,18 @@ wrong for as long as it existed:
   block. `Lever` matches the lowercase `lever` in a dump heading like
   `## ENG-1218 | Make the parked-lever body sliceable`. "Lever" is the
   most common word in a lever dump by construction, so the relaxation is
-  worse than the bug: measured on a fixture, dropping the anchor returned
-  **42 of 53 lines** — the evidence prose the file exists to keep out of
-  the transcript — where the anchored form returns **23**.
+  worse than the bug: measured on a fixture, the unanchored pattern
+  returned **42 of 53 lines**, pulling in evidence prose the file exists
+  to keep out of the transcript, where the committed pattern against a
+  normalized dump returns **23**.
 
-The `$` is what does the work; keep it on every branch.
+Read that pair as the before/after of the whole fix, not of the anchor
+alone — the two measured runs also differ by an added branch and by the
+heading normalization described below.
+
+**Both anchors are load-bearing**: `$` stops a branch matching a title
+that merely *contains* the word, and `^` stops one matching a title that
+*ends* in it. Keep the group wrapped in both.
 
 `--sections` (plural) exists for this. `--section` refuses an ambiguous
 pattern — right for a single read, and it stops applying at exactly the

@@ -33,14 +33,18 @@ not a non-dropset sweep.
 
 **That 151M is no longer reclaimable here, deliberately.**
 The base checkout is a live worktree, so it is now kept
-unconditionally. In practice this changes nothing: that one
-directory holds *every* session ever started from the base
-repo, so the newest of them keeps its mtime fresh and the
-age rule effectively never fired on it — the outcome is the
-same, stated as "live worktree" instead of "within age".
-If the base-repo dir ever needs reclaiming, that wants its
-own per-session rule rather than a whole-slug age rule; do
-not reach for it by dropping the live-worktree protection.
+unconditionally. In practice we expect this to change
+nothing: that one directory holds *every* session ever
+started from the base repo, so its mtime should stay fresh
+and the age rule is unlikely ever to have fired on it — the
+outcome the same, stated as "live worktree" rather than
+"within age". **That is reasoning about mtime, not a
+measurement over months** — unlike the verified claims
+elsewhere in this file, and worth reading as the weaker
+thing it is. If the directory does grow without bound, the
+fix is a per-session rule rather than a whole-slug age rule;
+do not reach for it by dropping the live-worktree
+protection.
 
 ## Two mechanisms, three roots
 
@@ -48,11 +52,21 @@ not reach for it by dropping the live-worktree protection.
    CLI cache `~/Library/Caches/claude-cli-nodejs` both name
    a subdirectory per working directory with the same
    `slugify()` scheme (every `/` and `.` → `-`, shared with
-   `session_metrics.py`). A slug whose **worktree still
-   exists** is kept unconditionally; a slug whose worktree is
-   **gone** gets the age rule; every **non-dropset** slug is
-   age-only. The CLI cache also carries stale slugs for dead
-   repos — good reclaim.
+   `session_metrics.py`). Five keep-rules are tried in order —
+   current session, open PR, **live worktree**, **recent prompt
+   activity**, then the age grace period — and only a slug that
+   passes all of them is deleted. A slug whose **worktree still
+   exists** is therefore kept unconditionally, whatever its age
+   and whatever its PR says. The CLI cache also carries stale
+   slugs for dead repos — good reclaim.
+
+   Two riders on that summary, because "worktree gone ⇒ age
+   rule" is *necessary* but not *sufficient*: recent prompt
+   activity keeps a gone-worktree slug anyway, and a slug the
+   caller marks **completed** is deleted outright, skipping the
+   grace period. The activity rule applies to **every** slug, so
+   a non-dropset slug is not age-only either.
+
 1. **Session-UUID** — `~/.claude/file-history` is one flat
    subdirectory per session UUID, mixing every repo, so it
    can't be cheaply repo-scoped by name. It is age-ruled, but
@@ -79,10 +93,20 @@ the PR says and whatever the age: a worktree on disk means a
 session someone intends to resume. The PR lookup this skill
 performs is now **belt-and-braces on top of that**, not the
 load-bearing protection it used to be. It still earns its
-place — "open PR" is the more useful reason to show a human,
-and it protects a branch whose worktree has already been
-pruned away — but a failure of this lookup can no longer
-reach a live session.
+place — "open PR" is the more useful reason to show a human —
+but a failure of this lookup can no longer reach a live
+session.
+
+Be precise about how much it adds, because the obvious
+stronger claim is false: the tool builds the protected set
+and the live set from the **same** worktree list, so the
+protected set is a strict subset. The open-PR rule therefore
+changes no keep/delete outcome today — only the reason
+string. In particular it does **not** rescue a branch whose
+worktree is already gone: such a branch contributes no
+worktree entry, so it cannot be protected either. The tool
+warns when a `--protected-branch` matches no live worktree,
+and that warning is the only trace it leaves.
 
 **`state: "open"` already includes drafts.** Worth stating
 because the first theory of the 2026-09-07 loss was that
@@ -240,6 +264,14 @@ were the blunt two-day age rule across three roots. Those are
 different facts: one is work in flight, the other is a grace
 period, and only the first is a reason not to reclaim the
 space.
+
+The breakout now names **five** reasons, not two, and they
+carry very different weight. `current session`, `open PR`,
+`live worktree` and `session of a kept project` all mean work
+someone can still come back to; only `within age` is the blunt
+grace period. A run whose kept count is mostly the age rule
+is reclaimable; one dominated by the first four is correctly
+protected.
 
 **Read the named tags before approving anything.** Each
 dropset slug proposed for deletion prints on its own line as

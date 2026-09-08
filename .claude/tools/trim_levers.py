@@ -562,7 +562,22 @@ DUMP_BODY_MIN_DEPTH = 3
 
 def normalize_body_headings(body: str, min_depth: int = DUMP_BODY_MIN_DEPTH) -> str:
     """Shift a lever body's ATX headings so its shallowest sits at ``min_depth``,
-    preserving the relative structure and leaving fenced blocks alone.
+    leaving fenced blocks alone.
+
+    Relative structure survives the shift, with one bounded exception: the h6
+    clamp below can collapse two originally-distinct depths into one, which
+    needs a body spanning depth 1 through 5 or deeper. The cost of that is
+    slicing *fidelity* — a former parent section becomes a sibling of its own
+    child — never a broken dump, since the property everything else depends on
+    (every body heading at ``min_depth`` or deeper) still holds. The clamp is
+    the lesser evil; see the comment on it.
+
+    Fence handling matches ``read_result.py``'s ``iter_headings`` exactly: both
+    toggle on the same fence syntax and skip what is inside. That agreement is
+    the point — a heading this function declines to shift is also one the slicer
+    declines to see, so the two cannot disagree about what a heading is. On an
+    *unbalanced* fence both therefore ignore the remainder of the body, and the
+    slicer already warns about that case.
 
     **This is what makes the dump sliceable, and its absence was a silent
     correctness bug rather than a cosmetic one.** ``render_bodies`` writes a
