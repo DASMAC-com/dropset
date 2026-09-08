@@ -5,6 +5,8 @@ disable-model-invocation: false
 user-invocable: true
 ---
 
+<!-- cspell:word IGNORECASE -->
+
 # `trim-context`
 
 The **consumer** half of the context-economy feedback loop.
@@ -136,16 +138,52 @@ Parked bodies are written to a house structure, so ask for those
 headings across every lever in one call:
 
 ```sh
-python3 .claude/tools/read_result.py \
-  --sections '^#+ (The lever|Lever|Concrete edit|Proposed edit)' \
+python3 .claude/tools/read_result.py --sections \
+  '^(The lever|Lever|Concrete edit|Proposed edit|The edit this implies)$' \
   <scratchpad>/levers.md
 ```
+
+**Match the heading TEXT, anchored end-to-end — never write `^#+` here.**
+`--sections` matches against heading text with the hash markers **already
+stripped**, case-insensitively and unanchored (`re.IGNORECASE` +
+`rx.search`). Two consequences, both of which this exact command got
+wrong for as long as it existed:
+
+- a `^#+` prefix is **dead syntax** — it tries to match hashes that are
+  not in the string, so the call fails with `no heading matches` every
+  time, on any pool, however well-structured;
+- a bare word branch matches **inside a title**, and emits that whole
+  block. `Lever` matches the lowercase `lever` in a dump heading like
+  `## ENG-1218 | Make the parked-lever body sliceable`. "Lever" is the
+  most common word in a lever dump by construction, so the relaxation is
+  worse than the bug: measured on a fixture, the unanchored pattern
+  returned **42 of 53 lines**, pulling in evidence prose the file exists
+  to keep out of the transcript, where the committed pattern against a
+  normalized dump returns **23**.
+
+Read that pair as the before/after of the whole fix, not of the anchor
+alone — the two measured runs also differ by an added branch and by the
+heading normalization described below.
+
+**Both anchors are load-bearing**: `$` stops a branch matching a title
+that merely *contains* the word, and `^` stops one matching a title that
+*ends* in it. Keep the group wrapped in both.
 
 `--sections` (plural) exists for this. `--section` refuses an ambiguous
 pattern — right for a single read, and it stops applying at exactly the
 scale where slicing matters, because the same heading in every lever is
 N matches by construction. That refusal is what made the whole-file read
 the compliant-looking move.
+
+**The dump's own heading depths are what make this slice terminate**, and
+`--bodies-out` now guarantees them: each lever body's headings are
+normalized to sit **below** its `## <identifier>` line. They used to be
+pasted verbatim at `#`, one level *shallower* than the identifier above
+them — and a markdown section runs to the next heading of the same or
+shallower depth, so a `# Proposed edit` section ran straight through the
+next lever's `##` identifier and swallowed it whole. That is why fixing
+the pattern alone was not enough: no pattern can bound a section's
+*extent*, only which headings are selected.
 
 Measured: the pool-wide *fetch* is no longer the problem — one
 `--bodies-out` wrote 41 bodies (103,250 chars) for ≈858 tokens. The

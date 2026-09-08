@@ -15,17 +15,49 @@ Three roots, two mechanisms:
 * **Slug-partitioned** — ``~/.claude/projects`` and
   ``~/Library/Caches/claude-cli-nodejs`` both name a subdirectory per working
   directory with the same ``slugify()`` scheme (every ``/`` and ``.`` → ``-``).
-  A dropset slug gets the age rule **unless** its worktree branch has an open PR
-  (kept regardless of age); a non-dropset slug is age-only.
+  A slug whose **worktree still exists** is kept unconditionally; a slug whose
+  worktree is *gone* gets the age rule; a non-dropset slug is age-only.
 * **Session-UUID** — ``~/.claude/file-history`` is one flat subdirectory per
-  session UUID, mixing every repo, so it can't be cheaply repo-scoped: age-only
-  by directory mtime.
+  session UUID, mixing every repo. It is age-ruled by directory mtime, but no
+  longer *only* that: the projects tree names each session as
+  ``<slug>/<uuid>.jsonl``, so a session belonging to a slug we are keeping is
+  kept here too. Both of a session's directories are protected together,
+  because the loss below took both and half a fix is not one.
 
 The **dropset set is derived forward** (``git worktree list`` → slug of each
 real worktree path), never by string-matching slug prefixes — a prefix would
 wrongly catch a sibling repo like ``dropset-beta`` whose slug starts with the
 base repo's. The **current session is always kept** in every root (by session
 id, and by the current working directory's slug).
+
+**Why this tool refuses to run without a resolvable repo.** It used to treat a
+missing ``--dropset-repo`` as "no worktrees exist", degrading to an age-only
+sweep in which every live worktree's transcripts were classified — and reported
+— as ``non-dropset``. On 2026-09-07 a ``housekeeping`` pass invoked it that way
+and hard-deleted a live worktree session's transcript; the approval prompt read
+``8.3 MB non-dropset transcripts``, so what was approved bore no resemblance to
+what was lost. Three guards close that hole, and they are deliberately
+belt-and-braces because the failure is unrecoverable:
+
+1. the repo is **defaulted from this tool's own committed location** — never
+   from the working directory, which would only move the hole — and the run
+   **aborts** when it cannot be resolved, rather than proceeding with an
+   empty set;
+2. an existing worktree protects its slug **whatever the PR state** — an
+   existing worktree means a session someone intends to resume;
+3. the **prompt history** (``~/.claude/history.jsonl``) is cross-checked, so a
+   slug with recent activity survives even a total failure of the PR lookup.
+
+Every one of the three fails in the keep-more direction: the cost of a false
+keep is disk, the cost of a false delete is a session that cannot be resumed.
+
+One consequence worth stating, since it is a deliberate trade rather than an
+oversight: guard 2 protects the **main** worktree too, so the base checkout's
+project directory (the largest single slug dir here) is now never age-reclaimed
+by this tool. In practice it never was — that directory holds every session ever
+started from the base repo, so its mtime is refreshed by the newest of them and
+the age rule effectively never fired on it. The change makes the outcome
+explicit ("live worktree") instead of incidental ("within age").
 
 Safety invariant: the tool only ever deletes a directory that resolves **under**
 one of the three known roots, never follows a symlink, refuses any entry that
@@ -36,6 +68,7 @@ deletion requires ``--apply``. Standard library only.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -86,6 +119,13 @@ def file_history_root() -> Path:
     return claude_home() / "file-history"
 
 
+def history_path() -> Path:
+    """``~/.claude/history.jsonl`` — one JSON object per submitted prompt,
+    carrying the ``project`` (working directory) and an epoch-**milliseconds**
+    ``timestamp``. Read only to establish recent activity; never written."""
+    return claude_home() / "history.jsonl"
+
+
 def cli_cache_root() -> Path:
     """``~/Library/Caches/claude-cli-nodejs`` — the CLI cache, slug-partitioned
     exactly like the projects tree."""
@@ -124,17 +164,120 @@ def parse_worktrees(porcelain: str) -> list[tuple[str, str | None]]:
 def dropset_slug_sets(
     worktrees: list[tuple[str, str | None]], protected_branches: set[str]
 ) -> tuple[set[str], set[str]]:
-    """From parsed worktrees, return ``(dropset_slugs, protected_slugs)``: every
-    real worktree path's slug, and the subset whose branch has an open PR (so it
-    is kept regardless of age)."""
-    dropset: set[str] = set()
+    """From parsed worktrees, return ``(live_slugs, protected_slugs)``: every
+    **existing** worktree path's slug, and the subset whose branch has an open
+    PR.
+
+    Both sets are kept, and the distinction is now only about the *reason*
+    reported — ``git worktree list`` enumerates worktrees that exist, so
+    membership in the first set is itself proof that a checkout is on disk.
+
+    **``protected`` is a subset of ``live`` by construction here** (equal when
+    every branch has an open PR), since both are built from the same loop over
+    the same worktree list. So with this
+    caller the open-PR rule can never change a keep/delete outcome — it only
+    supplies the more informative reason string. It is kept because it is the
+    rule that would still hold if protected slugs ever came from a source other
+    than the worktree list, and because "open PR" is what a human wants to read;
+    not because it protects anything ``live`` does not already cover. A branch
+    whose worktree has been pruned away contributes no entry to
+    ``git worktree list``, so it cannot reach ``protected`` either — the
+    ``run()`` warning about a ``--protected-branch`` matching no live worktree
+    is the only trace such a branch leaves.
+    """
+    live: set[str] = set()
     protected: set[str] = set()
     for path, branch in worktrees:
         slug = slugify(Path(path))
-        dropset.add(slug)
+        live.add(slug)
         if branch is not None and branch in protected_branches:
             protected.add(slug)
-    return dropset, protected
+    return live, protected
+
+
+def base_worktree(worktrees: list[tuple[str, str | None]]) -> Path:
+    """The main worktree — ``git worktree list`` documents it as the first
+    entry, ahead of every linked worktree. Preferred over "the one on ``main``"
+    because a branch checkout is a convention while the ordering is a
+    guarantee."""
+    if not worktrees:
+        raise PruneError("cannot identify the base repo from an empty worktree list")
+    return Path(worktrees[0][0])
+
+
+def former_worktree_prefix(base_repo: Path) -> str:
+    """The slug prefix shared by every worktree under ``<base>/.claude/worktrees``
+    — the directory ``claude --worktree`` creates them in.
+
+    This is the one place a prefix comparison is legitimate, and it is safe for
+    the reason the blanket ban exists: the ban protects against matching a
+    *sibling repo* like ``dropset-beta`` off the base repo's own slug, and this
+    prefix reaches a directory **inside** the base repo, which no sibling can
+    share. It is used only to label and to name a tag, never to widen deletion:
+    a former worktree created outside that directory simply falls through to the
+    age-only ``non-dropset`` branch, exactly as it did before.
+    """
+    return slugify(base_repo / ".claude" / "worktrees") + "-"
+
+
+def worktree_tag(slug: str, prefix: str | None) -> str | None:
+    """The issue tag a worktree slug encodes (``…-worktrees-eng-1192`` →
+    ``eng-1192``), or ``None`` when the slug is not a worktree of this repo.
+    The manifest uses it so an approval reads as "delete the eng-1192 session"
+    rather than as an opaque slug string."""
+    if not prefix or not slug.startswith(prefix):
+        return None
+    return slug[len(prefix) :] or None
+
+
+def read_active_slugs(cutoff_ts: float, path: Path | None = None) -> set[str]:
+    """Slugs of every working directory named as the ``project`` of a prompt
+    newer than ``cutoff_ts``, read from the prompt history.
+
+    This is the guard that degrades safely. The open-PR protection is only as
+    good as the GitHub lookup that feeds it, and the lookup is the part most
+    likely to fail or to be handed an empty list — which is precisely the
+    failure that deleted a live session. Recent prompts are local, need no
+    network, and are direct evidence that a human was working somewhere.
+
+    Best-effort by construction: a missing file, an unreadable one, or a
+    malformed line yields fewer protected slugs rather than an error, because a
+    guard that can abort the run would itself become a reason to skip it. It
+    catches ``OSError`` on the read and ``ValueError`` per line, and skips any
+    record whose shape is wrong.
+
+    That is "best-effort", not "cannot raise" — a pathological file could still
+    raise ``MemoryError`` on the read or ``RecursionError`` on deeply nested
+    JSON, neither of which is caught. Both fail **safe**: this runs in ``run()``
+    before any scanning, so an escape aborts the process with nothing deleted.
+    Worth stating precisely rather than claiming an absolute the code does not
+    deliver.
+    """
+    src = path if path is not None else history_path()
+    slugs: set[str] = set()
+    try:
+        text = src.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return slugs
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        project = record.get("project")
+        stamp = record.get("timestamp")
+        if not isinstance(project, str) or not project:
+            continue
+        if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
+            continue
+        if stamp / 1000.0 < cutoff_ts:  # history timestamps are milliseconds
+            continue
+        slugs.add(slugify(Path(project)))
+    return slugs
 
 
 @dataclass
@@ -148,61 +291,102 @@ def decide_slug(
     slug: str,
     mtime_ts: float,
     *,
-    dropset_slugs: set[str],
+    live_slugs: set[str],
     protected_slugs: set[str],
     current_slug: str | None,
     cutoff_ts: float,
     completed_slugs: set[str] | None = None,
+    active_slugs: set[str] | None = None,
+    former_prefix: str | None = None,
 ) -> Decision:
     """Decide a slug-partitioned entry (projects or CLI cache).
 
-    The current slug is always kept, and an open PR keeps its slug regardless
-    of age. Otherwise the age rule applies — **except** for a slug the caller
-    has marked *completed*, which is deleted without a grace period.
+    Four keep-rules are tried in order, then the age rule:
 
-    The completion override exists because the age rule is blunt: a slug whose
-    worktree no longer exists and whose branch's PR is merged or closed is
-    finished work, and waiting two days to reclaim it protects nothing. The
-    caller already computes exactly that set (merged PRs intersected with
-    completed issues) one step before this decision, so nothing new has to be
-    discovered — it was simply not being passed in.
+    1. the **current session** — always kept;
+    2. an **open PR** on the slug's branch;
+    3. a **live worktree** — the checkout still exists on disk;
+    4. **recent prompt activity** against that working directory.
 
-    Protection is checked **before** completion, so a slug that somehow lands
-    in both is kept. They are mutually exclusive by construction (open versus
-    merged/closed), and ordering it this way means a bug in the caller's set
-    arithmetic costs disk rather than data.
+    Only then does a slug reach the age rule, and only a slug the caller marked
+    *completed* skips the grace period within it.
 
-    **One deliberate widening, called out because it is easy to miss in the
-    diff:** the open-PR check now sits ABOVE the dropset-slug branch rather
-    than inside it, so a protected slug that is not in ``dropset_slugs`` is now
-    kept instead of falling through to the age rule. In practice the caller
-    builds ``protected_slugs`` as a subset of ``dropset_slugs``, so this is a
-    no-op today; it is written this way so the guarantee is "an open PR is
-    never pruned" rather than "an open PR is never pruned *if* we also
-    recognized its worktree". The direction is keep-more.
+    **Rule 3 is the fix for a data-loss bug and it is unconditional on
+    purpose.** It used to be the *weakest* rule rather than a keep-rule at all:
+    a dropset slug was age-ruled, and protection came solely from the open-PR
+    list. That made every protection contingent on a network lookup landing
+    correctly, and when a caller omitted the repo argument the worktree set was
+    empty, no slug was recognized, and live sessions were deleted under the
+    ``non-dropset`` label. An existing worktree is *local, free and
+    unambiguous* evidence that a session is meant to be resumable, so it now
+    protects on its own — whatever the PR says, and whatever the age.
+
+    **Rule 4 sits above the completion override deliberately.** Completion is
+    the caller's set arithmetic; recent prompts are the operator's own behavior.
+    When the two disagree, believing the human costs at most a couple of days of
+    disk, while believing the arithmetic can cost a transcript — so the weaker
+    evidence does not get to override the stronger one. It shares the age
+    cutoff rather than inventing a second window, so "recently active" and
+    "within the grace period" mean the same span.
+
+    Rules 1–3 keep their previous relative order, and each is checked before
+    ``completed`` for the same reason as before: a slug landing in both sets is
+    kept, so a bug in the caller's set arithmetic costs disk rather than data.
+
+    ``former_prefix`` only changes the *label*: past the keep-rules, a slug
+    recognizable as a pruned-away worktree of this repo is reported as
+    ``dropset-old`` instead of ``non-dropset``. Both are age-ruled identically.
+    That distinction exists because the mislabelling is what made the loss
+    approvable — "non-dropset transcripts" is exactly what a human waves
+    through.
     """
     completed = completed_slugs or set()
+    active = active_slugs or set()
     if current_slug is not None and slug == current_slug:
         return Decision(False, "kept", "current session")
     if slug in protected_slugs:
         return Decision(False, "kept", "open PR")
+    if slug in live_slugs:
+        return Decision(False, "kept", "live worktree")
+    if slug in active:
+        return Decision(False, "kept", "recent session activity")
     if slug in completed:
         return Decision(True, "completed", "worktree gone, PR merged or closed")
-    if slug in dropset_slugs:
+    if former_prefix and slug.startswith(former_prefix):
         if mtime_ts < cutoff_ts:
-            return Decision(True, "dropset-old", "dropset, older than threshold")
-        return Decision(False, "kept", "dropset, within age")
+            return Decision(True, "dropset-old", "worktree gone, older than threshold")
+        return Decision(False, "kept", "worktree gone, within age")
     if mtime_ts < cutoff_ts:
         return Decision(True, "non-dropset", "non-dropset, older than threshold")
     return Decision(False, "kept", "non-dropset, within age")
 
 
 def decide_history(
-    name: str, mtime_ts: float, *, current_uuid: str | None, cutoff_ts: float
+    name: str,
+    mtime_ts: float,
+    *,
+    current_uuid: str | None,
+    cutoff_ts: float,
+    protected_uuids: set[str] | None = None,
 ) -> Decision:
-    """Decide a file-history session-UUID directory: age-only, current kept."""
+    """Decide a file-history session-UUID directory: age rule, with the current
+    session and any **protected session** kept.
+
+    ``file-history`` is one flat directory per session UUID with no repo in the
+    name, which is why it was age-only — there was nothing to join on. There is
+    now: the projects tree stores each session as ``<slug>/<uuid>.jsonl``, so
+    the sessions belonging to a slug we decided to keep can be named exactly,
+    and the prompt history supplies the rest.
+
+    This matters because the 2026-09-07 loss took **both** of a session's
+    directories. Protecting only the transcript would leave the same session
+    half-destroyable by the same blunt rule, which is not a fix.
+    """
+    protected = protected_uuids or set()
     if current_uuid is not None and name == current_uuid:
         return Decision(False, "kept", "current session")
+    if name in protected:
+        return Decision(False, "kept", "session of a kept project")
     if mtime_ts < cutoff_ts:
         return Decision(True, "file-history", "older than threshold")
     return Decision(False, "kept", "within age")
@@ -246,6 +430,10 @@ class Record:
     delete: bool
     reason: str
     size: int
+    # The issue tag when the slug is a worktree of this repo, else None. Carried
+    # so the manifest can name what it proposes to delete; defaulted so the
+    # field is additive for every existing caller.
+    tag: str | None = None
 
 
 def _dir_contains_session(entry: Path, current_uuid: str | None) -> bool:
@@ -260,13 +448,15 @@ def _dir_contains_session(entry: Path, current_uuid: str | None) -> bool:
 def scan_slug_root(
     root: Path,
     *,
-    dropset_slugs: set[str],
+    live_slugs: set[str],
     protected_slugs: set[str],
     current_slug: str | None,
     current_uuid: str | None,
     cutoff_ts: float,
     guard_session_file: bool,
     completed_slugs: set[str] | None = None,
+    active_slugs: set[str] | None = None,
+    former_prefix: str | None = None,
 ) -> list[Record]:
     """Classify every immediate subdirectory of a slug-partitioned root."""
     records: list[Record] = []
@@ -275,25 +465,46 @@ def scan_slug_root(
     for entry in sorted(root.iterdir()):
         if not entry.is_dir() or entry.is_symlink():
             continue  # never follow a symlink out of the root
+        tag = worktree_tag(entry.name, former_prefix)
         if guard_session_file and _dir_contains_session(entry, current_uuid):
-            records.append(Record(entry, "kept", False, "current session", 0))
+            records.append(Record(entry, "kept", False, "current session", 0, tag))
             continue
         d = decide_slug(
             entry.name,
             entry.stat().st_mtime,
-            dropset_slugs=dropset_slugs,
+            live_slugs=live_slugs,
             protected_slugs=protected_slugs,
             current_slug=current_slug,
             cutoff_ts=cutoff_ts,
             completed_slugs=completed_slugs,
+            active_slugs=active_slugs,
+            former_prefix=former_prefix,
         )
         size = dir_size(entry) if d.delete else 0
-        records.append(Record(entry, d.category, d.delete, d.reason, size))
+        records.append(Record(entry, d.category, d.delete, d.reason, size, tag))
     return records
 
 
+def session_uuids_in(slug_dir: Path) -> set[str]:
+    """The session UUIDs a projects slug directory holds, read from its
+    ``<uuid>.jsonl`` transcript filenames — the join that lets a ``file-history``
+    directory be matched back to the project it belongs to."""
+    uuids: set[str] = set()
+    try:
+        for entry in slug_dir.iterdir():
+            if entry.is_file() and entry.suffix == ".jsonl":
+                uuids.add(entry.stem)
+    except OSError:
+        return uuids
+    return uuids
+
+
 def scan_history_root(
-    root: Path, *, current_uuid: str | None, cutoff_ts: float
+    root: Path,
+    *,
+    current_uuid: str | None,
+    cutoff_ts: float,
+    protected_uuids: set[str] | None = None,
 ) -> list[Record]:
     """Classify every session-UUID directory under ``file-history``."""
     records: list[Record] = []
@@ -307,6 +518,7 @@ def scan_history_root(
             entry.stat().st_mtime,
             current_uuid=current_uuid,
             cutoff_ts=cutoff_ts,
+            protected_uuids=protected_uuids,
         )
         size = dir_size(entry) if d.delete else 0
         records.append(Record(entry, d.category, d.delete, d.reason, size))
@@ -319,11 +531,24 @@ def scan_history_root(
 
 CATEGORY_LABELS = {
     "completed": "finished work (worktree gone, PR merged or closed)",
-    "dropset-old": "dropset transcripts (aged, no open PR)",
+    "dropset-old": "dropset transcripts (worktree gone, aged)",
     "non-dropset": "non-dropset transcripts",
     "file-history": "file-history (session UUID dirs)",
     "cli-cache": "CLI cache (aged)",
 }
+
+
+# How many UNTAGGED entries a manifest group names individually before
+# summarizing the rest. Bounds an approval prompt on a machine with many stale
+# foreign slugs.
+#
+# The cap deliberately does **not** apply to tagged entries. Sorting tagged
+# first is not enough on its own: a repo accumulates per-issue worktrees, so a
+# group can hold more than this many *tagged* entries, and truncating those
+# would drop real session names — in lexical tag order, which is arbitrary —
+# from a hard-delete approval prompt. That is the precise hole naming entries
+# was added to close, so every tagged entry is always named.
+MANIFEST_NAME_CAP = 20
 
 
 def _mb(n: int) -> str:
@@ -349,7 +574,25 @@ def kept_by_reason(groups: dict[str, list[Record]]) -> dict[str, int]:
 
 def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
     """The grouped dry-run manifest: per-group count + MB, a total, and the
-    kept count broken out by the reason each record was kept for."""
+    kept count broken out by the reason each record was kept for.
+
+    **Every** directory proposed for deletion is named on its own line — by its
+    issue tag when it has one, otherwise by its directory name. The counts alone
+    were what made a real loss approvable: a group line reading "non-dropset
+    transcripts: 6 dir(s), 8.3 MB" is indistinguishable from junk, and the one
+    entry that mattered was a live session's transcript. A human can veto
+    "eng-1192"; nobody can veto a megabyte count.
+
+    **Naming only the tagged entries would leave that hole open**, which is why
+    this names all of them: a tag exists only for a slug matching the worktree
+    prefix, so precisely the entries a wrongly resolved repo strands in
+    ``non-dropset`` — the shape of the original loss — would print as an
+    anonymous bulk line again.
+
+    **Every tagged entry is named, with no cap**; only the untagged remainder
+    is truncated. See ``MANIFEST_NAME_CAP`` for why sorting tagged first is not
+    a sufficient substitute.
+    """
     lines = ["purge-conversations — dry run (nothing deleted)\n"]
     total = 0
     for category, label in CATEGORY_LABELS.items():
@@ -359,6 +602,14 @@ def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
         size = sum(r.size for r in recs)
         total += size
         lines.append(f"  {label}: {len(recs)} dir(s), {_mb(size)}")
+        tagged = sorted((r for r in recs if r.tag), key=lambda rec: rec.tag)
+        untagged = sorted((r for r in recs if not r.tag), key=lambda r: r.path.name)
+        for r in tagged:
+            lines.append(f"    - {r.tag} ({_mb(r.size)})")
+        for r in untagged[:MANIFEST_NAME_CAP]:
+            lines.append(f"    - {r.path.name} ({_mb(r.size)})")
+        if len(untagged) > MANIFEST_NAME_CAP:
+            lines.append(f"    … and {len(untagged) - MANIFEST_NAME_CAP} more")
     lines.append(f"  TOTAL to free: {_mb(total)}")
     # Header and breakout from ONE source. `protected` arrives as a
     # caller-computed scalar, and a header that can disagree with the lines
@@ -388,12 +639,145 @@ def safe_delete(record: Record, roots: list[Path]) -> int:
     return freed
 
 
-def read_worktrees(dropset_repo: str | None) -> list[tuple[str, str | None]]:
-    """Run ``git worktree list --porcelain`` for the dropset repo, or return an
-    empty list when no repo was given (every slug is then treated as
-    non-dropset — age-only)."""
-    if not dropset_repo:
-        return []
+def repo_root_from_tool() -> Path:
+    """This tool's own repository root, from its committed location
+    (``<repo>/.claude/tools/prune_conversations.py`` → ``<repo>``).
+
+    **The default is derived from the tool, not from the working directory,
+    and that distinction is a safety property rather than a convenience.**
+    Defaulting from the cwd looks equivalent and is not: run from inside *any
+    other* git checkout, ``git rev-parse --show-toplevel`` succeeds, the
+    worktree listing succeeds, and every protection is then computed for the
+    wrong repo — so every dropset slug misses the live-worktree rule and lands
+    in ``non-dropset, older than threshold``. That is precisely the
+    classification, and precisely the manifest label, that made the 2026-09-07
+    loss approvable. A refusal that fires only outside *any* repo does not
+    cover it.
+
+    The tool is committed inside the repo it protects, so its own path answers
+    the question unambiguously and cannot be wrong about which repo is meant. A
+    linked worktree's copy resolves to that worktree, which is equally correct:
+    ``git worktree list`` from a linked worktree enumerates the whole set, the
+    main worktree included.
+    """
+    return Path(__file__).resolve().parents[2]
+
+
+def git_common_dir(repo: str) -> str | None:
+    """A repo's shared git directory, resolved absolute — the identity every
+    worktree of one repository shares and no two repositories do. ``None`` when
+    it cannot be read, so callers can skip a comparison rather than guess."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo, "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    out = proc.stdout.strip()
+    if not out:
+        return None
+    path = Path(out)
+    # git may answer relative to the repo it was asked about.
+    if not path.is_absolute():
+        path = Path(repo) / path
+    try:
+        return str(path.resolve())
+    except OSError:
+        return None
+
+
+def resolve_dropset_repo(explicit: str | None) -> str:
+    """The repo whose worktrees are protected: ``--dropset-repo`` when given,
+    otherwise this tool's own repo (see :func:`repo_root_from_tool`).
+
+    Defaulting is the point. The flag was optional and omitting it silently
+    disabled **all** worktree protection, which is not a state any invocation
+    ever wants — so the tool derives what it needs and **refuses** when it
+    cannot, rather than treating "I don't know the worktrees" as "there are
+    none".
+
+    Both paths are then sanity-checked for a ``.claude`` directory, and an
+    **explicit** path must additionally name *this* repository — compared by
+    ``--git-common-dir``, which every worktree of a repo shares and no other
+    repo does.
+
+    That second gate exists because the explicit path is the **mandated** one:
+    the skill tells operators to always pass ``--dropset-repo``, so it is the
+    path most likely to carry a typo, and a ``.claude`` check alone accepts any
+    other Claude-using checkout — after which every protection is computed for
+    the wrong repo and every dropset slug lands in ``non-dropset``. That is the
+    original failure exactly, reached through the flag meant to prevent it.
+
+    A second clone of this repo is refused too, and the remedy is in the error:
+    run *that* checkout's own copy of the tool, whose default resolves it
+    correctly. If either side's common dir cannot be read the comparison is
+    skipped rather than guessed — the ``.claude`` gate still applies, and the
+    defaulted path does not depend on it.
+    """
+    candidate = explicit if explicit else str(repo_root_from_tool())
+    try:
+        proc = subprocess.run(
+            ["git", "-C", candidate, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        root = proc.stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        root = ""
+    if not root:
+        # Name the right remedy for the path actually taken: telling a caller
+        # who passed --dropset-repo to pass --dropset-repo reads as a bug in
+        # the tool.
+        remedy = (
+            "Check the path you passed."
+            if explicit
+            else "Pass --dropset-repo <path> explicitly."
+        )
+        raise PruneError(
+            f"cannot resolve the dropset repo: {candidate!r} is not inside a "
+            f"git worktree. {remedy} Refusing rather than running with an "
+            "empty worktree set, which would age-delete live sessions' "
+            "transcripts as 'non-dropset'."
+        )
+    # Cheapest and most specific first: a repo with no `.claude` at all cannot
+    # be this one, and saying so beats the subprocess comparison below telling
+    # the caller it is "a different repository" — true but less useful, and it
+    # buys two `git rev-parse` calls to reach a worse message.
+    if not (Path(root) / ".claude").is_dir():
+        raise PruneError(
+            f"resolved repo {root!r} has no .claude directory, so it cannot be "
+            "the repo this tool protects. Refusing rather than computing "
+            "worktree protections for the wrong repo — every slug would then "
+            "age-delete as 'non-dropset'."
+        )
+    if explicit:
+        mine = git_common_dir(str(repo_root_from_tool()))
+        theirs = git_common_dir(root)
+        if mine and theirs and mine != theirs:
+            raise PruneError(
+                f"--dropset-repo {explicit!r} resolves to a different "
+                f"repository than this tool belongs to ({root!r} vs "
+                f"{str(repo_root_from_tool())!r}). Refusing: every protection "
+                "would be computed for the wrong repo and every slug of the "
+                "intended one would age-delete as 'non-dropset'. To prune for "
+                "that checkout, run its own copy of this tool — the default "
+                "resolves it correctly."
+            )
+    return root
+
+
+def read_worktrees(dropset_repo: str) -> list[tuple[str, str | None]]:
+    """Run ``git worktree list --porcelain`` for the dropset repo.
+
+    Raises on an empty result. A valid repo always reports at least its main
+    worktree, so "no worktrees" means the lookup did not do what the caller
+    thinks it did — and continuing from there is precisely the state that
+    deleted a live session, since every protection is computed from this list.
+    """
     try:
         proc = subprocess.run(
             ["git", "-C", dropset_repo, "worktree", "list", "--porcelain"],
@@ -403,7 +787,14 @@ def read_worktrees(dropset_repo: str | None) -> list[tuple[str, str | None]]:
         )
     except (OSError, subprocess.CalledProcessError) as e:
         raise PruneError(f"git worktree list failed for {dropset_repo}: {e}") from e
-    return parse_worktrees(proc.stdout)
+    worktrees = parse_worktrees(proc.stdout)
+    if not worktrees:
+        raise PruneError(
+            f"git worktree list reported no worktrees for {dropset_repo}; "
+            "refusing to run, because every protection is derived from that "
+            "list and an empty one protects nothing."
+        )
+    return worktrees
 
 
 # --------------------------------------------------------------------------
@@ -418,16 +809,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--dropset-repo",
-        help="path to the dropset base repo; its worktrees' slugs get the "
-        "open-PR-protected age rule. Omit to treat every slug as non-dropset.",
+        help="path to a dropset checkout (any worktree will do); every existing "
+        "worktree's slug is kept. Defaults to THIS TOOL'S OWN repo, not the "
+        "working directory — so the cwd never affects what is protected. A "
+        "path naming a different repository is refused, as is one that does "
+        "not resolve; the run ABORTS rather than protecting nothing.",
     )
     p.add_argument(
         "--protected-branch",
         action="append",
         default=[],
         metavar="BRANCH",
-        help="a worktree branch with an OPEN PR — its slug is kept regardless "
-        "of age (repeatable; the skill supplies these from the GitHub MCP).",
+        help="a worktree branch with an OPEN PR (drafts included) — its slug is "
+        "kept regardless of age (repeatable; the skill supplies these from the "
+        "GitHub MCP). Belt-and-braces: an existing worktree is already kept.",
     )
     p.add_argument(
         "--completed-slug",
@@ -468,13 +863,29 @@ def run(argv: list[str]) -> int:
     now = args.now if args.now is not None else _now()
     cutoff_ts = now - args.age_days * SECONDS_PER_DAY
 
-    worktrees = read_worktrees(args.dropset_repo)
-    dropset_slugs, protected_slugs = dropset_slug_sets(
+    repo = resolve_dropset_repo(args.dropset_repo)
+    worktrees = read_worktrees(repo)
+    live_slugs, protected_slugs = dropset_slug_sets(
         worktrees, set(args.protected_branch)
     )
+    former_prefix = former_worktree_prefix(base_worktree(worktrees))
     current_slug = slugify(Path.cwd())
     current_uuid = args.current_session
     completed_slugs = set(args.completed_slug)
+    active_slugs = read_active_slugs(cutoff_ts)
+
+    # A protected branch naming no live worktree is legitimate (its worktree
+    # may already have been pruned while the PR stayed open), so this warns
+    # rather than aborts. It is still worth saying out loud: the same shape is
+    # what a broken lookup produces, and the old failure was silent.
+    live_branches = {branch for _path, branch in worktrees if branch}
+    unmatched = sorted(set(args.protected_branch) - live_branches)
+    if unmatched:
+        print(
+            "warning: --protected-branch matched no live worktree: "
+            + ", ".join(unmatched),
+            file=sys.stderr,
+        )
 
     proj = projects_root()
     cli = cli_cache_root()
@@ -482,32 +893,50 @@ def run(argv: list[str]) -> int:
     roots = [proj, cli, hist]
 
     records: list[Record] = []
-    records += scan_slug_root(
+    project_records = scan_slug_root(
         proj,
-        dropset_slugs=dropset_slugs,
+        live_slugs=live_slugs,
         protected_slugs=protected_slugs,
         current_slug=current_slug,
         current_uuid=current_uuid,
         cutoff_ts=cutoff_ts,
         guard_session_file=True,
         completed_slugs=completed_slugs,
+        active_slugs=active_slugs,
+        former_prefix=former_prefix,
     )
+    records += project_records
+    # Sessions belonging to a project directory we are keeping, so file-history
+    # is protected on the same footing as the transcript it belongs to. Derived
+    # from the decisions just made rather than re-computed, so the two roots
+    # cannot disagree about which sessions matter.
+    protected_uuids: set[str] = set()
+    for r in project_records:
+        if not r.delete:
+            protected_uuids |= session_uuids_in(r.path)
     # The CLI cache uses the same slug scheme; re-tag a deletable slug entry as
     # the cli-cache group so the manifest separates it from transcripts.
     for r in scan_slug_root(
         cli,
-        dropset_slugs=dropset_slugs,
+        live_slugs=live_slugs,
         protected_slugs=protected_slugs,
         current_slug=current_slug,
         current_uuid=current_uuid,
         cutoff_ts=cutoff_ts,
         guard_session_file=False,
         completed_slugs=completed_slugs,
+        active_slugs=active_slugs,
+        former_prefix=former_prefix,
     ):
         if r.delete:
             r.category = "cli-cache"
         records.append(r)
-    records += scan_history_root(hist, current_uuid=current_uuid, cutoff_ts=cutoff_ts)
+    records += scan_history_root(
+        hist,
+        current_uuid=current_uuid,
+        cutoff_ts=cutoff_ts,
+        protected_uuids=protected_uuids,
+    )
 
     groups: dict[str, list[Record]] = {}
     for r in records:

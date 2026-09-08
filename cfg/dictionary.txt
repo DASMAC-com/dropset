@@ -12,6 +12,7 @@ alphavantage
 anza
 apikey
 applescript
+approvable
 aptos
 askq
 asym

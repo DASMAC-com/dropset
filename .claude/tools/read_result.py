@@ -456,14 +456,25 @@ def run(argv: list[str]) -> int:
         action="store_true",
         help="list markdown headings with line numbers",
     )
-    mode.add_argument("--section", default=None, metavar="RE", help="one heading block")
+    mode.add_argument(
+        "--section",
+        default=None,
+        metavar="RE",
+        help="one heading block. RE matches the heading TEXT with the leading "
+        "hashes already stripped, case-insensitively and unanchored — so a "
+        "'^#+ ' prefix can never match, and a bare word matches inside longer "
+        "headings. Anchor with ^...$ when you mean the whole heading.",
+    )
     mode.add_argument(
         "--sections",
         default=None,
         metavar="RE",
         help="EVERY matching heading block, in file order — the deliberate "
         "multi-match form, for when N matches is the point (a fold wanting "
-        "the same two sections out of every lever) rather than an ambiguity",
+        "the same two sections out of every lever) rather than an ambiguity. "
+        "Same matching contract as --section: hash-stripped heading text, "
+        "IGNORECASE, unanchored; anchor with ^...$ to avoid matching a word "
+        "inside a title.",
     )
     mode.add_argument("--grep", default=None, metavar="RE", help="matching lines")
     mode.add_argument(
