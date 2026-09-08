@@ -553,6 +553,73 @@ def parked_with_bodies(api_key: str, project_id: str) -> list[dict]:
     )
 
 
+ATX_HEADING_RE = re.compile(r"^(#{1,6})(\s+.*)$")
+
+# The depth `render_bodies` forces every lever body's headings to start at, so
+# they sit strictly below the `## <identifier>` heading above them.
+DUMP_BODY_MIN_DEPTH = 3
+
+
+def normalize_body_headings(body: str, min_depth: int = DUMP_BODY_MIN_DEPTH) -> str:
+    """Shift a lever body's ATX headings so its shallowest sits at ``min_depth``,
+    preserving the relative structure and leaving fenced blocks alone.
+
+    **This is what makes the dump sliceable, and its absence was a silent
+    correctness bug rather than a cosmetic one.** ``render_bodies`` writes a
+    ``## <identifier>`` heading per lever, but a lever body carries its own
+    ``# Lever`` / ``# Evidence`` / ``# Proposed edit`` headings one level
+    *shallower* than that. A markdown section runs until the next heading of
+    the same or shallower depth, so a depth-1 ``# Proposed edit`` section did
+    not stop at the next lever's depth-2 identifier — it ran on through it,
+    swallowing the following lever whole.
+
+    The damage lands on the reader, not the tool: slicing the dump for the two
+    sections a fold wants returned those sections *plus* every intervening
+    lever's evidence prose, which is the payload the file exists to keep out of
+    a transcript. Measured on a fixture reproducing the real shape: a correct,
+    end-anchored two-section pattern still returned 38 of 53 lines, including
+    evidence explicitly marked as must-not-be-emitted.
+
+    Normalizing *down* rather than raising the identifier keeps
+    ``_DUMP_SECTION_RE`` (`^## …`) matching exactly what it did before, and
+    guarantees no body heading can ever collide with an identifier line — a
+    body heading is now always depth ≥ 3.
+    """
+    depths = []
+    in_fence = False
+    for line in body.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        match = ATX_HEADING_RE.match(line)
+        if match:
+            depths.append(len(match.group(1)))
+    if not depths:
+        return body
+    shift = min_depth - min(depths)
+    if shift <= 0:
+        return body
+    out: list[str] = []
+    in_fence = False
+    for line in body.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        match = ATX_HEADING_RE.match(line) if not in_fence else None
+        if match:
+            # Clamp at h6: `iter_headings` only recognizes `#{1,6}`, so pushing
+            # past it would stop the line being a heading at all and silently
+            # un-sliceable — worse than a slightly flattened hierarchy.
+            depth = min(len(match.group(1)) + shift, 6)
+            out.append("#" * depth + match.group(2))
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def render_bodies(levers: list[dict]) -> str:
     """The parked pool as one document, ready to be sliced with read_result.py.
 
@@ -560,6 +627,10 @@ def render_bodies(levers: list[dict]) -> str:
     pipeline exists to keep out of a transcript, and the caller wants a few
     sections of it, not all of it. One `## <identifier>` heading per lever makes
     ``read_result.py --headings`` / ``--section`` the natural next call.
+
+    Each body's own headings are normalized to sit **below** that identifier
+    (see ``normalize_body_headings``) so a sliced section stops at the next
+    lever instead of running through it.
     """
     parts = []
     for lever in sorted(levers, key=lambda m: str(m.get("identifier"))):
@@ -567,7 +638,7 @@ def render_bodies(levers: list[dict]) -> str:
         parts.append("")
         parts.append(f"{lever.get('url')}")
         parts.append("")
-        parts.append((lever.get("description") or "").rstrip())
+        parts.append(normalize_body_headings((lever.get("description") or "").rstrip()))
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"
 

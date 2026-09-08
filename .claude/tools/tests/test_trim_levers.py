@@ -1123,11 +1123,80 @@ class BodiesBearingReadTests(unittest.TestCase):
         rendered = tl.render_bodies(self.NODES)
         self.assertLess(rendered.index("## ENG-1"), rendered.index("## ENG-2"))
 
+    def test_body_headings_sit_below_the_identifier_heading(self):
+        """The property that makes a sliced section stop at the next lever.
+
+        A body heading shallower than the `## <identifier>` above it makes its
+        section run *through* that identifier and swallow the following lever,
+        which is what the fold's --sections call was silently returning.
+        """
+        rendered = tl.render_bodies(
+            [
+                {
+                    "identifier": "ENG-1",
+                    "title": "First",
+                    "url": "u1",
+                    "description": "# Lever\n\nstatement\n\n# Proposed edit\n\nedit\n",
+                },
+                {
+                    "identifier": "ENG-2",
+                    "title": "Second",
+                    "url": "u2",
+                    "description": "### The lever\n\nstatement two\n",
+                },
+            ]
+        )
+        for line in rendered.splitlines():
+            match = tl.ATX_HEADING_RE.match(line)
+            if match and " | " not in match.group(2):
+                self.assertGreaterEqual(
+                    len(match.group(1)),
+                    tl.DUMP_BODY_MIN_DEPTH,
+                    f"body heading shallower than the identifier: {line!r}",
+                )
+
     def test_the_bodies_file_is_owner_only(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "bodies.md")
             self._run(["list", "--bodies-out", path])
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+
+class NormalizeBodyHeadingsTests(unittest.TestCase):
+    def test_shallowest_heading_is_moved_to_the_minimum_depth(self):
+        out = tl.normalize_body_headings("# Lever\n\ntext\n\n# Evidence\n")
+        self.assertIn("### Lever", out)
+        self.assertIn("### Evidence", out)
+
+    def test_relative_structure_is_preserved(self):
+        out = tl.normalize_body_headings("# Lever\n\n## Detail\n")
+        self.assertIn("### Lever", out)
+        self.assertIn("#### Detail", out)
+
+    def test_a_body_already_deep_enough_is_untouched(self):
+        body = "### The lever\n\ntext\n\n### The edit this implies\n"
+        self.assertEqual(tl.normalize_body_headings(body), body)
+
+    def test_a_body_with_no_headings_is_untouched(self):
+        body = "just prose\n\nand more prose\n"
+        self.assertEqual(tl.normalize_body_headings(body), body)
+
+    def test_fenced_hashes_are_left_alone(self):
+        # A lever about filing conventions legitimately quotes fenced markdown;
+        # shifting a `#` inside it would corrupt the quoted material.
+        out = tl.normalize_body_headings(
+            "# Lever\n\n```md\n# Quoted sample\n```\n\n# Proposed edit\n"
+        )
+        self.assertIn("### Lever", out)
+        self.assertIn("\n# Quoted sample\n", out)
+
+    def test_depth_is_clamped_at_h6(self):
+        # `iter_headings` only recognizes `#{1,6}`; pushing past it would stop
+        # the line being a heading at all — silently un-sliceable.
+        out = tl.normalize_body_headings("# A\n\n###### Deep\n")
+        self.assertIn("### A\n", out)
+        self.assertIn("###### Deep", out)
+        self.assertNotIn("#######", out)
 
 
 class ComposeFoldTests(unittest.TestCase):
