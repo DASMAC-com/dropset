@@ -608,11 +608,17 @@ collectors-up: check-docker
 		up -d --build --quiet-pull postgres migrate coinbase coinbase-ticker \
 		kraken erapi frankfurter grafana
 	@$(KEYED_UP)
+# Both profiles, because a service is only addressable under a profile that
+# is enabled: the keyed three live in `fx` (`FX_COMPOSE` carries it) and
+# `pyth` lives in its own, so naming pyth under `fx` alone silently tore
+# down everything EXCEPT the one service that needed a deliberate start.
+# The keyed three are `$(KEYED_SERVICES)` rather than a second copy of the
+# list — a teardown that loses a name fails quietly, leaving the container
+# up for the next bring-up to reuse.
 .PHONY: collectors-down
 collectors-down: check-docker
-	docker compose -f infra/localnet/docker-compose.yml --profile fx \
-		rm -sf coinbase coinbase-ticker kraken erapi frankfurter pyth grafana \
-		oanda twelvedata alphavantage
+	$(FX_COMPOSE) --profile pyth rm -sf coinbase coinbase-ticker kraken \
+		erapi frankfurter pyth grafana $(KEYED_SERVICES)
 
 # Grafana alone, on http://localhost:3200, serving the provisioned
 # market-data ingestion dashboard (market-data/grafana/, docs/data-feeds.md
