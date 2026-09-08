@@ -1,5 +1,3 @@
-<!-- cspell:word Chainlink -->
-
 <!-- cspell:word Switchboard -->
 
 <!-- cspell:word Redstone -->
