@@ -271,7 +271,7 @@ impl Default for FairValueConfig {
                 // live source go quiet before it is presumed dead" — measured
                 // per-source, not guessed. Recalibratable.
                 tape: Duration::from_secs(5 * 60),
-                // Six days, and deliberately not the observed tail.
+                // Seven days, and deliberately not the observed tail.
                 //
                 // A reference fix is authoritative for the moment it names, so
                 // this bound must exceed the longest gap between publications
@@ -285,19 +285,30 @@ impl Default for FairValueConfig {
                 // would drop every reference source on the first long weekend
                 // of the year.
                 //
-                // The margin over that 120h is thinner than it looks, and the
-                // reason is a units mismatch worth stating: age is measured
-                // against the fix's *reference date*, which the adapter floors
-                // to midnight UTC, while the ECB publishes it around 14:00 UTC
-                // that day. Every reading therefore presents ~14h older than
-                // its true vintage, so the 120h closure reaches this bound as
-                // ~134h. Six days (144h) clears it by ~10h, not by the 24h the
-                // raw subtraction suggests.
+                // **Size against ~134h, not 120h.** Age is measured from the
+                // fix's *reference date*, which the adapter floors to midnight
+                // UTC, while the ECB publishes around 14:00 UTC that day — so
+                // every reading presents ~14h older than its true vintage and
+                // the 120h closure arrives here as ~134h. That mechanism is
+                // the reason this is not six days: six (144h) clears ~134h by
+                // only ~10h, which is thinner than the margin the figure
+                // appears to carry. Seven days (168h) restores it.
+                //
+                // The cost of the wider bound is close to nothing: a reference
+                // source never leads a leg while a tape answers, fusion
+                // de-weights it by age on its own, and the weekend regime gate
+                // suppresses it independently of ageing.
+                //
+                // **Unverified assumption**, flagged rather than buried: that
+                // no TARGET closure exceeds 120h. That comes from reading the
+                // holiday calendar (Easter's Thursday→Tuesday and the
+                // Christmas/New Year block both land at five days), not from a
+                // source. Anyone who verifies it against the published TARGET
+                // calendar can tighten back toward six days with evidence.
                 //
                 // Recalibratable; post-validation analytics owns the real
-                // number. Whoever revisits it should size against the ~134h
-                // effective figure rather than the 120h calendar one.
-                reference: Duration::from_secs(6 * 24 * 60 * 60),
+                // number.
+                reference: Duration::from_secs(7 * 24 * 60 * 60),
             },
             // Placeholder: a slow, minutes-scale smoothing so the demo basis
             // (when FX is wired) doesn't chase. TBD(analytics).

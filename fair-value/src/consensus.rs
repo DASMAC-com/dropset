@@ -137,9 +137,13 @@ impl LegStaleness {
     /// what it is exercising.
     ///
     /// This reproduces the pre-split behavior, which is the defect the split
-    /// exists to remove, so it is **not** a production configuration: a real
-    /// config states both bounds. It is kept public for tests and for a caller
-    /// migrating a single-bound value across the signature change.
+    /// exists to remove, so it is not what a production configuration should
+    /// state — a real config gives both bounds their own value. That is a
+    /// statement of intent rather than an enforced invariant: equal bounds are
+    /// degenerate, not *inverted*, so `FairValueConfig::validate` accepts them
+    /// and only rejects a reference bound shorter than the tape one. Kept
+    /// public for tests and for a caller migrating a single-bound value across
+    /// the signature change.
     pub const fn uniform(bound: Duration) -> Self {
         Self {
             tape: bound,
@@ -1373,10 +1377,15 @@ mod tests {
             "at 600s only the reference-class candidate is within its bound"
         );
 
-        // Swapping the bounds must invert exactly which one survives — this is
-        // the half that catches a `for_class` whose arms are transposed, since
-        // a transposition passes the assertion above by reading the other
-        // field of a struct that still has both.
+        // Swapping the bounds must invert exactly which one survives.
+        //
+        // The assertion above already catches every wrong `for_class` I can
+        // construct — transposed arms, either field returned unconditionally,
+        // `max`, `min` — so this half is a redundant confirmation rather than
+        // the load-bearing check. It earns its place by pinning the *direction*
+        // of the mapping rather than only that some mapping happens: without
+        // it, a reader has to derive from the bound values which arm was
+        // consulted.
         let swapped = LegStaleness {
             tape: secs(86_400),
             reference: secs(60),

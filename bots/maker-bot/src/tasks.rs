@@ -273,7 +273,14 @@ impl FeedHub {
             .then(|| self.fx.get(market.currency))
             .flatten()
             .map(|(v, reference_date, t)| {
-                frankfurter_reading(*v, *reference_date, *t, now, tick.now_unix)
+                frankfurter_reading(
+                    *v,
+                    *reference_date,
+                    *t,
+                    now,
+                    tick.now_unix,
+                    tick.reference_publish_interval,
+                )
             });
 
         // Frankfurter republishes the ECB's **daily** reference fix, so it is
@@ -445,6 +452,10 @@ struct TickCtx {
     leg_stale: LegStaleness,
     /// The engine's dispersion band, for that same early resolution.
     leg_dispersion: f64,
+    /// How long one publication cycle of a reference source lasts, used as the
+    /// age floor for a fix that arrived with no parseable stamp. See
+    /// [`frankfurter_reading`].
+    reference_publish_interval: Duration,
     /// Whether the FX session is closed (§1 fm2) — suppresses the daily FX
     /// references so the crypto-only regime can engage. Still required after
     /// honest publication ageing: the reference bound has to clear a
@@ -528,7 +539,7 @@ fn pyth_reading(q: &FxQuote, read_at: Instant, now: Instant, now_unix: i64) -> R
         // Implausibly far ahead of us — trust nothing it says about its age.
         MAX_PYTH_AGE
     } else {
-        Duration::from_secs(delta.max(0) as u64)
+        published_age(now_unix, q.publish_time)
     };
     let age = published.max(received).min(MAX_PYTH_AGE);
     match q.confidence {
@@ -543,7 +554,10 @@ fn pyth_reading(q: &FxQuote, read_at: Instant, now: Instant, now_unix: i64) -> R
 /// before the cast is what makes the cast sound: `saturating_sub` cannot
 /// overflow, the clamp discards a *future* stamp rather than wrapping it into
 /// an enormous age, and only then is the value narrowed to `u64`. Every tier
-/// that ages from a publisher's clock goes through this.
+/// that ages from a publisher's clock routes through this, [`pyth_reading`]
+/// included — that one keeps its own signed comparison first, because its
+/// forward-skew branch needs the raw delta, but the clamp-and-cast itself is
+/// not duplicated.
 fn published_age(now_unix: i64, stamp: i64) -> Duration {
     Duration::from_secs(now_unix.saturating_sub(stamp).max(0) as u64)
 }
@@ -556,15 +570,25 @@ fn published_age(now_unix: i64, stamp: i64) -> Duration {
 /// rate published on Friday morning still claims to be one poll old on Sunday
 /// night.
 ///
-/// **An absent stamp falls back to the receipt age**, so a market the
-/// receipt-aged path would have quoted is never darked by a missing or
-/// unparseable upstream `date`. State the direction of that guarantee
-/// carefully, because it runs one way only: it protects *availability*, and it
-/// costs *integrity*. A venue that omits the field selects receipt-ageing for
-/// itself, so an honest venue reporting a true multi-hour vintage is aged — and
-/// de-weighted by the fusion's age inflation — while a silent one is not.
-/// Publication ageing is therefore enforced against an honest-but-slow source,
-/// not against a malfunctioning one.
+/// **An absent stamp is floored at one publication interval**, not treated as
+/// fresh. `reference_date` is `None` whenever the upstream `date` is missing or
+/// unparseable, and the honest reading of that state is not "this fix is new"
+/// but "this fix is of unknown vintage, and a daily fix is up to one interval
+/// old" — so the floor is simply true, as well as conservative.
+///
+/// It exists because the alternative is an integrity inversion. Falling back to
+/// the receipt age would let a venue **select its own ageing rule**: omit the
+/// field and stay perpetually fresh, while an honest venue reporting a true
+/// multi-hour vintage is aged and then de-weighted by the fusion's age
+/// inflation. That is not a small differential — fusion weights by inverse
+/// variance, so a candidate claiming age zero can outweigh an honestly-stamped
+/// one by two orders of magnitude. Flooring makes omitting the date *cost*
+/// weight rather than buy it, which points the failure conservative.
+///
+/// Availability is unaffected, which is what makes the floor cheap: one
+/// interval is far inside the reference staleness bound, so a market the
+/// receipt-aged path would have quoted is still quoted. The floor moves how
+/// much such a reading is *believed*, never whether it is offered.
 ///
 /// **The receipt age is a floor, and its only job is the forward-skew guard.**
 /// Taking `max` means a stamp can only ever make a reading *older*, never
@@ -575,7 +599,10 @@ fn published_age(now_unix: i64, stamp: i64) -> Duration {
 /// It does **not** catch a dead poller, and it cannot: a fix is never received
 /// before it is published, so the receipt age is bounded above by the
 /// publication age and `max` selects the publication term in every case except
-/// clock skew. A dead poller ages the leg out anyway — the publication term is
+/// clock skew — either a venue stamping ahead of us, or a local wall-clock
+/// adjustment, since the two terms are measured on different clocks
+/// (monotonic for receipt, wall for publication). Both resolve the same way:
+/// the receipt term wins and the reading ages *up*, never down. A dead poller ages the leg out anyway — the publication term is
 /// recomputed against a fresh `now_unix` on every tick, so it grows on its own
 /// while the cached stamp sits still. Poller *liveness* is an operator signal
 /// rather than a quoting gate: the `Feed stale` alert reads `feed_health`, one
@@ -586,11 +613,14 @@ fn frankfurter_reading(
     read_at: Instant,
     now: Instant,
     now_unix: i64,
+    publish_interval: Duration,
 ) -> Reading {
     let received = now.duration_since(read_at);
     let age = match reference_date {
         Some(published) => published_age(now_unix, published).max(received),
-        None => received,
+        // The floor, not a replacement: a poller that has been dead longer than
+        // one interval is older still, and that has to win.
+        None => received.max(publish_interval),
     };
     Reading::new(rate, age)
 }
@@ -758,6 +788,7 @@ pub fn run_supervisor(
             now_unix: unix_secs(wall) as i64,
             leg_stale: cfg.fair_value.leg_stale,
             leg_dispersion: cfg.fair_value.leg_dispersion_frac,
+            reference_publish_interval: cfg.fair_value.fusion.reference_publish_interval,
             weekend,
         };
         // The sample and its legs share one timestamp — the tick's, not each
@@ -1856,9 +1887,18 @@ mod tests {
             now_unix,
             leg_stale: BotConfig::default().fair_value.leg_stale,
             leg_dispersion: BotConfig::default().fair_value.leg_dispersion_frac,
+            reference_publish_interval: BotConfig::default()
+                .fair_value
+                .fusion
+                .reference_publish_interval,
             weekend: false,
         }
     }
+
+    /// One reference publication cycle, for the helper tests. Only the
+    /// unstamped path reads it — where a stamp is present it is inert, and the
+    /// tests below pass it purely to satisfy the signature.
+    const PUBLISH_INTERVAL: Duration = Duration::from_secs(86_400);
 
     /// A hub with one reading in every source's cache, each at a distinguishable
     /// value so a test can tell which ones reached a leg and what they resolved
@@ -2225,23 +2265,53 @@ mod tests {
         // fusion estimator's variance inflation bite at all.
         let now = Instant::now();
         let published = 1_786_579_250;
-        let r = frankfurter_reading(1.14, Some(published), now, now, published + 6 * 3_600);
+        let r = frankfurter_reading(
+            1.14,
+            Some(published),
+            now,
+            now,
+            published + 6 * 3_600,
+            PUBLISH_INTERVAL,
+        );
         assert_eq!(r.age, Duration::from_secs(6 * 3_600));
     }
 
     #[test]
-    fn a_fix_with_no_reference_date_falls_back_to_the_receipt_age() {
+    fn a_fix_with_no_reference_date_is_floored_at_one_publish_interval() {
         // A missing or malformed upstream `date` costs the stamp, never the
-        // rates: the reading is still offered, aged exactly as it was before
-        // honest stamping existed. Honest ageing must never dark a market that
-        // the receipt-aged path would have quoted.
+        // rates — but the reading is NOT offered as fresh. Ageing an unstamped
+        // fix from receipt would let a venue select its own ageing rule by
+        // omitting the field, outweighing an honestly-stamped sibling in the
+        // fusion; flooring makes the omission cost weight instead of buying it.
         let now = Instant::now();
+        let interval = Duration::from_secs(86_400);
         let read_at = now - Duration::from_secs(90);
-        let r = frankfurter_reading(1.14, None, read_at, now, 1_786_579_250);
-        // Exact, not a lower bound: the `Instant` delta is deterministic, and
-        // the risk this test names is over-ageing, which `>=` would permit.
-        assert_eq!(r.age, Duration::from_secs(90));
+
+        let r = frankfurter_reading(1.14, None, read_at, now, 1_786_579_250, interval);
+        assert_eq!(
+            r.age, interval,
+            "an unstamped fix is of unknown vintage, so it is aged a full interval"
+        );
         assert_eq!(r.value, 1.14, "the rate survives a missing stamp");
+
+        // Availability is untouched, which is what makes the floor cheap: one
+        // interval is far inside the reference bound, so the market the
+        // receipt-aged path would have quoted is still quoted.
+        assert!(r.fresh(FairValueConfig::default().leg_stale.reference));
+    }
+
+    #[test]
+    fn an_unstamped_fix_older_than_the_interval_keeps_its_receipt_age() {
+        // The floor is a floor, not a replacement. A poller dead for longer
+        // than one interval has produced something older than "one interval
+        // old", and that has to win — otherwise the floor would make a very
+        // stale unstamped reading look exactly as good as a fresh one.
+        let now = Instant::now();
+        let interval = Duration::from_secs(86_400);
+        let read_at = now - Duration::from_secs(3 * 86_400);
+
+        let r = frankfurter_reading(1.14, None, read_at, now, 1_786_579_250, interval);
+        assert_eq!(r.age, Duration::from_secs(3 * 86_400));
     }
 
     #[test]
@@ -2254,7 +2324,14 @@ mod tests {
         let now = Instant::now();
         let read_at = now - Duration::from_secs(600);
         let now_unix = 1_786_579_250;
-        let r = frankfurter_reading(1.14, Some(now_unix + 86_400), read_at, now, now_unix);
+        let r = frankfurter_reading(
+            1.14,
+            Some(now_unix + 86_400),
+            read_at,
+            now,
+            now_unix,
+            PUBLISH_INTERVAL,
+        );
         // Exact on purpose. A lower bound passes even if `.max(0)` is dropped,
         // which would wrap the future stamp into a ~584-billion-second age and
         // dark the leg instead of flooring it at receipt — the opposite failure
@@ -2283,7 +2360,14 @@ mod tests {
         let published = 1_786_579_250;
         let reference = FairValueConfig::default().leg_stale.reference;
 
-        let weekend = frankfurter_reading(1.14, Some(published), now, now, published + 3 * 86_400);
+        let weekend = frankfurter_reading(
+            1.14,
+            Some(published),
+            now,
+            now,
+            published + 3 * 86_400,
+            PUBLISH_INTERVAL,
+        );
         assert!(
             weekend.fresh(reference),
             "a three-day-old fix must survive the reference bound"
@@ -2308,9 +2392,19 @@ mod tests {
         let reference = FairValueConfig::default().leg_stale.reference;
         let past_bound = reference.as_secs() as i64 + 3_600;
 
-        // The stamp has not moved and the poller has delivered nothing since,
-        // but wall-clock has advanced past the bound.
-        let r = frankfurter_reading(1.14, Some(published), now, now, published + past_bound);
+        // The poller really is dead: nothing has been received for as long as
+        // wall-clock has advanced, so `read_at` is as far back as the stamp is
+        // old. (A fixture with `read_at == now` would assert the same age but
+        // model a *live* poller delivering a stale-stamped fix — a different
+        // scenario from the one this test is named for.)
+        let r = frankfurter_reading(
+            1.14,
+            Some(published),
+            now - Duration::from_secs(past_bound as u64),
+            now,
+            published + past_bound,
+            PUBLISH_INTERVAL,
+        );
         assert!(!r.fresh(reference));
         assert_eq!(r.age, Duration::from_secs(past_bound as u64));
     }
