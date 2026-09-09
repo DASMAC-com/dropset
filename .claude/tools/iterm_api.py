@@ -236,12 +236,18 @@ def _first_session(container):
     summary. Confirmed live: a probe whose typed command would have created a
     marker file produced the tab and no marker.
 
-    Order matters. The container's own session is checked FIRST so a Tab
-    resolves directly; only then do we walk ``.tabs`` for a Window. Within the
-    Window branch, tabs come before ``current_tab`` because ``current_tab`` is
-    None on a window this process only just created — that attribute reads the
-    app's cached state, which has not caught up with a window the cache does not
-    know exists. Also measured live, on the dispatcher's first run.
+    The two blocks are disjoint in practice — a Window exposes no
+    ``.sessions``, a Tab no ``.tabs`` — so their relative order is not what
+    makes this correct; handling BOTH shapes is. Stated plainly because the
+    opposite claim invites a future reader to preserve a constraint that does
+    not exist, and because reverting the block order would leave every test
+    green.
+
+    The order that IS load-bearing sits inside the Window branch: tabs come
+    before ``current_tab``, since ``current_tab`` is None on a window this
+    process only just created — that attribute reads the app's cached state,
+    which has not caught up with a window the cache does not know exists. Also
+    measured live, on the dispatcher's first run.
     """
     # Tab-shaped: answers directly.
     sessions = getattr(container, "sessions", None) or []

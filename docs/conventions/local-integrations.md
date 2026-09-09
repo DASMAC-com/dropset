@@ -989,12 +989,23 @@ absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is why a
 seat verb *clears* those variables rather than merely warning about
 them (see below).
 
-**With one exception, and it is deliberate: the bearer token is cleared
-only if the launcher itself resolved it.** The `${VAR:-…}` form means an
-operator can export their own key and run with no 1Password coordinates
-at all; destroying that token on a seat verb would make the *next*
-`task` in the same tab fail, pointing at config they chose not to set.
-Everything else — `AWS_REGION` included — is cleared unconditionally.
+**Two classes, and conflating them gets it wrong in both directions.**
+The four Claude variables are *owned* — nothing else sets them, so they
+are cleared outright. `AWS_REGION` and `AWS_BEARER_TOKEN_BEDROCK` are
+*shared* with the operator's own environment: an `AWS_REGION` from the
+shell profile, or a bearer token exported by hand (which the `${VAR:-…}`
+form exists to honor, so running with no 1Password coordinates at all is
+supported). Clearing those outright destroys values the launcher never
+owned, and destroying the token in particular makes the *next* `task` in
+that tab fail against config the operator chose not to set.
+
+So a seat verb **undoes a launch** rather than clearing: the launcher
+records what each shared variable held beforehand and what it installed,
+and restores the former only where the current value is still the
+latter. That is what makes three otherwise-broken cases come out right —
+a seat verb in a tab that never launched (leave them alone), a second
+`task` in one tab (the first launch's record wins), and a value the
+operator swapped by hand afterwards (recognized as theirs, kept).
 
 **The model string is runtime config.** `DS_BEDROCK_MODEL` in the
 untracked runtime config carries the full string, context-window suffix

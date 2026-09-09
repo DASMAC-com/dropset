@@ -345,14 +345,20 @@ class FirstSession(unittest.TestCase):
         tab = self._tab(sessions=[], current=wanted)
         self.assertIs(iterm_api._first_session(tab), wanted)
 
-    def test_a_window_still_wins_over_its_own_tabs_absent_sessions(self):
-        # Order check: the container's own session is consulted first so a Tab
-        # resolves directly, but a Window (which has no `.sessions`) must still
-        # descend into `.tabs` exactly as before.
+    def test_a_window_has_no_own_session_and_descends_into_its_tabs(self):
+        # The two shapes are disjoint: a Window exposes no `.sessions`, so
+        # adding the Tab-shaped block in front must not divert a Window away
+        # from the tabs walk that was already working and is live-verified.
         wanted = self._Session()
         window = self._window(tabs=[self._tab(sessions=[wanted])], current_tab=None)
         self.assertIsNone(getattr(window, "sessions", None))
         self.assertIs(iterm_api._first_session(window), wanted)
+
+    def test_a_tab_whose_sessions_is_None_rather_than_empty(self):
+        # `or []` guards it, but the fakes only ever handed None to a Window.
+        wanted = self._Session()
+        tab = self._tab(sessions=None, current=wanted)
+        self.assertIs(iterm_api._first_session(tab), wanted)
 
 
 if __name__ == "__main__":

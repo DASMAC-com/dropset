@@ -195,53 +195,162 @@ class SeatGuard(SubstrateHarness):
         'print -r -- "CACHE=${ENABLE_PROMPT_CACHING_1H-unset}"'
     )
 
-    def test_inherited_bedrock_exports_are_cleared(self):
+    def test_the_OWNED_bedrock_exports_are_cleared(self):
         # The concrete slip: run `task 1234`, quit, then `plan` in the same tab.
         # Without this the planning session runs on credits with its Fable pin
         # dropped, and nothing anywhere reports it.
+        #
+        # Asserts only the four variables this launcher OWNS. `AWS_REGION` and
+        # the bearer token are shared with the operator's environment and are
+        # restored rather than cleared, which cannot be exercised by hand-set
+        # exports like these — there is no recorded launch to undo. Their real
+        # behavior is covered end-to-end by `SharedVariableRoundTrip` below.
         result = self._zsh(
             f"_ds_seat_guard plan; {self._PROBE}",
             env={
                 "CLAUDE_CODE_USE_BEDROCK": "1",
                 "ANTHROPIC_MODEL": "us.anthropic.claude-opus-5[1m]",
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL": "us.anthropic.claude-haiku-x",
-                "AWS_REGION": "us-west-2",
                 "ENABLE_PROMPT_CACHING_1H": "1",
             },
         )
         self.assertIn("USE=unset", result.stdout)
         self.assertIn("MODEL=unset", result.stdout)
         self.assertIn("FAST=unset", result.stdout)
-        self.assertIn("REGION=unset", result.stdout)
         self.assertIn("CACHE=unset", result.stdout)
 
-    def test_an_operator_supplied_token_SURVIVES_the_seat_guard(self):
-        # The token is the one deliberate exception, and its direction matters.
-        # `_ds_bedrock_env`'s `${VAR:-…}` form exists so an operator can export
-        # their own key and run with no 1Password coordinates at all.
-        # Destroying it here would make the NEXT `task` in the same tab fail,
-        # pointing at config they deliberately did not set.
+    def test_a_seat_verb_in_a_FRESH_tab_leaves_shared_variables_alone(self):
+        # `AWS_REGION` and the token are shared with the operator's own
+        # environment. With no launch recorded in this shell they were never
+        # ours, so a plain `plan` in a fresh tab must not destroy an
+        # `AWS_REGION` the shell profile exported.
         result = self._zsh(
             f"_ds_seat_guard plan; {self._PROBE}",
             env={
-                "CLAUDE_CODE_USE_BEDROCK": "1",
+                "AWS_REGION": "eu-central-1",
                 "AWS_BEARER_TOKEN_BEDROCK": "operator-supplied",
             },
         )
-        self.assertIn("USE=unset", result.stdout)
+        self.assertIn("REGION=eu-central-1", result.stdout)
         self.assertIn("TOKEN=operator-supplied", result.stdout)
 
-    def test_a_launcher_resolved_token_IS_cleared(self):
-        # The other side of the same rule: what the launcher itself resolved is
-        # the launcher's to clean up. `_DS_TOKEN_FROM_LAUNCHER` is the marker
-        # `_ds_bedrock_env` sets when it, rather than the operator, produced the
-        # value.
+
+@unittest.skipUnless(shutil.which("zsh"), _NEEDS_ZSH)
+class SharedVariableRoundTrip(SubstrateHarness):
+    """End-to-end: drive `_ds_bedrock_env` for real, then run the seat guard.
+
+    These exist because the first attempt at provenance tracking was tested by
+    hand-setting its marker, which is exactly where its two bugs lived: the
+    marker went stale on a SECOND launch in one tab (so a launcher-resolved
+    token then survived a seat verb), and a hand-swapped token was destroyed
+    anyway. Neither is reachable from a test that sets the marker itself.
+    """
+
+    _PROBE = SeatGuard._PROBE
+
+    #: Enough for `_ds_bedrock_env` to succeed without touching 1Password.
+    _TOKEN_ENV = {"AWS_BEARER_TOKEN_BEDROCK": "operator-supplied"}
+
+    def test_an_operator_token_and_region_survive_a_real_launch_and_guard(self):
         result = self._zsh(
-            f"_DS_TOKEN_FROM_LAUNCHER=1; _ds_seat_guard plan; {self._PROBE}",
-            env={
-                "CLAUDE_CODE_USE_BEDROCK": "1",
-                "AWS_BEARER_TOKEN_BEDROCK": "launcher-resolved",
-            },
+            f"_ds_bedrock_env; _ds_seat_guard plan; {self._PROBE}",
+            env={**self._TOKEN_ENV, "AWS_REGION": "eu-central-1"},
+        )
+        self.assertIn("USE=unset", result.stdout)
+        self.assertIn("REGION=eu-central-1", result.stdout)
+        self.assertIn("TOKEN=operator-supplied", result.stdout)
+
+    def test_a_region_the_launcher_installed_is_undone(self):
+        # No operator region beforehand, so the restore is to "absent".
+        result = self._zsh(
+            f"_ds_bedrock_env; _ds_seat_guard plan; {self._PROBE}",
+            env=dict(self._TOKEN_ENV),
+        )
+        self.assertIn("REGION=unset", result.stdout)
+
+    def test_a_FAILED_launch_does_not_destroy_the_operators_region(self):
+        # `_ds_bedrock_env` exports AWS_REGION before it can discover it has no
+        # token, and its failure path rolls back through the same function the
+        # seat guard uses. The rollback must undo the launch, not clear.
+        result = self._zsh(
+            f"_ds_bedrock_env; {self._PROBE}",
+            env={"AWS_REGION": "eu-central-1"},
+        )
+        self.assertIn("no Bedrock bearer token", result.stderr)
+        self.assertIn("REGION=eu-central-1", result.stdout)
+
+    def test_a_SECOND_launch_in_one_tab_still_restores_the_operators_values(self):
+        # The staleness bug: recording again on the second launch would capture
+        # the FIRST launch's values as "prior", so the restore would put
+        # Bedrock's region back instead of the operator's.
+        result = self._zsh(
+            f"_ds_bedrock_env; _ds_bedrock_env; _ds_seat_guard plan; {self._PROBE}",
+            env={**self._TOKEN_ENV, "AWS_REGION": "eu-central-1"},
+        )
+        self.assertIn("REGION=eu-central-1", result.stdout)
+        self.assertIn("TOKEN=operator-supplied", result.stdout)
+
+    def test_a_token_swapped_BY_HAND_after_a_launch_is_left_alone(self):
+        # It no longer matches what the launch installed, so it is the
+        # operator's and stays — the vice-versa of the case above.
+        result = self._zsh(
+            "_ds_bedrock_env; export AWS_BEARER_TOKEN_BEDROCK=swapped-by-hand; "
+            f"_ds_seat_guard plan; {self._PROBE}",
+            env=dict(self._TOKEN_ENV),
+        )
+        self.assertIn("TOKEN=swapped-by-hand", result.stdout)
+
+
+@unittest.skipUnless(shutil.which("zsh"), _NEEDS_ZSH)
+class LauncherResolvedToken(SubstrateHarness):
+    """The 1Password path — the one an actual operator launch takes.
+
+    Every other case here supplies `AWS_BEARER_TOKEN_BEDROCK` directly, which
+    exercises the `${VAR:-…}` escape hatch and skips the resolution entirely.
+    A stub `op` on PATH reaches the real branch at no extra cost, and it is the
+    only way to test the direction that matters most: a token the LAUNCHER
+    produced must not outlive a seat verb.
+    """
+
+    _PROBE = SeatGuard._PROBE
+    _RESOLVED = "stub-resolved-token"
+
+    def _op_env(self):
+        bin_dir = Path(self._tmp.name) / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        stub = bin_dir / "op"
+        stub.write_text(f"#!/bin/sh\necho {self._RESOLVED}\n", encoding="utf-8")
+        stub.chmod(0o755)
+        return {
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            "DS_OP_ACCOUNT": "example.1password.com",
+            "DS_OP_BEDROCK_REF": "op://vault/item/credential",
+        }
+
+    def test_the_token_is_resolved_from_the_configured_reference(self):
+        result = self._zsh(
+            f'_ds_bedrock_env; print -r -- "rc=$?"; {self._PROBE}',
+            env=self._op_env(),
+        )
+        self.assertIn("rc=0", result.stdout)
+        self.assertIn(f"TOKEN={self._RESOLVED}", result.stdout)
+
+    def test_a_launcher_resolved_token_does_NOT_outlive_a_seat_verb(self):
+        result = self._zsh(
+            f"_ds_bedrock_env; _ds_seat_guard plan; {self._PROBE}",
+            env=self._op_env(),
+        )
+        self.assertIn("USE=unset", result.stdout)
+        self.assertIn("TOKEN=unset", result.stdout)
+
+    def test_it_still_does_not_outlive_a_SECOND_launch_in_the_same_tab(self):
+        # The staleness bug in the first provenance attempt: the second launch
+        # saw a token already present, concluded it was the operator's, and the
+        # seat guard then preserved a launcher-resolved credential in a seat
+        # tab. Two launches, one guard, token must still be gone.
+        result = self._zsh(
+            f"_ds_bedrock_env; _ds_bedrock_env; _ds_seat_guard plan; {self._PROBE}",
+            env=self._op_env(),
         )
         self.assertIn("TOKEN=unset", result.stdout)
 

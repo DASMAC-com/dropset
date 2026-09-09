@@ -554,6 +554,21 @@ _ds_bedrock_env() {
   local model
   model="$(_ds_bedrock_model)"
 
+  # Two of the variables below — `AWS_REGION` and the bearer token — are SHARED
+  # with the operator's own environment rather than owned by this launcher, so
+  # what they held before this launch is recorded and later restored. See
+  # `_ds_substrate_unset`, which undoes a launch rather than blanket-clearing.
+  #
+  # FIRST launch in a shell wins. Recording again on a second `task` in the
+  # same tab would capture the FIRST launch's own values as the "prior" ones,
+  # so the restore would put Bedrock's region and token back instead of the
+  # operator's — the staleness this guard exists to avoid, one level up.
+  if [[ -z "$_DS_SUBSTRATE_TOUCHED" ]]; then
+    _DS_PRIOR_REGION="${AWS_REGION-}"
+    _DS_PRIOR_TOKEN="${AWS_BEARER_TOKEN_BEDROCK-}"
+    _DS_SUBSTRATE_TOUCHED=1
+  fi
+
   export CLAUDE_CODE_USE_BEDROCK=1
   export AWS_REGION="${DS_BEDROCK_REGION:-us-west-2}"
   export ANTHROPIC_MODEL="$model"
@@ -562,20 +577,16 @@ _ds_bedrock_env() {
 
   # Resolved at launch, never held in a long-lived shell — the same lazy shape
   # and the same `${VAR:-…}` override as `_ds_secrets`, for the same reasons.
-  #
-  # Whether the token was ALREADY there is recorded, because the seat guard
-  # must not destroy one the operator exported themselves. See
-  # `_ds_substrate_unset`.
-  local had_token="$AWS_BEARER_TOKEN_BEDROCK"
   if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_BEDROCK_REF" ]]; then
     export AWS_BEARER_TOKEN_BEDROCK="${AWS_BEARER_TOKEN_BEDROCK:-$(op read \
       --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")}"
   fi
-  if [[ -z "$had_token" && -n "$AWS_BEARER_TOKEN_BEDROCK" ]]; then
-    _DS_TOKEN_FROM_LAUNCHER=1
-  else
-    unset _DS_TOKEN_FROM_LAUNCHER
-  fi
+
+  # What this launch actually installed. The restore compares against these, so
+  # a value the operator swapped by hand afterwards is recognized as theirs and
+  # left alone.
+  _DS_LAUNCHER_REGION="${AWS_REGION-}"
+  _DS_LAUNCHER_TOKEN="${AWS_BEARER_TOKEN_BEDROCK-}"
 
   if [[ -z "$AWS_BEARER_TOKEN_BEDROCK" ]]; then
     print -u2 'dropset: no Bedrock bearer token — cannot start a Bedrock session.'
@@ -607,25 +618,61 @@ _ds_bedrock_env() {
 # The absence of `CLAUDE_CODE_USE_BEDROCK` IS how a seat launch is expressed, so
 # a seat verb has to make that absence true rather than merely assert it.
 #
-# `AWS_REGION` is cleared too, and that was a real omission rather than a
-# judgement call: `_ds_bedrock_env` exports it unconditionally, so leaving it
-# pinned every later `aws` invocation in that tab to the Bedrock region. Note
-# clearing it does NOT leave the AWS CLI without a region — it falls back to the
-# profile's own `region`, which is where a seat tab should have been reading
-# from all along.
+# TWO CLASSES OF VARIABLE, and conflating them is what made earlier versions of
+# this wrong in both directions.
 #
-# The BEARER TOKEN is the deliberate exception, and only when the operator
-# supplied it. `_ds_bedrock_env`'s `${VAR:-…}` form exists so a token exported
-# by hand wins, which means an operator can run with no 1Password coordinates at
-# all. Destroying that token here would make the NEXT `task` in the same tab
-# fail, pointing at config they deliberately did not set. So we clear only what
-# this launcher itself resolved.
+# The four Claude ones are **owned**: nothing but this launcher sets them, so
+# clearing them outright is always right.
+#
+# `AWS_REGION` and `AWS_BEARER_TOKEN_BEDROCK` are **shared** with the operator's
+# own environment. Clearing those outright destroys values the launcher never
+# owned — an `AWS_REGION` from the shell profile, or a bearer token exported by
+# hand (which `_ds_bedrock_env`'s `${VAR:-…}` form exists to honor, so running
+# with no 1Password coordinates at all is supported). Destroying the token in
+# particular makes the NEXT `task` in the tab fail, pointing at config the
+# operator deliberately did not set.
+#
+# So this UNDOES a launch instead of clearing: `_ds_bedrock_env` records what
+# each shared variable held beforehand and what it then installed, and this
+# restores the former — but only where the current value is still the latter.
+# Three cases fall out, all of them wrong under a blanket clear:
+#
+#   * no launch recorded in this shell — the values are not ours; leave them.
+#   * a second `task` in the same tab — the FIRST launch's record wins, so the
+#     restore reaches the operator's values rather than Bedrock's.
+#   * the operator swapped one by hand after a launch — it no longer matches
+#     what we installed, so it is recognized as theirs and kept.
 _ds_substrate_unset() {
+  # Owned outright by this launcher: nothing else in the operator's shell sets
+  # them, so they are cleared unconditionally.
   unset CLAUDE_CODE_USE_BEDROCK ANTHROPIC_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
-  unset ENABLE_PROMPT_CACHING_1H AWS_REGION
-  if [[ -n "$_DS_TOKEN_FROM_LAUNCHER" ]]; then
-    unset AWS_BEARER_TOKEN_BEDROCK _DS_TOKEN_FROM_LAUNCHER
+  unset ENABLE_PROMPT_CACHING_1H
+
+  # `AWS_REGION` and the bearer token are SHARED with the operator, so this
+  # UNDOES a launch rather than clearing them. Absent a recorded launch they
+  # were never ours — a `plan` in a fresh tab must not destroy an `AWS_REGION`
+  # the profile exported.
+  [[ -n "$_DS_SUBSTRATE_TOUCHED" ]] || return 0
+
+  # Restore only what is still what the launch installed. If the operator has
+  # since swapped either by hand, that value is theirs and stays.
+  if [[ "${AWS_REGION-}" == "$_DS_LAUNCHER_REGION" ]]; then
+    if [[ -n "$_DS_PRIOR_REGION" ]]; then
+      export AWS_REGION="$_DS_PRIOR_REGION"
+    else
+      unset AWS_REGION
+    fi
   fi
+  if [[ "${AWS_BEARER_TOKEN_BEDROCK-}" == "$_DS_LAUNCHER_TOKEN" ]]; then
+    if [[ -n "$_DS_PRIOR_TOKEN" ]]; then
+      export AWS_BEARER_TOKEN_BEDROCK="$_DS_PRIOR_TOKEN"
+    else
+      unset AWS_BEARER_TOKEN_BEDROCK
+    fi
+  fi
+
+  unset _DS_PRIOR_REGION _DS_PRIOR_TOKEN _DS_SUBSTRATE_TOUCHED
+  unset _DS_LAUNCHER_REGION _DS_LAUNCHER_TOKEN
 }
 
 # Seat verbs call this: warn if the shell arrived carrying Bedrock exports, then
