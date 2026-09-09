@@ -1839,6 +1839,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dropset-db-schema",
+ "dropset-fair-value",
  "dropset-feeds",
  "serde",
  "serde_json",
