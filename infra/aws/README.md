@@ -17,7 +17,7 @@ infra/aws/
   network.yml         VPC, public/private subnets (2 AZs), NAT, routing
   iam-baseline.yml    CFN deployment role, agent role, secrets policy
   cloudtrail.yml      multi-region audit trail + private log bucket
-  bedrock-agent.yml Bedrock agent IAM user, invoke policy, spend alert
+  bedrock-agent.yml   Bedrock agent IAM user, invoke policy, spend alert
   params/             per-stack example parameter files (<stack>.<env>.json)
 ```
 
@@ -193,11 +193,39 @@ Two things to know about that dialog:
 
 - The value is shown **once**. There is no way to read it back later, so
   a lost key is re-minted and the old one deactivated, never recovered.
-- Generating the key **auto-attaches the `AmazonBedrockLimitedAccess`
-  managed policy** to the user. That is broader than this stack intends,
-  so detach it afterwards under the user's **Permissions** tab, leaving
-  only `dropset-bedrock-invoke`. Claude Code needs nothing
-  the invoke policy does not already grant.
+
+- Generating the key is **reported** to auto-attach the
+  `AmazonBedrockLimitedAccess` managed policy to the user. That would be
+  broader than this stack intends, so check the user's **Permissions**
+  tab afterwards and detach anything beyond
+  `dropset-bedrock-invoke` — Claude Code needs nothing the invoke policy
+  does not already grant.
+
+  **Treat that as a check, not as a known fact.** The CloudTrail record
+  does not corroborate it: over the 90 days covering the first mint
+  (2026-09-04 00:37:16 UTC) there is **no `AttachUserPolicy` for
+  `AmazonBedrockLimitedAccess` at all**, and no attach event of any kind
+  follows the mint. The only two attaches in the window are the
+  template's own — one 36 seconds after `CreateUser`, one in the later
+  policy rename — and both are accounted for.
+
+  Read the bound on that honestly before acting on it. It is **one
+  mint**, so n=1; and an absent event is weaker evidence than a present
+  one, since the console could in principle attach through an API that
+  logs under another name or under an AWS-internal principal this trail
+  does not capture. What the window does establish is that management
+  events *were* being recorded throughout — `CreateUser`,
+  `CreateServiceSpecificCredential` and both attach/detach pairs are all
+  present — so a silent trail is not the explanation.
+
+  Hence: keep the step, drop the certainty. Detaching a policy that was
+  never attached costs one glance at a tab; skipping a check that turns
+  out to be needed silently re-widens the identity.
+
+  **The lookups must target `us-east-1`.** IAM is a global service and
+  its events land there, not in the stack's `us-west-2` — the same query
+  against `us-west-2` returns zero events for every one of these names
+  and reads exactly like "it never happened".
 
 **Rotating it.** Rotate monthly. The key also expires on the date chosen
 at generation, and expiry is silent from this repo's side — nothing here
@@ -225,12 +253,29 @@ working key:
 1. Only then deactivate or delete the old credential, by its
    `ServiceSpecificCredentialId`.
 
-**Generating a key auto-attaches `AmazonBedrockLimitedAccess` again**, so
-the detach in the previous step is part of *every* rotation, not just the
-first. Check the user's Permissions tab afterwards: it should list only
-`dropset-bedrock-invoke`. A rotation that skips this silently
-re-widens the agent's permissions and leaves the live user out of step
-with what this template declares.
+**Re-check the attached policies after every mint**, not just the first
+— the check above is part of every rotation. The user's Permissions tab
+should list only `dropset-bedrock-invoke`. A rotation that skips the
+check would leave a re-widened identity out of step with what this
+template declares, and nothing else would report it.
+
+Verify it from the command line with the same two reads, remembering the
+region:
+
+```sh
+aws iam list-attached-user-policies --user-name dropset-bedrock-agent
+```
+
+```sh
+aws cloudtrail lookup-events --region us-east-1 \
+  --lookup-attributes AttributeKey=EventName,AttributeValue=AttachUserPolicy
+```
+
+Both need an IAM-capable identity. **`PowerUserAccess` is not one** — it
+denies `iam:ListAttachedUserPolicies` and
+`iam:ListServiceSpecificCredentials` outright, so an agent session on
+the usual SSO role cannot run the first of these at all. The CloudTrail
+lookup it *can* run.
 
 Store it in 1Password as one item per provider with a named field per
 credential, giving a reference of the shape
