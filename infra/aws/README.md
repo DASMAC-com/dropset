@@ -145,6 +145,12 @@ aws cloudformation delete-stack --stack-name dropset-dev-network
 aws cloudformation delete-stack --stack-name dropset-dev-cloudtrail
 ```
 
+**Two stacks have a resource CloudFormation will not clean up for you,
+and both fail part-way rather than up front.** The CloudTrail log bucket
+is retained on purpose (below). The Bedrock agent user carries an
+out-of-band API key that blocks `DeleteUser` with `DeleteConflict` —
+delete the credential first, per "Bedrock agent identity" above.
+
 The CloudTrail **log bucket is deliberately kept** when its stack is
 deleted: it carries `DeletionPolicy: Retain` so an accidental stack
 deletion cannot destroy the audit logs. Its name is deterministic
@@ -189,6 +195,34 @@ letting CloudFormation see it at all.
 
 So the template creates the *user*, and the key is minted against that
 user in the IAM console, by hand.
+
+**The cost of that split shows up at teardown, not at create.** A
+service-specific credential is a child of the user that CloudFormation
+does not know exists, and `iam:DeleteUser` refuses with `DeleteConflict`
+while one is attached — so deleting or replacing this stack fails
+part-way unless the credential is removed first. Measured during the
+worker-to-agent migration. Do this before any delete or rename of the
+stack:
+
+```sh
+aws iam list-service-specific-credentials \
+  --user-name dropset-bedrock-agent \
+  --service-name bedrock.amazonaws.com
+```
+
+```sh
+aws iam delete-service-specific-credential \
+  --user-name dropset-bedrock-agent \
+  --service-specific-credential-id <id>
+```
+
+**This is not an argument for moving the key into the template**, which
+is the natural next thought. It cannot go there — there is no resource
+type for it, and a custom resource would have to surface the secret
+through stack outputs or events, which is the worse-custody trade the
+paragraph above rejects. It is also **not drift**: the template declares
+no credential, so nothing has diverged from it. It is an ordering
+requirement, and documenting it is the whole fix.
 
 **The key is operator-only.** It is generated in the console, copied
 once, and pasted into 1Password by a person. No tool, script, or agent
