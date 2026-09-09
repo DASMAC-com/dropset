@@ -63,11 +63,38 @@ predict this one from its parameter file.
 **Renaming a resource is a replacement, and sometimes a stack rename.**
 IAM users and managed policies carry explicit names, so changing one
 forces CloudFormation to replace the resource — and anything hanging off
-it, such as a service-specific credential, dies with it. When the
-**stack name** changes too, `deploy` cannot update in place at all: the
-old stack must be deleted first, or the new one collides on the
-duplicate name. `infra/aws/README.md` carries the worked sequence for
-the worker-to-agent rename.
+it, such as a service-specific credential, dies with it.
+
+When the **stack name** changes too, `deploy` cannot update in place, so
+the migration is a create and a delete. **Order them
+create-new-then-delete-old**, and check first whether anything actually
+collides: if every explicitly-named resource moved in the same change —
+which a rename of the *thing* usually implies — the two stacks can
+coexist, the old one keeps serving until the new one is verified, and
+there is no window with neither. Deleting first is only forced by an
+actual name collision, and it buys an outage plus a state with no
+rollback. `infra/aws/README.md` carries the worked sequence for the
+worker-to-agent rename.
+
+**A stack outside the `${EnvironmentName}-` prefix must be named in the
+agent-provisioning role.** That role scopes its CloudFormation mutations
+by stack ARN, so `dropset-bedrock-agent` — which deliberately carries no
+environment segment — is listed there explicitly. Adding another such
+stack means adding it there too, or an agent-driven deploy of it fails
+with `AccessDenied` on a role that looks like it should cover it. It is
+listed by name rather than by widening the pattern to `dropset-*`, which
+would hand the role every stack in the account for the sake of one.
+
+**That path has a live precondition worth knowing before relying on
+it.** The role's grants are conditioned on `aws:ViaAWSMCPService` and
+`aws:CalledViaAWSMCP`, so they apply only when the *role itself* is the
+calling principal via the MCP. Measured: the MCP server as currently
+wired calls as the operator's `PowerUserAccess` SSO role, which can
+assume the provisioning role but never calls as it — and
+`PowerUserAccess` is denied `iam:PassRole`, so a `--role-arn` deploy
+fails outright. The role is therefore **documented but not wired**, the
+same "inert until wired" shape as an unwired guard hook. Deploying a
+stack that creates IAM currently needs a genuine admin identity.
 
 ## Agent Toolkit for AWS
 

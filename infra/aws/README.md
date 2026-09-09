@@ -88,21 +88,38 @@ create IAM roles, and it cannot pass a role to CloudFormation
    **Migrating from the old `dropset-dev-bedrock-workers` stack.** The
    stack, the IAM user, the managed policy and all three exports were
    renamed together when the identity noun became *agent*. Because the
-   **stack name** itself changed, this is a delete-then-deploy rather
-   than an in-place update — `aws cloudformation deploy` under a new
-   name would otherwise stand up a second user beside the first and
-   fail on the duplicate `ManagedPolicyName`:
+   **stack name** itself changed, the new stack is created rather than
+   updated — but **create the new one first and delete the old one
+   last**, which is safe here and gives the migration no downtime at
+   all:
+
+   1. Redeploy `iam-baseline.yml` (below). The agent-provisioning role
+      scopes its stack mutations by name, and `dropset-bedrock-agent`
+      carries no environment segment, so it must be named there before
+      an agent-driven deploy of it can work.
+   1. Deploy `dropset-bedrock-agent` with the command above.
+   1. Mint the key against the **new** user and confirm a real Bedrock
+      call (see "Bedrock agent identity" below).
+   1. Only then retire the old stack:
 
    ```sh
    aws cloudformation delete-stack --stack-name dropset-dev-bedrock-workers
    ```
 
-   Wait for `DELETE_COMPLETE` before deploying the new stack. The old
-   API key dies with the replaced user, which is why the mint below is
-   part of this migration and not merely of the first install. Nothing
-   runs continuously against this identity, so the gap costs nothing;
-   and nothing imports the old exports, which is what made the rename
-   free to take now rather than later.
+   **Nothing collides, which is what makes that ordering available.**
+   Every name moved in the same deploy — user
+   `dropset-dev-bedrock-worker` → `dropset-bedrock-agent`, policy
+   `dropset-dev-bedrock-invoke` → `dropset-bedrock-invoke`, and all
+   three exports — so the two stacks can coexist, and the old key keeps
+   working right up until its user is deleted. Deleting first would
+   instead open a window with no Bedrock identity at all, and no
+   rollback if the mint then failed.
+
+   The old API key dies with the old user, so a new one is minted
+   against the new user either way: the mint is part of this migration
+   and not merely of the first install. Nothing imports the old
+   exports — verified before the rename — which is what made it free to
+   take now rather than later.
 
 To let a *restricted* identity provision stacks that do create IAM (the
 warehouse stack's task roles), pass the deployment role so
