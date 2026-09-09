@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn a_usd_quoted_roster_resolves_to_currencies_and_a_reverse_lookup() {
-        let roster = usd_quoted_currencies("erapi", &ids("AUD-USD,NGN-USD")).unwrap();
+        let roster = usd_quoted_currencies("er-api", &ids("AUD-USD,NGN-USD")).unwrap();
         // Roster order is preserved: this is what the batched source is built
         // with, and the silence watch reports against the same sequence.
         assert_eq!(roster.currencies, ["AUD", "NGN"]);
@@ -427,10 +427,13 @@ mod tests {
         // `parse_roster` normalizes already, so this is the guard rail rather
         // than the normalization — pinned because the adapter looks the code up
         // verbatim in the provider's table, where a miss is silent.
-        let roster = usd_quoted_currencies("erapi", &ids("eur-usd")).unwrap();
+        let roster = usd_quoted_currencies("er-api", &ids("eur-usd")).unwrap();
         assert_eq!(roster.currencies, ["EUR"]);
-        // The product id is carried through unchanged: only the lookup key is
-        // upper-cased, never the value stored in `spot_ticks.product_id`.
+        // Only the lookup KEY is upper-cased; the product id is carried through
+        // byte-for-byte. This pins that local contract, not a storage property:
+        // `parse_roster` upper-cases every id before one reaches this function,
+        // so a lower-case id never arrives in production and this test cannot
+        // say anything about what `spot_ticks.product_id` holds.
         assert_eq!(roster.by_currency["EUR"], "eur-usd");
     }
 
@@ -452,14 +455,14 @@ mod tests {
         // The response is a table keyed by currency, so a duplicate has one
         // reading overwrite the other and only one product id ever gets a row.
         // Rejecting names BOTH ids, since the operator has to pick.
-        let err = usd_quoted_currencies("erapi", &ids("EUR-USD,EUR-USD"))
+        let err = usd_quoted_currencies("er-api", &ids("EUR-USD,EUR-USD"))
             .expect_err("a duplicated currency must not resolve");
         let rendered = err.to_string();
         assert!(rendered.contains("EUR"), "{rendered}");
         assert!(rendered.contains("overwrite"), "{rendered}");
         // The case-folded duplicate is caught too — the upper-casing above is
         // what makes `eur-usd` and `EUR-USD` collide rather than pass as two.
-        assert!(usd_quoted_currencies("erapi", &ids("EUR-USD,eur-usd")).is_err());
+        assert!(usd_quoted_currencies("er-api", &ids("EUR-USD,eur-usd")).is_err());
     }
 
     #[test]
@@ -468,8 +471,19 @@ mod tests {
         // not reach the quote comparison and be reported as a USD problem.
         // A vendor's own spelling, which is the realistic mistake: OANDA writes
         // the pair `EUR_USD`, so it carries no `-` to split on at all.
-        assert!(usd_quoted_currencies("erapi", &ids("EUR_USD")).is_err());
-        assert!(usd_quoted_currencies("erapi", &ids("EUROS-USD")).is_err());
+        //
+        // Asserted on the rendered message rather than with a bare `is_err()`:
+        // both inputs are errors under EITHER ordering, so `is_err()` alone
+        // could not fail if the USD comparison ever ran first — which is the
+        // property this test is named for. `split_canonical`'s message names
+        // the canonical-symbol problem and says nothing about USD quoting.
+        for bad in ["EUR_USD", "EUROS-USD"] {
+            let err = usd_quoted_currencies("er-api", &ids(bad))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("canonical"), "{bad}: {err}");
+            assert!(!err.contains("quotes against USD"), "{bad}: {err}");
+        }
     }
 
     #[test]

@@ -27,6 +27,16 @@
 //! whatever a lone binary falls back to must be something its compose roster
 //! also carries, or the two disagree about what the service even collects.
 //!
+//! **Be honest about what containment buys, which is little.**
+//! `fx::DEFAULT_PRODUCTS` is the single pair `AUD-USD`, so for oanda,
+//! twelvedata and alphavantage the check reduces to "the compose roster
+//! contains `AUD-USD`". Adding a pair to one of those three compose defaults,
+//! or removing any pair but `AUD-USD` from one, is **not** caught here. Their
+//! compose rosters are effectively unpinned, and that is a consequence of the
+//! shared one-pair fallback rather than a property this file establishes —
+//! recorded so a later reader does not credit it with more coverage than it
+//! has. The five `Exact` services are where the real pinning is.
+//!
 //! **Why it compares text.** Every constant here lives in a binary crate or is
 //! private to its module, so none can be imported; and compose is YAML with no
 //! parser in this crate's dependency tree. Both sides are read as source, which
@@ -40,7 +50,7 @@ use std::collections::{BTreeMap, BTreeSet};
 const COMPOSE: &str = include_str!("../../infra/localnet/docker-compose.yml");
 
 /// How a service's Rust default relates to its compose default.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum Mode {
     /// The two name the same pairs. The service owns its constant.
     Exact,
@@ -55,8 +65,10 @@ struct Wiring {
     service: &'static str,
     /// That service's binary's source, for the error message.
     rust_source: &'static str,
-    /// The `DEFAULT_PRODUCTS` constant's value, extracted at compile time.
-    rust_default: &'static str,
+    /// The whole source text of the file that owns the constant, pulled in with
+    /// `include_str!`. The constant's own value is extracted from it later by
+    /// [`rust_default`] — this is the haystack, not the needle.
+    rust_source_text: &'static str,
     mode: Mode,
 }
 
@@ -72,61 +84,69 @@ fn wirings() -> Vec<Wiring> {
         Wiring {
             service: "alphavantage",
             rust_source: "market-data/src/fx.rs",
-            rust_default: fx,
+            rust_source_text: fx,
             mode: Mode::SubsetOfCompose,
         },
         Wiring {
             service: "coinbase",
             rust_source: "market-data/src/config.rs",
-            rust_default: include_str!("../src/config.rs"),
+            rust_source_text: include_str!("../src/config.rs"),
             mode: Mode::Exact,
         },
         Wiring {
             service: "coinbase-ticker",
             rust_source: "market-data/src/bin/coinbase_ticker.rs",
-            rust_default: include_str!("../src/bin/coinbase_ticker.rs"),
+            rust_source_text: include_str!("../src/bin/coinbase_ticker.rs"),
             mode: Mode::Exact,
         },
         Wiring {
             service: "erapi",
             rust_source: "market-data/src/bin/erapi.rs",
-            rust_default: include_str!("../src/bin/erapi.rs"),
+            rust_source_text: include_str!("../src/bin/erapi.rs"),
             mode: Mode::Exact,
         },
         Wiring {
             service: "frankfurter",
             rust_source: "market-data/src/bin/frankfurter.rs",
-            rust_default: include_str!("../src/bin/frankfurter.rs"),
+            rust_source_text: include_str!("../src/bin/frankfurter.rs"),
             mode: Mode::Exact,
         },
         Wiring {
             service: "kraken",
             rust_source: "market-data/src/bin/kraken.rs",
-            rust_default: include_str!("../src/bin/kraken.rs"),
+            rust_source_text: include_str!("../src/bin/kraken.rs"),
             mode: Mode::Exact,
         },
         Wiring {
             service: "oanda",
             rust_source: "market-data/src/fx.rs",
-            rust_default: fx,
+            rust_source_text: fx,
             mode: Mode::SubsetOfCompose,
         },
         Wiring {
             service: "twelvedata",
             rust_source: "market-data/src/fx.rs",
-            rust_default: fx,
+            rust_source_text: fx,
             mode: Mode::SubsetOfCompose,
         },
     ]
 }
 
-/// Split a `AUD-USD,EUR-USD` roster spec, matching `roster::parse_roster`'s
-/// tolerance for the whitespace a YAML fold leaves behind.
+/// Split a `AUD-USD,EUR-USD` roster spec the way `roster::parse_roster` does:
+/// trimming the whitespace a YAML fold leaves behind, skipping blank entries,
+/// and **upper-casing**.
+///
+/// The upper-casing is not cosmetic. `parse_roster` normalizes every id before
+/// a collector sees it, so `eur-usd` in compose is `EUR-USD` at runtime — which
+/// means without it this file would report a false divergence on a pure case
+/// difference, and the canonical-id guard below would reject a spelling that
+/// works perfectly in production. Matching the runtime normalization is what
+/// keeps both from being latent.
 fn pairs(spec: &str) -> BTreeSet<String> {
     spec.split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
-        .map(str::to_string)
+        .map(str::to_ascii_uppercase)
         .collect()
 }
 
@@ -181,7 +201,13 @@ fn compose_defaults() -> BTreeMap<String, String> {
                 }
             }
         }
-        let Some(value) = line.trim_start().strip_prefix("PRODUCT_IDS:") else {
+        // Matched at its EXACT indent — six spaces, under `environment:` —
+        // rather than at any depth. The continuation rule below keys on eight
+        // spaces, so a depth-insensitive match here would let the two rules
+        // disagree: a `PRODUCT_IDS:` at some other depth would match, then find
+        // none of its own continuation lines and silently yield an empty
+        // roster. All eight occurrences in the file sit at six.
+        let Some(value) = line.strip_prefix("      PRODUCT_IDS:") else {
             continue;
         };
         let Some(service) = service.clone() else {
@@ -228,7 +254,7 @@ fn unwrap_default(value: &str) -> String {
 fn every_rust_default_agrees_with_its_compose_default() {
     let compose = compose_defaults();
     for wiring in wirings() {
-        let rust = pairs(&rust_default(wiring.rust_default).unwrap_or_else(|| {
+        let rust = pairs(&rust_default(wiring.rust_source_text).unwrap_or_else(|| {
             panic!(
                 "no DEFAULT_PRODUCTS constant found in {} — the extractor has \
                  stopped matching its shape",
@@ -304,7 +330,7 @@ fn the_extractors_actually_found_every_roster() {
         compose.keys().collect::<Vec<_>>(),
     );
     for wiring in wirings() {
-        let rust = rust_default(wiring.rust_default)
+        let rust = rust_default(wiring.rust_source_text)
             .unwrap_or_else(|| panic!("no DEFAULT_PRODUCTS in {}", wiring.rust_source));
         assert!(
             !pairs(&rust).is_empty(),

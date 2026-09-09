@@ -39,9 +39,17 @@ pub(crate) async fn serve_once(response: Vec<u8>) -> u16 {
 /// promise is invisible to a response-only assertion, so it would drift
 /// silently.
 ///
-/// The receiver resolves once the head has been drained. It yields an `Err` if
-/// the client hung up before completing one, which a caller may treat as a
-/// failure or ignore.
+/// **The captured head is the whole head, request headers included** — so
+/// assert through [`request_line`] rather than on the raw string. A raw-head
+/// assertion against a client built with `with_secret_header` would print the
+/// credential into the CI log on failure; narrowing to the request line makes
+/// that impossible by construction rather than by care.
+///
+/// The receiver resolves once a **complete** head has been drained, and yields
+/// an `Err` if the client hung up before completing one — so a caller's
+/// `expect` on it means what it says. Sending a partial head instead would
+/// surface a truncated request as a confusing assertion failure on a mangled
+/// request line, rather than as the disconnect it actually was.
 pub(crate) async fn serve_once_capturing(response: Vec<u8>) -> (u16, oneshot::Receiver<String>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -52,15 +60,22 @@ pub(crate) async fn serve_once_capturing(response: Vec<u8>) -> (u16, oneshot::Re
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut head = Vec::new();
         let mut byte = [0u8; 1];
+        let mut complete = true;
         while !head.ends_with(b"\r\n\r\n") {
             if socket.read(&mut byte).await.unwrap() == 0 {
+                // EOF before the terminator: the client hung up mid-head.
+                complete = false;
                 break;
             }
             head.extend_from_slice(&byte);
         }
         // Sent before the response is written, so a caller that awaits the head
-        // cannot deadlock against a client still waiting to be answered.
-        let _ = tx.send(String::from_utf8_lossy(&head).into_owned());
+        // cannot deadlock against a client still waiting to be answered. A
+        // partial head is dropped rather than sent, which is what makes the
+        // `Err` contract above true — the receiver sees the disconnect.
+        if complete {
+            let _ = tx.send(String::from_utf8_lossy(&head).into_owned());
+        }
         socket.write_all(&response).await.unwrap();
     });
     (port, rx)

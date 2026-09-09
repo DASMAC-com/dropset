@@ -345,6 +345,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_status_fails_the_poll_rather_than_yielding_an_empty_batch() {
+        // The sibling of er-api's error-path test, and not redundant with it:
+        // both venues share `HttpClient`, but each `poll` propagates its own
+        // `self.fetch().await?`, and swallowing that into an empty reading
+        // would report a dead feed as a healthy one covering no currencies.
+        let (port, _head) = serve_once_capturing(
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n".to_vec(),
+        )
+        .await;
+
+        // `let … else` rather than `expect_err`, which would need `Batch` to be
+        // `Debug`; widening a public type to phrase a test is the wrong trade.
+        let Err(err) =
+            FrankfurterSnapshotSource::new(&format!("http://127.0.0.1:{port}"), currencies())
+                .unwrap()
+                .next()
+                .await
+        else {
+            panic!("a 503 must not read as a successful poll");
+        };
+        // The status phrase, not the bare number — see the er-api twin for why
+        // the ephemeral port makes a bare-number assertion unsound.
+        assert!(
+            format!("{err:?}").contains("503 Service Unavailable"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn both_polls_ask_the_venue_the_identical_question() {
         // `fetch` exists so the two polls cannot drift apart in what they
         // request — only in how much of the answer they decode. That promise is

@@ -450,7 +450,14 @@ mod tests {
         let Err(err) = source_against(port, &["EUR"]).next().await else {
             panic!("a 503 must not read as a successful poll");
         };
-        assert!(format!("{err:?}").contains("503"), "{err:?}");
+        // The status PHRASE, not the bare number: the error chain renders the
+        // request URL, which carries the stub's ephemeral port — and a port
+        // like 50310 contains "503", so a bare-number assertion would hold for
+        // an unrelated connection error on roughly 1% of runs.
+        assert!(
+            format!("{err:?}").contains("503 Service Unavailable"),
+            "{err:?}"
+        );
     }
 
     #[test]
