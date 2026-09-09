@@ -608,10 +608,13 @@ collectors-up: check-docker
 		up -d --build --quiet-pull postgres migrate coinbase coinbase-ticker \
 		kraken erapi frankfurter grafana
 	@$(KEYED_UP)
-# Both profiles, because a service is only addressable under a profile that
-# is enabled: the keyed three live in `fx` (`FX_COMPOSE` carries it) and
-# `pyth` lives in its own, so naming pyth under `fx` alone silently tore
-# down everything EXCEPT the one service that needed a deliberate start.
+
+# Both profiles, because a profiled service is only addressable under a
+# profile that is enabled: the keyed three live in `fx` (`FX_COMPOSE` carries
+# it) and `pyth` lives in its own. Naming pyth under `fx` alone silently
+# skipped it while removing every other collector in this list — measured,
+# compose exits 0 and says nothing for a service behind a disabled profile,
+# while erroring `no such service` for a name it does not know at all.
 # The keyed three are `$(KEYED_SERVICES)` rather than a second copy of the
 # list — a teardown that loses a name fails quietly, leaving the container
 # up for the next bring-up to reuse.
