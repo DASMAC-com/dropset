@@ -55,6 +55,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -94,9 +95,6 @@ query InFlight($filter: IssueFilter, $first: Int!, $after: String) {
   }
 }
 """
-
-# Enumerate every session's name across every window and tab. Newline-joined so
-# the caller parses lines rather than an AppleScript list literal.
 
 
 class FleetResumeError(Exception):
@@ -202,8 +200,17 @@ def live_tags() -> set[str]:
 
 
 def resume_command(tag: str) -> str:
-    """The exact line typed into a freshly opened tab."""
-    return f"{RESUME_VERB} {tag}"
+    """The exact line typed into a freshly opened tab.
+
+    The tag is quoted rather than interpolated raw. It is a digit run today —
+    `tag_of` matches `^ENG-(\\d+)$` and returns `group(1)` — but it ORIGINATES
+    IN A LINEAR API RESPONSE, and the AppleScript quoter this replaced made
+    exactly this point in its own docstring before being deleted with the rest
+    of that path: "the input is constrained" is a property of today's caller,
+    not of this function. The line is typed into a live interactive shell, so
+    the property is worth keeping across the change of mechanism.
+    """
+    return f"{RESUME_VERB} {shlex.quote(tag)}"
 
 
 def open_tabs(tags: list[str]) -> list[tuple[str, str]]:
@@ -218,9 +225,20 @@ def open_tabs(tags: list[str]) -> list[tuple[str, str]]:
     can be marked". The caller reconstructs the shortfall by difference against
     what it requested; see the `no_tty` handling in :func:`run`, which exists
     because an earlier version reported a clean summary over a total failure.
+
+    The `/dev/` prefix check is carried over from the AppleScript parser this
+    replaced. It is not redundant with the truthiness test: the value is handed
+    straight to `mark_attention`, which shells out with it, so the shape check
+    is the guard on that boundary. Dropping it in the migration would have
+    widened what reaches a subprocess from "a device path" to "any non-empty
+    string iTerm hands back".
     """
     ttys = iterm_api.open_tabs([resume_command(tag) for tag in tags])
-    return [(tag, tty) for tag, tty in zip(tags, ttys) if tty]
+    return [
+        (tag, tty)
+        for tag, tty in zip(tags, ttys)
+        if tty and str(tty).startswith("/dev/")
+    ]
 
 
 def mark_attention(tty: str) -> bool:

@@ -93,13 +93,31 @@ create IAM roles, and it cannot pass a role to CloudFormation
    last**, which is safe here and gives the migration no downtime at
    all:
 
-   1. Redeploy `iam-baseline.yml` (below). The agent-provisioning role
+   1. Redeploy `iam-baseline.yml` (above). The agent-provisioning role
       scopes its stack mutations by name, and `dropset-bedrock-agent`
       carries no environment segment, so it must be named there before
       an agent-driven deploy of it can work.
    1. Deploy `dropset-bedrock-agent` with the command above.
    1. Mint the key against the **new** user and confirm a real Bedrock
       call (see "Bedrock agent identity" below).
+   1. Delete the **old** user's API key. This step is not optional and
+      not deferrable: an out-of-band service-specific credential blocks
+      `iam:DeleteUser` with `DeleteConflict`, CloudFormation does not
+      know it exists, and the stack delete below fails **part-way**
+      without it. Note the user name here is the **old** one:
+
+   ```sh
+   aws iam list-service-specific-credentials \
+     --user-name dropset-dev-bedrock-worker \
+     --service-name bedrock.amazonaws.com
+   ```
+
+   ```sh
+   aws iam delete-service-specific-credential \
+     --user-name dropset-dev-bedrock-worker \
+     --service-specific-credential-id <id>
+   ```
+
    1. Only then retire the old stack:
 
    ```sh
@@ -115,9 +133,11 @@ create IAM roles, and it cannot pass a role to CloudFormation
    instead open a window with no Bedrock identity at all, and no
    rollback if the mint then failed.
 
-   The old API key dies with the old user, so a new one is minted
+   The old API key does not survive the old user, so a new one is minted
    against the new user either way: the mint is part of this migration
-   and not merely of the first install. Nothing imports the old
+   and not merely of the first install. Note the credential does not die
+   *automatically* — the step above is what removes it, and until it
+   does the user cannot be deleted at all. Nothing imports the old
    exports — verified before the rename — which is what made it free to
    take now rather than later.
 
@@ -145,11 +165,13 @@ aws cloudformation delete-stack --stack-name dropset-dev-network
 aws cloudformation delete-stack --stack-name dropset-dev-cloudtrail
 ```
 
-**Two stacks have a resource CloudFormation will not clean up for you,
-and both fail part-way rather than up front.** The CloudTrail log bucket
-is retained on purpose (below). The Bedrock agent user carries an
-out-of-band API key that blocks `DeleteUser` with `DeleteConflict` —
-delete the credential first, per "Bedrock agent identity" above.
+**Two stacks have a resource CloudFormation will not clean up for you —
+and they fail in opposite ways.** The CloudTrail log bucket is retained
+on purpose, so that stack's delete **succeeds** and simply leaves the
+bucket behind (below). The Bedrock agent user carries an out-of-band API
+key that blocks `DeleteUser` with `DeleteConflict`, so that stack's
+delete **fails part-way** until the credential is deleted first, per
+"Bedrock agent identity" below.
 
 The CloudTrail **log bucket is deliberately kept** when its stack is
 deleted: it carries `DeletionPolicy: Retain` so an accidental stack
@@ -253,19 +275,26 @@ Two things to know about that dialog:
   does not already grant.
 
   **Treat that as a check, not as a known fact.** The CloudTrail record
-  does not corroborate it: over the 90 days covering the first mint
-  (2026-09-04 00:37:16 UTC) there is **no `AttachUserPolicy` for
-  `AmazonBedrockLimitedAccess` at all**, and no attach event of any kind
-  follows the mint. The only two attaches in the window are the
-  template's own — one 36 seconds after `CreateUser`, one in the later
-  policy rename — and both are accounted for.
+  does not corroborate it, across **two** mints:
 
-  Read the bound on that honestly before acting on it. It is **one
-  mint**, so n=1; and an absent event is weaker evidence than a present
+  - **2026-09-04 00:37:16 UTC** (the first). Over the 90-day window
+    there is **no `AttachUserPolicy` for `AmazonBedrockLimitedAccess` at
+    all**, and no attach of any kind follows the mint. The only two
+    attaches are the template's own — one 36 seconds after `CreateUser`,
+    one in the later policy rename.
+  - **2026-09-09 00:34:09 UTC** (the worker-to-agent re-mint), and this
+    one is a **true before/after on the same user**: attached policies
+    were `{dropset-bedrock-invoke}` immediately before the mint and
+    `{dropset-bedrock-invoke}` immediately after. The only attach in
+    that window is CloudFormation's, 2.5 minutes *before* the mint; the
+    only detach is the old stack's teardown, 12 minutes after.
+
+  Read the bound on that honestly before acting on it. Two mints is
+  still a small n, and an absent event is weaker evidence than a present
   one, since the console could in principle attach through an API that
   logs under another name or under an AWS-internal principal this trail
-  does not capture. What the window does establish is that management
-  events *were* being recorded throughout — `CreateUser`,
+  does not capture. What both windows establish is that management
+  events *were* being recorded throughout — `CreateUser`, `CreatePolicy`,
   `CreateServiceSpecificCredential` and both attach/detach pairs are all
   present — so a silent trail is not the explanation.
 
@@ -322,11 +351,12 @@ aws cloudtrail lookup-events --region us-east-1 \
   --lookup-attributes AttributeKey=EventName,AttributeValue=AttachUserPolicy
 ```
 
-Both need an IAM-capable identity. **`PowerUserAccess` is not one** — it
-denies `iam:ListAttachedUserPolicies` and
+**The first needs an IAM-capable identity; the second does not.**
+`cloudtrail:LookupEvents` is not an IAM action, so `PowerUserAccess` can
+run the lookup — but it is denied `iam:ListAttachedUserPolicies` and
 `iam:ListServiceSpecificCredentials` outright, so an agent session on
-the usual SSO role cannot run the first of these at all. The CloudTrail
-lookup it *can* run.
+the usual SSO role cannot run the direct permissions read at all. On
+that role, CloudTrail is the only one of the two checks available.
 
 Store it in 1Password as one item per provider with a named field per
 credential, giving a reference of the shape

@@ -905,7 +905,7 @@ something that actually runs.
 **And the drift ran the other way too — check parity when committing a
 personal helper.** (This paragraph and the one above name the verbs by
 their **pre-rename** spellings — `aps`, `naps`, `paps` — because that is
-what they were called when this happened. The table above maps them to
+what they were called when this happened. The table below maps them to
 the verbs that exist now.) The committed family was written from this
 doc rather than from the profile, and the profile had moved on: the
 operator's own `aps` passed `acceptEdits`, a display name, and
@@ -988,6 +988,13 @@ from 1Password at launch. A seat launch exports none of them — **the
 absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is why a
 seat verb *clears* those variables rather than merely warning about
 them (see below).
+
+**With one exception, and it is deliberate: the bearer token is cleared
+only if the launcher itself resolved it.** The `${VAR:-…}` form means an
+operator can export their own key and run with no 1Password coordinates
+at all; destroying that token on a seat verb would make the *next*
+`task` in the same tab fail, pointing at config they chose not to set.
+Everything else — `AWS_REGION` included — is cleared unconditionally.
 
 **The model string is runtime config.** `DS_BEDROCK_MODEL` in the
 untracked runtime config carries the full string, context-window suffix

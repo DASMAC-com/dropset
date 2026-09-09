@@ -62,11 +62,11 @@ class RenderTests(unittest.TestCase):
         )
         b = self._skill(
             "b",
-            "<!-- render:begin guard verb=caps -->\n<!-- render:end guard -->\n",
+            "<!-- render:begin guard verb=architect -->\n<!-- render:end guard -->\n",
         )
         self._run(["--write"])
         self.assertIn("about plan.", a.read_text(encoding="utf-8"))
-        self.assertIn("about caps.", b.read_text(encoding="utf-8"))
+        self.assertIn("about architect.", b.read_text(encoding="utf-8"))
 
     def test_rendering_is_idempotent(self):
         path = self._skill(

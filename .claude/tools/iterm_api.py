@@ -52,10 +52,16 @@ ITERM_SOCKET = (
     Path.home() / "Library" / "Application Support" / "iTerm2" / "private" / "socket"
 )
 
-#: How long to wait on the driver. Generous, because creating N tabs is N round
-#: trips to a GUI app — but bounded, because a hung driver would otherwise hang
-#: a session launcher, and the whole family's contract is "fatal never".
+#: Base wait on the driver: connection setup plus one round trip. Bounded,
+#: because a hung driver would otherwise hang a session launcher and the whole
+#: family's contract is "fatal never".
 DRIVER_TIMEOUT_SECONDS = 60
+
+#: Added per tab on a batch op. A fixed budget that is generous for one tab is
+#: not generous for twenty, and the failure it produces is the worst kind: the
+#: driver is killed mid-batch with tabs already open and typed into, while the
+#: caller is told the whole batch failed.
+PER_TAB_TIMEOUT_SECONDS = 10
 
 
 class ItermUnavailable(Exception):
@@ -111,12 +117,18 @@ def preflight() -> str | None:
     return None
 
 
-def _call(request: dict) -> dict:
-    """Run one request through the driver. Raises ``ItermUnavailable``."""
+def _call(request: dict, *, timeout: int | None = None) -> dict:
+    """Run one request through the driver. Raises ``ItermUnavailable``.
+
+    ``timeout`` defaults to :data:`DRIVER_TIMEOUT_SECONDS`. A batch op passes a
+    larger one: the budget has to cover N round trips to a GUI app, and a fixed
+    figure that is generous for one tab is not generous for twenty.
+    """
     reason = preflight()
     if reason is not None:
         raise ItermUnavailable(reason)
 
+    budget = DRIVER_TIMEOUT_SECONDS if timeout is None else timeout
     interpreter = bundled_interpreter()
     try:
         completed = subprocess.run(
@@ -125,11 +137,11 @@ def _call(request: dict) -> dict:
             capture_output=True,
             text=True,
             check=False,
-            timeout=DRIVER_TIMEOUT_SECONDS,
+            timeout=budget,
         )
     except subprocess.TimeoutExpired as exc:
         raise ItermUnavailable(
-            f"the iTerm2 driver did not answer within {DRIVER_TIMEOUT_SECONDS}s"
+            f"the iTerm2 driver did not answer within {budget}s"
         ) from exc
     except OSError as exc:
         raise ItermUnavailable(f"cannot run the iTerm2 driver: {exc}") from exc
@@ -165,8 +177,16 @@ def open_window(command: str) -> str | None:
     is how the operator talks to the fleet. This never falls back to the current
     session — typing a launch verb into a window already running something is
     worse than not dispatching at all.
+
+    The tty is read defensively. A bare ``.get("ttys", [None])[0]`` applies its
+    default only when the key is ABSENT, so a driver answering ``"ttys": []``
+    would raise IndexError and one answering ``"ttys": null`` TypeError — either
+    escaping as a raw traceback past `session_dispatch`, which catches only
+    `ItermUnavailable` and is the code path whose entire job is to print the
+    verb you can run by hand.
     """
-    return _call({"op": "open_window", "command": command}).get("ttys", [None])[0]
+    ttys = _call({"op": "open_window", "command": command}).get("ttys") or []
+    return ttys[0] if ttys else None
 
 
 def open_tabs(commands: list[str]) -> list[str | None]:
@@ -179,12 +199,18 @@ def open_tabs(commands: list[str]) -> list[str | None]:
     """
     if not commands:
         return []
-    response = _call({"op": "open_tabs", "commands": list(commands)})
+    response = _call(
+        {"op": "open_tabs", "commands": list(commands)},
+        # One round trip per tab against a GUI app, so the budget scales.
+        timeout=DRIVER_TIMEOUT_SECONDS + PER_TAB_TIMEOUT_SECONDS * len(commands),
+    )
     ttys = list(response.get("ttys") or [])
-    # Positional contract, defended here rather than trusted: a short list from
-    # a future driver would otherwise silently shift every caller's tag/tty
-    # pairing by one, which is exactly the class of bug that made the previous
-    # AppleScript path report a clean summary over a total mark failure.
+    # Positional contract, defended here rather than trusted. Note precisely
+    # what the pad buys: it restores the LENGTH, so `zip` cannot drop trailing
+    # tags. It cannot repair a gap in the MIDDLE — everything after such a gap
+    # is still shifted, and the pad then lets `zip` consume it. The driver makes
+    # that unreachable by appending None in place, so gaps are positional by
+    # construction; this is a guard on the length invariant alone.
     ttys += [None] * (len(commands) - len(ttys))
     return ttys[: len(commands)]
 
@@ -194,23 +220,46 @@ def open_tabs(commands: list[str]) -> list[str | None]:
 # ---------------------------------------------------------------------------
 
 
-def _first_session(window):
-    """The session to type into, from a just-created window.
+def _first_session(container):
+    """The session to type into, given EITHER a Window or a Tab.
 
-    ``window.current_tab`` is None on a window this process only just created —
-    that attribute reads the app's cached state, which has not caught up with a
-    window the cache does not know exists. Measured on the first live run of the
-    dispatcher. ``window.tabs`` IS populated on the returned object, so walk it
-    and keep ``current_tab`` as the fallback for any iTerm version where the
-    reverse holds.
+    Both shapes are handled because the two ops pass different ones:
+    ``open_window`` hands over a Window, ``open_tabs`` a Tab. A Tab exposes
+    ``.sessions`` / ``.current_session``; a Window exposes ``.tabs``.
+
+    **Taking a Tab is not hypothetical generality — it is a fixed bug.** An
+    earlier version inspected only the Window attributes, so when ``open_tabs``
+    passed a Tab both lookups missed, this returned None for every tab, and the
+    driver appended a null tty and moved on WITHOUT TYPING ANYTHING. `fleet
+    --apply` opened one blank tab per in-flight issue and resumed none of them,
+    while reporting ``opened: 0`` — visible, but only if someone read the
+    summary. Confirmed live: a probe whose typed command would have created a
+    marker file produced the tab and no marker.
+
+    Order matters. The container's own session is checked FIRST so a Tab
+    resolves directly; only then do we walk ``.tabs`` for a Window. Within the
+    Window branch, tabs come before ``current_tab`` because ``current_tab`` is
+    None on a window this process only just created — that attribute reads the
+    app's cached state, which has not caught up with a window the cache does not
+    know exists. Also measured live, on the dispatcher's first run.
     """
-    for tab in getattr(window, "tabs", None) or []:
+    # Tab-shaped: answers directly.
+    sessions = getattr(container, "sessions", None) or []
+    if sessions:
+        return sessions[0]
+    current = getattr(container, "current_session", None)
+    if current is not None:
+        return current
+
+    # Window-shaped: walk its tabs, with current_tab as the late fallback.
+    for tab in getattr(container, "tabs", None) or []:
         sessions = getattr(tab, "sessions", None) or []
         if sessions:
             return sessions[0]
-        if getattr(tab, "current_session", None) is not None:
-            return tab.current_session
-    tab = getattr(window, "current_tab", None)
+        current = getattr(tab, "current_session", None)
+        if current is not None:
+            return current
+    tab = getattr(container, "current_tab", None)
     return getattr(tab, "current_session", None) if tab is not None else None
 
 
@@ -254,7 +303,13 @@ async def _driver_body(connection, request, result):  # pragma: no cover
         if window is None:
             result["error"] = "iTerm2 refused to create a window"
             return
+        # Published into `result` BEFORE the loop, and mutated in place, so a
+        # failure partway through a batch still reports the tabs already opened.
+        # Otherwise the caller is told the whole batch failed and prints every
+        # verb as "run these by hand" — which double-resumes the first k
+        # sessions, since those tabs are open and running.
         ttys = []
+        result["ttys"] = ttys
         for command in request["commands"]:
             tab = await window.async_create_tab()
             session = _first_session(tab) if tab is not None else None
@@ -265,7 +320,6 @@ async def _driver_body(connection, request, result):  # pragma: no cover
                 continue
             await session.async_send_text(command + "\n")
             ttys.append(await session.async_get_variable("tty"))
-        result["ttys"] = ttys
         result["ok"] = True
         return
 

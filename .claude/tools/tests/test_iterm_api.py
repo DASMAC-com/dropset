@@ -76,10 +76,21 @@ class InterpreterDiscovery(unittest.TestCase):
             self.assertIn("3.14.0", str(iterm_api.bundled_interpreter(root)))
 
 
-class CallContract(unittest.TestCase):
-    """`_call` turns every failure into `ItermUnavailable` with a reason."""
+class DriverStub:
+    """Fakes the subprocess boundary and RECORDS what crossed it.
 
-    def _stub(self, *, stdout, stderr="", preflight=None):
+    A mixin rather than a base `TestCase`: `OpenTabsPositional` used to derive
+    from `CallContract` to reuse this, which made unittest collect and re-run
+    every parent case under the subclass too — inflating the suite count and
+    reporting any parent failure twice.
+
+    `sent` is the point. An earlier version discarded argv and stdin entirely,
+    so nothing asserted WHAT `_call` sends: renaming the request's `op` from
+    `session_names` to anything else left all six response-parsing cases green.
+    That is a test passing whether or not its subject is right.
+    """
+
+    def _stub(self, *, stdout, stderr="", preflight=None, returncode=0, raises=None):
         self.addCleanup(setattr, iterm_api, "preflight", iterm_api.preflight)
         self.addCleanup(
             setattr, iterm_api, "bundled_interpreter", iterm_api.bundled_interpreter
@@ -88,14 +99,33 @@ class CallContract(unittest.TestCase):
         iterm_api.preflight = lambda: preflight
         iterm_api.bundled_interpreter = lambda root=None: Path("/bin/true")
 
+        self.sent = {}
         completed = type("Completed", (), {})()
         completed.stdout = stdout
         completed.stderr = stderr
-        completed.returncode = 0
+        completed.returncode = returncode
+
+        real_timeout_expired = iterm_api.subprocess.TimeoutExpired
+
+        def run(argv, **kwargs):
+            self.sent["argv"] = argv
+            self.sent["input"] = kwargs.get("input")
+            self.sent["timeout"] = kwargs.get("timeout")
+            if raises is not None:
+                raise raises
+            return completed
+
         stub = type("Subprocess", (), {})()
-        stub.run = lambda *a, **k: completed
-        stub.TimeoutExpired = iterm_api.subprocess.TimeoutExpired
+        stub.run = run
+        stub.TimeoutExpired = real_timeout_expired
         iterm_api.subprocess = stub
+
+    def sent_request(self):
+        return json.loads(self.sent["input"])
+
+
+class CallContract(DriverStub, unittest.TestCase):
+    """`_call` turns every failure into `ItermUnavailable` with a reason."""
 
     def test_a_failed_preflight_never_spawns_the_driver(self):
         self._stub(stdout="", preflight="the API is off")
@@ -132,8 +162,88 @@ class CallContract(unittest.TestCase):
         self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/ttys004"]}))
         self.assertEqual(iterm_api.open_window("task 1"), "/dev/ttys004")
 
+    def test_an_empty_ttys_list_is_none_not_an_IndexError(self):
+        # `.get("ttys", [None])[0]` applies its default only when the key is
+        # ABSENT, so `"ttys": []` used to raise IndexError — escaping past
+        # session_dispatch, which catches only ItermUnavailable and whose whole
+        # job on that path is printing the verb you can run by hand.
+        self._stub(stdout=json.dumps({"ok": True, "ttys": []}))
+        self.assertIsNone(iterm_api.open_window("task 1"))
 
-class OpenTabsPositional(CallContract):
+    def test_a_null_ttys_is_none_not_a_TypeError(self):
+        self._stub(stdout=json.dumps({"ok": True, "ttys": None}))
+        self.assertIsNone(iterm_api.open_window("task 1"))
+
+    # --- what _call SENDS, not just what it parses ---------------------------
+
+    def test_the_request_names_the_op_and_rides_stdin(self):
+        # stdin, not argv: a request on the command line would be visible in
+        # `ps` to every process on the machine.
+        self._stub(stdout=json.dumps({"ok": True, "names": []}))
+        iterm_api.session_names()
+        self.assertEqual(self.sent_request(), {"op": "session_names"})
+        self.assertIn("--_driver", self.sent["argv"])
+        self.assertNotIn("session_names", " ".join(self.sent["argv"]))
+
+    def test_open_window_sends_its_command_verbatim(self):
+        self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a"]}))
+        iterm_api.open_window("task local 1234")
+        self.assertEqual(
+            self.sent_request(),
+            {"op": "open_window", "command": "task local 1234"},
+        )
+
+    def test_open_tabs_sends_every_command_in_order(self):
+        self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a", "/dev/b"]}))
+        iterm_api.open_tabs(["task resume 1", "task resume 2"])
+        self.assertEqual(
+            self.sent_request(),
+            {"op": "open_tabs", "commands": ["task resume 1", "task resume 2"]},
+        )
+
+    def test_the_batch_timeout_scales_with_the_command_count(self):
+        # A fixed budget generous for one tab is not generous for twenty, and
+        # the failure it produces is the bad kind: the driver is killed
+        # mid-batch with tabs already open and typed into.
+        self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a"]}))
+        iterm_api.open_window("task 1")
+        one_shot = self.sent["timeout"]
+
+        self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a"] * 5}))
+        iterm_api.open_tabs(["a", "b", "c", "d", "e"])
+        self.assertGreater(self.sent["timeout"], one_shot)
+
+    # --- failure branches of the subprocess call -----------------------------
+
+    def test_a_timeout_is_a_named_failure(self):
+        self._stub(
+            stdout="",
+            raises=iterm_api.subprocess.TimeoutExpired(cmd="driver", timeout=60),
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.session_names()
+        self.assertIn("did not answer", str(caught.exception))
+
+    def test_a_driver_that_cannot_start_is_a_named_failure(self):
+        self._stub(stdout="", raises=OSError("no such interpreter"))
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.session_names()
+        self.assertIn("cannot run", str(caught.exception))
+
+    def test_a_nonzero_exit_with_parseable_output_is_still_honored(self):
+        # The driver reports failure in its JSON, not via exit status, so a
+        # non-zero exit carrying a well-formed error must surface that error
+        # rather than a generic one.
+        self._stub(
+            stdout=json.dumps({"ok": False, "error": "iTerm2 refused"}),
+            returncode=1,
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.session_names()
+        self.assertEqual(str(caught.exception), "iTerm2 refused")
+
+
+class OpenTabsPositional(DriverStub, unittest.TestCase):
     """`open_tabs` promises one entry per command, in order."""
 
     def test_no_commands_makes_no_call_at_all(self):
@@ -215,6 +325,34 @@ class FirstSession(unittest.TestCase):
         # face — the whole point of the fallback path.
         window = self._window(tabs=None, current_tab=None)
         self.assertIsNone(iterm_api._first_session(window))
+
+    # --- the Tab-shaped caller: this is the blocking-bug regression guard ----
+
+    def test_a_TAB_resolves_directly(self):
+        # THE BUG THIS PINS. `open_tabs` passes a Tab, not a Window. An earlier
+        # version inspected only `.tabs` / `.current_tab`, which a Tab has
+        # neither of, so this returned None for every tab, the driver appended a
+        # null tty and moved on WITHOUT TYPING ANYTHING — `fleet --apply` opened
+        # one blank tab per in-flight issue and resumed none of them. Confirmed
+        # live: a probe whose typed command would have created a marker file
+        # produced the tab and no marker.
+        wanted = self._Session()
+        tab = self._tab(sessions=[wanted])
+        self.assertIs(iterm_api._first_session(tab), wanted)
+
+    def test_a_TAB_with_only_current_session_resolves(self):
+        wanted = self._Session()
+        tab = self._tab(sessions=[], current=wanted)
+        self.assertIs(iterm_api._first_session(tab), wanted)
+
+    def test_a_window_still_wins_over_its_own_tabs_absent_sessions(self):
+        # Order check: the container's own session is consulted first so a Tab
+        # resolves directly, but a Window (which has no `.sessions`) must still
+        # descend into `.tabs` exactly as before.
+        wanted = self._Session()
+        window = self._window(tabs=[self._tab(sessions=[wanted])], current_tab=None)
+        self.assertIsNone(getattr(window, "sessions", None))
+        self.assertIs(iterm_api._first_session(window), wanted)
 
 
 if __name__ == "__main__":

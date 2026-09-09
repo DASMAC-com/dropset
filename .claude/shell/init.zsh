@@ -449,6 +449,23 @@ _DS_BEDROCK_FAST_FALLBACK='us.anthropic.claude-haiku-4-5-20251001'
 # Where a session's substrate choice is recorded. See `_ds_substrate_write`.
 _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
 
+# Internal: normalize a worktree tag. A bare number gets the `eng-` prefix, so
+# `task 882` and `task eng-882` agree; anything else passes through untouched,
+# which is what keeps a deliberate non-`eng` worktree name usable.
+#
+# ONE owner, because the start and resume sides MUST agree. They did not: the
+# start side let a non-`eng` name through literally while the resume side did
+# `eng-${1#eng-}`, which force-prefixes. So `task my-thing` recorded its
+# substrate under `my-thing` and `task resume my-thing` looked for
+# `eng-my-thing`, missed, and silently resumed on the seat — a miss in exactly
+# the direction the design calls silent. Deriving both from here makes the
+# agreement structural rather than something two call sites have to remember.
+_ds_tag_of() {
+  local tag="$1"
+  [[ "$tag" == <-> ]] && tag="eng-$tag"
+  print -r -- "$tag"
+}
+
 # Compose the model string a Bedrock launch exports as `ANTHROPIC_MODEL`.
 #
 # `DS_BEDROCK_MODEL` in the untracked runtime config wins and is used VERBATIM,
@@ -480,8 +497,14 @@ _ds_bedrock_model() {
   print -r -- "${_DS_BEDROCK_PROFILE_FALLBACK}[1m]"
 }
 
-# Record the substrate a session launched on, keyed by tag (worktree sessions)
-# or by session id (base-repo sessions).
+# Record the substrate a session launched on, keyed by worktree tag.
+#
+# The key is a parameter rather than a hard-coded tag because a base-repo
+# session would key on its computed session id — but **no verb does that
+# today**, and the only two call sites both pass a worktree tag. Said plainly
+# because the earlier wording here described session-id keying as if it
+# shipped, which it does not: every base-repo verb is seat-only, so none of
+# them has a substrate worth recording.
 #
 # WHY A MARKER AT ALL: a resume must land on the substrate its session started
 # on, and the slip is silent in BOTH directions. A Bedrock session resumed onto
@@ -539,9 +562,19 @@ _ds_bedrock_env() {
 
   # Resolved at launch, never held in a long-lived shell — the same lazy shape
   # and the same `${VAR:-…}` override as `_ds_secrets`, for the same reasons.
+  #
+  # Whether the token was ALREADY there is recorded, because the seat guard
+  # must not destroy one the operator exported themselves. See
+  # `_ds_substrate_unset`.
+  local had_token="$AWS_BEARER_TOKEN_BEDROCK"
   if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_BEDROCK_REF" ]]; then
     export AWS_BEARER_TOKEN_BEDROCK="${AWS_BEARER_TOKEN_BEDROCK:-$(op read \
       --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")}"
+  fi
+  if [[ -z "$had_token" && -n "$AWS_BEARER_TOKEN_BEDROCK" ]]; then
+    _DS_TOKEN_FROM_LAUNCHER=1
+  else
+    unset _DS_TOKEN_FROM_LAUNCHER
   fi
 
   if [[ -z "$AWS_BEARER_TOKEN_BEDROCK" ]]; then
@@ -564,18 +597,35 @@ _ds_bedrock_env() {
   return 0
 }
 
-# Clear every Bedrock export from the calling shell.
+# Clear the Bedrock exports from the calling shell.
 #
 # THIS IS NOT TIDINESS, IT IS THE SEAT PIN. These helpers export into the
-# CALLING shell — they have to, since a subshell could not set the environment
-# `claude` inherits — so the variables outlive the session that set them. Run
-# `task 1234`, quit it, and that tab is still a Bedrock tab: the next `plan` in
-# it would silently run against credits with the Fable pin dropped. The absence
-# of `CLAUDE_CODE_USE_BEDROCK` IS how a seat launch is expressed, so a seat verb
-# has to make that absence true rather than merely assert it.
+# CALLING shell — they have to, since a child process could not set the
+# environment `claude` inherits — so the variables outlive the session that set
+# them. Run `task 1234`, quit it, and that tab is still a Bedrock tab: the next
+# `plan` in it would silently run against credits with the Fable pin dropped.
+# The absence of `CLAUDE_CODE_USE_BEDROCK` IS how a seat launch is expressed, so
+# a seat verb has to make that absence true rather than merely assert it.
+#
+# `AWS_REGION` is cleared too, and that was a real omission rather than a
+# judgement call: `_ds_bedrock_env` exports it unconditionally, so leaving it
+# pinned every later `aws` invocation in that tab to the Bedrock region. Note
+# clearing it does NOT leave the AWS CLI without a region — it falls back to the
+# profile's own `region`, which is where a seat tab should have been reading
+# from all along.
+#
+# The BEARER TOKEN is the deliberate exception, and only when the operator
+# supplied it. `_ds_bedrock_env`'s `${VAR:-…}` form exists so a token exported
+# by hand wins, which means an operator can run with no 1Password coordinates at
+# all. Destroying that token here would make the NEXT `task` in the same tab
+# fail, pointing at config they deliberately did not set. So we clear only what
+# this launcher itself resolved.
 _ds_substrate_unset() {
   unset CLAUDE_CODE_USE_BEDROCK ANTHROPIC_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
-  unset ENABLE_PROMPT_CACHING_1H AWS_BEARER_TOKEN_BEDROCK
+  unset ENABLE_PROMPT_CACHING_1H AWS_REGION
+  if [[ -n "$_DS_TOKEN_FROM_LAUNCHER" ]]; then
+    unset AWS_BEARER_TOKEN_BEDROCK _DS_TOKEN_FROM_LAUNCHER
+  fi
 }
 
 # Seat verbs call this: warn if the shell arrived carrying Bedrock exports, then
@@ -663,12 +713,8 @@ _ds_task_start() {
     return 1
   fi
 
-  # A bare number gets the `eng-` prefix, so `task 882` and `task eng-882`
-  # agree and the start/resume pair composes: `task resume` resolves `eng-<n>`,
-  # so without this `task 882` would create a worktree named `882` that
-  # `task resume 882` then reports as missing. Only an all-digit argument is
-  # rewritten — a deliberate non-`eng` worktree name still passes through.
-  [[ "$tag" == <-> ]] && tag="eng-$tag"
+  # Shared with the resume side, which is the whole point — see `_ds_tag_of`.
+  tag="$(_ds_tag_of "$tag")"
 
   _ds_base || return 1
   _ds_secrets
@@ -710,15 +756,35 @@ _ds_task_start() {
 _ds_task_resume() {
   # No number: the picker, from wherever the shell already is. The operator's
   # form, and worth keeping for a reason the tag form cannot cover — a session
-  # whose worktree has already been pruned is still reachable this way. It gets
-  # no substrate treatment because the picker spans both.
+  # whose worktree has already been pruned is still reachable this way.
+  #
+  # The picker cannot know which session will be chosen, so it cannot re-export
+  # the right substrate — but it must not leave the tab's CURRENT one in place
+  # either, or picking a seat session in a tab that last ran `task` resumes it
+  # on Bedrock. Clearing makes the residual leak one-directional and matches the
+  # standing "absent marker = seat" default: the worst case becomes a Bedrock
+  # session resumed on the seat, which is loud (the model banner changes) rather
+  # than silent.
   if [[ -z "$1" ]]; then
+    _ds_seat_guard 'task resume'
     _ds_secrets
     claude --resume
     return
   fi
 
-  local tag="eng-${1#eng-}"
+  local tag
+  tag="$(_ds_tag_of "$1")"
+
+  # Re-export whatever this session launched with, BEFORE moving the shell.
+  # Absent marker = seat, so a session predating markers resumes as it always
+  # did. Order matters: `_ds_bedrock_env` can fail (no token), and resolving
+  # after the `cd` below would leave the operator relocated into the worktree
+  # with no session and no explanation of the move.
+  if [[ "$(_ds_substrate_read "$tag")" == 'bedrock' ]]; then
+    _ds_bedrock_env || return 1
+  else
+    _ds_seat_guard 'task resume'
+  fi
 
   local mode sid run_from
   {
@@ -736,14 +802,6 @@ _ds_task_resume() {
   cd "${run_from:-$_DS_REPO}" || cd "$_DS_REPO" || return 1
   _ds_pull
   _ds_secrets
-
-  # Re-export whatever this session launched with. Absent marker = seat, so a
-  # session that predates markers resumes exactly as it always did.
-  if [[ "$(_ds_substrate_read "$tag")" == 'bedrock' ]]; then
-    _ds_bedrock_env || return 1
-  else
-    _ds_seat_guard 'task resume'
-  fi
 
   case "$mode" in
     continue)
@@ -809,7 +867,16 @@ explore() {
     # name is not one. Expect to pick from a list. `plan`, `housekeeping` and
     # `architect` avoid this entirely by computing their own id; a free-form
     # name has nothing to compute from.
-    claude --resume "$1"
+    #
+    # THE MODEL PIN RIDES THE RESUME PATH TOO. `--model` and
+    # `--permission-mode` are per-session flags, so passing them only on the
+    # create path honors the pin on a session's FIRST launch and silently drops
+    # to the saved default on every reopen after it — and an `explore` session
+    # is reopened often. That is exactly the slip `_ds_daily_session` documents
+    # above ("still works, so nobody notices"), and this verb reproduced it
+    # until review caught it. `_ds_session` gets this right by construction;
+    # this branch has to do it by hand.
+    claude --resume "$1" --permission-mode auto --model claude-fable-5
     return
   fi
 

@@ -46,8 +46,14 @@ import iterm_api
 #: but a *shape*: the tool types its argument into an interactive shell, so
 #: anything that is not one of these forms would be arbitrary command execution
 #: wearing a verb's name. A caller wanting a shell command has a shell.
-_TAG = re.compile(r"^(?:eng-)?\d+$")
-_NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+#: `\Z` and `re.ASCII`, both deliberately, and neither is theoretical.
+#: Python's `$` matches just before a trailing newline, so `^\d+$` accepts
+#: `"1234\n"` — a different shape than the shell's grammar takes, reaching a
+#: line that gets typed into a live shell. And bare `\d` is Unicode-aware, so
+#: `eng-١٢٣` would validate as a tag. `shlex.quote` downstream keeps either
+#: from being exploitable; the point of this table is to refuse the shape.
+_TAG = re.compile(r"\A(?:eng-)?\d+\Z", re.ASCII)
+_NAME = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z", re.ASCII)
 
 
 def validate(argv: list[str]) -> list[str]:
@@ -130,6 +136,20 @@ def run(argv: list[str]) -> int:
     )
     parser.add_argument("verb", nargs=argparse.REMAINDER, help="the session verb")
     args = parser.parse_args(argv)
+
+    # REMAINDER swallows everything after the first positional, so a trailing
+    # `--dry-run` never registers as the flag — `session_dispatch.py plan
+    # --dry-run` would not dry-run. Today `validate` happens to reject the
+    # stray word so nothing is typed, but that is luck rather than design, and
+    # dry-run is the look-before-you-type affordance on a boundary that types
+    # into a live shell. Catch it explicitly and say where the flag goes.
+    if any(word in ("--dry-run", "-n") for word in args.verb):
+        print(
+            "session-dispatch: --dry-run must come BEFORE the verb "
+            "(argparse REMAINDER swallows anything after it)",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         words = validate(args.verb)

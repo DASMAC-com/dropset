@@ -136,6 +136,11 @@ class ModelComposition(SubstrateHarness):
             "_ds_bedrock_model",
             env={"DS_BEDROCK_MODEL": "us.anthropic.claude-opus-5[200k]"},
         )
+        # The positive assertion is not decoration. On its own the
+        # `assertNotIn` below passes vacuously — if the function emitted
+        # nothing, exited non-zero, or did not exist at all, stderr is still
+        # silent and the case still goes green.
+        self.assertEqual(result.stdout.strip(), "us.anthropic.claude-opus-5[200k]")
         self.assertNotIn("no context-window", result.stderr)
 
 
@@ -175,9 +180,17 @@ class MarkerRoundTrip(SubstrateHarness):
 class SeatGuard(SubstrateHarness):
     """`_ds_seat_guard` — the seat pin is an absence, so it must be made true."""
 
+    #: Probes EVERY variable `_ds_substrate_unset` touches. Reviewing an
+    #: earlier version found it asserted four of five — `FAST` was missing, so
+    #: deleting that name from the unset list kept this suite green while a
+    #: seat session's background sub-turns went on billing to Bedrock credits.
+    #: That is exactly the silent-in-production class the module docstring
+    #: names as its selection criterion, so the probe is kept exhaustive.
     _PROBE = (
         'print -r -- "USE=${CLAUDE_CODE_USE_BEDROCK-unset}"; '
         'print -r -- "MODEL=${ANTHROPIC_MODEL-unset}"; '
+        'print -r -- "FAST=${ANTHROPIC_DEFAULT_HAIKU_MODEL-unset}"; '
+        'print -r -- "REGION=${AWS_REGION-unset}"; '
         'print -r -- "TOKEN=${AWS_BEARER_TOKEN_BEDROCK-unset}"; '
         'print -r -- "CACHE=${ENABLE_PROMPT_CACHING_1H-unset}"'
     )
@@ -191,14 +204,46 @@ class SeatGuard(SubstrateHarness):
             env={
                 "CLAUDE_CODE_USE_BEDROCK": "1",
                 "ANTHROPIC_MODEL": "us.anthropic.claude-opus-5[1m]",
-                "AWS_BEARER_TOKEN_BEDROCK": "placeholder-key",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "us.anthropic.claude-haiku-x",
+                "AWS_REGION": "us-west-2",
                 "ENABLE_PROMPT_CACHING_1H": "1",
             },
         )
         self.assertIn("USE=unset", result.stdout)
         self.assertIn("MODEL=unset", result.stdout)
-        self.assertIn("TOKEN=unset", result.stdout)
+        self.assertIn("FAST=unset", result.stdout)
+        self.assertIn("REGION=unset", result.stdout)
         self.assertIn("CACHE=unset", result.stdout)
+
+    def test_an_operator_supplied_token_SURVIVES_the_seat_guard(self):
+        # The token is the one deliberate exception, and its direction matters.
+        # `_ds_bedrock_env`'s `${VAR:-…}` form exists so an operator can export
+        # their own key and run with no 1Password coordinates at all.
+        # Destroying it here would make the NEXT `task` in the same tab fail,
+        # pointing at config they deliberately did not set.
+        result = self._zsh(
+            f"_ds_seat_guard plan; {self._PROBE}",
+            env={
+                "CLAUDE_CODE_USE_BEDROCK": "1",
+                "AWS_BEARER_TOKEN_BEDROCK": "operator-supplied",
+            },
+        )
+        self.assertIn("USE=unset", result.stdout)
+        self.assertIn("TOKEN=operator-supplied", result.stdout)
+
+    def test_a_launcher_resolved_token_IS_cleared(self):
+        # The other side of the same rule: what the launcher itself resolved is
+        # the launcher's to clean up. `_DS_TOKEN_FROM_LAUNCHER` is the marker
+        # `_ds_bedrock_env` sets when it, rather than the operator, produced the
+        # value.
+        result = self._zsh(
+            f"_DS_TOKEN_FROM_LAUNCHER=1; _ds_seat_guard plan; {self._PROBE}",
+            env={
+                "CLAUDE_CODE_USE_BEDROCK": "1",
+                "AWS_BEARER_TOKEN_BEDROCK": "launcher-resolved",
+            },
+        )
+        self.assertIn("TOKEN=unset", result.stdout)
 
     def test_clearing_is_announced(self):
         # The warning is kept alongside the correction: a silent fix hides that

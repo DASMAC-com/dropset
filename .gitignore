@@ -29,10 +29,10 @@ sdk/ts/dist/
 .claude/settings.local.json
 
 # Which substrate — Bedrock or the seat — each session launched on, one file
-# per worktree tag or session id, written by the session verbs in
-# .claude/shell/init.zsh so a resume lands on the provider its session started
-# with. Machine-local runtime state: the same tag means different things on
-# two machines, and an absent marker correctly reads as "seat".
+# per worktree tag, written by the session verbs in .claude/shell/init.zsh so a
+# resume lands on the provider its session started with. Machine-local runtime
+# state: the same tag means different things on two machines, and an absent
+# marker correctly reads as "seat".
 .claude/session-substrate/
 
 # The local secrets enclave's operator file: which 1Password vault this
