@@ -647,6 +647,10 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The loopback stub these tests used to define inline. It lives in
+    // `crate::testing` now because the venue adapters' poll-path tests need the
+    // same server — see that module's note.
+    use crate::testing::serve_once;
 
     fn retry_after_headers(value: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -919,35 +923,6 @@ mod tests {
         assert_eq!(sorted.as_slice(), BENIGN_QUERY_PARAMS);
     }
 
-    /// Answer one request on loopback with `response`, returning the port to
-    /// aim a client at.
-    ///
-    /// The request head is **drained before answering**, which is load-bearing
-    /// rather than tidy: closing a socket that still holds unread received data
-    /// sends RST instead of FIN on both Darwin and Linux, and a RST that
-    /// overtakes the response surfaces as a connection reset instead of the
-    /// status under test. That is the shape of a test which passes locally and
-    /// fails once a month in the merge queue.
-    async fn serve_once(response: &'static [u8]) -> u16 {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut head = Vec::new();
-            let mut byte = [0u8; 1];
-            while !head.ends_with(b"\r\n\r\n") {
-                if socket.read(&mut byte).await.unwrap() == 0 {
-                    break;
-                }
-                head.extend_from_slice(&byte);
-            }
-            socket.write_all(response).await.unwrap();
-        });
-        port
-    }
-
     #[tokio::test]
     async fn a_redirect_is_refused_rather_than_followed() {
         // A cross-host 302. If the client followed it, the hop would carry every
@@ -957,7 +932,8 @@ mod tests {
         let port = serve_once(
             b"HTTP/1.1 302 Found\r\n\
               Location: http://credential-thief.invalid/\r\n\
-              Content-Length: 0\r\n\r\n",
+              Content-Length: 0\r\n\r\n"
+                .to_vec(),
         )
         .await;
 
@@ -999,7 +975,8 @@ mod tests {
         // The refused-connection test above covers only the `send` path, so
         // without this the redaction that matters most in production is the
         // one with no coverage.
-        let port = serve_once(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n").await;
+        let port =
+            serve_once(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n".to_vec()).await;
 
         let err = HttpClient::new(format!("http://127.0.0.1:{port}"))
             .unwrap()

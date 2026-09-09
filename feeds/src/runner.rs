@@ -1,7 +1,5 @@
 //! The runner: drive a source and fan each batch to its sinks.
 
-// cspell:word oneshot
-
 use crate::sink::Sink;
 use crate::source::Source;
 use anyhow::Result;

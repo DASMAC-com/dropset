@@ -95,6 +95,13 @@ mod http;
 #[cfg(feature = "http")]
 pub use http::HttpClient;
 
+// The loopback HTTP stub every venue adapter's poll-path test answers its
+// request with. Test-only and never exported, so it adds nothing to the
+// crate's surface; gated on `http` as well as `test` because every consumer is
+// (see the module note).
+#[cfg(all(test, feature = "http"))]
+mod testing;
+
 // Not gated, on purpose: the module's shared vocabulary (`Quotes`, `Candle`)
 // needs no transport, so a streaming venue can land here without pulling in
 // `http`. Each venue submodule carries its own transport's gate instead — every

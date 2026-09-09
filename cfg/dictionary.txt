@@ -164,6 +164,7 @@ officedocument
 ohlc
 ohlcv
 oneline
+oneshot
 onramps
 openpgp
 openxmlformats
@@ -215,6 +216,7 @@ retunable
 retune
 retuned
 retunes
+rfind
 rlib
 rnaps
 rollup

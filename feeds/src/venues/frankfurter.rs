@@ -213,6 +213,7 @@ pub fn parse_frankfurter_snapshot(body: &Value, currencies: &[&str]) -> Frankfur
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{json_response, request_line, serve_once_capturing};
     use serde_json::json;
 
     #[test]
@@ -286,17 +287,96 @@ mod tests {
         assert_eq!(snap.reference_date, Some(1_788_825_600));
     }
 
-    // NOT COVERED, deliberately, and recorded so the gap is a decision rather
-    // than an oversight: `FrankfurterSnapshotSource::next` wraps its reading in
-    // `Batch::new(vec![…])`, and emptying that vector would compile, pass every
-    // test here, and yield a collector that polls forever writing nothing. The
-    // only way to reach `next` is over HTTP, and this crate's one loopback stub
-    // is private to `http.rs`'s own test module — so covering it means either
-    // duplicating that stub or promoting it to shared test infrastructure,
-    // which is wider than this change. The sibling `ErApiSource` carries the
-    // identical gap, so closing it belongs to whichever change makes the stub
-    // shared, for both venues at once. Verified once by hand instead: a live
-    // run against a disposable Postgres wrote 13 rows.
+    /// The live response shape, captured 2026-09-08.
+    fn live_body() -> Value {
+        json!({
+            "amount": 1.0,
+            "base": "USD",
+            "date": "2026-09-08",
+            "rates": { "AUD": 1.3861, "CAD": 1.3805, "EUR": 0.86103 }
+        })
+    }
+
+    fn currencies() -> Vec<String> {
+        ["AUD", "CAD", "EUR"].map(str::to_string).to_vec()
+    }
+
+    #[tokio::test]
+    async fn the_snapshot_source_yields_exactly_one_reading_over_http() {
+        // This test used to be a comment saying it could not be written. The
+        // gap was real: `next` wraps its reading in `Batch::new(vec![…])`, and
+        // emptying that vector compiles, passes every parse test above, and
+        // yields a collector that polls forever writing nothing — which this
+        // repo has already shipped once for real. The only route to `next` is
+        // HTTP, and the crate's one loopback stub was private to `http.rs`;
+        // it now lives in `crate::testing`, which is what makes this reachable.
+        let (port, _head) = serve_once_capturing(json_response(&live_body().to_string())).await;
+        let mut source =
+            FrankfurterSnapshotSource::new(&format!("http://127.0.0.1:{port}"), currencies())
+                .unwrap();
+
+        let batch = source.next().await.expect("the stub answers one poll");
+
+        assert_eq!(batch.records.len(), 1);
+        let snap = &batch.records[0];
+        // Both halves survive the round trip: the rates, and the reference date
+        // that is this source's entire reason for existing beside the bare one.
+        let expected = parse_frankfurter_snapshot(&live_body(), &["AUD", "CAD", "EUR"]);
+        assert_eq!(snap.rates, expected.rates);
+        assert_eq!(snap.reference_date, Some(1_788_825_600));
+    }
+
+    #[tokio::test]
+    async fn the_bare_source_yields_exactly_one_reading_over_http() {
+        // The sibling gap, and not redundant with the one above: this is the
+        // `Record` the maker's fair-value cascade receives, and it is a
+        // separate `Source` impl with its own `Batch::new(vec![…])` to empty.
+        let (port, _head) = serve_once_capturing(json_response(&live_body().to_string())).await;
+        let mut source =
+            FrankfurterSource::new(&format!("http://127.0.0.1:{port}"), currencies()).unwrap();
+
+        let batch = source.next().await.expect("the stub answers one poll");
+
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(
+            batch.records[0],
+            parse_frankfurter(&live_body(), &["AUD", "CAD", "EUR"])
+        );
+    }
+
+    #[tokio::test]
+    async fn both_polls_ask_the_venue_the_identical_question() {
+        // `fetch` exists so the two polls cannot drift apart in what they
+        // request — only in how much of the answer they decode. That promise is
+        // invisible to any response-only assertion, so it needs the request
+        // head: the two are compared against each other rather than against a
+        // hand-written URL, which is what makes this a test of the *property*
+        // rather than of today's query-string spelling.
+        let (snapshot_port, snapshot_head) =
+            serve_once_capturing(json_response(&live_body().to_string())).await;
+        let (bare_port, bare_head) =
+            serve_once_capturing(json_response(&live_body().to_string())).await;
+
+        FrankfurterSource::new(&format!("http://127.0.0.1:{snapshot_port}"), currencies())
+            .unwrap()
+            .poll_snapshot()
+            .await
+            .expect("the stub answers one poll");
+        FrankfurterSource::new(&format!("http://127.0.0.1:{bare_port}"), currencies())
+            .unwrap()
+            .poll()
+            .await
+            .expect("the stub answers one poll");
+
+        let snapshot_head = snapshot_head.await.expect("a complete request head");
+        let bare_head = bare_head.await.expect("a complete request head");
+        assert_eq!(request_line(&snapshot_head), request_line(&bare_head));
+        // And that shared request is the documented one: base-keyed by query,
+        // unlike the sibling er-api venue's path-keyed endpoint.
+        let line = request_line(&snapshot_head);
+        assert!(line.starts_with("GET /latest?"), "{line}");
+        assert!(line.contains("base=USD"), "{line}");
+    }
 
     #[test]
     fn a_missing_or_bogus_date_costs_the_stamp_not_the_rates() {
