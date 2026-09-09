@@ -108,6 +108,31 @@ pub fn fx_candidate_kind(source: &str) -> Option<FxCandidateKind> {
     }
 }
 
+/// Whether a contributing source is a **live tape** rather than a slow fix.
+///
+/// Takes the maker's own source tags, so it spans both the in-process Pyth
+/// anchor and the store's venues — the question "is this leg resting on
+/// something live" does not care which transport the reading arrived over.
+///
+/// Used to decide whether an MVP market may quote at all: a leg composed
+/// entirely of daily fixes is a market pricing off yesterday, which the
+/// higher-priority pairs are not allowed to do even though the thin-roster
+/// pairs must (that is all they will ever have). Note this asks about the
+/// **contributors** — the sources actually credited in the value — rather than
+/// about what was offered, so a tape that was offered and then dropped for
+/// being stale correctly does not count.
+pub fn is_tape_source(source: &str) -> bool {
+    matches!(
+        fx_candidate_kind(source),
+        Some(FxCandidateKind::Tape | FxCandidateKind::TrustedTape)
+    ) || source == PYTH_SOURCE
+}
+
+/// The Pyth tag, duplicated from `tasks` rather than imported to keep this
+/// module free of a cycle back into the tick loop. The two are pinned equal by
+/// a test there.
+const PYTH_SOURCE: &str = "pyth-hermes";
+
 /// The canonical store pair for a market's tracked currency — `AUD` →
 /// `AUD-USD`.
 ///

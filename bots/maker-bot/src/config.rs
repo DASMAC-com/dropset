@@ -72,7 +72,7 @@ pub struct MarketConfig {
     pub pyth_feed_id: &'static str,
     /// Whether [`MarketConfig::pyth_feed_id`] is published as `USD/<ccy>` and
     /// must be reciprocated into USD per `<ccy>`. Pyth quotes each cross one
-    /// way only, and for five of the seven roster currencies that is the
+    /// way only, and for six of the nine roster currencies that is the
     /// inverted direction.
     pub pyth_invert: bool,
     /// Coinbase product id for the token against USDC — the **primary** basis
@@ -108,6 +108,22 @@ pub struct MarketConfig {
     /// down. A representative spot value; a live FX anchor and basis supersede
     /// it whenever the feeds answer.
     pub static_usd: f64,
+    /// Whether this market refuses to quote without a **live tape** on its FX
+    /// leg — the MVP pairs, which are the ones intended to take real fills.
+    ///
+    /// The roster deliberately splits here. Most markets have no intraday FX
+    /// source and never will under the no-new-venues rule, so a daily ECB fix
+    /// is all they will ever have and requiring a tape would simply dark them
+    /// — and `make demo` is supposed to rest a book on every roster pair. The
+    /// MVP pairs are different: they are the ones that will quote on mainnet,
+    /// so pricing them off a day-old fix is the exact risk the fail-closed
+    /// posture exists to decline.
+    ///
+    /// This is therefore a statement about *intent*, not about coverage, which
+    /// is why it is a flag rather than something derived from whether a store
+    /// series happens to exist. A market that ought to have a tape and does
+    /// not should halt loudly, not quietly reclassify itself as thin-roster.
+    pub requires_live_tape: bool,
 }
 
 /// The demo roster — nine non-USD FX stablecoins, each quoted against USDC at
@@ -182,6 +198,7 @@ pub const MARKETS: [MarketConfig; 9] = [
         coinmarketcap_id: Some(20641),
         pinned_basis: None,
         static_usd: 1.14,
+        requires_live_tape: true,
     },
     MarketConfig {
         symbol: "VCHF",
@@ -196,6 +213,7 @@ pub const MARKETS: [MarketConfig; 9] = [
         coinmarketcap_id: Some(24130),
         pinned_basis: None,
         static_usd: 1.235,
+        requires_live_tape: false,
     },
     MarketConfig {
         symbol: "TGBP",
@@ -210,6 +228,7 @@ pub const MARKETS: [MarketConfig; 9] = [
         coinmarketcap_id: Some(38935),
         pinned_basis: None,
         static_usd: 1.324,
+        requires_live_tape: false,
     },
     MarketConfig {
         symbol: "ZARP",
@@ -224,6 +243,7 @@ pub const MARKETS: [MarketConfig; 9] = [
         coinmarketcap_id: Some(21856),
         pinned_basis: None,
         static_usd: 0.0605,
+        requires_live_tape: false,
     },
     MarketConfig {
         symbol: "MXNe",
@@ -255,6 +275,7 @@ pub const MARKETS: [MarketConfig; 9] = [
         // wrongly imply the inner quote rests through the market.
         pinned_basis: Some(1.0),
         static_usd: 0.0573,
+        requires_live_tape: false,
     },
     MarketConfig {
         symbol: "XSGD",
@@ -269,6 +290,7 @@ pub const MARKETS: [MarketConfig; 9] = [
         coinmarketcap_id: Some(8489),
         pinned_basis: None,
         static_usd: 0.7705,
+        requires_live_tape: false,
     },
     MarketConfig {
         symbol: "IDRX",
@@ -283,6 +305,7 @@ pub const MARKETS: [MarketConfig; 9] = [
         coinmarketcap_id: Some(26732),
         pinned_basis: None,
         static_usd: 0.000056,
+        requires_live_tape: false,
     },
     // The two MVP pairs added beside EURC. Both quote off the FX composite
     // alone, on a pinned 1.0 basis — see the roster note above for why each has
@@ -300,6 +323,7 @@ pub const MARKETS: [MarketConfig; 9] = [
         coinmarketcap_id: None,
         pinned_basis: Some(1.0),
         static_usd: 0.7214,
+        requires_live_tape: true,
     },
     MarketConfig {
         symbol: "CADC",
@@ -314,6 +338,7 @@ pub const MARKETS: [MarketConfig; 9] = [
         coinmarketcap_id: None,
         pinned_basis: Some(1.0),
         static_usd: 0.7244,
+        requires_live_tape: true,
     },
 ];
 

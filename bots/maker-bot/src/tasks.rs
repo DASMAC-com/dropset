@@ -1376,7 +1376,32 @@ fn quote_market_inner(
         }
     };
 
-    let action = killswitch::evaluate(&fair, &inv, &cfg.kill, launch_tvl, store_silent);
+    // Read off the leg's **contributors** rather than off what was offered: a
+    // tape that was offered and then dropped for being stale has not priced
+    // anything, so counting it would defeat the guard exactly when it matters.
+    let tape_shortfall = ctx.cfg.requires_live_tape
+        && !fair
+            .fx_leg
+            .contributors
+            .iter()
+            .any(|c| fx_store::is_tape_source(c.source));
+    if tape_shortfall {
+        eprintln!(
+            "[{}] halting: no live FX tape — every contributor to the anchor \
+             is a daily fix, and this pair is not allowed to quote off one",
+            ctx.cfg.symbol
+        );
+    }
+    let action = killswitch::evaluate(
+        &fair,
+        &inv,
+        &cfg.kill,
+        launch_tvl,
+        killswitch::FeedGuards {
+            store_silent,
+            tape_shortfall,
+        },
+    );
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);
     let reference = skew::apply_skew(mid, skew_bps);
     sample
@@ -2160,6 +2185,39 @@ mod tests {
             );
         }
         hub.fx_store_last_ok = Some(now);
+    }
+
+    /// `fx_store` duplicates the Pyth tag rather than importing it, to keep
+    /// that module free of a cycle back into this one. Pin them equal: if they
+    /// drifted, a Pyth-only FX leg would read as having no live tape and an
+    /// MVP market would halt with its anchor working.
+    #[test]
+    fn the_pyth_tag_is_the_one_fx_store_recognizes() {
+        assert!(fx_store::is_tape_source(SOURCE_PYTH));
+    }
+
+    /// The daily references must *not* count as a live tape, or the guard
+    /// would pass on exactly the composition it exists to reject.
+    #[test]
+    fn a_daily_fix_is_not_a_live_tape() {
+        assert!(!fx_store::is_tape_source(SOURCE_FRANKFURTER));
+        assert!(!fx_store::is_tape_source(SOURCE_ERAPI));
+        assert!(!fx_store::is_tape_source(fx_store::SOURCE_ALPHAVANTAGE));
+        assert!(fx_store::is_tape_source(fx_store::SOURCE_OANDA));
+        assert!(fx_store::is_tape_source(fx_store::SOURCE_TWELVEDATA));
+    }
+
+    /// Exactly the three MVP pairs demand a live tape. The rest must not, or
+    /// `make demo` stops resting books on the thin-roster pairs — which have
+    /// no intraday source and never will.
+    #[test]
+    fn only_the_mvp_pairs_require_a_live_tape() {
+        let required: Vec<_> = crate::config::MARKETS
+            .iter()
+            .filter(|m| m.requires_live_tape)
+            .map(|m| m.symbol)
+            .collect();
+        assert_eq!(required, ["EURC", "AUDD", "CADC"]);
     }
 
     /// The store's rows reach the FX leg, and the leg is now six candidates
