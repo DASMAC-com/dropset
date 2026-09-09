@@ -10,9 +10,9 @@
 //! matching the hyphenated style the Coinbase rows already use, and each
 //! adapter is handed the spelling it wants at construction.
 
-use crate::roster::{roster_from_env, RosterEntry, VenueSymbol};
+use crate::roster::{roster_from_env, RosterEntry, VenueProduct, VenueSymbol};
 use anyhow::{anyhow, Context, Result};
-use dropset_feeds::{now_secs, secrets::SecretProvider};
+use dropset_feeds::{now_secs, secrets::SecretProvider, venues::OandaCandles, Cursor, HttpClient};
 use std::collections::HashMap;
 
 /// Default backfill depth, matching the Coinbase collector's — deep enough to
@@ -318,6 +318,43 @@ pub fn usd_quoted_currencies(venue: &str, ids: &[String]) -> Result<UsdRoster> {
     })
 }
 
+/// Build the OANDA source for one resolved roster entry.
+///
+/// **This lives in the library rather than in the collector's `main` for one
+/// reason: so it can be tested.** It is a thin adapter over
+/// [`OandaCandles::resume`], and the only judgement it makes is which fields
+/// of the resolved entry go where — but `resume` takes eight positional
+/// arguments, two of which (`instrument` and `invert`) are exactly the pair
+/// whose mix-up is silent. Wiring `false` where `resolved.inverted` belongs
+/// leaves every other test in the workspace green while the store fills with
+/// reciprocals under canonical product ids, and a reciprocal is a plausible
+/// price, so nothing downstream and no reader of the data would notice.
+///
+/// In a `main` that line is unreachable from any test. Here it is one call.
+pub fn oanda_source(
+    http: HttpClient,
+    feed: &str,
+    resolved: &VenueProduct,
+    cfg: &FxConfig,
+    resume: Option<Cursor>,
+) -> Result<OandaCandles> {
+    OandaCandles::resume(
+        http,
+        feed,
+        // The VENUE's spelling — never `product_id`, which is what the reading
+        // is stored under.
+        &resolved.venue_symbol,
+        cfg.granularity_secs,
+        cfg.max_buckets_per_request,
+        resume,
+        cfg.backfill_start_secs,
+        // A pair OANDA quotes the other way round: the adapter fetches the
+        // reciprocal instrument and inverts each candle, so what reaches the
+        // sink is already in `product_id`'s direction.
+        resolved.inverted,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,6 +367,86 @@ mod tests {
         assert!(!oanda.inverted);
         assert_eq!(twelvedata_symbol("AUD-USD").unwrap(), "AUD/USD");
         assert_eq!(split_canonical("AUD-USD").unwrap(), ("AUD", "USD"));
+    }
+
+    /// A resolved entry as `resolve_venue` would emit it.
+    fn resolved(product_id: &str, venue_symbol: &str, inverted: bool) -> VenueProduct {
+        VenueProduct {
+            venue_symbol: venue_symbol.to_string(),
+            product_id: product_id.to_string(),
+            inverted,
+        }
+    }
+
+    /// The collector's config, with the two fields `oanda_source` reads.
+    fn test_cfg() -> FxConfig {
+        FxConfig {
+            products: vec![],
+            database_url: String::new(),
+            base_url: "https://example.test".to_string(),
+            granularity_secs: 60,
+            poll_interval_secs: 60,
+            max_buckets_per_request: 500,
+            backfill_start_secs: 1_000,
+        }
+    }
+
+    #[test]
+    fn the_collector_wires_the_inversion_flag_through_to_the_source() {
+        // **The gap this closes.** This wiring used to live inline in
+        // `market-data/src/bin/oanda.rs`, where no test could reach it — so
+        // passing `false` instead of `resolved.inverted` left the entire
+        // workspace green (the adapter's own tests build their sources
+        // directly; the live-venue tests compose the same call themselves)
+        // while every stored CAD-USD row became 1.37838 under a product id
+        // meaning 0.7255. Silent, and indistinguishable from real data.
+        let http = OandaCandles::client("https://example.test", "token").unwrap();
+        let cfg = test_cfg();
+
+        let reversed = oanda_source(
+            http.clone(),
+            "fx:oanda:CAD-USD",
+            &resolved("CAD-USD", "USD_CAD", true),
+            &cfg,
+            None,
+        )
+        .unwrap();
+        assert!(
+            reversed.inverts(),
+            "a reversed entry must produce an inverting source"
+        );
+
+        let direct = oanda_source(
+            http,
+            "fx:oanda:AUD-USD",
+            &resolved("AUD-USD", "AUD_USD", false),
+            &cfg,
+            None,
+        )
+        .unwrap();
+        assert!(
+            !direct.inverts(),
+            "a canonical-direction entry must NOT invert"
+        );
+    }
+
+    #[test]
+    fn the_collector_polls_the_venue_symbol_not_the_canonical_id() {
+        // The other half of the same positional-argument risk: `resume` takes
+        // the venue's spelling, and handing it `product_id` would ask OANDA
+        // for `CAD-USD` — which 400s, so it fails loudly rather than
+        // silently. Pinned anyway, because the two arguments are adjacent and
+        // both are strings, which is the shape that swaps unnoticed.
+        let http = OandaCandles::client("https://example.test", "token").unwrap();
+        let source = oanda_source(
+            http,
+            "fx:oanda:CAD-USD",
+            &resolved("CAD-USD", "USD_CAD", true),
+            &test_cfg(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(source.instrument(), "USD_CAD");
     }
 
     #[test]

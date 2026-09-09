@@ -18,7 +18,7 @@ use dropset_feeds::{
     CursorStore, PgCursorStore, RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
-    fx::{oanda_instrument, secret, FxConfig, FxDefaults},
+    fx::{oanda_instrument, oanda_source, secret, FxConfig, FxDefaults},
     instruments::register as register_instruments,
     roster::resolve_venue,
     store::CexWriter,
@@ -91,22 +91,13 @@ async fn main() -> anyhow::Result<()> {
     };
     let mut feeds = Vec::with_capacity(instruments.len());
     for resolved in instruments {
-        let (instrument, product_id) = (resolved.venue_symbol, resolved.product_id);
+        let product_id = resolved.product_id.clone();
         let feed = cfg.feed_name(SOURCE, &product_id);
         let resume = cursors.load(&feed).await?;
-        let source = OandaCandles::resume(
-            http.clone(),
-            feed.clone(),
-            &instrument,
-            cfg.granularity_secs,
-            cfg.max_buckets_per_request,
-            resume,
-            cfg.backfill_start_secs,
-            // A pair OANDA quotes the other way round: the adapter fetches the
-            // reciprocal instrument and inverts each candle, so what reaches
-            // the sink is already in `product_id`'s direction.
-            resolved.inverted,
-        )?;
+        // The construction lives in the library so that the instrument/invert
+        // wiring is reachable from a test — see `fx::oanda_source`, which is
+        // where the argument order is documented and pinned.
+        let source = oanda_source(http.clone(), &feed, &resolved, &cfg, resume)?;
         let writer = CexWriter::new(SOURCE, &product_id, cfg.granularity_secs);
         let sinks: Vec<Box<dyn Sink<Candle>>> =
             vec![Box::new(StoreSink::new(pool.clone(), feed.clone(), writer))];

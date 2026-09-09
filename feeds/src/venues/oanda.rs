@@ -194,6 +194,28 @@ impl OandaCandles {
         })
     }
 
+    /// The venue instrument this source polls.
+    ///
+    /// Exposed so a collector can assert what it actually wired, rather than
+    /// what it meant to. See [`Self::inverts`].
+    pub fn instrument(&self) -> &str {
+        &self.instrument
+    }
+
+    /// Whether this source inverts each candle before yielding it.
+    ///
+    /// **This accessor exists because the argument behind it is the one line
+    /// in the collector whose failure is silent.** `resume` takes eight
+    /// positional arguments and this is the last of them, so a slip that
+    /// passed `false` here would leave every test green — the adapter's own
+    /// tests construct their sources directly, and the live-venue tests
+    /// compose the same call themselves — while the store filled with
+    /// reciprocals under canonical product ids. A reader cannot tell that
+    /// from the data, because a reciprocal is a plausible price.
+    pub fn inverts(&self) -> bool {
+        self.invert
+    }
+
     /// The start of the currently-forming bucket. The venue's `complete` flag
     /// is what actually excludes a forming candle; this only bounds how far a
     /// request reaches, so the backfill never asks for the future.
