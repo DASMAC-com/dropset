@@ -123,9 +123,15 @@ pub const MARKET_ZARP: PairConfig = fx_market("ZARP", "keys/ZARP.json", 6, 0.060
 pub const MARKET_MXNE: PairConfig = fx_market("MXNe", "keys/MXNe.json", 9, 0.0573);
 pub const MARKET_XSGD: PairConfig = fx_market("XSGD", "keys/XSGD.json", 6, 0.7705);
 pub const MARKET_IDRX: PairConfig = fx_market("IDRX", "keys/idrx.json", 2, 0.000056);
+// The two MVP pairs. Their seed references are the ECB fix for 2026-09-08
+// (USD/AUD 1.3861 and USD/CAD 1.3805, reciprocated), the same
+// representative-spot basis the rest of the roster uses — the maker discovers
+// the live price from the feeds and never reads these after bootstrap.
+pub const MARKET_AUDD: PairConfig = fx_market("AUDD", "keys/AUDD.json", 6, 0.7214);
+pub const MARKET_CADC: PairConfig = fx_market("CADC", "keys/CADC.json", 6, 0.7244);
 
 /// Every localnet pair the bootstrap can bring up.
-pub const PAIRS: [&PairConfig; 7] = [
+pub const PAIRS: [&PairConfig; 9] = [
     &MARKET_EURC,
     &MARKET_VCHF,
     &MARKET_TGBP,
@@ -133,6 +139,8 @@ pub const PAIRS: [&PairConfig; 7] = [
     &MARKET_MXNE,
     &MARKET_XSGD,
     &MARKET_IDRX,
+    &MARKET_AUDD,
+    &MARKET_CADC,
 ];
 
 /// The opening / reset quote ladder: a four-rung symmetric ladder of

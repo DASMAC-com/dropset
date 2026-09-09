@@ -30,5 +30,13 @@
   "IDRX": {
     "mint": "idrxatdM6g4rzL5pWzzHcigyXE9RJa8eHxB9wCj6iwo",
     "tokenProgram": "classic"
+  },
+  "AUDD": {
+    "mint": "AUDD7hSnRsvgGmhi9spowDhbi7wucwQfE86ut9sAZBmJ",
+    "tokenProgram": "classic"
+  },
+  "CADC": {
+    "mint": "CADCCCmJMM9tP7m2AHMnWjTEKA28M5vqyghLD1u6FcNU",
+    "tokenProgram": "classic"
   }
 }

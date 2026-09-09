@@ -110,8 +110,11 @@ pub struct MarketConfig {
     pub static_usd: f64,
 }
 
-/// The demo roster — the seven non-USD FX stablecoins with ≥ $1k Solana
-/// liquidity, each quoted against USDC at $100 top-of-book. The CoinGecko ids
+/// The demo roster — nine non-USD FX stablecoins, each quoted against USDC at
+/// $100 top-of-book. Seven were chosen on ≥ $1k Solana liquidity; **AUDD and
+/// CADC are the MVP additions**, rostered because they are the pairs the first
+/// real fills are aimed at rather than because they clear that bar. The
+/// CoinGecko ids
 /// are from a by-contract lookup on each token's real mainnet mint; the
 /// CoinMarketCap ids from its `cryptocurrency/detail` record. MXNe (Real MXN)
 /// has no CoinMarketCap *coin* listing, so that tier is `None` — CMC's DEX
@@ -142,16 +145,30 @@ pub struct MarketConfig {
 /// one market has nothing to corroborate against.
 ///
 /// The Pyth feed ids are from the Hermes FX catalogue
-/// (`/v2/price_feeds?asset_type=fx`). Only EUR and GBP are published as
-/// `<ccy>/USD`; the rest are `USD/<ccy>` and carry `pyth_invert: true`.
+/// (`/v2/price_feeds?asset_type=fx`, which is still keyless even though the
+/// price reads are not). Only EUR, GBP and AUD are published as `<ccy>/USD`;
+/// the rest are `USD/<ccy>` and carry `pyth_invert: true`.
 ///
-/// **Only EURC reaches a CEX.** Coinbase lists `EURC-USDC` and Kraken lists
-/// `EURC/USD`; none of the other six tokens trades on either venue, so their
-/// basis leg has no primary tier and the CoinGecko / CoinMarketCap fallbacks
-/// carry it. That asymmetry is the roster's, not a gap in the wiring — but it
-/// does leave five markets resting their basis on one uncorroborated index
-/// reading, and MXNe (below) on none at all.
-pub const MARKETS: [MarketConfig; 7] = [
+/// **Only EURC reaches a CEX as a wired basis leg.** Coinbase lists
+/// `EURC-USDC` and Kraken lists `EURC/USD`, so EURC composes on an observed
+/// basis; five of the others reach no CEX at all, so their basis leg has no
+/// primary tier and the CoinGecko / CoinMarketCap fallbacks carry it. That
+/// asymmetry is the roster's, not a gap in the wiring — but it does leave five
+/// markets resting their basis on one uncorroborated index reading, and three
+/// (MXNe, AUDD, CADC) on a pinned basis instead.
+///
+/// **AUDD is the one deliberate omission, and it is not an oversight.**
+/// Coinbase does list `AUDD-USDC` — re-checked 2026-09-08, `online` with
+/// `trading_disabled: false`, and the market-data ticker collector rosters it
+/// again. It is left unwired here for the MVP on two grounds. First, the
+/// operator's re-scope is explicit that for the first fills the FX anchor times
+/// the 1:1 redemption peg is enough for AUDD and CADC, and only EURC uses a
+/// stored Coinbase basis. Second, the product is thinly traded, and a ticker
+/// poll returns the last print whether or not one happened recently — so a
+/// stale print aged from receipt would read fresh and *corroborate* the basis
+/// leg with a number nobody traded. Wiring it is the v2 upgrade, and it wants
+/// the publication-vs-receipt aging the FX tiers now use, not a bare ticker.
+pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "EURC",
         base_keypair_file: "keys/EURC.json",
@@ -266,6 +283,37 @@ pub const MARKETS: [MarketConfig; 7] = [
         coinmarketcap_id: Some(26732),
         pinned_basis: None,
         static_usd: 0.000056,
+    },
+    // The two MVP pairs added beside EURC. Both quote off the FX composite
+    // alone, on a pinned 1.0 basis — see the roster note above for why each has
+    // no observed basis leg, which is a different reason in each case.
+    MarketConfig {
+        symbol: "AUDD",
+        base_keypair_file: "keys/AUDD.json",
+        base_decimals: 6,
+        currency: "AUD",
+        pyth_feed_id: "67a6f93030420c1c9e3fe37c1ab6b77966af82f995944a9fefce357a22854a80",
+        pyth_invert: false,
+        coinbase_product: None,
+        kraken_pair: None,
+        coingecko_id: None,
+        coinmarketcap_id: None,
+        pinned_basis: Some(1.0),
+        static_usd: 0.7214,
+    },
+    MarketConfig {
+        symbol: "CADC",
+        base_keypair_file: "keys/CADC.json",
+        base_decimals: 6,
+        currency: "CAD",
+        pyth_feed_id: "3112b03a41c910ed446852aacf67118cb1bec67b2cd0b9a214c58cc0eaa2ecca",
+        pyth_invert: true,
+        coinbase_product: None,
+        kraken_pair: None,
+        coingecko_id: None,
+        coinmarketcap_id: None,
+        pinned_basis: Some(1.0),
+        static_usd: 0.7244,
     },
 ];
 
