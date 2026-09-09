@@ -80,8 +80,8 @@ mod reading;
 
 pub use config::{ConfigError, FairValueConfig};
 pub use consensus::{
-    Candidate, Candidates, Consensus, ConsensusState, Contributor, Contributors, SourceClass,
-    MAX_CANDIDATES,
+    Candidate, Candidates, Consensus, ConsensusState, Contributor, Contributors, LegStaleness,
+    SourceClass, MAX_CANDIDATES,
 };
 pub use engine::{
     observed_basis, Anchor, ClockCtx, Degrade, FairValue, FairValueEngine, Health, LegReport, Legs,

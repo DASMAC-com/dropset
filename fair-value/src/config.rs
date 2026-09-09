@@ -21,16 +21,17 @@
 
 use std::time::Duration;
 
+use crate::consensus::LegStaleness;
 use crate::fusion::FusionConfig;
 
 /// Every constant the fair-value engine reads. See the module header: the
 /// defaults are demo-safe placeholders, not calibrated values.
 #[derive(Clone, Copy, Debug)]
 pub struct FairValueConfig {
-    /// A leg older than this is stale and drops out of the composition.
-    /// TBD(analytics): the §1 per-leg staleness thresholds (FX vs basis vs
-    /// peg-truth cadences differ by orders of magnitude).
-    pub leg_stale: Duration,
+    /// A reading older than its class's bound is stale and drops out of the
+    /// composition. See [`LegStaleness`] for why the split is by source class
+    /// and not by leg.
+    pub leg_stale: LegStaleness,
 
     /// The basis EMA smoothing half-life — how slowly the multiplicative
     /// correction tracks its live observations (§1 basis estimation).
@@ -151,6 +152,8 @@ pub enum ConfigError {
     NotAFraction(&'static str),
     /// A duration that must be non-zero is zero.
     ZeroDuration(&'static str),
+    /// The per-class staleness bounds are ordered the wrong way round.
+    StalenessInverted,
 }
 
 impl std::fmt::Display for ConfigError {
@@ -160,6 +163,10 @@ impl std::fmt::Display for ConfigError {
             Self::NotPositive(field) => write!(f, "{field}: must be positive and finite"),
             Self::NotAFraction(field) => write!(f, "{field}: must be a fraction in (0, 1]"),
             Self::ZeroDuration(field) => write!(f, "{field}: must be a non-zero duration"),
+            Self::StalenessInverted => write!(
+                f,
+                "leg_stale: the reference bound must not be shorter than the tape bound"
+            ),
         }
     }
 }
@@ -177,8 +184,19 @@ impl FairValueConfig {
     /// from the compile-time markets table today — this is hardening, so that a
     /// later runtime-configurable path cannot introduce it quietly.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.leg_stale.is_zero() {
-            return Err(ConfigError::ZeroDuration("leg_stale"));
+        if self.leg_stale.tape.is_zero() {
+            return Err(ConfigError::ZeroDuration("leg_stale.tape"));
+        }
+        if self.leg_stale.reference.is_zero() {
+            return Err(ConfigError::ZeroDuration("leg_stale.reference"));
+        }
+        // Inverting the two would let a daily fix age out faster than a live
+        // tape, which is the exact inversion the class split exists to remove.
+        // Nothing can reach it from the compile-time markets table today; this
+        // is hardening for the runtime-configurable path this validator's own
+        // doc anticipates.
+        if self.leg_stale.reference < self.leg_stale.tape {
+            return Err(ConfigError::StalenessInverted);
         }
         if self.basis_half_life.is_zero() {
             return Err(ConfigError::ZeroDuration("basis_half_life"));
@@ -247,9 +265,51 @@ fn is_fraction(v: f64) -> bool {
 impl Default for FairValueConfig {
     fn default() -> Self {
         Self {
-            // Placeholder: the old maker used a flat 5-minute feed staleness.
-            // TBD(analytics): split per leg.
-            leg_stale: Duration::from_secs(5 * 60),
+            leg_stale: LegStaleness {
+                // The old flat feed staleness, kept for the tape class. A tape
+                // publishes continuously, so its bound answers "how long may a
+                // live source go quiet before it is presumed dead" — measured
+                // per-source, not guessed. Recalibratable.
+                tape: Duration::from_secs(5 * 60),
+                // Seven days, and deliberately not the observed tail.
+                //
+                // A reference fix is authoritative for the moment it names, so
+                // this bound must exceed the longest gap between publications
+                // or the class drops out of the roster entirely. Measured
+                // cadence over a daily FX series is 24h between working days
+                // and 72h across a weekend — but a sample window containing no
+                // holiday says nothing about the closures that bind. The
+                // Easter block (Good Friday plus Easter Monday) puts 120h
+                // between two consecutive fixes, and the Christmas/New Year
+                // closures are comparable, so a bound set at the observed 72h
+                // would drop every reference source on the first long weekend
+                // of the year.
+                //
+                // **Size against ~134h, not 120h.** Age is measured from the
+                // fix's *reference date*, which the adapter floors to midnight
+                // UTC, while the ECB publishes around 14:00 UTC that day — so
+                // every reading presents ~14h older than its true vintage and
+                // the 120h closure arrives here as ~134h. That mechanism is
+                // the reason this is not six days: six (144h) clears ~134h by
+                // only ~10h, which is thinner than the margin the figure
+                // appears to carry. Seven days (168h) restores it.
+                //
+                // The cost of the wider bound is close to nothing: a reference
+                // source never leads a leg while a tape answers, fusion
+                // de-weights it by age on its own, and the weekend regime gate
+                // suppresses it independently of ageing.
+                //
+                // **Unverified assumption**, flagged rather than buried: that
+                // no TARGET closure exceeds 120h. That comes from reading the
+                // holiday calendar (Easter's Thursday→Tuesday and the
+                // Christmas/New Year block both land at five days), not from a
+                // source. Anyone who verifies it against the published TARGET
+                // calendar can tighten back toward six days with evidence.
+                //
+                // Recalibratable; post-validation analytics owns the real
+                // number.
+                reference: Duration::from_secs(7 * 24 * 60 * 60),
+            },
             // Placeholder: a slow, minutes-scale smoothing so the demo basis
             // (when FX is wired) doesn't chase. TBD(analytics).
             basis_half_life: Duration::from_secs(10 * 60),
@@ -314,9 +374,89 @@ mod tests {
     #[test]
     fn positive_durations_and_fraction() {
         let c = FairValueConfig::default();
-        assert!(c.leg_stale > Duration::ZERO);
+        assert!(c.leg_stale.tape > Duration::ZERO);
+        assert!(c.leg_stale.reference > Duration::ZERO);
         assert!(c.basis_half_life > Duration::ZERO);
         assert!(c.fx_max_confidence_frac > 0.0);
+    }
+
+    #[test]
+    fn the_reference_bound_survives_a_holiday_extended_closure() {
+        // The bound this pins is the whole point of splitting by class: a
+        // reference fix must stay live across the longest gap between two
+        // publications, or it drops out of the roster on a closure nobody is
+        // watching. A normal weekend is 72h; the Easter block (Good Friday plus
+        // Easter Monday) is 120h and is what binds. A bound calibrated to the
+        // observed weekend tail passes a 72h assertion and still fails here,
+        // which is why the holiday case is asserted rather than the weekend.
+        let c = FairValueConfig::default();
+        let easter_block = Duration::from_secs(120 * 60 * 60);
+        assert!(
+            c.leg_stale.reference > easter_block,
+            "reference bound {:?} must exceed the {easter_block:?} Easter closure",
+            c.leg_stale.reference
+        );
+    }
+
+    #[test]
+    fn a_reference_fix_outlives_a_tape() {
+        // The classes are ordered by construction: a tape that has gone quiet
+        // for longer than a daily fix's publication interval is dead, while the
+        // fix at that same age is merely doing what a daily fix does.
+        let c = FairValueConfig::default();
+        assert!(c.leg_stale.reference > c.leg_stale.tape);
+    }
+
+    #[test]
+    fn an_inverted_pair_of_bounds_is_rejected() {
+        // The ordering is an invariant, not just a property of the defaults —
+        // inverted, a daily fix would age out faster than a live tape.
+        let c = FairValueConfig {
+            leg_stale: LegStaleness {
+                tape: Duration::from_secs(600),
+                reference: Duration::from_secs(60),
+            },
+            ..Default::default()
+        };
+        assert_eq!(c.validate(), Err(ConfigError::StalenessInverted));
+
+        // Equal bounds are permitted: that is `uniform`, which is degenerate
+        // rather than inverted.
+        let c = FairValueConfig {
+            leg_stale: LegStaleness::uniform(Duration::from_secs(600)),
+            ..Default::default()
+        };
+        assert_eq!(c.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_zero_bound_is_rejected_per_class() {
+        // Both halves are checked, and they name themselves distinctly — a
+        // validator that reported one field for either would send the operator
+        // to the wrong value.
+        let c = FairValueConfig {
+            leg_stale: LegStaleness {
+                tape: Duration::ZERO,
+                ..FairValueConfig::default().leg_stale
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            c.validate(),
+            Err(ConfigError::ZeroDuration("leg_stale.tape"))
+        );
+
+        let c = FairValueConfig {
+            leg_stale: LegStaleness {
+                reference: Duration::ZERO,
+                ..FairValueConfig::default().leg_stale
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            c.validate(),
+            Err(ConfigError::ZeroDuration("leg_stale.reference"))
+        );
     }
 
     #[test]

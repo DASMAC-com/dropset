@@ -203,6 +203,7 @@ ratatui
 raydium
 readback
 reauthored
+recalibratable
 refspec
 regclass
 rels

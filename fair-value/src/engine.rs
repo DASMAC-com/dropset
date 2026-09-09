@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use crate::basis::{BasisEma, Fold};
 use crate::config::FairValueConfig;
-use crate::consensus::{Candidates, Consensus, ConsensusState, Contributors};
+use crate::consensus::{Candidates, Consensus, ConsensusState, Contributors, LegStaleness};
 use crate::fusion::{Fusion, FusionReport, FusionStep};
 
 /// The raw feed legs for one market on one tick. Each leg carries **every
@@ -99,7 +99,7 @@ impl Legs {
     /// division are stated once. The consumer's copy had already drifted into
     /// re-implementing the crate's leg gating alongside the arithmetic, which is
     /// the shape this crate exists to prevent.
-    pub fn observed_basis(&self, stale: Duration, dispersion_frac: f64) -> Option<f64> {
+    pub fn observed_basis(&self, stale: LegStaleness, dispersion_frac: f64) -> Option<f64> {
         let fx = self.fx.resolve(stale, dispersion_frac).reading?;
         let crypto = self.crypto_usdc.resolve(stale, dispersion_frac).reading?;
         observed_basis(crypto.value, fx.value)
@@ -503,7 +503,7 @@ impl FairValueEngine {
     /// state, freshness and outlier would describe a resolution the composed
     /// reading never used, with nothing failing. A diagnostic that
     /// disagrees with the thing it is diagnosing is worse than none.
-    pub fn leg_bounds(&self) -> (Duration, f64) {
+    pub fn leg_bounds(&self) -> (LegStaleness, f64) {
         (self.cfg.leg_stale, self.cfg.leg_dispersion_frac)
     }
 
@@ -1576,7 +1576,7 @@ mod tests {
     /// set must not count as checked.
     #[test]
     fn a_basis_is_observable_only_when_both_legs_are_live_and_fresh() {
-        let stale = secs(300);
+        let stale = LegStaleness::uniform(secs(300));
         let base = Legs {
             fx: src(fresh(0.0573)),
             crypto_usdc: src(fresh(0.0573)),

@@ -13,7 +13,7 @@
 //! currency the keyless FX-rate tier pegs to — plus the mock-mint keypair and
 //! decimals the localnet bootstrap and inventory valuation need.
 
-use dropset_fair_value::FairValueConfig;
+use dropset_fair_value::{FairValueConfig, LegStaleness};
 use dropset_sdk::clock::{SlotSpan, WallSpan};
 use std::time::Duration;
 
@@ -617,21 +617,45 @@ impl Default for BotConfig {
             kill: KillSwitchConfig::default(),
             invalidate: InvalidateConfig::default(),
             fair_value: FairValueConfig {
-                // One bound has to cover legs whose cadences differ by orders
+                // One bound used to cover legs whose cadences differ by orders
                 // of magnitude: Pyth republishes every second or so, while the
                 // Frankfurter fallback behind it is a once-a-working-day ECB
-                // reference. The bound is therefore set by the *slowest* leg —
-                // anything tighter would drop the fallback out of the
-                // composition permanently, which is the tier that keeps the six
-                // CEX-less exotics quoting at all.
+                // reference. It was therefore set by the *slowest* leg —
+                // anything tighter dropped the fallback out of the composition
+                // permanently, which is the tier that keeps the six CEX-less
+                // exotics quoting at all.
                 //
-                // The cost is that a dead Pyth feed is not caught for 15 min on
-                // its own; in practice the weekend flip is what this governs,
-                // and Pyth ages from its `publish_time` (not from receipt), so
-                // a frozen FX session does go stale here rather than reading as
-                // perpetually fresh. TBD(analytics): split per leg, which is
-                // the real fix and belongs to the analytics.
-                leg_stale: Duration::from_secs(15 * 60),
+                // That is now split by source class rather than by leg, which
+                // is the only split that can express it: a daily fix and a live
+                // Pyth tape sit on the *same* FX leg, so the leg never
+                // identified the convention. See `LegStaleness`.
+                leg_stale: LegStaleness {
+                    // Held where it was rather than tightened, on measurement.
+                    //
+                    // Splitting the classes made a tighter tape bound possible
+                    // and the measured tail does not support one. The fat tail
+                    // of inter-tick gaps is dominated by *stack-wide* outages,
+                    // which are caught whatever this value is — every leg goes
+                    // stale together — so only single-source gaps may set it,
+                    // and the worst of those measured is minutes rather than
+                    // seconds. A materially tighter bound would reject readings
+                    // during gaps that actually happened.
+                    //
+                    // The standing cost is unchanged and worth restating: a
+                    // dead Pyth is not caught for the width of this bound. Pyth
+                    // ages from its `publish_time` rather than from receipt, so
+                    // a frozen FX session does go stale here rather than
+                    // reading as perpetually fresh. Recalibratable; the
+                    // supporting measurements are dev-stack figures recorded in
+                    // the issue, and post-validation analytics owns the real
+                    // number.
+                    tape: Duration::from_secs(15 * 60),
+                    // The reference bound is the crate default, sized to clear
+                    // the longest gap between two published fixes rather than
+                    // the longest one this roster happens to have observed.
+                    // See `FairValueConfig::default`.
+                    reference: FairValueConfig::default().leg_stale.reference,
+                },
                 ..FairValueConfig::default()
             },
         }

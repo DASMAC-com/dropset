@@ -102,6 +102,64 @@ impl SourceClass {
     }
 }
 
+/// The staleness bound for each [`SourceClass`].
+///
+/// # Why one bound per class rather than one per leg
+///
+/// A single shared bound has to cover publication conventions that differ by
+/// orders of magnitude, so it is set by the slowest source on the roster and is
+/// then simultaneously too loose for a tape (a dead feed is not caught until
+/// the slow bound elapses) and too tight for a daily fix (whose honest age
+/// exceeds it within hours, dropping the reference class out of the composition
+/// entirely).
+///
+/// The split cannot be *per leg*: a daily reference fix and a live tape sit on
+/// the same FX leg, so the leg does not identify the convention. The
+/// [`SourceClass`] does, and every candidate already carries one — which is why
+/// this is keyed by class and lives beside it.
+///
+/// Both values are **recalibratable**; see [`crate::FairValueConfig`]'s
+/// defaults for the derivation behind each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LegStaleness {
+    /// Bound for a [`SourceClass::Tape`] source — one that publishes
+    /// continuously and whose age is a statement about now.
+    pub tape: Duration,
+    /// Bound for a [`SourceClass::Reference`] source — one published on a slow
+    /// schedule, authoritative for the moment it names. Must exceed the longest
+    /// gap between publications, holidays included, or the class drops out of
+    /// the roster on a closure nobody is watching.
+    pub reference: Duration,
+}
+
+impl LegStaleness {
+    /// One bound for every class — the shape a test wants when staleness is not
+    /// what it is exercising.
+    ///
+    /// This reproduces the pre-split behavior, which is the defect the split
+    /// exists to remove, so it is not what a production configuration should
+    /// state — a real config gives both bounds their own value. That is a
+    /// statement of intent rather than an enforced invariant: equal bounds are
+    /// degenerate, not *inverted*, so `FairValueConfig::validate` accepts them
+    /// and only rejects a reference bound shorter than the tape one. Kept
+    /// public for tests and for a caller migrating a single-bound value across
+    /// the signature change.
+    pub const fn uniform(bound: Duration) -> Self {
+        Self {
+            tape: bound,
+            reference: bound,
+        }
+    }
+
+    /// The bound governing `class`.
+    pub fn for_class(self, class: SourceClass) -> Duration {
+        match class {
+            SourceClass::Tape => self.tape,
+            SourceClass::Reference => self.reference,
+        }
+    }
+}
+
 /// One source's reading for a leg, tagged so a disagreement can name who
 /// diverged.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -231,9 +289,17 @@ impl Candidates {
 
     /// Whether some source answered promptly but with an unusable value. Lets a
     /// caller tell a live feed publishing garbage from a dead one.
-    pub fn any_invalid(&self, stale: Duration) -> bool {
+    ///
+    /// **"Promptly" means each candidate's own class bound**, which is a much
+    /// weaker claim for the reference class than for a tape: a reference source
+    /// that published garbage and then died still counts as "answered promptly"
+    /// until its publication age crosses the reference bound, so the caller
+    /// reports it as invalid rather than stale for that whole window. Both
+    /// arms degrade the same way, so this costs a label rather than a decision
+    /// — but the label is the one an operator reads.
+    pub fn any_invalid(&self, stale: LegStaleness) -> bool {
         self.iter()
-            .any(|c| c.reading.young(stale) && !c.reading.valid())
+            .any(|c| c.reading.young(stale.for_class(c.class)) && !c.reading.valid())
     }
 
     /// Every healthy candidate's value, in offer order.
@@ -243,9 +309,9 @@ impl Candidates {
     /// rather than "what is this leg worth?". Those are different questions, and
     /// answering the first from the consensus is how a guard gets silenced by
     /// the very disagreement it exists to catch.
-    pub fn healthy_values(&self, stale: Duration) -> impl Iterator<Item = f64> + '_ {
+    pub fn healthy_values(&self, stale: LegStaleness) -> impl Iterator<Item = f64> + '_ {
         self.iter()
-            .filter(move |c| c.reading.fresh(stale))
+            .filter(move |c| c.reading.fresh(stale.for_class(c.class)))
             .map(|c| c.reading.value)
     }
 
@@ -274,7 +340,7 @@ impl Candidates {
     /// the dispersion gate — is therefore a statement about the fast set. That
     /// is the honest reading: `n` is how many sources corroborate the fast
     /// signal, and a reference fix does not corroborate it.
-    pub fn resolve(&self, stale: Duration, dispersion_frac: f64) -> Consensus {
+    pub fn resolve(&self, stale: LegStaleness, dispersion_frac: f64) -> Consensus {
         // Both fills zip against the destination array. Note this is *not*
         // guarding an overflow here: `iter()` walks a fixed
         // `[Option<Candidate>; MAX_CANDIDATES]`, so it can never yield more than
@@ -283,10 +349,10 @@ impl Candidates {
         // over the same fixed width. (`Fusion::update` takes an arbitrary public
         // slice and does need the guard — see the comment there.)
         let mut all = [None; MAX_CANDIDATES];
-        for (slot, c) in all
-            .iter_mut()
-            .zip(self.iter().filter(|c| c.reading.fresh(stale)))
-        {
+        for (slot, c) in all.iter_mut().zip(
+            self.iter()
+                .filter(|c| c.reading.fresh(stale.for_class(c.class))),
+        ) {
             *slot = Some(*c);
         }
 
@@ -853,7 +919,7 @@ mod tests {
         Reading::new(v, secs(1))
     }
 
-    const STALE: Duration = Duration::from_secs(300);
+    const STALE: LegStaleness = LegStaleness::uniform(Duration::from_secs(300));
     /// A 2% dispersion band, tight enough that the cases below are unambiguous.
     const BAND: f64 = 0.02;
 
@@ -1274,6 +1340,93 @@ mod tests {
         let dead = Candidates::none().push("a", Some(Reading::new(1.14, secs(600))));
         assert!(!dead.any_invalid(STALE), "stale is not invalid");
         assert!(!Candidates::none().any_invalid(STALE));
+    }
+
+    /// The bound each class is measured against must be the bound for *that*
+    /// class, and nothing else in this module's tests can see that: they all
+    /// use [`LegStaleness::uniform`], under which the routing is invisible.
+    ///
+    /// So this pins the routing directly. Both candidates are offered at the
+    /// same age, sitting between the two bounds, and differ only in class —
+    /// which makes the assertion a statement about `for_class` and nothing
+    /// else. It fails if the arms of `for_class` are swapped, and it fails if
+    /// any of the three call sites reverts to measuring every candidate
+    /// against one bound.
+    #[test]
+    fn each_class_is_measured_against_its_own_bound() {
+        let split = LegStaleness {
+            tape: secs(60),
+            reference: secs(86_400),
+        };
+        // 600s: past the tape bound, well inside the reference bound.
+        let aged = Reading::new(1.14, secs(600));
+        let set = Candidates::none()
+            .push("tape", Some(aged))
+            .push_reference("fix", Some(aged));
+
+        let healthy: Vec<&'static str> = set
+            .resolve(split, BAND)
+            .healthy()
+            .iter()
+            .flatten()
+            .map(|c| c.source)
+            .collect();
+        assert_eq!(
+            healthy,
+            vec!["fix"],
+            "at 600s only the reference-class candidate is within its bound"
+        );
+
+        // Swapping the bounds must invert exactly which one survives.
+        //
+        // The assertion above already catches every wrong `for_class` I can
+        // construct — transposed arms, either field returned unconditionally,
+        // `max`, `min` — so this half is a redundant confirmation rather than
+        // the load-bearing check. It earns its place by pinning the *direction*
+        // of the mapping rather than only that some mapping happens: without
+        // it, a reader has to derive from the bound values which arm was
+        // consulted.
+        let swapped = LegStaleness {
+            tape: secs(86_400),
+            reference: secs(60),
+        };
+        let healthy: Vec<&'static str> = set
+            .resolve(swapped, BAND)
+            .healthy()
+            .iter()
+            .flatten()
+            .map(|c| c.source)
+            .collect();
+        assert_eq!(
+            healthy,
+            vec!["tape"],
+            "with the bounds swapped the tape candidate is the surviving one"
+        );
+    }
+
+    /// `any_invalid` reads the same per-class bound, so a garbage reading past
+    /// the tape bound is still "prompt" for a reference source and not for a
+    /// tape one. Pins the second of the three call sites.
+    #[test]
+    fn invalidity_is_judged_against_the_candidate_s_own_bound() {
+        let split = LegStaleness {
+            tape: secs(60),
+            reference: secs(86_400),
+        };
+        let garbage = Reading::new(0.0, secs(600));
+
+        assert!(
+            Candidates::none()
+                .push_reference("fix", Some(garbage))
+                .any_invalid(split),
+            "a reference source inside its own bound is answering, so garbage is invalid"
+        );
+        assert!(
+            !Candidates::none()
+                .push("tape", Some(garbage))
+                .any_invalid(split),
+            "the same reading on a tape source is past its bound, so it reads as dead"
+        );
     }
 
     /// The contributor set as `(source, weight)`, in iteration order — which is
