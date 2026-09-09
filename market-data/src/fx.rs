@@ -491,7 +491,7 @@ mod tests {
         // Not a startup failure here: `parse_roster` is what rejects an empty
         // spec, and duplicating that judgement would give one mistake two
         // different error messages depending on which layer caught it.
-        let roster = usd_quoted_currencies("erapi", &[]).unwrap();
+        let roster = usd_quoted_currencies("er-api", &[]).unwrap();
         assert!(roster.currencies.is_empty());
         assert!(roster.by_currency.is_empty());
     }

@@ -50,7 +50,11 @@ use std::collections::{BTreeMap, BTreeSet};
 const COMPOSE: &str = include_str!("../../infra/localnet/docker-compose.yml");
 
 /// How a service's Rust default relates to its compose default.
-#[derive(Clone, Copy)]
+///
+/// Carries no derives: its only use is a `match` on unit variants binding
+/// nothing, which reads the discriminant and moves nothing out of the owned
+/// `Wiring`. Clippy does not warn on an unused derive, so this is the kind of
+/// thing only a reader catches.
 enum Mode {
     /// The two name the same pairs. The service owns its constant.
     Exact,
@@ -132,9 +136,9 @@ fn wirings() -> Vec<Wiring> {
     ]
 }
 
-/// Split a `AUD-USD,EUR-USD` roster spec the way `roster::parse_roster` does:
-/// trimming the whitespace a YAML fold leaves behind, skipping blank entries,
-/// and **upper-casing**.
+/// Split a `AUD-USD,EUR-USD` roster spec into its normalized entries: trimming
+/// the whitespace a YAML fold leaves behind, skipping blank entries, and
+/// **upper-casing**.
 ///
 /// The upper-casing is not cosmetic. `parse_roster` normalizes every id before
 /// a collector sees it, so `eur-usd` in compose is `EUR-USD` at runtime — which
@@ -142,12 +146,30 @@ fn wirings() -> Vec<Wiring> {
 /// difference, and the canonical-id guard below would reject a spelling that
 /// works perfectly in production. Matching the runtime normalization is what
 /// keeps both from being latent.
+///
+/// **This is deliberately NOT a re-implementation of `parse_roster`**, and the
+/// difference is load-bearing in one direction: that function *rejects* a
+/// duplicate canonical id, whereas a `BTreeSet` silently collapses one. A
+/// compose default carrying the same pair twice would therefore crash every
+/// collector at startup while a set-only comparison stayed green — exactly the
+/// silent divergence this file exists to close. [`entry_count`] is what covers
+/// it. (`parse_roster` also accepts the `CANONICAL=VENUE` pin form, which is
+/// not re-implemented either — but that one fails loudly through the
+/// canonical-id guard, since `=` is not an upper-case letter.)
 fn pairs(spec: &str) -> BTreeSet<String> {
+    entries(spec).map(str::to_ascii_uppercase).collect()
+}
+
+/// The spec's entries before deduping — the input [`pairs`] collapses.
+fn entries(spec: &str) -> impl Iterator<Item = &str> {
     spec.split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
-        .map(str::to_ascii_uppercase)
-        .collect()
+}
+
+/// How many entries a spec names, counting a repeat twice.
+fn entry_count(spec: &str) -> usize {
+    entries(spec).count()
 }
 
 /// The value of a `const DEFAULT_PRODUCTS: &str = "…";` in Rust source.
@@ -202,11 +224,18 @@ fn compose_defaults() -> BTreeMap<String, String> {
             }
         }
         // Matched at its EXACT indent — six spaces, under `environment:` —
-        // rather than at any depth. The continuation rule below keys on eight
-        // spaces, so a depth-insensitive match here would let the two rules
-        // disagree: a `PRODUCT_IDS:` at some other depth would match, then find
-        // none of its own continuation lines and silently yield an empty
-        // roster. All eight occurrences in the file sit at six.
+        // rather than at any depth. A depth-insensitive match would pair a key
+        // at some other depth with the continuation rule below, which keys on
+        // eight spaces, and silently yield an empty roster. Anchoring at column
+        // zero also excludes the two INNER `${PRODUCT_IDS:-…}` references (the
+        // coinbase pair), so the ten textual occurrences reduce to the eight
+        // keys, all of which sit at six spaces today.
+        //
+        // The two rules are still only pinned to today's file, not derived
+        // from each other: YAML would accept a seven-space continuation, which
+        // this loop would treat as the end of the block. That truncation is
+        // loud for the five `Exact` services and — like everything else about
+        // them — silent for the three subset ones.
         let Some(value) = line.strip_prefix("      PRODUCT_IDS:") else {
             continue;
         };
@@ -345,6 +374,21 @@ fn the_extractors_actually_found_every_roster() {
              pass for the wrong reason",
             wiring.service,
         );
+        // Neither side may name a pair twice. This is the one way `pairs`'s
+        // set semantics diverge from `parse_roster` in the DANGEROUS
+        // direction: the parser rejects a duplicate canonical id and refuses
+        // to start, while a set just collapses it — so without this a repeated
+        // pair in compose would crash every collector at startup with this
+        // suite green.
+        for (side, spec) in [("rust", rust.as_str()), ("compose", composed.as_str())] {
+            assert_eq!(
+                entry_count(spec),
+                pairs(spec).len(),
+                "the {side} roster for `{}` names a pair twice, which \
+                 `parse_roster` rejects at startup: {spec:?}",
+                wiring.service,
+            );
+        }
         // Every entry on both sides is a canonical `BASE-QUOTE` id. This is
         // what catches a fold that swallowed a separator: `EUR-USD GBP-USD`
         // parses as one entry and would otherwise just look like a missing pair.

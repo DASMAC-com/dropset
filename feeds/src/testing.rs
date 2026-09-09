@@ -42,14 +42,24 @@ pub(crate) async fn serve_once(response: Vec<u8>) -> u16 {
 /// **The captured head is the whole head, request headers included** — so
 /// assert through [`request_line`] rather than on the raw string. A raw-head
 /// assertion against a client built with `with_secret_header` would print the
-/// credential into the CI log on failure; narrowing to the request line makes
-/// that impossible by construction rather than by care.
+/// credential into the CI log on failure.
+///
+/// Note the bound on that, because the obvious stronger claim is false:
+/// narrowing to the request line removes a **header**-borne credential, not
+/// every credential. `HttpClient` also carries secrets as **query
+/// parameters** (`with_secret_query_param`), and a query string is part of the
+/// request line — so a capturing test against such a client still has the
+/// secret in what it asserts on. No test configures one today; a future one
+/// must redact rather than rely on this helper.
 ///
 /// The receiver resolves once a **complete** head has been drained, and yields
 /// an `Err` if the client hung up before completing one — so a caller's
 /// `expect` on it means what it says. Sending a partial head instead would
 /// surface a truncated request as a confusing assertion failure on a mangled
-/// request line, rather than as the disconnect it actually was.
+/// request line, rather than as the disconnect it actually was. The one case
+/// that neither resolves nor errors is a client that never connects at all,
+/// which holds the sender inside a parked `accept`; in practice the client's
+/// own failed request panics first.
 pub(crate) async fn serve_once_capturing(response: Vec<u8>) -> (u16, oneshot::Receiver<String>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
