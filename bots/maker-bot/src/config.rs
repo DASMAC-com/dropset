@@ -630,36 +630,30 @@ impl Default for BotConfig {
                 // Pyth tape sit on the *same* FX leg, so the leg never
                 // identified the convention. See `LegStaleness`.
                 leg_stale: LegStaleness {
-                    // Held at 15 min rather than tightened, on measurement.
+                    // Held where it was rather than tightened, on measurement.
                     //
-                    // Splitting the classes made a tighter tape bound possible,
-                    // and the measured tail does not support one. Inter-tick
-                    // gaps over the stored history are 15s at the median, but
-                    // the fat tail is dominated by *stack-wide* outages — of 15
-                    // gaps past 300s in the window where all three tape sources
-                    // were live, 12 hit all three at once. Those are caught
-                    // whatever this value is, since every leg goes stale
-                    // together; the bound's discriminating job is a single
-                    // source dying while the others answer.
-                    //
-                    // Excluding the stack-wide events, the worst single-source
-                    // gap measured is 439s (Kraken), with Pyth showing one of
-                    // 4440s. A bound under ~10 min would reject readings during
-                    // gaps that actually happened, so 15 min keeps roughly 2x
-                    // margin over the measured tail.
+                    // Splitting the classes made a tighter tape bound possible
+                    // and the measured tail does not support one. The fat tail
+                    // of inter-tick gaps is dominated by *stack-wide* outages,
+                    // which are caught whatever this value is — every leg goes
+                    // stale together — so only single-source gaps may set it,
+                    // and the worst of those measured is minutes rather than
+                    // seconds. A materially tighter bound would reject readings
+                    // during gaps that actually happened.
                     //
                     // The standing cost is unchanged and worth restating: a
-                    // dead Pyth is not caught for 15 min. Pyth ages from its
-                    // `publish_time` rather than from receipt, so a frozen FX
-                    // session does go stale here rather than reading as
-                    // perpetually fresh. Recalibratable — and these are
-                    // dev-stack figures, so post-validation analytics owns the
-                    // real number.
+                    // dead Pyth is not caught for the width of this bound. Pyth
+                    // ages from its `publish_time` rather than from receipt, so
+                    // a frozen FX session does go stale here rather than
+                    // reading as perpetually fresh. Recalibratable; the
+                    // supporting measurements are dev-stack figures recorded in
+                    // the issue, and post-validation analytics owns the real
+                    // number.
                     tape: Duration::from_secs(15 * 60),
-                    // The reference bound is the crate default: six days, sized
-                    // to clear the longest gap between two published fixes
-                    // rather than the longest one this roster happens to have
-                    // observed. See `FairValueConfig::default`.
+                    // The reference bound is the crate default, sized to clear
+                    // the longest gap between two published fixes rather than
+                    // the longest one this roster happens to have observed.
+                    // See `FairValueConfig::default`.
                     reference: FairValueConfig::default().leg_stale.reference,
                 },
                 ..FairValueConfig::default()

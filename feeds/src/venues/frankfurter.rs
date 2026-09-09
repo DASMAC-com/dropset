@@ -89,12 +89,17 @@ impl FrankfurterSource {
     /// erroring, per the batched-poll convention in [`venues`](super).
     ///
     /// **Deliberately does not parse the response's `date`.** This is the
-    /// method the maker's fair-value cascade drives, and it discards the
-    /// reference date, so parsing one here would put a date-parse on the
-    /// quoting path for a value that path never reads — widening what a
-    /// malformed upstream response can reach for no benefit. The date is
-    /// parsed only by [`poll_snapshot`](Self::poll_snapshot), whose caller
-    /// actually stores it.
+    /// rates-only decode, for a caller that has no use for the reference date
+    /// — the maker's one-shot dry-run is the live instance — so parsing one
+    /// here would widen what a malformed upstream response can reach for no
+    /// benefit to that caller. The date is parsed only by
+    /// [`poll_snapshot`](Self::poll_snapshot).
+    ///
+    /// Note this is **no longer** the method the maker's quoting path drives:
+    /// that path moved to the snapshot variant in order to age the fix from
+    /// publication rather than receipt. The narrow decode is kept because it is
+    /// still the honest shape for a caller that wants rates alone, not because
+    /// the quoting path depends on it.
     pub async fn poll(&self) -> Result<Quotes<String>> {
         let body = self.fetch().await?;
         let currencies: Vec<&str> = self.currencies.iter().map(String::as_str).collect();
@@ -125,12 +130,14 @@ impl FrankfurterSource {
 
 /// A poll [`Source`] yielding [`FrankfurterSnapshot`] rather than a bare
 /// [`Quotes`] map — the same venue, the same single request, for a consumer
-/// that keys stored readings on the reference date.
+/// that needs the reference date: one that keys stored readings on it, or one
+/// that ages the fix from publication rather than receipt.
 ///
-/// A separate type rather than a change to [`FrankfurterSource`] because that
-/// source's `Record` is what the maker's fair-value cascade receives over its
-/// broadcast channel; moving it would ripple into the quoting path for a
-/// benefit only the store path can use.
+/// A separate type rather than a change to [`FrankfurterSource`] so that each
+/// `Record` shape stays available on its own. The maker's quoting path now
+/// takes *this* one over its broadcast channel — the ripple that decision
+/// implies was accepted deliberately, because ageing a daily fix from receipt
+/// reports it as seconds old however long ago it was published.
 pub struct FrankfurterSnapshotSource(FrankfurterSource);
 
 impl FrankfurterSnapshotSource {

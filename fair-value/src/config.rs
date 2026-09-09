@@ -152,6 +152,8 @@ pub enum ConfigError {
     NotAFraction(&'static str),
     /// A duration that must be non-zero is zero.
     ZeroDuration(&'static str),
+    /// The per-class staleness bounds are ordered the wrong way round.
+    StalenessInverted,
 }
 
 impl std::fmt::Display for ConfigError {
@@ -161,6 +163,10 @@ impl std::fmt::Display for ConfigError {
             Self::NotPositive(field) => write!(f, "{field}: must be positive and finite"),
             Self::NotAFraction(field) => write!(f, "{field}: must be a fraction in (0, 1]"),
             Self::ZeroDuration(field) => write!(f, "{field}: must be a non-zero duration"),
+            Self::StalenessInverted => write!(
+                f,
+                "leg_stale: the reference bound must not be shorter than the tape bound"
+            ),
         }
     }
 }
@@ -183,6 +189,14 @@ impl FairValueConfig {
         }
         if self.leg_stale.reference.is_zero() {
             return Err(ConfigError::ZeroDuration("leg_stale.reference"));
+        }
+        // Inverting the two would let a daily fix age out faster than a live
+        // tape, which is the exact inversion the class split exists to remove.
+        // Nothing can reach it from the compile-time markets table today; this
+        // is hardening for the runtime-configurable path this validator's own
+        // doc anticipates.
+        if self.leg_stale.reference < self.leg_stale.tape {
+            return Err(ConfigError::StalenessInverted);
         }
         if self.basis_half_life.is_zero() {
             return Err(ConfigError::ZeroDuration("basis_half_life"));
@@ -271,9 +285,18 @@ impl Default for FairValueConfig {
                 // would drop every reference source on the first long weekend
                 // of the year.
                 //
-                // Six days is that 120h worst closure plus margin.
+                // The margin over that 120h is thinner than it looks, and the
+                // reason is a units mismatch worth stating: age is measured
+                // against the fix's *reference date*, which the adapter floors
+                // to midnight UTC, while the ECB publishes it around 14:00 UTC
+                // that day. Every reading therefore presents ~14h older than
+                // its true vintage, so the 120h closure reaches this bound as
+                // ~134h. Six days (144h) clears it by ~10h, not by the 24h the
+                // raw subtraction suggests.
+                //
                 // Recalibratable; post-validation analytics owns the real
-                // number.
+                // number. Whoever revisits it should size against the ~134h
+                // effective figure rather than the 120h calendar one.
                 reference: Duration::from_secs(6 * 24 * 60 * 60),
             },
             // Placeholder: a slow, minutes-scale smoothing so the demo basis
@@ -371,6 +394,28 @@ mod tests {
         // fix at that same age is merely doing what a daily fix does.
         let c = FairValueConfig::default();
         assert!(c.leg_stale.reference > c.leg_stale.tape);
+    }
+
+    #[test]
+    fn an_inverted_pair_of_bounds_is_rejected() {
+        // The ordering is an invariant, not just a property of the defaults —
+        // inverted, a daily fix would age out faster than a live tape.
+        let c = FairValueConfig {
+            leg_stale: LegStaleness {
+                tape: Duration::from_secs(600),
+                reference: Duration::from_secs(60),
+            },
+            ..Default::default()
+        };
+        assert_eq!(c.validate(), Err(ConfigError::StalenessInverted));
+
+        // Equal bounds are permitted: that is `uniform`, which is degenerate
+        // rather than inverted.
+        let c = FairValueConfig {
+            leg_stale: LegStaleness::uniform(Duration::from_secs(600)),
+            ..Default::default()
+        };
+        assert_eq!(c.validate(), Ok(()));
     }
 
     #[test]

@@ -48,7 +48,7 @@ use crate::model::killswitch::Action;
 use crate::model::ladder::Side;
 use anyhow::Result;
 use async_trait::async_trait;
-use dropset_fair_value::{Candidates, FairValue, FusionReport, LegStaleness, Legs};
+use dropset_fair_value::{Candidates, FairValue, FusionReport, LegStaleness, Legs, SourceClass};
 // `MAX_ERROR_CHARS` bounds the tick-error text a sample carries. Taken from
 // the framework rather than restated, so the two error columns cannot drift
 // apart — see its own doc there for why the bound is a character count.
@@ -753,6 +753,22 @@ pub fn leg_samples(
         let Some(r) = resolved.reading else {
             return;
         };
+        // The widest bound among the classes present, not the tape bound
+        // unconditionally. A leg resolved off its reference tier carries a
+        // reference-class age by construction, and measuring that against the
+        // tape bound would report a perfectly live daily fix as stale in the
+        // operator's telemetry while the engine was quoting off it.
+        //
+        // Note `healthy()` is every fresh candidate of both classes, which is a
+        // superset of the fast set `r` was summarized from — deliberately, so
+        // the bound cannot be narrower than the reading it judges.
+        let widest_bound = resolved
+            .healthy()
+            .iter()
+            .flatten()
+            .map(|c| stale_after.for_class(c.class))
+            .max()
+            .unwrap_or_else(|| stale_after.for_class(SourceClass::Tape));
         // A fusion that has never been seeded has no estimate to report, so the
         // whole group stays NULL rather than reporting a variance for a value
         // that does not exist.
@@ -764,21 +780,7 @@ pub fn leg_samples(
             value: r.value,
             age_secs: r.age.as_secs_f64(),
             confidence: r.confidence,
-            // Checked against the widest bound among the sources that actually
-            // contributed, not against the tape bound unconditionally. A leg
-            // resolved off its reference tier carries a reference-class age by
-            // construction, and measuring that against the tape bound would
-            // report a perfectly live daily fix as stale in the operator's
-            // telemetry while the engine was quoting off it.
-            fresh: r.fresh(
-                resolved
-                    .healthy()
-                    .iter()
-                    .flatten()
-                    .map(|c| stale_after.for_class(c.class))
-                    .max()
-                    .unwrap_or(stale_after.tape),
-            ),
+            fresh: r.fresh(widest_bound),
             consensus_state: format!("{:?}", resolved.state),
             contributor_count: i32::try_from(resolved.n).unwrap_or(i32::MAX),
             dispersion_outlier: resolved.outlier.map(str::to_string),
@@ -1675,6 +1677,37 @@ mod tests {
 
     const BAND: f64 = 0.01;
     const STALE: LegStaleness = LegStaleness::uniform(Duration::from_secs(15));
+
+    /// A leg resolved off its reference tier must not be reported stale against
+    /// the *tape* bound — the operator would read a perfectly live daily fix as
+    /// dead while the engine quoted off it.
+    ///
+    /// Every other test in this module uses a uniform `STALE`, under which the
+    /// bound this row is judged against is unobservable, so this is the only
+    /// coverage of the per-class lookup in `leg_samples`.
+    #[test]
+    fn a_reference_resolved_leg_is_judged_against_the_reference_bound() {
+        let split = LegStaleness {
+            tape: Duration::from_secs(60),
+            reference: Duration::from_secs(86_400),
+        };
+        // Six hours old: a dead tape, an unremarkable daily fix.
+        let fix = Reading::new(1.14, Duration::from_secs(6 * 3_600));
+        let legs = Legs {
+            fx: Candidates::none().push_reference("frankfurter", Some(fix)),
+            crypto_usdc: Candidates::none(),
+            usdc_usd: Candidates::none(),
+            static_usd: 1.14,
+        };
+
+        let rows = leg_samples(7, "EURC", &legs, split, BAND, &fair(None));
+        assert_eq!(rows.len(), 1, "only the FX leg resolved");
+        assert!(
+            rows[0].fresh,
+            "a six-hour-old fix is live against the reference bound"
+        );
+        assert_eq!(rows[0].age_secs, (6 * 3_600) as f64);
+    }
 
     #[test]
     fn leg_samples_record_the_consensus_and_skip_legs_that_resolved_to_nothing() {

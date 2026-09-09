@@ -118,8 +118,8 @@ impl SourceClass {
 /// [`SourceClass`] does, and every candidate already carries one — which is why
 /// this is keyed by class and lives beside it.
 ///
-/// Both values are **recalibratable**; see `FairValueConfig`'s defaults for the
-/// derivation behind each.
+/// Both values are **recalibratable**; see [`crate::FairValueConfig`]'s
+/// defaults for the derivation behind each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LegStaleness {
     /// Bound for a [`SourceClass::Tape`] source — one that publishes
@@ -133,8 +133,13 @@ pub struct LegStaleness {
 }
 
 impl LegStaleness {
-    /// One bound for every class — the pre-split behavior, and the shape a test
-    /// wants when staleness is not what it is exercising.
+    /// One bound for every class — the shape a test wants when staleness is not
+    /// what it is exercising.
+    ///
+    /// This reproduces the pre-split behavior, which is the defect the split
+    /// exists to remove, so it is **not** a production configuration: a real
+    /// config states both bounds. It is kept public for tests and for a caller
+    /// migrating a single-bound value across the signature change.
     pub const fn uniform(bound: Duration) -> Self {
         Self {
             tape: bound,
@@ -280,6 +285,14 @@ impl Candidates {
 
     /// Whether some source answered promptly but with an unusable value. Lets a
     /// caller tell a live feed publishing garbage from a dead one.
+    ///
+    /// **"Promptly" means each candidate's own class bound**, which is a much
+    /// weaker claim for the reference class than for a tape: a reference source
+    /// that published garbage and then died still counts as "answered promptly"
+    /// until its publication age crosses the reference bound, so the caller
+    /// reports it as invalid rather than stale for that whole window. Both
+    /// arms degrade the same way, so this costs a label rather than a decision
+    /// — but the label is the one an operator reads.
     pub fn any_invalid(&self, stale: LegStaleness) -> bool {
         self.iter()
             .any(|c| c.reading.young(stale.for_class(c.class)) && !c.reading.valid())
@@ -1323,6 +1336,88 @@ mod tests {
         let dead = Candidates::none().push("a", Some(Reading::new(1.14, secs(600))));
         assert!(!dead.any_invalid(STALE), "stale is not invalid");
         assert!(!Candidates::none().any_invalid(STALE));
+    }
+
+    /// The bound each class is measured against must be the bound for *that*
+    /// class, and nothing else in this module's tests can see that: they all
+    /// use [`LegStaleness::uniform`], under which the routing is invisible.
+    ///
+    /// So this pins the routing directly. Both candidates are offered at the
+    /// same age, sitting between the two bounds, and differ only in class —
+    /// which makes the assertion a statement about `for_class` and nothing
+    /// else. It fails if the arms of `for_class` are swapped, and it fails if
+    /// any of the three call sites reverts to measuring every candidate
+    /// against one bound.
+    #[test]
+    fn each_class_is_measured_against_its_own_bound() {
+        let split = LegStaleness {
+            tape: secs(60),
+            reference: secs(86_400),
+        };
+        // 600s: past the tape bound, well inside the reference bound.
+        let aged = Reading::new(1.14, secs(600));
+        let set = Candidates::none()
+            .push("tape", Some(aged))
+            .push_reference("fix", Some(aged));
+
+        let healthy: Vec<&'static str> = set
+            .resolve(split, BAND)
+            .healthy()
+            .iter()
+            .flatten()
+            .map(|c| c.source)
+            .collect();
+        assert_eq!(
+            healthy,
+            vec!["fix"],
+            "at 600s only the reference-class candidate is within its bound"
+        );
+
+        // Swapping the bounds must invert exactly which one survives — this is
+        // the half that catches a `for_class` whose arms are transposed, since
+        // a transposition passes the assertion above by reading the other
+        // field of a struct that still has both.
+        let swapped = LegStaleness {
+            tape: secs(86_400),
+            reference: secs(60),
+        };
+        let healthy: Vec<&'static str> = set
+            .resolve(swapped, BAND)
+            .healthy()
+            .iter()
+            .flatten()
+            .map(|c| c.source)
+            .collect();
+        assert_eq!(
+            healthy,
+            vec!["tape"],
+            "with the bounds swapped the tape candidate is the surviving one"
+        );
+    }
+
+    /// `any_invalid` reads the same per-class bound, so a garbage reading past
+    /// the tape bound is still "prompt" for a reference source and not for a
+    /// tape one. Pins the second of the three call sites.
+    #[test]
+    fn invalidity_is_judged_against_the_candidate_s_own_bound() {
+        let split = LegStaleness {
+            tape: secs(60),
+            reference: secs(86_400),
+        };
+        let garbage = Reading::new(0.0, secs(600));
+
+        assert!(
+            Candidates::none()
+                .push_reference("fix", Some(garbage))
+                .any_invalid(split),
+            "a reference source inside its own bound is answering, so garbage is invalid"
+        );
+        assert!(
+            !Candidates::none()
+                .push("tape", Some(garbage))
+                .any_invalid(split),
+            "the same reading on a tape source is past its bound, so it reads as dead"
+        );
     }
 
     /// The contributor set as `(source, weight)`, in iteration order — which is

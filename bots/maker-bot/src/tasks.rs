@@ -188,7 +188,8 @@ struct FeedHub {
     cg: HashMap<String, (f64, Instant)>,
     /// `cmc numeric id → (usd, when read)`.
     cmc: HashMap<u32, (f64, Instant)>,
-    /// `currency → (usd per unit, when read)`.
+    /// `currency → (usd per unit, ECB reference date, when read)`. The middle
+    /// element is `None` when the upstream response carried no parseable date.
     fx: HashMap<String, (f64, Option<i64>, Instant)>,
     /// `currency → (usd per unit, provider's refresh instant, when read)`.
     erapi: HashMap<String, (f64, i64, Instant)>,
@@ -260,10 +261,10 @@ impl FeedHub {
         // receipt read fresh all weekend though the ECB published on Friday, so
         // letting it stand in kept the engine in the Normal regime on a dead
         // market. The clock is honest now, but the bound it is measured against
-        // has to exceed a holiday-length publication gap — six days — so a
-        // Friday fix is still comfortably live on Sunday and would still stand
-        // in. Ageing-out cannot enforce the crypto-only regime at any bound
-        // that also lets the fix survive Easter.
+        // has to clear a holiday-length publication gap, so a Friday fix is
+        // still comfortably live on Sunday and would still stand in. Ageing-out
+        // cannot enforce the crypto-only regime at any bound that also lets the
+        // fix survive a holiday closure.
         //
         // So this stays, for the reason the sibling tier already had: a market
         // that is not trading must not be quoted off a rate that describes it,
@@ -286,15 +287,10 @@ impl FeedHub {
         // does not dark the fix-anchored markets.
         // er-api is the second reference tier and the only one that prices NGN,
         // so those markets get a corroborated FX leg instead of resting on a
-        // single fix. Suppressed over the weekend like Frankfurter, and now for
-        // exactly the same reason — which is worth stating, because the two
-        // reasons used to differ. Frankfurter was suppressed because it aged
-        // from receipt and would *look* fresh on Saturday; er-api because its
-        // blend republishes Friday's close over a shut market, so a genuinely
-        // fresh snapshot describes a market that is not trading. Both clocks
-        // are honest now, so only the second reason remains, and it applies to
-        // both: a market that is not trading must not be quoted off a rate that
-        // describes it, however honestly fresh (§1 fm2).
+        // single fix. Suppressed over the weekend like Frankfurter, and for the
+        // same reason stated above: er-api's blend republishes Friday's close
+        // over a shut market, so even a genuinely fresh snapshot describes a
+        // market that is not trading (§1 fm2).
         //
         // Aged from the provider's own `last_update`, not from receipt — see
         // [`erapi_reading`]. This is what makes the reference class's
@@ -305,11 +301,9 @@ impl FeedHub {
         //
         // The honest age is safe here only because the staleness bound is now
         // split by source class: one shared bound would drop an hours-old fix
-        // before fusion ever saw it. Note the provider stall guard binds well
-        // before the reference bound does — er-api republishes daily, so 48h
-        // without the snapshot advancing is a broken provider, whereas the
-        // six-day reference bound exists for a source that legitimately gaps
-        // that long (the ECB fix across a holiday closure).
+        // before fusion ever saw it. The provider stall guard binds well before
+        // the reference bound does — see [`MAX_ERAPI_SNAPSHOT_AGE`] for why the
+        // two answer different questions.
         let fx_erapi = (!tick.weekend)
             .then(|| self.erapi.get(market.currency))
             .flatten()
@@ -543,6 +537,17 @@ fn pyth_reading(q: &FxQuote, read_at: Instant, now: Instant, now_unix: i64) -> R
     }
 }
 
+/// Seconds elapsed since a venue-supplied epoch instant, as a [`Duration`].
+///
+/// The one place the epoch-delta contract is stated, because the `.max(0)`
+/// before the cast is what makes the cast sound: `saturating_sub` cannot
+/// overflow, the clamp discards a *future* stamp rather than wrapping it into
+/// an enormous age, and only then is the value narrowed to `u64`. Every tier
+/// that ages from a publisher's clock goes through this.
+fn published_age(now_unix: i64, stamp: i64) -> Duration {
+    Duration::from_secs(now_unix.saturating_sub(stamp).max(0) as u64)
+}
+
 /// Turn a cached Frankfurter rate into a [`Reading`], aged from the **ECB
 /// reference date** the rates belong to rather than from receipt.
 ///
@@ -551,17 +556,30 @@ fn pyth_reading(q: &FxQuote, read_at: Instant, now: Instant, now_unix: i64) -> R
 /// rate published on Friday morning still claims to be one poll old on Sunday
 /// night.
 ///
-/// **An absent stamp costs nothing.** `reference_date` is `None` whenever the
-/// upstream `date` is missing or unparseable, and that case falls back to the
-/// receipt age — exactly today's behavior. Honest stamping can therefore never
-/// dark a market that the receipt-aged path would have quoted.
+/// **An absent stamp falls back to the receipt age**, so a market the
+/// receipt-aged path would have quoted is never darked by a missing or
+/// unparseable upstream `date`. State the direction of that guarantee
+/// carefully, because it runs one way only: it protects *availability*, and it
+/// costs *integrity*. A venue that omits the field selects receipt-ageing for
+/// itself, so an honest venue reporting a true multi-hour vintage is aged — and
+/// de-weighted by the fusion's age inflation — while a silent one is not.
+/// Publication ageing is therefore enforced against an honest-but-slow source,
+/// not against a malfunctioning one.
 ///
-/// **The receipt age is a floor, which is also the forward-skew guard.** Taking
-/// `max` of the two means a stamp can only ever make a reading *older*, never
+/// **The receipt age is a floor, and its only job is the forward-skew guard.**
+/// Taking `max` means a stamp can only ever make a reading *older*, never
 /// younger, so a bogus future date cannot pin the age at zero and report a
 /// frozen rate as perpetually fresh — the failure [`pyth_reading`] needs an
-/// explicit skew bound for. It also means a dead poller still ages the leg out
-/// even while the cached stamp stays put.
+/// explicit skew bound for.
+///
+/// It does **not** catch a dead poller, and it cannot: a fix is never received
+/// before it is published, so the receipt age is bounded above by the
+/// publication age and `max` selects the publication term in every case except
+/// clock skew. A dead poller ages the leg out anyway — the publication term is
+/// recomputed against a fresh `now_unix` on every tick, so it grows on its own
+/// while the cached stamp sits still. Poller *liveness* is an operator signal
+/// rather than a quoting gate: the `Feed stale` alert reads `feed_health`, one
+/// series per source, and fires on silence long before this bound would.
 fn frankfurter_reading(
     rate: f64,
     reference_date: Option<i64>,
@@ -571,9 +589,7 @@ fn frankfurter_reading(
 ) -> Reading {
     let received = now.duration_since(read_at);
     let age = match reference_date {
-        Some(published) => {
-            Duration::from_secs(now_unix.saturating_sub(published).max(0) as u64).max(received)
-        }
+        Some(published) => published_age(now_unix, published).max(received),
         None => received,
     };
     Reading::new(rate, age)
@@ -590,15 +606,15 @@ fn frankfurter_reading(
 /// reasons about a six-hour-old daily fix, and never saw an age above a poll
 /// interval.
 ///
-/// **The receipt age is still a floor**, exactly as for Pyth: if the poller
-/// dies the leg has to go stale even though the last snapshot instant it cached
-/// stays where it was. Without the floor a dead collector would hold the leg
-/// permanently fresh at whatever age the provider last claimed.
+/// **The receipt age is a floor**, on the same terms as
+/// [`frankfurter_reading`] — see there for why that floor is a forward-skew
+/// guard and *not* a dead-poller check. Both tiers share the reasoning; it is
+/// written out once, in the sibling.
 ///
-/// No forward-skew branch is needed here, unlike [`pyth_reading`]: an
-/// implausibly-ahead stamp is already dropped by [`erapi_provider_stalled`]
-/// before a reading is built, so the subtraction below cannot be negative for
-/// any value that reaches it.
+/// The stall guard is the difference between the two: a stamp that is
+/// implausibly ahead, or older than [`MAX_ERAPI_SNAPSHOT_AGE`], is dropped by
+/// [`erapi_provider_stalled`] before a reading is built here — so this tier is
+/// bounded in both directions where the sibling relies on the floor alone.
 fn erapi_reading(
     rate: f64,
     last_update: i64,
@@ -606,9 +622,8 @@ fn erapi_reading(
     now: Instant,
     now_unix: i64,
 ) -> Reading {
-    let published = Duration::from_secs(now_unix.saturating_sub(last_update).max(0) as u64);
     let received = now.duration_since(read_at);
-    Reading::new(rate, published.max(received))
+    Reading::new(rate, published_age(now_unix, last_update).max(received))
 }
 
 /// How long er-api's own snapshot may go without advancing before the tier is
@@ -624,8 +639,10 @@ fn erapi_reading(
 ///
 /// It binds well before the reference staleness bound does, and deliberately:
 /// er-api republishes daily, so 48h without the table advancing is a fault,
-/// whereas the six-day reference bound exists for a source that legitimately
-/// gaps that long (the ECB fix across a holiday closure).
+/// whereas the reference bound has to clear a holiday-length publication gap
+/// for a source that legitimately gaps that long (the ECB fix across a
+/// closure). The two answer different questions — is this provider working,
+/// versus is this fix too old to price on.
 ///
 /// Two days rather than one, because the snapshot legitimately gaps 24–27 hours
 /// between publications and a one-day bound would fire on the ordinary case. The
@@ -1781,6 +1798,47 @@ mod tests {
         assert_eq!(cache["euro-coin"].0, 1.14);
     }
 
+    /// The drain is the only place the ECB reference date enters the cache, so
+    /// it is the single point where the whole publication-ageing path can be
+    /// silently reverted: dropping the stamp here leaves every fix aged from
+    /// receipt again, with the helpers and their tests all still passing.
+    #[test]
+    fn drain_frankfurter_into_keeps_the_reference_date() {
+        let (tx, mut rx) = broadcast::channel(4);
+        let published = 1_786_579_250;
+        tx.send(FrankfurterSnapshot {
+            rates: HashMap::from([("EUR".to_string(), 1.14)]),
+            reference_date: Some(published),
+        })
+        .expect("a receiver is live");
+
+        let mut cache: HashMap<String, (f64, Option<i64>, Instant)> = HashMap::new();
+        drain_frankfurter_into(&mut rx, &mut cache, Instant::now());
+
+        let (rate, stamp, _) = cache["EUR"];
+        assert_eq!(rate, 1.14);
+        assert_eq!(stamp, Some(published), "the reference date must survive");
+    }
+
+    /// A snapshot whose upstream `date` did not parse still delivers its rates
+    /// — the stamp is what is lost, never the price.
+    #[test]
+    fn drain_frankfurter_into_caches_a_rate_with_no_reference_date() {
+        let (tx, mut rx) = broadcast::channel(4);
+        tx.send(FrankfurterSnapshot {
+            rates: HashMap::from([("EUR".to_string(), 1.14)]),
+            reference_date: None,
+        })
+        .expect("a receiver is live");
+
+        let mut cache: HashMap<String, (f64, Option<i64>, Instant)> = HashMap::new();
+        drain_frankfurter_into(&mut rx, &mut cache, Instant::now());
+
+        let (rate, stamp, _) = cache["EUR"];
+        assert_eq!(rate, 1.14);
+        assert_eq!(stamp, None);
+    }
+
     /// EURC is the one market with every tier available, so it exercises the
     /// whole preference order.
     fn eurc() -> MarketConfig {
@@ -2180,7 +2238,9 @@ mod tests {
         let now = Instant::now();
         let read_at = now - Duration::from_secs(90);
         let r = frankfurter_reading(1.14, None, read_at, now, 1_786_579_250);
-        assert!(r.age >= Duration::from_secs(90));
+        // Exact, not a lower bound: the `Instant` delta is deterministic, and
+        // the risk this test names is over-ageing, which `>=` would permit.
+        assert_eq!(r.age, Duration::from_secs(90));
         assert_eq!(r.value, 1.14, "the rate survives a missing stamp");
     }
 
@@ -2195,11 +2255,11 @@ mod tests {
         let read_at = now - Duration::from_secs(600);
         let now_unix = 1_786_579_250;
         let r = frankfurter_reading(1.14, Some(now_unix + 86_400), read_at, now, now_unix);
-        assert!(
-            r.age >= Duration::from_secs(600),
-            "a future stamp must not undercut the receipt age: {:?}",
-            r.age
-        );
+        // Exact on purpose. A lower bound passes even if `.max(0)` is dropped,
+        // which would wrap the future stamp into a ~584-billion-second age and
+        // dark the leg instead of flooring it at receipt — the opposite failure
+        // from the one this test is named for, and equally a bug.
+        assert_eq!(r.age, Duration::from_secs(600));
     }
 
     #[test]
@@ -2213,12 +2273,12 @@ mod tests {
     }
 
     #[test]
-    fn an_honestly_aged_daily_fix_survives_a_weekend_but_not_a_dead_poller() {
-        // The two halves of the split, in one place. A Friday fix read on
-        // Sunday is three days old and must still be live against the reference
-        // bound — that is what the six-day bound buys, and a shared 15-minute
-        // bound would have dropped it. But if the poller itself dies the
-        // receipt floor still ages the leg out regardless of the stamp.
+    fn an_honestly_aged_daily_fix_survives_a_weekend() {
+        // The point of the reference bound: a Friday fix read on Sunday is
+        // three days old and must still be live, which is what a bound sized to
+        // clear a holiday-length publication gap buys. The second assertion is
+        // the one that makes this a test of the *split* — the same reading
+        // against the old shared bound is dropped.
         let now = Instant::now();
         let published = 1_786_579_250;
         let reference = FairValueConfig::default().leg_stale.reference;
@@ -2232,18 +2292,41 @@ mod tests {
             !weekend.fresh(Duration::from_secs(15 * 60)),
             "and would not have survived the old shared bound"
         );
+    }
 
-        let dead_poller = frankfurter_reading(
-            1.14,
-            Some(published),
-            now - (reference + Duration::from_secs(60)),
-            now,
-            published,
-        );
-        assert!(
-            !dead_poller.fresh(reference),
-            "a dead poller ages the leg out however recent the stamp claims to be"
-        );
+    #[test]
+    fn a_dead_poller_ages_out_through_the_publication_term() {
+        // Worth pinning explicitly, because the obvious mechanism is the wrong
+        // one. The receipt floor does NOT catch a dead poller: a fix is never
+        // received before it is published, so the receipt age is bounded above
+        // by the publication age and `max` picks the publication term in every
+        // case but clock skew. What ages the leg out is that the publication
+        // term is recomputed against a fresh `now_unix` each tick, so it grows
+        // on its own while the cached stamp sits still.
+        let now = Instant::now();
+        let published = 1_786_579_250;
+        let reference = FairValueConfig::default().leg_stale.reference;
+        let past_bound = reference.as_secs() as i64 + 3_600;
+
+        // The stamp has not moved and the poller has delivered nothing since,
+        // but wall-clock has advanced past the bound.
+        let r = frankfurter_reading(1.14, Some(published), now, now, published + past_bound);
+        assert!(!r.fresh(reference));
+        assert_eq!(r.age, Duration::from_secs(past_bound as u64));
+    }
+
+    #[test]
+    fn an_erapi_stamp_ahead_of_the_clock_falls_back_to_the_receipt_age() {
+        // The er-api counterpart to the Frankfurter skew test. `.max(received)`
+        // is the only guard on that tier's helper against a stamp ahead of us
+        // (the stall filter catches an implausible one earlier, but this is the
+        // helper's own behavior), and with `read_at == now` in the sibling
+        // tests nothing else here exercises it.
+        let now = Instant::now();
+        let read_at = now - Duration::from_secs(300);
+        let now_unix = 1_786_579_250;
+        let r = erapi_reading(1.142, now_unix + 3_600, read_at, now, now_unix);
+        assert_eq!(r.age, Duration::from_secs(300));
     }
 
     #[test]
