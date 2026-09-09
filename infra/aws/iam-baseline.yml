@@ -62,8 +62,17 @@ Resources:
               StringEquals:
                 'aws:CalledViaAWSMCP': !Ref 'McpServicePrincipal'
             Effect: 'Allow'
-            Resource: !Sub >-
-              arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${EnvironmentName}-*/*
+            Resource:
+            - !Sub >-
+                     arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${EnvironmentName}-*/*
+            # The Bedrock agent stack carries NO environment segment - the
+            # agent identity is not per-environment and there is exactly one
+            # of it (see docs/conventions/aws-infra.md). So it falls outside
+            # the prefix above and needs naming here. Listed explicitly rather
+            # than widening the wildcard to dropset-*, which would hand this
+            # role every stack in the account for the sake of one.
+            - !Sub >-
+                     arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/dropset-bedrock-agent/*
             Sid: 'AgentDrivenStackMutations'
           - Action:
             - 'cloudformation:DescribeChangeSet'

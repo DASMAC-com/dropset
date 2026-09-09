@@ -1081,7 +1081,7 @@ per-directory *content* — `frontend/node_modules`,
    recovery, but recovering is the expensive path.)
 
 1. Normalize the branch name to the bare Linear tag.
-   The `aps` shell helper starts worktree sessions with
+   The `task` shell helper starts worktree sessions with
    `claude -w <tag>`, which names the worktree directory
    `eng-###` but the **branch** `worktree-eng-###` —
    there's no CLI flag to drop the `worktree-` prefix, so

@@ -11,7 +11,7 @@ search-shape rule in three separate files, and the same cspell rule in two.
 This makes a repeated block have **one source**. A skill marks the region it
 wants filled, and this tool fills it:
 
-    <!-- render:begin fable-model-guard verb=paps -->
+    <!-- render:begin fable-model-guard verb=plan -->
     ...generated content, do not edit by hand...
     <!-- render:end fable-model-guard -->
 

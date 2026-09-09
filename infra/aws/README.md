@@ -17,7 +17,7 @@ infra/aws/
   network.yml         VPC, public/private subnets (2 AZs), NAT, routing
   iam-baseline.yml    CFN deployment role, agent role, secrets policy
   cloudtrail.yml      multi-region audit trail + private log bucket
-  bedrock-workers.yml Bedrock worker IAM user, invoke policy, spend alert
+  bedrock-agent.yml   Bedrock agent IAM user, invoke policy, spend alert
   params/             per-stack example parameter files (<stack>.<env>.json)
 ```
 
@@ -73,17 +73,73 @@ create IAM roles, and it cannot pass a role to CloudFormation
      --parameter-overrides file://infra/aws/params/cloudtrail.dev.json
    ```
 
-1. **Bedrock workers — admin, once.** Creates an IAM user, so it needs
-   the same named-IAM capability as the baseline. See "Bedrock worker
+1. **Bedrock agent — admin, once.** Creates an IAM user, so it needs
+   the same named-IAM capability as the baseline. See "Bedrock agent
    identity" below for the two out-of-band steps that follow it.
 
    ```sh
    aws cloudformation deploy \
-     --template-file infra/aws/bedrock-workers.yml \
-     --stack-name dropset-dev-bedrock-workers \
-     --parameter-overrides file://infra/aws/params/bedrock-workers.dev.json \
+     --template-file infra/aws/bedrock-agent.yml \
+     --stack-name dropset-bedrock-agent \
+     --parameter-overrides file://infra/aws/params/bedrock-agent.dev.json \
      --capabilities CAPABILITY_NAMED_IAM
    ```
+
+   **Migrating from the old `dropset-dev-bedrock-workers` stack.** The
+   stack, the IAM user, the managed policy and all three exports were
+   renamed together when the identity noun became *agent*. Because the
+   **stack name** itself changed, the new stack is created rather than
+   updated — but **create the new one first and delete the old one
+   last**, which is safe here and gives the migration no downtime at
+   all:
+
+   1. Redeploy `iam-baseline.yml` (above). The agent-provisioning role
+      scopes its stack mutations by name, and `dropset-bedrock-agent`
+      carries no environment segment, so it must be named there before
+      an agent-driven deploy of it can work.
+   1. Deploy `dropset-bedrock-agent` with the command above.
+   1. Mint the key against the **new** user and confirm a real Bedrock
+      call (see "Bedrock agent identity" below).
+   1. Delete the **old** user's API key. This step is not optional and
+      not deferrable: an out-of-band service-specific credential blocks
+      `iam:DeleteUser` with `DeleteConflict`, CloudFormation does not
+      know it exists, and the stack delete below fails **part-way**
+      without it. Note the user name here is the **old** one:
+
+   ```sh
+   aws iam list-service-specific-credentials \
+     --user-name dropset-dev-bedrock-worker \
+     --service-name bedrock.amazonaws.com
+   ```
+
+   ```sh
+   aws iam delete-service-specific-credential \
+     --user-name dropset-dev-bedrock-worker \
+     --service-specific-credential-id <id>
+   ```
+
+   1. Only then retire the old stack:
+
+   ```sh
+   aws cloudformation delete-stack --stack-name dropset-dev-bedrock-workers
+   ```
+
+   **Nothing collides, which is what makes that ordering available.**
+   Every name moved in the same deploy — user
+   `dropset-dev-bedrock-worker` → `dropset-bedrock-agent`, policy
+   `dropset-dev-bedrock-invoke` → `dropset-bedrock-invoke`, and all
+   three exports — so the two stacks can coexist, and the old key keeps
+   working right up until its user is deleted. Deleting first would
+   instead open a window with no Bedrock identity at all, and no
+   rollback if the mint then failed.
+
+   The old API key does not survive the old user, so a new one is minted
+   against the new user either way: the mint is part of this migration
+   and not merely of the first install. Note the credential does not die
+   *automatically* — the step above is what removes it, and until it
+   does the user cannot be deleted at all. Nothing imports the old
+   exports — verified before the rename — which is what made it free to
+   take now rather than later.
 
 To let a *restricted* identity provision stacks that do create IAM (the
 warehouse stack's task roles), pass the deployment role so
@@ -109,6 +165,14 @@ aws cloudformation delete-stack --stack-name dropset-dev-network
 aws cloudformation delete-stack --stack-name dropset-dev-cloudtrail
 ```
 
+**Two stacks have a resource CloudFormation will not clean up for you —
+and they fail in opposite ways.** The CloudTrail log bucket is retained
+on purpose, so that stack's delete **succeeds** and simply leaves the
+bucket behind (below). The Bedrock agent user carries an out-of-band API
+key that blocks `DeleteUser` with `DeleteConflict`, so that stack's
+delete **fails part-way** until the credential is deleted first, per
+"Bedrock agent identity" below.
+
 The CloudTrail **log bucket is deliberately kept** when its stack is
 deleted: it carries `DeletionPolicy: Retain` so an accidental stack
 deletion cannot destroy the audit logs. Its name is deterministic
@@ -125,9 +189,9 @@ Because the one deterministic name is reused each cycle, this never
 accumulates orphan buckets; `Retain` only makes the delete explicit
 rather than automatic.
 
-## Bedrock worker identity
+## Bedrock agent identity
 
-`bedrock-workers.yml` stands up the identity that unattended worker
+`bedrock-agent.yml` stands up the identity that Bedrock agent
 sessions authenticate as: an IAM user, a managed policy scoped to model
 invocation in the US regions, and an optional monthly spend alert that
 the committed parameter file deliberately leaves uncreated — it sets no
@@ -154,33 +218,104 @@ letting CloudFormation see it at all.
 So the template creates the *user*, and the key is minted against that
 user in the IAM console, by hand.
 
+**The cost of that split shows up at teardown, not at create.** A
+service-specific credential is a child of the user that CloudFormation
+does not know exists, and `iam:DeleteUser` refuses with `DeleteConflict`
+while one is attached — so deleting or replacing this stack fails
+part-way unless the credential is removed first. Measured during the
+worker-to-agent migration. Do this before any delete or rename of the
+stack:
+
+```sh
+aws iam list-service-specific-credentials \
+  --user-name dropset-bedrock-agent \
+  --service-name bedrock.amazonaws.com
+```
+
+```sh
+aws iam delete-service-specific-credential \
+  --user-name dropset-bedrock-agent \
+  --service-specific-credential-id <id>
+```
+
+**This is not an argument for moving the key into the template**, which
+is the natural next thought. It cannot go there — there is no resource
+type for it, and a custom resource would have to surface the secret
+through stack outputs or events, which is the worse-custody trade the
+paragraph above rejects. It is also **not drift**: the template declares
+no credential, so nothing has diverged from it. It is an ordering
+requirement, and documenting it is the whole fix.
+
 **The key is operator-only.** It is generated in the console, copied
 once, and pasted into 1Password by a person. No tool, script, or agent
 session ever reads, prints, or handles the value — which is why this is
 a console procedure rather than a command this repo could run for you.
 
-In the IAM console: **Users** → `dropset-dev-bedrock-worker` →
+In the IAM console: **Users** → `dropset-bedrock-agent` →
 **Security credentials** → **API keys** → **Generate API key** → choose
-**Amazon Bedrock** as the service → pick an expiration (90 days keeps it
-on the existing rotation rhythm) → **Generate**, then copy the value.
+**Amazon Bedrock** as the service → pick an expiration → **Generate**,
+then copy the value.
+
+**Rotation is monthly**, so the expiry chosen here is a backstop rather
+than the schedule — the operator re-mints on the monthly rhythm well
+before any of the offered expirations lands. Leak exposure on this key
+is bounded to credit burn rather than data, which is what keeps custody
+this simple; the cadence is the compensating control.
 
 Two things to know about that dialog:
 
 - The value is shown **once**. There is no way to read it back later, so
   a lost key is re-minted and the old one deactivated, never recovered.
-- Generating the key **auto-attaches the `AmazonBedrockLimitedAccess`
-  managed policy** to the user. That is broader than this stack intends,
-  so detach it afterwards under the user's **Permissions** tab, leaving
-  only `dropset-dev-bedrock-invoke`. Claude Code needs nothing
-  the invoke policy does not already grant.
 
-**Rotating it.** The key expires on the date chosen at generation, and
-expiry is silent from this repo's side — nothing here warns you. List
-the current credential, its status and its expiry date with:
+- Generating the key is **reported** to auto-attach the
+  `AmazonBedrockLimitedAccess` managed policy to the user. That would be
+  broader than this stack intends, so check the user's **Permissions**
+  tab afterwards and detach anything beyond
+  `dropset-bedrock-invoke` — Claude Code needs nothing the invoke policy
+  does not already grant.
+
+  **Treat that as a check, not as a known fact.** The CloudTrail record
+  does not corroborate it, across **two** mints:
+
+  - **2026-09-04 00:37:16 UTC** (the first). Over the 90-day window
+    there is **no `AttachUserPolicy` for `AmazonBedrockLimitedAccess` at
+    all**, and no attach of any kind follows the mint. The only two
+    attaches are the template's own — one 36 seconds after `CreateUser`,
+    one in the later policy rename.
+  - **2026-09-09 00:34:09 UTC** (the worker-to-agent re-mint), and this
+    one is a **true before/after on the same user**: attached policies
+    were `{dropset-bedrock-invoke}` immediately before the mint and
+    `{dropset-bedrock-invoke}` immediately after. The only attach in
+    that window is CloudFormation's, 2.5 minutes *before* the mint; the
+    only detach is the old stack's teardown, 12 minutes after.
+
+  Read the bound on that honestly before acting on it. Two mints is
+  still a small n, and an absent event is weaker evidence than a present
+  one, since the console could in principle attach through an API that
+  logs under another name or under an AWS-internal principal this trail
+  does not capture. What both windows establish is that management
+  events *were* being recorded throughout — `CreateUser`, `CreatePolicy`,
+  `CreateServiceSpecificCredential` and both attach/detach pairs are all
+  present — so a silent trail is not the explanation.
+
+  Hence: keep the step, drop the certainty. Detaching a policy that was
+  never attached costs one glance at a tab; skipping a check that turns
+  out to be needed silently re-widens the identity.
+
+  **The lookups must target `us-east-1`.** IAM is a global service and
+  its events land there, not in the stack's `us-west-2` — the same query
+  against `us-west-2` returns zero events for every one of these names
+  and reads exactly like "it never happened".
+
+**Rotating it.** Rotate monthly. The key also expires on the date chosen
+at generation, and expiry is silent from this repo's side — nothing here
+warns you, and the launcher's only job is to make the first failed call
+legible rather than opaque. List the current credential, its status and
+its expiry date with:
 
 ```sh
 aws iam list-service-specific-credentials \
-  --user-name dropset-dev-bedrock-worker \
+  --user-name dropset-bedrock-agent \
   --service-name bedrock.amazonaws.com
 ```
 
@@ -194,16 +329,34 @@ working key:
 1. Update the existing 1Password field in place. Launching resolves the
    reference fresh each time, so nothing else has to change: no redeploy,
    no edit to this repo, no change to the runtime config.
-1. Launch a worker session and confirm it makes a real call.
+1. Launch an agent session and confirm it makes a real call.
 1. Only then deactivate or delete the old credential, by its
    `ServiceSpecificCredentialId`.
 
-**Generating a key auto-attaches `AmazonBedrockLimitedAccess` again**, so
-the detach in the previous step is part of *every* rotation, not just the
-first. Check the user's Permissions tab afterwards: it should list only
-`dropset-dev-bedrock-invoke`. A rotation that skips this silently
-re-widens the worker's permissions and leaves the live user out of step
-with what this template declares.
+**Re-check the attached policies after every mint**, not just the first
+— the check above is part of every rotation. The user's Permissions tab
+should list only `dropset-bedrock-invoke`. A rotation that skips the
+check would leave a re-widened identity out of step with what this
+template declares, and nothing else would report it.
+
+Verify it from the command line with the same two reads, remembering the
+region:
+
+```sh
+aws iam list-attached-user-policies --user-name dropset-bedrock-agent
+```
+
+```sh
+aws cloudtrail lookup-events --region us-east-1 \
+  --lookup-attributes AttributeKey=EventName,AttributeValue=AttachUserPolicy
+```
+
+**The first needs an IAM-capable identity; the second does not.**
+`cloudtrail:LookupEvents` is not an IAM action, so `PowerUserAccess` can
+run the lookup — but it is denied `iam:ListAttachedUserPolicies` and
+`iam:ListServiceSpecificCredentials` outright, so an agent session on
+the usual SSO role cannot run the direct permissions read at all. On
+that role, CloudTrail is the only one of the two checks available.
 
 Store it in 1Password as one item per provider with a named field per
 credential, giving a reference of the shape
@@ -279,7 +432,7 @@ Models whose `allowed_modes` include `none` are unaffected by the
 account setting — a more permissive account mode does not cause their
 content to be retained. **That includes the Opus family this stack now
 defaults to.** The opt-in was made when Fable 5.1 was the ratified
-worker model, and it is kept because the model is a parameter: a
+agent model, and it is kept because the model is a parameter: a
 Fable-class model has to keep working without an infrastructure change.
 So read the opt-in as removing a constraint on which models are
 selectable, not as a statement about what happens to Opus traffic.
@@ -305,15 +458,20 @@ just opted into having that content retained for human review — so
 keeping it inside US regions is the conservative pairing. Revisit only
 if throughput headroom ever justifies it.
 
-### Launching a worker session by hand
+### Launching an agent session
 
-Until the launcher learns this (a later phase), a worker session is
-started with these exports:
+**The `task` verb does this for you** — `.claude/shell/init.zsh` exports
+the whole set below and resolves the key from 1Password at launch. See
+`docs/conventions/local-integrations.md` → "Session helpers" for the
+verb table and the substrate rule that decides which verbs get these
+exports at all. What follows is the equivalent by hand, for debugging a
+launch that misbehaves:
 
 ```sh
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=us-west-2
 export ANTHROPIC_MODEL='us.anthropic.claude-opus-5[1m]'
+export ANTHROPIC_DEFAULT_HAIKU_MODEL='us.anthropic.claude-haiku-4-5-20251001'
 export ENABLE_PROMPT_CACHING_1H=1
 export AWS_BEARER_TOKEN_BEDROCK="$(op read \
   --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")"
@@ -326,6 +484,22 @@ carries placeholder shapes only. Resolving it at launch rather than
 exporting the key into a long-lived shell keeps the value out of every
 process that does not need it.
 
+**The model string is runtime config, not code.** `DS_BEDROCK_MODEL` in
+that same untracked file carries the full string, context-window suffix
+included, and the launcher uses it verbatim — so changing model or
+window is a one-line personal-config edit with no repo change. Unset,
+the launcher falls back to this stack's exported profile id **with
+`[1m]` appended**, because the export is the bare profile id and the
+suffix's absence is silent: it costs four fifths of the context window
+and nothing reports it. A shell test asserts that composition ends in
+the suffix, and a configured string carrying no suffix draws a
+launch-time warning rather than a refusal — the override is the
+operator's to make.
+
+`ANTHROPIC_DEFAULT_HAIKU_MODEL` pins the fast tier at Bedrock Haiku so
+background sub-turns bill to credits alongside the primary model,
+rather than falling back to the subscription.
+
 Setting `ANTHROPIC_MODEL` does more than pick the primary model: on
 Bedrock it also routes background tasks (session titles and the like) to
 that same model. That matters for cost attribution, not for permissions
@@ -333,7 +507,7 @@ that same model. That matters for cost attribution, not for permissions
 nothing fails for want of a grant. The Sonnet auto-mode classifier is
 the case in point: Claude Code invokes it regardless of the model
 selected here, and the policy covers it. Switching models needs no
-template edit and no redeploy; `WorkerModelId` only steers the default
+template edit and no redeploy; `AgentModelId` only steers the default
 this stack publishes.
 
 `ENABLE_PROMPT_CACHING_1H` requests the 1-hour cache TTL in place of the
@@ -343,7 +517,7 @@ stay at zero, the cause is regional cache support rather than this flag.
 **Enabling a model the account has never used.** Serverless foundation
 models activate on first invocation, but a model served through AWS
 Marketplace additionally needs one invocation by a principal holding
-`aws-marketplace:Subscribe` and `ViewSubscriptions` — which the worker
+`aws-marketplace:Subscribe` and `ViewSubscriptions` — which the agent
 deliberately does not have. So a model new to the account is enabled by
 invoking it once as an administrator; afterwards every principal can use
 it. The console's model-access page has been retired and no longer does

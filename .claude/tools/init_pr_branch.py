@@ -71,7 +71,7 @@ from collections.abc import Callable
 # A worktree tag: `eng-` followed by digits, case-insensitive.
 _TAG_RE = re.compile(r"^eng-\d+$", re.IGNORECASE)
 
-# The `aps` helper names worktree branches `worktree-eng-###`; the bare
+# The `task` helper names worktree branches `worktree-eng-###`; the bare
 # `eng-###` is what matches the Linear issue identifier.
 _WORKTREE_PREFIX = "worktree-"
 
@@ -135,7 +135,7 @@ def normalize_tag(tag: str) -> str | None:
 def normalize_branch(branch: str) -> tuple[str, bool]:
     """Return ``(normalized_branch, rename_needed)``.
 
-    A ``worktree-eng-###`` branch (the ``aps`` default) is stripped to the bare
+    A ``worktree-eng-###`` branch (the ``task`` default) is stripped to the bare
     ``eng-###``; any other name is left as-is. ``rename_needed`` is ``True`` only
     when the leading ``worktree-`` prefix was actually present.
     """

@@ -69,10 +69,19 @@ batched board writes and its compact board read — `list`, `fields`,
 issue's whole body back, and `issueUpdate` selecting `success` alone
 does not), `search_source.py` (the one scoped-search
 shape, which takes its exclude lists from `review_diff.py`),
-`fleet_resume.py` (the fleet-resume launcher behind the `faps` verb —
+`fleet_resume.py` (the fleet-resume launcher behind the `fleet` verb —
 resolves the in-flight issues from Linear, skips the ones already open,
-and emits one AppleScript that opens and resumes the rest; read-only
-unless `--apply`), `migration_collisions.py` (compares this branch's new
+and opens and resumes the rest in one driver round trip; read-only
+unless `--apply`), `iterm_api.py` (the one owner of iTerm automation,
+over iTerm's Python API — the library is not stdlib and is not
+installed, so this stays importable from ordinary `python3` and shells
+out to the interpreter iTerm ships, which carries it; consolidating
+`fleet_resume.py` and `session_dispatch.py` here retired AppleScript
+from the toolbox entirely), `session_dispatch.py` (opens a new iTerm
+window and types one session verb — the planning session's dispatch
+arm, authorized by the operator's yes, and loud enough on failure to
+print the verb it would have typed),
+`migration_collisions.py` (compares this branch's new
 migration numbers
 against other open PRs' before an enqueue — `--others-from-gh` runs that
 open-PR read **inside its own process**, because the earlier
@@ -240,7 +249,7 @@ So a block that is genuinely repeated gets **one source** under
 `.claude/shared/`, and each skill marks the region it wants filled:
 
 ```markdown
-<!-- render:begin fable-model-guard verb=paps -->
+<!-- render:begin fable-model-guard verb=plan -->
 <!-- render:end fable-model-guard -->
 ```
 

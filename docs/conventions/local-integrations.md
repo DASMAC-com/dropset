@@ -903,14 +903,18 @@ never worked (below). Committing the functions makes this doc describe
 something that actually runs.
 
 **And the drift ran the other way too — check parity when committing a
-personal helper.** The committed family was written from this doc rather
-than from the profile, and the profile had moved on: the operator's own
-`aps` passed `acceptEdits`, a display name, and `/init-pr`, its `naps`
-passed a permission mode, and its base-`cd` did a `git pull` — none of
-which the committed copies did. The gap went unnoticed for a while
-because every helper still *worked*; it was only the launch *shape* that
-differed, and the `acceptEdits` one meant sessions started via the
-committed `aps` prompted on every edit. Worse, the migration that
+personal helper.** (This paragraph and the one above name the verbs by
+their **pre-rename** spellings — `aps`, `naps`, `paps` — because that is
+what they were called when this happened. The table below maps them to
+the verbs that exist now.) The committed family was written from this
+doc rather than from the profile, and the profile had moved on: the
+operator's own `aps` passed `acceptEdits`, a display name, and
+`/init-pr`, its `naps` passed a permission mode, and its base-`cd` did a
+`git pull` — none of which the committed copies did. The gap went
+unnoticed for a while because every helper still *worked*; it was only
+the launch *shape* that differed, and the `acceptEdits` one meant
+sessions started via the committed `aps` prompted on every edit. Worse,
+the migration that
 revealed this found the profile had **never sourced** the committed
 script at all — it still carried full personal copies of every helper,
 so nothing committed here had ever run.
@@ -937,8 +941,119 @@ That is JSON read by the harness, not shell read by zsh, so sourcing
 this changes nothing about it — `make hook-wiring` remains the answer
 there.
 
-The family, one line each (`init-pr` names `aps` when it explains why a
-branch arrives as `worktree-eng-###`):
+#### The verb table
+
+Every verb says the job. This replaced an
+`aps`/`raps`/`naps`/`rnaps`/`paps`/`haps`/`caps`/`faps` family in a
+clean cut with **no aliases** — the family is small and every launcher
+is the operator's own muscle memory, so a half-migration leaving both
+names alive was the outcome to avoid.
+
+| Verb                    | Job                                    | Substrate   | Model          |
+| ----------------------- | -------------------------------------- | ----------- | -------------- |
+| `task <n>`              | worktree session on Linear task n      | Bedrock     | Opus 5, 1M, 1h |
+| `task local <n>`        | same, when the work needs web research | seat        | saved default  |
+| `task resume [n]`       | resume by number (bare = the picker)   | as recorded | as launched    |
+| `explore [name]`        | base-repo session, optionally named    | seat only   | Fable pin      |
+| `explore resume <name>` | resume a named base-repo session       | seat only   | Fable pin      |
+| `plan`                  | daily planning session                 | seat        | Fable pin      |
+| `housekeeping`          | upkeep; also the 5-hour-window opener  | seat        | saved default  |
+| `architect <topic>`     | long-horizon design thread             | seat        | Fable pin      |
+| `fleet [go]`            | batch resume                           | per-window  | as launched    |
+| `cdds [n]`              | not a session verb — navigation        | —           | —              |
+
+#### Substrate: which provider a session runs against
+
+**The rule is capability, not attendance.** A session runs on Bedrock
+unless it needs something Bedrock lacks — web search, web fetch, deep
+research — or it is a **seat session by role** (`plan`, `architect`,
+`housekeeping`, `explore`). Sub-agents are *not* a differentiator:
+Opus-spawning-Opus sub-agents are verified working on Bedrock.
+
+An earlier framing split on **attendance** (unattended work goes to
+Bedrock) and was superseded. Who is watching says nothing about which
+tools a session needs, and the verbs that actually broke on Bedrock
+broke on capability.
+
+`housekeeping` is the deliberate exception that is *not* a capability
+call: it would run on Bedrock perfectly well, and it stays on the seat
+because the operator uses it to **open the 5-hour subscription window**
+at the start of a day. Moving it would silently retire that.
+
+**What a Bedrock launch exports:** `CLAUDE_CODE_USE_BEDROCK=1`,
+`AWS_REGION`, `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (the
+fast tier, pinned so background sub-turns bill to credits too),
+`ENABLE_PROMPT_CACHING_1H=1`, and `AWS_BEARER_TOKEN_BEDROCK` resolved
+from 1Password at launch. A seat launch exports none of them — **the
+absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is why a
+seat verb *clears* those variables rather than merely warning about
+them (see below).
+
+**Two classes, and conflating them gets it wrong in both directions.**
+The four Claude variables are *owned* — nothing else sets them, so they
+are cleared outright. `AWS_REGION` and `AWS_BEARER_TOKEN_BEDROCK` are
+*shared* with the operator's own environment: an `AWS_REGION` from the
+shell profile, or a bearer token exported by hand (which the `${VAR:-…}`
+form exists to honor, so running with no 1Password coordinates at all is
+supported). Clearing those outright destroys values the launcher never
+owned, and destroying the token in particular makes the *next* `task` in
+that tab fail against config the operator chose not to set.
+
+So a seat verb **undoes a launch** rather than clearing: the launcher
+records what each shared variable held beforehand and what it installed,
+and restores the former only where the current value is still the
+latter. That is what makes three otherwise-broken cases come out right —
+a seat verb in a tab that never launched (leave them alone), a second
+`task` in one tab (the first launch's record wins), and a value the
+operator swapped by hand afterwards (recognized as theirs, kept).
+
+**The model string is runtime config.** `DS_BEDROCK_MODEL` in the
+untracked runtime config carries the full string, context-window suffix
+included, and is used verbatim — so changing model or window is a
+one-line personal-config edit with no repo change. Unset, the launcher
+falls back to the stack's published profile id **with `[1m]` appended**.
+That append is the whole reason it is a function: the stack exports a
+bare profile id, Bedrock defaults a model with no suffix to the 200k
+window, and *nothing reports the difference* — the symptom is a session
+running at one fifth of its intended context, indistinguishable from
+one that simply filled up. A shell test asserts the composition ends in
+the suffix, and a configured string carrying no suffix **warns and is
+still honored**: the override is the operator's to make.
+
+**Substrate stickiness.** A launch records its choice in an untracked
+marker under `.claude/session-substrate/`, keyed by worktree tag; the
+resume verbs read it and re-export accordingly. This exists because the
+slip is **silent in both directions** — a Bedrock session resumed onto
+the seat quietly eats the 5-hour window, and a seat session resumed onto
+Bedrock quietly spends credits on attended work. Neither errors.
+**An absent marker reads as `seat`**, the conservative default, which is
+also correct for every session predating markers.
+
+**Two guards, pointing opposite ways.** A Bedrock launch **hard-gates**
+on the environment being present — no bearer token means no launch,
+because the alternative is an opaque provider error several turns in,
+long after work has started. A seat verb **warns and clears**: these
+helpers export into the *calling* shell (they must — a child process could
+not set what `claude` inherits), so a tab that ran `task` is still a
+Bedrock tab afterwards, and the next `plan` in it would silently run on
+credits with the Fable pin dropped. Warning alone was the ratified
+behavior and is not sufficient on its own, since it announces a slip it
+then permits; the warning is kept beside the correction because a silent
+fix would hide that the tab was in an unexpected state.
+
+The gate does **not** call the provider. A live probe would cost a round
+trip on every launch to answer what the session's own first turn answers
+for free, so the "provider answering" half is served by making that first
+failure legible. `DS_BEDROCK_PROBE=1` buys the pre-flight when
+diagnosing a launch.
+
+All of it is covered by `.claude/scripts/test_ds_substrate.py`, which
+drives the real zsh functions.
+
+#### The family, one line each
+
+(`init-pr` names `task` when it explains why a branch arrives as
+`worktree-eng-###`.)
 
 - **`_ds_pull`** (internal) — fast-forward the **base** checkout's
   `main`. Everything below inherits it, via `cdds` or via the internal
@@ -958,7 +1073,7 @@ branch arrives as `worktree-eng-###`):
     an expired credential or a diverged `main` warns and returns 0. A
     navigation command must not be able to brick session startup.
   - **Throttled** (60s, stamped in `.git/.ds-last-pull`, claimed
-    *before* the pull). Not an optimization: `faps go` opens many tabs
+    *before* the pull). Not an optimization: `fleet go` opens many tabs
     at once and a pull takes `index.lock`, so without the throttle they
     race and print git errors over each other.
 
@@ -1002,48 +1117,61 @@ branch arrives as `worktree-eng-###`):
   the worktree gets fresh `origin` refs through the shared object store
   without its work branch being touched.
 
-- **`aps <tag>`** — start a **worktree** session:
-  `claude -w <tag> -n <tag> --permission-mode acceptEdits /init-pr`.
+- **`task <n>`** — start a **worktree** session:
+  `claude -w <tag> -n <tag> --permission-mode auto /init-pr`.
   This is what creates the `eng-###` worktree directory whose branch
   arrives named `worktree-eng-###`; there is no CLI flag to drop the
   prefix, so `init-pr` renames it. This is the implementation-session
   entry point. A **bare number** is given the `eng-` prefix, so
-  `aps 882` and `aps eng-882` agree and the `aps` → `raps` pair
+  `task 882` and `task eng-882` agree and the start / resume pair
   composes; a deliberate non-`eng` name passes through untouched.
 
-  **`--permission-mode acceptEdits` is the load-bearing part.** The
-  shared `settings.local.json` sets no default permission mode, so
-  without it an implementation session starts in the default mode and
-  prompts on every edit. `-n <tag>` is for the human (the prompt box,
-  the `/resume` picker, the terminal title — `raps` resolves by
-  directory), and `/init-pr` runs the bootstrap without being asked, the
-  same trick `paps` and `haps` use.
+  **It runs on Bedrock**, per the substrate rule above.
+  `-n <tag>` is for the human (the prompt box, the `/resume` picker, the
+  terminal title — `task resume` resolves by directory), and `/init-pr`
+  runs the bootstrap without being asked, the same trick `plan` and
+  `housekeeping` use.
 
-- **`raps <n>`** — resume a worktree session by number: takes a bare
-  `<n>`, resolves it to the `eng-<n>` worktree, and resumes that
-  session's most recent conversation there. The number-to-worktree
-  resolution is the whole point — you resume `raps 814`, not a UUID.
+- **`task local <n>`** — the same thing on the **seat**, for work that
+  needs web search or deep research. `local` is a literal first word
+  rather than a flag: these helpers do no flag parsing, and the word
+  reads better at the call site than `-l` would.
 
-- **`naps <name>`** — start a **named** session in the current directory
-  (no worktree), also with `--permission-mode acceptEdits` for the reason
-  above. The general-purpose named-session entry point.
+- **`task resume <n>`** — resume a worktree session by number: takes a
+  bare `<n>`, resolves it to the `eng-<n>` worktree, and resumes that
+  session's most recent conversation there, **on the substrate it
+  launched with**. The number-to-worktree resolution is the whole point —
+  you resume `task resume 814`, not a UUID. A bare `task resume` opens
+  the picker, which is the one form that still reaches a session whose
+  worktree has already been pruned.
 
-- **`rnaps <name>`** — resume a named session by the same name. The
-  counterpart to `naps`, as `raps` is to `aps`; added so a long-running
-  session survives a closed terminal. **A bare name pre-filters the
-  interactive picker rather than resuming deterministically** —
-  `-r/--resume` matches on session *ID*, and a name is not one, so
-  expect to pick from a list. That is the same underlying fact that made
-  the old `paps` wrong, and it is why `paps` / `haps` compute an id of
-  their own instead.
+- **`explore [name]`** — start a base-repo session, optionally named.
+  The general-purpose not-tied-to-a-worktree entry point, and the fold
+  of two older verbs whose bodies were identical bar one flag: bare
+  `explore` is the unnamed form, `explore <name>` the named one.
 
-- **`paps`** — start **or resume** a **planning** session. Takes no
+  **Seat-only, and Fable-pinned** — both halves of one ratified
+  decision. Base-repo work is thinking-heavy, so it runs the top tier
+  like `plan` and `architect`; and a Fable-class model on Bedrock falls
+  under the account's standing AWS human-review retention opt-in, which
+  the seat is free of. There is deliberately **no `explore local`**:
+  seat is the only substrate, so the word would be a no-op.
+
+- **`explore resume <name>`** — resume a named base-repo session.
+  **A bare name pre-filters the interactive picker rather than resuming
+  deterministically** — `-r/--resume` matches on session *ID*, and a
+  name is not one, so expect to pick from a list. That is the same
+  underlying fact that made the old planning verb wrong, and it is why
+  `plan` / `housekeeping` / `architect` compute an id of their own
+  instead. A free-form name has nothing to compute from.
+
+- **`plan`** — start **or resume** a **planning** session. Takes no
   argument: it derives the session name `plan-<day-of-month>` from
   today's date (run on the 14th → `plan-14`), `cd`s to the base repo,
   and launches Claude Code with `--model claude-fable-5` and `/plan`
   as the initial prompt.
 
-  `paps` is **idempotent by design** — if today's `plan-<day>` session
+  `plan` is **idempotent by design** — if today's `plan-<day>` session
   already exists it resumes it, otherwise it creates it. That collapses
   the new-vs-resume split into one verb, which is the point: a planning
   session is opened and reopened many times in a day, and having to
@@ -1061,7 +1189,7 @@ branch arrives as `worktree-eng-###`):
     session going forward is unspecified.
 
   - **The directory.** A planning session touches the board, not a
-    branch, so it must run in the base repo. `paps` `cd`s there
+    branch, so it must run in the base repo. `plan` `cd`s there
     itself rather than trusting the shell's cwd.
 
   - **The bootstrap.** Passing `/plan` as the initial prompt means the
@@ -1106,30 +1234,30 @@ branch arrives as `worktree-eng-###`):
     every session now runs in, which is one more reason the fast firm
     refuses to generalize a bare verb.
 
-  This **supersedes** `naps planning-<day>` / `rnaps planning-<day>`
-  and the older `planning-<day>` session naming. `naps` / `rnaps`
-  remain, for named sessions that aren't planning sessions.
+  This **supersedes** hand-naming a base-repo session `planning-<day>`
+  and resuming it by that name. `explore` / `explore resume` remain, for
+  base-repo sessions that aren't planning sessions.
 
   `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not
   `plan-05`.
 
-- **`haps`** — start **or resume** today's **housekeeping** session, so
+- **`housekeeping`** — start **or resume** today's **housekeeping** session, so
   a day's upkeep is one verb rather than a hand-started session. Same
-  contract as `paps`, with three substitutions: the display name is
+  contract as `plan`, with three substitutions: the display name is
   `housekeeping-<day-of-month>`, the initial prompt is `/housekeeping`,
   and the session-id seed carries its own prefix so a day's planning and
   housekeeping sessions cannot collide. **No model pin**, deliberately —
   housekeeping is upkeep, not board decisions, so it does not inherit
   the planning tier and runs on the saved default.
 
-- **`caps <topic>`** — start **or resume** an **architect** session on
-  one topic: the CEO hat, and the complement to `paps` rather than a
+- **`architect <topic>`** — start **or resume** an **architect** session on
+  one topic: the CEO hat, and the complement to `plan` rather than a
   variant of it. Same base-repo launch, same model pin, same
   idempotency; the different half is the briefing (`/architect`) and
   what it may write — **nothing to the board**.
 
   It keys on the **topic, not the date**, which is the one substantive
-  difference from `paps` / `haps`: a design thread outlives a day, so
+  difference from `plan` / `housekeeping`: a design thread outlives a day, so
   `_ds_topic_sid` omits the date from the seed. Putting the date in
   would silently start a fresh conversation each morning and lose the
   thread — the failure the verb exists to prevent. Each topic gets its
@@ -1141,17 +1269,22 @@ branch arrives as `worktree-eng-###`):
   dashes, since it reaches both a session name and a filename.
 
   All three standing verbs share one core, `_ds_session`, which takes
-  an already-computed id — `paps` and `haps` hand it a daily id,
-  `caps` a topic id. That split is deliberate: the operator's stated
+  an already-computed id — `plan` and `housekeeping` hand it a daily id,
+  `architect` a topic id. That split is deliberate: the operator's stated
   abstraction is that these launchers differ **only in the briefing**.
 
-- **`faps [go]`** — resume the whole **fleet**: one iTerm tab per
-  in-flight Linear issue, each with `raps <n>` typed **and Enter
+- **`fleet [go]`** — resume the whole **fleet**: one iTerm tab per
+  in-flight Linear issue, each with `task resume <n>` typed **and Enter
   pressed**, and each flagged green for attention. The batch counterpart
-  to `raps`, for after a machine restart — the loaded window becomes a
-  to-attend list with nothing left to type.
+  to `task resume`, for after a machine restart — the loaded window
+  becomes a to-attend list with nothing left to type.
 
-  A bare `faps` prints the plan and opens nothing; `faps go` applies it.
+  Because each tab types `task resume`, which reads that session's own
+  substrate marker, a **mixed fleet** of Bedrock and seat sessions comes
+  back on the right provider per session — and `fleet` itself needs no
+  substrate knowledge at all.
+
+  A bare `fleet` prints the plan and opens nothing; `fleet go` applies it.
   Read-only by default deliberately: one verb can open many tabs and
   resume many sessions, so seeing the list first is worth a word.
 
@@ -1164,28 +1297,48 @@ branch arrives as `worktree-eng-###`):
     there (see `linear-automation.md` → "The Linear state tracks the
     SESSION, not the PR"). Matching the type means a workflow rename
     cannot silently drop a session from the fleet.
-  - **It skips an issue whose tab is already open**, so it is safe to
-    run twice. The signal is the iTerm tab *name*, which carries the tag
-    because `aps` passes `-n <tag>` — so the two are coupled: if `aps`
-    ever stops setting a display name, this stops recognizing live
-    sessions and starts double-resuming.
+  - **It skips an issue whose session is already open**, so it is safe
+    to run twice. The signal is the iTerm session *name*, which carries
+    the tag because `task` passes `-n <tag>` — so the two are coupled:
+    if `task` ever stops setting a display name, this stops recognizing
+    live sessions and starts double-resuming. An iTerm it cannot reach
+    at all yields an **empty** live set, so `--apply` would open a
+    duplicate tab per issue: visible, and cheap to close. The opposite
+    default would resume nothing and print a clean summary, which is the
+    failure nobody notices.
   - **The attention mark is driven from outside the tab.** A coprocess
     bound to a key can only ever reach its own session, so the launcher
-    reads each new tab's `tty` out of AppleScript and calls
+    reads each new tab's `tty` back from the API and calls
     `iterm-attend.sh --tty <path> --mark`. `--mark` *sets* green rather
     than toggling: a toggle's outcome depends on the tab's history, and
     a launcher wants green, not "the other one".
 
   The deterministic half — the Linear query, the tag derivation, the
-  already-live check, the emitted AppleScript — is the committed tool
-  `.claude/tools/fleet_resume.py`; `faps` is the thin verb over it, per
-  the skill-tooling convention. **The apply path's effect is not
-  unit-testable** (asserting it would mean opening tabs in a live window
-  and resuming real work sessions), so the emitted script is verified by
-  compiling it against iTerm's scripting dictionary with `osacompile`,
-  which resolves every term and executes nothing.
+  already-live check, the window driving — is the committed tool
+  `.claude/tools/fleet_resume.py`; `fleet` is the thin verb over it, per
+  the skill-tooling convention.
 
-#### Why `paps` and `haps` compute a session id
+  **No AppleScript.** iTerm is driven through its Python API via the
+  shared `.claude/tools/iterm_api.py`, the one owner of iTerm automation
+  in this repo. This tool and `session_dispatch.py` were the only two
+  AppleScript callers, and consolidating them retired the language from
+  the toolbox rather than leaving a second copy to drift. The library is
+  not stdlib and is not installed: iTerm ships a Python environment
+  carrying it, so `iterm_api` stays importable from ordinary `python3`
+  and shells out to that interpreter for the calls that need it, one
+  JSON request in and one JSON response out.
+
+  **The apply path's effect is still not unit-testable** (asserting it
+  would mean opening tabs in a live window and resuming real work
+  sessions). This used to be covered indirectly by compiling the emitted
+  AppleScript with `osacompile`; there is no analogue for a Python API
+  call, and it is **not** replaced by a mock, which would only assert
+  that the module's idea of the API is self-consistent. What is asserted
+  instead is the positional contract between the two halves — one tty
+  per command, in order, gaps preserved — since a short response would
+  otherwise shift every tag/tty pairing by one.
+
+#### Why `plan` and `housekeeping` compute a session id
 
 The idempotency is **forced, not over-engineered**, and the reasoning is
 worth recording because the obvious implementation is the one that was
@@ -1216,9 +1369,9 @@ this one would have been caught at filing time rather than at wiring
 time.
 
 The split is deliberate and matches the session kinds: worktree
-sessions (`aps` / `raps`) run one deterministic spec to completion and
-are addressed by their Linear number; the standing sessions (`paps`,
-`haps`) run in the base repo, recur daily, and are addressed by the day
+sessions (`task` / `task resume`) run one deterministic spec to completion and
+are addressed by their Linear number; the standing sessions (`plan`,
+`housekeeping`) run in the base repo, recur daily, and are addressed by the day
 they started.
 
 ### iTerm2 manual setup (can't be committed)

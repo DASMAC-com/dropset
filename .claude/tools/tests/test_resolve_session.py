@@ -205,7 +205,7 @@ class ResolveTests(unittest.TestCase):
         # states that as a safety property — a sub-agent transcript is not a
         # session a human can resume, so offering one is a wrong answer rather
         # than a missing one. Nothing pinned it: switching `glob` to `rglob`
-        # kept every test green while `raps` began offering sub-agent ids.
+        # kept every test green while `task resume` began offering sub-agent ids.
         wt = self.fx.worktree("eng-14")
         slug = self.fx.projects / slugify(wt)
         nested = slug / "subagents"
@@ -253,9 +253,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(json.loads(out)["session_id"], "sid21")
 
     def test_the_lines_format_prints_three_fields_in_order(self):
-        # `--format lines` is the format the shipping caller (`raps`) reads
+        # `--format lines` is the format the shipping caller (`task resume`) reads
         # positionally, and it had no coverage at all: swapping the print
-        # order, or dropping the `or ""`, left every test green while `raps`
+        # order, or dropping the `or ""`, left every test green while `task resume`
         # resumed from the wrong directory or with a literal "None".
         wt = self.fx.worktree("eng-22")
         self.fx.transcript(self.fx.repo, "sid22", [str(wt)])

@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog, except a meta-flavored finding, which is promoted by swapping its milestone to `Claude meta` and stays parked), the parked `Claude meta` milestone — plus any open unpulled batch — swept and folded into one batch issue by default at bootstrap — assembled only when no meta issue is In Progress or In Review, which is what lets the batch carry no blocking edge at all — and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `paps`), never in a worktree.
+description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog, except a meta-flavored finding, which is promoted by swapping its milestone to `Claude meta` and stays parked), the parked `Claude meta` milestone — plus any open unpulled batch — swept and folded into one batch issue by default at bootstrap — assembled only when no meta issue is In Progress or In Review, which is what lets the batch carry no blocking edge at all — and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `plan`), never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -56,13 +56,13 @@ Two standing rules for the doc itself:
 
 The **base repo**, never a worktree — a planning session
 touches the board, not a branch. Start *or* resume one with
-a bare **`paps`** (Planning Agentic Programming Session):
+a bare **`plan`**:
 
 ```sh
-paps
+plan
 ```
 
-`paps` is **idempotent by design** — one verb, no
+`plan` is **idempotent by design** — one verb, no
 new-vs-resume split to remember. It names the session
 `plan-<day-of-month>` (run on the 14th → `plan-14`), and:
 
@@ -72,15 +72,19 @@ new-vs-resume split to remember. It names the session
   immediately;
 - if it already exists, it **resumes** it.
 
-That supersedes the older `naps planning-<day>` /
-`rnaps planning-<day>` pair, and the older `planning-<day>`
-session naming. `paps`, its worktree counterparts `aps` /
-`raps`, and the general-purpose `naps` / `rnaps` are
-documented in `docs/conventions/local-integrations.md`.
+It is a **seat** verb: planning runs the top tier, and a
+seat launch is what a Fable pin means. If the shell arrived
+carrying Bedrock exports from an earlier `task` in the same
+tab, `plan` clears them and says so.
+
+That supersedes hand-naming a base-repo session
+`planning-<day>`. `plan`, its worktree counterpart `task`,
+and the general-purpose `explore` are documented in
+`docs/conventions/local-integrations.md`.
 
 ### Check the model before doing anything else
 
-<!-- render:begin fable-model-guard verb=paps -->
+<!-- render:begin fable-model-guard verb=plan -->
 
 Sessions of this kind deliberately run the most capable model —
 **fidelity is the point**, and a session that has quietly landed on
@@ -94,7 +98,7 @@ Fable/Mythos-tier model, say so and offer the fix via
 
 1. *"Run `/model fable` now and continue"* — recommended; it switches
    the running session in place.
-1. *"Relaunch via `paps`"* — the deterministic path, at the cost of
+1. *"Relaunch via `plan`"* — the deterministic path, at the cost of
    restarting the session.
 1. *"Continue on this model anyway"* — proceed, and don't ask again
    this session.
@@ -107,7 +111,7 @@ that needs the top tier.
 The `model:` frontmatter on this skill is **belt-and-braces, not the
 mechanism**. Whether it switches the session going forward or applies
 only to this invocation's execution is not specified, so it is not
-relied on — `paps` passing `--model claude-fable-5` at launch is the
+relied on — `plan` passing `--model claude-fable-5` at launch is the
 deterministic path, and the check above is what catches every other
 route in.
 
@@ -697,6 +701,35 @@ instead of a description of the edit.
 The owning session is also the one that can judge the
 amendment against what it has already built, which a planning
 session cannot see.
+
+**Starting one is the other half of this step.** When a task
+is unblocked and ready, this session may **raise the offer
+itself** — "1234 is unblocked; start it?" — and on the
+operator's yes, dispatch it:
+
+```sh
+python3 .claude/tools/session_dispatch.py task 1234
+```
+
+That opens a **new iTerm window** and types the verb, exactly
+as if the operator had typed it. One window per session is
+load-bearing: it is how the operator talks to the fleet.
+
+Three things about the boundary:
+
+- **The ask-then-yes IS the authorization**, the same class
+  as `fleet go`. There is no second gate inside the tool, and
+  it never dispatches unasked.
+- **The substrate choice stays at the call site.** Pass
+  `task local 1234` for work that needs web research; the
+  dispatcher passes `local` straight through and adds no
+  policy of its own. See the substrate rule in
+  `docs/conventions/local-integrations.md`.
+- **Best effort.** If iTerm's Python API is off, or macOS has
+  not granted Automation access, the tool fails loudly and
+  prints the verb it would have typed — so relay that line to
+  the operator rather than retrying. `--dry-run` shows the
+  line without opening anything.
 
 **6. Write back — incrementally, then rewritten at the
 gate.**

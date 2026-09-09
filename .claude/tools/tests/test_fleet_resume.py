@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Unit tests for ``fleet_resume.py`` (stdlib ``unittest``; no pytest).
 
-Nothing here talks to Linear or to iTerm: the two seams (``_post`` and
-``_osascript``) are patched, and the assertions are on the plan the tool would
-carry out and on the AppleScript it would emit.
+Nothing here talks to Linear or to iTerm: the two seams (``_post`` and the
+``iterm_api`` entry points) are patched, and the assertions are on the plan the
+tool would carry out and the verbs it would type.
 
 **What these tests do not cover, deliberately.** The ``--apply`` path's *effect*
 — tabs actually appearing — cannot be asserted without opening tabs in the
-operator's live window and resuming real work sessions. The emitted script is
-verified instead by compiling it against the iTerm scripting dictionary with
-``osacompile``, which resolves every term without executing anything; see
-:class:`EmittedScriptIsValid`.
+operator's live window and resuming real work sessions.
+
+This suite used to also compile the emitted AppleScript with ``osacompile`` as a
+stand-in for that. The tool no longer emits AppleScript — iTerm is driven
+through its Python API via the shared ``iterm_api`` module — so what those cases
+checked (that every term resolves against the iTerm dictionary) has no analogue
+here and is not replaced by a mock pretending to be one. The API surface this
+now depends on is exercised for real by the live dispatch path, not by a fake.
 """
 
 from __future__ import annotations
@@ -18,8 +22,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import shutil
-import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -53,28 +55,72 @@ class TagOf(unittest.TestCase):
         self.assertEqual(fr.tag_of("  ENG-7  "), "7")
 
     def test_a_non_eng_identifier_yields_none(self):
-        # Skipped rather than turned into a bad `raps` argument.
+        # Skipped rather than turned into a bad `task resume` argument.
         self.assertIsNone(fr.tag_of("OPS-4"))
         self.assertIsNone(fr.tag_of("ENG-"))
         self.assertIsNone(fr.tag_of(""))
 
 
 class LiveTags(unittest.TestCase):
-    def test_it_reads_the_tag_out_of_a_tab_name(self):
+    def test_it_reads_the_tag_out_of_a_session_name(self):
         # The name carries a status glyph, so this is a search not a match.
-        names = "◐ eng-914\n✳ eng-923\n"
-        with mock.patch.object(fr, "_osascript", return_value=names):
+        # These are the real shapes, copied from a live listing.
+        names = ["◐ eng-914", "◑ eng-923"]
+        with mock.patch.object(fr.iterm_api, "session_names", return_value=names):
             self.assertEqual(fr.live_tags(), {"914", "923"})
 
-    def test_a_tab_with_no_tag_contributes_nothing(self):
+    def test_a_session_with_no_tag_contributes_nothing(self):
         # A plain shell, or a planning session — neither is resumed by this.
-        names = "Default\n✳ plan-21\nbash\n"
-        with mock.patch.object(fr, "_osascript", return_value=names):
+        names = ["Default", "◐ plan-21", "bash"]
+        with mock.patch.object(fr.iterm_api, "session_names", return_value=names):
             self.assertEqual(fr.live_tags(), set())
 
     def test_no_open_windows_is_an_empty_set_not_an_error(self):
-        with mock.patch.object(fr, "_osascript", return_value=""):
+        with mock.patch.object(fr.iterm_api, "session_names", return_value=[]):
             self.assertEqual(fr.live_tags(), set())
+
+    def test_an_unreachable_iterm_reports_and_yields_an_empty_set(self):
+        # The failure DIRECTION is the assertion. Empty means "nothing looks
+        # live", so --apply would open a duplicate tab per issue: visible, and
+        # cheap to close. The opposite default — unreachable reads as
+        # everything-live — would resume nothing and print a clean summary,
+        # which is the failure nobody notices.
+        err = io.StringIO()
+        with (
+            mock.patch.object(
+                fr.iterm_api,
+                "session_names",
+                side_effect=fr.iterm_api.ItermUnavailable("API off"),
+            ),
+            redirect_stderr(err),
+        ):
+            self.assertEqual(fr.live_tags(), set())
+        self.assertIn("API off", err.getvalue())
+
+
+class ResumeCommand(unittest.TestCase):
+    def test_it_types_the_substrate_aware_resume_verb(self):
+        # `task resume` reads the session's own substrate marker, which is what
+        # lets a mixed Bedrock/seat fleet come back correctly with no substrate
+        # knowledge in this tool.
+        self.assertEqual(fr.resume_command("889"), "task resume 889")
+
+    def test_open_tabs_pairs_each_tag_with_its_tty(self):
+        with mock.patch.object(
+            fr.iterm_api, "open_tabs", return_value=["/dev/ttys4", "/dev/ttys5"]
+        ) as opened:
+            pairs = fr.open_tabs(["889", "852"])
+        self.assertEqual(pairs, [("889", "/dev/ttys4"), ("852", "/dev/ttys5")])
+        opened.assert_called_once_with(["task resume 889", "task resume 852"])
+
+    def test_a_tag_with_no_tty_is_omitted_from_the_pairs(self):
+        # Omitted rather than carried with a placeholder, so the pair list keeps
+        # meaning "these can be marked"; `run` reconstructs the shortfall by
+        # difference against what it requested.
+        with mock.patch.object(
+            fr.iterm_api, "open_tabs", return_value=["/dev/ttys4", None]
+        ):
+            self.assertEqual(fr.open_tabs(["889", "852"]), [("889", "/dev/ttys4")])
 
 
 class Plan(unittest.TestCase):
@@ -151,49 +197,6 @@ class Plan(unittest.TestCase):
             result = fr.plan("key", "proj")
         self.assertEqual([e["tag"] for e in result["resume"]], ["1", "2"])
         self.assertEqual(calls, [None, "c1"])
-
-
-class OpenScript(unittest.TestCase):
-    def test_it_writes_the_resume_verb_and_presses_enter(self):
-        script = fr.open_script(["889"])
-        self.assertIn('write s text "raps 889" newline yes', script)
-
-    def test_newline_is_explicit_not_defaulted(self):
-        # The operator's ask is that Enter is actually pressed; relying on
-        # `write text`'s default newline would make that implicit.
-        self.assertIn("newline yes", fr.open_script(["1"]))
-
-    def test_it_emits_one_script_for_the_whole_fleet(self):
-        script = fr.open_script(["1", "2", "3"])
-        self.assertEqual(script.count('tell application "iTerm2"'), 1)
-        self.assertEqual(script.count("create tab with default profile"), 3)
-
-    def test_it_reports_each_tab_s_tty(self):
-        # The tty is how the attend mark reaches a tab this process is not in.
-        script = fr.open_script(["889"])
-        self.assertIn("tty of s", script)
-
-    def test_a_value_is_quoted_for_applescript(self):
-        self.assertEqual(fr._applescript_literal('a"b'), '"a\\"b"')
-        self.assertEqual(fr._applescript_literal("a\\b"), '"a\\\\b"')
-
-    def test_no_tags_still_produces_a_valid_shell_of_a_script(self):
-        script = fr.open_script([])
-        self.assertIn('tell application "iTerm2"', script)
-        self.assertNotIn("create tab", script)
-
-
-class ParseOpenResult(unittest.TestCase):
-    def test_it_pairs_tags_with_ttys(self):
-        out = "889 /dev/ttys004\n852 /dev/ttys005\n"
-        self.assertEqual(
-            fr.parse_open_result(out),
-            [("889", "/dev/ttys004"), ("852", "/dev/ttys005")],
-        )
-
-    def test_a_malformed_line_is_dropped_not_guessed_at(self):
-        out = "889 /dev/ttys004\nnonsense\n852 not-a-tty\n\n"
-        self.assertEqual(fr.parse_open_result(out), [("889", "/dev/ttys004")])
 
 
 class Summary(unittest.TestCase):
@@ -394,11 +397,11 @@ class Cli(unittest.TestCase):
         with (
             mock.patch.object(fr, "_post", return_value=_page([_issue("ENG-889")])),
             mock.patch.object(fr, "live_tags", return_value=set()),
-            mock.patch.object(fr, "_osascript") as osa,
+            mock.patch.object(fr.iterm_api, "open_tabs") as opened,
         ):
             code, out, err = self._run()
         self.assertEqual(code, 0)
-        osa.assert_not_called()
+        opened.assert_not_called()
         self.assertIn("read-only", err)
         self.assertEqual(json.loads(out)["resume"][0]["tag"], "889")
 
@@ -406,7 +409,7 @@ class Cli(unittest.TestCase):
         with (
             mock.patch.object(fr, "_post", return_value=_page([_issue("ENG-889")])),
             mock.patch.object(fr, "live_tags", return_value=set()),
-            mock.patch.object(fr, "_osascript", return_value="889 /dev/ttys009\n"),
+            mock.patch.object(fr.iterm_api, "open_tabs", return_value=["/dev/ttys009"]),
             mock.patch.object(fr, "mark_attention", return_value=True) as marker,
         ):
             code, out, _ = self._run("--apply")
@@ -420,18 +423,18 @@ class Cli(unittest.TestCase):
         with (
             mock.patch.object(fr, "_post", return_value=_page([_issue("ENG-889")])),
             mock.patch.object(fr, "live_tags", return_value={"889"}),
-            mock.patch.object(fr, "_osascript") as osa,
+            mock.patch.object(fr.iterm_api, "open_tabs") as opened,
         ):
             code, out, _ = self._run("--apply")
         self.assertEqual(code, 0)
-        osa.assert_not_called()
+        opened.assert_not_called()
         self.assertEqual(json.loads(out)["opened"], 0)
 
     def test_a_failed_mark_is_reported_not_fatal(self):
         with (
             mock.patch.object(fr, "_post", return_value=_page([_issue("ENG-889")])),
             mock.patch.object(fr, "live_tags", return_value=set()),
-            mock.patch.object(fr, "_osascript", return_value="889 /dev/ttys009\n"),
+            mock.patch.object(fr.iterm_api, "open_tabs", return_value=["/dev/ttys009"]),
             mock.patch.object(fr, "mark_attention", return_value=False),
         ):
             code, out, err = self._run("--apply")
@@ -448,7 +451,7 @@ class Cli(unittest.TestCase):
         with (
             mock.patch.object(fr, "_post", return_value=_page([_issue("ENG-889")])),
             mock.patch.object(fr, "live_tags", return_value=set()),
-            mock.patch.object(fr, "_osascript", return_value="garbage output\n"),
+            mock.patch.object(fr.iterm_api, "open_tabs", return_value=[None]),
             mock.patch.object(fr, "mark_attention", return_value=True) as marker,
         ):
             code, out, err = self._run("--apply")
@@ -469,7 +472,7 @@ class Cli(unittest.TestCase):
                 return_value=_page([_issue("ENG-889"), _issue("ENG-1042")]),
             ),
             mock.patch.object(fr, "live_tags", return_value=set()),
-            mock.patch.object(fr, "_osascript", return_value="889 /dev/ttys009\n"),
+            mock.patch.object(fr.iterm_api, "open_tabs", return_value=["/dev/ttys009"]),
             mock.patch.object(fr, "mark_attention", return_value=True),
         ):
             code, out, err = self._run("--apply")
@@ -493,38 +496,6 @@ class Cli(unittest.TestCase):
                     code = fr.main()
         self.assertEqual(code, 1)
         self.assertIn("LINEAR_API_KEY", err.getvalue())
-
-
-@unittest.skipUnless(shutil.which("osacompile"), "macOS-only: needs osacompile")
-class EmittedScriptIsValid(unittest.TestCase):
-    """The apply path's *effect* cannot be asserted without opening tabs in a
-    live window, so the emitted script is verified by compiling it instead —
-    `osacompile` resolves every term against the iTerm dictionary and runs
-    nothing."""
-
-    def test_the_emitted_script_compiles(self):
-        completed = subprocess.run(
-            ["osacompile", "-o", "/dev/null", "-"],
-            input=fr.open_script(["923", "852"]),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(
-            completed.returncode, 0, f"osacompile said: {completed.stderr}"
-        )
-
-    def test_the_session_listing_script_compiles_too(self):
-        completed = subprocess.run(
-            ["osacompile", "-o", "/dev/null", "-"],
-            input=fr._LIST_SESSIONS,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(
-            completed.returncode, 0, f"osacompile said: {completed.stderr}"
-        )
 
 
 if __name__ == "__main__":

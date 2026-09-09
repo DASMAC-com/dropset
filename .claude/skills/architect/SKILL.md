@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Run an architect session — the long-horizon design conversation, in the same seat quality as a planning session but doing a different job. Bootstraps minimally (the Planning document and the track umbrellas, nothing else), holds the conversation at decision altitude with deep code reads allowed and big surveys delegated, and writes NOTHING to the board: it hands its conclusions to the planning session through the Planning document's notes section and a direct message, naming the tracks its decisions likely affect without touching them. Runs in the base repo on the mandated model, launched with `caps <topic>`, never in a worktree.
+description: Run an architect session — the long-horizon design conversation, in the same seat quality as a planning session but doing a different job. Bootstraps minimally (the Planning document and the track umbrellas, nothing else), holds the conversation at decision altitude with deep code reads allowed and big surveys delegated, and writes NOTHING to the board: it hands its conclusions to the planning session through the Planning document's notes section and a direct message, naming the tracks its decisions likely affect without touching them. Runs in the base repo on the mandated model, launched with `architect <topic>`, never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -20,17 +20,23 @@ cut scope, and giving one to the daily board orchestrator
 would mean every routine pass could reopen strategy. So these
 are two sessions, not one skill with a mode toggle.
 
-`plan` stays the daily driver, launched with `paps`,
+`plan` stays the daily driver, launched with `plan`,
 unchanged.
 
 ## Where it runs
 
 **The base repo, on the mandated model, launched with
-`caps <topic>`** — never a worktree. The verb is capitals for
-CEO, takes a topic, and is **idempotent**: it creates the
-session if the named one is absent and resumes it if present.
-One verb, no resume twin — the same lesson that retired the
-`naps` / `rnaps` pair for planning.
+`architect <topic>`** — never a worktree. The verb takes a
+topic and is **idempotent**: it creates the session if the
+named one is absent and resumes it if present. One verb, no
+resume twin — the same lesson that folded the base-repo
+start/resume pair into `explore`.
+
+It is a **seat** verb, like `plan`: this session argues
+strategy, so it runs the top tier, and a seat launch is what
+a Fable pin means. If the shell arrived carrying Bedrock
+exports from an earlier `task` in the same tab, `architect`
+clears them and says so.
 
 The session is named `ceo-<topic>`, so the fleet listing reads
 by role: `eng-*` implementers, `plan-*` planning, `ceo-*`
@@ -41,7 +47,7 @@ volatility conversation cannot drift into a custody one.
 
 ### Check the model before doing anything else
 
-<!-- render:begin fable-model-guard verb=caps -->
+<!-- render:begin fable-model-guard verb=architect -->
 
 Sessions of this kind deliberately run the most capable model —
 **fidelity is the point**, and a session that has quietly landed on
@@ -55,7 +61,7 @@ Fable/Mythos-tier model, say so and offer the fix via
 
 1. *"Run `/model fable` now and continue"* — recommended; it switches
    the running session in place.
-1. *"Relaunch via `caps`"* — the deterministic path, at the cost of
+1. *"Relaunch via `architect`"* — the deterministic path, at the cost of
    restarting the session.
 1. *"Continue on this model anyway"* — proceed, and don't ask again
    this session.
@@ -68,7 +74,7 @@ that needs the top tier.
 The `model:` frontmatter on this skill is **belt-and-braces, not the
 mechanism**. Whether it switches the session going forward or applies
 only to this invocation's execution is not specified, so it is not
-relied on — `caps` passing `--model claude-fable-5` at launch is the
+relied on — `architect` passing `--model claude-fable-5` at launch is the
 deterministic path, and the check above is what catches every other
 route in.
 

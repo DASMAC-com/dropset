@@ -8,10 +8,14 @@ Repetitive, error-prone, and dependent on a Linear round trip the operator has
 to make by hand.
 
 This does all of it. For each in-flight issue with no live session it opens a
-tab, types ``raps <n>``, **presses Enter**, and applies the green attend mark —
-so the loaded window is a to-attend list and every session is genuinely
+tab, types ``task resume <n>``, **presses Enter**, and applies the green attend
+mark — so the loaded window is a to-attend list and every session is genuinely
 resumed, not merely queued for a keystroke. Nothing is left for the operator to
 type.
+
+``task resume`` reads that session's own substrate marker, so a mixed fleet of
+Bedrock and seat sessions comes back on the right provider per session and this
+tool needs no substrate knowledge of its own.
 
 **What counts as in-flight: state TYPE** ``started``, not the state *names*.
 That covers **In Progress and In Review**, which is the set that means "a
@@ -23,15 +27,23 @@ rename cannot silently drop a session from the fleet. The failure direction is
 safe either way: this only ever *opens* a tab, so an over-wide match costs a tab
 and an under-wide one costs a resumed session.
 
-**Skipping a live session** keys on the iTerm tab's **name**, which carries the
-tag because ``aps`` passes ``-n <tag>`` at launch. That is not a coincidence to
-rely on loosely — it is the same parity fix that made the committed ``aps``
-match the operative one, so the two are coupled: if ``aps`` ever stops setting
-a display name, this stops recognizing live sessions and starts double-resuming.
+**Skipping a live session** keys on the iTerm session's **name**, which carries
+the tag because ``task`` passes ``-n <tag>`` at launch. That is not a
+coincidence to rely on loosely — it is the same parity fix that made the
+committed launcher match the operative one, so the two are coupled: if ``task``
+ever stops setting a display name, this stops recognizing live sessions and
+starts double-resuming.
 
 **Read-only by default.** A bare run prints the plan and touches nothing;
-``--apply`` opens the tabs. Every AppleScript is emitted as **one** script per
-run rather than one per tab, so the whole reload is a single ``osascript``.
+``--apply`` opens the tabs. The whole reload is **one** driver round trip rather
+than one per tab, so it pays interpreter startup once and cannot interleave with
+the tabs it is creating.
+
+**No AppleScript.** iTerm is driven through its Python API, via the shared
+``iterm_api`` module — the one owner of iTerm automation in this repo. This tool
+and ``session_dispatch.py`` were the only two AppleScript callers, and
+consolidating them there retired the language from the toolbox entirely rather
+than leaving a second copy to drift.
 
 Stdlib only. A Python skill-tool under ``.claude/tools/`` — deliberately **not**
 a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -43,10 +55,12 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
+import iterm_api
 import linear_api
 
 ENDPOINT = linear_api.ENDPOINT
@@ -55,9 +69,10 @@ ENDPOINT = linear_api.ENDPOINT
 # triage / backlog / unstarted / started / completed / canceled.
 IN_FLIGHT_TYPE = "started"
 
-# The shell verb each tab is told to run. `raps <n>` resolves the number to the
-# `eng-<n>` worktree and continues that session there.
-RESUME_VERB = "raps"
+# The shell verb each tab is told to run. `task resume <n>` resolves the number
+# to the `eng-<n>` worktree, continues that session there, and re-exports the
+# substrate that session launched on.
+RESUME_VERB = "task resume"
 
 # An `ENG-###` identifier, or the tag inside an iTerm session name. The name
 # carries a status glyph prefix ("◐ eng-914"), so this is a search, not a match.
@@ -79,22 +94,6 @@ query InFlight($filter: IssueFilter, $first: Int!, $after: String) {
     }
   }
 }
-"""
-
-# Enumerate every session's name across every window and tab. Newline-joined so
-# the caller parses lines rather than an AppleScript list literal.
-_LIST_SESSIONS = """
-set out to ""
-tell application "iTerm2"
-  repeat with w in windows
-    repeat with t in tabs of w
-      repeat with s in sessions of t
-        set out to out & (name of s) & linefeed
-      end repeat
-    end repeat
-  end repeat
-end tell
-return out
 """
 
 
@@ -165,7 +164,7 @@ def in_flight(api_key: str, project_id: str) -> list[dict]:
 
 
 def tag_of(identifier: str) -> str | None:
-    """``ENG-889`` → ``889``, the argument ``raps`` takes.
+    """``ENG-889`` → ``889``, the argument ``task resume`` takes.
 
     Returns ``None`` for anything that is not an ``ENG-###`` identifier, so a
     differently-shaped one is skipped rather than turned into a bad command.
@@ -174,90 +173,72 @@ def tag_of(identifier: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _osascript(script: str) -> str:
-    try:
-        completed = subprocess.run(
-            ["osascript", "-"],
-            input=script,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError as exc:
-        raise FleetResumeError(f"cannot run osascript: {exc}") from exc
-    if completed.returncode != 0:
-        detail = (completed.stderr or "").strip() or f"exit {completed.returncode}"
-        raise FleetResumeError(f"osascript failed: {detail}")
-    return completed.stdout
-
-
 def live_tags() -> set[str]:
     """The tags of sessions already open in iTerm, from the **session** names.
 
-    (Session, not tab: `_LIST_SESSIONS` enumerates `name of s`. The two are
-    equivalent for the one-pane tabs these helpers create, but the distinction
-    matters if a tab is ever split.)
+    (Session, not tab: the two are equivalent for the one-pane tabs these
+    helpers create, but the distinction matters if a tab is ever split.)
 
-    The name carries a status glyph, so this searches rather than matches.
-    A session whose name has no tag (a plain shell, a planning session)
-    contributes nothing.
+    The name carries a status glyph — `"◐ eng-914"` — so this searches rather
+    than matches. A session whose name has no tag (a plain shell, a planning
+    session) contributes nothing.
+
+    An iTerm that cannot be reached yields an EMPTY set rather than an error,
+    and the direction of that failure is deliberate: an empty set means nothing
+    looks live, so `--apply` would open a tab for every in-flight issue. That
+    costs duplicate tabs, which is visible and cheap to close. The opposite
+    default — treating unreachable as "everything is live" — would silently
+    resume nothing at all and report a clean run, which is the failure nobody
+    notices.
     """
-    out = _osascript(_LIST_SESSIONS)
-    return {m.group(1) for m in _TAG_RE.finditer(out)}
+    try:
+        names = iterm_api.session_names()
+    except iterm_api.ItermUnavailable as exc:
+        print(f"fleet-resume: cannot read live sessions ({exc})", file=sys.stderr)
+        return set()
+    return {m.group(1) for m in _TAG_RE.finditer("\n".join(names))}
 
 
-def _applescript_literal(value: str) -> str:
-    """Quote a string for AppleScript source.
+def resume_command(tag: str) -> str:
+    """The exact line typed into a freshly opened tab.
 
-    Backslash and double-quote are escaped, which is what the values here
-    actually need: every one is an ``eng-<digits>`` tag from :func:`tag_of`, so
-    neither character can occur. It is done anyway because the result is
-    assembled into a script that gets *executed*, and "the input is
-    constrained" is a property of today's caller, not of this function.
-
-    **Not a general AppleScript quoter.** A literal newline or other control
-    character would pass through unescaped and break the emitted source —
-    AppleScript string literals have no escape for those, so handling them
-    would mean splitting into a concatenation of ``character id`` terms. That
-    is unnecessary for a digit-run tag and is deliberately not implemented; if
-    this ever quotes free-form text, it needs that work first.
+    The tag is quoted rather than interpolated raw. It is a digit run today —
+    `tag_of` matches `^ENG-(\\d+)$` and returns `group(1)` — but it ORIGINATES
+    IN A LINEAR API RESPONSE, and the AppleScript quoter this replaced made
+    exactly this point in its own docstring before being deleted with the rest
+    of that path: "the input is constrained" is a property of today's caller,
+    not of this function. The line is typed into a live interactive shell, so
+    the property is worth keeping across the change of mechanism.
     """
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return f"{RESUME_VERB} {shlex.quote(tag)}"
 
 
-def open_script(tags: list[str]) -> str:
-    """One AppleScript that opens a tab per tag and reports each tab's tty.
+def open_tabs(tags: list[str]) -> list[tuple[str, str]]:
+    """Open a tab per tag, type its resume verb, and pair each tag with its tty.
 
-    Emitted as a single script rather than one per tag: a per-tag `osascript`
-    would pay process startup per session and interleave badly with the tabs
-    it is creating. The tty comes back so the caller can apply the attend mark
-    to each new tab — a coprocess bound to a key can only reach its own
-    session, so the mark has to be driven from here.
+    The tty comes back so the caller can apply the attend mark to each new tab —
+    a coprocess bound to a key can only reach its own session, so the mark has
+    to be driven from here.
+
+    Tags whose tty could not be read are OMITTED from the returned pairs rather
+    than carried with a placeholder, which keeps the pair list meaning "these
+    can be marked". The caller reconstructs the shortfall by difference against
+    what it requested; see the `no_tty` handling in :func:`run`, which exists
+    because an earlier version reported a clean summary over a total failure.
+
+    The `/dev/` prefix check is carried over from the AppleScript parser this
+    replaced. It is not redundant with the truthiness test: the value is handed
+    straight to `mark_attention`, which shells out with it, so the shape check
+    is the guard on that boundary. Dropping it in the migration would have
+    widened what reaches a subprocess from "a device path" to "any non-empty
+    string iTerm hands back".
     """
-    lines = ['set out to ""', 'tell application "iTerm2"', "  set w to current window"]
-    for tag in tags:
-        command = _applescript_literal(f"{RESUME_VERB} {tag}")
-        lines += [
-            "  tell w",
-            "    set t to (create tab with default profile)",
-            "  end tell",
-            "  set s to current session of t",
-            f"  write s text {command} newline yes",
-            f'  set out to out & {_applescript_literal(tag)} & " " & (tty of s)'
-            " & linefeed",
-        ]
-    lines += ["end tell", "return out"]
-    return "\n".join(lines)
-
-
-def parse_open_result(out: str) -> list[tuple[str, str]]:
-    """``"889 /dev/ttys004"`` lines → ``[(tag, tty)]``."""
-    pairs = []
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) == 2 and parts[1].startswith("/dev/"):
-            pairs.append((parts[0], parts[1]))
-    return pairs
+    ttys = iterm_api.open_tabs([resume_command(tag) for tag in tags])
+    return [
+        (tag, tty)
+        for tag, tty in zip(tags, ttys)
+        if tty and str(tty).startswith("/dev/")
+    ]
 
 
 def mark_attention(tty: str) -> bool:
@@ -381,7 +362,16 @@ def run(argv: list[str]) -> int:
     result = plan(api_key, project_id)
     if args.apply and result["resume"]:
         tags = [entry["tag"] for entry in result["resume"]]
-        pairs = parse_open_result(_osascript(open_script(tags)))
+        try:
+            pairs = open_tabs(tags)
+        except iterm_api.ItermUnavailable as exc:
+            # Best effort is the bar, and the operator loses the convenience
+            # rather than the information: name every verb that went untyped so
+            # the fleet can be brought back by hand.
+            raise FleetResumeError(
+                f"{exc}\n  run these by hand:\n"
+                + "\n".join(f"    {resume_command(tag)}" for tag in tags)
+            ) from exc
         unmarked = [tag for tag, tty in pairs if not mark_attention(tty)]
         result["opened"] = len(pairs)
         result["unmarked"] = unmarked
