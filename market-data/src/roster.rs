@@ -1,4 +1,6 @@
 // cspell:word USDTUSD
+// cspell:word USDCAD
+// cspell:word USDUSDT
 //! The product roster a collector polls: parsing it out of the environment,
 //! and the canonical ↔ venue spelling it hands each adapter.
 //!
@@ -54,13 +56,13 @@ impl RosterEntry {
     /// **A pin may not stand in for an inversion, and saying so is the whole
     /// reason `derive` runs even when a pin is present.** A pin fixes a
     /// *spelling*; a direction-fixed venue quoting the other way round is a
-    /// different *value*. The two look interchangeable at the roster: `CAD-USD`
-    /// means USD per CAD (~0.7254), OANDA serves only `USD_CAD` (~1.37838),
-    /// and `CAD-USD=USD_CAD` parses cleanly — so without this refusal an
-    /// operator reaching for the documented escape hatch would wire the
-    /// reciprocal into a canonical product id, storing 1.37838 where 0.7254
-    /// belongs with nothing failing. Refusing is safe because a pin is never
-    /// *needed* for such a pair: the venue rule already derives its spelling.
+    /// different *value*, and `CANONICAL=REVERSED` parses cleanly, so without
+    /// this refusal an operator reaching for the documented escape hatch would
+    /// wire a reciprocal into a canonical product id with nothing failing.
+    /// Refusing is safe because a pin is never *needed* for such a pair: the
+    /// venue rule derives that spelling by definition. The worked example, the
+    /// measurement behind it and the date are in
+    /// `OANDA_REVERSED_PAIRS` (`crate::fx`) — one home for the numbers.
     pub fn resolve_with<F, T>(&self, derive: F) -> Result<VenueSymbol>
     where
         F: FnOnce(&str) -> Result<T>,
@@ -83,10 +85,72 @@ impl RosterEntry {
                 self.product_id
             ));
         }
+        if self.pin_reverses_the_legs(pinned) {
+            return Err(anyhow!(
+                "{:?} pins the venue symbol {pinned:?}, which is its own two \
+                 legs in the opposite order — that is a reciprocal, not a \
+                 spelling, so honouring it would store the inverse of {:?} \
+                 under that id. If this venue really does quote the pair \
+                 backwards, it belongs in that venue's reversed-pair table so \
+                 the adapter inverts it at intake; a pin cannot express a \
+                 direction.",
+                self.product_id,
+                self.product_id
+            ));
+        }
         Ok(VenueSymbol {
             symbol: pinned.clone(),
             inverted: false,
         })
+    }
+
+    /// Whether `pinned` is this entry's own two legs in the **opposite** order.
+    ///
+    /// **This is the half of the reciprocal guard that does not depend on any
+    /// venue's table, and it is why the guard above is trustworthy.** The
+    /// refusal keyed on `derived.inverted` is exactly as wide as the venue
+    /// rule's list of reversed pairs — so for a pair a venue quotes backwards
+    /// but that is *missing* from that list, the rule reports `inverted:
+    /// false`, the pin is honoured, and `XXX-USD=USD_XXX` stores the raw
+    /// reciprocal under the canonical id with nothing failing. That is the
+    /// same silent off-by-a-reciprocal the table exists to prevent, reachable
+    /// through the documented escape hatch, and a missing table entry is
+    /// precisely the mistake most likely to coincide with someone reaching for
+    /// a pin.
+    ///
+    /// Comparing the legs closes it without consulting any table. Separators
+    /// and case are ignored, so `USD_CAD`, `USD/CAD` and `USDCAD` are all
+    /// caught for `CAD-USD`.
+    ///
+    /// **The bound on that, since this type is deliberately venue-ignorant.**
+    /// "A pin is never needed to swap a pair's own legs" holds for a venue
+    /// whose rule *derives* the reversed spelling — which is the direction-
+    /// fixed case this exists for. It would not hold for a hypothetical venue
+    /// that quotes a pair canonically but happens to *name* it with the legs
+    /// reversed: there the pin would be the only way to say so, this guard
+    /// would refuse it, and the error text would misdirect the operator toward
+    /// a reversed-pair table that would then double-invert. No such venue is
+    /// wired today (Kraken and Twelve Data both concatenate or separate the
+    /// legs in canonical order), so this is recorded as the condition under
+    /// which the guard would need revisiting rather than as a live gap.
+    ///
+    /// It deliberately does **not** fire on a legitimate pin: Kraken's
+    /// `USDT-USD=USDTZUSD` normalizes to `USDTZUSD`, whose reversed legs would
+    /// be `USDUSDT` — no match.
+    fn pin_reverses_the_legs(&self, pinned: &str) -> bool {
+        let Some((base, quote)) = self.product_id.split_once('-') else {
+            return false;
+        };
+        if base.is_empty() || quote.is_empty() {
+            return false;
+        }
+        let bare: String = pinned
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .flat_map(char::to_uppercase)
+            .collect();
+        let reversed = format!("{quote}{base}").to_ascii_uppercase();
+        bare == reversed
     }
 }
 
@@ -122,12 +186,15 @@ impl From<String> for VenueSymbol {
 /// One roster entry resolved against a venue: what to ask the venue for, and
 /// what to store the answer under.
 ///
-/// **A named pair rather than a tuple, deliberately.** Both fields are
-/// `String`, so a positional `(venue, canonical)` swaps silently at any call
-/// site that takes it apart — and the consequence of a swap is storing a
-/// reading under a venue-native symbol, which is the exact outcome the
-/// canonical-id convention exists to prevent (see [`crate::fx`]). Names make
-/// that mistake fail to compile.
+/// **Named fields rather than a tuple, deliberately.** The two symbol fields
+/// are both `String`, so a positional `(venue, canonical)` swaps silently at
+/// any call site that takes it apart — and the consequence of a swap is
+/// storing a reading under a venue-native symbol, which is the exact outcome
+/// the canonical-id convention exists to prevent (see [`crate::fx`]). Names
+/// make that mistake fail to compile. `inverted` cannot swap with either of
+/// them, but it benefits from the same rule for a different reason: read
+/// positionally, a trailing `bool` says nothing about which direction it
+/// asserts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VenueProduct {
     /// The symbol to send to the venue, and the key its response comes back
@@ -168,8 +235,10 @@ where
 {
     let mut out: Vec<VenueProduct> = Vec::with_capacity(products.len());
     for entry in products {
-        let VenueSymbol { symbol, inverted } = entry.resolve_with(&derive)?;
-        let venue_symbol = symbol;
+        let VenueSymbol {
+            symbol: venue_symbol,
+            inverted,
+        } = entry.resolve_with(&derive)?;
         if let Some(clash) = out.iter().find(|p| p.venue_symbol == venue_symbol) {
             // Worded for both caller shapes. A collector that indexes a batched
             // response by venue symbol would file the venue's single answer
@@ -425,6 +494,28 @@ mod tests {
             .to_string();
         assert!(err.contains("opposite direction"), "{err}");
         assert!(err.contains("not a reciprocal"), "{err}");
+    }
+
+    #[test]
+    fn a_pin_that_reverses_its_own_legs_is_refused_without_consulting_a_table() {
+        // The hole the table-keyed refusal alone leaves: for a pair a venue
+        // quotes backwards but that is MISSING from its reversed-pair table,
+        // the rule reports `inverted: false`, the pin is honoured, and the raw
+        // reciprocal lands under the canonical id with nothing failing. A
+        // missing table entry is exactly the mistake most likely to coincide
+        // with someone reaching for a pin, so the guard must not depend on the
+        // table. Here `derive` deliberately reports NOT inverted.
+        for pin in ["USD_CAD", "USD/CAD", "USDCAD", "usd_cad"] {
+            let roster = parse_roster(&format!("CAD-USD={pin}")).unwrap();
+            let err = roster[0]
+                .resolve_with(|_| Ok("CAD_USD".to_string()))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("opposite order"),
+                "pin {pin:?} should be refused as a reciprocal: {err}"
+            );
+        }
     }
 
     #[test]

@@ -325,16 +325,56 @@ fn window_end(
 /// A candle that fails to decode is dropped rather than failing the batch. The
 /// alternative would let one malformed row stall a backfill indefinitely, and
 /// the store's `ON CONFLICT DO NOTHING` means a later re-fetch can still fill
-/// the gap. A candle that fails to *invert* is dropped on the same terms and
-/// for the same reason.
+/// the gap.
+///
+/// **A candle that fails to *invert* is dropped too, but the inherited
+/// rationale does not transfer intact and it is worth being exact about why.**
+/// A decode failure is a per-row malformation: one bad string in one candle,
+/// incidental and self-clearing. An inversion failure is a property of the
+/// *value*, and the value comes from the same series every window — so a venue
+/// state that produces one produces them all, in every window. Combined with
+/// the cursor advancing past the whole window regardless, a systematic
+/// inversion failure would render as a permanently empty series, which reads
+/// as *market closed* rather than as an error, and the `ON CONFLICT` mitigation
+/// does not apply because nothing rewinds the cursor.
+///
+/// Dropping is still the right call — one bar must not stall a backfill, and
+/// `decode`'s floor means reaching this at all takes an out-of-contract
+/// response. But the drop is **logged** rather than silent, because the silence
+/// watch that would eventually notice an empty series cannot say *why* it is
+/// empty, and the error discarded here is the only thing that can.
 fn assemble(raw: Vec<RawCandle>, next_start: i64, end: i64, invert: bool) -> Vec<Candle> {
     let mut records: Vec<Candle> = raw
         .into_iter()
         .filter(|c| c.complete)
-        .filter_map(|c| decode(&c).ok())
+        .filter_map(|c| {
+            // Logged for the same reason the inversion drop below is, and the
+            // reason now applies more strongly here: `decode` enforces the
+            // positive-finite floor, so a venue emitting `NaN`, `inf` or a
+            // negative does it every window — the recurring, renders-as-closed
+            // shape — and this is the branch every canonical-direction pair
+            // takes.
+            decode(&c)
+                .inspect_err(|err| {
+                    tracing::warn!(
+                        time = %c.time,
+                        error = %err,
+                        "dropping a candle that could not be decoded"
+                    );
+                })
+                .ok()
+        })
         .filter_map(|c| {
             if invert {
-                invert_candle(&c).ok()
+                invert_candle(&c)
+                    .inspect_err(|err| {
+                        tracing::warn!(
+                            bucket_start = c.bucket_start,
+                            error = %err,
+                            "dropping a candle that could not be inverted"
+                        );
+                    })
+                    .ok()
             } else {
                 Some(c)
             }
@@ -349,9 +389,14 @@ fn assemble(raw: Vec<RawCandle>, next_start: i64, end: i64, invert: bool) -> Vec
 ///
 /// Rejects a value that cannot be inverted into a price rather than producing
 /// one: `1.0 / 0.0` is `inf` in release, and an infinity reaching `cex_prices`
-/// is a `NaN`-shaped poison in every average computed over it afterwards. A
-/// non-positive or non-finite FX mid is already impossible upstream, so this is
-/// a guard rail on arithmetic rather than on the venue.
+/// is a `NaN`-shaped poison in every average computed over it afterwards.
+///
+/// **[`decode`] already enforces a positive finite floor, so the first check
+/// here is defense in depth rather than the only guard** — this function is
+/// reachable from tests and from any future caller that has not been through
+/// `decode`. The *second* check is not redundant at all, and is the one that
+/// earns its keep: a subnormal input (`1e-320`) is finite and positive, clears
+/// every check `decode` makes, and still overflows to `inf` when inverted.
 fn invert_price(price: f64) -> Result<f64> {
     if !price.is_finite() || price <= 0.0 {
         return Err(anyhow!(
@@ -395,11 +440,40 @@ fn invert_candle(raw: &Candle) -> Result<Candle> {
 }
 
 /// Decode one complete candle into the shared [`Candle`] record.
+///
+/// **Parsing is not validation, so this also enforces a positive finite
+/// floor.** `str::parse::<f64>()` accepts `"inf"`, `"-inf"`, `"NaN"`, `"-0"`
+/// and negatives as `Ok`, so a parse alone leaves the value sane only because
+/// the venue is *trusted* to send sane numbers. `cex_prices` constrains its
+/// price columns to `NOT NULL` and nothing more — no `CHECK` — so an infinity
+/// or a `NaN` that gets this far is stored, and then poisons every average
+/// taken over the series afterwards.
+///
+/// The floor lives **here**, at the one place the venue's data becomes a
+/// `Candle`, rather than beside the inversion — otherwise it would guard only
+/// the reciprocal pairs and leave every canonical-direction pair (the majority
+/// of any roster) unchecked, which is validation that varies by quote
+/// direction for no reason.
+///
+/// **One narrow asymmetry survives, deliberately.** A subnormal price
+/// (`1e-320`) is finite and positive, so it clears this floor and is stored on
+/// a canonical-direction pair — while on a reversed pair it is dropped,
+/// because its reciprocal overflows. That is a property of the arithmetic
+/// rather than an unchecked path: there is nothing wrong with a subnormal as a
+/// *stored* price, only as one about to be inverted. Stated here so the
+/// remaining difference is on the record rather than looking like the same
+/// oversight this floor just fixed.
 fn decode(raw: &RawCandle) -> Result<Candle> {
     let price = |field: &str, value: &str| -> Result<f64> {
-        value
+        let parsed = value
             .parse::<f64>()
-            .with_context(|| format!("OANDA {field} price {value:?} is not a number"))
+            .with_context(|| format!("OANDA {field} price {value:?} is not a number"))?;
+        if !parsed.is_finite() || parsed <= 0.0 {
+            return Err(anyhow!(
+                "OANDA {field} price {value:?} is not a positive finite number"
+            ));
+        }
+        Ok(parsed)
     };
     Ok(Candle {
         bucket_start: parse_unix_seconds(&raw.time)?,
@@ -659,6 +733,20 @@ mod tests {
         assert!(invert_price(-1.5).is_err());
         assert!(invert_price(f64::NAN).is_err());
         assert!(invert_price(f64::INFINITY).is_err());
+
+        // The overflow re-check, which the four cases above do NOT reach —
+        // every one of them fails the first guard, so without this the second
+        // guard could be deleted with the suite still green. A subnormal is
+        // finite and positive, so it clears every check `decode` makes, and
+        // its reciprocal overflows.
+        assert!(invert_price(1e-320).is_err());
+        assert!(invert_price(5e-324).is_err(), "the smallest subnormal");
+
+        // ...and the bound, so the guard is not mistaken for "rejects small
+        // values": `f64::MIN_POSITIVE` inverts to a large but finite number,
+        // so it is accepted. Only inputs whose reciprocal actually overflows
+        // are refused.
+        assert!(invert_price(f64::MIN_POSITIVE).is_ok());
     }
 
     #[test]
@@ -676,5 +764,86 @@ mod tests {
         assert_eq!(inverted[0].close, 1.0 / direct[0].close);
         assert_eq!(inverted[0].high, 1.0 / direct[0].low);
         assert!(inverted[0].high > inverted[0].low);
+    }
+
+    #[test]
+    fn a_non_finite_price_is_dropped_on_the_direct_path_too_not_only_inverted() {
+        // The point of putting the floor in `decode` rather than beside the
+        // inversion: `str::parse::<f64>()` accepts all four of these as `Ok`,
+        // and `cex_prices` has no CHECK constraint, so before the floor
+        // existed each one would have been STORED on any non-inverted pair —
+        // which is every pair on a default roster except CAD-USD. Guarding
+        // only the inverted path would have made validation depend on quote
+        // direction.
+        for bad in ["0", "-1.5", "inf", "NaN"] {
+            let body: CandlesResponse = serde_json::from_value(serde_json::json!({
+                "instrument": "AUD_USD",
+                "granularity": "M1",
+                "candles": [{
+                    "complete": true,
+                    "volume": 7,
+                    "time": "1786668660.000000000",
+                    "mid": { "o": "0.65", "h": "0.66", "l": "0.64", "c": bad }
+                }]
+            }))
+            .unwrap();
+            // invert = FALSE — the direction that had no guard at all.
+            let got = assemble(body.candles, 1_786_668_600, 1_786_668_780, false);
+            assert!(
+                got.is_empty(),
+                "a {bad:?} close must not reach the store on the direct path"
+            );
+        }
+    }
+
+    #[test]
+    fn a_candle_that_cannot_be_inverted_is_dropped_without_taking_the_batch() {
+        // The drop policy documented on `assemble` had no test, and the
+        // plausible wrong edit — `.ok().or(Some(c))`, "don't lose data" —
+        // would have kept every other test green while letting an
+        // *un-inverted* reciprocal reach `cex_prices`. This pins it.
+        //
+        // Note which value is needed: `decode`'s positive-finite floor now
+        // rejects "0", "-1", "inf" and "NaN" before the inversion is ever
+        // reached, so the only input that decodes cleanly and *then* fails to
+        // invert is a subnormal, whose reciprocal overflows.
+        let body: CandlesResponse = serde_json::from_value(serde_json::json!({
+            "instrument": "USD_CAD",
+            "granularity": "M1",
+            "candles": [
+                {
+                    "complete": true,
+                    "volume": 11,
+                    "time": "1786668660.000000000",
+                    "mid": {
+                        "o": "1e-320", "h": "1e-320",
+                        "l": "1e-320", "c": "1e-320"
+                    }
+                },
+                {
+                    "complete": true,
+                    "volume": 22,
+                    "time": "1786668720.000000000",
+                    "mid": {
+                        "o": "1.37200", "h": "1.38000",
+                        "l": "1.37000", "c": "1.37838"
+                    }
+                }
+            ]
+        }))
+        .unwrap();
+
+        let got = assemble(body.candles, 1_786_668_600, 1_786_668_780, true);
+
+        // The healthy candle survives; the un-invertible one is gone rather
+        // than passed through raw.
+        assert_eq!(got.len(), 1, "only the invertible candle should survive");
+        assert_eq!(got[0].bucket_start, 1_786_668_720);
+        assert_eq!(got[0].volume, 22.0);
+        assert!(
+            got[0].close < 1.0,
+            "the survivor must be inverted, not raw: {}",
+            got[0].close
+        );
     }
 }

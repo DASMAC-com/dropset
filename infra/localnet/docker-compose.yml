@@ -150,10 +150,11 @@ services:
     # change. The idempotent insert absorbs the redundant polls that remain.
     #
     # **`ERAPI_PRODUCT_IDS` deliberately does not chain to `FX_PRODUCT_IDS`**
-    # the way the keyed FX venues do. That shared roster is the three pairs
-    # those vendors are paid for; this venue prices its whole table in one
-    # request, so narrowing it to that set would discard the coverage that is
-    # the only reason to run it.
+    # the way Twelve Data and Alpha Vantage do. That shared roster is the
+    # narrow set of pairs those vendors are paid for; this venue prices its
+    # whole table in one request, so narrowing it to that set would discard
+    # the coverage that is the only reason to run it. (OANDA does not chain
+    # either, for an unrelated reason — see its own service comment.)
     build:
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
@@ -512,9 +513,11 @@ services:
     # The variable stays unchained even so, and the reason is about how the
     # dashboard *renders* rather than about the 400. Which pairs are reversed
     # is a measured table in the code (`OANDA_REVERSED_PAIRS` in
-    # market-data/src/fx.rs), so a pair added to the shared roster but
-    # missing from that table would be registered here and then 400 on every
-    # poll — present but not producing, which the coverage panel renders as
+    # market-data/src/fx.rs), so a pair OANDA quotes **backwards** that were
+    # added to the shared roster while missing from that table would be
+    # registered here and then 400 on every poll (a canonically-quoted pair
+    # absent from the table is the normal case and works fine) —
+    # present but not producing, which the coverage panel renders as
     # **faulted**. That is a false outage for what is really a config gap,
     # and not conflating those two is the whole thesis of §4 of
     # docs/dashboards.md. Unchained, such a pair simply has no OANDA row:

@@ -13,10 +13,20 @@
 //! **Why they assert a band and not a rate.** A hardcoded 0.7255 would fail on
 //! any day the market moved, which trains the reader to ignore it. The claim
 //! worth pinning is structural — the inverted series is on the *right order of
-//! magnitude* for the canonical direction, and the raw one is not — so a wide
-//! band around a plausible CAD/USD is both sufficient to catch a missing
-//! inversion (which would read ~1.38, far outside it) and stable across
-//! years of ordinary FX drift.
+//! magnitude* for the canonical direction, and the raw one is not — so a band
+//! around a plausible CAD/USD catches a missing inversion, which would read
+//! ~1.38.
+//!
+//! **The band's honest bound.** It is *not* stable across all FX history, and
+//! it cannot be: CAD traded at and above parity with USD for stretches of
+//! 2007–2013 (USD/CAD bottomed near 0.906 in Nov 2007, i.e. CAD/USD ≈ 1.10),
+//! while the all-time low is ≈ 0.618 in Jan 2002. The bounds below cover that
+//! range, but note the structural limit — any band wide enough to contain
+//! parity necessarily overlaps its own reciprocal image, so *at* parity these
+//! tests cannot distinguish a direction at all. That is a property of the
+//! measurement, not a defect to widen away. If CAD approaches parity again,
+//! the discriminating assertion is the reciprocal check in
+//! `the_stored_series_is_canonical_end_to_end`, not the band.
 //!
 //! Needs a network and a credential, so `#[ignore]`d like the fence tests:
 //!
@@ -32,21 +42,41 @@ use dropset_feeds::{
 };
 use dropset_market_data::fx::{oanda_instrument, secret};
 
-/// A generously wide band around a plausible CAD/USD. The point is to separate
-/// ~0.73 from its reciprocal ~1.38, not to pin a rate.
-const CAD_USD_BAND: (f64, f64) = (0.55, 0.95);
+/// A band around a plausible CAD/USD, wide enough to cover the pair's
+/// historical range (≈0.618 in 2002 to ≈1.10 in 2007) while still separating
+/// it from its reciprocal ≈1.38. The point is to catch a missing inversion,
+/// not to pin a rate — see the module doc for why it cannot be made
+/// unconditionally safe.
+const CAD_USD_BAND: (f64, f64) = (0.50, 1.20);
 
 /// The practice host, matching the collector's default.
 const BASE_URL: &str = "https://api-fxpractice.oanda.com";
 
+/// Four days back, so the first windows cover recent trading days. Call this
+/// **once** per test and share the result across fetches — see
+/// [`first_non_empty`].
+fn recent_start() -> i64 {
+    now_secs() - 4 * 86_400
+}
+
 /// Drain windows until one carries candles, so a request landing on a closed
 /// weekend is not read as a failure. FX is shut from Friday evening to Sunday
 /// evening and a window inside that legitimately returns nothing.
-async fn first_non_empty(instrument: &str, invert: bool) -> Vec<dropset_feeds::venues::Candle> {
+/// `start` is passed in rather than computed here, so two calls can be made to
+/// cover the **same** window. Recomputing `now_secs()` per call makes the
+/// second window start later by however long the first call's round trips
+/// took, and `assemble` filters on `bucket_start >= next_start` — so with
+/// minute candles the oldest surviving bucket drops out whenever a minute
+/// boundary falls inside that delta. Any test comparing the two fetches
+/// bucket-for-bucket would then fail a few percent of runs, and would read as
+/// a quote-direction failure rather than as a race.
+async fn first_non_empty(
+    instrument: &str,
+    invert: bool,
+    start: i64,
+) -> Vec<dropset_feeds::venues::Candle> {
     let api_key = secret(oanda::SECRET_NAME).expect("OANDA credential must resolve");
     let http = OandaCandles::client(BASE_URL, &api_key).expect("client builds");
-    // Four days back, so the first windows cover recent trading days.
-    let start = now_secs() - 4 * 86_400;
     let mut source = OandaCandles::resume(
         http,
         format!("test:oanda:{instrument}"),
@@ -77,7 +107,7 @@ async fn the_reversed_instrument_is_the_one_that_exists() {
     // Half the premise: `USD_CAD` is real. If OANDA ever listed `CAD_USD`, the
     // table entry would become wrong in the harmless direction, but this is
     // where that shows up.
-    let records = first_non_empty("USD_CAD", false).await;
+    let records = first_non_empty("USD_CAD", false, recent_start()).await;
     let bar = &records[0];
     assert!(
         bar.low <= bar.high,
@@ -88,8 +118,10 @@ async fn the_reversed_instrument_is_the_one_that_exists() {
     let (lo, hi) = CAD_USD_BAND;
     assert!(
         bar.close > 1.0 / hi && bar.close < 1.0 / lo,
-        "raw USD_CAD close {} should sit near the reciprocal of a CAD/USD, \
-         outside {CAD_USD_BAND:?}",
+        "raw USD_CAD close {} should sit on the reciprocal side of \
+         {CAD_USD_BAND:?} — note the two ranges legitimately overlap once the \
+         band is wide enough to contain parity, so this is a sanity check and \
+         not a separation proof (see the module doc)",
         bar.close
     );
 }
@@ -126,9 +158,29 @@ async fn the_canonical_direction_is_rejected_by_the_venue() {
         ),
         Err(err) => err.to_string(),
     };
+    // **Assert on the status token the transport writes, and rule the auth
+    // failures out explicitly.** A substring test for `"400"` or
+    // `"instrument"` reads as precise and is very nearly vacuous: the request
+    // path is `/v3/instruments/{instrument}/candles`, so ANY error carrying
+    // the URL contains "instrument" — including a 401 from an expired
+    // credential — and the query string carries `from=<epoch>`, where an
+    // epoch like 1786668400 contains "400". Either would let a stale key
+    // masquerade as the measurement succeeding, in the one test whose job is
+    // to catch this table drifting away from the venue.
+    //
+    // `HttpClient::check_status` interpolates the status as `returned {status}`
+    // (pinned by its own test `a_failed_status_is_named_in_the_error_itself`),
+    // so `returned 400` is an unambiguous anchor.
+    for auth_status in ["returned 401", "returned 403"] {
+        assert!(
+            !msg.contains(auth_status),
+            "the credential looks stale ({auth_status}) — this test cannot \
+             say anything about quote direction until it is fixed: {msg}"
+        );
+    }
     assert!(
-        msg.contains("400") || msg.to_ascii_lowercase().contains("instrument"),
-        "expected a 400 naming the instrument, got: {msg}"
+        msg.contains("returned 400"),
+        "expected v20 to reject CAD_USD with a 400, got: {msg}"
     );
 }
 
@@ -143,7 +195,11 @@ async fn the_stored_series_is_canonical_end_to_end() {
     assert_eq!(resolved.symbol, "USD_CAD");
     assert!(resolved.inverted, "CAD-USD must be marked reversed");
 
-    let records = first_non_empty(&resolved.symbol, resolved.inverted).await;
+    // One start for both fetches below, so they cover the same window and the
+    // bucket-for-bucket comparison cannot race a minute boundary.
+    let start = recent_start();
+
+    let records = first_non_empty(&resolved.symbol, resolved.inverted, start).await;
     let bar = &records[0];
 
     let (lo, hi) = CAD_USD_BAND;
@@ -159,6 +215,25 @@ async fn the_stored_series_is_canonical_end_to_end() {
              {CAD_USD_BAND:?} — a missing inversion would read near 1.38"
         );
     }
+
+    // **The direction-proof half, which needs no magic numbers at all.** The
+    // band above is a sanity check with a structural limit (see the module
+    // doc); this is the assertion that still discriminates at parity. Fetch
+    // the SAME instrument un-inverted and require the two to be exact
+    // reciprocals of each other — true regardless of where the market is.
+    let raw = first_non_empty(&resolved.symbol, false, start).await;
+    let raw_bar = raw
+        .iter()
+        .find(|c| c.bucket_start == bar.bucket_start)
+        .expect("the same window must return the same buckets");
+    assert_eq!(bar.close, 1.0 / raw_bar.close, "close is the reciprocal");
+    assert_eq!(bar.high, 1.0 / raw_bar.low, "high comes from the raw low");
+    assert_eq!(bar.low, 1.0 / raw_bar.high, "low comes from the raw high");
+    // Note this is sufficient on its own to prove the inversion HAPPENED, and
+    // it stays sufficient at parity: if `invert` were false the two bars would
+    // be identical, so `close == 1.0 / close` would force `close == 1.0`
+    // exactly. No band, and no assumption about which side of parity the
+    // market sits on.
 
     // The detail a field-wise reciprocal gets wrong, checked against the live
     // response shape rather than a captured one.

@@ -204,12 +204,11 @@ pub fn split_canonical(product_id: &str) -> Result<(&str, &str)> {
 ///
 /// **An explicit table rather than a convention, for the same reason
 /// `granularity_code` uses an allowlist: the rule is real but this file is not
-/// where it can be verified.** FX market convention does fix the direction —
-/// USD is the quote currency for EUR, GBP, AUD and NZD and the base for
-/// essentially everything else — so the direction of an unlisted pair is
-/// *predictable*, and encoding that prediction would silently commit every
-/// future pair to it. Each entry here is measured against the live venue
-/// instead.
+/// where it can be verified.** FX market convention does fix the direction, so
+/// the direction of an unlisted pair is *predictable* — and encoding that
+/// prediction would silently commit every future pair to it. Each entry here
+/// is measured against the live venue instead, by the `#[ignore]`d tests in
+/// `market-data/tests/oanda_direction.rs`.
 ///
 /// **Extending it is safe because a wrong entry fails loudly, in either
 /// direction.** OANDA lists exactly one instrument per pair and rejects the
@@ -231,8 +230,14 @@ const OANDA_REVERSED_PAIRS: &[&str] = &["CAD-USD"];
 /// `OANDA_REVERSED_PAIRS` in this module, and [`VenueSymbol`].
 pub fn oanda_instrument(product_id: &str) -> Result<VenueSymbol> {
     let (base, quote) = split_canonical(product_id)?;
-    let canonical = format!("{base}-{quote}").to_ascii_uppercase();
-    if OANDA_REVERSED_PAIRS.contains(&canonical.as_str()) {
+    // Normalize once and build **both** the table key and the emitted symbol
+    // from the result. Normalizing only the lookup would let `cad-usd` match
+    // the table and then emit `usd_cad`, which v20 would reject — an
+    // inconsistency rather than a live bug, since `parse_roster` already
+    // folds every canonical id to upper case, but a normalizing function
+    // should not normalize half of its output.
+    let (base, quote) = (base.to_ascii_uppercase(), quote.to_ascii_uppercase());
+    if OANDA_REVERSED_PAIRS.contains(&format!("{base}-{quote}").as_str()) {
         return Ok(VenueSymbol {
             symbol: format!("{quote}_{base}"),
             inverted: true,

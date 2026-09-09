@@ -691,9 +691,12 @@ grafana-down: check-docker
 # the store holds canonical-direction values only, and `CAD-USD` is on
 # OANDA's roster via `USD_CAD`. But which pairs are reversed is a measured
 # table in the code (OANDA_REVERSED_PAIRS, market-data/src/fx.rs), so a pair
-# on the shared roster and absent from that table would 400 on every poll.
+# OANDA quotes BACKWARDS and absent from that table would 400 on every poll —
+# a canonically-quoted pair absent from it is the normal case and works fine.
 # OANDA therefore keeps OANDA_PRODUCT_IDS alone: widen the shared roster
-# freely; widen OANDA's deliberately.
+# freely; widen OANDA's deliberately. The fuller reason it stays unchained is
+# about how a 400ing pair RENDERS on the coverage panel — see the `oanda`
+# service comment in infra/localnet/docker-compose.yml.
 #
 # **A pinned spelling (`CANONICAL=VENUE`) must go in a per-venue variable**, not
 # in the shared one: OANDA_PRODUCT_IDS, TWELVEDATA_PRODUCT_IDS, or
