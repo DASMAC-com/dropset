@@ -51,12 +51,11 @@ use dropset_feeds::{
     RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
-    fx::split_canonical,
+    fx::{usd_quoted_currencies, UsdRoster},
     instruments::register as register_instruments,
     roster::{canonical_only, roster_from_env},
     ticks::{SilenceWatch, Tick, TickConfig, TickDefaults, TickSource, TickWriter},
 };
-use std::collections::HashMap;
 use std::time::Duration;
 
 /// The value written to `spot_ticks.source`.
@@ -160,33 +159,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Resolve the whole roster before connecting: a malformed or unquotable
     // entry must fail startup rather than become a series that never appears.
-    //
-    // The request is keyed by base currency (`?base=USD`) and the adapter
-    // inverts each rate into USD per unit, so every pair this venue can serve
-    // quotes *against USD*. An entry that does not is a roster mistake no
-    // amount of polling will fix, and it would otherwise look exactly like a
-    // currency the provider does not carry.
-    let mut by_currency: HashMap<String, String> = HashMap::with_capacity(ids.len());
-    let mut currencies = Vec::with_capacity(ids.len());
-    for product_id in &ids {
-        let (base, quote) = split_canonical(product_id)?;
-        if !quote.eq_ignore_ascii_case("USD") {
-            anyhow::bail!(
-                "frankfurter quotes against USD, so `{product_id}` cannot be served by this venue"
-            );
-        }
-        // Upper-cased to match the provider's response keys, which the adapter
-        // looks up verbatim. `parse_roster` already normalizes, so this is a
-        // guard rail rather than the normalization itself.
-        let currency = base.to_ascii_uppercase();
-        if let Some(prior) = by_currency.insert(currency.clone(), product_id.clone()) {
-            anyhow::bail!(
-                "`{prior}` and `{product_id}` both name {currency}, so one reading would \
-                 overwrite the other"
-            );
-        }
-        currencies.push(currency);
-    }
+    // The request is keyed by base currency (`?base=USD`), so every pair this
+    // venue can serve quotes against USD — see `usd_quoted_currencies`, which
+    // the sibling er-api collector shares.
+    let UsdRoster {
+        by_currency,
+        currencies,
+    } = usd_quoted_currencies("frankfurter", &ids)?;
 
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;

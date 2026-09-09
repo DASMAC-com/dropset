@@ -1,4 +1,3 @@
-// cspell:word rfind
 //! Per-feed liveness, reported generically through the runner's metrics seam.
 //!
 //! [`FeedMetrics`] already gives the runner a place to report every turn of

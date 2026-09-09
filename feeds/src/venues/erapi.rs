@@ -245,6 +245,7 @@ pub fn parse_erapi(body: &Value, currencies: &[&str]) -> Result<ErApiSnapshot> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{json_response, request_line, serve_once_capturing};
     use serde_json::json;
 
     fn success_body() -> Value {
@@ -373,6 +374,90 @@ mod tests {
             .remove("time_last_update_unix");
         let err = parse_erapi(&body, &["EUR"]).expect_err("a missing instant must not parse");
         assert!(err.to_string().contains("time_last_update_unix"), "{err}");
+    }
+
+    /// A source aimed at a loopback stub answering one canned body.
+    fn source_against(port: u16, currencies: &[&str]) -> ErApiSource {
+        ErApiSource::new(
+            &format!("http://127.0.0.1:{port}"),
+            currencies.iter().map(|c| c.to_string()).collect(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn next_yields_exactly_one_reading_over_http() {
+        // THE test this module was missing, and the reason the loopback stub
+        // was promoted to `crate::testing`. Every assertion above stops at
+        // `parse_erapi`; none of them reaches `next`, which wraps the reading
+        // in `Batch::new(vec![…])`. Emptying that vector compiles and passes
+        // every parse test here, and ships a collector that polls forever
+        // writing nothing — which this repo has already shipped once for real.
+        // Only a batch actually driven over HTTP can see it.
+        let (port, _head) = serve_once_capturing(json_response(&success_body().to_string())).await;
+        let mut source = source_against(port, &["EUR", "NGN"]);
+
+        let batch = source.next().await.expect("the stub answers one poll");
+
+        // Exactly one: a snapshot is a single reading, and a `next` that
+        // yielded none or two would be as wrong as one that yielded nothing.
+        assert_eq!(batch.records.len(), 1);
+        let snap = &batch.records[0];
+        // The reading survives the round trip intact — the rates inverted, the
+        // provider's own instants carried. Compared against `parse_erapi` on
+        // the same body rather than against fresh literals, so this pins the
+        // transport rather than restating the parser's arithmetic.
+        assert_eq!(
+            snap,
+            &parse_erapi(&success_body(), &["EUR", "NGN"]).unwrap()
+        );
+        assert!(snap.rates.contains_key("NGN"));
+    }
+
+    #[tokio::test]
+    async fn the_request_is_the_usd_path_with_no_query() {
+        // The endpoint is keyed by base currency in its **path** and takes no
+        // query parameters — the property `ErApiSource::new`'s doc comment
+        // states and the whole `base_code == "USD"` guard rests on. Nothing
+        // else observes the request that is actually issued, so without this a
+        // path typo would surface only as a live 404.
+        let (port, head) = serve_once_capturing(json_response(&success_body().to_string())).await;
+        source_against(port, &["EUR"])
+            .poll()
+            .await
+            .expect("the stub answers one poll");
+
+        let head = head
+            .await
+            .expect("the client sends a complete request head");
+        assert_eq!(request_line(&head), "GET /v6/latest/USD HTTP/1.1");
+    }
+
+    #[tokio::test]
+    async fn a_failed_status_fails_the_poll_rather_than_yielding_an_empty_batch() {
+        // The complement of the first test: a broken venue must reach the
+        // runner as an error, because a `next` that swallowed it into an empty
+        // batch would report a dead feed as a healthy one covering nothing —
+        // the same distinction `parse_erapi` draws for a 200-with-error body,
+        // here for the transport.
+        let (port, _head) = serve_once_capturing(
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n".to_vec(),
+        )
+        .await;
+
+        // `let … else` rather than `expect_err`, which would need `Batch` to be
+        // `Debug`; widening a public type to phrase a test is the wrong trade.
+        let Err(err) = source_against(port, &["EUR"]).next().await else {
+            panic!("a 503 must not read as a successful poll");
+        };
+        // The status PHRASE, not the bare number: the error chain renders the
+        // request URL, which carries the stub's ephemeral port — and a port
+        // like 50310 contains "503", so a bare-number assertion would hold for
+        // an unrelated connection error on roughly 1% of runs.
+        assert!(
+            format!("{err:?}").contains("503 Service Unavailable"),
+            "{err:?}"
+        );
     }
 
     #[test]
