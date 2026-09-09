@@ -24,6 +24,7 @@ use crate::chain;
 use crate::config::{BotConfig, MarketConfig, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR};
 use crate::context::{Context, ProfileKind, VaultSnapshot};
 use crate::fills::Fill;
+use crate::fx_store::{self, FxStoreSnapshot};
 use crate::model::fair_mid::{build_legs, FairValue};
 use crate::model::invalidate::{self, InvalidateReason};
 use crate::model::inventory::Inventory;
@@ -69,6 +70,14 @@ pub struct FeedReceivers {
     /// NGN. Carries the provider's own refresh instants alongside the rates,
     /// which is why it is a snapshot rather than a bare map.
     pub erapi: broadcast::Receiver<ErApiSnapshot>,
+    /// The market-data store — the **intraday** FX anchor, and the only tier
+    /// here that is not a venue poll. The keyed FX venues are metered and the
+    /// collectors already poll them, so the maker reads their rows instead of
+    /// holding a second credential against the same budget.
+    ///
+    /// Unlike every other tier, losing this one **halts** rather than
+    /// degrading; see [`crate::fx_store`].
+    pub fx_store: broadcast::Receiver<FxStoreSnapshot>,
 }
 
 /// Drain every reading queued on `rx` into `cache`, stamping `now` as the read
@@ -170,6 +179,39 @@ fn drain_erapi_into(
     }
 }
 
+/// Drain market-data store snapshots into `cache`, keyed by `(source, pair)`,
+/// keeping the venue's own publication instant beside the receipt time.
+///
+/// Returns whether any snapshot arrived — which is **not** the same question
+/// as whether any row did. An empty snapshot is a successful read that found
+/// nothing, and the caller needs that distinguished from a failed read: the
+/// first is collectors being behind, the second is the store being gone, and
+/// only the second halts. This is why the reader emits an empty batch rather
+/// than skipping the tick.
+fn drain_fx_store_into(
+    rx: &mut broadcast::Receiver<FxStoreSnapshot>,
+    cache: &mut HashMap<(String, String), (f64, i64, Instant)>,
+    now: Instant,
+) -> bool {
+    let mut answered = false;
+    loop {
+        match rx.try_recv() {
+            Ok(snap) => {
+                answered = true;
+                for row in snap.rows {
+                    cache.insert(
+                        (row.source, row.product_id),
+                        (row.close, row.published_at, now),
+                    );
+                }
+            }
+            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            Err(TryRecvError::Lagged(_)) => continue,
+        }
+    }
+    answered
+}
+
 /// The shared feed cache. Each tier's source polls on its own cadence and
 /// forwards its readings onto a live sink; a cycle drains those into the
 /// per-tier caches below, and `legs()` composes each market's legs by walking
@@ -193,6 +235,28 @@ struct FeedHub {
     fx: HashMap<String, (f64, Option<i64>, Instant)>,
     /// `currency → (usd per unit, provider's refresh instant, when read)`.
     erapi: HashMap<String, (f64, i64, Instant)>,
+    /// `(venue, canonical pair) → (close, bucket close instant, when read)`.
+    ///
+    /// Keyed by venue as well as pair because each venue is a separate
+    /// candidate on the same leg — that is the whole point of reading three of
+    /// them.
+    fx_store: HashMap<(String, String), (f64, i64, Instant)>,
+    /// When the store last answered at all, or `None` if it never has.
+    ///
+    /// Tracked separately from the rows because the halt rule turns on the
+    /// *read* succeeding, not on any particular series being present: a store
+    /// that answers with nothing is up, and a market whose pair no collector
+    /// covers must not halt every other market.
+    fx_store_last_ok: Option<Instant>,
+    /// When this hub was built — the clock the store-silence bound runs from
+    /// before the first successful read.
+    ///
+    /// Without it the bot would have to either halt on its first tick, before
+    /// any poll could possibly have completed, or treat "never read" as
+    /// healthy, which is the fail-open case the halt rule exists to remove.
+    /// Measuring from startup gives the first poll a bounded chance to arrive
+    /// and halts if it never does.
+    started_at: Instant,
 }
 
 impl FeedHub {
@@ -205,7 +269,22 @@ impl FeedHub {
             cmc: HashMap::new(),
             fx: HashMap::new(),
             erapi: HashMap::new(),
+            fx_store: HashMap::new(),
+            fx_store_last_ok: None,
+            started_at: Instant::now(),
         }
+    }
+
+    /// Whether the price store has been silent long enough to stop quoting.
+    ///
+    /// Measured from the last successful read, or from startup if there has
+    /// never been one. See [`crate::fx_store::MAX_STORE_SILENCE`] for why this
+    /// bound sits well inside the engine's tape staleness bound: if it did
+    /// not, a dead store would quietly become a fall-through to the daily
+    /// reference tier instead of a halt.
+    fn store_silent(&self, now: Instant) -> bool {
+        let since = now.duration_since(self.fx_store_last_ok.unwrap_or(self.started_at));
+        fx_store::store_unavailable(since)
     }
 
     /// Drain each tier's live-sink receiver into the cache, stamping `now`. The
@@ -222,6 +301,9 @@ impl FeedHub {
         }
         drain_frankfurter_into(&mut rx.frankfurter, &mut self.fx, now);
         drain_erapi_into(&mut rx.erapi, &mut self.erapi, now);
+        if drain_fx_store_into(&mut rx.fx_store, &mut self.fx_store, now) {
+            self.fx_store_last_ok = Some(now);
+        }
     }
 
     /// This market's cached readings, aged to `now`, offered to the engine as
@@ -317,8 +399,41 @@ impl FeedHub {
             .filter(|(_, last_update, _)| !erapi_provider_stalled(*last_update, tick.now_unix))
             .map(|(v, last_update, t)| erapi_reading(*v, *last_update, *t, now, tick.now_unix));
 
-        let fx = Candidates::none()
-            .push_trusted(SOURCE_PYTH, fx_pyth)
+        // The intraday tapes, read from the market-data store. These are what
+        // make the FX leg a live signal rather than a daily fix: with Pyth
+        // dark by decision, every other FX candidate here is a reference tier
+        // that is also suppressed all weekend.
+        //
+        // Offered *before* the daily references so that an over-full leg drops
+        // a fix rather than a live minute bar — offer order's one remaining
+        // job. The cap has headroom today, so this is defensive.
+        let mut fx = Candidates::none().push_trusted(SOURCE_PYTH, fx_pyth);
+        if let Some(product) = fx_store::fx_product_id(market.currency) {
+            for source in fx_store::FX_STORE_SOURCES {
+                let reading = self
+                    .fx_store
+                    .get(&(source.to_string(), product.clone()))
+                    .map(|(value, published, read_at)| {
+                        fx_store_reading(*value, *published, *read_at, now, tick.now_unix)
+                    });
+                fx = match fx_store::fx_candidate_kind(source) {
+                    Some(fx_store::FxCandidateKind::TrustedTape) => {
+                        fx.push_trusted(source, reading)
+                    }
+                    Some(fx_store::FxCandidateKind::Tape) => fx.push(source, reading),
+                    Some(fx_store::FxCandidateKind::Reference) => {
+                        fx.push_reference(source, reading)
+                    }
+                    // Unreachable while `FX_STORE_SOURCES` and the designation
+                    // table agree, which a test in `fx_store` pins. Dropping a
+                    // source that carries no designation is the safe
+                    // direction: it keeps a newly-rostered collector from
+                    // pricing the book the moment it is switched on.
+                    None => fx,
+                };
+            }
+        }
+        let fx = fx
             .push_reference(SOURCE_FRANKFURTER, fx_reference)
             .push_reference(SOURCE_ERAPI, fx_erapi);
 
@@ -501,6 +616,34 @@ pub const SOURCE_COINBASE: &str = "coinbase";
 pub const SOURCE_KRAKEN: &str = "kraken";
 pub const SOURCE_COINGECKO: &str = "coingecko";
 pub const SOURCE_CMC: &str = "coinmarketcap";
+
+/// Turn a cached market-data store row into a [`Reading`].
+///
+/// The fourth sibling of [`pyth_reading`] and friends, holding the same
+/// contract they do: `age = max(publication_age, receipt_age)`.
+///
+/// The publication instant here is the **bucket close** the collector wrote,
+/// not the database write — a stalled collector keeps serving the same row, so
+/// ageing from the write would report an hours-old print as fresh every time
+/// it was re-read. The receipt floor covers the other direction, a poller of
+/// ours that has died sitting on a stamp that no longer moves. Taking the
+/// `max` is also the forward-skew guard: a stamp can only ever make a reading
+/// older, so a bogus future bucket cannot pin the age at zero.
+///
+/// Unlike [`pyth_reading`] this needs no explicit skew branch or absolute
+/// ceiling — the `max` handles skew by construction, and there is no
+/// weekend-publication subtlety because a closed FX market simply stops
+/// producing buckets, which ages the candidate out on its own.
+fn fx_store_reading(
+    value: f64,
+    published_at: i64,
+    read_at: Instant,
+    now: Instant,
+    now_unix: i64,
+) -> Reading {
+    let age = fx_store::store_reading_age(published_at, now_unix, now.duration_since(read_at));
+    Reading::new(value, age)
+}
 
 /// A ceiling on the age [`pyth_reading`] will report, so a wildly skewed clock
 /// or a bogus `publish_time` degrades to "stale" rather than to a negative or
@@ -796,6 +939,17 @@ pub fn run_supervisor(
         // exactly. `tick.now_unix` is that second, already computed for the
         // publish-time arithmetic.
         let ts = tick.now_unix;
+        // One verdict for the whole cycle, not per market: the store is a
+        // process-wide dependency, so every market halts or none does. Read
+        // after the drain above, so a snapshot that arrived this cycle counts.
+        let store_silent = hub.store_silent(now);
+        if store_silent {
+            eprintln!(
+                "[halt] the market-data store has been silent past {:?} — \
+                 every market stops quoting until it answers",
+                fx_store::MAX_STORE_SILENCE
+            );
+        }
         for ctx in &mut markets {
             let legs = hub.legs(&ctx.cfg, &tick);
             check_first_basis(ctx, &cfg, legs);
@@ -836,7 +990,7 @@ pub fn run_supervisor(
                 )));
             report_leg_health(ctx, &fair);
             let got_fill = routed.get(&ctx.market.market).copied();
-            if let Err(e) = quote_market(ctx, &cfg, now, ts, fair, got_fill) {
+            if let Err(e) = quote_market(ctx, &cfg, now, ts, fair, got_fill, store_silent) {
                 eprintln!("[{}] tick error: {e}", ctx.cfg.symbol);
             }
         }
@@ -1113,13 +1267,14 @@ fn quote_market(
     ts: i64,
     fair: FairValue,
     got_fill: Option<(u64, u64)>,
+    store_silent: bool,
 ) -> Result<()> {
     let mut sample = SampleBuilder::new(ts, MarketId::of(ctx), fair, ctx.profile_kind);
     sample
         .last_set(ctx.last_set_price)
         .ladder(&cfg.strategy.ladder);
 
-    let result = quote_market_inner(ctx, cfg, now, fair, got_fill, &mut sample);
+    let result = quote_market_inner(ctx, cfg, now, fair, got_fill, store_silent, &mut sample);
     if let Err(e) = &result {
         // Recorded *alongside* whatever the tick decided, never over it. A
         // halt whose kill stamp then failed is the most alarming row the
@@ -1139,6 +1294,7 @@ fn quote_market_inner(
     now: Instant,
     fair: FairValue,
     got_fill: Option<(u64, u64)>,
+    store_silent: bool,
     sample: &mut SampleBuilder,
 ) -> Result<()> {
     let vault = chain::read_vault(
@@ -1220,7 +1376,7 @@ fn quote_market_inner(
         }
     };
 
-    let action = killswitch::evaluate(&fair, &inv, &cfg.kill, launch_tvl);
+    let action = killswitch::evaluate(&fair, &inv, &cfg.kill, launch_tvl, store_silent);
     let skew_bps = skew::ref_skew_bps(&inv, &cfg.strategy);
     let reference = skew::apply_skew(mid, skew_bps);
     sample
@@ -1987,6 +2143,121 @@ mod tests {
     /// The resolved value of a leg, under the same rules the engine will apply.
     fn resolved(legs: &Legs, leg: fn(&Legs) -> Candidates, tick: &TickCtx) -> Consensus {
         leg(legs).resolve(tick.leg_stale, tick.leg_dispersion)
+    }
+
+    /// Seed the store cache with one fresh row per intraday venue, as the
+    /// collectors would have written them: a minute bucket that closed 30s ago.
+    fn with_store_rows(hub: &mut FeedHub, currency: &str, now: Instant, now_unix: i64) {
+        let product = fx_store::fx_product_id(currency).unwrap();
+        for (source, value) in [
+            (fx_store::SOURCE_OANDA, 1.1631),
+            (fx_store::SOURCE_TWELVEDATA, 1.1632),
+            (fx_store::SOURCE_ALPHAVANTAGE, 1.1621),
+        ] {
+            hub.fx_store.insert(
+                (source.to_string(), product.clone()),
+                (value, now_unix - 30, now),
+            );
+        }
+        hub.fx_store_last_ok = Some(now);
+    }
+
+    /// The store's rows reach the FX leg, and the leg is now six candidates
+    /// deep — which is why `MAX_CANDIDATES` had to grow past six.
+    #[test]
+    fn the_store_rows_are_offered_to_the_fx_leg() {
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let mut hub = full_hub(now, now_unix);
+        with_store_rows(&mut hub, "EUR", now, now_unix);
+        let legs = hub.legs(&eurc(), &tick_at(now, now_unix));
+        assert_eq!(
+            legs.fx.iter().count(),
+            6,
+            "Pyth, three store venues, and both daily references"
+        );
+        for source in fx_store::FX_STORE_SOURCES {
+            assert!(
+                legs.fx.iter().any(|c| c.source == source),
+                "{source} did not reach the leg"
+            );
+        }
+    }
+
+    /// A market whose pair no collector covers still composes — its store
+    /// candidates are simply absent. This is the CADC-on-OANDA case: OANDA is
+    /// direction-fixed and serves no CAD-USD, so that venue must be missing
+    /// rather than fatal.
+    #[test]
+    fn an_uncovered_pair_loses_only_its_own_candidates() {
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let mut hub = full_hub(now, now_unix);
+        // Only two of the three venues carry this pair.
+        let product = fx_store::fx_product_id("EUR").unwrap();
+        hub.fx_store.insert(
+            (fx_store::SOURCE_TWELVEDATA.to_string(), product),
+            (1.1632, now_unix - 30, now),
+        );
+        hub.fx_store_last_ok = Some(now);
+        let legs = hub.legs(&eurc(), &tick_at(now, now_unix));
+        assert_eq!(legs.fx.iter().count(), 4, "the two absent venues drop out");
+        assert!(!legs.fx.iter().any(|c| c.source == fx_store::SOURCE_OANDA));
+    }
+
+    /// A store row is aged from the venue's bucket close, not from when the
+    /// row was read — so a collector that stalled ages its candidate out even
+    /// though this process keeps reading the row successfully.
+    #[test]
+    fn a_stalled_collector_ages_its_own_candidate_out() {
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let mut hub = full_hub(now, now_unix);
+        let product = fx_store::fx_product_id("EUR").unwrap();
+        // Read this instant, but the bucket closed six hours ago.
+        hub.fx_store.insert(
+            (fx_store::SOURCE_OANDA.to_string(), product),
+            (1.1631, now_unix - 6 * 3600, now),
+        );
+        hub.fx_store_last_ok = Some(now);
+        let legs = hub.legs(&eurc(), &tick_at(now, now_unix));
+        let oanda = legs
+            .fx
+            .iter()
+            .find(|c| c.source == fx_store::SOURCE_OANDA)
+            .expect("offered as a candidate");
+        assert_eq!(
+            oanda.reading.age,
+            Duration::from_secs(6 * 3600),
+            "aged from the bucket close, not from the read"
+        );
+    }
+
+    /// The halt clock runs from startup before the first successful read, so a
+    /// store that never answers halts rather than being treated as healthy.
+    #[test]
+    fn a_store_that_never_answered_goes_silent_on_the_startup_clock() {
+        let hub = FeedHub::new();
+        assert!(
+            !hub.store_silent(hub.started_at),
+            "a bot that just booted has not yet missed anything"
+        );
+        assert!(
+            !hub.store_silent(hub.started_at + fx_store::MAX_STORE_SILENCE),
+            "the first poll gets the whole bound to arrive in"
+        );
+        assert!(
+            hub.store_silent(hub.started_at + fx_store::MAX_STORE_SILENCE + Duration::from_secs(1)),
+            "a store that never answered must halt, not quote"
+        );
+    }
+
+    /// Once the store has answered, the clock runs from that read rather than
+    /// from startup — otherwise every bot would halt five minutes after boot.
+    #[test]
+    fn a_successful_read_restarts_the_silence_clock() {
+        let mut hub = FeedHub::new();
+        let later = hub.started_at + fx_store::MAX_STORE_SILENCE;
+        hub.fx_store_last_ok = Some(later);
+        assert!(!hub.store_silent(later + Duration::from_secs(60)));
+        assert!(hub.store_silent(later + fx_store::MAX_STORE_SILENCE + Duration::from_secs(1)));
     }
 
     #[test]

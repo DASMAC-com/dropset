@@ -29,14 +29,15 @@ use dropset_feeds::venues::{
     FrankfurterSource, KrakenSource, PythFeed, PythHermesSource,
 };
 use dropset_feeds::{
-    forward_channel, parked_source, run_until, run_until_with_metrics, HttpClient, RunConfig, Sink,
-    Source, PARKED_SOURCES,
+    connect_lazy, forward_channel, parked_source, run_until, run_until_with_metrics, HttpClient,
+    RunConfig, Sink, Source, PARKED_SOURCES,
 };
 use dropset_maker_bot::config::{
     BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
     USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
 };
 use dropset_maker_bot::context::Context as BotContext;
+use dropset_maker_bot::fx_store::{self, FxStoreSource};
 use dropset_maker_bot::model::fair_mid::build_legs;
 use dropset_maker_bot::quote_state::QuoteStateStore;
 use dropset_maker_bot::tasks::{
@@ -653,6 +654,50 @@ fn spawn_price_feeds(
         telemetry,
         HealthRow::Report,
     );
+    // The intraday FX anchor, read from the market-data store rather than
+    // polled from the keyed venues (see `fx_store`). Unlike telemetry, which
+    // degrades to silence when the database is absent, this one is on the
+    // price path — so a missing URL is a startup error rather than a bot that
+    // boots and then halts a few minutes later for reasons the operator has to
+    // go and diagnose. Fail-closed, but fail *legibly*.
+    let url = std::env::var(telemetry::DATABASE_URL_ENV).map_err(|_| {
+        anyhow!(
+            "{} is required: the intraday FX anchor is read from the \
+             market-data store, and the maker will not quote without it",
+            telemetry::DATABASE_URL_ENV
+        )
+    })?;
+    // Lazy, like telemetry's: connecting here would make the bot's startup
+    // wait on the database, and a connection that drops later has to be
+    // survivable anyway — the source retries on its own backoff and the
+    // silence bound is what turns a persistent failure into a halt.
+    //
+    // Built inside the runtime's context because a lazy pool still spawns its
+    // idle reaper immediately, and `tokio::spawn` panics without a handle in
+    // scope. This function is handed the runtime rather than running on it, so
+    // that handle has to be entered explicitly.
+    let pool = {
+        let _guard = rt.enter();
+        connect_lazy(&url)?
+    };
+    let fx_store = spawn_feed(
+        rt,
+        FxStoreSource::new(
+            "store:fx",
+            pool,
+            roster
+                .currencies
+                .iter()
+                .filter_map(|c| fx_store::fx_product_id(c))
+                .collect(),
+        ),
+        RunConfig {
+            poll_interval: cfg.fx_store_poll,
+            error_backoff: FEED_ERROR_BACKOFF,
+        },
+        telemetry,
+        HealthRow::Report,
+    );
     Ok(FeedReceivers {
         pyth,
         kraken,
@@ -661,6 +706,7 @@ fn spawn_price_feeds(
         coinmarketcap,
         frankfurter,
         erapi,
+        fx_store,
     })
 }
 
@@ -737,6 +783,45 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
             .map(|snap| snap.rates)
             .unwrap_or_default()
     };
+    // The store tier. Unlike the live path this tolerates an absent or
+    // unreachable database: a dry run is a wiring check, and reporting "no
+    // rows" is the diagnosis rather than a reason to refuse to run. The
+    // fail-closed rule governs quoting, and a dry run does not quote.
+    let fx_store_rows: Vec<_> = if drop("fx-store") {
+        Vec::new()
+    } else {
+        // The enter guard is why this is not a plain `and_then`: a lazy pool
+        // spawns its reaper on construction, so it has to be built inside the
+        // runtime's context (see `spawn_price_feeds`).
+        let pool = {
+            let _guard = rt.enter();
+            std::env::var(telemetry::DATABASE_URL_ENV)
+                .ok()
+                .and_then(|url| connect_lazy(&url).ok())
+        };
+        match pool {
+            Some(pool) => {
+                let products = roster
+                    .currencies
+                    .iter()
+                    .filter_map(|c| fx_store::fx_product_id(c))
+                    .collect();
+                rt.block_on(FxStoreSource::new("store:fx", pool, products).latest())
+                    .unwrap_or_else(|e| {
+                        eprintln!("[dry-run] the market-data store did not answer: {e}");
+                        Vec::new()
+                    })
+            }
+            None => {
+                eprintln!(
+                    "[dry-run] {} is unset — the intraday FX tier is dark, and \
+                     the live bot would refuse to start",
+                    telemetry::DATABASE_URL_ENV
+                );
+                Vec::new()
+            }
+        }
+    };
     let fx = if drop("fx") {
         Default::default()
     } else {
@@ -749,14 +834,15 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     println!(
         "Tiers live: pyth {} feeds, coinbase {} products, kraken {} pairs, \
          coingecko {} ids, coinmarketcap {} ids, fx {} currencies, \
-         erapi {} currencies",
+         erapi {} currencies, fx-store {} rows",
         pyth.len(),
         coinbase.len(),
         kraken.len(),
         cg.len(),
         cmc.len(),
         fx.len(),
-        erapi.len()
+        erapi.len(),
+        fx_store_rows.len()
     );
     if !args.drop.is_empty() {
         println!("Suppressed tiers: {}", args.drop.join(", "));
@@ -825,10 +911,29 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
             Some(conf) => Reading::with_confidence(p.value, now, conf),
             None => Reading::new(p.value, now),
         });
-        // Reference class, matching `FeedHub::legs` — the two collections must
-        // agree or a dry run stops predicting the live mid.
-        let fx_q = Candidates::none()
-            .push_trusted(SOURCE_PYTH, fx_pyth)
+        // The store's intraday tapes, then the reference class — the same
+        // order and the same designations as `FeedHub::legs`, which the two
+        // collections must agree on or a dry run stops predicting the live mid.
+        let mut fx_q = Candidates::none().push_trusted(SOURCE_PYTH, fx_pyth);
+        if let Some(product) = fx_store::fx_product_id(m.currency) {
+            for source in fx_store::FX_STORE_SOURCES {
+                let reading = fx_store_rows
+                    .iter()
+                    .find(|r| r.source == source && r.product_id == product)
+                    .map(|r| Reading::new(r.close, now));
+                fx_q = match fx_store::fx_candidate_kind(source) {
+                    Some(fx_store::FxCandidateKind::TrustedTape) => {
+                        fx_q.push_trusted(source, reading)
+                    }
+                    Some(fx_store::FxCandidateKind::Tape) => fx_q.push(source, reading),
+                    Some(fx_store::FxCandidateKind::Reference) => {
+                        fx_q.push_reference(source, reading)
+                    }
+                    None => fx_q,
+                };
+            }
+        }
+        let fx_q = fx_q
             .push_reference(SOURCE_FRANKFURTER, q(fx.get(m.currency).copied()))
             .push_reference(SOURCE_ERAPI, q(erapi.get(m.currency).copied()));
         // Basis leg: Coinbase token/USDC, Kraken token/USD, then the reflexive

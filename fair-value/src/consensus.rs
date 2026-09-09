@@ -45,19 +45,35 @@ use crate::reading::Reading;
 /// How many sources one leg may carry. A fixed array keeps [`crate::Legs`]
 /// `Copy` and keeps this crate allocation-free.
 ///
-/// Sized with headroom above the longest roster leg (four: two venues and two
-/// aggregators) rather than exactly to it. That margin is load-bearing:
-/// candidates are placed in the order offered, before anything knows which are
-/// healthy, so a leg filled to the cap could seat a **stale** candidate ahead of
-/// a live source and silently drop the live one. Keeping the cap clear of the
-/// real ladders means that cannot arise, and adding a source does not quietly
-/// evict another. A leg that does overflow drops its least-preferred
-/// candidates — the only thing offer order is still entitled to decide.
-pub const MAX_CANDIDATES: usize = 6;
+/// Sized with headroom above the longest roster leg rather than exactly to it.
+/// That margin is load-bearing: candidates are placed in the order offered,
+/// before anything knows which are healthy, so a leg filled to the cap could
+/// seat a **stale** candidate ahead of a live source and silently drop the
+/// live one. Keeping the cap clear of the real ladders means that cannot
+/// arise, and adding a source does not quietly evict another. A leg that does
+/// overflow drops its least-preferred candidates — the only thing offer order
+/// is still entitled to decide.
+///
+/// **A caller must therefore offer tapes before references**, and that
+/// constraint is easy to violate silently by reordering a push chain. An
+/// overflow that evicted a live tape while seating a daily fix would cost the
+/// leg twice over, because [`Candidates::resolve`] computes its fast set from
+/// tape-class candidates only and excludes references from the median that
+/// guards dislocations: the leg would lose the fast signal *and* fall through
+/// to the reference path that exists for markets having no tape at all.
+pub const MAX_CANDIDATES: usize = 8;
 
-/// The longest ladder any roster leg offers today: two venues and two
-/// aggregators on the basis leg.
-const LONGEST_REAL_LEG: usize = 4;
+/// The longest ladder any roster leg offers today: **six**, on the FX leg of a
+/// market whose currency every source covers (EUR, AUD, GBP) — Pyth, the two
+/// intraday tapes read from the market-data store (OANDA, Twelve Data), and
+/// three daily references (Alpha Vantage, Frankfurter, er-api).
+///
+/// This overtook the basis leg's four (two venues and two aggregators) when
+/// the maker began reading the collectors' intraday FX rows. Note the FX leg
+/// reached exactly the old cap of six, which is the case the margin above
+/// exists to prevent — at the cap, a stale Pyth reading offered first could
+/// have evicted a live tape offered last.
+const LONGEST_REAL_LEG: usize = 6;
 
 // Enforced at compile time rather than in a test, because the margin is the
 // whole reason the cap is not simply `LONGEST_REAL_LEG`: without it a stale
@@ -1295,7 +1311,7 @@ mod tests {
         // Order is only entitled to decide who survives an over-full set, but
         // it must decide it predictably.
         let mut c = Candidates::none();
-        for source in ["a", "b", "c", "d", "e", "f"] {
+        for source in ["a", "b", "c", "d", "e", "f", "g", "h"] {
             c = c.push(source, Some(r(1.0)));
         }
         c = c.push("overflow", Some(r(9.0)));
@@ -1308,13 +1324,24 @@ mod tests {
         // The margin that keeps a stale candidate from ever displacing a live
         // one is asserted at compile time above; this checks the thing that
         // margin is *for* — offering the longest real ladder leaves every
-        // source in place, with room for one more.
+        // source in place, with room to spare.
+        //
+        // The longest real ladder is now the FX leg of a fully-covered market,
+        // not the basis leg: Pyth, two intraday tapes read from the store, and
+        // three daily references.
         let mut c = Candidates::none();
-        for source in ["coinbase", "kraken", "coingecko", "coinmarketcap"] {
+        for source in [
+            "pyth-hermes",
+            "oanda",
+            "twelvedata",
+            "alphavantage",
+            "frankfurter",
+            "erapi",
+        ] {
             c = c.push(source, Some(r(1.0)));
         }
         assert_eq!(c.iter().count(), LONGEST_REAL_LEG);
-        assert_eq!(c.push("a-fifth", Some(r(1.0))).iter().count(), 5);
+        assert_eq!(c.push("a-seventh", Some(r(1.0))).iter().count(), 7);
     }
 
     #[test]

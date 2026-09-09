@@ -435,6 +435,18 @@ pub struct FeedConfig {
     /// whole publication cycle. Both are keyless and batched, so the cost is one
     /// request per interval per process.
     pub fx_poll: Duration,
+    /// Market-data store poll interval — the **intraday** FX anchor.
+    ///
+    /// Matched to the collectors' own minute cadence rather than set faster:
+    /// they write one-minute buckets every 60 s, so polling harder re-reads
+    /// rows that have not changed and buys nothing but database load. Polling
+    /// much slower would be worse than it looks — this read is also the
+    /// liveness signal the halt rule turns on, so the interval is the
+    /// resolution at which a dead store can be noticed at all, and it has to
+    /// leave several attempts inside
+    /// [`crate::fx_store::MAX_STORE_SILENCE`] so one slow round trip cannot
+    /// stop every market quoting.
+    pub fx_store_poll: Duration,
     /// Pyth Hermes FX-anchor poll interval — the primary anchor tier. Hermes
     /// republishes on the order of a second, so this is the cadence at which
     /// the anchor actually moves and is polled far harder than the daily ECB
@@ -598,6 +610,7 @@ impl Default for FeedConfig {
             coingecko_poll: Duration::from_secs(60),
             coinmarketcap_poll: Duration::from_secs(60),
             fx_poll: Duration::from_secs(300),
+            fx_store_poll: Duration::from_secs(30),
             // The primaries are keyless but not rate-limit-free, and one poll
             // covers the whole roster in each case. A 5 s Hermes cadence tracks
             // the anchor at the bot's own tick rate; the CEX basis legs move

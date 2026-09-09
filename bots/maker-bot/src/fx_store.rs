@@ -26,17 +26,32 @@
 //!
 //! The venues split by publication cadence rather than by quality:
 //!
-//! | Venue           | `cex_prices.source` | Bucket | Class       |
-//! | --------------- | ------------------- | ------ | ----------- |
-//! | OANDA           | `oanda`             | 1 min  | `Tape`      |
-//! | Twelve Data     | `twelvedata`        | 1 min  | `Tape`      |
-//! | Alpha Vantage   | `alphavantage`      | daily  | `Reference` |
+//! | Venue           | `cex_prices.source` | Bucket | Offered as        |
+//! | --------------- | ------------------- | ------ | ----------------- |
+//! | OANDA           | `oanda`             | 1 min  | `Tape`, *trusted* |
+//! | Twelve Data     | `twelvedata`        | 1 min  | `Tape`            |
+//! | Alpha Vantage   | `alphavantage`      | daily  | `Reference`       |
 //!
 //! Alpha Vantage is pinned daily by its own free tier, so it is a reference
 //! fix and not a tape — it is authoritative for the day it names and says
 //! nothing about now. Offering it as a tape would let a fix hours old sit in
 //! the fast median beside a live minute bar, which is exactly the pooling the
 //! reference class exists to prevent.
+//!
+//! **OANDA is designated believable alone, and that is a ruling rather than a
+//! default.** The degrade ladder has a quote-on-one-venue mode, and that mode
+//! is only sound if the last venue standing is one the bot will trust without
+//! corroboration — otherwise the ladder's bottom rung is unreachable and the
+//! leg darks instead of degrading. OANDA is the roster's FX anchor by role
+//! (deepest history, real tick volume, a per-candle `complete` flag), so it
+//! carries that designation beside Pyth's. Twelve Data is untrusted by
+//! default: it is a fine corroborating tape and nobody has argued it should
+//! stand alone.
+//!
+//! Note "trusted" is not a [`dropset_fair_value::SourceClass`] — that enum is
+//! `Tape` or `Reference` and nothing else. Trust is a separate attribute of a
+//! candidate, which is why [`FxCandidateKind`] below is the product of the two
+//! rather than an extension of either.
 
 use std::time::Duration;
 
@@ -55,6 +70,53 @@ pub const SOURCE_ALPHAVANTAGE: &str = "alphavantage";
 /// Order is not priority — the engine resolves by consensus — it only decides
 /// who survives a candidate set larger than the engine will hold.
 pub const FX_STORE_SOURCES: [&str; 3] = [SOURCE_OANDA, SOURCE_TWELVEDATA, SOURCE_ALPHAVANTAGE];
+
+/// How a store venue's reading is offered to the engine.
+///
+/// This is the product of two independent things — the engine's `SourceClass`
+/// (`Tape` or `Reference`) and whether the candidate is trusted to stand alone
+/// — because the engine models them separately: class picks the staleness
+/// bound and whether the reading joins the fast median, trust decides whether
+/// one source is a sufficient leg. Keeping the mapping here as data, rather
+/// than as a chain of `if source == …` at the call site, is what lets the
+/// designation be tested without a database or a tick loop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FxCandidateKind {
+    /// A live tape that still needs corroboration.
+    Tape,
+    /// A live tape designated believable alone — the bottom rung of the
+    /// degrade ladder rests on this existing.
+    TrustedTape,
+    /// A slow fix: authoritative for the moment it names, kept out of the fast
+    /// median, and governed by the far looser reference staleness bound.
+    Reference,
+}
+
+/// The ruled designation for a `cex_prices.source`, or `None` for a venue this
+/// reader does not offer to the FX leg.
+///
+/// Returning `None` rather than defaulting to [`FxCandidateKind::Tape`] is
+/// deliberate: an unrecognized source is a roster change nobody wired here,
+/// and silently promoting it to a live tape would let a new collector start
+/// pricing the book the moment it was switched on.
+pub fn fx_candidate_kind(source: &str) -> Option<FxCandidateKind> {
+    match source {
+        SOURCE_OANDA => Some(FxCandidateKind::TrustedTape),
+        SOURCE_TWELVEDATA => Some(FxCandidateKind::Tape),
+        SOURCE_ALPHAVANTAGE => Some(FxCandidateKind::Reference),
+        _ => None,
+    }
+}
+
+/// The canonical store pair for a market's tracked currency — `AUD` →
+/// `AUD-USD`.
+///
+/// The store normalizes all three venues' spellings onto this id, so it is the
+/// one join key that works across sources. USD itself has no cross and returns
+/// `None`.
+pub fn fx_product_id(currency: &str) -> Option<String> {
+    (currency != "USD").then(|| format!("{currency}-USD"))
+}
 
 /// How long the store may stay silent before the maker treats it as gone.
 ///
@@ -253,6 +315,52 @@ mod tests {
         assert!(!store_unavailable(secs(0)));
         assert!(!store_unavailable(MAX_STORE_SILENCE));
         assert!(store_unavailable(MAX_STORE_SILENCE + secs(1)));
+    }
+
+    /// The designations are a ruling, not a default, so they are pinned here
+    /// rather than left to whatever the call site happens to pass.
+    #[test]
+    fn the_ruled_designations_hold() {
+        assert_eq!(
+            fx_candidate_kind(SOURCE_OANDA),
+            Some(FxCandidateKind::TrustedTape),
+            "the degrade ladder's one-venue rung needs a believable-alone tape"
+        );
+        assert_eq!(
+            fx_candidate_kind(SOURCE_TWELVEDATA),
+            Some(FxCandidateKind::Tape)
+        );
+        assert_eq!(
+            fx_candidate_kind(SOURCE_ALPHAVANTAGE),
+            Some(FxCandidateKind::Reference),
+            "a daily series is a fix, never a tape"
+        );
+    }
+
+    /// A source nobody wired must not start pricing the book by default.
+    #[test]
+    fn an_unknown_source_is_not_offered() {
+        assert_eq!(fx_candidate_kind("kraken"), None);
+        assert_eq!(fx_candidate_kind(""), None);
+    }
+
+    /// Every venue the reader asks the store for must have a designation, or
+    /// its rows would be fetched and then silently dropped.
+    #[test]
+    fn every_requested_source_is_designated() {
+        for source in FX_STORE_SOURCES {
+            assert!(
+                fx_candidate_kind(source).is_some(),
+                "{source} is queried but has no designation"
+            );
+        }
+    }
+
+    #[test]
+    fn a_currency_maps_onto_its_canonical_pair() {
+        assert_eq!(fx_product_id("AUD").as_deref(), Some("AUD-USD"));
+        assert_eq!(fx_product_id("CAD").as_deref(), Some("CAD-USD"));
+        assert_eq!(fx_product_id("USD"), None, "USD has no cross");
     }
 
     /// The SQL beside the `.bind()` chain has to agree with it, and it is

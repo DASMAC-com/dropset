@@ -41,6 +41,22 @@ use dropset_fair_value::FairValue;
 /// Why the bot halted — carried into the alert log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HaltReason {
+    /// The market-data store — where the intraday FX anchor comes from — has
+    /// been silent past [`crate::fx_store::MAX_STORE_SILENCE`].
+    ///
+    /// **This is a deliberate fail-closed halt, and it reverses an earlier
+    /// rule.** The bot used to be free to keep quoting off whatever was still
+    /// live, which for a store outage means composing off a daily ECB fix
+    /// while the data the operator chose to price on is simply absent. That is
+    /// the risk being declined: at this size not quoting is free, and a wrong
+    /// quote is not.
+    ///
+    /// Evaluated before every other switch because it is the only one that
+    /// says *the inputs are missing* rather than *the inputs say something
+    /// alarming*. A basis or common-mode verdict derived from a composition
+    /// that has lost its anchor is a less trustworthy thing to report than the
+    /// plain fact that the anchor is gone.
+    PriceStoreUnavailable,
     /// USDC/USD left its common-mode band — a correlated, portfolio-wide depeg
     /// that moves every market's basis at once (§1 fm1, §4). The most systemic
     /// halt, so it is evaluated before the per-market peg event.
@@ -86,12 +102,21 @@ pub fn evaluate(
     inv: &Inventory,
     kill: &KillSwitchConfig,
     launch_tvl: f64,
+    store_silent: bool,
 ) -> Action {
     let scale = if fair.degraded() {
         kill.degraded_scale
     } else {
         1.0
     };
+
+    // Fail-closed on a missing price store, ahead of everything else. Note
+    // this switch is *not* scaled by `degraded`: it is not a threshold that
+    // tightens as confidence drops, it is the absence of the data the rest of
+    // this function reasons about.
+    if store_silent {
+        return Action::Halt(HaltReason::PriceStoreUnavailable);
+    }
 
     // Hard halts first — these want a human, not a self-healing reshape. The
     // portfolio-wide common-mode guard precedes the per-market basis event: a
@@ -190,7 +215,7 @@ mod tests {
     #[test]
     fn balanced_vault_quotes() {
         assert_eq!(
-            evaluate(&ok_fair(), &inv(50.0, 50.0), &kill(), LAUNCH),
+            evaluate(&ok_fair(), &inv(50.0, 50.0), &kill(), LAUNCH, false),
             Action::Quote
         );
     }
@@ -200,7 +225,7 @@ mod tests {
         // 65/35 → 30% (not > 30), 66/34 → 32% → reshape. Base-heavy, so the
         // accumulating (bid) side is the one shrunk.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(66.0, 34.0), &kill(), LAUNCH),
+            evaluate(&ok_fair(), &inv(66.0, 34.0), &kill(), LAUNCH, false),
             Action::Reshape(Side::Bid)
         );
     }
@@ -210,7 +235,7 @@ mod tests {
         // 34/66 → 32% imbalance, quote-heavy → the accumulating (ask) side is
         // the one shrunk, mirroring the base-heavy bid case.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(34.0, 66.0), &kill(), LAUNCH),
+            evaluate(&ok_fair(), &inv(34.0, 66.0), &kill(), LAUNCH, false),
             Action::Reshape(Side::Ask)
         );
     }
@@ -219,7 +244,7 @@ mod tests {
     fn heavy_imbalance_freezes_the_accumulating_side() {
         // 78/22 → 56% imbalance, base-heavy → freeze the bid side.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(78.0, 22.0), &kill(), LAUNCH),
+            evaluate(&ok_fair(), &inv(78.0, 22.0), &kill(), LAUNCH, false),
             Action::FreezeSide(Side::Bid)
         );
     }
@@ -228,7 +253,7 @@ mod tests {
     fn critical_imbalance_halts() {
         // 95/5 → 90% imbalance → halt for review.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(95.0, 5.0), &kill(), LAUNCH),
+            evaluate(&ok_fair(), &inv(95.0, 5.0), &kill(), LAUNCH, false),
             Action::Halt(HaltReason::ImbalanceCritical)
         );
     }
@@ -239,7 +264,7 @@ mod tests {
         fair.basis_breach = true;
         // Even a balanced vault halts on a basis-band breach.
         assert_eq!(
-            evaluate(&fair, &inv(50.0, 50.0), &kill(), LAUNCH),
+            evaluate(&fair, &inv(50.0, 50.0), &kill(), LAUNCH, false),
             Action::Halt(HaltReason::BasisBreach)
         );
     }
@@ -252,7 +277,7 @@ mod tests {
         fair.usdc_breach = true;
         fair.basis_breach = true;
         assert_eq!(
-            evaluate(&fair, &inv(50.0, 50.0), &kill(), LAUNCH),
+            evaluate(&fair, &inv(50.0, 50.0), &kill(), LAUNCH, false),
             Action::Halt(HaltReason::UsdcCommonMode)
         );
     }
@@ -261,7 +286,7 @@ mod tests {
     fn tvl_floor_halts() {
         // $79 against a $100 launch is below the 0.8 (20% drawdown) floor.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(40.0, 39.0), &kill(), LAUNCH),
+            evaluate(&ok_fair(), &inv(40.0, 39.0), &kill(), LAUNCH, false),
             Action::Halt(HaltReason::TvlFloor)
         );
     }
@@ -274,11 +299,11 @@ mod tests {
         let above = inv(405_000.0, 405_000.0); // $810k
         let below = inv(399_000.0, 399_000.0); // $798k
         assert_eq!(
-            evaluate(&ok_fair(), &above, &kill(), 1_000_000.0),
+            evaluate(&ok_fair(), &above, &kill(), 1_000_000.0, false),
             Action::Quote
         );
         assert_eq!(
-            evaluate(&ok_fair(), &below, &kill(), 1_000_000.0),
+            evaluate(&ok_fair(), &below, &kill(), 1_000_000.0, false),
             Action::Halt(HaltReason::TvlFloor)
         );
     }
@@ -290,8 +315,56 @@ mod tests {
         // critically imbalanced halts on TvlFloor, not ImbalanceCritical.
         let drained = inv(70.0, 5.0); // $75 (≤ $80 floor), ~87% imbalance
         assert_eq!(
-            evaluate(&ok_fair(), &drained, &kill(), LAUNCH),
+            evaluate(&ok_fair(), &drained, &kill(), LAUNCH, false),
             Action::Halt(HaltReason::TvlFloor)
+        );
+    }
+
+    /// Fail-closed: a silent price store halts even when everything the bot
+    /// can still see looks perfectly healthy. This is the whole point of the
+    /// rule — the dangerous case is not an alarming reading, it is a calm one
+    /// composed without the data that was supposed to inform it.
+    #[test]
+    fn a_silent_store_halts_an_otherwise_healthy_market() {
+        assert_eq!(
+            evaluate(&ok_fair(), &inv(50.0, 50.0), &kill(), LAUNCH, false),
+            Action::Quote,
+            "control: this market quotes when the store is live"
+        );
+        assert_eq!(
+            evaluate(&ok_fair(), &inv(50.0, 50.0), &kill(), LAUNCH, true),
+            Action::Halt(HaltReason::PriceStoreUnavailable)
+        );
+    }
+
+    /// The store switch outranks every other halt, so the reported reason
+    /// names the missing input rather than a verdict derived from a
+    /// composition that had already lost its anchor.
+    #[test]
+    fn a_silent_store_outranks_the_other_halts() {
+        let mut fair = ok_fair();
+        fair.usdc_breach = true;
+        fair.basis_breach = true;
+        assert_eq!(
+            evaluate(&fair, &inv(50.0, 50.0), &kill(), LAUNCH, true),
+            Action::Halt(HaltReason::PriceStoreUnavailable),
+            "the most systemic switch is the one saying the inputs are gone"
+        );
+        // And it is genuinely the ordering doing the work, not the only halt
+        // that can fire on this input.
+        assert_eq!(
+            evaluate(&fair, &inv(50.0, 50.0), &kill(), LAUNCH, false),
+            Action::Halt(HaltReason::UsdcCommonMode)
+        );
+    }
+
+    /// The store switch is not a threshold, so `degraded` must not scale it —
+    /// a degraded composition and a missing one are different facts.
+    #[test]
+    fn the_store_switch_is_not_scaled_by_degraded() {
+        assert_eq!(
+            evaluate(&degraded_fair(), &inv(50.0, 50.0), &kill(), LAUNCH, true),
+            Action::Halt(HaltReason::PriceStoreUnavailable)
         );
     }
 
@@ -300,11 +373,11 @@ mod tests {
         // 60/40 → 20% imbalance: Quote when healthy, Reshape when degraded
         // (reshape bound tightens 30% → 15%). Base-heavy → shrink the bid side.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(60.0, 40.0), &kill(), LAUNCH),
+            evaluate(&ok_fair(), &inv(60.0, 40.0), &kill(), LAUNCH, false),
             Action::Quote
         );
         assert_eq!(
-            evaluate(&degraded_fair(), &inv(60.0, 40.0), &kill(), LAUNCH),
+            evaluate(&degraded_fair(), &inv(60.0, 40.0), &kill(), LAUNCH, false),
             Action::Reshape(Side::Bid)
         );
     }
@@ -315,11 +388,11 @@ mod tests {
         // permitted drawdown halves to 10%). A vault at $85 is above the
         // healthy floor but halts once degraded.
         assert_eq!(
-            evaluate(&ok_fair(), &inv(43.0, 42.0), &kill(), LAUNCH),
+            evaluate(&ok_fair(), &inv(43.0, 42.0), &kill(), LAUNCH, false),
             Action::Quote
         );
         assert_eq!(
-            evaluate(&degraded_fair(), &inv(43.0, 42.0), &kill(), LAUNCH),
+            evaluate(&degraded_fair(), &inv(43.0, 42.0), &kill(), LAUNCH, false),
             Action::Halt(HaltReason::TvlFloor)
         );
     }
@@ -336,11 +409,11 @@ mod tests {
             ..KillSwitchConfig::default()
         };
         assert_eq!(
-            evaluate(&degraded_fair(), &inv(55.0, 45.0), &kill(), LAUNCH),
+            evaluate(&degraded_fair(), &inv(55.0, 45.0), &kill(), LAUNCH, false),
             Action::Quote
         );
         assert_eq!(
-            evaluate(&degraded_fair(), &inv(55.0, 45.0), &tight, LAUNCH),
+            evaluate(&degraded_fair(), &inv(55.0, 45.0), &tight, LAUNCH, false),
             Action::Reshape(Side::Bid)
         );
     }
