@@ -131,6 +131,26 @@ them to a file with one `## <identifier>` heading each, printing only
 sizes; slice it with
 `python3 .claude/tools/read_result.py --section '<identifier>' <file>`.
 
+**To see WHICH levers are in the pool, take a depth-2 heading map.** That
+is a different question from reading their content, and it has its own
+narrow form:
+
+```sh
+python3 .claude/tools/read_result.py --headings --max-depth 2 \
+  <scratchpad>/levers.md
+```
+
+`--max-depth 2` returns exactly the `## ENG-#### | <title>` identifier
+lines — which is what a fold reads to write its umbrella title — because
+`--bodies-out` normalizes each lever's own headings to sit below its
+identifier. A bare `--headings` returns every heading at every depth
+instead: measured on a 32-lever dump, **116 headings where 32 were
+wanted**, ≈1.3k and that pass's single largest result, larger than any
+Linear write or the fold's own `compose`. The ratio scales with a pool
+nothing bounds, and `housekeeping` folds every pass. The deeper headings
+are not waste in general — they are consumed later and selectively, by
+the `--sections` call below.
+
 **For the fold itself, take the sections — not the bodies.** A fold
 consumes two things from each lever, its statement and its concrete
 edit, and cites the evidence prose by reference rather than inlining it.
