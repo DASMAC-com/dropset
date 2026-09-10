@@ -288,7 +288,7 @@ class ClassifyTests(unittest.TestCase):
         self.assertIsNone(classify(allow[0], 0, allow))  # the broad one stays
 
     def test_subsumed_narrow_before_broad_append_pattern(self):
-        # firm-perms appends the broader rule AFTER the narrow one — the narrow
+        # Firming appends the broader rule AFTER the narrow one — the narrow
         # entry is still dead weight and must be flagged regardless of order.
         allow = ["Bash(git status --short:*)", "Bash(git status:*)"]
         self.assertEqual(classify(allow[0], 0, allow)[0], "subsumed")

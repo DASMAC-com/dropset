@@ -121,7 +121,7 @@ def _target_path(payload):
 
 
 def _is_allowed_base_settings(target, base):
-    """True for the base `.claude/settings*.json` files firm-perms may write."""
+    """True for the base `.claude/settings*.json` files a firming write targets."""
     claude_dir = os.path.join(base, ".claude")
     allowed = (
         os.path.join(claude_dir, "settings.json"),
@@ -232,7 +232,7 @@ def _self_test():
         (payload("Edit", base + "/.claude/worktrees/eng-1/x.rs"), wt, {}, True),
         # Editing inside this worktree → allowed.
         (payload("Edit", wt + "/program/src/lib.rs"), wt, {}, False),
-        # Base settings files firm-perms writes → allowed.
+        # Base settings files a firming write targets → allowed.
         (payload("Write", base + "/.claude/settings.local.json"), wt, {}, False),
         (payload("Write", base + "/.claude/settings.json"), wt, {}, False),
         # Relative path (resolves against worktree cwd) → allowed.

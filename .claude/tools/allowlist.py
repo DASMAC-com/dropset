@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""``settings.local.json`` allowlist parser — the shared, context-cheap reader
-for the ``permissions.allow`` array that both ``firm-perms`` and
-``housekeeping`` step 7 need, without either whole-reading the ~250-entry file
-into the model's context (per ``CLAUDE.md`` → "Context economy" / "Skill
-tooling").
+"""``settings.local.json`` allowlist parser and writer — the context-cheap way to
+read or extend the ``permissions.allow`` array without whole-reading the
+~400-entry file into the model's context (per ``CLAUDE.md`` → "Context economy" /
+"Skill tooling").
+
+This is now the **whole** firming interface: the ``firm-perms`` skill that used to
+wrap it was retired on 2026-09-10, measured unused as a verb while the tool itself
+stayed in daily use. ``housekeeping`` step 7a drives ``cruft``; anything else
+firms a rule with ``add``.
 
 Three subcommands. All three print JSON to stdout; ``covers`` and ``cruft``
 only read the settings file, while ``add`` **writes** it (and deliberately does
@@ -36,7 +40,7 @@ option, so it precedes the subcommand
   reasons over a short shortlist instead of the whole array. Categories mirror
   ``housekeeping`` step 7: ``over-broad`` (a bare-verb wildcard or an unscoped
   file-access root), ``subsumed`` (a narrower rule an earlier one already
-  covers — the dead weight ``firm-perms`` never prunes), ``dangerous`` (an
+  covers — the dead weight ``add`` never prunes), ``dangerous`` (an
   ``rm -rf`` / force-push / pipe-to-shell one-off), ``machine-path`` (a
   malformed path, or an absolute home path in a settings file where one does
   not belong), ``machine-path-stale`` (a path that no longer resolves on
@@ -294,8 +298,8 @@ def _over_broad_reason(rule: str) -> str | None:
 
 def _is_subsumed(index: int, allow: list[str]) -> bool:
     """Whether ``allow[index]`` is dead weight another entry already covers.
-    Checks the **whole** list, not just earlier entries — ``firm-perms``
-    *appends* generalized rules, so the common layout is a narrow rule with the
+    Checks the **whole** list, not just earlier entries — firming *appends*
+    generalized rules, so the common layout is a narrow rule with the
     broader one that subsumes it sitting *after* it. A **strictly broader**
     coverer flags the narrow rule regardless of position; an **exact-equivalent**
     duplicate flags only the later copy (so one survives). A coverer that is
