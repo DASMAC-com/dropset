@@ -605,8 +605,7 @@ indexer-down: check-docker
 .PHONY: collectors-up
 collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --build --quiet-pull postgres migrate coinbase coinbase-ticker \
-		kraken erapi frankfurter grafana
+		up -d --build --quiet-pull postgres migrate $(KEYLESS_SERVICES) grafana
 	@$(KEYED_UP)
 
 # Both profiles, because a profiled service is only addressable under a
@@ -615,13 +614,16 @@ collectors-up: check-docker
 # skipped it while removing every other collector in this list — measured,
 # compose exits 0 and says nothing for a service behind a disabled profile,
 # while erroring `no such service` for a name it does not know at all.
-# The keyed three are `$(KEYED_SERVICES)` rather than a second copy of the
-# list — a teardown that loses a name fails quietly, leaving the container
-# up for the next bring-up to reuse.
+# Every service group here is a variable — grafana aside — rather than a
+# second copy of the list: a teardown that loses a name fails quietly,
+# leaving the container up for the next bring-up to reuse. Grafana stays
+# spelled twice because it is not a collector, it has its own `grafana` /
+# `grafana-down` targets naming it anyway, and folding it into
+# `KEYLESS_SERVICES` would make that variable's name lie.
 .PHONY: collectors-down
 collectors-down: check-docker
-	$(FX_COMPOSE) --profile pyth rm -sf coinbase coinbase-ticker kraken \
-		erapi frankfurter pyth grafana $(KEYED_SERVICES)
+	$(FX_COMPOSE) --profile pyth rm -sf $(KEYLESS_SERVICES) grafana \
+		$(PYTH_SERVICES) $(KEYED_SERVICES)
 
 # Grafana alone, on http://localhost:3200, serving the provisioned
 # market-data ingestion dashboard (market-data/grafana/, docs/data-feeds.md
@@ -720,6 +722,24 @@ OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account '$(DROPSET_OP_ACCOUNT)',)
 # the truth. `FX_COMPOSE` is shared for the same reason — `ps -q` resolves a
 # service only under the same compose file and profile that started it.
 KEYED_SERVICES = oanda twelvedata alphavantage
+# The five keyless feeds, named once: `collectors-up` starts them and
+# `collectors-down` removes them, and a teardown that quietly loses a name
+# leaves the container up for the next bring-up to reuse. The bring-up also
+# starts `postgres`, `migrate` and `grafana`, which stay out of this variable
+# deliberately — the first two are shared infrastructure the teardown never
+# removes, and grafana is not a collector — so the two service lists are not
+# symmetric and one start-and-stop variable would be wrong. Keep this list
+# profile-free: the bring-up enables no profile, so a profiled service added
+# here would be silently skipped there while the teardown still removed it.
+KEYLESS_SERVICES = coinbase coinbase-ticker kraken erapi frankfurter
+# Pyth is removal-only, and the asymmetry is the point: no target here starts
+# it (it went keyed and is started deliberately once a key exists — see the
+# `collectors-up` comment above), but `collectors-down` still removes it so a
+# hand-started container is not left for the next bring-up to reuse. A single
+# home for that profile's list, not a discovery mechanism: compose cannot
+# enumerate a profile's members, so a service added to `pyth` still has to be
+# added here.
+PYTH_SERVICES = pyth
 FX_COMPOSE = docker compose -f infra/localnet/docker-compose.yml --profile fx
 # `--build` for the same reason as `collectors-up` above: without it these
 # services keep whichever image another worktree last built.
