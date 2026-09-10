@@ -911,17 +911,52 @@ is `false`, skip the rest of this step** and note "memory
 scan skipped (`<reason>`)" in the report. Only when `scan`
 is `true`, do the review below.
 
-Read the memory bodies **in this step's own pass** and flag
-a memory as stale when it:
+**Then run the scan as a tool call, not by hand:**
 
-- names a **file / function / flag / `ENG-###`** that no
-  longer exists (a dangling reference — the same check the
-  memory-recall caveat demands before acting on a memory);
-- is **superseded or contradicted** by a newer memory or by
-  current code / conventions;
-- describes work that has since **shipped and is now
-  derivable from the repo**, so it no longer earns its
-  context slot.
+```sh
+python3 .claude/tools/memory_audit.py <memory_dir>
+```
+
+It prints one `kind: slug — reason` line per candidate plus a
+summary, and **never a memory body**. Run it from the base
+repo root so cited paths resolve against the checkout
+(`--repo-root` overrides). Four kinds, and their confidence
+is **not** equal — the report labels each:
+
+- **`index-desync`** (exact) — a `MEMORY.md` pointer with no
+  file, or a file with no pointer. A half-done purge is
+  exactly this.
+- **`over-long-index`** (exact) — reported as a **count plus
+  the worst few**, never every row.
+- **`dangling-path`** (exact, bounded) — a code-span
+  repo-relative path that no longer resolves. Bounded because
+  a candidate must start with a real top-level repo entry: a
+  looser "contains a slash" test reported 25 candidates
+  against the live store of which ~4 were real, the rest
+  being currency pairs, CIDR blocks, Action refs and git
+  refs. The accepted blind spot is a path whose own top-level
+  directory was deleted.
+- **`superseded-candidate`** (heuristic) — memories sharing an
+  `eng-<digits>` stem. A candidate to look at, never a
+  verdict.
+
+**An `ENG-###` reference is deliberately NOT checked** — issue
+existence lives in Linear and the tool is offline, so a check
+that cannot run would pass silently. If a candidate's reason
+turns on an issue, verify that one through the Linear MCP.
+
+This step used to be prescribed as prose, and was the last
+one in the pass that was: every pass then improvised the same
+shapes, which cost **≈3.2k of ≈8.3k total Bash bytes (~39%)**
+on one measured pass and took four of its top six results —
+including an `ls` that printed all 97 filenames to answer
+what the already-in-context index answers, and an `awk` that
+returned 56 rows when the decision needed a count.
+
+Judgement the tool does not make: whether a memory
+**describes work that has since shipped** and so no longer
+earns its context slot. That one still wants a read, and it
+is the reason this step is a review rather than a report.
 
 For each stale candidate, **purge** = delete the memory
 `.md` file **and** remove its one-line `MEMORY.md` pointer
