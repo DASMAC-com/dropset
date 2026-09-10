@@ -31,8 +31,20 @@ const SOURCE: &str = "twelvedata";
 /// anything else using the same key.
 const USABLE_DAILY_REQUESTS: u64 = 600;
 
+/// The roster polled when `PRODUCT_IDS` is unset, matching the default this
+/// service resolves to in `infra/localnet/docker-compose.yml` — where
+/// `TWELVEDATA_PRODUCT_IDS` falls through to the shared `FX_PRODUCT_IDS`.
+/// `market-data/tests/roster_compose_agreement.rs` pins the two together.
+///
+/// Written out here rather than shared with `alphavantage`, which resolves to
+/// the same four pairs today: each collector spends its own quota, so a roster
+/// is a per-venue cost decision (see `USABLE_DAILY_REQUESTS` above), and the
+/// exact-match check wants one constant per service to compare against.
+const DEFAULT_PRODUCTS: &str = "AUD-USD,CAD-USD,EUR-USD,GBP-USD";
+
 const DEFAULTS: FxDefaults = FxDefaults {
     base_url: "https://api.twelvedata.com",
+    default_products: DEFAULT_PRODUCTS,
     granularity_secs: 60,
     // See the module note: sized to 800 credits/day with headroom.
     poll_interval_secs: 300,

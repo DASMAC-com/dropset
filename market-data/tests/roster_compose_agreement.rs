@@ -20,22 +20,20 @@
 //! currency the provider does not carry, which is the failure the collectors'
 //! own silence watches are written to make visible and cannot here.
 //!
-//! **Two modes, because two kinds of collector share this file.** Five services
-//! carry their own constant and must match compose exactly. The three FX
-//! venues share `fx::DEFAULT_PRODUCTS`, one pair wide, because they do not all
-//! quote the same instruments — so for those the property is **containment**:
-//! whatever a lone binary falls back to must be something its compose roster
-//! also carries, or the two disagree about what the service even collects.
+//! **One mode: every service must match compose exactly.** All eight carry
+//! their own `DEFAULT_PRODUCTS`, in the binary that polls the roster, so the
+//! property is equality for all of them.
 //!
-//! **Be honest about what containment buys, which is little.**
-//! `fx::DEFAULT_PRODUCTS` is the single pair `AUD-USD`, so for oanda,
-//! twelvedata and alphavantage the check reduces to "the compose roster
-//! contains `AUD-USD`". Adding a pair to one of those three compose defaults,
-//! or removing any pair but `AUD-USD` from one, is **not** caught here. Their
-//! compose rosters are effectively unpinned, and that is a consequence of the
-//! shared one-pair fallback rather than a property this file establishes —
-//! recorded so a later reader does not credit it with more coverage than it
-//! has. The five `Exact` services are where the real pinning is.
+//! **This file used to have a second, much weaker mode**, and what it cost is
+//! worth recording. The three keyed FX venues shared one
+//! `fx::DEFAULT_PRODUCTS`, narrowed to the single pair every one of them
+//! quotes, so they could only be pinned by **containment** — which for a
+//! one-pair constant reduces to "the compose roster contains `AUD-USD`", and
+//! left those three compose rosters effectively unpinned. Measured: deleting
+//! `EUR-USD` from oanda's compose default left the suite green — a silent
+//! de-roster of an MVP anchor pair. Giving each venue its own constant (see
+//! `fx::FxDefaults::default_products`) is what turned that into an exact
+//! match, and it is why containment is gone rather than merely tightened.
 //!
 //! **Why it compares text.** Every constant here lives in a binary crate or is
 //! private to its module, so none can be imported; and compose is YAML with no
@@ -49,20 +47,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const COMPOSE: &str = include_str!("../../infra/localnet/docker-compose.yml");
 
-/// How a service's Rust default relates to its compose default.
-///
-/// Carries no derives: its only use is a `match` on unit variants binding
-/// nothing, which reads the discriminant and moves nothing out of the owned
-/// `Wiring`. Clippy does not warn on an unused derive, so this is the kind of
-/// thing only a reader catches.
-enum Mode {
-    /// The two name the same pairs. The service owns its constant.
-    Exact,
-    /// The Rust default is a subset of the compose default. The service shares
-    /// the FX venues' one-pair fallback — see `fx::DEFAULT_PRODUCTS`.
-    SubsetOfCompose,
-}
-
 /// One compose service, and where its Rust-side default is written.
 struct Wiring {
     /// The service key in `docker-compose.yml`.
@@ -73,7 +57,6 @@ struct Wiring {
     /// `include_str!`. The constant's own value is extracted from it later by
     /// [`rust_default`] — this is the haystack, not the needle.
     rust_source_text: &'static str,
-    mode: Mode,
 }
 
 /// Every compose service that takes a roster, and the constant behind it.
@@ -83,55 +66,46 @@ struct Wiring {
 /// join the file and quietly escape the check — the way it would if this test
 /// only iterated over the rows it already knew.
 fn wirings() -> Vec<Wiring> {
-    let fx = include_str!("../src/fx.rs");
     vec![
         Wiring {
             service: "alphavantage",
-            rust_source: "market-data/src/fx.rs",
-            rust_source_text: fx,
-            mode: Mode::SubsetOfCompose,
+            rust_source: "market-data/src/bin/alphavantage.rs",
+            rust_source_text: include_str!("../src/bin/alphavantage.rs"),
         },
         Wiring {
             service: "coinbase",
             rust_source: "market-data/src/config.rs",
             rust_source_text: include_str!("../src/config.rs"),
-            mode: Mode::Exact,
         },
         Wiring {
             service: "coinbase-ticker",
             rust_source: "market-data/src/bin/coinbase_ticker.rs",
             rust_source_text: include_str!("../src/bin/coinbase_ticker.rs"),
-            mode: Mode::Exact,
         },
         Wiring {
             service: "erapi",
             rust_source: "market-data/src/bin/erapi.rs",
             rust_source_text: include_str!("../src/bin/erapi.rs"),
-            mode: Mode::Exact,
         },
         Wiring {
             service: "frankfurter",
             rust_source: "market-data/src/bin/frankfurter.rs",
             rust_source_text: include_str!("../src/bin/frankfurter.rs"),
-            mode: Mode::Exact,
         },
         Wiring {
             service: "kraken",
             rust_source: "market-data/src/bin/kraken.rs",
             rust_source_text: include_str!("../src/bin/kraken.rs"),
-            mode: Mode::Exact,
         },
         Wiring {
             service: "oanda",
-            rust_source: "market-data/src/fx.rs",
-            rust_source_text: fx,
-            mode: Mode::SubsetOfCompose,
+            rust_source: "market-data/src/bin/oanda.rs",
+            rust_source_text: include_str!("../src/bin/oanda.rs"),
         },
         Wiring {
             service: "twelvedata",
-            rust_source: "market-data/src/fx.rs",
-            rust_source_text: fx,
-            mode: Mode::SubsetOfCompose,
+            rust_source: "market-data/src/bin/twelvedata.rs",
+            rust_source_text: include_str!("../src/bin/twelvedata.rs"),
         },
     ]
 }
@@ -233,9 +207,10 @@ fn compose_defaults() -> BTreeMap<String, String> {
         //
         // The two rules are still only pinned to today's file, not derived
         // from each other: YAML would accept a seven-space continuation, which
-        // this loop would treat as the end of the block. That truncation is
-        // loud for the five `Exact` services and — like everything else about
-        // them — silent for the three subset ones.
+        // this loop would treat as the end of the block. Such a truncation is
+        // now loud for every service — it drops pairs from the compose side of
+        // an exact comparison — where under the old containment mode it was
+        // silent for the three FX venues.
         let Some(value) = line.strip_prefix("      PRODUCT_IDS:") else {
             continue;
         };
@@ -297,29 +272,16 @@ fn every_rust_default_agrees_with_its_compose_default() {
                 wiring.service
             )
         }));
-        match wiring.mode {
-            Mode::Exact => assert_eq!(
-                rust,
-                composed,
-                "service `{}`: the roster in {} and the compose default have \
-                 diverged. Only in Rust: {:?}; only in compose: {:?}",
-                wiring.service,
-                wiring.rust_source,
-                rust.difference(&composed).collect::<Vec<_>>(),
-                composed.difference(&rust).collect::<Vec<_>>(),
-            ),
-            Mode::SubsetOfCompose => {
-                let stray: Vec<_> = rust.difference(&composed).collect();
-                assert!(
-                    stray.is_empty(),
-                    "service `{}`: {} falls back to {stray:?}, which its compose \
-                     roster does not carry — a binary run by hand would collect \
-                     a pair localnet never does",
-                    wiring.service,
-                    wiring.rust_source,
-                );
-            }
-        }
+        assert_eq!(
+            rust,
+            composed,
+            "service `{}`: the roster in {} and the compose default have \
+             diverged. Only in Rust: {:?}; only in compose: {:?}",
+            wiring.service,
+            wiring.rust_source,
+            rust.difference(&composed).collect::<Vec<_>>(),
+            composed.difference(&rust).collect::<Vec<_>>(),
+        );
     }
 }
 

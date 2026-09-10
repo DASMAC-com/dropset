@@ -43,8 +43,21 @@ const SOURCE: &str = "alphavantage";
 /// roster, and the same key may be shared.
 const USABLE_DAILY_REQUESTS: u64 = 20;
 
+/// The roster polled when `PRODUCT_IDS` is unset, matching the default this
+/// service resolves to in `infra/localnet/docker-compose.yml` — where
+/// `ALPHAVANTAGE_PRODUCT_IDS` falls through to the shared `FX_PRODUCT_IDS`.
+/// `market-data/tests/roster_compose_agreement.rs` pins the two together.
+///
+/// This is the venue where roster width bites hardest: the free tier allows 25
+/// requests **a day** for the whole account and every restart re-polls the
+/// whole roster, so each added pair is a real share of
+/// `USABLE_DAILY_REQUESTS`. Its own constant, so widening another vendor's
+/// roster cannot reach this budget.
+const DEFAULT_PRODUCTS: &str = "AUD-USD,CAD-USD,EUR-USD,GBP-USD";
+
 const DEFAULTS: FxDefaults = FxDefaults {
     base_url: "https://www.alphavantage.co",
+    default_products: DEFAULT_PRODUCTS,
     granularity_secs: GRANULARITY_SECS,
     // See the module note: 25 requests/day for the whole account.
     poll_interval_secs: 21_600,

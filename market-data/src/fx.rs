@@ -21,23 +21,32 @@ use std::collections::HashMap;
 /// 2007), so this is a cost choice rather than a limit.
 const DEFAULT_BACKFILL_DAYS: u64 = 60;
 
-/// The roster an FX collector polls when `PRODUCT_IDS` is unset.
-///
-/// **Shared by all three FX venues, and deliberately narrower than what compose
-/// gives them.** OANDA, Twelve Data and Alpha Vantage differ in which pairs
-/// they can serve — OANDA's instrument list is direction-fixed — so there is no
-/// one roster that is right for all three, and this is the intersection: the
-/// single pair every FX venue quotes. `docker-compose.yml` supplies each
-/// service's real roster by environment, which is where a per-venue set
-/// belongs. `market-data/tests/roster_compose_agreement.rs` pins that this stays
-/// a **subset** of each compose default rather than equal to it.
-const DEFAULT_PRODUCTS: &str = "AUD-USD";
-
 /// The per-venue starting points a binary supplies, since a poll budget and a
 /// request cap are properties of the venue rather than of the deployment.
 pub struct FxDefaults {
     /// The venue's API root.
     pub base_url: &'static str,
+    /// The roster this collector polls when `PRODUCT_IDS` is unset, as a
+    /// canonical spec like `AUD-USD,EUR-USD`.
+    ///
+    /// **Per-venue, and owned by the binary** — the same place the five
+    /// non-FX collectors keep their `DEFAULT_PRODUCTS`. This module used to
+    /// hold one shared fallback for all three FX venues, narrowed to the
+    /// single pair every one of them quotes; the cost was that
+    /// `market-data/tests/roster_compose_agreement.rs` could only pin the
+    /// three against compose by **containment**, which for a one-pair
+    /// constant reduces to "the compose roster contains `AUD-USD`" and left
+    /// those rosters effectively unpinned. Giving each venue its own makes
+    /// that check an exact match, like every other service's.
+    ///
+    /// A venue's roster is not derivable from another's: OANDA's v20
+    /// instrument list is **direction-fixed**, so which pairs it can serve
+    /// and how they are spelled is a fact about the venue (see
+    /// [`oanda_instrument`]). That is why `docker-compose.yml` deliberately
+    /// does not chain `OANDA_PRODUCT_IDS` to the shared `FX_PRODUCT_IDS`,
+    /// and why these constants do not share either — a widening that is
+    /// right for one vendor should not silently reach the others.
+    pub default_products: &'static str,
     /// Bucket width. Only Alpha Vantage is pinned (daily); the others default
     /// to minute bars and can be widened by environment.
     pub granularity_secs: i64,
@@ -87,7 +96,7 @@ impl FxConfig {
         Ok(Self {
             database_url,
             base_url: env_or("FX_BASE_URL", defaults.base_url),
-            products: roster_from_env(DEFAULT_PRODUCTS)?,
+            products: roster_from_env(defaults.default_products)?,
             granularity_secs,
             backfill_start_secs,
             max_buckets_per_request: env_or(
