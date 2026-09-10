@@ -475,9 +475,11 @@ never reported. Detail, and the verb table:
 `docs/conventions/local-integrations.md`.
 
 A planning session may **dispatch** a ready task — `session_dispatch.py`
-opens a new iTerm window and types the verb, authorized by the
-operator's yes exactly as `fleet go` is. iTerm is driven through its
-Python API via `.claude/tools/iterm_api.py`, the one owner of that
+opens a **tab in the dispatching session's own window** (never a new
+window: the operator drives the fleet from one window) and types the
+verb, authorized by the operator's yes exactly as `fleet go` is. Several
+verbs go in one call, separated by a bare `+`. iTerm is driven through
+its Python API via `.claude/tools/iterm_api.py`, the one owner of that
 automation; **AppleScript is retired** from the toolbox.
 
 ## What a skill may decide alone

@@ -1314,9 +1314,33 @@ drives the real zsh functions.
     a launcher wants green, not "the other one".
 
   The deterministic half — the Linear query, the tag derivation, the
-  already-live check, the window driving — is the committed tool
+  already-live check, the tab driving — is the committed tool
   `.claude/tools/fleet_resume.py`; `fleet` is the thin verb over it, per
   the skill-tooling convention.
+
+  **A planning session's dispatch opens a TAB, never a window.**
+  `.claude/tools/session_dispatch.py` is the dispatch arm — it types a
+  ready task's verb into a new tab, authorized by the operator's yes
+  exactly as `fleet go` is. The tab lands in the **dispatching session's
+  own window**: the operator drives the fleet from one window, so a
+  dispatched session has to appear beside the planning session that
+  started it rather than as another window to find. That is an operator
+  ruling of 2026-09-10, made on seeing two resumes arrive as separate
+  windows, and it **reverses** an earlier "one iTerm window per session
+  is load-bearing" rule that this doc, the `plan` skill and the tool's
+  own docstring all used to state. The reversal retired
+  `iterm_api.open_window` outright, since the dispatcher was its only
+  caller and the launcher already opened tabs.
+
+  Two properties worth keeping when editing it. It takes **several verbs
+  in one call**, separated by a bare `+`, for one driver round trip
+  instead of one per tab — and it validates every verb before opening
+  anything, so a batch with one typo dispatches nothing rather than half
+  of itself. And it still **never types into the current session**: on a
+  blocked dispatch it prints the verbs for the operator to run by hand.
+  That hazard — a launch verb typed into a session already running
+  something — is what the failure path guards, and it was never what the
+  window-per-session rule bought.
 
   **No AppleScript.** iTerm is driven through its Python API via the
   shared `.claude/tools/iterm_api.py`, the one owner of iTerm automation

@@ -77,10 +77,11 @@ over iTerm's Python API — the library is not stdlib and is not
 installed, so this stays importable from ordinary `python3` and shells
 out to the interpreter iTerm ships, which carries it; consolidating
 `fleet_resume.py` and `session_dispatch.py` here retired AppleScript
-from the toolbox entirely), `session_dispatch.py` (opens a new iTerm
-window and types one session verb — the planning session's dispatch
-arm, authorized by the operator's yes, and loud enough on failure to
-print the verb it would have typed),
+from the toolbox entirely), `session_dispatch.py` (opens an iTerm tab
+per session verb, in the dispatching session's own window, and types
+each — the planning session's dispatch arm, authorized by the
+operator's yes, and loud enough on failure to print the verbs it would
+have typed),
 `migration_collisions.py` (compares this branch's new
 migration numbers
 against other open PRs' before an enqueue — `--others-from-gh` runs that

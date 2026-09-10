@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Drive iTerm2 through its Python API. The one owner of iTerm automation.
 
-Two callers: `session_dispatch.py` (open ONE new window and type a verb) and
-`fleet_resume.py` (open one TAB per in-flight issue and type a resume verb into
-each). Both used to reach for AppleScript; this retires it from the toolbox
-entirely, which was the point of consolidating them here rather than letting the
-second caller grow its own copy.
+Two callers, and both now want the same thing: `session_dispatch.py` (open a tab
+per dispatched verb and type it) and `fleet_resume.py` (open one tab per
+in-flight issue and type a resume verb into each). Both used to reach for
+AppleScript; this retires it from the toolbox entirely, which was the point of
+consolidating them here rather than letting the second caller grow its own copy.
+
+So `open_tabs` is the only window-creating entry point. A `open_window` op used to
+sit beside it for the dispatcher, on a since-reversed rule that each session got
+its own window; the operator ruled on 2026-09-10 that a dispatch belongs in the
+dispatching session's window, which left that op with no caller and retired it.
 
 WHY A SEPARATE PROCESS. `iterm2` is not stdlib, and the repo's tools convention
 is stdlib-only so nothing here needs a pip install. iTerm ships its own Python
@@ -170,25 +175,6 @@ def session_names() -> list[str]:
     return list(_call({"op": "session_names"}).get("names") or [])
 
 
-def open_window(command: str) -> str | None:
-    """Open a NEW window and type ``command`` into it. Returns its tty, if any.
-
-    A new window rather than a tab, deliberately: one iTerm window per session
-    is how the operator talks to the fleet. This never falls back to the current
-    session — typing a launch verb into a window already running something is
-    worse than not dispatching at all.
-
-    The tty is read defensively. A bare ``.get("ttys", [None])[0]`` applies its
-    default only when the key is ABSENT, so a driver answering ``"ttys": []``
-    would raise IndexError and one answering ``"ttys": null`` TypeError — either
-    escaping as a raw traceback past `session_dispatch`, which catches only
-    `ItermUnavailable` and is the code path whose entire job is to print the
-    verb you can run by hand.
-    """
-    ttys = _call({"op": "open_window", "command": command}).get("ttys") or []
-    return ttys[0] if ttys else None
-
-
 def open_tabs(commands: list[str]) -> list[str | None]:
     """Open one tab per command in the current window, typing each. Returns ttys.
 
@@ -221,11 +207,13 @@ def open_tabs(commands: list[str]) -> list[str | None]:
 
 
 def _first_session(container):
-    """The session to type into, given EITHER a Window or a Tab.
+    """The session to type into, given a Tab — or, defensively, a Window.
 
-    Both shapes are handled because the two ops pass different ones:
-    ``open_window`` hands over a Window, ``open_tabs`` a Tab. A Tab exposes
-    ``.sessions`` / ``.current_session``; a Window exposes ``.tabs``.
+    **Every caller today passes a Tab.** ``open_tabs`` is the only op that reaches
+    here, and it always hands over the Tab it just created; the Window branch
+    below is retained as a fallback rather than because something calls it that
+    way. It was live when an ``open_window`` op existed, which was retired once a
+    dispatch became a tab in the operator's own window rather than a new one.
 
     **Taking a Tab is not hypothetical generality — it is a fixed bug.** An
     earlier version inspected only the Window attributes, so when ``open_tabs``
@@ -234,7 +222,8 @@ def _first_session(container):
     --apply` opened one blank tab per in-flight issue and resumed none of them,
     while reporting ``opened: 0`` — visible, but only if someone read the
     summary. Confirmed live: a probe whose typed command would have created a
-    marker file produced the tab and no marker.
+    marker file produced the tab and no marker. That history is why the Window
+    branch stays: the failure it guards was silent, and the branch is six lines.
 
     The two blocks are disjoint in practice — a Window exposes no
     ``.sessions``, a Tab no ``.tabs`` — so their relative order is not what
@@ -284,20 +273,6 @@ async def _driver_body(connection, request, result):  # pragma: no cover
                     if name:
                         names.append(name)
         result["names"] = names
-        result["ok"] = True
-        return
-
-    if op == "open_window":
-        window = await iterm2.Window.async_create(connection)
-        if window is None:
-            result["error"] = "iTerm2 refused to create a window"
-            return
-        session = _first_session(window)
-        if session is None:
-            result["error"] = "the new iTerm2 window came back with no session"
-            return
-        await session.async_send_text(request["command"] + "\n")
-        result["ttys"] = [await session.async_get_variable("tty")]
         result["ok"] = True
         return
 
