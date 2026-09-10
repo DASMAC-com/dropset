@@ -2241,10 +2241,16 @@ mod tests {
         }
     }
 
-    /// A market whose pair no collector covers still composes — its store
-    /// candidates are simply absent. This is the CADC-on-OANDA case: OANDA is
-    /// direction-fixed and serves no CAD-USD, so that venue must be missing
-    /// rather than fatal.
+    /// A market whose pair some collector does not cover still composes — the
+    /// absent venue's candidate is simply missing rather than fatal.
+    ///
+    /// Coverage is per venue *and* per pair, and it moves: CADC was the
+    /// motivating case, because OANDA's direction-fixed instrument list served
+    /// no `CAD-USD` until the adapter learned to invert at intake. The
+    /// behavior outlives that particular gap — a venue can be dark, be
+    /// rate-limited, or simply not list a pair — so this is deliberately
+    /// written against a generic partial-coverage set rather than against
+    /// whichever pair happens to be short a venue today.
     #[test]
     fn an_uncovered_pair_loses_only_its_own_candidates() {
         let (now, now_unix) = (Instant::now(), 1_786_579_250);
