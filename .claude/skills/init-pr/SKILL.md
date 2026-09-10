@@ -16,10 +16,12 @@ work continues.
 This is the first skill an agent should run after
 `claude --worktree <tag>` starts.
 
-Two cheap pre-checks come **first**, before anything that
+Three cheap pre-checks come **first**, before anything that
 mutates the worktree — the model tier this session is running
-as, and the `gh` credential. Both exist because the failure
-they catch is otherwise discovered late and expensively.
+as, the `gh` credential, and whether the issue already has a
+merged PR. All three exist because the failure they catch is
+otherwise discovered late and expensively; the third catches a
+session that had nothing to build at all.
 
 ## Step 0: check which model this session is running as
 
@@ -212,6 +214,59 @@ its assurance from an actual **checkpoint commit** before its
 fan-out and its CI wait, rather than from any probe. A signed
 commit is the only check that proves signing works, which is
 also why step 6 is where a real failure surfaces.
+
+## Step 0c: pre-check that the issue is not already merged
+
+Still before anything that mutates the worktree, confirm the
+issue does not already have a **merged** PR against it:
+
+```sh
+gh pr list --repo DASMAC-com/dropset --search "<ENG-###>" \
+  --state all --json number,title,state,mergedAt
+```
+
+Read the result:
+
+- **A merged PR is a STOP.** Do not rename, rebase, commit or
+  map anything. Surface it in one sentence — "ENG-### already
+  merged as PR #N; the issue looks mis-stated or mis-queued" —
+  and ask via `AskUserQuestion` whether to stand down or to
+  proceed anyway because there is genuinely follow-up scope.
+  The issue being pullable is not evidence that work remains:
+  per `docs/conventions/linear-automation.md`, **Done means
+  operator-ratified, not merged**, so a merged issue sitting in
+  Backlog is a contradiction, not an instruction.
+- **A closed-not-merged PR is a WARNING, not a stop.** A
+  legitimate retry exists — an abandoned attempt, a superseded
+  approach — so name it and carry on.
+- **No PRs, or only open ones, is the normal case.** Say
+  nothing and proceed. (An open PR on this branch is what a
+  resumed session looks like.)
+
+**Why this is a pre-check and not a step-12 concern.** Measured
+(2026-09-03, the ENG-1060 session): the issue was implemented
+and merged as PR #381 and landed In Review per convention, then
+moved **backwards to Backlog fourteen minutes later** — In
+Progress 09-01 22:45, In Review 09-02 00:14, Backlog 09-02
+00:28. That made merged scope look pullable. A worker session
+launched against it a day later, bootstrapped a worktree, hit
+the signing pre-check, consumed an operator round trip, and
+only then discovered there was nothing to build.
+
+**The root cause of the backwards move is unknown** — an
+automation write-back, an integration setting, or a stray
+click; the state history alone cannot distinguish them, and the
+convention was working as stated everywhere else that day. The
+guard is worth having regardless of cause, because it catches
+the whole class: any path that re-queues completed scope,
+including a human re-opening the wrong issue.
+
+**Why `gh` here rather than the GitHub MCP.** This is a
+field-selected read of at most a few rows, and the MCP search
+getter returns whole PR objects — the same
+orders-of-magnitude argument `docs/conventions/github-mcp.md`
+records for `gh api --jq`. It also reuses an existing
+`Bash(gh pr list:*)` allow-rule, so it costs no new prompt.
 
 ## Input
 
