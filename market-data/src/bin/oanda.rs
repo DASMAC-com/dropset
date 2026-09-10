@@ -18,7 +18,7 @@ use dropset_feeds::{
     CursorStore, PgCursorStore, RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
-    fx::{oanda_instrument, secret, FxConfig, FxDefaults},
+    fx::{oanda_instrument, oanda_source, secret, FxConfig, FxDefaults},
     instruments::register as register_instruments,
     roster::resolve_venue,
     store::CexWriter,
@@ -64,9 +64,22 @@ async fn main() -> anyhow::Result<()> {
     // Both lists, because a pinned `CANONICAL=VENUE` override is honoured here:
     // without the resolved instruments in the log, a mis-pinned one is visible
     // nowhere at startup.
+    //
+    // `inverted` is here for the same reason and matters more: an inverted pair
+    // is fetched under a symbol that reads as a *different* pair (`CAD-USD` via
+    // `USD_CAD`), so the two lists above look mismatched to anyone who does not
+    // know which entries are reciprocals. Naming them is what makes the pairing
+    // legible — and it is the one place an operator can confirm the direction
+    // the venue rule chose without reading the code.
     tracing::info!(
         products = %instruments.iter().map(|p| p.product_id.as_str()).collect::<Vec<_>>().join(","),
         instruments = %instruments.iter().map(|p| p.venue_symbol.as_str()).collect::<Vec<_>>().join(","),
+        inverted = %instruments
+            .iter()
+            .filter(|p| p.inverted)
+            .map(|p| p.product_id.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
         granularity = cfg.granularity_secs,
         poll_secs = cfg.poll_interval_secs,
         "oanda collector starting"
@@ -78,18 +91,13 @@ async fn main() -> anyhow::Result<()> {
     };
     let mut feeds = Vec::with_capacity(instruments.len());
     for resolved in instruments {
-        let (instrument, product_id) = (resolved.venue_symbol, resolved.product_id);
+        let product_id = resolved.product_id.clone();
         let feed = cfg.feed_name(SOURCE, &product_id);
         let resume = cursors.load(&feed).await?;
-        let source = OandaCandles::resume(
-            http.clone(),
-            feed.clone(),
-            &instrument,
-            cfg.granularity_secs,
-            cfg.max_buckets_per_request,
-            resume,
-            cfg.backfill_start_secs,
-        )?;
+        // The construction lives in the library so that the instrument/invert
+        // wiring is reachable from a test — see `fx::oanda_source`, which is
+        // where the argument order is documented and pinned.
+        let source = oanda_source(http.clone(), &feed, &resolved, &cfg, resume)?;
         let writer = CexWriter::new(SOURCE, &product_id, cfg.granularity_secs);
         let sinks: Vec<Box<dyn Sink<Candle>>> =
             vec![Box::new(StoreSink::new(pool.clone(), feed.clone(), writer))];

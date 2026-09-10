@@ -150,10 +150,11 @@ services:
     # change. The idempotent insert absorbs the redundant polls that remain.
     #
     # **`ERAPI_PRODUCT_IDS` deliberately does not chain to `FX_PRODUCT_IDS`**
-    # the way the keyed FX venues do. That shared roster is the three pairs
-    # those vendors are paid for; this venue prices its whole table in one
-    # request, so narrowing it to that set would discard the coverage that is
-    # the only reason to run it.
+    # the way Twelve Data and Alpha Vantage do. That shared roster is the
+    # narrow set of pairs those vendors are paid for; this venue prices its
+    # whole table in one request, so narrowing it to that set would discard
+    # the coverage that is the only reason to run it. (OANDA does not chain
+    # either, for an unrelated reason — see its own service comment.)
     build:
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
@@ -498,17 +499,38 @@ services:
     # convention, and rejects the other direction outright rather than
     # inverting it. Measured 2026-09-08 — `CAD_USD` returns
     # `400 Invalid value specified for 'instrument'` while `USD_CAD` returns
-    # 1.37838 — so putting `CAD-USD` on the shared roster would give this
-    # service an instrument that 400s on every poll forever, and the canonical
-    # id means USD per CAD, which is the reciprocal of the only series OANDA
-    # will serve. Storing `USD_CAD` under `CAD-USD` would be a silent
-    # off-by-a-reciprocal, so pinning the spelling is not the fix either;
-    # inverting a candle (which also swaps high and low) is adapter work
-    # nobody has done. Twelve Data and Alpha Vantage both quote `CAD/USD`
-    # directly and carry it through the shared roster.
+    # 1.37838.
     #
-    # The consequence for §3 of docs/dashboards.md: CAD/USD has **one**
-    # intraday keyed source where EUR/USD and AUD/USD have two.
+    # The adapter now handles that by **inverting at intake**: a pair OANDA
+    # quotes backwards is fetched under the reciprocal instrument and every
+    # candle is flipped before it reaches a sink, so `cex_prices` only ever
+    # holds canonical-direction values. `CAD-USD` is therefore back on this
+    # roster, served via `USD_CAD` (1/1.37838 = 0.7255, agreeing with Twelve
+    # Data's direct `CAD/USD`). Note a pinned spelling is still **not** the
+    # mechanism and the roster refuses one for such a pair: a pin fixes a
+    # spelling, and the reciprocal is a different value.
+    #
+    # The variable stays unchained even so, and the reason is about how the
+    # dashboard *renders* rather than about the 400. Which pairs are reversed
+    # is a measured table in the code (`OANDA_REVERSED_PAIRS` in
+    # market-data/src/fx.rs), so a pair OANDA quotes **backwards** that were
+    # added to the shared roster while missing from that table would be
+    # registered here and then 400 on every poll (a canonically-quoted pair
+    # absent from the table is the normal case and works fine) —
+    # present but not producing, which the coverage panel renders as
+    # **faulted**. That is a false outage for what is really a config gap,
+    # and not conflating those two is the whole thesis of §4 of
+    # docs/dashboards.md. Unchained, such a pair simply has no OANDA row:
+    # the venue reads as deliberately **not** covering it, which is the
+    # truthful rendering. So widen the shared roster freely; widen OANDA's
+    # deliberately.
+    #
+    # The residual, recorded rather than fixed: nothing forces someone
+    # widening `FX_PRODUCT_IDS` to think about OANDA at all. The change that
+    # would make re-chaining safe is to *derive* the reversed set from the
+    # venue's own instrument list at startup and delete the table — which
+    # trades a maintained constant for a boot-time network dependency, so it
+    # is not obviously right.
     build:
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
@@ -522,7 +544,7 @@ services:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       OANDA_API_KEY: '${OANDA_API_KEY:-}'
       PRODUCT_IDS: >-
-        ${OANDA_PRODUCT_IDS:-AUD-USD,EUR-USD,GBP-USD}
+        ${OANDA_PRODUCT_IDS:-AUD-USD,CAD-USD,EUR-USD,GBP-USD}
       RUST_LOG: 'info'
     profiles:
     - 'fx'

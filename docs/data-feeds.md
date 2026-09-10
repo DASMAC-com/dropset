@@ -981,6 +981,25 @@ measured against a live key rather than read off a pricing page:
 - **OANDA is the anchor.** Deep minute history, a per-candle `complete`
   flag, 5000 candles per request, and a budget so loose the cadence is
   chosen for freshness rather than to dodge a limit.
+- **Its instrument list is direction-fixed, so some pairs are inverted
+  at intake.** OANDA lists one instrument per pair in market convention
+  and rejects the other outright: `USD_CAD` exists, `CAD_USD` answers
+  `400` (measured 2026-09-08, against Twelve Data's `CAD/USD` at
+  0.7255 = 1/1.37838). The adapter fetches the reciprocal and flips
+  each candle before the sink, so `cex_prices` holds
+  canonical-direction values only and no consumer needs to know which
+  rows came from a reversed instrument. Two consequences worth keeping
+  straight. Inverting a bar swaps **high and low** — `x -> 1/x`
+  reverses order, so the new high comes from the raw low, and a
+  field-wise reciprocal silently yields `high < low`, which no column
+  constraint would catch. And a **pinned spelling is not the
+  mechanism**: the roster refuses `CAD-USD=USD_CAD` rather than
+  honouring it, because a pin fixes a spelling while the reciprocal is
+  a different value. Which pairs are reversed is a measured table,
+  `OANDA_REVERSED_PAIRS` in `market-data/src/fx.rs`; a wrong entry in
+  either direction asks for a nonexistent instrument and 400s on the
+  first poll, so extending it fails loudly rather than storing a
+  plausible wrong number.
 - **Twelve Data is the cross-check.** It defaults to *exchange-local*
   time — a default AUD/USD request returned `10:26` when UTC was `00:26`,
   i.e. Sydney — so every request pins `timezone=UTC`. A ten-hour skew in
