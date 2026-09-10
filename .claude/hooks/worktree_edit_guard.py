@@ -18,8 +18,8 @@ worktree-local path to use instead.
 
 Two carve-outs let the legitimate base writes through:
 
-* the base `.claude/settings.json` / `settings.local.json` — `firm-perms`
-  and `firm_last.py` write the base allowlist on purpose; and
+* the base `.claude/settings.json` / `settings.local.json` —
+  `allowlist.py add` writes the base allowlist on purpose; and
 * the env escape `ALLOW_BASE_REPO_EDITS`, for a rare deliberate base edit.
   It requires an **explicit affirmative** (`1` / `true` / `yes` / `on`).
   Testing the variable for mere truthiness disabled the guard for `0`,

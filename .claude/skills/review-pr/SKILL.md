@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and offering to enqueue the PR, capture session metrics and then firm up permissions (the last interactive step) while it sits in the queue, and report whether it merges or gets taken back out.
+description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and offering to enqueue the PR, capture session metrics (the last interactive step) while it sits in the queue, and report whether it merges or gets taken back out.
 user-invocable: true
 ---
 
@@ -1813,8 +1813,8 @@ already being asked to start the review.
    an on-topic agent can't wander into a settings /
    permissions / git audit: **"review the code diff only;
    do not audit permissions, settings, or git history."**
-   Review lenses have drifted into a `firm-perms`-style
-   permission-allowlist audit or run the full test suite
+   Review lenses have drifted into a permission-allowlist
+   audit or run the full test suite
    instead of reviewing the diff, forcing an expensive
    redo; the negative-scope line is what kept the redo on
    task. The only exception is the two **freshness** lenses
@@ -3429,10 +3429,10 @@ already being asked to start the review.
    **Mutate files with `Edit` / `Write`, never an inline
    interpreter.** `CLAUDE.md` → "Shell commands" forbids a
    `python3 -c` one-liner because it cannot reduce to a
-   reusable allow-rule — `firm-perms` classifies the shape as
-   *malformed*, not as missing a glob, so **every repetition is
-   a permission prompt that can never be firmed**. That is why
-   one occurrence is enough to justify the rule.
+   reusable allow-rule — the shape is *malformed*, not merely
+   missing a glob, so **every repetition is a permission prompt
+   that can never be firmed**. That is why one occurrence is
+   enough to justify the rule.
 
    It was emitted **six times in one session**, every instance
    file mutation with a first-class alternative: two
@@ -4567,10 +4567,9 @@ already being asked to start the review.
    structured summary now — *before* the merge-queue
    prompt — so the human reviews the full picture at the
    moment they decide whether to enqueue. The
-   session-metrics capture, the `firm-perms` results, and the
-   merge-queue outcome aren't known yet (all resolve in the
-   steps below); they're surfaced separately as they land,
-   not folded in here.
+   session-metrics capture and the merge-queue outcome aren't
+   known yet (both resolve in the steps below); they're
+   surfaced separately as they land, not folded in here.
 
    - Linear coverage: the resolved tag, and each
      checklist item marked addressed / partial /
@@ -4833,8 +4832,8 @@ already being asked to start the review.
      for the enqueue; the `gh` exit is the signal.) Report
      the enqueue and move on — the queue *outcome* (landed
      vs. taken out) lands asynchronously and is surfaced by
-     the final step, after `firm-perms`; do **not** block
-     here waiting for the merge.
+     the final step, after the session-metrics capture; do
+     **not** block here waiting for the merge.
 
      **And expect no output at all.** Under this harness
      `gh pr merge --auto` prints **nothing** — stdout is not a
@@ -4889,46 +4888,32 @@ already being asked to start the review.
    — the merge resolves asynchronously in the queue, so this
    is productive work to do while it does — and regardless of
    the merge outcome (it analyzes the session, not the PR).
-   It runs **before** `firm-perms` by design: `/session-metrics`
-   itself triggers command approvals, and the `firm-perms`
-   **sweep** that follows should harvest them, so metrics comes
-   first and firm-perms is the **last interactive step**.
+   It is now the **last interactive step**: the permission-
+   firming step that used to follow it is retired (see below).
 
-   **Ask first, via `AskUserQuestion` — and ask for BOTH
-   closing gates in that one call.** This is a skill-to-skill
-   handoff, so gate it on the same TUI selector the
-   merge-queue prompt uses (per `CLAUDE.md` → "The PR workflow
-   and skill handoffs"): one call carrying two questions —
-   whether to capture session metrics now, offering "yes, run
-   /session-metrics" (**first**, the recommended default) and
-   "skip"; and the `firm-perms` question the next step
-   describes, with its own options.
+   **Ask first, via `AskUserQuestion`.** This is a
+   skill-to-skill handoff, so gate it on the same TUI selector
+   the merge-queue prompt uses (per `CLAUDE.md` → "The PR
+   workflow and skill handoffs"): whether to capture session
+   metrics now, offering "yes, run /session-metrics"
+   (**first**, the recommended default) and "skip".
 
-   This is the same argument the entry gate already makes for
-   asking tier and spawn together, and it applies more
-   strongly here: both gates are unconditional, both are pure
-   run-this-closing-step authorizations, neither answer
-   changes what the other does, and by this point the user has
-   already been prompted twice.
+   **This used to be one call carrying TWO questions** — the
+   second being whether to run a `firm-perms` sweep. That
+   skill is retired, measured 2026-09-10: across 176
+   transcripts it was never once invoked by an operator, 19 of
+   102 of its runs made no allowlist call at all, and 418 of
+   its 475 coverage checks were its own sweep machinery rather
+   than a result. The firming that does happen is a direct
+   `allowlist.py add` call, 53 of 60 of which happened outside
+   any firm-perms run. So the tool stayed and the verb went;
+   this gate lost its second half with it.
 
-   **The ordering objection does not apply.** The next step
-   requires `firm-perms` to run *after* `/session-metrics` so
-   its sweep harvests that run's approvals — but that
-   constrains **execution** order, not **question** order.
-   Asking both up front and then running them in the
-   prescribed sequence preserves the property exactly, which
-   one session confirmed in practice: one interaction, both
-   approved, the sweep still ran last and still saw the
-   metrics run's approvals, for ≈60 tokens.
-
-   The real saving is one fewer blocking round trip at the
-   point the user is most likely to have walked away — the
-   merge resolves asynchronously and actively invites other
-   work, and a prompt firing into an absent user is the
-   failure the next step warns about. Halving the tail prompts
-   halves that exposure. Keep both decline paths and both
-   reporting requirements exactly as they are; only the prompt
-   is merged.
+   Keep the single prompt at this point in the sequence. The
+   reason the pair was batched still holds for the one that
+   remains: the merge resolves asynchronously and actively
+   invites other work, so a prompt firing later fires into an
+   absent user.
 
    - On **decline**, skip this step and note in the report
      that session metrics were **not** captured this run.
@@ -4956,93 +4941,20 @@ already being asked to start the review.
    `/session-metrics` so its prose names concrete levers, not
    just the tool's raw sink ranking.
 
-1. **Firm up the permission allowlist** — the **last
-   interactive step**, so it sees the whole run's approvals.
-   A review run approves a lot of one-off commands (the
-   diff-review and cross-check agents in steps 5–6, the
-   enqueue, and the `session-metrics` step just above all
-   pile them up), so the natural moment to generalize them
-   is *after* all of them, while the user is still present to
-   confirm. Run this **after** `session-metrics` and
-   **before** the async merge-queue outcome watch below —
-   **not** gated on the merge landing (it resolves
-   asynchronously), and crucially **not** deferred past it:
-   the merge can land minutes later via a scheduled wakeup,
-   and a propose-then-confirm gate firing then would prompt
-   an absent user.
-
-   **This step's question was already asked** — it rides the
-   previous step's batched `AskUserQuestion` as its second
-   question ("yes, run /firm-perms sweep", **first** and
-   recommended, versus "skip"), because both closing gates are
-   unconditional and independent and the user has been
-   prompted twice already. Do **not** prompt again here; act
-   on the answer already given. Only the prompt was merged —
-   the execution order is unchanged, and this step still runs
-   **after** `/session-metrics` so the sweep harvests that
-   run's approvals.
-
-   - On **decline**, skip this step and note in the
-     report that permissions were **not** firmed this run.
-
-   - On **approve**, run the **sweep** — `/firm-perms sweep`.
-     Because this step now sits at the tail of the
-     interactive sequence, the whole-session harvest is the
-     right default — **not** the single-approval `firm_last`
-     fast-firm, which made sense only when this step ran
-     mid-run. The sweep collects every approval this run made
-     (sub-agent and `session-metrics` commands included),
-     generalizes and dedupes them, and writes the result to
-     the one shared `settings.local.json` at the main
-     checkout behind its propose-then-confirm gate — live in
-     every worktree at once. Relay what it firmed.
-
-     Watch for what it reports as **unfirmable**: a
-     `find / … | head`, a `sed … | grep`, or a heredoc is
-     malformed, not missing a glob, and when an agent emitted
-     it that's a signal the **step-5 reviewer brief leaked** —
-     tighten the brief so the pattern stops recurring, rather
-     than allow-listing it.
-
-   **A source edit this step produces cannot land on this
-   branch — route it to the batch issue.** `firm-perms` may
-   conclude that a pattern traces to a committed skill,
-   script, or Makefile target and belongs fixed at the source
-   rather than allow-listed. By the time this step runs the
-   branch is pushed and usually enqueued, so such an edit has
-   nowhere to go: committing it means a second PR, and
-   leaving it in the worktree loses it when the worktree is
-   pruned. Not hypothetical — a nine-line fix was stranded
-   exactly this way and survived only because someone ran
-   `git status` before deleting the worktree.
-
-   So **write the edit verbatim into the open `Claude:` batch
-   issue** — the standing accumulator for agent-infra work,
-   found as the open Backlog issue whose title carries the
-   `Claude:` prefix — never into the merged branch, and never
-   left dirty in the worktree. Then **say so out loud in the
-   report**, naming the issue, so the handoff is visible
-   rather than assumed. The step ordering stays as it is:
-   moving the source-edit half before the ready gate would
-   miss exactly the approvals granted during the CI wait,
-   which are most of them.
-
-   **The one residual gap.** The `gh api graphql` merge-queue
-   probe in the outcome-watch step below runs *after* this
-   sweep — unattended, during the queue wait — so its
-   approval falls outside the harvest. Rather than chase it
-   every run, **pre-firm that one fixed probe shape** once:
-   confirm the `Bash(gh api graphql:*)` allow-rule the probe
-   reduces to is present (the sweep will propose it if this
-   run approved it), so the probe never prompts while the
-   user is away.
-
 1. **Surface the merge-queue outcome** (separately). Run
    this **only** if the user approved the enqueue (skip it
    if they declined — there's nothing queued to watch). The
    merge lands asynchronously, so this is its own note,
-   printed after `firm-perms` and after the review summary
-   above — the summary couldn't know this outcome yet.
+   printed after the session-metrics capture and after the
+   review summary above — the summary couldn't know this
+   outcome yet.
+
+   **The `gh api graphql` dequeue probe below runs unattended**,
+   during the queue wait, so confirm the
+   `Bash(gh api graphql:*)` allow-rule it reduces to is
+   present rather than letting it prompt an absent user. This
+   used to be handled by pre-firming the shape in the retired
+   permission-firming step; the hazard outlived the step.
 
    **The Linear status is settled at enqueue.** After enqueue
    the PR sits in the queue asynchronously
@@ -5058,8 +4970,8 @@ already being asked to start the review.
    auto-**Done** and wrote the issue *back* to In Review,
    because merge and completion are different events and an
    auto-Done hides exactly the sessions that still owe
-   follow-up — session metrics, perms firming, post-merge
-   tidy, and feedback that has to reach a planning session.
+   follow-up — session metrics, post-merge tidy, and feedback
+   that has to reach a planning session.
    The team setting now states that convention natively, so
    the write-back was retired: it spent a full-body Linear
    echo in every implementation session to restore a state
@@ -5073,15 +4985,14 @@ already being asked to start the review.
    re-mark it — is gone, because nothing sets Done at all now.
 
    Then run the existing tail — post-merge tidy, session
-   metrics, `firm-perms` — and close with an explicit
-   **follow-up ledger**: every operator-facing item either
-   addressed, handed to a planning session, or filed as a task.
-   Name them.
+   metrics — and close with an explicit **follow-up ledger**:
+   every operator-facing item either addressed, handed to a
+   planning session, or filed as a task. Name them.
 
    **Only an explicit approval moves it to Done.** The terminal
    step is an `AskUserQuestion` — *"all follow-up complete:
-   metrics filed, perms firmed, feedback forwarded — mark
-   Done?"* — and nothing else sets that state.
+   metrics filed, feedback forwarded — mark Done?"* — and
+   nothing else sets that state.
 
    Watch whether the PR lands or gets kicked back out with a
    **single** probe per check: the `gh api graphql` dequeue
@@ -5435,8 +5346,8 @@ already being asked to start the review.
 
    So restate the remainder as a checklist and work it:
 
-   - [ ] **Session metrics** captured (the step above).
-   - [ ] **`firm-perms`** run — the last interactive step.
+   - [ ] **Session metrics** captured (the step above) — the
+     last interactive step.
    - [ ] **Post-merge tidy**, on a merge: the notification
      dismissed `state: "done"`, and `make clean` run.
    - [ ] **Working tree clean** — `git status --short` is
@@ -5446,17 +5357,14 @@ already being asked to start the review.
      complete with a dirty tree.
 
    **That last item is detection, and it goes last on
-   purpose.** The step above names one *cause* of a late edit
-   (a `firm-perms` source edit produced after the push), but
-   a stray change can come from anywhere — a fix made during
-   the session-metrics step, a partially applied edit, a
-   scratch file written into the repo instead of the
+   purpose.** A stray change can come from anywhere — a fix
+   made during the session-metrics step, a partially applied
+   edit, a scratch file written into the repo instead of the
    scratchpad. Nothing else at the end of a review looks at
    tree state: `git status` is read at step 2 and never
    again, so the blast radius is total and the evidence is
    deleted with the worktree. It runs after the post-merge
-   tidy because both `make clean` and `firm-perms` can
-   themselves touch the tree.
+   tidy because `make clean` can itself touch the tree.
 
    **A diversion does not discharge them.** Another skill, a
    message from a peer session, a fresh user request, or a

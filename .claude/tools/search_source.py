@@ -977,7 +977,7 @@ def run(argv: list[str]) -> int:
     # (The lever behind this proposed tracking first-time *patterns* per
     # session instead. That is not implementable here: this tool has no way to
     # identify its session — `CLAUDE_SESSION_ID` is not set in a Bash tool call
-    # — and guessing by newest-mtime is the same race `firm_last.py` documents.)
+    # — and guessing by newest-mtime is a race under a fleet of sessions.)
     if (
         args.context
         and not files_only

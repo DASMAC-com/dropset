@@ -108,7 +108,7 @@ section, so a skill never reads either to quote it), and
 `render_review.py` (measures or contact-sheets rendered deck pages
 instead of reading them at print resolution — the one tool with an
 optional dependency, per the lazy-import rule above), alongside the
-`firm-perms` / `housekeeping` / `cspell-audit` glue.
+`allowlist.py` / `housekeeping` / `cspell-audit` glue.
 `.claude/tools/` is the single home for skill glue: there is **no**
 top-level `tools/` tree.
 
@@ -148,24 +148,19 @@ literal firmed path under it can never survive a reboot. The leading
 `**` is what absorbs the rotating prefix; a per-tool directory name is
 what keeps the glob narrow enough to grant. The broad
 `Read(/var/folders/**)` form stays **refused** — an unscoped root over
-the whole system temp tree is exactly what the `firm-perms` safety
-floor exists to reject.
+the whole system temp tree is exactly what the allowlist safety floor
+exists to reject.
 
-**Nothing will catch it later.** `firm-perms`' sweep can only
-generalize approvals it can *see*; a recurring prompt that the operator
-keeps approving one-off never surfaces as a pattern to harvest. This
-one was found by hand-probing after the prompts got annoying, not by
-any tooling. So the allow-rule is part of adding the tool, in the same
-PR, or it does not happen.
+**Nothing will catch it later.** Nothing sweeps approvals into rules any
+more — the `firm-perms` skill that used to is retired, and firming is now
+an explicit `allowlist.py add`. So a recurring prompt that the operator
+keeps approving one-off never surfaces as a pattern at all. This one was
+found by hand-probing after the prompts got annoying, not by any
+tooling. So the allow-rule is part of adding the tool, in the same PR,
+or it does not happen.
 
-Two related notes, so neither gets re-diagnosed:
+One related note, so it does not get re-diagnosed:
 
-- **The harvest blind spot is a known bound, not a bug to fix.** A
-  sweep over approvals cannot see a prompt that was approved without
-  being firmed. Rather than have `firm-perms` probe the known
-  `claude-*` temp directories on every run — speculative work for a
-  case this convention now prevents at the source — the limitation is
-  recorded here and the fix is placed at tool-authoring time.
 - **After a reboot, `allowlist.py cruft` flags previously-firmed
   literal `/var/folders/<old-hash>` rules under its
   `machine-path-stale` category.** That is **expected rot**, resolved

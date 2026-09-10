@@ -67,9 +67,9 @@ class GeneralizeBash(unittest.TestCase):
     def test_interpreter_keeps_script_path(self):
         self.assertEqual(
             fc.generalize(
-                "Bash", {"command": "python3 .claude/tools/firm_last.py exact"}
+                "Bash", {"command": "python3 .claude/tools/allowlist.py exact"}
             ),
-            "Bash(python3 .claude/tools/firm_last.py:*)",
+            "Bash(python3 .claude/tools/allowlist.py:*)",
         )
         self.assertEqual(
             fc.generalize("Bash", {"command": "bash scripts/deploy.sh a b"}),

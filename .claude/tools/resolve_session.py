@@ -87,8 +87,8 @@ class ResolveSessionError(Exception):
 def claude_home() -> Path:
     """The Claude Code state directory — ``CLAUDE_CONFIG_DIR`` or ``~/.claude``.
 
-    Mirrors ``firm_last.py`` and ``prune_conversations.py`` rather than
-    re-deciding it: three tools reading the same tree must agree on where it is.
+    Mirrors ``prune_conversations.py`` rather than re-deciding it: two tools
+    reading the same tree must agree on where it is.
     """
     configured = os.environ.get("CLAUDE_CONFIG_DIR")
     if configured:
@@ -101,7 +101,9 @@ def claude_home() -> Path:
 
 def slugify(path: Path) -> str:
     """Claude Code names each project's transcript dir after the working dir,
-    replacing every ``/`` and ``.`` with ``-``. Same scheme as ``firm_last.py``.
+    replacing every ``/`` and ``.`` with ``-``. Same scheme as
+    ``prune_conversations.py``, and the one
+    ``docs/conventions/local-integrations.md`` points at for the rule.
     """
     return "".join("-" if c in "/." else c for c in str(path))
 

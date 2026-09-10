@@ -352,10 +352,11 @@ skipped because it matched a closed (rejected) one.
   its recommendations imply are folded — propose-only — by
   `trim-context` (run on its own or by `housekeeping`) and
   applied later by a human.
-- **Runs standalone or at handoff.** `review-pr` offers it
-  after its `firm-perms` gate (recommended, via
-  `AskUserQuestion`), but it runs just as well invoked by
-  hand for any session id whose transcript is still on disk.
+- **Runs standalone or at handoff.** `review-pr` offers it at
+  its closing gate (recommended, via `AskUserQuestion`) — where
+  it is now the last interactive step — but it runs just as well
+  invoked by hand for any session id whose transcript is still
+  on disk.
 - **Approximate by design.** Result token counts are
   bytes ÷ 4 — adequate for *ranking* sinks, which is the
   decision the recommendations turn on. Treat the numbers as

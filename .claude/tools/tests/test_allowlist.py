@@ -516,10 +516,10 @@ class AddTests(unittest.TestCase):
             self.assertTrue(out["added"])
             self.assertEqual(load_allow(p), ["Bash(cargo test:*)"])
 
-    def test_refuses_a_bare_verb_wildcard_the_fast_firm_would_refuse(self):
-        """`firm_into` has no floor of its own — `firm_last` checks it in the
-        caller — so a write path that skipped the check would grant exactly what
-        the fast firm refuses, via one non-prompting pre-approved call."""
+    def test_refuses_a_bare_verb_wildcard(self):
+        """`firm_into` has no floor of its own — it writes what it is given — so a
+        write path that skipped `add`'s check would grant a whole hazardous verb
+        via one non-prompting pre-approved call."""
         for rule in ("Bash(git:*)", "Bash(rm:*)", "Bash(curl:*)"):
             with tempfile.TemporaryDirectory() as d:
                 p = self._path(d, ["Bash(git status:*)"])

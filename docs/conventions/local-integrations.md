@@ -147,7 +147,8 @@ but its `PreToolUse` **wiring** is not. To turn the guard on, add this
 
 Baseline permission allow-rules (the `Bash(prefix:*)` globs the shell
 rules produce) go in the same file, or in `settings.local.json` — the
-`firm-perms` skill maintains the local allowlist for you. See
+`.claude/tools/allowlist.py` tool maintains the local allowlist for
+you. See
 "How settings files resolve across worktrees" below for *which* file a
 worktree session actually reads and writes: it is one shared file, not
 a per-worktree copy.
@@ -192,13 +193,13 @@ which is a distinct, explicitly documented mechanism.
 
 **This corrects a superseded model.** An earlier version of this doc
 claimed a worktree "does not inherit the base repo's copy
-automatically" and that `firm-perms`' sweep was what propagated it.
+automatically" and that a firming sweep was what propagated it.
 That was wrong: there is nothing to propagate, because there is only
-one file. Two consequences follow, both fixed in the skills:
+one file. Two consequences follow:
 
-- `firm-perms`' worktree-plus-base **dual-write is redundant by
-  design** — the worktree write already lands in the main checkout's
-  file.
+- A worktree-plus-base **dual-write is redundant by design** — the
+  worktree write already lands in the main checkout's file, which is why
+  `allowlist.py` resolves that one path rather than writing twice.
 - "User scope is the only thing a fresh worktree inherits" is
   **false**. The real criterion for putting a rule in
   `~/.claude/settings.json` is **cross-*repo* portability** — a rule
@@ -435,8 +436,8 @@ instead. A `Read` of a base path is merely wasteful, not corrupting, so
 it is left alone.
 
 Two carve-outs pass through: the base `.claude/settings.json` /
-`settings.local.json` files (which `firm-perms` and `firm_last.py` write
-on purpose), and the env escape `ALLOW_BASE_REPO_EDITS` for a rare
+`settings.local.json` files (which `allowlist.py add` writes on
+purpose), and the env escape `ALLOW_BASE_REPO_EDITS` for a rare
 deliberate base edit. The escape needs an **explicit affirmative** —
 `1`, `true`, `yes` or `on`. It used to test the variable for mere
 truthiness, which disabled the guard for `0`, `false` and `no`, the
@@ -1226,13 +1227,14 @@ drives the real zsh functions.
     regardless of permission mode — the policy layers compose rather
     than substitute, so `auto` is not a way around a guard.
 
-    One interaction worth knowing when reading `firm-perms` output:
-    entering auto mode **drops overly broad allow-rules** (a bare
-    `Bash(*)`, a wildcard interpreter) while keeping narrow ones like
+    One interaction worth knowing when firming a rule: entering auto
+    mode **drops overly broad allow-rules** (a bare `Bash(*)`, a
+    wildcard interpreter) while keeping narrow ones like
     `Bash(python3 .claude/tools/*)`, restoring them on exit. A firmed
     rule that is too broad therefore stops taking effect in the mode
-    every session now runs in, which is one more reason the fast firm
-    refuses to generalize a bare verb.
+    every session now runs in, which is one more reason
+    `allowlist.py add` refuses a bare-verb wildcard on a hazardous
+    program.
 
   This **supersedes** hand-naming a base-repo session `planning-<day>`
   and resuming it by that name. `explore` / `explore resume` remain, for
@@ -1385,7 +1387,8 @@ transcript as the existence check. The seed carries the **full** date so
 `plan-18` in August and `plan-18` in September cannot collide — the
 display name stays day-only by operator choice, and the id is what
 disambiguates. The transcript-path slug replaces every `/` and `.` with
-`-`, the same rule `.claude/tools/firm_last.py`'s slugify encodes.
+`-`, the same rule `.claude/tools/resolve_session.py`'s `slugify`
+encodes.
 
 The lesson generalizes past this one block: **a committed code block
 that invokes a CLI flag is checkable against that CLI's `--help`**, and

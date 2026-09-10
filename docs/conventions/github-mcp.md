@@ -359,7 +359,8 @@ allow-rule per read tool covers all of its methods. They go in
 resolved through worktrees to the main checkout** — so firming them
 once makes them live in every worktree, with nothing to propagate
 (see `local-integrations.md` → "How settings files resolve across
-worktrees"). `firm-perms` writes them at session end.
+worktrees"). Write one with
+`python3 .claude/tools/allowlist.py add '<rule>'`.
 
 ## Actions: secrets, variables, and required checks
 

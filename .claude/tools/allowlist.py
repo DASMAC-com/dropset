@@ -17,7 +17,7 @@ option, so it precedes the subcommand
   where an uncovered rule would append (end of the array), and
   ``would_subsume`` lists the indices of existing narrower entries the new rule
   would make redundant. The membership + subsumption logic is ``firm_core``'s,
-  so it matches what ``firm_last.py`` writes.
+  so ``covers`` and ``add`` can never disagree about what a rule already grants.
 * ``add RULE`` — the **write** counterpart of ``covers``, closing the loop so a
   hand-firm never has to read the allowlist at all. ``covers`` already computes
   where the rule would land; ``add`` performs that append (via
@@ -158,7 +158,7 @@ class AllowlistError(Exception):
 
 
 # Re-exported so callers and tests have one name for it; the implementation
-# lives in firm_core because firm_last.py needs the identical answer, and two
+# lives in firm_core because hook_wiring.py needs the identical answer, and two
 # separately-written copies of it drifted.
 find_main_checkout = firm_core.main_checkout
 
@@ -175,8 +175,7 @@ def resolve_settings_path(path: Path | None, *, explicit: bool = False) -> Path:
     ``resolved.exists()`` looked safer but inverted the fix: on a main checkout
     with no allowlist yet, ``add`` would scaffold into the *worktree* instead —
     a file nothing ever reads, which then exists forever and shadows the real
-    one on every later call. ``firm_last`` refuses outright in that situation;
-    this now agrees with it by writing where the file belongs.
+    one on every later call. So this writes where the file belongs instead.
 
     An ``explicit`` ``--settings`` path is **never** redirected, even when it
     does not exist. A caller that names a file means that file: silently
@@ -239,15 +238,14 @@ def covers(rule: str, allow: list[str]) -> dict:
 def add(rule: str, path: Path) -> dict:
     """Append ``rule`` to ``path``'s allow array unless already covered.
 
-    Delegates the write to ``firm_core.firm_into`` — the writer the fast firm uses,
-    so subsumed narrower entries are pruned identically — and neither path needs
-    the allowlist in context. Re-reads the array afterwards only to report the
-    new ``count``; the array itself never leaves this process.
+    Delegates the write to ``firm_core.firm_into``, so subsumed narrower entries
+    are pruned in the same pass, and without needing the allowlist in context.
+    Re-reads the array afterwards only to report the new ``count``; the array
+    itself never leaves this process.
 
     **The safety floor is enforced here, not in the writer.** ``firm_into`` has
-    no floor of its own — ``firm_last.py`` checks ``is_bareverb_wildcard`` in its
-    *caller* and returns before writing. So a write path that called
-    ``firm_into`` directly would grant exactly what the fast firm refuses, and because
+    no floor of its own — it writes what it is given. So a write path that called
+    it directly would grant exactly what this tool refuses, and because
     this tool runs under the pre-approved directory-wide
     ``Bash(python3 .claude/tools/:*)`` rule, that would be a single
     non-prompting call that widens the agent's own Bash grant to a whole

@@ -719,10 +719,9 @@ the same git-ignored pair, both of which only this session is
 positioned to run — it is the one that works from the base
 repo, where those files resolve.
 
-**7a. The permission allowlist, for cruft.**
-`firm-perms` only ever **adds** to
-`<base>/.claude/settings.local.json` (unions, generalizes),
-never prunes — so dead weight accumulates. Get the suspicious
+**7a. The permission allowlist, for cruft.** Firming only ever
+**adds** to `<base>/.claude/settings.local.json` (unions,
+generalizes), never prunes — so dead weight accumulates. Get the suspicious
 shortlist from the helper (`<base>` was resolved in step 1)
 rather than whole-reading the ~250-entry array into context
 (per `CLAUDE.md` → "Context economy" / "Skill tooling"):
@@ -753,7 +752,7 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
 
 - **stale single-use commands** (`category: subsumed`) — a
   narrower rule an earlier one already covers (the dead weight
-  `firm-perms` never removes);
+  a firming pass never removes);
 
 - **guard conflicts** (`category: guard-conflict`) — a rule
   granting a command shape a committed `PreToolUse` guard
@@ -796,8 +795,9 @@ first.** A read-only verb with no subcommand (`grep`, `tail`,
 `firm_core.NO_BARE_WILDCARD` is a deny-list of *hazardous*
 programs, not a floor over every verb, so `Bash(grep:*)` is
 acceptable, `cruft` correctly does not flag it, and
-`firm_last` would firm it. Both halves of the floor agree —
-a filed finding once claimed they disagreed, and they do not.
+`allowlist.py add` would firm it. Both halves of the floor
+agree — a filed finding once claimed they disagreed, and they
+do not.
 What *is* true is that a shell filter prints its output into
 the tool result, so preferring the Grep tool or
 `run_quiet.py inspect` is a **context-economy** rule, never a
@@ -814,7 +814,7 @@ still parses with an **exit-code-only** check,
 through `run_quiet`, never a full pretty-print echo that
 re-dumps the array into context; in an **unattended** pass,
 file the candidates **propose-only** (or just list them) and
-delete nothing. This is the pruning half; `firm-perms` is
+delete nothing. This is the pruning half; `allowlist.py add` is
 the add-only half, and the allowlist is `settings.local.json`
 (git-ignored per the settings.json decision). The
 `allowlist.py cruft` helper above is what keeps the full file

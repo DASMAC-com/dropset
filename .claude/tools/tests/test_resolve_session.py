@@ -41,9 +41,9 @@ class Fixture:
     Takes the TestCase so the `CLAUDE_CONFIG_DIR` override is registered for
     cleanup. Mutating `os.environ` unguarded leaked the temp path into every
     module loaded after this one in the single `make tools-tests` process —
-    and `resolve_session` itself names two other readers of that variable
-    (`firm_last.py`, `prune_conversations.py`), so a green suite was only
-    green by alphabetical load order rather than by isolation.
+    and `resolve_session` itself names another reader of that variable
+    (`prune_conversations.py`), so a green suite was only green by
+    alphabetical load order rather than by isolation.
     """
 
     def __init__(self, case: unittest.TestCase):
