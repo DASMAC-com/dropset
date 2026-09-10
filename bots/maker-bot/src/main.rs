@@ -867,7 +867,7 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     // health, and a pinned basis rendered as `1.0000 pinned`.
     println!(
         "\n  market      mid (USDC)    anchor         health       \
-         basis           fx sources            basis sources"
+         basis           fx sources                    basis sources"
     );
 
     let now = Duration::from_secs(0);
@@ -995,8 +995,28 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         if fair.uncertain {
             fx_col.push_str(" (wide)");
         }
+        // The fail-closed verdict, which the leg description alone cannot
+        // give. Without this the table is actively misleading in exactly the
+        // situation the halt exists for: with the store unreachable, an MVP
+        // pair still renders as "2 src, agree" off the daily references, and
+        // a reader concludes it is fine when the live bot would refuse to
+        // quote it. A dry run that gets the live decision wrong is worse
+        // than one that omits it, and this file's own rule is that the two
+        // collections must agree.
+        //
+        // Rendered on the FX column because that is the leg the guard is
+        // about, and a whole column would be blank on every healthy row.
+        if m.requires_live_tape
+            && !fair
+                .fx_leg
+                .contributors
+                .iter()
+                .any(|c| fx_store::is_tape_source(c.source))
+        {
+            fx_col = format!("HALT: no tape ({fx_col})");
+        }
         println!(
-            "  {:<10}  {:>12}  {:<13}  {:<11}  {:<14}  {:<20}  {}",
+            "  {:<10}  {:>12}  {:<13}  {:<11}  {:<14}  {:<28}  {}",
             m.symbol,
             mid,
             anchor,
