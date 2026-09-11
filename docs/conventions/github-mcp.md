@@ -19,7 +19,7 @@ read used by `housekeeping`:
   (a `gh api graphql … mergeQueueEntry` read). The enqueue stays on
   `gh` because the server exposes no auto-merge / merge-queue tool
   (`merge_pull_request` does an *immediate* merge, which bypasses the
-  queue); the probe stays on `gh` because the hosted MCP's
+  queue); the probe stays on `gh` because the server's
   `pull_request_read` omits the merge-queue state — and on a
   merge-queue repo a still-queued PR reports `autoMergeRequest: null`,
   so the probe must read `mergeQueueEntry` (non-null while queued)
@@ -241,6 +241,23 @@ dispatched by a `method` enum — `pull_request_read` covers `get` /
 reads.
 
 ## Authentication (PAT header, not OAuth)
+
+**Remote, but locally configured — which is what makes it usable
+everywhere.** The server runs at a GitHub URL, yet it is registered in
+user-local settings with our own credential rather than riding claude.ai
+account auth. That distinction, not MCP-vs-CLI, is the one that
+determines availability: a locally configured server is offered to a
+**Bedrock** session and a subscription session alike, while a
+claude.ai-hosted connector is structurally absent on Bedrock. Confirmed
+2026-09-10 on a Bedrock worktree session, which received this server
+along with the other eight locally configured ones and neither hosted
+connector.
+
+So **this server stays as-is**, and an operator-reported failure of it on
+a Bedrock session should be diagnosed against that split before anyone
+edits config. The same reasoning is set out at length, with the separate
+context-economy argument kept apart from it, in
+[aws-infra](aws-infra.md) → "Hosted versus locally configured".
 
 The server is added at **user scope** with a PAT in an `Authorization`
 header, read from `GITHUB_MCP_PAT` — never a committed file or

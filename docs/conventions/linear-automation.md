@@ -168,11 +168,22 @@ spec while missing a criterion, with nothing signalling the omission.
 **What this verification does and does not establish.** The registration
 above was confirmed `✔ Connected` at user scope, which proves the
 credential, the endpoint and the `${LINEAR_API_KEY}` expansion. It was
-confirmed from a **subscription** session, not a Bedrock one; that
-Bedrock sessions receive it follows from the spike's established fact
-that they receive all locally configured servers, and is an inference
-rather than a direct observation. Confirm it on the next Bedrock
-session — it costs one `claude mcp list`.
+first confirmed from a **subscription** session, not a Bedrock one, so
+that Bedrock sessions receive it was initially an inference from the
+spike's established fact that they receive all locally configured
+servers.
+
+**Confirmed directly on Bedrock, 2026-09-10.** A worktree session running
+with `CLAUDE_CODE_USE_BEDROCK=1` on the `us.`-profile Opus 5 model
+received the locally configured `linear` server and drove the whole
+Linear half of its work through it — `save_issue` state transitions, two
+anchored body `patch` writes, and `list_comments`. So the inference is now
+an observation, and the `list_comments` gap named above is closed for a
+Bedrock session that has this server registered: the tool the zero-echo
+writers cannot replace is the one that was exercised.
+
+That session also received all nine locally configured servers and
+neither claude.ai connector, which is the same split the spike measured.
 
 ## Structured filing fields
 

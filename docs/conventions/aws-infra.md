@@ -115,15 +115,31 @@ through the credentialed server. The rules:
   `https://knowledge-mcp.global.api.aws/mcp`, is a zero-install,
   also-credential-free alternative with a broader corpus; the dedicated
   Documentation server is the canonical pick.)
-- **Account actions → the SigV4 `aws-mcp` server.** The credentialed
-  remote server (the managed [Agent Toolkit for AWS][toolkit] proxy) is
-  scoped to actual account work — deploy, inspect, CLI execution, and
-  skill retrieval (`aws___retrieve_skill`) — where the IAM auth and
-  least-privilege roles below actually matter. Do not vendor the
-  toolkit's skills into the repo — the server retrieves them on demand.
+
+- **Account actions → the AWS CLI, with the SigV4 `aws-mcp` server as
+  the richer path when it is up.** The credentialed remote server (the
+  managed [Agent Toolkit for AWS][toolkit] proxy) is scoped to actual
+  account work — deploy, inspect, CLI execution, and skill retrieval
+  (`aws___retrieve_skill`) — where the IAM auth and least-privilege
+  roles below actually matter. Do not vendor the toolkit's skills into
+  the repo; the server retrieves them on demand.
+
+  **`aws-mcp` has been failing to connect, and the CLI is the
+  fallback.** Reproduced across sessions, most recently 2026-09-10 with
+  `MCP error -32602: Invalid request parameters` at startup, having also
+  failed in a planning bootstrap and during the Bedrock spike. Treat a
+  failure as this server's own bug — **not** as a substrate problem: it
+  is locally configured, so it is offered on Bedrock and subscription
+  sessions alike (see "Hosted versus locally configured" below). Until
+  it is fixed, do account work with the AWS CLI under an SSO profile,
+  which covers the same actions; the Bedrock work has been CLI-first
+  throughout. What has no CLI equivalent, and so is the real loss, is
+  `aws___retrieve_skill`.
+
 - **Discover before acting.** Search the AWS docs (via `aws-docs`) and
   retrieve the relevant skill *before* writing a template or running a
   command, so the work follows current AWS guidance rather than memory.
+
 - **Least privilege.** Agent-driven provisioning uses the dedicated
   `*-agent-provisioning` role (`infra/aws/iam-baseline.yml`), whose
   permissions activate only when the request flows through the MCP
@@ -164,6 +180,44 @@ signs each MCP request with them. As with the other user-scope MCP
 servers, a newly added server loads on the **next** Claude Code
 session, not mid-session. Credentials are never committed: no access
 keys in the repo, no secrets in templates (see `infra/aws/README.md`).
+
+## Hosted versus locally configured — the axis that actually matters
+
+**The distinction is hosted-vs-locally-configured, not MCP-vs-CLI.** This
+is worth stating because the intuitive framing is wrong and led to a
+proposal to retire MCP servers wholesale.
+
+A **locally configured** server (added with `claude mcp add`, as both AWS
+servers above are) is wired into user-local settings and is therefore
+**substrate-independent**: it is offered to a Bedrock session and a
+subscription session alike. A **claude.ai-hosted connector** rides
+claude.ai account authentication, which a Bedrock session does not hold,
+so it is **structurally absent** there — not misconfigured, absent.
+
+Verified by an exact hosted-versus-local split across the two
+substrates: every locally configured server connected on both, while the
+two claude.ai connectors appeared only on the subscription session.
+Confirmed again on 2026-09-10, when a Bedrock worktree session received
+all nine locally configured servers — GitHub and Linear among them — and
+neither hosted connector.
+
+Two consequences:
+
+- **Diagnose a connector failure per substrate before touching config.**
+  An operator-reported GitHub or Drive failure on a Bedrock session is
+  probably this, not broken settings. Conversely `aws-mcp`'s failure is
+  *not* this — it is locally configured and fails on both.
+- **Prefer a locally configured server or a committed tool for anything
+  a Bedrock session needs.** That is a compatibility argument.
+
+**Keep the context-economy argument separate from it.** CLI-shaped output
+is leaner than an MCP response — an MCP write that echoes a whole issue
+body is the largest recurring sink the trim levers keep finding, which is
+why the committed zero-echo tools exist — and a server's schemas cost
+context per session in any session that does not defer tools. That is a
+real argument for reaching for a CLI or a committed tool first, and it is
+an **economy** argument, not a compatibility one. Conflating the two
+produces the wrong conclusion about which servers to keep.
 
 [awslabs]: https://github.com/awslabs/mcp
 [toolkit]: https://docs.aws.amazon.com/agent-toolkit/
