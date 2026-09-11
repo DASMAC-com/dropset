@@ -292,6 +292,26 @@ db-schema <-> market-data instruments: the THIRD write path into the
   series — so an audit must not read registration as liveness. The
   registry is the statement that this surface exists at all; the
   containment tests are its mechanical check.
+db-schema <-> market-data fair price: the FOURTH write path into the
+  shared schema, and the first persisting a DERIVED CONCLUSION rather
+  than an observation, a registry, or seeded configuration.
+  db-schema/migrations/0011_fair_price_feed.sql defines fair_price
+  (primary key (product_id, ts), carrying the same canonical
+  product-id CHECK 0009 puts on instrument_registry), written by
+  market-data/src/fair_price.rs (publish) through
+  market-data/queries/fair_price_insert.sql. The contract is the enum
+  VOCABULARY as much as the row shape: anchor, regime, degrade and
+  health reach their columns as stable TEXT wire names owned by
+  fair_price.rs, so renaming a variant in the dropset-fair-value crate
+  silently re-labels a series that dashboards filter on unless the
+  mapping moves with it — which is why those names are pinned by test.
+  Two hazards. The estimator's own ts is the staleness basis for every
+  consumer, so a consumer ageing from its own read time instead would
+  report a stalled estimator as fresh. And fair_price.fair is NOT
+  maker_telemetry.fair — the first is what the estimator published, the
+  second what a maker priced off; they diverge under a halt or a
+  declined pause, and the two processes tick on their own clocks, so a
+  query correlating them must join on a window rather than on equality.
 db-schema <-> grafana dashboards: db-schema/migrations owns the
   dropset_ro reader role and the SELECT grants behind it, which the
   provisioned datasource

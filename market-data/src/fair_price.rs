@@ -21,7 +21,6 @@
 //! and analytics already filter on.
 
 use dropset_fair_value::{Anchor, Degrade, FairValue, Health, Regime};
-use sqlx::PgPool;
 
 /// The stable wire name for the anchor leg.
 pub fn anchor_name(anchor: Anchor) -> &'static str {
@@ -53,18 +52,28 @@ pub fn regime_name(regime: Regime) -> &'static str {
 ///
 /// `None` here means "not degraded" — never "degraded for an unknown reason".
 /// The column is NULL in exactly the regimes that are not [`Regime::Degraded`].
+///
+/// The non-degraded regimes are spelled out rather than caught by a `_` arm, or
+/// by the `let ... else` this used to use, so that a regime added later is a
+/// compile error here instead of silently acquiring a NULL `degrade`. That
+/// property is what the rest of this module's mappings get from being
+/// wildcard-free, and it is worth the extra arm to keep it uniform.
 pub fn degrade_name(regime: Regime) -> Option<&'static str> {
-    let Regime::Degraded(degrade) = regime else {
-        return None;
-    };
-    Some(match degrade {
-        Degrade::FxStale => "fx_stale",
-        Degrade::LegDispersed => "leg_dispersed",
-        Degrade::FxInvalid => "fx_invalid",
-        Degrade::NoBasisLeg => "no_basis_leg",
-        Degrade::BasisUnusable => "basis_unusable",
-        Degrade::StaticPeg => "static_peg",
-    })
+    match regime {
+        Regime::Degraded(degrade) => Some(match degrade {
+            Degrade::FxStale => "fx_stale",
+            Degrade::LegDispersed => "leg_dispersed",
+            Degrade::FxInvalid => "fx_invalid",
+            Degrade::NoBasisLeg => "no_basis_leg",
+            Degrade::BasisUnusable => "basis_unusable",
+            Degrade::StaticPeg => "static_peg",
+        }),
+        Regime::Normal
+        | Regime::CryptoOnly
+        | Regime::FxPinned
+        | Regime::Uncorroborated
+        | Regime::Paused => None,
+    }
 }
 
 /// The stable wire name for the kill-switch health gate.
@@ -84,11 +93,20 @@ pub fn health_name(health: Health) -> &'static str {
 /// report a value composed from stale feeds as freshly published. It is passed
 /// in for that reason rather than read from the database or the system clock.
 ///
-/// Returns whether the row was new. A `false` means the primary key already held
-/// this pair at this stamp — see the query's note on why that is left visible
-/// rather than overwritten.
+/// Takes any Postgres executor rather than a pool specifically, so a caller
+/// publishing a whole tick can pass one transaction and have the tick land
+/// atomically. With a bare pool each pair is its own auto-commit round trip, so
+/// an interrupted tick leaves some pairs written at `ts` and others absent —
+/// indistinguishable, to a reader, from pairs the estimator skipped. Widening
+/// this later would be a breaking change to a public signature, and it costs
+/// nothing now.
+///
+/// Returns whether the row was new. **A `false` is an alarm, not a benign
+/// no-op**: the primary key already held this pair at this stamp, which means
+/// something else published for it. A caller must log or count it — see the
+/// query's note on why the row is left alone rather than overwritten.
 pub async fn publish(
-    pool: &PgPool,
+    executor: impl sqlx::PgExecutor<'_>,
     ts: i64,
     product_id: &str,
     fv: &FairValue,
@@ -111,7 +129,7 @@ pub async fn publish(
         .bind(fv.uncertain)
         .bind(fv.basis_breach)
         .bind(fv.usdc_breach)
-        .execute(pool)
+        .execute(executor)
         .await?;
     Ok(res.rows_affected() > 0)
 }
@@ -195,17 +213,42 @@ mod tests {
     /// Wire names are a schema contract, so they are pinned here rather than
     /// left to `Debug`. A rename that reaches the column silently re-labels a
     /// series every dashboard and analytics query already filters on.
+    ///
+    /// **Every** name this module owns is pinned, not a sample. A partial list
+    /// is the failure this test exists to prevent, wearing the shape of the
+    /// test that prevents it: whatever it leaves out can still be renamed with
+    /// the suite green, which is precisely the silent re-labelling above.
     #[test]
     fn the_wire_names_are_pinned() {
-        assert_eq!(anchor_name(Anchor::CryptoReference), "crypto_reference");
         assert_eq!(anchor_name(Anchor::Fx), "fx");
+        assert_eq!(anchor_name(Anchor::CryptoReference), "crypto_reference");
         assert_eq!(anchor_name(Anchor::Static), "static");
         assert_eq!(anchor_name(Anchor::None), "none");
+
+        assert_eq!(regime_name(Regime::Normal), "normal");
         assert_eq!(regime_name(Regime::CryptoOnly), "crypto_only");
+        assert_eq!(regime_name(Regime::FxPinned), "fx_pinned");
+        assert_eq!(regime_name(Regime::Uncorroborated), "uncorroborated");
+        assert_eq!(regime_name(Regime::Paused), "paused");
         assert_eq!(
             regime_name(Regime::Degraded(Degrade::StaticPeg)),
             "degraded"
         );
+
+        for (degrade, expected) in [
+            (Degrade::FxStale, "fx_stale"),
+            (Degrade::LegDispersed, "leg_dispersed"),
+            (Degrade::FxInvalid, "fx_invalid"),
+            (Degrade::NoBasisLeg, "no_basis_leg"),
+            (Degrade::BasisUnusable, "basis_unusable"),
+            (Degrade::StaticPeg, "static_peg"),
+        ] {
+            assert_eq!(degrade_name(Regime::Degraded(degrade)), Some(expected));
+        }
+
+        assert_eq!(health_name(Health::Ok), "ok");
         assert_eq!(health_name(Health::Unverified), "unverified");
+        assert_eq!(health_name(Health::Degraded), "degraded");
+        assert_eq!(health_name(Health::Pause), "pause");
     }
 }

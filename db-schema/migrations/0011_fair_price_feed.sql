@@ -6,8 +6,15 @@
 -- was correct for its moment and this does not contradict it: while the maker
 -- was the only thing computing a fair value, `maker_telemetry.fair` was the
 -- series, and adding a second home for it would have been duplication. What
--- changed is not the arithmetic but its *owner* — the estimator now runs as its
--- own process, and its output has to outlive any one consumer's telemetry.
+-- this table anticipates is not a change in the arithmetic but a change of
+-- *owner*: it exists for an estimator that will own the computation as its own
+-- process, whose output has to outlive any one consumer's telemetry.
+--
+-- That process does **not** exist as of this migration. This table is the
+-- output half of the seam, landing first so the contract is fixed before
+-- anything writes to it; the statements below about two makers and about
+-- independent tick clocks describe the arrangement it is built for, not the
+-- one running today.
 --
 -- So the two columns answer different questions and both are kept:
 --
@@ -29,9 +36,9 @@
 -- one pair, and the estimator has no opinion about how many. The id is the
 -- canonical `BASE-QUOTE` of the instruments dimension (0009), so this table
 -- joins to `instrument_registry`, `spot_ticks` and `cex_prices` without a
--- translation step. `FairValueEngine` is documented as one instance per market
--- because it carries a basis EMA; the estimator holds one instance per
--- `product_id`, which is the same constraint read at the level this table keys.
+-- translation step. The engine carries a per-market basis EMA, so an estimator
+-- holds one engine instance per key it publishes under — the same constraint,
+-- read at the level this table keys.
 --
 -- **`ts` is the ESTIMATOR's stamp, and that is the point of the column.** A
 -- consumer ages the value from this, never from its own read time — a fair value
@@ -43,21 +50,37 @@
 -- 0007. A panel rendering a NULL `fair` as 0 would draw a pause as a collapse to
 -- zero, which is the most misleading reading available.
 --
--- **Deliberately not here: per-leg and per-source attribution.** `maker_legs`
--- and `maker_leg_contributions` carry those, and they remain maker-owned for
--- now. Moving them behind this seam is a known follow-up rather than an
--- oversight — it is a larger change than this table, because both are keyed by
--- market and would have to be re-keyed by pair to sit beside this one. Nothing
--- here should be read as having discharged it.
+-- **Deliberately not here: per-leg and per-source attribution.** This table
+-- carries the composition and its guard flags, and no breakdown of which
+-- source contributed what. Nothing here discharges that.
+--
+-- Be precise about what that costs, because "it lives in the maker's telemetry
+-- tables" would be too generous: for exactly the ticks this table exists to
+-- capture — the estimator publishing while no maker composed — attribution is
+-- recorded nowhere at all, not elsewhere. Per-leg staleness is in the same
+-- position. The mutable docs carry the current plan for both.
 --
 -- **Disclosure.** 0002 grants the read-only `dropset_ro` role SELECT on every
--- table in `public`, so a dashboard reader sees this. The reasoning 0007 set out
--- for its own columns covers these too, and for the same reason: every number
--- here is a deterministic function of public venue quotes and the calibration
--- constants committed in the repository. No credential, inventory figure, or
--- venue-produced free text appears — `anchor`, `regime`, `degrade` and `health`
--- are compile-time constants, the rest are numbers — and none may be added
--- without extending that argument.
+-- table in `public`, so a dashboard reader sees this.
+--
+-- What licenses it is **precedent, not derivation**: 0003 already exposes
+-- `fair`, `anchor`, `regime`, `health`, `uncertain`, `basis`, `basis_breach`
+-- and `usdc_breach` to that same role on `maker_telemetry`. This table
+-- discloses no vocabulary that is not already disclosed, which is the whole of
+-- the argument.
+--
+-- Stated that way on purpose, because the tempting argument is weaker than it
+-- looks. "Every number here is a deterministic function of public venue quotes
+-- and calibration constants committed in the repository" is true of the
+-- derivation and does **not** establish non-disclosure: the role is held by
+-- whoever has the dashboard password, who need not have repo access, and to
+-- that reader a guard flag flipping against quotes they also hold is an
+-- observation of where the band sits. `uncertain` says "quote, but widen".
+-- Precedent covers these columns; determinism would not have.
+--
+-- No credential, inventory figure, or venue-produced free text appears —
+-- `anchor`, `regime`, `degrade` and `health` are compile-time constants, the
+-- rest are numbers — and none may be added without extending this argument.
 CREATE TABLE fair_price (
     -- Unix seconds, the estimator's own tick stamp. See the note above.
     ts             BIGINT           NOT NULL,
@@ -92,9 +115,15 @@ CREATE TABLE fair_price (
     -- The smoothed basis, set only in an FX-anchored regime — there is no basis
     -- without an FX anchor to divide the crypto reference by.
     basis          DOUBLE PRECISION,
-    -- How long ago the value in `basis` was last *observed*: 0 on a tick that
-    -- folded an observation, growing on every tick that did not. Without it a
-    -- basis smoothed six seconds ago and one smoothed five days ago are
+    -- How long ago the value in `basis` was last *observed*, floored to whole
+    -- seconds — so 0 means "observed less than a second ago" rather than
+    -- "folded on this exact tick", and the first tick or two after a fold can
+    -- still read 0. That resolution is deliberate: the age is read against
+    -- multi-second freshness bounds, and finer precision would imply the
+    -- estimator ticks faster than it does.
+    --
+    -- The point of the column is the coarse distinction: without it a basis
+    -- smoothed six seconds ago and one smoothed five days ago are
     -- indistinguishable, so the operator cannot tell a live correction from a
     -- carried one.
     --
