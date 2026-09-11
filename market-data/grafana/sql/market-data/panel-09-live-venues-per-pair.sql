@@ -2,45 +2,55 @@
 -- Source: market-data.json
 -- Regenerate: make dashboard-sql
 
--- Live venues per pair: the redundancy criterion, shown directly rather
--- than by implication.
+-- Live venues per pair: the quoting criterion, shown directly rather than by
+-- implication.
 --
--- TWO COUNTS, NOT ONE, because cadence is not interchangeable with
--- freshness. A daily source is breadth and a sanity input, never an input to
--- a live quote, so pooling it into one live-sources number overstates
--- redundancy several times over: every FX anchor here carries three daily
--- sources alongside its intraday ones, and a pooled count would read as
--- comfortably redundant while one venue dropping left the pair thin.
+-- THE CRITERION IS ONE LIVE TRUSTED TAPE, halt at zero -- ruled by the
+-- operator on 2026-09-10, replacing a "survives one or two venues dark"
+-- reading that could not be implemented because it contradicted itself. So
+-- trusted_live is the only column that decides anything, and it is the only
+-- one colored. Everything beside it is context: margin is what stands behind
+-- the tape, not a second requirement.
 --
--- CADENCE IS MEASURED, NOT LABELLED -- and measured by counting readings
--- rather than by testing recency, which is the mistake this query was first
--- written with. A daily venue is FRESH for the first hour after it publishes,
--- so a recency-only split silently promoted a daily source into the quotable
--- count once a day: exactly the cadence-versus-freshness conflation the split
--- exists to prevent. The classifier therefore cannot itself be a freshness
--- test.
+-- The trusted tape is oanda, named here as a literal because primacy is a
+-- DESIGNATION rather than a measurement -- it is the anchor treated as truth,
+-- and no column in the store records that. Twelve Data carries the same pairs
+-- intraday and is deliberately not believable alone, which is precisely why
+-- the two must not be pooled into one count: one-live-of-two says nothing
+-- until you know which one.
 --
--- Counting over a window separates the two populations by a very wide margin
--- rather than on a tuned boundary: an intraday venue lands hundreds of
--- readings per six hours where a daily one lands one or none, so "at least
--- hourly" sits in a gap of roughly fifty times. It is also a definition
--- rather than a magic number -- six readings in six hours IS hourly -- and it
--- needs no per-venue cadence table, which would be the restated-constant
--- drift that keeps the class staleness bounds in one view instead of in each
--- panel.
+-- WHY THERE IS NO CADENCE CLASSIFIER HERE, since the obvious way to write
+-- this panel has one and it is a trap. An earlier version split sources into
+-- intraday and daily by counting readings in a six-hour window, which fails
+-- in the worst possible direction: a genuinely intraday venue that has been
+-- down for more than six hours has no readings in the window, so it stops
+-- counting as intraday and lands in the daily population -- while
+-- instrument_source_liveness still reports it live, because that bound is 48
+-- to 72 hours. A long outage therefore made the panel look HEALTHIER, moving
+-- a failed venue into a bucket that is supposed to look old. Verified against
+-- the store: a source can be is_live with zero readings in six hours.
 --
--- Recency still earns a column, just not the classification. An intraday
--- venue that has stopped printing is not quotable either, and keeping
--- stalled_intraday separate from daily_breadth stops a real outage hiding in
--- the population that is SUPPOSED to look old.
+-- Freshness alone does the work instead, and under the ruled criterion that
+-- is sufficient rather than a compromise: cadence only ever mattered as a
+-- proxy for "could this price a quote right now", and a designated tape plus
+-- a recency test answers that directly. It is also fail-closed, which the
+-- classifier was not -- when the tape stops printing, trusted_live goes to
+-- zero and stays there.
+--
+-- One honest edge, visible rather than hidden: a daily source counts toward
+-- margin for the freshness window after it publishes. That is why margin is
+-- context and not a criterion. It can never reach trusted_live, so it cannot
+-- clear the halt -- which is exactly what the ruling requires of a daily
+-- reference.
 --
 -- THE MVP ANCHORS ARE A LITERAL, which is deliberate and not an oversight.
 -- There is no legitimate state in which an MVP anchor is absent, so this
 -- panel has to be unable to lose one. A de-rostered product leaves the
 -- registry, so a purely registry-driven read would drop it silently -- the
--- same invisible-rather-than-dark defect one level up that the coverage
--- panel exists to catch. Naming the three keeps a dark anchor rendering as a
--- row of zeros.
+-- same invisible-rather-than-dark defect one level up that the coverage panel
+-- exists to catch. Naming the three keeps a dark anchor rendering as a row of
+-- zeros. They order first and are not otherwise displayed: the row order
+-- already says it, so a column restating it would be sort machinery on show.
 WITH anchor AS (
   SELECT * FROM (VALUES
     ('EUR-USD'),
@@ -55,70 +65,39 @@ scope AS (
   SELECT product_id FROM instrument_source_liveness
 ),
 
--- Readings per source and product over a fixed six-hour window, across BOTH
--- storage tiers. Both halves are required: the daily sources split across the
--- two tables (candle vendors write buckets, er-api and Frankfurter write
--- prints), so counting either table alone would classify half the roster from
--- no evidence and call it daily by default.
-cadence AS (
-  SELECT
-    source,
-    product_id,
-    count(*) AS readings
-  FROM (
-    SELECT source, product_id
-    FROM cex_prices
-    WHERE bucket_start >= extract(epoch FROM now()) - 21600
-    UNION ALL
-    SELECT source, product_id
-    FROM spot_ticks
-    WHERE observed_at >= extract(epoch FROM now()) - 21600
-  ) AS r
-  GROUP BY source, product_id
-),
-
 graded AS (
   SELECT
     s.product_id,
     l.source,
     l.is_live,
-    extract(epoch FROM now()) - l.last_data_at AS age_secs,
-    -- Six readings in six hours is hourly, and nothing on the roster sits
-    -- anywhere near it. A source absent from the window entirely counts as 0,
-    -- which is the right answer rather than a missing one: a daily venue that
-    -- published before the window opened genuinely has no intraday evidence.
-    coalesce(c.readings, 0) >= 6 AS intraday
+    -- Read the liveness verdict from the view and the recency test here. The
+    -- two answer different questions: is_live is "should this source be
+    -- producing at all", on a class-aware bound that tolerates an FX weekend,
+    -- while fresh is "is it producing right now".
+    extract(epoch FROM now()) - l.last_data_at
+      <= ${quote_freshness_mins:sqlstring}::bigint * 60 AS fresh,
+    l.source = 'oanda' AS trusted
   FROM scope AS s
   LEFT JOIN instrument_source_liveness AS l ON l.product_id = s.product_id
-  LEFT JOIN cadence AS c
-    ON c.source = l.source AND c.product_id = l.product_id
 )
 
 SELECT
   g.product_id,
-  EXISTS (
-    SELECT 1 FROM anchor AS a WHERE a.product_id = g.product_id
-  ) AS mvp_anchor,
+  count(*) FILTER (WHERE g.is_live AND g.trusted AND g.fresh) AS trusted_live,
   count(*) FILTER (
-    WHERE
-      g.is_live
-      AND g.intraday
-      AND g.age_secs <= ${quote_freshness_mins:sqlstring}::bigint * 60
-  ) AS quotable_now,
-  count(*) FILTER (
-    WHERE
-      g.is_live
-      AND g.intraday
-      AND g.age_secs > ${quote_freshness_mins:sqlstring}::bigint * 60
-  ) AS stalled_intraday,
-  count(*) FILTER (WHERE g.is_live AND NOT g.intraday) AS daily_breadth,
+    WHERE g.is_live AND NOT g.trusted AND g.fresh
+  ) AS margin,
+  -- Where a real outage lands, and it can only go up. A daily source lives
+  -- here too between publications, so this is not by itself a fault reading
+  -- -- read it against fresh_sources to see which kind it is.
+  count(*) FILTER (WHERE g.is_live AND NOT g.fresh) AS live_but_stale,
   count(*) FILTER (WHERE NOT g.is_live) AS dark,
   string_agg(g.source, ', ' ORDER BY g.source) FILTER (
-    WHERE
-      g.is_live
-      AND g.intraday
-      AND g.age_secs <= ${quote_freshness_mins:sqlstring}::bigint * 60
-  ) AS quotable_sources
+    WHERE g.is_live AND g.fresh
+  ) AS fresh_sources
 FROM graded AS g
 GROUP BY g.product_id
-ORDER BY mvp_anchor DESC, quotable_now ASC, g.product_id ASC
+ORDER BY
+  EXISTS (SELECT 1 FROM anchor AS a WHERE a.product_id = g.product_id) DESC,
+  trusted_live ASC,
+  g.product_id ASC

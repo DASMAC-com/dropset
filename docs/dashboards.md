@@ -127,14 +127,36 @@ fresh.
 
 ## 3. Redundancy — the criterion the maker actually needs
 
-The maker must keep quoting at a **100 bps spread with any one or two
-venues dark**. The dashboard shows this *directly*, not by implication:
+The maker quotes a pair while it has **one live trusted intraday tape**,
+and halts at zero. The dashboard shows this *directly*, not by
+implication:
 
-> **live venues per pair, against the minimum that pair needs.**
+> **per pair: is a trusted intraday tape live, and how much margin is
+> behind it.**
 
-Not "sources configured". Not a row count. The number that answers
-"can we still quote if OANDA drops right now". A pair at or below its
-minimum is the loudest thing on the page.
+Not "sources configured". Not a row count. Not an average. The number
+that answers "can we quote this pair at all right now". A pair at zero
+is the loudest thing on the page.
+
+**Ruled by the operator, 2026-09-10, and this section previously stated
+the criterion wrongly.** It required quoting "with any one or two venues
+dark" and then asserted that CAD/USD's *two* intraday sources satisfied
+it — two sources with two dark leaves none, so the section contradicted
+itself and no panel could implement both halves. The ruled criterion is
+the weaker and more honest one: **one** live trusted tape, halt on zero.
+
+Three parts of the ruling that change how this is read:
+
+- **OANDA is the source believable alone**, per candidate primacy — it
+  is §2's anchor, treated as truth. A second intraday source is
+  **margin**, not a requirement.
+- **A daily reference alone does not clear the bar.** This is §2's
+  cadence rule as a quoting gate rather than a display note: three daily
+  sources carrying a pair do not make it quotable.
+- **Initial mainnet posture is weekday-only quoting**, from the
+  operator's laptop. So a weekend with no live tape is the expected
+  state rather than a halt to investigate — which is §4's
+  weekend-is-not-a-fault rule reaching the quoting path too.
 
 **CAD/USD was the thin one, and it is the reason the panel exists.**
 Measured 2026-09-08: OANDA's v20 instrument list is direction-fixed and
@@ -145,15 +167,22 @@ carry it, but daily — breadth, not a live-quote input, per §2.
 
 *Closed.* The OANDA adapter now inverts a reversed pair **at intake**:
 it fetches `USD_CAD` and flips each candle before the sink, high and
-low included, since inverting reverses their order. So CAD/USD has two
-intraday sources and meets this section's "any one or two venues dark"
-criterion at intraday cadence, like the other two MVP pairs.
+low included, since inverting reverses their order. So CAD/USD carries
+the trusted tape itself rather than resting on Twelve Data, with a
+second intraday source as margin — the same shape as the other two MVP
+anchors. Measured 2026-09-10: OANDA's CAD/USD runs about a minute
+behind and agrees with Twelve Data to within 4e-5 (0.72814 against
+0.72817), which is also what shows the inversion is the right way up
+rather than off by a reciprocal — something coverage alone cannot tell
+you.
 
 The panel is not retired by that, and this episode is the argument for
-it: the criterion is met by a **count**, and the count fell to one
-without a single feed failing — a mapping fact, invisible to every
-staleness bound in §2. So it must still render the per-pair minimum
-rather than average it away.
+it: what fell to one was a **count**, and it fell without a single feed
+failing — a mapping fact, invisible to every staleness bound in §2. Under
+the ruled criterion the stake is higher rather than lower, because the
+margin is what absorbed it: had the inversion not landed, CAD/USD's only
+intraday source would have been one the ruling does not consider
+believable alone.
 
 **Spreads are stated in bps here and everywhere, never in pips.** A pip
 is a fixed absolute increment, so what it is *worth* in relative terms
@@ -508,23 +537,43 @@ Both directions of drift are real, so both checks are worth running.
    that reads as right: a daily venue is genuinely fresh for the hour
    after it publishes, so er-api was promoted into the quotable count
    once a day — the exact cadence-versus-freshness conflation of §2,
-   reintroduced by the panel built to respect it. **A freshness test can
-   never classify cadence.** The panel now counts readings over a window
-   instead, which separates the populations by ~50× (hundreds per six
-   hours against one or none), and keeps recency as its own column so a
-   stalled intraday venue cannot hide among the sources that are
-   supposed to look old.
+   reintroduced by the panel built to respect it.
 
-1. **§3's own arithmetic does not add up, and needs a ruling.** §3
-   requires quoting with "any one or two venues dark" and then says
-   CAD/USD's **two** intraday sources meet it — but two sources with two
-   dark leaves none. Either the criterion means one-or-two *of the
-   pooled roster* (daily sources being the fallback, which §2 forbids
-   for live quotes), or the MVP anchors do not currently meet it and the
-   panel should say so. The panel is deliberately neutral pending that
-   ruling: it colors `quotable_now` against a minimum of 2, which is
-   what §3 currently asserts is sufficient, so a ruling changes one
-   threshold rather than the query.
+   The second fix counted readings over a six-hour window, and **that
+   one was worse, because it failed open.** A genuinely intraday venue
+   down longer than the window has no readings in it, so it stopped
+   counting as intraday and moved into the *daily* population — while
+   `instrument_source_liveness` still called it live, that bound being
+   48–72 h. The panel therefore looked **healthier the longer the outage
+   ran**, which is the one direction a liveness panel must never fail.
+   Verified against the store: a source can be `is_live` with zero
+   readings in six hours.
+
+   The shipped version has **no cadence classifier at all**. Under the
+   ruled criterion it needs none — cadence only ever mattered as a proxy
+   for "could this price a quote right now", and a *designated* tape plus
+   a recency test answers that directly and fails closed. The general
+   lesson is the one that survives the specific panel: **a classifier
+   built from the same signal an outage suppresses will always
+   misclassify the outage.** Both wrong versions read as careful; only
+   running them against a store that had a 24-hour-old live source
+   distinguished them.
+
+1. **§3's own arithmetic did not add up.** *Closed by operator ruling,
+   2026-09-10.* §3 required quoting with "any one or two venues dark"
+   and then asserted CAD/USD's **two** intraday sources met it — two
+   sources with two dark leaves none, so the section contradicted itself
+   and no panel could implement both halves. The ruled criterion is
+   **one live trusted intraday tape, halt on zero**, with a second
+   intraday source as margin; a daily reference alone does not clear it.
+   §3 now states that.
+
+   Worth keeping about the shape of this one: it was found by *building
+   the panel*, not by reading the section. The contradiction had sat in
+   prose through several revisions because prose can hold both halves
+   comfortably — it is only when something has to compute a threshold
+   that the two stop being compatible. An unimplementable requirement
+   reads as a fine requirement until someone implements it.
 
 1. **Two panels the operator could not parse.** Recorded as observed,
    not diagnosed, and deliberately not redesigned here — they are inputs
