@@ -262,23 +262,37 @@ state is that it is quiet, and a quiet fault is the worst thing this
 page can render.
 
 **The parked set is declared in code**, as `PARKED_SOURCES` in
-`feeds/src/parked.rs`: one entry per parked source, carrying the date the
-decision was taken and the reason it was taken. It is a Rust constant
-rather than a column on `instrument_registry` because that table is
-written only by a *running* collector, through `register_instruments` —
-so a parked source can never write the row that would say it is parked.
-The maker bot reads the set at its spawn site and does not start a parked
-tier at all, which is what makes the rule above hold by construction
-instead of by operator discipline; `parked_compose_agreement.rs` pins
-each entry against a compose profile the default bring-up leaves
-disabled, so an entry cannot claim a source is parked while compose
-starts it.
+`feeds/src/parked.rs`: one entry per parked source, carrying the date it
+has been parked since and the reason. It is keyed on the bare venue
+token (`pyth`), not the framework feed name (`pyth-hermes`) that
+`feed_health` records. It is a Rust constant rather than a column on
+`instrument_registry` because that table is written only by a *running*
+collector, through `register_instruments` — so a parked source can never
+write the row that would say it is parked. The maker bot reads the set at
+its spawn site and does not start a parked tier, which makes the
+*not-running* half of the rule above hold by construction rather than by
+operator discipline. `feeds/tests/parked_compose_agreement.rs` pins each
+entry against the deployment: the service must sit behind a compose
+profile, that profile must not be the one `collectors-up` enables, and
+the Makefile's start lists must not name it. A deliberate opt-in start
+(`make pyth-up`) is still possible and is what a park is for; what the
+test forbids is starting as a side effect of the ordinary bring-up.
 
 **What this page cannot do with it yet.** Because the set lives in code,
 no panel query can join against it: separating parked from faulted here
 needs either a copy of the list inside the query or a later change
 seeding it into reference data. The marker changes nothing about what the
-existing coverage query returns.
+existing coverage query returns — that query reads `instrument_registry`,
+which a parked source never wrote in the first place. It does change
+`feed_health`: parking removes the tier's only writer, so its row stops
+being updated, and in a fresh database it never appears at all. A parked
+source therefore renders on the feed-health panel and the staleness alert
+exactly as the "invisible, not dark" hazard below describes — absent, or
+frozen at its last value — never labelled parked. Worse for a row written
+before the park: it keeps `last_ok_at` NULL, so the unfiltered
+`ok_age_secs > 1800` alert goes on firing with nothing left running that
+could clear it. Before the park a credential arriving would have cleared
+it; now only an exclusion on the alert or a one-off delete will.
 
 **A weekend is not a fault either.** Alpha Vantage produces weekday
 daily bars, so on any Sunday it is correctly silent while reading dark

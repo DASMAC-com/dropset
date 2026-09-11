@@ -360,20 +360,27 @@ push liveness (feeds <-> maker-bot <-> db-schema <-> grafana): a FOUR
   tick_error as taking the query-only sanitize_error.
 feeds <-> ci-infra: which sources are deliberately NOT running exists
   twice — as feeds/src/parked.rs PARKED_SOURCES (bare venue token, date,
-  reason) and as the compose profile that holds the service out of the
-  default bring-up (infra/localnet/docker-compose.yml profiles:, plus the
-  Makefile's KEYLESS_SERVICES / KEYED_SERVICES / PYTH_SERVICES lists).
-  Neither derives the other: compose cannot read a Rust constant and the
-  constant cannot read a file the binary is not deployed with. Held by
-  feeds/tests/parked_compose_agreement.rs, which fails if an entry claims
-  a source is parked while compose starts it — one direction only: a new
+  reason) and as the deployment that declines to start them
+  (infra/localnet/docker-compose.yml profiles:, plus the Makefile's
+  KEYLESS_SERVICES / KEYED_SERVICES start lists and the removal-only
+  PYTH_SERVICES). Neither derives the other: compose cannot read a Rust
+  constant and the constant cannot read a file the binary is not deployed
+  with. Held by feeds/tests/parked_compose_agreement.rs, whose contract is
+  narrower than "compose never starts it": per entry, the service exists,
+  it declares SOME profiles: block, none of those is the profile
+  collectors-up enables, and no start list names it. A deliberate opt-in
+  start (make pyth-up, which passes --profile pyth) is still possible and
+  is what a park is FOR, so it stays green. One direction only: a new
   opt-in SOURCE added without a PARKED_SOURCES entry is NOT caught, since
   "behind a profile" and "parked" genuinely differ (the keyed FX venues
   sit behind fx and are expected to run). The registry-side counterpart
   of this seam is absent by design, not by omission: instrument_registry
   is written only by a RUNNING collector, so a parked source can never
   write the row that would say it is parked, and no consumer of the
-  parked set can reach it from SQL.
+  parked set can reach it from SQL. Note the sibling seam
+  market-data/tests/roster_compose_agreement.rs is the identical
+  Rust-constant-versus-compose-text shape for each collector's default
+  PRODUCT_IDS roster, and is otherwise uncovered here.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit

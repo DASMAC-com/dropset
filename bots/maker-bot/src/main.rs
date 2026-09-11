@@ -29,7 +29,7 @@ use dropset_feeds::venues::{
     FrankfurterSource, KrakenSource, PythFeed, PythHermesSource,
 };
 use dropset_feeds::{
-    forward_channel, parked, run_until, run_until_with_metrics, HttpClient, RunConfig, Sink,
+    forward_channel, parked_source, run_until, run_until_with_metrics, HttpClient, RunConfig, Sink,
     Source, PARKED_SOURCES,
 };
 use dropset_maker_bot::config::{
@@ -349,7 +349,7 @@ enum HealthRow {
     Skip,
 }
 
-/// Pyth's **bare venue token**, the key `dropset_feeds::parked` is indexed by.
+/// Pyth's **bare venue token**, the key `PARKED_SOURCES` is indexed by.
 ///
 /// Deliberately not [`SOURCE_PYTH`], which is the fusion attribution tag
 /// (`pyth-hermes`) and would silently match no park record — the two
@@ -367,7 +367,8 @@ const VENUE_PYTH: &str = "pyth";
 /// leaves the cache alone — so a parked tier's cache stays empty and its leg
 /// resolves to `None`, which is the same state a spawned-but-failing tier
 /// reaches. That equivalence is the point: parking a source changes what gets
-/// logged, not how the cascade prices.
+/// logged, not how the cascade prices. A unit test in `tasks.rs` pins the
+/// `Closed`-drains-like-`Empty` half that this function relies on.
 fn parked_receiver<T: Clone>() -> broadcast::Receiver<T> {
     let (_, rx) = broadcast::channel(1);
     rx
@@ -384,7 +385,9 @@ fn parked_receiver<T: Clone>() -> broadcast::Receiver<T> {
 /// with a health recorder attached, which is what makes the `feed_health`
 /// table complete by construction: the recorder keys on the source's own name,
 /// so a venue adapter added later reports without this function learning
-/// anything about it. When telemetry is disabled the plain `run_until` is
+/// anything about it. That completeness now covers only the tiers that are not
+/// parked: a source in `PARKED_SOURCES` never reaches this function, so it
+/// contributes no health row at all (see `parked_receiver`). When telemetry is disabled the plain `run_until` is
 /// used, so a run with no database costs nothing rather than reporting into a
 /// dead channel.
 ///
@@ -533,13 +536,11 @@ fn spawn_price_feeds(
     // into it is deliberately out of scope here. Against a self-hosted Hermes
     // it works unchanged — but `pyth_base_url` is a compile-time default with
     // no override, so reaching one is a code edit that also clears the park.
-    let pyth = match parked(VENUE_PYTH) {
+    let pyth = match parked_source(VENUE_PYTH) {
         // Parked: don't spawn a poller that cannot succeed. Keyless against
         // upstream Hermes every poll 401s, and the runner logs one `warn!` per
         // poll for the life of the process — a per-tick failure report for a
-        // tier that is off by decision, which is noise rather than signal. The
-        // cascade already prices without this leg, so skipping it changes the
-        // log and nothing else.
+        // tier that is off by decision, which is noise rather than signal.
         Some(park) => {
             // `eprintln!` with a `[feed]` tag, matching this file's own
             // diagnostics: the `tracing` macros here belong to the feeds crate,
@@ -764,9 +765,11 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     // reading as a fault — the same ambiguity, in the surface where a zero is
     // printed rather than rendered.
     for park in PARKED_SOURCES {
+        // Same field order as the live path's `[feed]` line: the venue is the
+        // subject of the sentence, so it leads.
         println!(
-            "Parked by decision since {}: {} — {}",
-            park.since, park.venue, park.reason
+            "Parked by decision: {} since {} — {}",
+            park.venue, park.since, park.reason
         );
     }
     // Column widths fit the longest value each can take: `Unverified` for
