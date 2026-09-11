@@ -87,6 +87,20 @@ cannot silently diverge. Today only the registry-driven coverage panel
 does; the rest query the measurement tables directly, which is part of
 what §8 item 1 is about.
 
+**The bound is chosen by asset class, so an unseeded currency silently
+gets the loosest one.** The venue column above is a summary; what
+actually decides is the pair's class, and a pair with an unseeded leg
+classes as `unclassified` and takes the fallback. That bit this table's
+own QCAD row: `QCAD` was missing from the `currency_kinds` seed, so the
+tripwire polled every 15 s was held to a 72 h silence rather than the
+48 h stated here — it could have been dark for three days and still read
+live. Seeding the leg lands `QCAD-USD` in `peg-pair`, which is the right
+class for the right reason rather than merely a tighter number: that
+class exists for pairs trading at ~1.0 where only the deviation is
+interesting, which is exactly what §3.1 watches. Read this as the
+general hazard rather than as one fixed row — **a class-derived bound
+means a missing seed is a silent liveness change**, and the roster grows.
+
 ### Cadence is not interchangeable with freshness
 
 A daily source is not a slow real-time source; it is a different kind
@@ -253,8 +267,19 @@ One sentence each; if a panel needs more, the panel is doing two jobs.
 Sources land in **two tiers by storage**, and this is the seam every
 visibility bug so far has fallen through. Candle venues write
 `cex_prices`; tick venues write `spot_ticks`. Today the tick-only class
-is **Kraken, er-api and Pyth** — and it grows, so no panel may assume
-it away.
+is **Kraken, er-api, Frankfurter and Pyth** — and it grows, so no panel
+may assume it away.
+
+**Frankfurter joined that class when it was wired, and this sentence
+lagged it** — the "it grows" prediction coming true, found by reading the
+store rather than by reasoning. Note which way the drift ran: the
+`Source` variable's own description already named Frankfurter, so the
+JSON was right and the prose was the stale side. That is the expected
+direction, because a panel is exercised every time someone loads the
+dashboard and a paragraph never is, and it is the reason to check this
+list against the store rather than against memory. `coinbase` is the one
+source in **both** tiers, so the tier is a property of the row's table,
+never of the source label.
 
 The rule: **a panel whose name says "by source" must cover both
 tables, or its name must say which tier it covers.** A query over
@@ -297,22 +322,47 @@ item 3 outright and the naming half of item 1. The four roster changes
 together in the following feeds PR, deliberately, so the dashboard is
 arranged once against a complete feed set rather than twice. That PR
 also settled item 11, on an operator ruling rather than by building
-anything. Items 6, 8, 10 and 12, and the selector half of item 1,
-remain open with no owner yet; each is a *rendering* defect rather than
-a missing feed, which is why the feed work did not touch them. (Item 12
-was missing from this list before — the omission predates the feeds PR,
-and it is exactly the rendering class the sentence describes.)
+anything. Items 6, 8, 10 and 12 remain open with no owner yet; each is a
+*rendering* defect rather than a missing feed, which is why the feed work
+did not touch them. (Item 12 was missing from this list before — the
+omission predates the feeds PR, and it is exactly the rendering class the
+sentence describes.)
 
-1. **A tick-only venue is still unreachable in the selector.** The
-   *naming* half of this is closed: `Candle rows per minute by source`
-   and `Candle coverage` now say which tier they cover, which is the
-   second remedy §6.1 allows. What remains open is the selector —
-   `var-candle-source` is `SELECT DISTINCT source FROM cex_prices`, so
-   a tick-only venue (**Kraken**, **er-api**, **Pyth**) can never be
-   *selected* at all. The registry-driven coverage panel is the model
-   for the fix: populate selectors from the registry, which knows every
-   source by construction. Making the two candle panels read across
-   both tables is the fuller remedy and remains open too.
+**The walkthrough PR added items 13 to 17 and retired item 1.** It closed
+13 by building the panel and 2's QCAD half by seeding the currency kind;
+14 and 15 record what building 13 taught, one of them a defect in this
+document's own arithmetic. Items 16 and 17 are held deliberately — they
+are inputs to the per-panel adjudication rather than work to do — and 17
+is where the ~10 chart cap gets resolved. Two of these came from
+*reading the store and asking whether the spec's claims were true*,
+rather than from checking the JSON against the spec: item 1 was a fixed
+defect still listed as open, and item 13 a requirement no item mentioned.
+Both directions of drift are real, so both checks are worth running.
+
+1. **A tick-only venue is still unreachable in the selector.** *This
+   item was overtaken and its remaining half was mis-stated; read the
+   correction rather than the claim.* The *naming* half closed as
+   recorded: `Candle rows per minute by source` and `Candle coverage`
+   say which tier they cover, the second remedy §6.1 allows.
+
+   The selector half is **not** open in the form written here. `Source`
+   — the multi-select the cross-tier panels read — is already
+   `SELECT DISTINCT source FROM instrument_registry`, so a tick-only
+   venue *is* selectable, and `Price by source` unions both tables and
+   shows it. What remains measurement-derived is `var-candle-source`
+   alone (`SELECT DISTINCT source FROM cex_prices`), and that one is
+   **deliberate rather than defective**: it feeds only the OHLC panel,
+   which reads `cex_prices`, so offering Kraken there would buy a
+   guaranteed-empty chart — trading an unreachable venue for an
+   ambiguous blank, which §4 likes even less.
+
+   Two things worth keeping from the error, since the wrong half is the
+   instructive one. The claim was *verified against the store rather
+   than re-read from the JSON*, which is how a fixed defect stayed on a
+   punch list. And "populate selectors from the registry" is a rule
+   about **selectors whose panels can show every tier**, not a rule
+   about every selector; stated without that bound it argues for a
+   change that makes the dashboard worse.
 
 1. **CAD/USD was not collected at all** until 2026-09-07, so §1's
    mandatory anchor was missing for CADC. *Closed, with a caveat worth
@@ -438,3 +488,61 @@ and it is exactly the rendering class the sentence describes.)
    "No data", indistinguishable from a broken query. This is §4's rule
    with nothing implementing it, and it is the generalization of the
    item above.
+
+1. **§3's redundancy panel did not exist**, and no item on this list
+   said so. *Closed — `Live venues per pair` is now built.* §3 claimed
+   the dashboard shows the criterion "directly, not by implication" and
+   §5 listed the panel; neither was true, and the gap survived twelve
+   punch-list items because every *individual* panel matched its own
+   description. What no reading of the JSON catches is a panel that is
+   absent, so the check has to run the other way — from the spec's
+   claims to the JSON — which is the lens this list was missing.
+
+1. **Pooling cadences would have overstated redundancy 2.5×.** Recorded
+   because the wrong version was built first and the live data caught
+   it. Every FX anchor reads five live sources and only **two** are
+   intraday, so the pooled count answers "how many venues carry this
+   pair" when §3 asks "how many could quote it right now".
+
+   The first fix split the two on **recency**, which is wrong in a way
+   that reads as right: a daily venue is genuinely fresh for the hour
+   after it publishes, so er-api was promoted into the quotable count
+   once a day — the exact cadence-versus-freshness conflation of §2,
+   reintroduced by the panel built to respect it. **A freshness test can
+   never classify cadence.** The panel now counts readings over a window
+   instead, which separates the populations by ~50× (hundreds per six
+   hours against one or none), and keeps recency as its own column so a
+   stalled intraday venue cannot hide among the sources that are
+   supposed to look old.
+
+1. **§3's own arithmetic does not add up, and needs a ruling.** §3
+   requires quoting with "any one or two venues dark" and then says
+   CAD/USD's **two** intraday sources meet it — but two sources with two
+   dark leaves none. Either the criterion means one-or-two *of the
+   pooled roster* (daily sources being the fallback, which §2 forbids
+   for live quotes), or the MVP anchors do not currently meet it and the
+   panel should say so. The panel is deliberately neutral pending that
+   ruling: it colors `quotable_now` against a minimum of 2, which is
+   what §3 currently asserts is sufficient, so a ruling changes one
+   threshold rather than the query.
+
+1. **Two panels the operator could not parse.** Recorded as observed,
+   not diagnosed, and deliberately not redesigned here — they are inputs
+   to the commissioned per-panel adjudication, which will rule on
+   keep/cut/merge/rename against the question each panel answers.
+
+   - `Feed cursor age (wall clock)` renders as 12–15 small unlabeled
+     boxes with no way to tell which feed each one is.
+   - `Fair price over its sources` versus `Fusion weight by source`
+     reads as an unclear distinction between the two.
+
+1. **The rendered-chart budget is already over, before the reserved
+   panels land.** §5's "about ten, a hard constraint" is 12 today: nine
+   panels plus the OHLC panel repeating over the three MVP anchors, and
+   the new redundancy panel makes 13. The pricing-path work reserves
+   three more readings, all of which read an estimator output table that
+   does not exist on `main` yet. Note the two rules are in genuine
+   tension rather than merely unmet: §1 requires every per-pair panel to
+   show all three anchors, so the repeat that breaches the cap is the
+   same rule that §1 mandates. Resolving that is the adjudication's job,
+   which is why the layout iteration is held rather than done here.

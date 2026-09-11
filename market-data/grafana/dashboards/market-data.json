@@ -983,6 +983,160 @@
       ],
       "title": "Source coverage (registry-driven)",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "The redundancy criterion the maker actually needs: how many venues could price this pair RIGHT NOW, against the minimum it needs. Every other panel here answers that only by implication. Read 'quotable_now' first and read it against the Minimum quotable sources setting - a pair at or below that number is the loudest thing on this dashboard, because it is one outage from not being quotable at all. TWO COUNTS RATHER THAN ONE, and the split is the whole value of the panel: a daily-cadence source is breadth and a sanity check, never an input to a live quote, so pooling everything into one 'live sources' number overstates redundancy badly. Each FX anchor here carries three daily sources beside its intraday ones, so a pooled count reads comfortable while one venue dropping would leave it thin. 'daily_breadth' is those sources, counted separately and deliberately not added in. 'dark' is registered and outside its class staleness bound. 'dark' is deliberately NOT color-coded, and that is a limitation being shown rather than hidden: it pools a PARKED source with a faulted one, because the two have no distinct rendering yet. Pyth is parked pending a credential, so today every row reads dark=1 - and coloring that red on every row of the panel is exactly the train-the-operator-to-ignore-red failure that keeping parked quiet exists to prevent. Read a non-zero 'dark' against the known-parked set until that rendering lands. CADENCE IS MEASURED HERE, by counting a source's readings over a six-hour window across both storage tiers, and it is deliberately not a recency test - which is what this panel was first built with and what the live data disproved. A daily venue is genuinely fresh for the first hour after it publishes, so a recency-only split promoted a daily source into the quotable count once a day, which is the exact conflation the split exists to prevent. Counting separates the populations by roughly fifty times on today's roster - hundreds of readings per six hours for an intraday venue against one or none for a daily one - so 'at least hourly' is a definition sitting in a very wide gap rather than a tuned threshold, and it needs no per-venue cadence table to drift from. Recency still earns its own column rather than the classification: 'stalled_intraday' is an intraday venue that has stopped printing, kept separate from 'daily_breadth' so that a real outage cannot hide inside the population that is supposed to look old. The three MVP anchors are named literally in the query so this panel cannot lose one: a de-rostered product leaves the registry and would silently vanish from a purely registry-driven read, which is precisely the defect one level up that Source coverage exists to catch. A dark anchor therefore renders as a row reading 0 rather than as no row. Deliberately NOT filtered by the Source or Product pickers, for the same reason Source coverage is not: a panel answering 'what is thin' must not be narrowed by a picker.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "quotable_now"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "stalled_intraday"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "daily_breadth"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dark"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 64
+      },
+      "id": 9,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Live venues per pair: the redundancy criterion, shown directly rather\n-- than by implication.\n--\n-- TWO COUNTS, NOT ONE, because cadence is not interchangeable with\n-- freshness. A daily source is breadth and a sanity input, never an input to\n-- a live quote, so pooling it into one live-sources number overstates\n-- redundancy several times over: every FX anchor here carries three daily\n-- sources alongside its intraday ones, and a pooled count would read as\n-- comfortably redundant while one venue dropping left the pair thin.\n--\n-- CADENCE IS MEASURED, NOT LABELLED -- and measured by counting readings\n-- rather than by testing recency, which is the mistake this query was first\n-- written with. A daily venue is FRESH for the first hour after it publishes,\n-- so a recency-only split silently promoted a daily source into the quotable\n-- count once a day: exactly the cadence-versus-freshness conflation the split\n-- exists to prevent. The classifier therefore cannot itself be a freshness\n-- test.\n--\n-- Counting over a window separates the two populations by a very wide margin\n-- rather than on a tuned boundary: an intraday venue lands hundreds of\n-- readings per six hours where a daily one lands one or none, so \"at least\n-- hourly\" sits in a gap of roughly fifty times. It is also a definition\n-- rather than a magic number -- six readings in six hours IS hourly -- and it\n-- needs no per-venue cadence table, which would be the restated-constant\n-- drift that keeps the class staleness bounds in one view instead of in each\n-- panel.\n--\n-- Recency still earns a column, just not the classification. An intraday\n-- venue that has stopped printing is not quotable either, and keeping\n-- stalled_intraday separate from daily_breadth stops a real outage hiding in\n-- the population that is SUPPOSED to look old.\n--\n-- THE MVP ANCHORS ARE A LITERAL, which is deliberate and not an oversight.\n-- There is no legitimate state in which an MVP anchor is absent, so this\n-- panel has to be unable to lose one. A de-rostered product leaves the\n-- registry, so a purely registry-driven read would drop it silently -- the\n-- same invisible-rather-than-dark defect one level up that the coverage\n-- panel exists to catch. Naming the three keeps a dark anchor rendering as a\n-- row of zeros.\nWITH anchor AS (\n  SELECT * FROM (VALUES\n    ('EUR-USD'),\n    ('AUD-USD'),\n    ('CAD-USD')\n  ) AS a (product_id)\n),\n\nscope AS (\n  SELECT product_id FROM anchor\n  UNION\n  SELECT product_id FROM instrument_source_liveness\n),\n\n-- Readings per source and product over a fixed six-hour window, across BOTH\n-- storage tiers. Both halves are required: the daily sources split across the\n-- two tables (candle vendors write buckets, er-api and Frankfurter write\n-- prints), so counting either table alone would classify half the roster from\n-- no evidence and call it daily by default.\ncadence AS (\n  SELECT\n    source,\n    product_id,\n    count(*) AS readings\n  FROM (\n    SELECT source, product_id\n    FROM cex_prices\n    WHERE bucket_start >= extract(epoch FROM now()) - 21600\n    UNION ALL\n    SELECT source, product_id\n    FROM spot_ticks\n    WHERE observed_at >= extract(epoch FROM now()) - 21600\n  ) AS r\n  GROUP BY source, product_id\n),\n\ngraded AS (\n  SELECT\n    s.product_id,\n    l.source,\n    l.is_live,\n    extract(epoch FROM now()) - l.last_data_at AS age_secs,\n    -- Six readings in six hours is hourly, and nothing on the roster sits\n    -- anywhere near it. A source absent from the window entirely counts as 0,\n    -- which is the right answer rather than a missing one: a daily venue that\n    -- published before the window opened genuinely has no intraday evidence.\n    coalesce(c.readings, 0) >= 6 AS intraday\n  FROM scope AS s\n  LEFT JOIN instrument_source_liveness AS l ON l.product_id = s.product_id\n  LEFT JOIN cadence AS c\n    ON c.source = l.source AND c.product_id = l.product_id\n)\n\nSELECT\n  g.product_id,\n  EXISTS (\n    SELECT 1 FROM anchor AS a WHERE a.product_id = g.product_id\n  ) AS mvp_anchor,\n  count(*) FILTER (\n    WHERE\n      g.is_live\n      AND g.intraday\n      AND g.age_secs <= ${quote_freshness_mins:sqlstring}::bigint * 60\n  ) AS quotable_now,\n  count(*) FILTER (\n    WHERE\n      g.is_live\n      AND g.intraday\n      AND g.age_secs > ${quote_freshness_mins:sqlstring}::bigint * 60\n  ) AS stalled_intraday,\n  count(*) FILTER (WHERE g.is_live AND NOT g.intraday) AS daily_breadth,\n  count(*) FILTER (WHERE NOT g.is_live) AS dark,\n  string_agg(g.source, ', ' ORDER BY g.source) FILTER (\n    WHERE\n      g.is_live\n      AND g.intraday\n      AND g.age_secs <= ${quote_freshness_mins:sqlstring}::bigint * 60\n  ) AS quotable_sources\nFROM graded AS g\nGROUP BY g.product_id\nORDER BY mvp_anchor DESC, quotable_now ASC, g.product_id ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Live venues per pair",
+      "type": "table"
     }
   ],
   "refresh": "5s",
@@ -1160,6 +1314,20 @@
         "query": "5,15,60,360,1440",
         "skipUrlSync": false,
         "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "60",
+          "value": "60"
+        },
+        "description": "How recent an INTRADAY source's newest reading must be for it to count as quotable right now. Note what this does and does not decide: it separates a printing intraday venue from a stalled one, and it plays no part in telling intraday from daily - the redundancy panel measures that by counting readings, precisely because a freshness test cannot do that job (a daily venue is fresh for an hour after every publish). So widening this can never promote a daily source into the quotable count; it only decides how long an intraday venue may go quiet before it moves to stalled_intraday. Any value in roughly the 30 to 360 minute range is equivalent on today's roster, since the slowest intraday venue runs minutes behind. A fixed list rather than a query, so it can never be empty and make every filter that reads it a syntax error.",
+        "label": "Minimum quotable freshness (min)",
+        "name": "quote_freshness_mins",
+        "options": [],
+        "query": "30,60,360,1440",
+        "skipUrlSync": false,
+        "type": "custom"
       }
     ]
   },
@@ -1169,7 +1337,7 @@
   },
   "timepicker": {},
   "timezone": "utc",
-  "title": "Market-data",
+  "title": "Market data",
   "uid": "market-data",
   "version": 1,
   "weekStart": ""
