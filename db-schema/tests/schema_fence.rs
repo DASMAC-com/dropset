@@ -391,10 +391,11 @@ fn manifests() -> Vec<(i64, Vec<Declared>)> {
     let orphans: Vec<&String> = files.values().map(|(name, _)| name).collect();
     assert!(
         orphans.is_empty(),
-        "fence manifests with no matching migration: {orphans:?} — if you just \
-         added the migration, note `sqlx::migrate!` embeds the history at compile \
-         time and cargo does not always notice a new file in the directory, so \
-         try rebuilding before believing this"
+        "fence manifests with no matching migration: {orphans:?} — a renamed \
+         or removed migration left its `.fence` behind; delete it or restore \
+         the migration. (This used to also fire spuriously on a stale \
+         compile-time embed after a rebase; `build.rs` now watches the \
+         migrations directory, so believe this one.)"
     );
     declared
 }
