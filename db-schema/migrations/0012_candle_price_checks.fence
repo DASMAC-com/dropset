@@ -1,2 +1,8 @@
 # Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# A CHECK constraint creates no relation, so the existence probe is blind to
+# this migration's whole payload by construction — and unlike the deferred
+# materialized-view directive, a weakened CHECK fails SILENTLY, not loudly.
+# The behavior is therefore asserted directly, by
+# `candle_price_checks_reject_what_they_name` in that same test file.
 none adds CHECK constraints to a table 0001 created, not a relation

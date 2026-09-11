@@ -2,6 +2,7 @@
 // cspell:word matview
 // cspell:word matviews
 // cspell:word schemaname
+// cspell:word SQLSTATE
 // cspell:word tablename
 // cspell:word unlogged
 // cspell:word unprovisioned
@@ -1350,4 +1351,143 @@ async fn migrate_is_idempotent() {
     require_schema(&pool)
         .await
         .expect("fence passes after re-run");
+}
+
+/// Insert one `cex_prices` bar, returning the database's verdict.
+///
+/// Prices are bound as `f64` rather than spelled into the SQL so that `NaN` and
+/// `INFINITY` travel as float8 values, which is how a venue's parsed reading
+/// would actually reach the column.
+async fn insert_candle(
+    pool: &PgPool,
+    bucket: i64,
+    low: f64,
+    high: f64,
+    open: f64,
+    close: f64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO cex_prices
+             (source, product_id, granularity_secs, bucket_start,
+              low, high, open, close, volume)
+         VALUES ('probe', 'EUR-USD', 60, $1, $2, $3, $4, $5, 0.0)",
+    )
+    .bind(bucket)
+    .bind(low)
+    .bind(high)
+    .bind(open)
+    .bind(close)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+/// The CHECK constraint a rejected insert violated.
+///
+/// The SQLSTATE is asserted first so that an unrelated failure — a missing
+/// table, a type mismatch — reports itself as such instead of surfacing as a
+/// confusing constraint-name mismatch.
+fn violated_constraint(err: &sqlx::Error) -> String {
+    let db = err
+        .as_database_error()
+        .expect("a CHECK violation is a database error");
+    assert_eq!(
+        db.code().as_deref(),
+        Some("23514"),
+        "expected a check_violation, got: {db}"
+    );
+    db.constraint()
+        .expect("a check violation names its constraint")
+        .to_string()
+}
+
+/// The candle price CHECKs reject exactly what their names claim, and accept a
+/// flat bucket.
+///
+/// `0012_candle_price_checks.sql` adds three CHECK constraints, and a CHECK
+/// creates no relation — so the existence probe is structurally blind to this
+/// migration's entire payload, which is why its manifest declares `none`. A
+/// dropped, merged or tightened CHECK would therefore apply cleanly and pass
+/// the whole fence while silently changing what the store accepts. That is the
+/// same argument [`the_instruments_view_derives_a_class_from_the_legs`] makes,
+/// and it binds harder here: the `matview` directive is deferred above on the
+/// grounds that its failure would be loud, whereas a weakened CHECK fails by
+/// storing bad data quietly.
+///
+/// Three properties, each of which a plausible later edit would break:
+///
+///   * **Attribution.** The migration's stated reason for splitting the checks
+///     is that the constraint name is the whole diagnostic a violation
+///     carries. Merging them into one CHECK would keep rejecting these rows
+///     and destroy that, so the name is asserted rather than the mere failure.
+///   * **A flat bucket is accepted.** `high = low` is a routine outcome for an
+///     interval in which the rate did not move, so `>=` is load-bearing and a
+///     tightening to `>` would reject real candles. It is the
+///     highest-consequence regression available here, because a refused candle
+///     aborts its whole batch and stops that venue's collector rather than
+///     dropping one row.
+///   * **Non-finite is rejected.** Postgres orders `NaN` above every other
+///     float, so `NaN > 0` holds; without the explicit `< 'Infinity'` bound a
+///     `NaN` price would store while the constraint name claimed positivity.
+///     This arm is why `prices_are_finite` exists at all.
+///
+/// Every accepted row here carries `volume = 0.0`, which also pins the
+/// deliberate volume exemption: some wired sources publish no volume, so a
+/// positivity constraint on that column would reject every row they write.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn candle_price_checks_reject_what_they_name() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    insert_candle(&pool, 0, 1.10, 1.20, 1.15, 1.18)
+        .await
+        .expect("a well-formed candle must be accepted");
+    insert_candle(&pool, 60, 1.10, 1.10, 1.10, 1.10)
+        .await
+        .expect("a flat bucket, high = low, must be accepted");
+
+    // Each case below violates EXACTLY ONE of the three constraints, so the
+    // expected name is not at the mercy of Postgres's evaluation order.
+    for (what, low, high, open, close, expected) in [
+        ("a zero low", 0.0, 1.20, 1.15, 1.18, "prices_are_positive"),
+        (
+            "a negative close",
+            1.10,
+            1.20,
+            1.15,
+            -1.18,
+            "prices_are_positive",
+        ),
+        (
+            "an inverted bar",
+            1.30,
+            1.20,
+            1.25,
+            1.28,
+            "high_at_least_low",
+        ),
+        (
+            "a NaN high",
+            1.10,
+            f64::NAN,
+            1.15,
+            1.18,
+            "prices_are_finite",
+        ),
+        (
+            "an infinite high",
+            1.10,
+            f64::INFINITY,
+            1.15,
+            1.18,
+            "prices_are_finite",
+        ),
+    ] {
+        let err = match insert_candle(&pool, 120, low, high, open, close).await {
+            Ok(()) => panic!("{what} was accepted and must not be"),
+            Err(e) => e,
+        };
+        assert_eq!(violated_constraint(&err), expected, "{what}");
+    }
 }

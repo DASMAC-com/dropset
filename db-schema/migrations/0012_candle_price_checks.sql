@@ -1,33 +1,51 @@
 -- Price sanity CHECKs on `cex_prices`, the CEX reference candle table 0001
--- created: every price positive, and a bucket's high never below its low.
+-- created: every price finite and positive, and a bucket's high never below
+-- its low.
 --
--- **The gap these close is a silent one, which is what makes it worth a
--- migration.** A venue adapter validates what it parses, and that is precisely
--- the reach of that guard — the bytes one adapter received. Nothing downstream
--- narrows it: the store sink's write is idempotent, not validating, and every
--- consumer treats a stored bar as already-true. So a non-positive price or an
--- inverted high/low arriving by any path an adapter does not cover stores
--- without a sound, and surfaces much later and somewhere else as an impossible
--- spread or a nonsense return in an analysis — wrong information rather than
--- missing information, which is the failure shape this schema spends effort on
--- elsewhere (0009's LEFT JOIN note is the same argument about a different
--- column). A constraint is the one place the check cannot be bypassed by
--- adding a writer, which a collector-side guard cannot promise.
+-- **Why the schema rather than only the collectors.** An adapter validates
+-- what it parses, and the strength of that guard is per-adapter rather than
+-- uniform. Nothing downstream reliably narrows it either. The insert is
+-- idempotent rather than validating, and while some analytics queries do
+-- carry a defensive `close > 0` — a log-return divides by it, so they have
+-- to — that guard is per-query and partial: it covers the one column the
+-- arithmetic forces and says nothing about `low`, `high`, `open`, or the
+-- ordering. Absent a constraint every consumer has to remember its own, and
+-- a malformed bucket reaches the ones that forgot as an impossible spread or
+-- a nonsense return — wrong information rather than missing information. A
+-- constraint is the one point a new writer cannot bypass.
 --
--- **Two constraints rather than one**, because they fail for unrelated reasons
--- and the constraint name is the whole diagnostic a violation carries: a
--- non-positive price means a parse or a unit went wrong, while an inverted
--- high/low means a bar was assembled or transformed wrongly. The OANDA
--- direction flip is the live instance of the second — inverting a bar has to
--- swap high and low, since `x -> 1/x` reverses their order, so this is exactly
--- the corruption an inversion bug would produce.
+-- **Three constraints rather than one**, because they fail for unrelated
+-- reasons and the constraint name is the whole diagnostic a violation
+-- carries: a non-positive price means a parse or a unit went wrong; a
+-- non-finite one means an upstream sentinel or a division reached the column
+-- intact; an inverted high/low means a bar was assembled or transformed
+-- wrongly. A direction-flipping adapter is the obvious source of the last,
+-- since inverting a bar must swap high and low — `x -> 1/x` reverses order.
 --
 -- **`> 0`, not `>= 0`.** A zero price is not a cheap quote, it is a missing
 -- one, and a bar carrying it would compute a zero or infinite return rather
--- than declining to answer. Volume is the deliberate opposite and is left
--- unconstrained here: zero volume is legitimate and routine — two wired
--- sources publish no volume at all and their rows carry `0.0` — so the column
--- has no positivity invariant to assert.
+-- than declining to answer.
+--
+-- **`>=` for high against low, not `>`.** A flat bucket — an interval in
+-- which the rate did not move — is a routine outcome on an illiquid pair or
+-- in a quiet session, not a defect, and `>` would reject it. This is the
+-- relation most at risk of being "tightened" later by a reader who takes
+-- `high = low` for a symptom, so the choice is stated rather than inferred.
+--
+-- **Why an explicit upper bound of infinity, which looks redundant beside
+-- `> 0` and is not.** Postgres orders `NaN` as GREATER than every other
+-- float, so `NaN > 0` holds and a positivity test alone admits it. Nor does
+-- the IEEE trick of comparing a value with itself help, because this engine
+-- treats `NaN = NaN` as true. `x < 'Infinity'` is false for both `NaN` and
+-- `Infinity` and true for every finite value, so pairing it with `x > 0` is
+-- what makes these columns mean "a real price". Without it these constraint
+-- names would assert more than they check.
+--
+-- **Volume is deliberately unconstrained.** Zero volume is legitimate and
+-- routine — some sources publish none at all — so the column carries no
+-- positivity invariant. Which sources, and why, is a property of the feed
+-- roster and changes with it, so it lives in docs/data-feeds.md §8 rather
+-- than here.
 --
 -- **Deliberately NOT here: the full OHLC ordering**, that `open` and `close`
 -- each sit within `[low, high]`. It is a coherent stronger invariant and a
@@ -36,19 +54,26 @@
 -- rider on this one. Nothing here should be read as having settled it.
 --
 -- **Added VALIDATED — the default — rather than `NOT VALID`.** `NOT VALID`
--- would exempt the rows already stored, permanently: Postgres would enforce
--- the invariant on new writes only, and the exemption is not something a later
--- migration can retract for rows that have since been read and reported on. It
--- is the historical series that the pricing-verification work reads, so an
--- exemption would leave the guarantee off exactly where it is being relied on.
--- The cost of the validating form is that this migration fails if any stored
--- bar violates it — which is the correct outcome, because such a bar is the
--- corruption this constraint exists to make loud, and it should be adjudicated
--- rather than grandfathered.
+-- would enforce the invariant on new writes only, leaving the rows already
+-- stored exempt. That exemption is retractable in principle — it is what
+-- `ALTER TABLE ... VALIDATE CONSTRAINT` exists for — but only prospectively:
+-- rows read and reported on while it stood were read without the guarantee,
+-- and the historical series is what any backfilled analysis reads. So the
+-- cost of the validating form is that this migration fails if a stored bar
+-- violates it, and that is the correct outcome: such a bar is the corruption
+-- these constraints exist to make loud, and it wants adjudicating rather
+-- than grandfathering.
 ALTER TABLE cex_prices
-    ADD CONSTRAINT cex_prices_prices_positive
+    ADD CONSTRAINT prices_are_positive
         CHECK (low > 0 AND high > 0 AND open > 0 AND close > 0);
 
 ALTER TABLE cex_prices
-    ADD CONSTRAINT cex_prices_high_at_least_low
+    ADD CONSTRAINT prices_are_finite
+        CHECK (low < 'Infinity'::double precision
+            AND high < 'Infinity'::double precision
+            AND open < 'Infinity'::double precision
+            AND close < 'Infinity'::double precision);
+
+ALTER TABLE cex_prices
+    ADD CONSTRAINT high_at_least_low
         CHECK (high >= low);
