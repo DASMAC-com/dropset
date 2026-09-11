@@ -171,11 +171,12 @@ than left to be inferred:
   that publishes one lets the model see *fresh-but-uncertain*; one that does
   not can only ever read as fresh or stale. This is why the anchor leg
   distinguishes sources at all.
-- **Coverage is permanently asymmetric.** Only one of the seven demo markets
-  reaches a CEX. For five of the rest an aggregator index *is* the basis leg,
-  and the last has **no basis source at all** — its basis is pinned, so there
-  is nothing for the resolution below to compare against. That is the standing
-  condition the leg resolution is built around, not a temporary gap.
+- **Coverage is permanently asymmetric.** Only one demo market (EURC) has a
+  wired CEX basis leg. For five of the rest an aggregator index *is* the basis
+  leg, and three — MXNe, AUDD and CADC — have **no basis source at all**:
+  their basis is pinned, so there is nothing for the resolution below to
+  compare against. That is the standing condition the leg resolution is built
+  around, not a temporary gap.
 
 ### Leg resolution
 

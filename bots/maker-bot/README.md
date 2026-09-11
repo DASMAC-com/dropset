@@ -1,14 +1,38 @@
 # dropset-maker-bot
 
 The localnet market-maker for the FX-stablecoin demo. A supervisor over
-many `<token>/USDC` markets — the seven non-USD FX stablecoins in
-`config::MARKETS` (EURC, VCHF, TGBP, ZARP, MXNe, XSGD, IDRX) — quoting on
+many `<token>/USDC` markets — the non-USD FX stablecoins in
+`config::MARKETS` (EURC, VCHF, TGBP, ZARP, MXNe, XSGD, IDRX, and the MVP
+pair additions AUDD and CADC) — quoting on
 the eCLOB per [`docs/market-making.md`](../../docs/market-making.md).
 One shared leader quotes every market; each cycle the bot refreshes a
 batched, tiered price feed, composes a per-market fair mid, and drives
 the program's relative-quoting hot path (`set_reference_price`, with an
 inventory skew) and cold path (`set_liquidity_profile`) under the spec's
 inventory / peg / staleness kill switches.
+
+## `DROPSET_DATABASE_URL` is required — the bot will not start without it
+
+The intraday FX anchor is read from the shared market-data store, so the
+connection string is a **startup requirement**, not an optional
+telemetry nicety. Run the binary without it and it exits immediately
+naming the variable.
+
+Most paths supply it already and you will never notice: compose sets it
+for the containerized maker, and the TUI defaults it to the localnet
+store for the makers it spawns. The path that does notice is a bare
+`cargo run -p dropset-maker-bot` from a shell that has not exported it.
+
+```sh
+DROPSET_DATABASE_URL='postgres://dropset:dropset@127.0.0.1:5432/dropset' \
+  cargo run -p dropset-maker-bot -- --dry-run
+```
+
+Failing closed here is deliberate. The alternative is a maker that
+starts, finds no intraday anchor, and quotes the MVP pairs off a daily
+ECB fix — which is the risk the fail-closed posture exists to decline.
+The same reasoning halts a running bot when the store goes silent; see
+`HaltReason::PriceStoreUnavailable`.
 
 ## The tiered price feed
 

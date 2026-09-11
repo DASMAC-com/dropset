@@ -258,6 +258,20 @@ db-schema <-> market-data: db-schema/migrations defines cex_prices and
   half-width to NULL rather than letting the CHECK abort a batch and
   crash-loop the collector; that coercion and the constraint have to move
   together.
+market-data <-> maker-bot price read: cex_prices acquires a consumer
+  OUTSIDE market-data. bots/maker-bot/queries/fx_store_latest.sql selects
+  (source, product_id, bucket_start + granularity_secs, close) for the
+  intraday FX venues, and bots/maker-bot/src/fx_store.rs decodes those
+  four columns BY NAME at runtime, so a renamed column or alias breaks the
+  maker at run time rather than at compile time — the maker deliberately
+  takes no dependency on db-schema and asserts no schema version. Three
+  things must move together: the column names the query projects, the
+  names fx_store decodes, and the venue labels, since FX_STORE_SOURCES
+  matches cex_prices.source literally against the collectors' own SOURCE
+  constants in market-data/src/bin. The seam is also load-bearing in a way
+  the write seams are not — this read is on the price path and its absence
+  halts every market (HaltReason::PriceStoreUnavailable), so a change that
+  silently empties it stops quoting rather than degrading it.
 db-schema <-> market-data config: a THIRD kind of contract, unlike the
   two row-shape seams above — db-schema/migrations both defines AND seeds
   pyth_fx_feeds, which market-data/src/pyth_roster.rs reads at startup as

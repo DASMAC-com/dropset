@@ -72,7 +72,7 @@ pub struct MarketConfig {
     pub pyth_feed_id: &'static str,
     /// Whether [`MarketConfig::pyth_feed_id`] is published as `USD/<ccy>` and
     /// must be reciprocated into USD per `<ccy>`. Pyth quotes each cross one
-    /// way only, and for five of the seven roster currencies that is the
+    /// way only, and for six of the nine roster currencies that is the
     /// inverted direction.
     pub pyth_invert: bool,
     /// Coinbase product id for the token against USDC — the **primary** basis
@@ -108,10 +108,29 @@ pub struct MarketConfig {
     /// down. A representative spot value; a live FX anchor and basis supersede
     /// it whenever the feeds answer.
     pub static_usd: f64,
+    /// Whether this market refuses to quote without a **live tape** on its FX
+    /// leg — the MVP pairs, which are the ones intended to take real fills.
+    ///
+    /// The roster deliberately splits here. Most markets have no intraday FX
+    /// source and never will under the no-new-venues rule, so a daily ECB fix
+    /// is all they will ever have and requiring a tape would simply dark them
+    /// — and `make demo` is supposed to rest a book on every roster pair. The
+    /// MVP pairs are different: they are the ones that will quote on mainnet,
+    /// so pricing them off a day-old fix is the exact risk the fail-closed
+    /// posture exists to decline.
+    ///
+    /// This is therefore a statement about *intent*, not about coverage, which
+    /// is why it is a flag rather than something derived from whether a store
+    /// series happens to exist. A market that ought to have a tape and does
+    /// not should halt loudly, not quietly reclassify itself as thin-roster.
+    pub requires_live_tape: bool,
 }
 
-/// The demo roster — the seven non-USD FX stablecoins with ≥ $1k Solana
-/// liquidity, each quoted against USDC at $100 top-of-book. The CoinGecko ids
+/// The demo roster — nine non-USD FX stablecoins, each quoted against USDC at
+/// $100 top-of-book. Seven were chosen on ≥ $1k Solana liquidity; **AUDD and
+/// CADC are the MVP additions**, rostered because they are the pairs the first
+/// real fills are aimed at rather than because they clear that bar. The
+/// CoinGecko ids
 /// are from a by-contract lookup on each token's real mainnet mint; the
 /// CoinMarketCap ids from its `cryptocurrency/detail` record. MXNe (Real MXN)
 /// has no CoinMarketCap *coin* listing, so that tier is `None` — CMC's DEX
@@ -142,16 +161,30 @@ pub struct MarketConfig {
 /// one market has nothing to corroborate against.
 ///
 /// The Pyth feed ids are from the Hermes FX catalogue
-/// (`/v2/price_feeds?asset_type=fx`). Only EUR and GBP are published as
-/// `<ccy>/USD`; the rest are `USD/<ccy>` and carry `pyth_invert: true`.
+/// (`/v2/price_feeds?asset_type=fx`, which is still keyless even though the
+/// price reads are not). Only EUR, GBP and AUD are published as `<ccy>/USD`;
+/// the rest are `USD/<ccy>` and carry `pyth_invert: true`.
 ///
-/// **Only EURC reaches a CEX.** Coinbase lists `EURC-USDC` and Kraken lists
-/// `EURC/USD`; none of the other six tokens trades on either venue, so their
-/// basis leg has no primary tier and the CoinGecko / CoinMarketCap fallbacks
-/// carry it. That asymmetry is the roster's, not a gap in the wiring — but it
-/// does leave five markets resting their basis on one uncorroborated index
-/// reading, and MXNe (below) on none at all.
-pub const MARKETS: [MarketConfig; 7] = [
+/// **Only EURC reaches a CEX as a wired basis leg.** Coinbase lists
+/// `EURC-USDC` and Kraken lists `EURC/USD`, so EURC composes on an observed
+/// basis; five of the others reach no CEX at all, so their basis leg has no
+/// primary tier and the CoinGecko / CoinMarketCap fallbacks carry it. That
+/// asymmetry is the roster's, not a gap in the wiring — but it does leave five
+/// markets resting their basis on one uncorroborated index reading, and three
+/// (MXNe, AUDD, CADC) on a pinned basis instead.
+///
+/// **AUDD is the one deliberate omission, and it is not an oversight.**
+/// Coinbase does list `AUDD-USDC` — re-checked 2026-09-08, `online` with
+/// `trading_disabled: false`, and the market-data ticker collector rosters it
+/// again. It is left unwired here for the MVP on two grounds. First, the
+/// operator's re-scope is explicit that for the first fills the FX anchor times
+/// the 1:1 redemption peg is enough for AUDD and CADC, and only EURC uses a
+/// stored Coinbase basis. Second, the product is thinly traded, and a ticker
+/// poll returns the last print whether or not one happened recently — so a
+/// stale print aged from receipt would read fresh and *corroborate* the basis
+/// leg with a number nobody traded. Wiring it is the v2 upgrade, and it wants
+/// the publication-vs-receipt aging the FX tiers now use, not a bare ticker.
+pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "EURC",
         base_keypair_file: "keys/EURC.json",
@@ -165,6 +198,7 @@ pub const MARKETS: [MarketConfig; 7] = [
         coinmarketcap_id: Some(20641),
         pinned_basis: None,
         static_usd: 1.14,
+        requires_live_tape: true,
     },
     MarketConfig {
         symbol: "VCHF",
@@ -179,6 +213,7 @@ pub const MARKETS: [MarketConfig; 7] = [
         coinmarketcap_id: Some(24130),
         pinned_basis: None,
         static_usd: 1.235,
+        requires_live_tape: false,
     },
     MarketConfig {
         symbol: "TGBP",
@@ -193,6 +228,7 @@ pub const MARKETS: [MarketConfig; 7] = [
         coinmarketcap_id: Some(38935),
         pinned_basis: None,
         static_usd: 1.324,
+        requires_live_tape: false,
     },
     MarketConfig {
         symbol: "ZARP",
@@ -207,6 +243,7 @@ pub const MARKETS: [MarketConfig; 7] = [
         coinmarketcap_id: Some(21856),
         pinned_basis: None,
         static_usd: 0.0605,
+        requires_live_tape: false,
     },
     MarketConfig {
         symbol: "MXNe",
@@ -238,6 +275,7 @@ pub const MARKETS: [MarketConfig; 7] = [
         // wrongly imply the inner quote rests through the market.
         pinned_basis: Some(1.0),
         static_usd: 0.0573,
+        requires_live_tape: false,
     },
     MarketConfig {
         symbol: "XSGD",
@@ -252,6 +290,7 @@ pub const MARKETS: [MarketConfig; 7] = [
         coinmarketcap_id: Some(8489),
         pinned_basis: None,
         static_usd: 0.7705,
+        requires_live_tape: false,
     },
     MarketConfig {
         symbol: "IDRX",
@@ -266,6 +305,40 @@ pub const MARKETS: [MarketConfig; 7] = [
         coinmarketcap_id: Some(26732),
         pinned_basis: None,
         static_usd: 0.000056,
+        requires_live_tape: false,
+    },
+    // The two MVP pairs added beside EURC. Both quote off the FX composite
+    // alone, on a pinned 1.0 basis — see the roster note above for why each has
+    // no observed basis leg, which is a different reason in each case.
+    MarketConfig {
+        symbol: "AUDD",
+        base_keypair_file: "keys/AUDD.json",
+        base_decimals: 6,
+        currency: "AUD",
+        pyth_feed_id: "67a6f93030420c1c9e3fe37c1ab6b77966af82f995944a9fefce357a22854a80",
+        pyth_invert: false,
+        coinbase_product: None,
+        kraken_pair: None,
+        coingecko_id: None,
+        coinmarketcap_id: None,
+        pinned_basis: Some(1.0),
+        static_usd: 0.7214,
+        requires_live_tape: true,
+    },
+    MarketConfig {
+        symbol: "CADC",
+        base_keypair_file: "keys/CADC.json",
+        base_decimals: 6,
+        currency: "CAD",
+        pyth_feed_id: "3112b03a41c910ed446852aacf67118cb1bec67b2cd0b9a214c58cc0eaa2ecca",
+        pyth_invert: true,
+        coinbase_product: None,
+        kraken_pair: None,
+        coingecko_id: None,
+        coinmarketcap_id: None,
+        pinned_basis: Some(1.0),
+        static_usd: 0.7244,
+        requires_live_tape: true,
     },
 ];
 
@@ -387,6 +460,18 @@ pub struct FeedConfig {
     /// whole publication cycle. Both are keyless and batched, so the cost is one
     /// request per interval per process.
     pub fx_poll: Duration,
+    /// Market-data store poll interval — the **intraday** FX anchor.
+    ///
+    /// Matched to the collectors' own minute cadence rather than set faster:
+    /// they write one-minute buckets every 60 s, so polling harder re-reads
+    /// rows that have not changed and buys nothing but database load. Polling
+    /// much slower would be worse than it looks — this read is also the
+    /// liveness signal the halt rule turns on, so the interval is the
+    /// resolution at which a dead store can be noticed at all, and it has to
+    /// leave several attempts inside
+    /// [`crate::fx_store::MAX_STORE_SILENCE`] so one slow round trip cannot
+    /// stop every market quoting.
+    pub fx_store_poll: Duration,
     /// Pyth Hermes FX-anchor poll interval — the primary anchor tier. Hermes
     /// republishes on the order of a second, so this is the cadence at which
     /// the anchor actually moves and is polled far harder than the daily ECB
@@ -550,6 +635,7 @@ impl Default for FeedConfig {
             coingecko_poll: Duration::from_secs(60),
             coinmarketcap_poll: Duration::from_secs(60),
             fx_poll: Duration::from_secs(300),
+            fx_store_poll: Duration::from_secs(30),
             // The primaries are keyless but not rate-limit-free, and one poll
             // covers the whole roster in each case. A 5 s Hermes cadence tracks
             // the anchor at the bot's own tick rate; the CEX basis legs move

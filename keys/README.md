@@ -63,6 +63,8 @@ per-market decimal handling the devnet/mainnet promotion will:
 | `MXNe.json` | `MXNe…` | 9   | base — mock MXNe (MXN)        |
 | `XSGD.json` | `XSGD…` | 6   | base — mock XSGD (SGD)        |
 | `idrx.json` | `idrx…` | 2   | base — mock IDRX (IDR)        |
+| `AUDD.json` | `AUDD…` | 6   | base — mock AUDD (AUD)        |
+| `CADC.json` | `CADC…` | 6   | base — mock CADC (CAD)        |
 
 These are named in the bootstrap's pair roster (`tui/src/market.rs`,
 `PAIRS`) and the maker-bot's market roster (`bots/maker-bot` →

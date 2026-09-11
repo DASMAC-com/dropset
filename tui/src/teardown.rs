@@ -38,7 +38,10 @@ use solana_signer::Signer;
 /// program. Use the TUI's `Wipe` for a true clean slate.
 pub fn run(client: &RpcClient, wallet: &Keypair, log: &Logger) -> Result<String> {
     let admin = wallet.pubkey();
-    let state = accounts::poll(client, &admin, None, 0);
+    // No symbol map: this closes every market it finds, so their order is
+    // immaterial — and this runs headless (`dropset-teardown`), with no
+    // repo root to resolve the checked-in mint keypairs from anyway.
+    let state = accounts::poll(client, &admin, None, 0, &[]);
     let before = client.get_balance(&admin).unwrap_or(0);
 
     // The `rent_recipient` of every close instruction must differ from the

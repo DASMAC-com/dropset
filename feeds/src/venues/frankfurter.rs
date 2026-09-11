@@ -11,8 +11,17 @@
 //! anchor "until Pyth Hermes / OANDA land"; both have, and the role did not
 //! change — a once-a-business-day administered fix is breadth and corroboration
 //! by nature, so it must never be a live-quote lead however many streaming
-//! sources exist. OANDA in particular does not supersede it everywhere: that
-//! venue's instrument list is direction-fixed and cannot serve CAD/USD at all.
+//! sources exist. Nor does OANDA supersede it on **breadth**: that venue is
+//! rostered for a handful of majors, while this one returns the whole ECB
+//! table in a single call, so most of the roster reaches no intraday source
+//! at all and this is the only thing pricing it.
+//!
+//! That reason is deliberately not the one this comment used to give. It
+//! argued OANDA could not serve CAD/USD at all, its instrument list being
+//! direction-fixed — true when written, and false since the adapter learned
+//! to invert a reversed pair at intake. A coverage gap that one adapter
+//! change can close was never the durable argument; the difference in *kind*
+//! between a daily administered fix and a streaming venue is.
 
 use super::Quotes;
 use crate::time::parse_civil_utc;

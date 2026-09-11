@@ -861,6 +861,7 @@ impl App {
                 &self.ctx.wallet.pubkey(),
                 self.swapper.as_ref(),
                 self.selected_market,
+                &self.mint_symbols,
             );
             let log = Logger::new(self.tx.clone());
             self.bots.reap(&log);

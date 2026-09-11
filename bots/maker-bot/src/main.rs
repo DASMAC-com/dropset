@@ -29,14 +29,15 @@ use dropset_feeds::venues::{
     FrankfurterSource, KrakenSource, PythFeed, PythHermesSource,
 };
 use dropset_feeds::{
-    forward_channel, parked_source, run_until, run_until_with_metrics, HttpClient, RunConfig, Sink,
-    Source, PARKED_SOURCES,
+    connect_lazy, forward_channel, parked_source, redact_to_origin, run_until,
+    run_until_with_metrics, HttpClient, RunConfig, Sink, Source, MAX_ERROR_CHARS, PARKED_SOURCES,
 };
 use dropset_maker_bot::config::{
     BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
     USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
 };
 use dropset_maker_bot::context::Context as BotContext;
+use dropset_maker_bot::fx_store::{self, FxStoreSource};
 use dropset_maker_bot::model::fair_mid::build_legs;
 use dropset_maker_bot::quote_state::QuoteStateStore;
 use dropset_maker_bot::tasks::{
@@ -653,6 +654,61 @@ fn spawn_price_feeds(
         telemetry,
         HealthRow::Report,
     );
+    // The intraday FX anchor, read from the market-data store rather than
+    // polled from the keyed venues (see `fx_store`). Unlike telemetry, which
+    // degrades to silence when the database is absent, this one is on the
+    // price path — so a missing URL is a startup error rather than a bot that
+    // boots and then halts a few minutes later for reasons the operator has to
+    // go and diagnose. Fail-closed, but fail *legibly*.
+    let url = std::env::var(telemetry::DATABASE_URL_ENV).map_err(|_| {
+        anyhow!(
+            "{} is required: the intraday FX anchor is read from the \
+             market-data store, and the maker will not quote without it",
+            telemetry::DATABASE_URL_ENV
+        )
+    })?;
+    // Lazy, like telemetry's: connecting here would make the bot's startup
+    // wait on the database, and a connection that drops later has to be
+    // survivable anyway — the source retries on its own backoff and the
+    // silence bound is what turns a persistent failure into a halt.
+    //
+    // Built inside the runtime's context because a lazy pool still spawns its
+    // idle reaper immediately, and `tokio::spawn` panics without a handle in
+    // scope. This function is handed the runtime rather than running on it, so
+    // that handle has to be entered explicitly.
+    let pool = {
+        let _guard = rt.enter();
+        // Redacted to origin, matching the telemetry path's treatment of the
+        // identical error. The two calls take the same input and only one of
+        // them used to redact — and this is the call where a malformed URL is
+        // guaranteed to produce an error, so it is the one whose cause chain
+        // would carry the operator's password into stderr.
+        connect_lazy(&url).map_err(|e| {
+            let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
+            anyhow!(
+                "{} is not a usable connection string ({cause})",
+                telemetry::DATABASE_URL_ENV
+            )
+        })?
+    };
+    let fx_store = spawn_feed(
+        rt,
+        FxStoreSource::new(
+            "store:fx",
+            pool,
+            roster
+                .currencies
+                .iter()
+                .filter_map(|c| fx_store::fx_product_id(c))
+                .collect(),
+        ),
+        RunConfig {
+            poll_interval: cfg.fx_store_poll,
+            error_backoff: FEED_ERROR_BACKOFF,
+        },
+        telemetry,
+        HealthRow::Report,
+    );
     Ok(FeedReceivers {
         pyth,
         kraken,
@@ -661,6 +717,7 @@ fn spawn_price_feeds(
         coinmarketcap,
         frankfurter,
         erapi,
+        fx_store,
     })
 }
 
@@ -737,6 +794,64 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
             .map(|snap| snap.rates)
             .unwrap_or_default()
     };
+    // The store tier. Unlike the live path this tolerates an absent or
+    // unreachable database: a dry run is a wiring check, and reporting "no
+    // rows" is the diagnosis rather than a reason to refuse to run. The
+    // fail-closed rule governs quoting, and a dry run does not quote.
+    let fx_store_rows: Vec<_> = if drop("fx-store") {
+        Vec::new()
+    } else {
+        // Two arms, not one `.ok()` chain. Collapsing them made the dry run
+        // report "the variable is unset" when the variable was in fact set
+        // and unparseable — telling the operator the easier of the two
+        // failures while the harder one was the real state, in the one mode
+        // whose entire job is to diagnose wiring.
+        //
+        // The enter guard is why this is not a plain `and_then`: a lazy pool
+        // spawns its reaper on construction, so it has to be built inside the
+        // runtime's context (see `spawn_price_feeds`).
+        let pool = {
+            let _guard = rt.enter();
+            match std::env::var(telemetry::DATABASE_URL_ENV) {
+                Ok(url) => match connect_lazy(&url) {
+                    Ok(pool) => Some(pool),
+                    Err(e) => {
+                        let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
+                        eprintln!(
+                            "[dry-run] {} is SET but not a usable connection string \
+                             ({cause}) — the intraday FX tier is dark",
+                            telemetry::DATABASE_URL_ENV
+                        );
+                        None
+                    }
+                },
+                Err(_) => {
+                    eprintln!(
+                        "[dry-run] {} is unset — the intraday FX tier is dark, and \
+                         the live bot would refuse to start",
+                        telemetry::DATABASE_URL_ENV
+                    );
+                    None
+                }
+            }
+        };
+        match pool {
+            Some(pool) => {
+                let products = roster
+                    .currencies
+                    .iter()
+                    .filter_map(|c| fx_store::fx_product_id(c))
+                    .collect();
+                rt.block_on(FxStoreSource::new("store:fx", pool, products).latest())
+                    .unwrap_or_else(|e| {
+                        eprintln!("[dry-run] the market-data store did not answer: {e}");
+                        Vec::new()
+                    })
+            }
+            // Whichever arm produced the `None` has already said why.
+            None => Vec::new(),
+        }
+    };
     let fx = if drop("fx") {
         Default::default()
     } else {
@@ -749,14 +864,15 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     println!(
         "Tiers live: pyth {} feeds, coinbase {} products, kraken {} pairs, \
          coingecko {} ids, coinmarketcap {} ids, fx {} currencies, \
-         erapi {} currencies",
+         erapi {} currencies, fx-store {} rows",
         pyth.len(),
         coinbase.len(),
         kraken.len(),
         cg.len(),
         cmc.len(),
         fx.len(),
-        erapi.len()
+        erapi.len(),
+        fx_store_rows.len()
     );
     if !args.drop.is_empty() {
         println!("Suppressed tiers: {}", args.drop.join(", "));
@@ -781,11 +897,18 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     // health, and a pinned basis rendered as `1.0000 pinned`.
     println!(
         "\n  market      mid (USDC)    anchor         health       \
-         basis           fx sources            basis sources"
+         basis           fx sources                    basis sources"
     );
 
     let now = Duration::from_secs(0);
     let q = |v: Option<f64>| v.map(|v| Reading::new(v, now));
+    // The wall clock, for the one tier whose age the dry run computes rather
+    // than assumes: store rows carry their own publication stamp, so they can
+    // be aged truthfully where a polled tier cannot.
+    let dry_run_now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
 
     /// One leg's consensus, rendered for the dry-run table. A dry run is the
     /// wiring check, so how many sources answered and which one disagrees is
@@ -825,10 +948,35 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
             Some(conf) => Reading::with_confidence(p.value, now, conf),
             None => Reading::new(p.value, now),
         });
-        // Reference class, matching `FeedHub::legs` — the two collections must
-        // agree or a dry run stops predicting the live mid.
-        let fx_q = Candidates::none()
-            .push_trusted(SOURCE_PYTH, fx_pyth)
+        // The store's intraday tapes, then the reference class — the same
+        // order and the same designations as `FeedHub::legs`, which the two
+        // collections must agree on or a dry run stops predicting the live mid.
+        let mut fx_q = Candidates::none().push_trusted(SOURCE_PYTH, fx_pyth);
+        if let Some(product) = fx_store::fx_product_id(m.currency) {
+            for source in fx_store::FX_STORE_SOURCES {
+                // Aged honestly from the row's own publication stamp, NOT at
+                // the age-zero convention the other tiers use here. That
+                // convention is harmless for a tier whose freshness the dry
+                // run does not adjudicate, and harmful for this one: the HALT
+                // column below turns on which sources actually contribute,
+                // contribution turns on staleness, and a forced age of zero
+                // means every offered row always survives — so the dry run
+                // could never reproduce a staleness-driven halt the live bot
+                // would take. The receipt age is genuinely ~0 (these rows
+                // were just fetched); the publication age is the real signal.
+                let reading = fx_store_rows
+                    .iter()
+                    .find(|r| r.source == source && r.product_id == product)
+                    .and_then(|r| {
+                        fx_store::store_reading(r.close, r.published_at, dry_run_now_unix, now)
+                    });
+                // The same helper the live path uses. Writing the dispatch
+                // out longhand here is what made "the two collections must
+                // agree" a claim in two comments and an invariant in neither.
+                fx_q = fx_store::push_store_candidate(fx_q, source, reading);
+            }
+        }
+        let fx_q = fx_q
             .push_reference(SOURCE_FRANKFURTER, q(fx.get(m.currency).copied()))
             .push_reference(SOURCE_ERAPI, q(erapi.get(m.currency).copied()));
         // Basis leg: Coinbase token/USDC, Kraken token/USD, then the reflexive
@@ -890,8 +1038,25 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         if fair.uncertain {
             fx_col.push_str(" (wide)");
         }
+        // The fail-closed verdict, which the leg description alone cannot
+        // give. Without this the table is actively misleading in exactly the
+        // situation the halt exists for: with the store unreachable, an MVP
+        // pair still renders as "2 src, agree" off the daily references, and
+        // a reader concludes it is fine when the live bot would refuse to
+        // quote it. A dry run that gets the live decision wrong is worse
+        // than one that omits it, and this file's own rule is that the two
+        // collections must agree.
+        //
+        // Rendered on the FX column because that is the leg the guard is
+        // about, and a whole column would be blank on every healthy row.
+        // Same predicate the tick loop uses, via the same helper — a dry run
+        // that computed this independently could disagree with the live
+        // decision, which is the one thing it exists not to do.
+        if tasks::tape_shortfall_for_dry_run(m.requires_live_tape, &fair.fx_leg) {
+            fx_col = format!("HALT: no tape ({fx_col})");
+        }
         println!(
-            "  {:<10}  {:>12}  {:<13}  {:<11}  {:<14}  {:<20}  {}",
+            "  {:<10}  {:>12}  {:<13}  {:<11}  {:<14}  {:<28}  {}",
             m.symbol,
             mid,
             anchor,
@@ -1019,14 +1184,23 @@ mod tests {
     }
 
     /// The inversion flag has to travel with the feed id, not be re-derived —
-    /// five of the seven roster currencies are published as `USD/<ccy>`.
+    /// most roster currencies are published as `USD/<ccy>` and only EUR, GBP
+    /// and AUD the other way, so the direction is a per-market fact.
     #[test]
     fn pyth_feeds_carry_each_markets_own_direction() {
-        let markets = args(&["EURC", "ZARP"]).selected();
+        // AUDD and CADC are here because the doc above now names AUD as one
+        // of the three non-inverted crosses, and the two new markets are
+        // where that claim is newly true — asserting only EUR and ZAR would
+        // leave the diff's own direction claim unexercised.
+        let markets = args(&["EURC", "ZARP", "AUDD", "CADC"]).selected();
         let roster = FeedRoster::for_markets(&markets);
         let eur = roster.pyth.iter().find(|f| f.key == "EUR").unwrap();
         let zar = roster.pyth.iter().find(|f| f.key == "ZAR").unwrap();
+        let aud = roster.pyth.iter().find(|f| f.key == "AUD").unwrap();
+        let cad = roster.pyth.iter().find(|f| f.key == "CAD").unwrap();
         assert!(!eur.invert, "EUR/USD is published direct");
         assert!(zar.invert, "ZAR is published as USD/ZAR");
+        assert!(!aud.invert, "AUD/USD is published direct");
+        assert!(cad.invert, "CAD is published as USD/CAD");
     }
 }
