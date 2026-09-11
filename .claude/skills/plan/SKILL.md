@@ -842,9 +842,28 @@ file each lever it yields as a **parked lever issue**, the
 same as an implementation session — so the fold mines
 planning-session shapes too, rather than only review shapes:
 
+**COMPUTE this session's id; never list the projects
+directory to find it.** A daily verb's session id is
+deterministic — an md5 of `dropset-<kind>-<YYYYMMDD>` — so
+one call names it:
+
+```sh
+python3 .claude/tools/resolve_session.py --daily-id plan
+```
+
 ```sh
 make session-metrics SESSION=<uuid>
 ```
+
+Searching for it instead is expensive and looks reasonable:
+one planning session ran a bare long-format listing of the
+Claude projects folder to find its own transcript, at
+**≈6.0k** for that single call — its sixth-largest result, and
+≈6.4k across five such calls, making the listing that
+session's top hardening candidate by result size. The next
+bootstrap reproduced the same id by computation at near-zero
+cost. Pass `--date YYYYMMDD` for an earlier day's session;
+`housekeeping` is the other daily kind.
 
 Levers file through `.claude/tools/trim_levers.py` (probe,
 then `file` or `append-evidence`), **not** into a document —

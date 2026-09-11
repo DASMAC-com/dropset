@@ -32,6 +32,53 @@ from linear_patch import LinearPatchError  # noqa: E402
 BODY = "# Title\n\nAlpha line\n\nBeta line\n\nGamma line\n"
 
 
+class McpOpVocabularyTests(unittest.TestCase):
+    """The MCP's argument names are accepted as aliases.
+
+    Two committed producers disagreed on the shape of a `replace` — the assembler
+    emitted the MCP's `old_string`/`new_string`, this tool wanted `anchor`/`text` —
+    and the disagreement only surfaced when an assembled ops file was rejected on
+    its first op, after the fold had already been composed.
+    """
+
+    def test_a_replace_in_the_mcp_shape_applies(self):
+        out = lp.apply_ops(
+            BODY, [{"op": "replace", "old_string": "Beta line", "new_string": "Bee"}]
+        )
+        self.assertIn("Bee", out)
+        self.assertNotIn("Beta line", out)
+
+    def test_an_append_in_the_mcp_shape_applies(self):
+        self.assertEqual(
+            lp.apply_ops("mid", [{"op": "append", "new_string": "-end"}]), "mid-end"
+        )
+
+    def test_a_replace_range_in_the_mcp_shape_applies(self):
+        out = lp.apply_ops(
+            BODY,
+            [
+                {
+                    "op": "replace_range",
+                    "from": "Alpha",
+                    "to": "Gamma",
+                    "new_string": "Z",
+                }
+            ],
+        )
+        self.assertIn("Z", out)
+
+    def test_this_tools_own_vocabulary_is_untouched(self):
+        op = {"op": "append", "text": "x"}
+        self.assertIs(lp._normalize_op_keys(op), op)
+
+    def test_an_explicit_key_wins_over_its_alias(self):
+        # A mixed op must not have its explicit key silently overridden.
+        got = lp._normalize_op_keys(
+            {"op": "append", "text": "explicit", "new_string": "alias"}
+        )
+        self.assertEqual(got["text"], "explicit")
+
+
 class ApplyOpsTests(unittest.TestCase):
     def test_append_and_prepend(self):
         self.assertEqual(

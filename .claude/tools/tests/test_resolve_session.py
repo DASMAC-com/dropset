@@ -297,5 +297,56 @@ class CliTests(unittest.TestCase):
         self.assertIn("error:", err.getvalue())
 
 
+class DailySessionIdTests(unittest.TestCase):
+    """The daily id is computed, never searched.
+
+    A planning session that lists the Claude projects directory to find its own
+    transcript pays ≈6.0k for one call. The id is an md5 of the launcher's own
+    seed, so it is a one-line computation.
+    """
+
+    #: Pinned against `md5 -qs 'dropset-plan-20260910'`, run directly. This is the
+    #: parity that matters: `_ds_daily_sid` in `.claude/shell/init.zsh` is what
+    #: actually names the session at launch, so a drift here means the tool
+    #: confidently reports an id no session ever had.
+    def test_the_seed_matches_the_shell_launcher_byte_for_byte(self):
+        self.assertEqual(
+            rs.daily_session_id("plan", "20260910"),
+            "90195a08-2348-adba-e976-f4b4a7aa6bf9",
+        )
+
+    def test_the_shape_is_a_uuid(self):
+        got = rs.daily_session_id("housekeeping", "20260101")
+        self.assertRegex(got, r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
+
+    def test_the_kind_and_the_date_both_change_the_id(self):
+        # The kind keeps a day's planning and housekeeping sessions apart; the
+        # full date keeps `plan-18` in August from colliding with September's.
+        base = rs.daily_session_id("plan", "20260910")
+        self.assertNotEqual(base, rs.daily_session_id("housekeeping", "20260910"))
+        self.assertNotEqual(base, rs.daily_session_id("plan", "20260911"))
+
+    def test_the_cli_prints_just_the_id(self):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = rs.run(
+                ["resolve_session.py", "--daily-id", "plan", "--date", "20260910"]
+            )
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().strip(), "90195a08-2348-adba-e976-f4b4a7aa6bf9")
+
+    def test_daily_id_needs_no_tag(self):
+        # The two modes are independent; requiring --tag here would defeat it.
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = rs.run(["resolve_session.py", "--daily-id", "plan"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.getvalue().strip())
+
+    def test_the_resolution_path_still_requires_a_tag(self):
+        with self.assertRaises(rs.ResolveSessionError):
+            rs.run(["resolve_session.py"])
+
+
 if __name__ == "__main__":
     unittest.main()
