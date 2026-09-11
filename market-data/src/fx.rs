@@ -29,15 +29,12 @@ pub struct FxDefaults {
     /// The roster this collector polls when `PRODUCT_IDS` is unset, as a
     /// canonical spec like `AUD-USD,EUR-USD`.
     ///
-    /// **Per-venue, and owned by the binary** — the same place the five
-    /// non-FX collectors keep their `DEFAULT_PRODUCTS`. This module used to
-    /// hold one shared fallback for all three FX venues, narrowed to the
-    /// single pair every one of them quotes; the cost was that
-    /// `market-data/tests/roster_compose_agreement.rs` could only pin the
-    /// three against compose by **containment**, which for a one-pair
-    /// constant reduces to "the compose roster contains `AUD-USD`" and left
-    /// those rosters effectively unpinned. Giving each venue its own makes
-    /// that check an exact match, like every other service's.
+    /// **Per-venue, and owned by the service that polls it** — the way the
+    /// five non-FX collectors already keep their `DEFAULT_PRODUCTS`. One
+    /// constant per service is what lets
+    /// `market-data/tests/roster_compose_agreement.rs` pin each against its
+    /// own compose default by exact match; that file's header records what
+    /// the shared fallback this replaced cost.
     ///
     /// A venue's roster is not derivable from another's: OANDA's v20
     /// instrument list is **direction-fixed**, so which pairs it can serve

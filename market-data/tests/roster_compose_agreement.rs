@@ -21,8 +21,9 @@
 //! own silence watches are written to make visible and cannot here.
 //!
 //! **One mode: every service must match compose exactly.** All eight carry
-//! their own `DEFAULT_PRODUCTS`, in the binary that polls the roster, so the
-//! property is equality for all of them.
+//! their own `DEFAULT_PRODUCTS` — seven in the binary that polls the roster,
+//! coinbase's in `market-data/src/config.rs` — so the property is equality
+//! for all of them.
 //!
 //! **This file used to have a second, much weaker mode**, and what it cost is
 //! worth recording. The three keyed FX venues shared one

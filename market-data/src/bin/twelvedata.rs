@@ -36,10 +36,10 @@ const USABLE_DAILY_REQUESTS: u64 = 600;
 /// `TWELVEDATA_PRODUCT_IDS` falls through to the shared `FX_PRODUCT_IDS`.
 /// `market-data/tests/roster_compose_agreement.rs` pins the two together.
 ///
-/// Written out here rather than shared with `alphavantage`, which resolves to
-/// the same four pairs today: each collector spends its own quota, so a roster
-/// is a per-venue cost decision (see `USABLE_DAILY_REQUESTS` above), and the
-/// exact-match check wants one constant per service to compare against.
+/// Its own constant rather than a shared one, because this venue's cost model
+/// is its own — 800 credits a day, of which `USABLE_DAILY_REQUESTS` above is
+/// the share this collector spends — and because the exact-match check wants
+/// one constant per service to compare against.
 const DEFAULT_PRODUCTS: &str = "AUD-USD,CAD-USD,EUR-USD,GBP-USD";
 
 const DEFAULTS: FxDefaults = FxDefaults {

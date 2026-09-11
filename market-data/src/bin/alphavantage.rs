@@ -51,8 +51,13 @@ const USABLE_DAILY_REQUESTS: u64 = 20;
 /// This is the venue where roster width bites hardest: the free tier allows 25
 /// requests **a day** for the whole account and every restart re-polls the
 /// whole roster, so each added pair is a real share of
-/// `USABLE_DAILY_REQUESTS`. Its own constant, so widening another vendor's
-/// roster cannot reach this budget.
+/// `USABLE_DAILY_REQUESTS`.
+///
+/// Note what having its own constant does **not** buy, since the quota makes
+/// it tempting to assume otherwise: under compose this service still chains to
+/// the shared `FX_PRODUCT_IDS`, so widening that to suit another vendor does
+/// reach this budget. The decoupling here applies to the lone-binary fallback
+/// — the one path on which the daily quota is not what binds.
 const DEFAULT_PRODUCTS: &str = "AUD-USD,CAD-USD,EUR-USD,GBP-USD";
 
 const DEFAULTS: FxDefaults = FxDefaults {
