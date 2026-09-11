@@ -811,6 +811,13 @@ async fn the_instruments_view_derives_a_class_from_the_legs() {
         ("probe", "EURC-EUR"),
         ("probe", "SOL-USDC"),
         ("probe", "ZZZ-USDC"),
+        // The CAD-stablecoin tripwire, seeded by the QCAD currency-kind
+        // migration -- named rather than numbered, because a migration number
+        // is not stable until it merges and this one has already been
+        // renumbered once. Registered here so the
+        // assertion below reads a real roster product rather than a fixture:
+        // losing that seed row is a silent class change, not a missing row.
+        ("probe", "QCAD-USD"),
         // The same product under a SECOND source. The dimension must still
         // report exactly one row for it: the view groups by product_id, and
         // that collapse is what stops four collectors polling EUR-USD from
@@ -858,6 +865,14 @@ async fn the_instruments_view_derives_a_class_from_the_legs() {
         // silent-failure shape as a candle field map that fails to a flat
         // line.
         ("ZZZ-USDC", "ZZZ", "USDC", "unclassified"),
+        // A stablecoin against a sovereign currency, so it falls to the
+        // one-of-each arm. This is the assertion that pins that seed: with
+        // QCAD unseeded the class is `unclassified`, which is not merely a
+        // label — the liveness view picks its staleness bound by class, so the
+        // unclassified bucket holds the roster's tightest-cadence source to the
+        // loosest silence the schema allows. The pair whose entire job is to
+        // notice a peg drifting would then be the one able to go dark unnoticed.
+        ("QCAD-USD", "QCAD", "USD", "peg-pair"),
     ] {
         let row: (String, String, String) = sqlx::query_as(
             "SELECT base, quote, asset_class FROM instruments WHERE product_id = $1",
@@ -899,7 +914,7 @@ async fn liveness_picks_its_staleness_bound_by_asset_class() {
     // `72 -> 96` both survive it. The first of those matters: 24h sits inside
     // the 24-27h publication gap this view explicitly budgets for, so a
     // tightening regression there would be silent.
-    let fixtures: [(&str, &str, Option<i64>); 7] = [
+    let fixtures: [(&str, &str, Option<i64>); 8] = [
         // fx-pair quiet 60h: inside the 72h session bound, so live. This is the
         // weekend case a flat 48h bound gets wrong for every FX pair.
         ("probe", "EUR-USD", Some(60)),
@@ -917,6 +932,14 @@ async fn liveness_picks_its_staleness_bound_by_asset_class() {
         // exercised the cross-source collapse before.
         ("stale-src", "CAD-USD", Some(80)),
         ("fresh-src", "CAD-USD", Some(30)),
+        // peg-pair quiet 60h: past 48h, so stale. The third class had no
+        // fixture at all, which left the tightest bound asserted for
+        // stablecoin pairs and merely ASSUMED for peg pairs — and the
+        // CAD-stablecoin tripwire is a peg pair whose whole value is being
+        // noticed when it goes quiet. If peg-pair ever drifted onto the 72h
+        // bound this reads live and fails here, rather than silently giving a
+        // 15s-cadence tripwire three days of slack.
+        ("probe", "QCAD-USD", Some(60)),
         // Registered, never collected.
         ("probe", "GBP-USD", None),
     ];
@@ -956,6 +979,11 @@ async fn liveness_picks_its_staleness_bound_by_asset_class() {
         ("EURC-USDC", "stablecoin-pair", false, true),
         ("USDT-USDC", "stablecoin-pair", true, true),
         ("CAD-USD", "fx-pair", true, true),
+        // The peg-pair bound, which the dashboards spec's 48h claim for this
+        // exact product rests on. Same 60h silence as EUR-USD above, opposite
+        // verdict — that contrast is what pins peg-pair to the tighter bound
+        // rather than to the FX session one.
+        ("QCAD-USD", "peg-pair", false, true),
         // Not live, and carrying no timestamp rather than a zero that would
         // render as 1970 on any panel formatting it as a time.
         ("GBP-USD", "fx-pair", false, false),

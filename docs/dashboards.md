@@ -87,6 +87,25 @@ cannot silently diverge. Today only the registry-driven coverage panel
 does; the rest query the measurement tables directly, which is part of
 what §8 item 1 is about.
 
+**The bound is chosen by asset class, so an unseeded currency silently
+gets the loosest one.** The venue column above is a summary; what
+actually decides is the pair's class, and a pair with an unseeded leg
+classes as `unclassified` and takes the fallback. That bit this table's
+own QCAD row: `QCAD` was missing from the `currency_kinds` seed, so the
+tripwire was held to a 72 h silence rather than the 48 h stated here — it
+could have been dark for three days and still read live. Against the
+15 s cadence **this table records** for that row, that is four orders of
+magnitude of slack; the cadence figure is the table's own claim rather
+than a measurement, because no cadence or poll interval is recorded
+anywhere in the schema — a fact worth knowing before citing one.
+
+Seeding the leg lands `QCAD-USD` in `peg-pair`, which is the right
+class for the right reason rather than merely a tighter number: that
+class exists for pairs trading at ~1.0 where only the deviation is
+interesting, which is exactly what §3.1 watches. Read this as the
+general hazard rather than as one fixed row — **a class-derived bound
+means a missing seed is a silent liveness change**, and the roster grows.
+
 ### Cadence is not interchangeable with freshness
 
 A daily source is not a slow real-time source; it is a different kind
@@ -113,14 +132,47 @@ fresh.
 
 ## 3. Redundancy — the criterion the maker actually needs
 
-The maker must keep quoting at a **100 bps spread with any one or two
-venues dark**. The dashboard shows this *directly*, not by implication:
+The maker quotes at a **100 bps top-of-book spread**, and it quotes a
+pair while that pair has **one live trusted intraday tape**, halting at
+zero. Those are two separate commitments and only the second one moved:
+the 100 bps figure is ratified independently (§8 item 11) and
+`docs/market-making.md` is where it is structural — 50 bps each side,
+with a worked inventory table. **Do not read the 2026-09-10 criterion
+ruling as touching the spread**, which is the mistake this paragraph
+exists to prevent: an earlier draft of this section deleted the spread
+commitment along with the discredited redundancy clause, on the
+reasoning that the ruling had replaced the sentence containing both. It
+had not — it replaced one clause of it, and §8 item 11 was left pointing
+at a figure §3 no longer stated.
 
-> **live venues per pair, against the minimum that pair needs.**
+The dashboard shows the criterion *directly*, not by implication:
 
-Not "sources configured". Not a row count. The number that answers
-"can we still quote if OANDA drops right now". A pair at or below its
-minimum is the loudest thing on the page.
+> **per pair: is a trusted intraday tape live, and how much margin is
+> behind it.**
+
+Not "sources configured". Not a row count. Not an average. The number
+that answers "can we quote this pair at all right now". A pair at zero
+is the loudest thing on the page.
+
+**Ruled by the operator, 2026-09-10, and this section previously stated
+the criterion wrongly.** It required quoting "with any one or two venues
+dark" and then asserted that CAD/USD's *two* intraday sources satisfied
+it — two sources with two dark leaves none, so the section contradicted
+itself and no panel could implement both halves. The ruled criterion is
+the weaker and more honest one: **one** live trusted tape, halt on zero.
+
+Three parts of the ruling that change how this is read:
+
+- **OANDA is the source believable alone**, per candidate primacy — it
+  is §2's anchor, treated as truth. A second intraday source is
+  **margin**, not a requirement.
+- **A daily reference alone does not clear the bar.** This is §2's
+  cadence rule as a quoting gate rather than a display note: three daily
+  sources carrying a pair do not make it quotable.
+- **Initial mainnet posture is weekday-only quoting**, from the
+  operator's laptop. So a weekend with no live tape is the expected
+  state rather than a halt to investigate — which is §4's
+  weekend-is-not-a-fault rule reaching the quoting path too.
 
 **CAD/USD was the thin one, and it is the reason the panel exists.**
 Measured 2026-09-08: OANDA's v20 instrument list is direction-fixed and
@@ -131,15 +183,25 @@ carry it, but daily — breadth, not a live-quote input, per §2.
 
 *Closed.* The OANDA adapter now inverts a reversed pair **at intake**:
 it fetches `USD_CAD` and flips each candle before the sink, high and
-low included, since inverting reverses their order. So CAD/USD has two
-intraday sources and meets this section's "any one or two venues dark"
-criterion at intraday cadence, like the other two MVP pairs.
+low included, since inverting reverses their order. So CAD/USD carries
+the trusted tape itself rather than resting on Twelve Data, with a
+second intraday source as margin — the same shape as the other two MVP
+anchors. Measured 2026-09-10: OANDA's CAD/USD runs about a minute behind
+and agrees with Twelve Data to within a few parts in 10^5. **Read that
+as the claim, not the levels** — the rate moves, so a quoted pair of
+closes would be a spot reading masquerading as a constant, and the
+durable fact is the agreement magnitude and the lag. Agreement at that
+scale is also what shows the intake inversion is the right way up rather
+than off by a reciprocal, which coverage alone cannot tell you: a
+reciprocal error still produces a full, fresh, plausible series.
 
 The panel is not retired by that, and this episode is the argument for
-it: the criterion is met by a **count**, and the count fell to one
-without a single feed failing — a mapping fact, invisible to every
-staleness bound in §2. So it must still render the per-pair minimum
-rather than average it away.
+it: what fell to one was a **count**, and it fell without a single feed
+failing — a mapping fact, invisible to every staleness bound in §2. Under
+the ruled criterion the stake is higher rather than lower, because the
+margin is what absorbed it: had the inversion not landed, CAD/USD's only
+intraday source would have been one the ruling does not consider
+believable alone.
 
 **Spreads are stated in bps here and everywhere, never in pips.** A pip
 is a fixed absolute increment, so what it is *worth* in relative terms
@@ -253,8 +315,19 @@ One sentence each; if a panel needs more, the panel is doing two jobs.
 Sources land in **two tiers by storage**, and this is the seam every
 visibility bug so far has fallen through. Candle venues write
 `cex_prices`; tick venues write `spot_ticks`. Today the tick-only class
-is **Kraken, er-api and Pyth** — and it grows, so no panel may assume
-it away.
+is **Kraken, er-api, Frankfurter and Pyth** — and it grows, so no panel
+may assume it away.
+
+**Frankfurter joined that class when it was wired, and this sentence
+lagged it** — the "it grows" prediction coming true, found by reading the
+store rather than by reasoning. Note which way the drift ran: the
+`Source` variable's own description already named Frankfurter, so the
+JSON was right and the prose was the stale side. That is the expected
+direction, because a panel is exercised every time someone loads the
+dashboard and a paragraph never is, and it is the reason to check this
+list against the store rather than against memory. `coinbase` is the one
+source in **both** tiers, so the tier is a property of the row's table,
+never of the source label.
 
 The rule: **a panel whose name says "by source" must cover both
 tables, or its name must say which tier it covers.** A query over
@@ -297,22 +370,51 @@ item 3 outright and the naming half of item 1. The four roster changes
 together in the following feeds PR, deliberately, so the dashboard is
 arranged once against a complete feed set rather than twice. That PR
 also settled item 11, on an operator ruling rather than by building
-anything. Items 6, 8, 10 and 12, and the selector half of item 1,
-remain open with no owner yet; each is a *rendering* defect rather than
-a missing feed, which is why the feed work did not touch them. (Item 12
-was missing from this list before — the omission predates the feeds PR,
-and it is exactly the rendering class the sentence describes.)
+anything. Items 6, 8, 10 and 12 remain open with no owner yet; each is a
+*rendering* defect rather than a missing feed, which is why the feed work
+did not touch them. (Item 12 was missing from this list before — the
+omission predates the feeds PR, and it is exactly the rendering class the
+sentence describes.)
 
-1. **A tick-only venue is still unreachable in the selector.** The
-   *naming* half of this is closed: `Candle rows per minute by source`
-   and `Candle coverage` now say which tier they cover, which is the
-   second remedy §6.1 allows. What remains open is the selector —
-   `var-candle-source` is `SELECT DISTINCT source FROM cex_prices`, so
-   a tick-only venue (**Kraken**, **er-api**, **Pyth**) can never be
-   *selected* at all. The registry-driven coverage panel is the model
-   for the fix: populate selectors from the registry, which knows every
-   source by construction. Making the two candle panels read across
-   both tables is the fuller remedy and remains open too.
+**The feed-verification PR added items 13 to 17 and retired item 1.**
+Named for what it did rather than for the issue it sits under: the
+attended walkthrough that issue is titled for was deliberately deferred
+to a follow-up, so do not read these items as walkthrough results. It
+closed
+13 by building the panel and 2's QCAD half by seeding the currency kind;
+14 and 15 record what building 13 taught, one of them a defect in this
+document's own arithmetic. Items 16 and 17 are held deliberately — they
+are inputs to the per-panel adjudication rather than work to do — and 17
+is where the ~10 chart cap gets resolved. Two of these came from
+*reading the store and asking whether the spec's claims were true*,
+rather than from checking the JSON against the spec: item 1 was a fixed
+defect still listed as open, and item 13 a requirement no item mentioned.
+Both directions of drift are real, so both checks are worth running.
+
+1. **A tick-only venue is still unreachable in the selector.** *This
+   item was overtaken and its remaining half was mis-stated; read the
+   correction rather than the claim.* The *naming* half closed as
+   recorded: `Candle rows per minute by source` and `Candle coverage`
+   say which tier they cover, the second remedy §6.1 allows.
+
+   The selector half is **not** open in the form written here. `Source`
+   — the multi-select the cross-tier panels read — is already
+   `SELECT DISTINCT source FROM instrument_registry`, so a tick-only
+   venue *is* selectable, and `Price by source` unions both tables and
+   shows it. What remains measurement-derived is `var-candle-source`
+   alone (`SELECT DISTINCT source FROM cex_prices`), and that one is
+   **deliberate rather than defective**: it feeds only the OHLC panel,
+   which reads `cex_prices`, so offering Kraken there would buy a
+   guaranteed-empty chart — trading an unreachable venue for an
+   ambiguous blank, which §4 likes even less.
+
+   Two things worth keeping from the error, since the wrong half is the
+   instructive one. The claim was *verified against the store rather
+   than re-read from the JSON*, which is how a fixed defect stayed on a
+   punch list. And "populate selectors from the registry" is a rule
+   about **selectors whose panels can show every tier**, not a rule
+   about every selector; stated without that bound it argues for a
+   change that makes the dashboard worse.
 
 1. **CAD/USD was not collected at all** until 2026-09-07, so §1's
    mandatory anchor was missing for CADC. *Closed, with a caveat worth
@@ -419,7 +521,17 @@ and it is exactly the rendering class the sentence describes.)
    MVP top-of-book spread: `docs/market-making.md` is current and its
    figure is structural there (50 bps each side, plus a worked
    inventory table), while §3's lean figure was the stale side. §3 now
-   states 100 bps, which is what sizes its redundancy panel.
+   states 100 bps.
+
+   **The clause that used to close this item — "which is what sizes its
+   redundancy panel" — is retired**, and it is worth saying why rather
+   than deleting it silently. It was true only under the
+   one-or-two-venues-dark reading, where the spread and the redundancy
+   count were one requirement; the 2026-09-10 ruling separated them, and
+   the shipped panel contains no bps and nothing derived from the spread.
+   Since §3 sends readers here as the spread figure's authority, leaving
+   the clause would have re-coupled the two things §3 now tells them to
+   keep apart.
 
    The same ruling settled the **unit**: bps everywhere, never pips —
    see the note in §3 for why a level-drifting increment is the wrong
@@ -438,3 +550,82 @@ and it is exactly the rendering class the sentence describes.)
    "No data", indistinguishable from a broken query. This is §4's rule
    with nothing implementing it, and it is the generalization of the
    item above.
+
+1. **§3's redundancy panel did not exist**, and no item on this list
+   said so. *Closed — `Live venues per pair` is now built.* §3 claimed
+   the dashboard shows the criterion "directly, not by implication" and
+   §5 listed the panel; neither was true, and the gap survived twelve
+   punch-list items because every *individual* panel matched its own
+   description. What no reading of the JSON catches is a panel that is
+   absent, so the check has to run the other way — from the spec's
+   claims to the JSON — which is the lens this list was missing.
+
+1. **Pooling cadences would have overstated redundancy 2.5×.** Recorded
+   because the wrong version was built first and the live data caught
+   it. Every FX anchor reads five live sources and only **two** are
+   intraday, so the pooled count answers "how many venues carry this
+   pair" when §3 asks "how many could quote it right now".
+
+   The first fix split the two on **recency**, which is wrong in a way
+   that reads as right: a daily venue is genuinely fresh for the hour
+   after it publishes, so er-api was promoted into the quotable count
+   once a day — the exact cadence-versus-freshness conflation of §2,
+   reintroduced by the panel built to respect it.
+
+   The second fix counted readings over a six-hour window, and **that
+   one was worse, because it failed open.** A genuinely intraday venue
+   down longer than the window has no readings in it, so it stopped
+   counting as intraday and moved into the *daily* population — while
+   `instrument_source_liveness` still called it live, that bound being
+   48–72 h. The panel therefore looked **healthier the longer the outage
+   ran**, which is the one direction a liveness panel must never fail.
+   Verified against the store: a source can be `is_live` with zero
+   readings in six hours.
+
+   The shipped version has **no cadence classifier at all**. Under the
+   ruled criterion it needs none — cadence only ever mattered as a proxy
+   for "could this price a quote right now", and a *designated* tape plus
+   a recency test answers that directly and fails closed. The general
+   lesson is the one that survives the specific panel: **a classifier
+   built from the same signal an outage suppresses will always
+   misclassify the outage.** Both wrong versions read as careful; only
+   running them against a store that had a 24-hour-old live source
+   distinguished them.
+
+1. **§3's own arithmetic did not add up.** *Closed by operator ruling,
+   2026-09-10.* §3 required quoting with "any one or two venues dark"
+   and then asserted CAD/USD's **two** intraday sources met it — two
+   sources with two dark leaves none, so the section contradicted itself
+   and no panel could implement both halves. The ruled criterion is
+   **one live trusted intraday tape, halt on zero**, with a second
+   intraday source as margin; a daily reference alone does not clear it.
+   §3 now states that.
+
+   Worth keeping about the shape of this one: it was found by *building
+   the panel*, not by reading the section. The contradiction had sat in
+   prose through several revisions because prose can hold both halves
+   comfortably — it is only when something has to compute a threshold
+   that the two stop being compatible. An unimplementable requirement
+   reads as a fine requirement until someone implements it.
+
+1. **Two panels the operator could not parse.** Recorded as observed,
+   not diagnosed, and deliberately not redesigned here — they are inputs
+   to the commissioned per-panel adjudication, which will rule on
+   keep/cut/merge/rename against the question each panel answers.
+
+   - `Feed cursor age (wall clock)` renders as 12–15 small unlabeled
+     boxes with no way to tell which feed each one is.
+   - `Fair price over its sources` versus `Fusion weight by source`
+     reads as an unclear distinction between the two.
+
+1. **The rendered-chart budget is already over, before the reserved
+   panels land.** §5's "about ten, a hard constraint" was 12 before this
+   PR: ten panels, of which nine render one chart each and the OHLC panel
+   repeats over the three MVP anchors (9 + 3). The redundancy panel added
+   here makes eleven panels and 13 rendered charts. The pricing-path work
+   reserves three more readings, all of which read an estimator table that
+   does not exist on `main` yet. Note the two rules are in genuine
+   tension rather than merely unmet: §1 requires every per-pair panel to
+   show all three anchors, so the repeat that breaches the cap is the
+   same rule that §1 mandates. Resolving that is the adjudication's job,
+   which is why the layout iteration is held rather than done here.

@@ -1,0 +1,41 @@
+-- Seed QCAD's currency kind, which `0009_instruments.sql` left out.
+--
+-- QCAD is a Canadian-dollar stablecoin, and that is not derivable from the
+-- string — which is the whole reason `currency_kinds` exists as hand-maintained
+-- reference data rather than a rule. This is a one-row widening of that seed,
+-- nothing more.
+--
+-- WHY IT MATTERS MORE THAN A LABEL. `instruments` left-joins both legs to
+-- `currency_kinds`, so an unseeded leg yields `asset_class = 'unclassified'`
+-- rather than dropping the product — deliberate, and 0009 says so. But
+-- `instrument_source_liveness` chooses its staleness bound *by class*, and the
+-- unclassified bucket takes the loosest one. So while QCAD-USD sat unseeded it
+-- was held to the longest silence the schema allows, regardless of how often
+-- its source is actually polled.
+--
+-- Deliberately no cadence figure here. The runner records a checksum of this
+-- file's raw bytes once applied, so a roster-dependent number written into it
+-- could never be corrected -- and no cadence or poll interval is in the schema
+-- anyway, which makes any such figure a claim about configuration that the
+-- database cannot corroborate. `docs/dashboards.md` is the mutable home for
+-- it.
+--
+-- Holding it to the loosest bound inverts the one thing the dashboard exists
+-- to prevent: QCAD-USD is the CAD-stablecoin tripwire, whose only job is to
+-- notice a peg drifting. A
+-- tripwire on the loosest bound can be dark for days and still read live, which
+-- is a no-data-reads-as-healthy failure on the panel specifically built to
+-- catch a regime change.
+--
+-- Seeding the leg lands QCAD-USD in `peg-pair` — a stablecoin against a
+-- sovereign currency falls to the view's one-of-each arm — and that is the
+-- right class for the right reason, not merely a tighter bound. The peg class
+-- exists because such a pair trades at ~1.0 and the only interesting thing
+-- about it is the deviation, which is exactly and only what this tripwire
+-- watches.
+--
+-- A plain INSERT rather than an upsert, matching 0006 and 0009: the desired end
+-- state is one row, and a pre-existing QCAD row would mean somebody wrote
+-- reference data by hand, which is worth failing on rather than absorbing.
+INSERT INTO currency_kinds (currency, kind) VALUES
+    ('QCAD', 'stablecoin');
