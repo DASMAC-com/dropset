@@ -358,6 +358,22 @@ push liveness (feeds <-> maker-bot <-> db-schema <-> grafana): a FOUR
   dropset_ro, so weakening either call site is a disclosure. Note the
   0003 and 0008 migration comments predate that and still describe
   tick_error as taking the query-only sanitize_error.
+feeds <-> ci-infra: which sources are deliberately NOT running exists
+  twice — as feeds/src/parked.rs PARKED_SOURCES (bare venue token, date,
+  reason) and as the compose profile that holds the service out of the
+  default bring-up (infra/localnet/docker-compose.yml profiles:, plus the
+  Makefile's KEYLESS_SERVICES / KEYED_SERVICES / PYTH_SERVICES lists).
+  Neither derives the other: compose cannot read a Rust constant and the
+  constant cannot read a file the binary is not deployed with. Held by
+  feeds/tests/parked_compose_agreement.rs, which fails if an entry claims
+  a source is parked while compose starts it — one direction only: a new
+  opt-in SOURCE added without a PARKED_SOURCES entry is NOT caught, since
+  "behind a profile" and "parked" genuinely differ (the keyed FX venues
+  sit behind fx and are expected to run). The registry-side counterpart
+  of this seam is absent by design, not by omission: instrument_registry
+  is written only by a RUNNING collector, so a parked source can never
+  write the row that would say it is parked, and no consumer of the
+  parked set can reach it from SQL.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit
