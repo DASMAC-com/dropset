@@ -138,7 +138,7 @@
           "refId": "A"
         }
       ],
-      "title": "Price \u2014 $venue_product on $venue_source (${granularity}s candles)",
+      "title": "Price \u2014 ${venue_product} on ${venue_source} (${granularity}s candles)",
       "type": "candlestick"
     },
     {
@@ -337,7 +337,7 @@
           "refId": "A"
         }
       ],
-      "title": "Candle coverage (all time, window $coverage_mins min)",
+      "title": "Candle coverage (all time, window ${coverage_mins} min)",
       "type": "table"
     },
     {
@@ -578,7 +578,7 @@
           "refId": "A"
         }
       ],
-      "title": "Cross-pair index \u2014 $currency pairs on $venue_source (first bar = 100)",
+      "title": "Cross-pair index \u2014 ${currency} pairs on ${venue_source} (first bar = 100)",
       "type": "timeseries"
     }
   ],

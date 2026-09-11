@@ -854,7 +854,7 @@
           "refId": "A"
         }
       ],
-      "title": "Candle coverage (all time, window $coverage_mins min)",
+      "title": "Candle coverage (all time, window ${coverage_mins} min)",
       "type": "table"
     },
     {
@@ -1025,7 +1025,7 @@
           "refId": "A"
         }
       ],
-      "title": "Tick coverage (last $coverage_mins min)",
+      "title": "Tick coverage (last ${coverage_mins} min)",
       "type": "table"
     },
     {

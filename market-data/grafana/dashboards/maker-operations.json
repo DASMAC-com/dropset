@@ -165,7 +165,7 @@
           "refId": "B"
         }
       ],
-      "title": "Quotes vs fair value \u2014 $market",
+      "title": "Quotes vs fair value \u2014 ${market}",
       "type": "timeseries"
     },
     {
@@ -543,7 +543,7 @@
           "refId": "A"
         }
       ],
-      "title": "Tick outcome \u2014 $market",
+      "title": "Tick outcome \u2014 ${market}",
       "type": "state-timeline"
     },
     {
@@ -645,7 +645,7 @@
           "refId": "A"
         }
       ],
-      "title": "Composition regime / health \u2014 $market",
+      "title": "Composition regime / health \u2014 ${market}",
       "type": "state-timeline"
     },
     {
@@ -734,7 +734,7 @@
           "refId": "A"
         }
       ],
-      "title": "Inventory \u2014 $market",
+      "title": "Inventory \u2014 ${market}",
       "type": "timeseries"
     },
     {
@@ -823,7 +823,7 @@
           "refId": "A"
         }
       ],
-      "title": "Reference skew \u2014 $market",
+      "title": "Reference skew \u2014 ${market}",
       "type": "timeseries"
     },
     {
@@ -912,7 +912,7 @@
           "refId": "A"
         }
       ],
-      "title": "Feed staleness \u2014 $market",
+      "title": "Feed staleness \u2014 ${market}",
       "type": "timeseries"
     },
     {
@@ -1001,7 +1001,7 @@
           "refId": "A"
         }
       ],
-      "title": "Feed confidence \u2014 $market",
+      "title": "Feed confidence \u2014 ${market}",
       "type": "timeseries"
     },
     {
