@@ -379,6 +379,7 @@ fn assemble(raw: Vec<RawCandle>, next_start: i64, end: i64, invert: bool) -> Vec
             decode(&c)
                 .inspect_err(|err| {
                     tracing::warn!(
+                        venue = "oanda",
                         time = %c.time,
                         error = %err,
                         "dropping a candle that could not be decoded"
@@ -391,6 +392,7 @@ fn assemble(raw: Vec<RawCandle>, next_start: i64, end: i64, invert: bool) -> Vec
                 invert_candle(&c)
                     .inspect_err(|err| {
                         tracing::warn!(
+                            venue = "oanda",
                             bucket_start = c.bucket_start,
                             error = %err,
                             "dropping a candle that could not be inverted"
@@ -402,6 +404,29 @@ fn assemble(raw: Vec<RawCandle>, next_start: i64, end: i64, invert: bool) -> Vec
             }
         })
         .filter(|c| c.bucket_start >= next_start && c.bucket_start < end)
+        .filter_map(|c| {
+            // The ordering invariant, judged **after** any inversion — the only
+            // place it can be. `decode`'s floor takes one field at a time, so it
+            // cannot see a relation between two of them, and inversion is where
+            // that relation is at risk: `x -> 1/x` reverses high and low, so a
+            // failure to swap them yields a bar whose high sits below its low,
+            // which is wrong on its own terms.
+            //
+            // Below the window filter, so a bar on the window overhang is simply
+            // discarded rather than warned about. That matches the other candle
+            // adapters, which all validate in-window bars only.
+            let bucket_start = c.bucket_start;
+            c.validated()
+                .inspect_err(|err| {
+                    tracing::warn!(
+                        venue = "oanda",
+                        bucket_start,
+                        error = %err,
+                        "dropping a candle that is not storable"
+                    );
+                })
+                .ok()
+        })
         .collect();
     records.sort_by_key(|c| c.bucket_start);
     records
@@ -562,6 +587,56 @@ mod tests {
         let got = assemble(body.candles, 1_786_668_600, 1_786_668_780, false);
         let times: Vec<i64> = got.iter().map(|c| c.bucket_start).collect();
         assert_eq!(times, vec![1_786_668_660]);
+    }
+
+    /// An inverted bar is dropped rather than stored, even though every one of
+    /// its prices clears `decode`'s per-field floor.
+    ///
+    /// This is the gap the per-field floor cannot cover by construction: it
+    /// judges one value at a time, so a bar whose four prices are each perfectly
+    /// good but whose high sits below its low passes it completely. `cex_prices`
+    /// refuses such a bar on its ordering constraint, and this adapter is the
+    /// reason that constraint exists — inversion has to swap high and low.
+    #[test]
+    fn assemble_drops_a_bar_whose_high_is_below_its_low() {
+        let body: CandlesResponse = serde_json::from_value(serde_json::json!({
+            "instrument": "AUD_USD",
+            "granularity": "M1",
+            "candles": [
+                {
+                    // Every price is finite and positive, so `decode` accepts
+                    // all four; only their relation is wrong.
+                    "complete": true,
+                    "volume": 28,
+                    "time": "1786668660.000000000",
+                    "mid": { "o": "0.70604", "h": "0.70600",
+                             "l": "0.70602", "c": "0.70601" }
+                },
+                {
+                    "complete": true,
+                    "volume": 31,
+                    "time": "1786668720.000000000",
+                    "mid": { "o": "0.70604", "h": "0.70606",
+                             "l": "0.70602", "c": "0.70606" }
+                }
+            ]
+        }))
+        .expect("the fixture decodes");
+
+        // Sanity: the bad bar really does clear the per-field floor, so this
+        // test would pass vacuously if it were rejected earlier.
+        assert!(
+            decode(&body.candles[0]).is_ok(),
+            "the fixture must exercise the ordering check, not the value floor"
+        );
+
+        let got = assemble(body.candles, 1_786_668_600, 1_786_668_780, false);
+        let times: Vec<i64> = got.iter().map(|c| c.bucket_start).collect();
+        assert_eq!(
+            times,
+            vec![1_786_668_720],
+            "the inverted bar must be dropped on its own, leaving the sound one"
+        );
     }
 
     #[test]
@@ -792,11 +867,15 @@ mod tests {
     fn a_non_finite_price_is_dropped_on_the_direct_path_too_not_only_inverted() {
         // The point of putting the floor in `decode` rather than beside the
         // inversion: `str::parse::<f64>()` accepts all four of these as `Ok`,
-        // and `cex_prices` has no CHECK constraint, so before the floor
-        // existed each one would have been STORED on any non-inverted pair —
-        // which is every pair on a default roster except CAD-USD. Guarding
-        // only the inverted path would have made validation depend on quote
-        // direction.
+        // so before the floor existed each one would have reached the store on
+        // any non-inverted pair — which is every pair on a default roster
+        // except CAD-USD. Guarding only the inverted path would have made
+        // validation depend on quote direction.
+        //
+        // Deliberately stated without appeal to what the column enforces. The
+        // floor earns its place by being the layer that can drop one bar
+        // instead of failing a batch, which is true whether or not the schema
+        // also constrains the value.
         for bad in ["0", "-1.5", "inf", "NaN"] {
             let body: CandlesResponse = serde_json::from_value(serde_json::json!({
                 "instrument": "AUD_USD",

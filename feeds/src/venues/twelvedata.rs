@@ -291,10 +291,39 @@ fn window_end(
 /// Turn a raw response (newest-first) into the batch's records: keep bars
 /// inside `[next_start, end)`, oldest-first. An undecodable bar is dropped
 /// rather than failing the batch, for the same reason as the OANDA adapter.
+///
+/// A bar that decodes but carries an unusable value is dropped the same way, by
+/// [`Candle::validated`] — this venue publishes prices as strings, and a
+/// successful parse is not evidence of a usable price (see that method). Both
+/// drops now warn, where the decode drop used to be silent: a venue emitting
+/// sentinels would otherwise shrink every batch with nothing in the log to say
+/// so.
 fn assemble(raw: Vec<RawBar>, next_start: i64, end: i64) -> Vec<Candle> {
     let mut records: Vec<Candle> = raw
         .into_iter()
-        .filter_map(|bar| decode(&bar).ok())
+        .filter_map(|bar| {
+            decode(&bar)
+                .and_then(Candle::validated)
+                .inspect_err(|err| {
+                    tracing::warn!(
+                        venue = "twelvedata",
+                        // `?`, not `%`: this is the venue's own string, echoed
+                        // back on a path that only runs when the venue sent
+                        // something this adapter would not store — so it is
+                        // unvalidated by construction and gets escaped.
+                        //
+                        // One message covers both failures this closure can see,
+                        // a bar that would not decode and a bar whose values were
+                        // refused, because the `error` field already
+                        // distinguishes them and the window here is bounded
+                        // either way.
+                        datetime = ?bar.datetime,
+                        error = %err,
+                        "dropping a candle that is not storable"
+                    );
+                })
+                .ok()
+        })
         .filter(|c| c.bucket_start >= next_start && c.bucket_start < end)
         .collect();
     records.sort_by_key(|c| c.bucket_start);
@@ -395,6 +424,32 @@ mod tests {
         let start = civil_to_epoch_secs(2026, 8, 14, 0, 27, 0);
         let end = civil_to_epoch_secs(2026, 8, 14, 1, 0, 0);
         assert!(assemble(body.values, start, end).is_empty());
+    }
+
+    /// A sentinel costs exactly its own bar, in the form the venue would really
+    /// send one: a JSON *string*.
+    ///
+    /// The spellings are the point. Rust's float parser accepts every one of
+    /// these, so a *successful* parse is not evidence of a usable price — which
+    /// is why the bare parse this path used to end in was not a guard at all.
+    #[test]
+    fn assemble_drops_a_bar_whose_price_string_parses_to_a_sentinel() {
+        let start = civil_to_epoch_secs(2026, 8, 14, 0, 0, 0);
+        let end = civil_to_epoch_secs(2026, 8, 14, 1, 0, 0);
+        let survivor = civil_to_epoch_secs(2026, 8, 14, 0, 25, 0);
+        for sentinel in ["NaN", "nan", "inf", "Infinity", "-Infinity", "0", "-1"] {
+            let mut body = captured_response();
+            // The newest bar; the 00:25 one is left sound.
+            body.values[0].high = sentinel.to_string();
+            let got = assemble(body.values, start, end);
+            let times: Vec<i64> = got.iter().map(|c| c.bucket_start).collect();
+            assert_eq!(
+                times,
+                vec![survivor],
+                "a high of {sentinel:?} must cost exactly its own bar, leaving \
+                 the sound one in the batch"
+            );
+        }
     }
 
     #[test]
