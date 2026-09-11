@@ -2,16 +2,47 @@
 -- Source: market-data.json
 -- Regenerate: make dashboard-sql
 
--- Age thresholds are tighter than the candle panel's on purpose: a tick
--- feed polling every 15s that has printed nothing for a minute is behind
--- in a way a 60s candle series would not be.
+-- Which venues are printing which products into the tick tier, and how fresh.
+--
+-- AGE IS COUNTED IN EXPECTED INTERVALS for the same reason the candle table
+-- counts buckets: three of the five tick sources publish once a day, so the
+-- 60/180-second bounds this panel used to carry marked er-api and Frankfurter
+-- red whenever they were perfectly healthy -- measured at roughly 83,000
+-- seconds old, which is simply what a daily reference looks like. The expected
+-- interval is declared per source because nothing in the store records a
+-- source's cadence, and every form derived from the readings themselves is
+-- suppressed by the outage it would have to report.
+--
+-- Note the window: a source that published nothing inside it has no row here
+-- at all. Source coverage renders every source by name whatever it has done,
+-- and is the panel to read for an absence.
+WITH cadence AS (
+  SELECT
+    d.source,
+    d.expected_secs
+  FROM (VALUES
+    ('coinbase', 60),
+    ('kraken', 60),
+    ('erapi', 86400),
+    ('frankfurter', 86400),
+    ('pyth', 60)
+  ) AS d (source, expected_secs)
+)
+
 SELECT
-  source,
-  product_id,
+  s.source,
+  s.product_id,
   count(*) AS prints,
-  to_timestamp(max(observed_at)) AS latest_print,
-  (extract(epoch FROM now()) - max(observed_at))::bigint AS age_secs
-FROM spot_ticks
-WHERE observed_at >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)
-GROUP BY 1, 2
+  to_timestamp(max(s.observed_at)) AS latest_print,
+  (extract(epoch FROM now()) - max(s.observed_at))::bigint AS age_secs,
+  round(
+    (extract(epoch FROM now()) - max(s.observed_at))
+    / coalesce(d.expected_secs, 60), 1
+  ) AS age_intervals
+FROM spot_ticks AS s
+LEFT JOIN cadence AS d ON s.source = d.source
+WHERE
+  s.observed_at
+  >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)
+GROUP BY s.source, s.product_id, d.expected_secs
 ORDER BY 1, 2

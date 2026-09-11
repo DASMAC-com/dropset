@@ -12,11 +12,15 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Wall-clock seconds since each feed last committed a batch, straight off `feed_cursors.updated_at`. This is the only true wall-clock liveness signal in the schema \u2014 every other panel measures candle-bucket time, which a backfill can advance without the feed being currently healthy. A wall of green is the end-to-end proof that a feeds change works. Deliberately NOT filtered by the Source picker, unlike the candle-age tile beside it: feed_cursors is keyed by the framework's feed id (`cex:coinbase:EURC-USDC`), not by the `source` column, so the picker's values do not apply here.",
+      "description": "Is every cursor-based collector process alive and committing right now, in wall-clock seconds. FOURTEEN ROWS EXPECTED \u2014 one per cursor-capable (source, product) in the registry.\n\nThis is the only true wall-clock liveness signal in the schema, and it answers a different question from every coverage table above. Those measure when DATA last arrived, which a closed venue suppresses even while the collector is healthy. Measured after the Friday FX close: OANDA's cursor was 33 seconds old while its newest candle was two hours old. The collector was fine; the market was shut.\n\nAGE IS COUNTED IN EXPECTED COMMITS, not seconds, which is what lets one bound serve a 60-second poller and a once-a-day collector at the same time. The 300-second store-silence bound this panel carries is five commits for a 60s source, so orange at 3 and red at 5 preserves it exactly \u2014 while a daily collector, which is 86400 seconds old whenever it is perfectly healthy, now reads about 1.0 instead of permanently red. Age in seconds is kept beside it as raw context and is not colored.\n\nA row reading NO CURSOR is a (source, product) the registry knows about for which no cursor has ever been committed. That is what this table's shape buys: the roster comes from the registry, so a cursor that disappears leaves a row behind rather than an absent tile.\n\nONLY PAGED COLLECTORS APPEAR HERE, deliberately. Kraken, er-api and Frankfurter are HTTP live sources that never commit a cursor, and Pyth is parked, so rows for them could never populate \u2014 an unscoped registry join renders 73 rows of which 59 are permanently empty. Source coverage is the panel that accounts for all eight sources by name.",
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
           },
           "mappings": [],
           "thresholds": {
@@ -25,20 +29,111 @@
               {
                 "color": "green",
                 "value": null
-              },
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "source"
+            },
+            "properties": [
               {
-                "color": "orange",
-                "value": 90
-              },
-              {
-                "color": "red",
-                "value": 300
+                "id": "displayName",
+                "value": "Source"
               }
             ]
           },
-          "unit": "s"
-        },
-        "overrides": []
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "product_id"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Product"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_secs"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Age"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_commits"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Age (expected commits)"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "color": "red",
+                        "index": 0,
+                        "text": "NO CURSOR"
+                      }
+                    },
+                    "type": "special"
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 3
+                    },
+                    {
+                      "color": "red",
+                      "value": 5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 4,
@@ -48,19 +143,16 @@
       },
       "id": 1,
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": true,
           "fields": "",
-          "values": false
+          "reducer": [
+            "count"
+          ],
+          "show": true
         },
-        "textMode": "auto",
-        "wideLayout": true
+        "showHeader": true
       },
       "targets": [
         {
@@ -71,18 +163,13 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  feed,\n  extract(epoch FROM now() - updated_at) AS age_secs\nFROM feed_cursors\nORDER BY feed",
+          "rawSql": "-- Is every cursor-based collector process alive and committing right now, in\n-- wall clock. This is the only true wall-clock liveness signal in the schema:\n-- every other freshness reading measures when DATA last arrived, which a\n-- closed venue suppresses even while the collector is perfectly healthy.\n-- Measured instance of exactly that: after the Friday FX close oanda's cursor\n-- was 33 seconds old while its newest candle was two hours old. Reading the\n-- two as one number would have reported a collector outage that was not\n-- happening.\n--\n-- SCOPED TO THE CURSOR-CAPABLE SOURCES, which is a deliberate narrowing of\n-- the registry rather than a plain registry read. Only paged collectors commit\n-- a cursor; kraken, erapi and frankfurter are HTTP live sources that must not\n-- adopt Backfill at all, and pyth is parked, so a cursor for any of them\n-- cannot exist. Joining the whole registry renders 73 rows of which 59 are\n-- permanently empty -- strictly worse than the tile wall this replaces, and\n-- the same \"rows the reader learns to ignore\" defect that cut the per-pair\n-- long tail. Registry-driven WITHIN that scope still buys the property that\n-- matters: a cursor row that disappears leaves its (source, product) behind as\n-- a row, so an absence renders rather than vanishing.\n--\n-- AGE IS COUNTED IN EXPECTED COMMITS, not seconds, and that is what lets one\n-- bound serve every source. The 300-second store-silence bound this panel\n-- carries was written for the 60-second pollers, where it is five commits; a\n-- daily collector is 86400 seconds old whenever it is perfectly healthy, so the\n-- same absolute bound painted four alphavantage rows permanently red. Orange\n-- at 3 and red at 5 preserves the 300s bound exactly for a 60s source while\n-- reading correctly for a daily one.\nWITH expected AS (\n  SELECT\n    r.source,\n    r.product_id,\n    d.expected_secs\n  FROM instrument_registry AS r\n  INNER JOIN (VALUES\n    ('oanda', 60),\n    ('twelvedata', 60),\n    ('coinbase', 60),\n    ('alphavantage', 86400)\n  ) AS d (source, expected_secs) ON r.source = d.source\n)\n\nSELECT\n  e.source,\n  e.product_id,\n  (extract(epoch FROM now() - fc.updated_at))::bigint AS age_secs,\n  round(\n    extract(epoch FROM now() - fc.updated_at) / e.expected_secs, 1\n  ) AS age_commits\nFROM expected AS e\nLEFT JOIN feed_cursors AS fc\n  ON\n    split_part(fc.feed, ':', 2) = e.source\n    AND split_part(fc.feed, ':', 3) = e.product_id\nORDER BY\n  age_commits DESC NULLS FIRST,\n  e.source ASC,\n  e.product_id ASC\n",
           "refId": "A"
         }
       ],
-      "title": "Feed cursor age (wall clock)",
-      "transformations": [
-        {
-          "id": "rowsToFields",
-          "options": {}
-        }
-      ],
-      "type": "stat"
+      "title": "Collector cursor age (wall clock)",
+      "transformations": null,
+      "type": "table"
     },
     {
       "datasource": {
@@ -544,7 +631,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Which venues are printing which products into the tick tier, and how fresh each is. A tick row has neither a bucket width nor OHLCV, which is why this tier is a separate table from the candle coverage above rather than merged into it.\n\nAge thresholds are tighter than the candle table's on purpose: a tick feed polling every 15s that has printed nothing for a minute is behind in a way a 60s candle series would not be. Note the consequence for a source that publishes once a day into this tier \u2014 it will sit red between publications, and the candle table's bucket-relative age is the reading that handles cadence properly.\n\nA source registered but printing nothing has no row here at all; Source coverage below is the panel that renders it as a row.",
+      "description": "Which venues are printing which products into the tick tier, and how fresh each is. A tick row has neither a bucket width nor OHLCV, which is why this tier is a separate table from the candle coverage above rather than merged into it.\n\nAGE IS COUNTED IN EXPECTED INTERVALS, not seconds, and that is the colored column. Three of the five tick sources publish once a day, so the 60/180-second bounds this panel used to carry marked er-api and Frankfurter red whenever they were perfectly healthy \u2014 measured at about 83,000 seconds old, which is just what a daily reference looks like. The expected interval is declared per source, because nothing in the store records a source's cadence and every version derived from the readings was suppressed by the outage it had to report.\n\nA source that published nothing inside the window has NO ROW here at all. Source coverage above accounts for all eight sources by name whatever they have done, and is the panel to read for an absence rather than this one.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -627,6 +714,22 @@
               {
                 "id": "unit",
                 "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_intervals"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Age (expected intervals)"
+              },
+              {
+                "id": "decimals",
+                "value": 1
               },
               {
                 "id": "custom.cellOptions",
@@ -646,11 +749,11 @@
                     },
                     {
                       "color": "orange",
-                      "value": 60
+                      "value": 3
                     },
                     {
                       "color": "red",
-                      "value": 180
+                      "value": 5
                     }
                   ]
                 }
@@ -687,7 +790,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "-- Age thresholds are tighter than the candle panel's on purpose: a tick\n-- feed polling every 15s that has printed nothing for a minute is behind\n-- in a way a 60s candle series would not be.\nSELECT\n  source,\n  product_id,\n  count(*) AS prints,\n  to_timestamp(max(observed_at)) AS latest_print,\n  (extract(epoch FROM now()) - max(observed_at))::bigint AS age_secs\nFROM spot_ticks\nWHERE observed_at >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)\nGROUP BY 1, 2\nORDER BY 1, 2",
+          "rawSql": "-- Which venues are printing which products into the tick tier, and how fresh.\n--\n-- AGE IS COUNTED IN EXPECTED INTERVALS for the same reason the candle table\n-- counts buckets: three of the five tick sources publish once a day, so the\n-- 60/180-second bounds this panel used to carry marked er-api and Frankfurter\n-- red whenever they were perfectly healthy -- measured at roughly 83,000\n-- seconds old, which is simply what a daily reference looks like. The expected\n-- interval is declared per source because nothing in the store records a\n-- source's cadence, and every form derived from the readings themselves is\n-- suppressed by the outage it would have to report.\n--\n-- Note the window: a source that published nothing inside it has no row here\n-- at all. Source coverage renders every source by name whatever it has done,\n-- and is the panel to read for an absence.\nWITH cadence AS (\n  SELECT\n    d.source,\n    d.expected_secs\n  FROM (VALUES\n    ('coinbase', 60),\n    ('kraken', 60),\n    ('erapi', 86400),\n    ('frankfurter', 86400),\n    ('pyth', 60)\n  ) AS d (source, expected_secs)\n)\n\nSELECT\n  s.source,\n  s.product_id,\n  count(*) AS prints,\n  to_timestamp(max(s.observed_at)) AS latest_print,\n  (extract(epoch FROM now()) - max(s.observed_at))::bigint AS age_secs,\n  round(\n    (extract(epoch FROM now()) - max(s.observed_at))\n    / coalesce(d.expected_secs, 60), 1\n  ) AS age_intervals\nFROM spot_ticks AS s\nLEFT JOIN cadence AS d ON s.source = d.source\nWHERE\n  s.observed_at\n  >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)\nGROUP BY s.source, s.product_id, d.expected_secs\nORDER BY 1, 2\n",
           "refId": "A"
         }
       ],
@@ -886,7 +989,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "The quoting criterion, shown directly rather than by implication: per pair, is a trusted tape live, and how much margin stands behind it. Read 'trusted_live' and nothing else to answer go or no-go - it is the only column colored, because it is the only one that decides anything. 0 means this pair cannot be quoted and the maker halts on it; 1 means it can. THE CRITERION IS ONE LIVE TRUSTED TAPE, halt at zero, ruled by the operator on 2026-09-10. It replaced a 'survives one or two venues dark' reading that no panel could implement, because it also asserted that two intraday sources satisfied it and two sources with two dark leaves none. The trusted tape is oanda, by designation rather than by measurement - it is the anchor treated as truth. Twelve Data carries the same pairs and is deliberately not believable alone, which is why the two are never pooled into one count: one-live-of-two tells you nothing until you know which one it was. 'margin_sources' is every other source that is live and fresh - context, not a requirement, and it cannot clear the halt. One honest edge shown rather than hidden: a daily source counts toward 'margin_sources' for the freshness window after it publishes, which is harmless precisely because margin decides nothing and a daily reference can never reach 'trusted_live'. 'live_but_stale' is where an outage lands FIRST, and note it is a TRANSITION bucket rather than a cumulative one: past the class staleness bound the source moves on into 'dark', so this counter rises and then falls back to zero rather than climbing with the outage. Past that point the red 'trusted_live' is the only trace, which is sufficient for go/no-go but will not tell you a long-dead source from one never rostered. Daily sources also sit in 'live_but_stale' between publications, so read it against 'fresh_sources' to tell an outage from a cadence. 'dark' is registered and outside its class staleness bound, and is deliberately NOT color-coded: it pools a parked source with a faulted one, and Pyth is parked pending a credential, so every row reads dark=1 today - coloring that red on every row is the train-the-operator-to-ignore-red failure that keeping parked quiet exists to prevent. Until parked and faulted render distinctly, this column is a constant and carries no information. The three MVP anchors sort first and are always present even if de-rostered, so an anchor no collector registers is a row of zeros rather than a missing row - including dark=0, because that column counts REGISTERED sources and there are none. Deliberately not called a 'dark anchor': that state is caught by trusted_live going red, not by the dark column, which reads 0 there and 1 in today's benign parked-Pyth state. Deliberately NOT filtered by the Source or Product pickers, for the same reason Source coverage is not: a panel answering 'what is thin' must not be narrowed by a picker.",
+      "description": "CAN WE QUOTE RIGHT NOW. One live trusted tape is the criterion and the halt is at zero, so the OANDA tape column is the only one that decides anything \u2014 everything beside it is context for diagnosing why.\n\nOANDA is the designated tape: the anchor treated as truth. That is a DESIGNATION, not a measurement, and no column in the store records it. Twelve Data carries the same pairs intraday and is deliberately not believable alone, which is exactly why the two are never pooled into one count \u2014 one-live-of-two says nothing until you know which one. A daily reference can never reach this column, so it can never clear the halt.\n\nTAPE AGE IS THE HALT BOUND, MADE READABLE. The freshness picker is the halt's detection latency rather than a display preference, so this column shows how far past that bound the tape has actually gone. It is what separates \"quiet for a minute\" from \"quiet since Friday\". Expect it to sit red across an FX weekend: the tape stops at the Friday close by design, so a no-go on every FX pair from Friday evening to Sunday is CORRECT rather than an incident, and the weekend annotation on the time-series panels is the context for it.\n\nStale (was live) is where an outage lands FIRST, and it is a transition bucket rather than a cumulative one: past the class bound a source leaves the live population entirely, so the count rises and then falls back. Read it against Printing now to tell an outage from an ordinary cadence.\n\nTHE LONG TAIL IS WITHHELD, counted in the final row. Pairs with no trusted tape and no live source were thirty-odd rows of zeros whose only effect was to teach the eye to skip the table \u2014 the same reason the constant Pyth column was removed. Source coverage above gives every source by name, including the parked one, which is where thin-roster visibility belongs.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -911,9 +1014,80 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "trusted_live"
+              "options": "sort_group"
             },
             "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "product_id"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Pair"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tape_live"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "OANDA tape"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "red",
+                        "index": 0,
+                        "text": "NO-GO"
+                      },
+                      "1": {
+                        "color": "green",
+                        "index": 1,
+                        "text": "live"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tape_age_secs"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Tape age"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
               {
                 "id": "custom.cellOptions",
                 "value": {
@@ -927,15 +1101,74 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "red",
+                      "color": "green",
                       "value": null
                     },
                     {
-                      "color": "green",
+                      "color": "red",
+                      "value": 900
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "corroborating"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Corroborating (live)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "stale_was_live"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Stale (was live)"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
                       "value": 1
                     }
                   ]
                 }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "printing_now"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Printing now"
               }
             ]
           }
@@ -969,7 +1202,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "-- Live venues per pair: the quoting criterion, shown directly rather than by\n-- implication.\n--\n-- THE CRITERION IS ONE LIVE TRUSTED TAPE, halt at zero -- ruled by the\n-- operator on 2026-09-10, replacing a \"survives one or two venues dark\"\n-- reading that could not be implemented because it contradicted itself. So\n-- trusted_live is the only column that decides anything, and it is the only\n-- one colored. Everything beside it is context: margin_sources is what stands\n-- behind the tape, not a second requirement.\n--\n-- The trusted tape is oanda, named here as a literal because primacy is a\n-- DESIGNATION rather than a measurement -- it is the anchor treated as truth,\n-- and no column in the store records that. Twelve Data carries the same pairs\n-- intraday and is deliberately not believable alone, which is precisely why\n-- the two must not be pooled into one count: one-live-of-two says nothing\n-- until you know which one.\n--\n-- WHY THERE IS NO CADENCE CLASSIFIER HERE, since the obvious way to write\n-- this panel has one and it is a trap. An earlier version split sources into\n-- intraday and daily by counting readings in a six-hour window, which fails\n-- in the worst possible direction: a genuinely intraday venue that has been\n-- down for more than six hours has no readings in the window, so it stops\n-- counting as intraday and lands in the daily population -- while\n-- instrument_source_liveness still reports it live, because that bound is 48\n-- to 72 hours. A long outage therefore made the panel look HEALTHIER, moving\n-- a failed venue into a bucket that is supposed to look old. Verified against\n-- the store: a source can be is_live with zero readings in six hours.\n--\n-- Freshness alone does the work instead, and under the ruled criterion that\n-- is sufficient rather than a compromise: cadence only ever mattered as a\n-- proxy for \"could this price a quote right now\", and a designated tape plus\n-- a recency test answers that directly. It is also fail-closed, which the\n-- classifier was not -- when the tape stops printing, trusted_live goes to\n-- zero and stays there.\n--\n-- One honest edge, visible rather than hidden: a daily source counts toward\n-- margin_sources for the freshness window after it publishes. That is why\n-- margin_sources is context and not a criterion. It can never reach\n-- trusted_live, so it cannot clear the halt -- which is exactly what the\n-- ruling requires of a daily reference.\n--\n-- THE MVP ANCHORS ARE A LITERAL, which is deliberate and not an oversight.\n-- There is no legitimate state in which an MVP anchor is absent, so this\n-- panel has to be unable to lose one. A de-rostered product leaves the\n-- registry, so a purely registry-driven read would drop it silently -- the\n-- same invisible-rather-than-dark defect one level up that the coverage panel\n-- exists to catch. Naming the three keeps a dark anchor rendering as a row of\n-- zeros. They order first and are not otherwise displayed: the row order\n-- already says it, so a column restating it would be sort machinery on show.\nWITH anchor AS (\n  SELECT a.product_id\n  FROM (VALUES\n    ('EUR-USD'),\n    ('AUD-USD'),\n    ('CAD-USD')\n  ) AS a (product_id)\n),\n\nscope AS (\n  SELECT a.product_id FROM anchor AS a\n  UNION\n  SELECT l.product_id FROM instrument_source_liveness AS l\n),\n\ngraded AS (\n  SELECT\n    s.product_id,\n    l.source,\n    l.is_live,\n    -- Read the liveness verdict from the view and the recency test here. The\n    -- two answer different questions: is_live is \"should this source be\n    -- producing at all\", on a class-aware bound that tolerates an FX weekend,\n    -- while fresh is \"is it producing right now\".\n    extract(epoch FROM now()) - l.last_data_at\n      <= ${quote_freshness_mins:sqlstring}::bigint * 60 AS fresh,\n    -- COUPLED to the exact source spelling the collectors register. The feeds\n    -- framework names some sources per product (a venue can register as\n    -- `venue:PRODUCT`), so if oanda ever adopted that shape this equality\n    -- would stop matching and every pair would read trusted_live = 0. That\n    -- fails CLOSED -- a permanent false halt, loud rather than silent, and\n    -- diagnosable because the venue still appears in fresh_sources -- which is\n    -- why it is left as a plain equality rather than a prefix match that could\n    -- also match a different venue whose name merely starts the same way.\n    l.source = 'oanda' AS trusted\n  FROM scope AS s\n  LEFT JOIN instrument_source_liveness AS l ON l.product_id = s.product_id\n)\n\nSELECT\n  g.product_id,\n  count(*) FILTER (WHERE g.is_live AND g.trusted AND g.fresh) AS trusted_live,\n  count(*) FILTER (\n    WHERE g.is_live AND NOT g.trusted AND g.fresh\n  ) AS margin_sources,\n  -- Where an outage lands FIRST, which is not where it stays: past the class\n  -- bound the source moves on into dark, so this counter rises and then falls\n  -- back to zero. It is a TRANSITION bucket, not a cumulative one, and saying\n  -- otherwise would be the same kind of overstatement as the cadence classifier\n  -- above. A daily source also sits here between publications, so read it\n  -- against fresh_sources to tell an outage from a cadence.\n  count(*) FILTER (WHERE g.is_live AND NOT g.fresh) AS live_but_stale,\n  count(*) FILTER (WHERE NOT g.is_live) AS dark,\n  string_agg(g.source, ', ' ORDER BY g.source) FILTER (\n    WHERE g.is_live AND g.fresh\n  ) AS fresh_sources\nFROM graded AS g\nGROUP BY g.product_id\nORDER BY\n  EXISTS (SELECT 1 FROM anchor AS a WHERE a.product_id = g.product_id) DESC,\n  trusted_live ASC,\n  g.product_id ASC",
+          "rawSql": "-- Can we quote right now. THE CRITERION IS ONE LIVE TRUSTED TAPE, halt at\n-- zero -- ruled by the operator on 2026-09-10, replacing a \"survives one or\n-- two venues dark\" reading that could not be implemented because it\n-- contradicted itself. So the tape column is the only one that decides\n-- anything; everything beside it is context.\n--\n-- The trusted tape is oanda, named here as a literal because primacy is a\n-- DESIGNATION rather than a measurement -- it is the anchor treated as truth,\n-- and no column in the store records that. Twelve Data carries the same pairs\n-- intraday and is deliberately not believable alone, which is precisely why\n-- the two must not be pooled into one count: one-live-of-two says nothing\n-- until you know which one.\n--\n-- TAPE AGE IS THE HALT BOUND MADE READABLE, and it is the reading this panel\n-- previously left implicit. The freshness picker IS the halt's detection\n-- latency, so showing the tape's actual age beside the verdict is what lets a\n-- reader see how far past the bound the tape has gone rather than only that it\n-- failed. It is also the one column that distinguishes \"quiet for a minute\"\n-- from \"quiet since Friday\" without a second panel.\n--\n-- WHY THERE IS NO CADENCE CLASSIFIER HERE, since the obvious way to write\n-- this panel has one and it is a trap. An earlier version split sources into\n-- intraday and daily by counting readings in a six-hour window, which fails\n-- in the worst possible direction: a genuinely intraday venue that has been\n-- down for more than six hours has no readings in the window, so it stops\n-- counting as intraday and lands in the daily population -- while\n-- instrument_source_liveness still reports it live, because that bound is 48\n-- to 72 hours. A long outage therefore made the panel look HEALTHIER. Verified\n-- against the store: a source can be is_live with zero readings in six hours.\n--\n-- Freshness alone does the work instead, and under the ruled criterion that\n-- is sufficient rather than a compromise: cadence only ever mattered as a\n-- proxy for \"could this price a quote right now\", and a designated tape plus\n-- a recency test answers that directly, fail-closed.\n--\n-- THE LONG TAIL IS CUT to the anchors plus any pair with a live tape, with the\n-- remainder counted in a final row. Thirty pairs reading zeros with an empty\n-- source list are thirty rows the reader must learn to ignore, which is the\n-- same defect that removed the constant dark column: a value that never varies\n-- costs width and teaches the eye to skip the table. Source coverage above\n-- already delivers by-name visibility for every thin-roster currency.\n--\n-- THE MVP ANCHORS ARE A LITERAL, which is deliberate. There is no legitimate\n-- state in which an MVP anchor is absent, so this panel has to be unable to\n-- lose one. A de-rostered product leaves the registry, so a purely\n-- registry-driven read would drop it silently -- the same\n-- invisible-rather-than-dark defect the coverage panel exists to catch.\nWITH anchor AS (\n  SELECT a.product_id\n  FROM (VALUES\n    ('EUR-USD'),\n    ('AUD-USD'),\n    ('CAD-USD')\n  ) AS a (product_id)\n),\n\nscope AS (\n  SELECT a.product_id FROM anchor AS a\n  UNION\n  SELECT l.product_id FROM instrument_source_liveness AS l\n),\n\ngraded AS (\n  SELECT\n    s.product_id,\n    l.source,\n    l.is_live,\n    l.last_data_at,\n    extract(epoch FROM now()) - l.last_data_at\n      <= ${quote_freshness_mins:sqlstring}::bigint * 60 AS fresh,\n    -- COUPLED to the exact source spelling the collectors register. The feeds\n    -- framework names some sources per product (a venue can register as\n    -- `venue:PRODUCT`), so if oanda ever adopted that shape this equality\n    -- would stop matching and every pair would read no-go. That fails CLOSED\n    -- -- a permanent false halt, loud rather than silent, and diagnosable\n    -- because the venue still appears in printing_now -- which is why it is\n    -- left as a plain equality rather than a prefix match that could also\n    -- match a different venue whose name merely starts the same way.\n    l.source = 'oanda' AS trusted\n  FROM scope AS s\n  LEFT JOIN instrument_source_liveness AS l ON l.product_id = s.product_id\n),\n\nper_pair AS (\n  SELECT\n    g.product_id,\n    EXISTS (SELECT 1 FROM anchor AS a WHERE a.product_id = g.product_id)\n      AS is_anchor,\n    count(*) FILTER (WHERE g.is_live AND g.trusted AND g.fresh) AS tape_live,\n    max(g.last_data_at) FILTER (WHERE g.trusted) AS tape_last_at,\n    count(*) FILTER (\n      WHERE g.is_live AND NOT g.trusted AND g.fresh\n    ) AS corroborating,\n    -- Where an outage lands FIRST, which is not where it stays: past the class\n    -- bound the source drops out of is_live entirely, so this counter rises\n    -- and then falls back. It is a TRANSITION bucket, not a cumulative one.\n    count(*) FILTER (WHERE g.is_live AND NOT g.fresh) AS stale_was_live,\n    string_agg(g.source, ', ' ORDER BY g.source) FILTER (\n      WHERE g.is_live AND g.fresh\n    ) AS printing_now\n  FROM graded AS g\n  GROUP BY g.product_id\n),\n\nshown AS (\n  SELECT p.* FROM per_pair AS p WHERE p.is_anchor OR p.tape_live > 0\n),\n\nwithheld AS (\n  SELECT count(*) AS n\n  FROM per_pair AS p\n  WHERE NOT (p.is_anchor OR p.tape_live > 0)\n)\n\nSELECT\n  0 AS sort_group,\n  s.product_id,\n  s.tape_live,\n  (extract(epoch FROM now()) - s.tape_last_at)::bigint AS tape_age_secs,\n  s.corroborating,\n  s.stale_was_live,\n  s.printing_now\nFROM shown AS s\nUNION ALL\nSELECT\n  1 AS sort_group,\n  w.n || ' further pairs withheld: no trusted tape and no live source'\n    AS product_id,\n  NULL AS tape_live,\n  NULL AS tape_age_secs,\n  NULL AS corroborating,\n  NULL AS stale_was_live,\n  NULL AS printing_now\nFROM withheld AS w\nWHERE w.n > 0\nORDER BY 1 ASC, 3 ASC, 2 ASC\n",
           "refId": "A"
         }
       ],
