@@ -119,15 +119,47 @@ impl Drop for BotManager {
     }
 }
 
+/// The localnet market-data store, as reached **from the host**.
+///
+/// The compose stack publishes Postgres on `127.0.0.1:5432` and carries the
+/// same throwaway localnet credentials in
+/// `infra/localnet/docker-compose.yml`; a containerized bot reaches it as
+/// `postgres:5432` on the compose network, and a bot this panel spawns is a
+/// host process, so it needs the published address instead.
+const LOCALNET_STORE_URL: &str = "postgres://dropset:dropset@127.0.0.1:5432/dropset";
+
+/// The variable the maker reads for the store. Spelled here rather than
+/// imported from the maker crate: the TUI does not depend on it, and adding
+/// that dependency to share one string would pull the whole bot into this
+/// crate's build graph.
+const STORE_URL_ENV: &str = "DROPSET_DATABASE_URL";
+
 /// Build the command that runs the maker bot scoped to one `symbol` (the maker
 /// resolves the symbol to its market itself). See `bot_command` for how the
 /// binary is located.
+///
+/// **Passes the store URL through, defaulting to the localnet one.** The maker
+/// reads its intraday FX anchor from the market-data store and refuses to
+/// start without a URL, which is deliberate — that anchor is on the price path
+/// and a maker quoting without it would be pricing off a daily fix. But a
+/// child process only inherits what this panel's own shell happens to carry,
+/// and nothing sets this variable interactively, so every maker launched from
+/// here failed at startup until this defaulted it. The Docker path never hit
+/// it because compose supplies the variable.
+///
+/// An ambient value still wins, so pointing the demo at another store stays a
+/// matter of exporting it before launching the TUI — the same precedence
+/// compose uses.
 pub fn maker_command(repo_root: &Path, symbol: &str, rpc_url: &str) -> Command {
-    bot_command(
+    let mut cmd = bot_command(
         repo_root,
         "dropset-maker-bot",
         &["--market", symbol, "--rpc", rpc_url],
-    )
+    );
+    if std::env::var_os(STORE_URL_ENV).is_none() {
+        cmd.env(STORE_URL_ENV, LOCALNET_STORE_URL);
+    }
+    cmd
 }
 
 /// Build the command that runs the taker bot scoped to one market by its PDA

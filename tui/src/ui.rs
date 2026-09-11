@@ -938,6 +938,8 @@ fn flag_for(symbol: &str) -> &'static str {
         "MXNe" => "\u{1F1F2}\u{1F1FD}", // 🇲🇽
         "XSGD" => "\u{1F1F8}\u{1F1EC}", // 🇸🇬
         "IDRX" => "\u{1F1EE}\u{1F1E9}", // 🇮🇩
+        "AUDD" => "\u{1F1E6}\u{1F1FA}", // 🇦🇺
+        "CADC" => "\u{1F1E8}\u{1F1E6}", // 🇨🇦
         "USDC" => "\u{1F1FA}\u{1F1F8}", // 🇺🇸
         _ => "",
     }
@@ -1125,6 +1127,29 @@ mod tests {
         assert_eq!(flag_for("USDC"), "\u{1F1FA}\u{1F1F8}");
         // …and an unknown symbol shows no flag rather than a wrong one.
         assert_eq!(flag_for("????"), "");
+    }
+
+    /// Every bootstrapped market must have a flag, because this table is a
+    /// hand-maintained duplicate of the roster and nothing else connects them.
+    ///
+    /// The failure it catches is silent by construction: an unknown symbol
+    /// falls through to `""`, which is also what a market with no flag would
+    /// legitimately render, so a roster addition loses its flag and the list
+    /// just looks slightly wrong. Measured — AUDD and CADC shipped flagless
+    /// and it took an operator noticing two blank cells in the markets list.
+    ///
+    /// The quote mint is checked too: it is not in `PAIRS` as a base, but the
+    /// book and fills panes flag it.
+    #[test]
+    fn every_bootstrapped_market_has_a_flag() {
+        for pair in crate::market::PAIRS {
+            assert!(
+                !flag_for(pair.base.symbol).is_empty(),
+                "{} is bootstrapped but has no flag in `flag_for`",
+                pair.base.symbol
+            );
+        }
+        assert!(!flag_for("USDC").is_empty(), "the quote mint needs one too");
     }
 
     #[test]
