@@ -1815,6 +1815,52 @@ mod tests {
         assert_eq!(cache["euro-coin"].0, 1.14);
     }
 
+    /// A channel whose sender is gone drains exactly like an empty one: the
+    /// cache is left alone and nothing panics.
+    ///
+    /// **This is what makes a parked tier safe**, and it is the one property in
+    /// that path with no other test. `main.rs`'s `parked_receiver` builds a
+    /// channel and drops the sender immediately, so the parked leg reaches the
+    /// engine as "no reading" rather than as an error — and the cascade prices
+    /// off the daily FX references. The sibling tests that reach the same end
+    /// state do it by calling `hub.pyth.clear()`, which never exercises
+    /// `Closed`, so narrowing `drain_into`'s match arm above from
+    /// `Empty | Closed` to `Empty` would leave all of them green while the
+    /// parked tier started panicking on every tick.
+    #[test]
+    fn drain_into_treats_a_closed_channel_as_empty() {
+        let (tx, mut rx) = broadcast::channel::<HashMap<String, f64>>(8);
+        // One reading queued BEFORE the close, so this also pins that a close
+        // does not discard what was already sent — `try_recv` drains the buffer
+        // first and only then reports `Closed`.
+        tx.send(HashMap::from([("euro-coin".to_string(), 1.14)]))
+            .unwrap();
+        drop(tx);
+
+        let mut cache: HashMap<String, (f64, Instant)> = HashMap::new();
+        let now = Instant::now();
+        drain_into(&mut rx, &mut cache, now);
+        assert_eq!(cache["euro-coin"].0, 1.14, "a buffered reading survives");
+
+        // Draining a closed, now-drained channel is a no-op rather than an
+        // error — the state a parked tier sits in for the life of the process.
+        drain_into(&mut rx, &mut cache, now);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache["euro-coin"].0, 1.14);
+    }
+
+    /// The parked case proper: a channel that never carried anything and whose
+    /// sender is already gone leaves the cache untouched, so the leg resolves
+    /// to `None` and the engine sees no candidate at all.
+    #[test]
+    fn drain_into_leaves_the_cache_empty_for_a_parked_tier() {
+        let (tx, mut rx) = broadcast::channel::<HashMap<String, f64>>(1);
+        drop(tx);
+        let mut cache: HashMap<String, (f64, Instant)> = HashMap::new();
+        drain_into(&mut rx, &mut cache, Instant::now());
+        assert!(cache.is_empty(), "a parked tier contributes no reading");
+    }
+
     #[test]
     fn drain_into_skips_a_lag_to_the_retained_latest() {
         // Capacity 2, three readings before the drain: the receiver lags past
