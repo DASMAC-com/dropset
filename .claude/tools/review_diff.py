@@ -121,6 +121,18 @@ DIFF_EXCLUDES = (
     # read. The JSON it is generated FROM stays in the diff, which is where a
     # query change should be reviewed.
     "market-data/grafana/sql",
+    # The conformance vectors, emitted by the committed generators and gated by
+    # `make check-conformance-vectors` — generated output in exactly the sense the
+    # entries above are, and reviewing their diff by eye adds nothing.
+    #
+    # On a vectors PR the omission dominated the fan-out: a 5783-line diff of
+    # which ~3460 lines were regenerated vector JSON, so even the `--split` tests
+    # slice came out at 4872 lines and the category split could not isolate the
+    # 1532 lines of hand-written material either. The two lenses handed the full
+    # diff were the two most expensive of that review, at 2.6-2.9x the cheapest,
+    # and both had been told to "skim past" the JSON — prompt discipline standing
+    # in for a slice that should not have contained it.
+    "sdk/conformance",
 )
 
 # Directories a recursive source search must never descend into. These are

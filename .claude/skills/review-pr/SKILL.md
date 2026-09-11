@@ -988,6 +988,27 @@ already being asked to start the review.
      pre-commit run cspell --config cfg/pre-commit-lint.yml --files <paths>
    ```
 
+   **When the unknown word is one you COINED, reword — and
+   reword to plain English, not to another coinage.** This is
+   the complementary case, and the pre-flight above cannot
+   catch it: the rule assumes the author knows the vocabulary up
+   front, but a coinage does not exist until it is typed, so a
+   sweep at the start of the change finds nothing. Measured:
+   four separate lint rounds on one prose-heavy change, every
+   word a self-inflicted verb form rather than a domain term,
+   and each reword producing the next round's word — one
+   invented participle gave way to another before the plain
+   phrasing finally passed.
+
+   So pick the phrasing with **no coined morphology at all**,
+   once. Rewording to a near neighbor just re-enters the loop,
+   because the neighbor is equally unknown. It also keeps words
+   with no domain meaning out of both the dictionary and the
+   file's escape block, which the spelling-hygiene convention
+   would otherwise have to clean up later. (The cost here is
+   round trips and wall-clock rather than context — `make lint`
+   is wrapped, so each round was a short failure tail.)
+
    Then place each word by the rule in
    `docs/conventions/docs-and-style.md`: a word used in **two
    or more** files goes in `cfg/dictionary.txt`; a word used in
@@ -1356,6 +1377,23 @@ already being asked to start the review.
    - **tests** — completeness (and correctness, when the diff
      changes behavior tests pin).
    - **docs** — the doc-freshness lens.
+
+   **When the branch diff is dominated by generated output, the
+   completeness lens and the cross-check get the HAND-WRITTEN
+   slices — not `diff_path` by default.** The step elsewhere says
+   the cross-check "should see everything"; regenerated output is
+   not part of everything. Measured on a conformance-vectors PR
+   before `sdk/conformance` joined `DIFF_EXCLUDES`: a 5783-line
+   diff of which ~3460 lines were vector JSON, so even the tests
+   slice came out at 4872 lines and the category split could not
+   isolate the 1532 hand-written lines either. The two lenses
+   handed the full diff were that review's two most expensive, at
+   2.6–2.9x the cheapest, and the ordering tracked handed-in size
+   almost monotonically. Both had been told to "skim past" the
+   JSON — prompt discipline standing in for a slice that should
+   not have contained it. `sdk/conformance` is excluded now, so
+   the common case is handled; the rule is for the next
+   generated family that is not.
 
    **Each brief must NAME the slice it is handed**, and a
    lens scoped to one tree gets that tree's `--only` diff

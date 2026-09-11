@@ -1213,6 +1213,35 @@ per-directory *content* — `frontend/node_modules`,
    run the install now, as part of the bootstrap. On
    `"present"` or `"no-frontend"` there is nothing to do.
 
+   **`program_so` is the same shape, with the opposite
+   action.** The field reports `present` / `absent` /
+   `no-program` from the same JSON. On `absent`, do **not**
+   build it at bootstrap — note that any litesvm test under
+   `programs/dropset/tests/` needs
+   `python3 .claude/tools/run_quiet.py -- make program` first,
+   and leave it there. That asymmetry with `pnpm install` is
+   deliberate: the BPF build takes minutes and most tasks never
+   touch `programs/**`, whereas the install is one quiet command
+   the first full lint needs regardless.
+
+   Why it is worth reporting at all: a cold worktree fails
+   **every** litesvm test at once, with a 125-line tail
+   complaining about a missing program keypair and suggesting
+   `anchor keys sync && anchor build` — which is *not* the
+   command this repo uses (`make program` copies the committed
+   keypair from `keys/` first). Every test failing together
+   reads like a broken harness rather than a missing artifact.
+   And the diff-keyed conditional loses here exactly as it does
+   for the frontend: the branch that measured this changed only
+   `programs/dropset/tests/**`, never `programs/dropset/src/**`.
+
+   One related trap worth knowing in the same breath:
+   `make test-no-teardown` leaves a `--no-default-features`
+   `.so` behind, so a later scoped `cargo test` fails ~15
+   unrelated teardown tests. `review-pr` step 11 documents that
+   ordering; a cold worktree reaches the same class from the
+   other direction.
+
    This used to say "install when the surfaced task touches
    `frontend/**`, or before the first full lint", and the
    conditional lost reliably to *this diff doesn't touch the

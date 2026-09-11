@@ -206,6 +206,43 @@ glue lives **with what it serves**, not in a tooling tree:
   paths, `Makefile`, both CI workflows, `.claude/tools/cspell_place.py`,
   and the docs) for no structural gain.
 
+### Exercising a Makefile macro — nothing lints or tests one
+
+A Makefile **macro** (a multi-line shell fragment expanded into recipes)
+sits in a gap: `shellcheck` reports "no files to check" for a diff that
+only touches the `Makefile`, because it does not cover recipe or macro
+shell, and the Makefile linter hook passes without analyzing shell
+semantics at all. There is no harness either — `.claude/tools/tests/` is
+Python-only. So a 16-line POSIX-sh macro can land with **no automated
+check having read it**.
+
+The only verification available is to run it, which means adding a
+temporary driver target:
+
+```make
+.PHONY: macro-check
+macro-check:
+ @$(THE_MACRO); echo "result=[$$result]"
+```
+
+Three things to get right, because the improvised version is repeated and
+easy to leave behind:
+
+- **Write the target once and delete it in the same session.** One run
+  added an equivalent target three separate times and invoked it eleven
+  times; each variant is a fresh permission prompt, since the target name
+  is part of the command.
+- **Escape `$` as `$$`** in the recipe, or make expands it and the shell
+  never sees the variable.
+- **Say in the PR that the macro was verified this way**, since no gate
+  records it — otherwise the diff looks checked when only the Python and
+  Rust around it was.
+
+The durable fix, when a macro becomes load-bearing, is the same one this
+document argues for everywhere else: move the logic into a Python tool
+under `.claude/tools/` where it can be tested, and let the Makefile
+target call it.
+
 ## MCP first for prototyping and fallback; harden settled workflows
 
 The MCP servers (`mcp__github__*`, `mcp__claude_ai_Linear__*`, …) are
