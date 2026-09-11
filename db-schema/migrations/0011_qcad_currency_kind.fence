@@ -1,0 +1,15 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# This migration only widens seeded data, exactly as 0006 does, so there is
+# nothing to declare: no relation, no column. `rows currency_kinds = N` is
+# deliberately NOT used — it pins an exact count, and the currency roster is
+# expected to grow, so that directive would turn every later seed widening into
+# a failing assertion here.
+#
+# What pins the content instead is
+# `the_instruments_view_derives_a_class_from_the_legs`, which registers QCAD-USD
+# and asserts it derives `peg-pair`. That reads the class rather than the seed,
+# so losing this row fails there as an `unclassified` derivation — which is the
+# form the defect actually takes, since the liveness view picks its staleness
+# bound by class.
+none only widens the currency_kinds seed, creating no relation or column
