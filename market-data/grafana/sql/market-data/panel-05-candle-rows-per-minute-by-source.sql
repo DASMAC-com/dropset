@@ -2,28 +2,71 @@
 -- Source: market-data.json
 -- Regenerate: make dashboard-sql
 
--- The CTE is load-bearing, not style. Grafana captures macro
--- arguments with a regex that stops at the first closing paren, so
--- wrapping the epoch column in a to_timestamp call inside the
--- time-group macro leaves it one truncated argument and the query
--- fails to interpolate. Converting the column in a CTE first hands
--- the macro a bare column name, which is all it can parse. For the
--- same reason, do not name a macro in a comment here: the scanner
--- does not skip comments and will try to interpolate the example.
-WITH bucketed AS (
+-- Is each source still landing rows at its expected rate, and did it stop
+-- mid-window. The CTE is load-bearing, not style: Grafana captures macro
+-- arguments with a regex that stops at the first closing paren, so wrapping
+-- the epoch column in a to_timestamp call inside the time-group macro leaves
+-- it one truncated argument and the query fails to interpolate. Converting the
+-- column in a CTE first hands the macro a bare column name, which is all it
+-- can parse. For the same reason, do not name a macro in a comment here: the
+-- scanner does not skip comments and will try to interpolate the example.
+--
+-- EVERY EXPECTED SOURCE IS SEEDED AT BOTH ENDS OF THE WINDOW, which is the
+-- whole redesign. Grouping over the measurement table alone omits a series
+-- ENTIRELY for a collector that was dead the whole window, so the panel got
+-- cleaner as an outage lengthened and an outage removed ink instead of adding
+-- it. Two zero rows per expected source cost nothing, guarantee the series
+-- exists, and let the time-group fill draw it flat across the range: a dead
+-- collector is now a line pinned at zero.
+--
+-- EXPECTED MEANS "HAS EVER WRITTEN THIS SHAPE", deliberately not "is in the
+-- registry". All-time history cannot be suppressed by an outage of any
+-- length, so it is fail-closed, while it also declines to invent a permanent
+-- zero line for a tick-only source that never wrote a candle in its life.
+WITH bounds AS (
   SELECT
-    to_timestamp(bucket_start) AS bucket_ts,
-    source
-  FROM cex_prices
-  WHERE $__unixEpochFilter(bucket_start)
-    AND source = ANY (ARRAY[${source:sqlstring}]::text[])
-    AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])
-    AND granularity_secs = ${granularity:sqlstring}::bigint
+    $__unixEpochFrom() AS lo,
+    $__unixEpochTo() AS hi
+),
+
+expected AS (
+  SELECT DISTINCT c.source
+  FROM cex_prices AS c
+  WHERE c.source = ANY (ARRAY[${source:sqlstring}]::text[])
+    AND c.product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])
+    AND c.granularity_secs = ${granularity:sqlstring}::bigint
+),
+
+seeded AS (
+  SELECT
+    to_timestamp(b.lo) AS bucket_ts,
+    e.source,
+    0 AS written
+  FROM expected AS e
+  CROSS JOIN bounds AS b
+  UNION ALL
+  SELECT
+    to_timestamp(b.hi) AS bucket_ts,
+    e.source,
+    0 AS written
+  FROM expected AS e
+  CROSS JOIN bounds AS b
+  UNION ALL
+  SELECT
+    to_timestamp(c.bucket_start) AS bucket_ts,
+    c.source,
+    1 AS written
+  FROM cex_prices AS c
+  WHERE $__unixEpochFilter(c.bucket_start)
+    AND c.source = ANY (ARRAY[${source:sqlstring}]::text[])
+    AND c.product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])
+    AND c.granularity_secs = ${granularity:sqlstring}::bigint
 )
+
 SELECT
   $__timeGroupAlias(bucket_ts, '1m', 0),
   source AS metric,
-  count(*) AS value
-FROM bucketed
+  sum(written) AS value
+FROM seeded
 GROUP BY 1, 2
 ORDER BY 1

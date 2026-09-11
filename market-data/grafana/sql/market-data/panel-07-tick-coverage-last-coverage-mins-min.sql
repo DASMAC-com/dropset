@@ -9,7 +9,6 @@ SELECT
   source,
   product_id,
   count(*) AS prints,
-  count(confidence) AS with_confidence,
   to_timestamp(max(observed_at)) AS latest_print,
   (extract(epoch FROM now()) - max(observed_at))::bigint AS age_secs
 FROM spot_ticks

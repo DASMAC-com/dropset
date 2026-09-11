@@ -89,83 +89,6 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Seconds since the newest candle bucket each source/product has on record. The floor is one granularity by construction \u2014 the collector persists only closed buckets, so a perfectly healthy 60s feed reads 60-120s and never 0. The thresholds are set above that floor accordingly; treat this as 'how stale is the data I would quote from', and the cursor-age tile beside it as 'is the process alive'. The thresholds are absolute and calibrated for 60s buckets, which is the only granularity any collector writes today; selecting a coarser Granularity raises the floor above them and the tile reads permanently amber or red.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 240
-              },
-              {
-                "color": "red",
-                "value": 600
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "dropset-postgres"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT\n  source || ' ' || product_id AS feed,\n  extract(epoch FROM now()) - max(bucket_start) AS age_secs\nFROM cex_prices\nWHERE source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n  AND granularity_secs = ${granularity:sqlstring}::bigint\nGROUP BY 1\nORDER BY 1",
-          "refId": "A"
-        }
-      ],
-      "title": "Last candle age",
-      "transformations": [
-        {
-          "id": "rowsToFields",
-          "options": {}
-        }
-      ],
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "dropset-postgres"
-      },
       "description": "OHLC candles as recorded, one panel per selected product. This is the 'real chart' view and the screenshot artifact. It reads a single source ($candle_source) on purpose: candles from two venues share a bucket key but are different series, so overlaying them would interleave bars rather than compare them. Use the overlay panel below to compare sources.",
       "fieldConfig": {
         "defaults": {
@@ -332,7 +255,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Rows landed per minute, per source. Note the axis is candle-bucket time, not insert time: the schema records no insert timestamp, so this counts buckets by the minute they cover. For a live 60s feed that is a flat line at one row per product per minute, and a collector that dies mid-window drops visibly to zero. A collector dead for the whole window contributes no series at all rather than a zero line - that case is what the freshness tiles above are for. The bucket is a fixed one minute rather than the dashboard interval, so the number means the same thing at every zoom level; the cost is that a multi-day range returns a point per minute.",
+      "description": "Is each source still landing rows at its expected rate, and did it stop mid-window. Shape over time exists nowhere else on this dashboard, and dating the onset of an outage is a real forensic need.\n\nA DEAD COLLECTOR IS A FLAT LINE AT ZERO, not a missing series. That is the point of the redesign: grouping over the measurement table alone drops a source that wrote nothing for the whole window, so the panel looked TIDIER the longer an outage ran, and the reader's eye had to notice an absence rather than a change. Every source that has ever written this product and bucket width is seeded across the window, so an outage now adds ink.\n\nExpected means \"has ever written this shape\", not \"is in the registry\" \u2014 all-time history cannot be erased by an outage, and it also avoids drawing a permanent zero line for a tick-only source that has never written a candle. A source that legitimately publishes once a day will sit at zero between publications; read it against the Role column of Source coverage rather than as an outage.\n\nCounts are candle ROWS per minute across the selected products, so a source covering four products at 60s tops out around four.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -341,7 +264,7 @@
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
-            "axisLabel": "rows/min",
+            "axisLabel": "candle rows per minute",
             "axisPlacement": "auto",
             "axisSoftMin": 0,
             "barAlignment": 0,
@@ -366,6 +289,7 @@
           },
           "decimals": 0,
           "mappings": [],
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -374,7 +298,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
@@ -408,7 +333,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- The CTE is load-bearing, not style. Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so\n-- wrapping the epoch column in a to_timestamp call inside the\n-- time-group macro leaves it one truncated argument and the query\n-- fails to interpolate. Converting the column in a CTE first hands\n-- the macro a bare column name, which is all it can parse. For the\n-- same reason, do not name a macro in a comment here: the scanner\n-- does not skip comments and will try to interpolate the example.\nWITH bucketed AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    source\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n    AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n    AND granularity_secs = ${granularity:sqlstring}::bigint\n)\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  count(*) AS value\nFROM bucketed\nGROUP BY 1, 2\nORDER BY 1",
+          "rawSql": "-- Is each source still landing rows at its expected rate, and did it stop\n-- mid-window. The CTE is load-bearing, not style: Grafana captures macro\n-- arguments with a regex that stops at the first closing paren, so wrapping\n-- the epoch column in a to_timestamp call inside the time-group macro leaves\n-- it one truncated argument and the query fails to interpolate. Converting the\n-- column in a CTE first hands the macro a bare column name, which is all it\n-- can parse. For the same reason, do not name a macro in a comment here: the\n-- scanner does not skip comments and will try to interpolate the example.\n--\n-- EVERY EXPECTED SOURCE IS SEEDED AT BOTH ENDS OF THE WINDOW, which is the\n-- whole redesign. Grouping over the measurement table alone omits a series\n-- ENTIRELY for a collector that was dead the whole window, so the panel got\n-- cleaner as an outage lengthened and an outage removed ink instead of adding\n-- it. Two zero rows per expected source cost nothing, guarantee the series\n-- exists, and let the time-group fill draw it flat across the range: a dead\n-- collector is now a line pinned at zero.\n--\n-- EXPECTED MEANS \"HAS EVER WRITTEN THIS SHAPE\", deliberately not \"is in the\n-- registry\". All-time history cannot be suppressed by an outage of any\n-- length, so it is fail-closed, while it also declines to invent a permanent\n-- zero line for a tick-only source that never wrote a candle in its life.\nWITH bounds AS (\n  SELECT\n    $__unixEpochFrom() AS lo,\n    $__unixEpochTo() AS hi\n),\n\nexpected AS (\n  SELECT DISTINCT c.source\n  FROM cex_prices AS c\n  WHERE c.source = ANY (ARRAY[${source:sqlstring}]::text[])\n    AND c.product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n    AND c.granularity_secs = ${granularity:sqlstring}::bigint\n),\n\nseeded AS (\n  SELECT\n    to_timestamp(b.lo) AS bucket_ts,\n    e.source,\n    0 AS written\n  FROM expected AS e\n  CROSS JOIN bounds AS b\n  UNION ALL\n  SELECT\n    to_timestamp(b.hi) AS bucket_ts,\n    e.source,\n    0 AS written\n  FROM expected AS e\n  CROSS JOIN bounds AS b\n  UNION ALL\n  SELECT\n    to_timestamp(c.bucket_start) AS bucket_ts,\n    c.source,\n    1 AS written\n  FROM cex_prices AS c\n  WHERE $__unixEpochFilter(c.bucket_start)\n    AND c.source = ANY (ARRAY[${source:sqlstring}]::text[])\n    AND c.product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\n    AND c.granularity_secs = ${granularity:sqlstring}::bigint\n)\n\nSELECT\n  $__timeGroupAlias(bucket_ts, '1m', 0),\n  source AS metric,\n  sum(written) AS value\nFROM seeded\nGROUP BY 1, 2\nORDER BY 1\n",
           "refId": "A"
         }
       ],
@@ -420,7 +345,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Which source covers which product, over the last $coverage_mins minutes. This is the panel that answers 'do we want another collector here' - a product with one source has no cross-check, and a product with none is a gap. Deliberately NOT filtered by the source/product variables: its job is to show everything arriving, including series the current selection hides.",
+      "description": "Which sources cover which products in the candle tier, how much history each holds, and how fresh each is. The store-inventory definition for both dashboards.\n\nEvery (source, product, bucket width) the store has EVER held is a row, so a series that stopped entirely stays visible instead of dropping out of a window. Read three columns together: Bars (all time) is how much history exists, Buckets in window is whether it is still arriving, and Age (buckets) is how late it is. All-time bars with zero in-window buckets is a series that STOPPED \u2014 the one reading no windowed panel can give you.\n\nAGE IS COUNTED IN BUCKETS, NOT SECONDS, and that is why the buckets column is the colored one. A daily series is 86400 seconds old just before its next bar lands, so an absolute bound tuned for 60s bars marks a perfectly healthy daily reference red forever. Dividing by the series' own bucket width makes one bound correct for both: about 1 is current, 2 is the bar in progress, orange at 4 and red at 8. Age in seconds is kept beside it as raw context and is deliberately not colored.\n\nThe window is independent of the dashboard time range on purpose: what is arriving now should not change when you pan back to look at history.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -445,12 +370,108 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "source"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Source"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "product_id"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Product"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "granularity_secs"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Bucket width"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bars_all_time"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Bars (all time)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "buckets_in_window"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Buckets in window"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latest_bucket"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Latest bucket"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "age_secs"
             },
             "properties": [
               {
+                "id": "displayName",
+                "value": "Age"
+              },
+              {
                 "id": "unit",
                 "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_cadences"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Age (buckets)"
+              },
+              {
+                "id": "decimals",
+                "value": 1
               },
               {
                 "id": "custom.cellOptions",
@@ -470,11 +491,11 @@
                     },
                     {
                       "color": "orange",
-                      "value": 240
+                      "value": 4
                     },
                     {
                       "color": "red",
-                      "value": 600
+                      "value": 8
                     }
                   ]
                 }
@@ -511,11 +532,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  source,\n  product_id,\n  granularity_secs,\n  count(*) AS buckets,\n  to_timestamp(max(bucket_start)) AS latest_bucket,\n  (extract(epoch FROM now()) - max(bucket_start))::bigint AS age_secs\nFROM cex_prices\nWHERE bucket_start >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)\nGROUP BY 1, 2, 3\nORDER BY 1, 2, 3",
+          "rawSql": "-- The candle tier's store inventory and its freshness in one definition,\n-- absorbing what the old Last candle age tile and the FX dashboard's What is\n-- in the store table each answered on their own.\n--\n-- DRIVEN FROM ALL TIME, windowed only in a column. A series that stopped\n-- entirely has no rows inside any window, so a windowed GROUP BY drops it and\n-- the reader cannot tell \"stopped\" from \"never configured\" -- that reading is\n-- what the FX table contributed and it has to survive the merge. Here every\n-- (source, product, bucket width) the store has ever held is a row, and\n-- buckets_in_window falling to 0 is what says it stopped.\n--\n-- STALENESS IS CADENCE-RELATIVE, which is why age_secs is not the colored\n-- column. A daily series is 86400 seconds old the moment before its next\n-- bucket lands, so any absolute bound correct for 60s bars paints a healthy\n-- daily reference permanently red -- the defect that made the FX table's\n-- 300/3600 thresholds wrong rather than merely noisy, measured on a source\n-- whose bars are 86400s wide. age_cadences divides by the series' own bucket\n-- width, so one number reads correctly for both: about 1 is current, 2 is the\n-- bucket in progress, and the colored bounds sit at 4 and 8 so a weekend of a\n-- daily reference does not read like an outage.\nWITH lifetime AS (\n  SELECT\n    c.source,\n    c.product_id,\n    c.granularity_secs,\n    count(*) AS bars_all_time,\n    max(c.bucket_start) AS last_bucket\n  FROM cex_prices AS c\n  GROUP BY 1, 2, 3\n),\n\nwindowed AS (\n  SELECT\n    c.source,\n    c.product_id,\n    c.granularity_secs,\n    count(*) AS buckets\n  FROM cex_prices AS c\n  WHERE c.bucket_start\n    >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)\n  GROUP BY 1, 2, 3\n)\n\nSELECT\n  l.source,\n  l.product_id,\n  l.granularity_secs,\n  l.bars_all_time,\n  coalesce(w.buckets, 0) AS buckets_in_window,\n  to_timestamp(l.last_bucket) AS latest_bucket,\n  (extract(epoch FROM now()) - l.last_bucket)::bigint AS age_secs,\n  round(\n    (extract(epoch FROM now()) - l.last_bucket) / l.granularity_secs, 1\n  ) AS age_cadences\nFROM lifetime AS l\nLEFT JOIN windowed AS w\n  ON\n    l.source = w.source\n    AND l.product_id = w.product_id\n    AND l.granularity_secs = w.granularity_secs\nORDER BY 1, 2, 3\n",
           "refId": "A"
         }
       ],
-      "title": "Candle coverage (last $coverage_mins min)",
+      "title": "Candle coverage (all time, window $coverage_mins min)",
       "type": "table"
     },
     {
@@ -523,7 +544,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "The same question as the candle coverage panel above, for the tick tier - which venues are printing which products into spot_ticks. Separate rather than merged into that panel because the two tiers have genuinely different columns: a candle row has a bucket width and OHLCV, a tick row has neither. Watch the confidence column: a venue that publishes one (Pyth) and suddenly stops is a different event from one that never had a confidence notion at all, which is why it is a count rather than a flag. Deliberately NOT filtered by the source/product variables, for the same reason as the panel above.",
+      "description": "Which venues are printing which products into the tick tier, and how fresh each is. A tick row has neither a bucket width nor OHLCV, which is why this tier is a separate table from the candle coverage above rather than merged into it.\n\nAge thresholds are tighter than the candle table's on purpose: a tick feed polling every 15s that has printed nothing for a minute is behind in a way a 60s candle series would not be. Note the consequence for a source that publishes once a day into this tier \u2014 it will sit red between publications, and the candle table's bucket-relative age is the reading that handles cadence properly.\n\nA source registered but printing nothing has no row here at all; Source coverage below is the panel that renders it as a row.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -548,9 +569,61 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "source"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Source"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "product_id"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Product"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "prints"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Prints in window"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latest_print"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Latest print"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "age_secs"
             },
             "properties": [
+              {
+                "id": "displayName",
+                "value": "Age"
+              },
               {
                 "id": "unit",
                 "value": "s"
@@ -614,7 +687,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "-- Age thresholds are tighter than the candle panel's on purpose: a tick\n-- feed polling every 15s that has printed nothing for a minute is behind\n-- in a way a 60s candle series would not be.\nSELECT\n  source,\n  product_id,\n  count(*) AS prints,\n  count(confidence) AS with_confidence,\n  to_timestamp(max(observed_at)) AS latest_print,\n  (extract(epoch FROM now()) - max(observed_at))::bigint AS age_secs\nFROM spot_ticks\nWHERE observed_at >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)\nGROUP BY 1, 2\nORDER BY 1, 2",
+          "rawSql": "-- Age thresholds are tighter than the candle panel's on purpose: a tick\n-- feed polling every 15s that has printed nothing for a minute is behind\n-- in a way a 60s candle series would not be.\nSELECT\n  source,\n  product_id,\n  count(*) AS prints,\n  to_timestamp(max(observed_at)) AS latest_print,\n  (extract(epoch FROM now()) - max(observed_at))::bigint AS age_secs\nFROM spot_ticks\nWHERE observed_at >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)\nGROUP BY 1, 2\nORDER BY 1, 2",
           "refId": "A"
         }
       ],
@@ -626,7 +699,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Every source the collectors registered, contributing or not - the completeness guarantee the two panels above cannot give. Both of those group over a measurement table, so a source that wrote nothing has no rows to group and is simply absent, which on a panel is indistinguishable from never having been configured. This one drives from instrument_registry instead, so a dark collector is a row reading 0 that sorts to the top. Read it when the question is 'is this source contributing anywhere' - Pyth included, whose ticks reach only the panel above and only while it is actually printing. Three columns, and the distinction between them is the point: 'products' is what the collector registered, 'ever_produced' how many of those have ever written a row, and 'live' how many are inside their staleness bound. ever_produced = 0 is a collector that has never worked; ever_produced = products with live = 0 is one that worked and died, and 'latest' says when. live < products is a partial outage. The bound is class-aware rather than a fixed window, so a daily-cadence source is not reported dead every load and an FX pair clears its weekend. TWO THINGS TO KNOW BEFORE TREATING A DARK ROW AS A FAULT. First, a source may be deliberately PARKED - pyth is, pending a credential, so it reads ever_produced=27 live=0 indefinitely and that is correct; expected-dark sources are recorded on their Linear issue, and any OTHER dark source is a fault. Second, the bars leg measures bucket_start, not write time, so a daily source is already ~1-2 days stale while healthy; across a weekend that can reach the 72h fx-pair bound and read quiet on a Monday. This panel reads its verdict from instrument_source_liveness rather than computing one, so widening for the daily case is a change to that view and every consumer follows it at once - which is exactly why the bounds are not restated here. Deliberately NOT filtered by the Source or Product variables: a panel answering 'what is missing' must not be narrowed by a picker populated from the same registry.",
+      "description": "Is every source the platform is meant to have contributing anywhere \u2014 including one that has produced nothing at all. EIGHT ROWS, ALWAYS: the roster is declared, so a source cannot answer this question by being absent from it. If you are asking \"are we getting data from Kraken, or Frankfurter, or er-api?\", this is the panel that answers it, by name.\n\nREAD Printing now, NOT Covered. Covered is a 48-to-72-hour class-aware bound that answers \"should this source be producing at all\" and deliberately tolerates an FX weekend \u2014 it was measured reading true at 24.6 hours old, so it is not a quoting signal and never was. Printing now applies the tape freshness bound and fails closed.\n\nA daily reference reads 0 under Printing now BETWEEN PUBLICATIONS, and that is correct rather than a fault \u2014 the Role column is what tells you which sources those are. This is also why there is no longer a single column called live: five covered sources on an FX pair is not five-fold redundancy, because three of them are daily references and only two quote intraday.\n\nRole is a DESIGNATION, not a measurement, and is declared in this query as a literal. Nothing in the store records whether a source is a tape or a reference, and every version that derived it from the readings was suppressed by the outages it needed to report. The cost is drift when the roster changes, which is why a source nobody declared renders as UNCLASSIFIED instead of quietly joining a group. Panel Price by source carries the same designation in its line styling and the two must be kept in step; the durable fix is a collector-written cadence column in the registry.\n\nPARKED IS NOT FAULTED, and this table cannot yet tell you which is which: a parked source is marked code-side and is not reachable from SQL, since only a running collector writes the registry. Pyth is the parked one, declared as such in the Role column, and that pointer is the workaround until the parked set becomes queryable.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -651,9 +724,61 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "live"
+              "options": "source"
             },
             "properties": [
+              {
+                "id": "displayName",
+                "value": "Source"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "role"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Role"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "products"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Products registered"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ever_produced"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Ever produced"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "printing_now"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Printing now"
+              },
               {
                 "id": "custom.cellOptions",
                 "value": {
@@ -682,39 +807,40 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "covered"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Covered (class bound)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latest"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Latest reading"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "age_secs"
             },
             "properties": [
               {
+                "id": "displayName",
+                "value": "Age"
+              },
+              {
                 "id": "unit",
                 "value": "s"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "mode": "basic",
-                  "type": "color-background"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "green",
-                      "value": null
-                    },
-                    {
-                      "color": "orange",
-                      "value": 172800
-                    },
-                    {
-                      "color": "red",
-                      "value": 259200
-                    }
-                  ]
-                }
               }
             ]
           }
@@ -730,12 +856,12 @@
       "options": {
         "cellHeight": "sm",
         "footer": {
-          "countRows": false,
+          "countRows": true,
           "fields": "",
           "reducer": [
-            "sum"
+            "count"
           ],
-          "show": false
+          "show": true
         },
         "showHeader": true
       },
@@ -748,7 +874,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "-- Every source the collectors REGISTERED, whether or not it is producing.\n-- The two coverage panels above group over a measurement table, so a source\n-- that wrote nothing in the window has no rows to group and vanishes\n-- entirely; absence there cannot be told apart from never having been\n-- configured. Driving from the registry inverts that, and a dark collector\n-- becomes a row reading 0 rather than a row that is not there.\n--\n-- PER (SOURCE, PRODUCT), NOT PER PRODUCT, and that is the whole point.\n-- instrument_liveness answers the same question one level up and\n-- deliberately drops the source, so a product some OTHER collector still\n-- covers reads live and the dead one is masked. That masking is exactly the\n-- defect this panel exists to catch, and instrument_source_liveness is the\n-- view that keeps the source.\n--\n-- READ FROM THE VIEW, do not recompute. This panel first carried its own\n-- copy of the two class-aware staleness bounds, because no per-source view\n-- existed when it was written. One does now, and it defines those constants\n-- once \u2014 so a copy here could only drift from them, and the whole reason the\n-- thresholds live in one place is that a silent divergence between two\n-- liveness verdicts is indistinguishable from a real outage. The view also\n-- carries the granularity-vocabulary constraint that keeps the bars lookup\n-- an index seek rather than a range scan, which this panel needs on a 5s\n-- refresh and now inherits rather than restates.\nSELECT\n  source,\n  count(*) AS products,\n  count(last_data_at) AS ever_produced,\n  count(*) FILTER (WHERE is_live) AS live,\n  to_timestamp(max(last_data_at)) AS latest,\n  (extract(epoch FROM now()) - max(last_data_at))::bigint AS age_secs\nFROM instrument_source_liveness\nGROUP BY source\nORDER BY live ASC, source ASC",
+          "rawSql": "-- Every source the collectors REGISTERED, whether or not it is producing, and\n-- the DESIGNATED role that says how to read its counts.\n--\n-- The two coverage tables above group over a measurement table, so a source\n-- that wrote nothing has no rows to group and vanishes entirely; absence there\n-- cannot be told apart from never having been configured. Driving from the\n-- registry inverts that, and a dark collector becomes a row reading 0 rather\n-- than a row that is not there.\n--\n-- THE ROSTER IS A DECLARED LITERAL, so this table has a FIXED height: eight\n-- rows, always, one per source the platform is meant to have. A registry-only\n-- read cannot promise that, because a source leaves the registry when its\n-- collector stops registering -- exactly the invisible-rather-than-dark defect\n-- one level up that this panel exists to catch. The full join is what makes it\n-- fail closed in both directions: a declared source missing from the registry\n-- still renders as a row of zeros, and a source in the registry that nobody\n-- declared renders with role UNCLASSIFIED rather than blending in.\n--\n-- WHY ROLE IS A LITERAL AND NOT DERIVED. Whether a source is a designated tape\n-- or a daily reference is a DESIGNATION, and no column in the store records\n-- it. Every derivable form is the shape this run deleted: any cadence measured\n-- from the readings themselves is suppressed by the very outage it must\n-- report. A literal cannot be suppressed, at the cost of drifting when the\n-- roster changes -- which is why an undeclared source is loud. The durable fix\n-- is a collector-written cadence column in the registry, filed as a gap.\n--\n-- READ printing_now, NOT covered. covered is the view's class-aware bound, 48\n-- to 72 hours, which answers \"should this source be producing at all\" and\n-- tolerates an FX weekend; it was measured returning true at 24.6 hours old,\n-- so it must never be read as a quoting signal. printing_now applies the tape\n-- freshness bound instead and is the fail-closed reading. A daily reference\n-- shows 0 there between publications BY DESIGN, and its role column is what\n-- says so -- which is also why the two counts are no longer one column called\n-- live, a name that invited reading five sources as five-fold redundancy when\n-- the real intraday redundancy on an FX pair is two.\nWITH declared AS (\n  SELECT\n    d.source,\n    d.role\n  FROM (VALUES\n    ('oanda', 'tape (FX)'),\n    ('twelvedata', 'intraday margin (FX)'),\n    ('coinbase', 'tape (crypto/peg)'),\n    ('kraken', 'tape (crypto/peg)'),\n    ('alphavantage', 'daily reference'),\n    ('erapi', 'daily reference'),\n    ('frankfurter', 'daily reference'),\n    ('pyth', 'parked by decision')\n  ) AS d (source, role)\n),\n\nrolled AS (\n  SELECT\n    l.source,\n    count(*) AS products,\n    count(l.last_data_at) AS ever_produced,\n    count(*) FILTER (WHERE l.is_live) AS covered,\n    count(*) FILTER (\n      WHERE\n        extract(epoch FROM now()) - l.last_data_at\n        <= ${quote_freshness_mins:sqlstring}::bigint * 60\n    ) AS printing_now,\n    max(l.last_data_at) AS latest\n  FROM instrument_source_liveness AS l\n  GROUP BY l.source\n)\n\nSELECT\n  coalesce(r.source, d.source) AS source,\n  coalesce(d.role, 'UNCLASSIFIED') AS role,\n  coalesce(r.products, 0) AS products,\n  coalesce(r.ever_produced, 0) AS ever_produced,\n  coalesce(r.printing_now, 0) AS printing_now,\n  coalesce(r.covered, 0) AS covered,\n  to_timestamp(r.latest) AS latest,\n  (extract(epoch FROM now()) - r.latest)::bigint AS age_secs\nFROM rolled AS r\nFULL JOIN declared AS d ON r.source = d.source\nORDER BY\n  coalesce(d.role, 'UNCLASSIFIED') ASC,\n  coalesce(r.source, d.source) ASC\n",
           "refId": "A"
         }
       ],

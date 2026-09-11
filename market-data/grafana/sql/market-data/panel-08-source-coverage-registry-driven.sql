@@ -2,36 +2,84 @@
 -- Source: market-data.json
 -- Regenerate: make dashboard-sql
 
--- Every source the collectors REGISTERED, whether or not it is producing.
--- The two coverage panels above group over a measurement table, so a source
--- that wrote nothing in the window has no rows to group and vanishes
--- entirely; absence there cannot be told apart from never having been
--- configured. Driving from the registry inverts that, and a dark collector
--- becomes a row reading 0 rather than a row that is not there.
+-- Every source the collectors REGISTERED, whether or not it is producing, and
+-- the DESIGNATED role that says how to read its counts.
 --
--- PER (SOURCE, PRODUCT), NOT PER PRODUCT, and that is the whole point.
--- instrument_liveness answers the same question one level up and
--- deliberately drops the source, so a product some OTHER collector still
--- covers reads live and the dead one is masked. That masking is exactly the
--- defect this panel exists to catch, and instrument_source_liveness is the
--- view that keeps the source.
+-- The two coverage tables above group over a measurement table, so a source
+-- that wrote nothing has no rows to group and vanishes entirely; absence there
+-- cannot be told apart from never having been configured. Driving from the
+-- registry inverts that, and a dark collector becomes a row reading 0 rather
+-- than a row that is not there.
 --
--- READ FROM THE VIEW, do not recompute. This panel first carried its own
--- copy of the two class-aware staleness bounds, because no per-source view
--- existed when it was written. One does now, and it defines those constants
--- once — so a copy here could only drift from them, and the whole reason the
--- thresholds live in one place is that a silent divergence between two
--- liveness verdicts is indistinguishable from a real outage. The view also
--- carries the granularity-vocabulary constraint that keeps the bars lookup
--- an index seek rather than a range scan, which this panel needs on a 5s
--- refresh and now inherits rather than restates.
+-- THE ROSTER IS A DECLARED LITERAL, so this table has a FIXED height: eight
+-- rows, always, one per source the platform is meant to have. A registry-only
+-- read cannot promise that, because a source leaves the registry when its
+-- collector stops registering -- exactly the invisible-rather-than-dark defect
+-- one level up that this panel exists to catch. The full join is what makes it
+-- fail closed in both directions: a declared source missing from the registry
+-- still renders as a row of zeros, and a source in the registry that nobody
+-- declared renders with role UNCLASSIFIED rather than blending in.
+--
+-- WHY ROLE IS A LITERAL AND NOT DERIVED. Whether a source is a designated tape
+-- or a daily reference is a DESIGNATION, and no column in the store records
+-- it. Every derivable form is the shape this run deleted: any cadence measured
+-- from the readings themselves is suppressed by the very outage it must
+-- report. A literal cannot be suppressed, at the cost of drifting when the
+-- roster changes -- which is why an undeclared source is loud. The durable fix
+-- is a collector-written cadence column in the registry, filed as a gap.
+--
+-- READ printing_now, NOT covered. covered is the view's class-aware bound, 48
+-- to 72 hours, which answers "should this source be producing at all" and
+-- tolerates an FX weekend; it was measured returning true at 24.6 hours old,
+-- so it must never be read as a quoting signal. printing_now applies the tape
+-- freshness bound instead and is the fail-closed reading. A daily reference
+-- shows 0 there between publications BY DESIGN, and its role column is what
+-- says so -- which is also why the two counts are no longer one column called
+-- live, a name that invited reading five sources as five-fold redundancy when
+-- the real intraday redundancy on an FX pair is two.
+WITH declared AS (
+  SELECT
+    d.source,
+    d.role
+  FROM (VALUES
+    ('oanda', 'tape (FX)'),
+    ('twelvedata', 'intraday margin (FX)'),
+    ('coinbase', 'tape (crypto/peg)'),
+    ('kraken', 'tape (crypto/peg)'),
+    ('alphavantage', 'daily reference'),
+    ('erapi', 'daily reference'),
+    ('frankfurter', 'daily reference'),
+    ('pyth', 'parked by decision')
+  ) AS d (source, role)
+),
+
+rolled AS (
+  SELECT
+    l.source,
+    count(*) AS products,
+    count(l.last_data_at) AS ever_produced,
+    count(*) FILTER (WHERE l.is_live) AS covered,
+    count(*) FILTER (
+      WHERE
+        extract(epoch FROM now()) - l.last_data_at
+        <= ${quote_freshness_mins:sqlstring}::bigint * 60
+    ) AS printing_now,
+    max(l.last_data_at) AS latest
+  FROM instrument_source_liveness AS l
+  GROUP BY l.source
+)
+
 SELECT
-  source,
-  count(*) AS products,
-  count(last_data_at) AS ever_produced,
-  count(*) FILTER (WHERE is_live) AS live,
-  to_timestamp(max(last_data_at)) AS latest,
-  (extract(epoch FROM now()) - max(last_data_at))::bigint AS age_secs
-FROM instrument_source_liveness
-GROUP BY source
-ORDER BY live ASC, source ASC
+  coalesce(r.source, d.source) AS source,
+  coalesce(d.role, 'UNCLASSIFIED') AS role,
+  coalesce(r.products, 0) AS products,
+  coalesce(r.ever_produced, 0) AS ever_produced,
+  coalesce(r.printing_now, 0) AS printing_now,
+  coalesce(r.covered, 0) AS covered,
+  to_timestamp(r.latest) AS latest,
+  (extract(epoch FROM now()) - r.latest)::bigint AS age_secs
+FROM rolled AS r
+FULL JOIN declared AS d ON r.source = d.source
+ORDER BY
+  coalesce(d.role, 'UNCLASSIFIED') ASC,
+  coalesce(r.source, d.source) ASC
