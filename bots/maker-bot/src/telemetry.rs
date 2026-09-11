@@ -447,6 +447,19 @@ pub fn spawn(rt: &Runtime) -> Telemetry {
     // So the only disabling condition left is an unset variable, and the only
     // error is a malformed URL — a misconfiguration worth reporting rather
     // than a transient the bot should ride out.
+    // Built inside the runtime's context. A lazy pool still spawns its idle
+    // reaper on construction — `connect_lazy` defers *connecting*, not the
+    // pool's own bookkeeping task — and `tokio::spawn` panics with "requires
+    // a Tokio context" without a handle in scope. This function is handed the
+    // runtime rather than running on it, so the handle has to be entered.
+    //
+    // This was latent for as long as it existed: the guard clause above
+    // returns early when the URL is unset, and outside the compose stack it
+    // always was, so the only callers that got here were containerized ones
+    // whose entrypoint already ran inside a runtime. Wiring the variable
+    // through to TUI-spawned makers is what first reached this line on a
+    // host process, and it panicked on the spot.
+    let _guard = rt.enter();
     let pool = match connect_lazy(&url) {
         Ok(pool) => pool,
         Err(e) => {

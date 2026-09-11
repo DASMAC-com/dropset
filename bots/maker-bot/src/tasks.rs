@@ -212,6 +212,26 @@ fn drain_fx_store_into(
     answered
 }
 
+/// This tick's view of the market-data store, shared by every market.
+///
+/// Two facts rather than one, because the per-market tape guard needs to tell
+/// "no tape" from "not yet asked". The store poller runs on its own cadence
+/// and the tick loop starts immediately, so on the first ticks of any run the
+/// cache is legitimately empty — and a market that halted on that would fire
+/// its alarm, pull its book, and recover seconds later on every single
+/// startup. An alarm that always fires is one the operator stops reading,
+/// which is the same reasoning that keeps a permanently-wrong basis source
+/// off the roster entirely.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StoreStatus {
+    /// Silent past its liveness bound — measured from startup until the first
+    /// successful read, so a store that never answers still halts.
+    silent: bool,
+    /// The store has answered at least once this run, so an empty candidate
+    /// set now means the venues are dark rather than unpolled.
+    answered: bool,
+}
+
 /// The shared feed cache. Each tier's source polls on its own cadence and
 /// forwards its readings onto a live sink; a cycle drains those into the
 /// per-tier caches below, and `legs()` composes each market's legs by walking
@@ -285,6 +305,14 @@ impl FeedHub {
     fn store_silent(&self, now: Instant) -> bool {
         let since = now.duration_since(self.fx_store_last_ok.unwrap_or(self.started_at));
         fx_store::store_unavailable(since)
+    }
+
+    /// This tick's view of the store, for the fail-closed guards.
+    fn store_status(&self, now: Instant) -> StoreStatus {
+        StoreStatus {
+            silent: self.store_silent(now),
+            answered: self.fx_store_last_ok.is_some(),
+        }
     }
 
     /// Drain each tier's live-sink receiver into the cache, stamping `now`. The
@@ -942,8 +970,8 @@ pub fn run_supervisor(
         // One verdict for the whole cycle, not per market: the store is a
         // process-wide dependency, so every market halts or none does. Read
         // after the drain above, so a snapshot that arrived this cycle counts.
-        let store_silent = hub.store_silent(now);
-        if store_silent {
+        let store = hub.store_status(now);
+        if store.silent {
             eprintln!(
                 "[halt] the market-data store has been silent past {:?} — \
                  every market stops quoting until it answers",
@@ -990,7 +1018,7 @@ pub fn run_supervisor(
                 )));
             report_leg_health(ctx, &fair);
             let got_fill = routed.get(&ctx.market.market).copied();
-            if let Err(e) = quote_market(ctx, &cfg, now, ts, fair, got_fill, store_silent) {
+            if let Err(e) = quote_market(ctx, &cfg, now, ts, fair, got_fill, store) {
                 eprintln!("[{}] tick error: {e}", ctx.cfg.symbol);
             }
         }
@@ -1267,14 +1295,14 @@ fn quote_market(
     ts: i64,
     fair: FairValue,
     got_fill: Option<(u64, u64)>,
-    store_silent: bool,
+    store: StoreStatus,
 ) -> Result<()> {
     let mut sample = SampleBuilder::new(ts, MarketId::of(ctx), fair, ctx.profile_kind);
     sample
         .last_set(ctx.last_set_price)
         .ladder(&cfg.strategy.ladder);
 
-    let result = quote_market_inner(ctx, cfg, now, fair, got_fill, store_silent, &mut sample);
+    let result = quote_market_inner(ctx, cfg, now, fair, got_fill, store, &mut sample);
     if let Err(e) = &result {
         // Recorded *alongside* whatever the tick decided, never over it. A
         // halt whose kill stamp then failed is the most alarming row the
@@ -1294,7 +1322,7 @@ fn quote_market_inner(
     now: Instant,
     fair: FairValue,
     got_fill: Option<(u64, u64)>,
-    store_silent: bool,
+    store: StoreStatus,
     sample: &mut SampleBuilder,
 ) -> Result<()> {
     let vault = chain::read_vault(
@@ -1379,7 +1407,14 @@ fn quote_market_inner(
     // Read off the leg's **contributors** rather than off what was offered: a
     // tape that was offered and then dropped for being stale has not priced
     // anything, so counting it would defeat the guard exactly when it matters.
+    //
+    // Gated on the store having answered at least once, so the empty cache of
+    // the first few ticks is not mistaken for dark venues. Without that gate
+    // every MVP market halts, alerts and zeroes its book on startup and then
+    // recovers — measured on the first live run. Nothing is lost by waiting:
+    // if the store never answers, `store.silent` halts on its own bound.
     let tape_shortfall = ctx.cfg.requires_live_tape
+        && store.answered
         && !fair
             .fx_leg
             .contributors
@@ -1398,7 +1433,7 @@ fn quote_market_inner(
         &cfg.kill,
         launch_tvl,
         killswitch::FeedGuards {
-            store_silent,
+            store_silent: store.silent,
             tape_shortfall,
         },
     );
@@ -2292,6 +2327,34 @@ mod tests {
             Duration::from_secs(6 * 3600),
             "aged from the bucket close, not from the read"
         );
+    }
+
+    /// A fresh hub has not asked the store yet, so the tape guard must stay
+    /// quiet — `answered` is what tells "no tape" from "not yet polled".
+    ///
+    /// The bug this pins was measured on the first live run: every MVP market
+    /// logged a NoLiveTape alert, zeroed its book on-chain, and recovered a
+    /// few seconds later once the first store poll landed.
+    #[test]
+    fn a_fresh_hub_has_not_asked_the_store_yet() {
+        let mut hub = FeedHub::new();
+        let status = hub.store_status(hub.started_at);
+        assert!(!status.answered, "nothing has been read yet");
+        assert!(!status.silent, "and the startup grace has not elapsed");
+
+        hub.fx_store_last_ok = Some(hub.started_at);
+        assert!(hub.store_status(hub.started_at).answered);
+    }
+
+    /// A store that never answers still halts — the grace is bounded, so the
+    /// quiet-on-startup rule above cannot become quiet forever.
+    #[test]
+    fn an_unanswered_store_still_halts_on_its_own_bound() {
+        let hub = FeedHub::new();
+        let past = hub.started_at + fx_store::MAX_STORE_SILENCE + Duration::from_secs(1);
+        let status = hub.store_status(past);
+        assert!(status.silent, "the store bound is what covers this case");
+        assert!(!status.answered);
     }
 
     /// The halt clock runs from startup before the first successful read, so a
