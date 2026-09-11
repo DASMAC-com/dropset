@@ -783,7 +783,9 @@ fn do_create_market(
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
-    let registry = accounts::poll(client, &wallet.pubkey(), None, 0)
+    // No symbol map: only `registry` is read, so the markets' order does not
+    // matter here (see the sibling call below).
+    let registry = accounts::poll(client, &wallet.pubkey(), None, 0, &[])
         .registry
         .context("registry not found — init first")?;
     let (base_mint, quote_mint) =
@@ -838,7 +840,10 @@ fn do_create_vault(
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
-    let state = accounts::poll(client, &wallet.pubkey(), None, 0);
+    // No symbol map: only `registry` is read below, so the markets' order is
+    // immaterial here. With an empty map the sort degrades to address order,
+    // which is still total — never the arbitrary scan order.
+    let state = accounts::poll(client, &wallet.pubkey(), None, 0, &[]);
     let registry = state.registry.context("registry not found")?;
     // Address this config's own market by its PDA — the bootstrap brings up
     // many markets, so the first-found one in `ChainState` isn't necessarily
@@ -911,11 +916,20 @@ fn do_probe_swap(
     log: &Logger,
 ) -> Result<String> {
     ensure_funded(client, &wallet.pubkey(), log);
-    // Swap against the selected market when one is set, else the first the scan
-    // finds — matching the book the operator is looking at.
+    // Swap against the selected market when one is set. The TUI always has a
+    // selection, so the fallback is for a caller that supplies none.
+    //
+    // That fallback takes the **lowest market address**, not the first row of
+    // the operator's list: no symbol map is passed here, so the sort has
+    // nothing to order by and falls back to its address tiebreak. This
+    // comment used to claim the fallback matched the book the operator was
+    // looking at, which was never true — before the list was sorted at all it
+    // was simply whichever market the account scan happened to yield first.
+    // Deterministic and stated beats arbitrary and mis-stated; wire the map
+    // through if the two ever need to agree.
     let market = match target {
         Some(address) => accounts::read_market_at(client, address),
-        None => accounts::poll(client, &wallet.pubkey(), None, 0)
+        None => accounts::poll(client, &wallet.pubkey(), None, 0, &[])
             .markets
             .into_iter()
             .next(),

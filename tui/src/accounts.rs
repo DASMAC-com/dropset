@@ -217,6 +217,7 @@ pub fn poll(
     wallet: &Pubkey,
     swapper: Option<&Pubkey>,
     selected: usize,
+    mint_symbols: &[(Pubkey, &'static str)],
 ) -> ChainState {
     let slot = client.get_slot().ok();
     let mut state = ChainState {
@@ -253,6 +254,7 @@ pub fn poll(
         dropset_sdk::time::now_unix_u32(),
         None,
     );
+    sort_markets_by_symbol(&mut state.markets, mint_symbols);
     // Participants are read for the selected market only — the accounts pane
     // shows one market at a time, so there is no need to fetch holdings for the
     // whole roster each poll. Cloned so the read borrows nothing of `state`
@@ -402,6 +404,39 @@ pub fn read_market_at(client: &RpcClient, address: Pubkey) -> Option<MarketView>
 // The two clocks are domain-typed all the way from the caller (see
 // `dropset_sdk::clock`), so the pair cannot be transposed into
 // `resting_levels` below.
+/// Order the markets list alphabetically by base-token symbol.
+///
+/// `get_program_accounts` returns accounts in the node's own store order,
+/// which is arbitrary and — worse — **unstable**: it can differ between runs
+/// and shift as accounts are written, so the list a reader just learned is not
+/// the list they get next time. Sorting here rather than at render time is
+/// deliberate: `poll` reads the selected market's participants by **index**
+/// further down, so a list reordered after the fact would attribute one
+/// market's holdings to another.
+///
+/// A market whose mint is not in the roster map sorts last rather than under
+/// its placeholder glyph, which keeps an unknown market visible at a
+/// predictable end of the list instead of interleaved among named ones. Ties
+/// break on the address so the order is total even then.
+fn sort_markets_by_symbol(markets: &mut [MarketView], mint_symbols: &[(Pubkey, &'static str)]) {
+    let symbol_of = |mint: &Pubkey| {
+        mint_symbols
+            .iter()
+            .find(|(m, _)| m == mint)
+            .map(|(_, s)| *s)
+    };
+    markets.sort_by(|a, b| {
+        let (sa, sb) = (symbol_of(&a.base_mint), symbol_of(&b.base_mint));
+        // `None` sorts after `Some` under Option's own ordering, which is the
+        // "unknown last" rule — spelled out because relying on it silently is
+        // how a later `unwrap_or("")` would invert it.
+        sa.is_none()
+            .cmp(&sb.is_none())
+            .then_with(|| sa.cmp(&sb))
+            .then_with(|| a.address.cmp(&b.address))
+    });
+}
+
 fn read_markets(
     client: &RpcClient,
     now_slot: SlotTime,
@@ -554,6 +589,55 @@ mod tests {
             markets,
             ..Default::default()
         }
+    }
+
+    /// The list is alphabetical by symbol, and an unknown mint sorts last
+    /// rather than interleaving under its placeholder glyph.
+    ///
+    /// Seeded in a deliberately scrambled order, because the defect this
+    /// closes is that `get_program_accounts` returns whatever the node's
+    /// store iteration yields — so the input order carries no information and
+    /// the test must not accidentally depend on it.
+    #[test]
+    fn markets_sort_alphabetically_with_unknowns_last() {
+        let symbols: Vec<(Pubkey, &'static str)> = vec![
+            (Pubkey::new_from_array([3; 32]), "EURC"),
+            (Pubkey::new_from_array([1; 32]), "CADC"),
+            (Pubkey::new_from_array([2; 32]), "AUDD"),
+        ];
+        // 4 is absent from the map — a market discovered on-chain that the
+        // bootstrap roster does not name.
+        let mut markets = vec![market(1, 3), market(1, 4), market(1, 1), market(1, 2)];
+        sort_markets_by_symbol(&mut markets, &symbols);
+
+        let order: Vec<Pubkey> = markets.iter().map(|m| m.base_mint).collect();
+        assert_eq!(
+            order,
+            vec![
+                Pubkey::new_from_array([2; 32]), // AUDD
+                Pubkey::new_from_array([1; 32]), // CADC
+                Pubkey::new_from_array([3; 32]), // EURC
+                Pubkey::new_from_array([4; 32]), // unknown, last
+            ]
+        );
+    }
+
+    /// The order must be total, so two runs over differently-shuffled input
+    /// agree. Without this the sort could look right on one arrangement and
+    /// still leave the list shifting between polls, which is the actual
+    /// complaint.
+    #[test]
+    fn the_market_order_is_independent_of_the_input_order() {
+        let symbols: Vec<(Pubkey, &'static str)> = vec![
+            (Pubkey::new_from_array([1; 32]), "CADC"),
+            (Pubkey::new_from_array([2; 32]), "AUDD"),
+        ];
+        let mut forward = vec![market(1, 1), market(1, 2), market(1, 9)];
+        let mut reverse = vec![market(1, 9), market(1, 2), market(1, 1)];
+        sort_markets_by_symbol(&mut forward, &symbols);
+        sort_markets_by_symbol(&mut reverse, &symbols);
+        let key = |ms: &[MarketView]| ms.iter().map(|m| m.base_mint).collect::<Vec<_>>();
+        assert_eq!(key(&forward), key(&reverse));
     }
 
     #[test]
