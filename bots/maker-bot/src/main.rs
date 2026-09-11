@@ -29,7 +29,8 @@ use dropset_feeds::venues::{
     FrankfurterSource, KrakenSource, PythFeed, PythHermesSource,
 };
 use dropset_feeds::{
-    forward_channel, run_until, run_until_with_metrics, HttpClient, RunConfig, Sink, Source,
+    forward_channel, parked, run_until, run_until_with_metrics, HttpClient, RunConfig, Sink,
+    Source, PARKED_SOURCES,
 };
 use dropset_maker_bot::config::{
     BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
@@ -348,6 +349,30 @@ enum HealthRow {
     Skip,
 }
 
+/// Pyth's **bare venue token**, the key `dropset_feeds::parked` is indexed by.
+///
+/// Deliberately not [`SOURCE_PYTH`], which is the fusion attribution tag
+/// (`pyth-hermes`) and would silently match no park record — the two
+/// vocabularies are separate on purpose and this is the kind of mix-up that
+/// fails by returning `None`, i.e. by reading as "not parked". Spelled here
+/// rather than imported from the adapter for the same reason `SOURCE_ERAPI` is:
+/// agreeing with a collector's `spot_ticks.source` today is convenient, not an
+/// invariant either side guarantees.
+const VENUE_PYTH: &str = "pyth";
+
+/// A receiver for a tier that will never deliver: an empty channel whose sender
+/// is dropped immediately.
+///
+/// `drain_into` treats `Closed` exactly as it treats `Empty` — it stops and
+/// leaves the cache alone — so a parked tier's cache stays empty and its leg
+/// resolves to `None`, which is the same state a spawned-but-failing tier
+/// reaches. That equivalence is the point: parking a source changes what gets
+/// logged, not how the cascade prices.
+fn parked_receiver<T: Clone>() -> broadcast::Receiver<T> {
+    let (_, rx) = broadcast::channel(1);
+    rx
+}
+
 /// Spawn a feeds `source` on `rt`, forwarding its records onto an in-process
 /// live sink, and return the receiver the supervisor drains. The runner is
 /// given a never-resolving shutdown (`pending`) so it lives with the process: a
@@ -504,20 +529,39 @@ fn spawn_price_feeds(
     roster: &FeedRoster,
     telemetry: &Telemetry,
 ) -> Result<FeedReceivers> {
-    let pyth = spawn_feed(
-        rt,
-        // Keyless on purpose: the bot resolves no secrets, and wiring a
-        // credential into it is deliberately out of scope here. Against
-        // upstream Hermes this tier therefore 401s and the cascade prices
-        // without it; against a self-hosted instance it works unchanged.
-        PythHermesSource::new(&cfg.pyth_base_url, None, roster.pyth.clone())?,
-        RunConfig {
-            poll_interval: cfg.pyth_poll,
-            error_backoff: FEED_ERROR_BACKOFF,
-        },
-        telemetry,
-        HealthRow::Report,
-    );
+    // Keyless on purpose: the bot resolves no secrets, and wiring a credential
+    // into it is deliberately out of scope here. Against a self-hosted Hermes
+    // it works unchanged — but `pyth_base_url` is a compile-time default with
+    // no override, so reaching one is a code edit that also clears the park.
+    let pyth = match parked(VENUE_PYTH) {
+        // Parked: don't spawn a poller that cannot succeed. Keyless against
+        // upstream Hermes every poll 401s, and the runner logs one `warn!` per
+        // poll for the life of the process — a per-tick failure report for a
+        // tier that is off by decision, which is noise rather than signal. The
+        // cascade already prices without this leg, so skipping it changes the
+        // log and nothing else.
+        Some(park) => {
+            // `eprintln!` with a `[feed]` tag, matching this file's own
+            // diagnostics: the `tracing` macros here belong to the feeds crate,
+            // whose output the subscriber in `main` renders, and the bot is not
+            // a direct dependent of `tracing`.
+            eprintln!(
+                "[feed] {} parked by decision since {} — {}",
+                park.venue, park.since, park.reason
+            );
+            parked_receiver()
+        }
+        None => spawn_feed(
+            rt,
+            PythHermesSource::new(&cfg.pyth_base_url, None, roster.pyth.clone())?,
+            RunConfig {
+                poll_interval: cfg.pyth_poll,
+                error_backoff: FEED_ERROR_BACKOFF,
+            },
+            telemetry,
+            HealthRow::Report,
+        ),
+    };
     let kraken = spawn_feed(
         rt,
         KrakenSource::new(&cfg.kraken_base_url, roster.kraken.clone())?,
@@ -710,6 +754,20 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     );
     if !args.drop.is_empty() {
         println!("Suppressed tiers: {}", args.drop.join(", "));
+    }
+    // A dry run still POLLS a parked venue, unlike the live path which does not
+    // spawn it: this is the wiring check, so "has it come back, does my
+    // self-hosted instance answer" is exactly the question being asked, and a
+    // check that declines to check is worthless. What the live path avoids is
+    // the per-poll warning of a permanent poller, which one deliberate poll
+    // does not have. Naming the park here is what keeps an empty tier from
+    // reading as a fault — the same ambiguity, in the surface where a zero is
+    // printed rather than rendered.
+    for park in PARKED_SOURCES {
+        println!(
+            "Parked by decision since {}: {} — {}",
+            park.since, park.venue, park.reason
+        );
     }
     // Column widths fit the longest value each can take: `Unverified` for
     // health, and a pinned basis rendered as `1.0000 pinned`.

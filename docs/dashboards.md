@@ -261,6 +261,25 @@ able to tell those two apart, because the whole value of the parked
 state is that it is quiet, and a quiet fault is the worst thing this
 page can render.
 
+**The parked set is declared in code**, as `PARKED_SOURCES` in
+`feeds/src/parked.rs`: one entry per parked source, carrying the date the
+decision was taken and the reason it was taken. It is a Rust constant
+rather than a column on `instrument_registry` because that table is
+written only by a *running* collector, through `register_instruments` —
+so a parked source can never write the row that would say it is parked.
+The maker bot reads the set at its spawn site and does not start a parked
+tier at all, which is what makes the rule above hold by construction
+instead of by operator discipline; `parked_compose_agreement.rs` pins
+each entry against a compose profile the default bring-up leaves
+disabled, so an entry cannot claim a source is parked while compose
+starts it.
+
+**What this page cannot do with it yet.** Because the set lives in code,
+no panel query can join against it: separating parked from faulted here
+needs either a copy of the list inside the query or a later change
+seeding it into reference data. The marker changes nothing about what the
+existing coverage query returns.
+
 **A weekend is not a fault either.** Alpha Vantage produces weekday
 daily bars, so on any Sunday it is correctly silent while reading dark
 against a wall-clock bound. Sessions come from the market calendar

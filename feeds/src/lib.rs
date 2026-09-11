@@ -49,6 +49,12 @@
 //! A keyed venue's credential is resolved through [`secrets`], never read from
 //! the environment by an adapter: an adapter takes its key as an argument, and
 //! the app decides which store it came from.
+//!
+//! One state sits outside the health axes entirely: a source may be
+//! [`parked`] — configured out by decision rather than failing. The health
+//! tables cannot express that (they report on pollers that are running), and a
+//! parked source spawned anyway logs a failure every poll forever, so the
+//! decision is declared in code and read at the spawn site.
 
 mod backfill;
 mod best_effort;
@@ -57,6 +63,7 @@ mod damped;
 mod forward;
 mod health;
 mod liveness;
+mod parked;
 mod record;
 mod runner;
 pub mod secrets;
@@ -76,6 +83,7 @@ pub use health::{
 // [`ChannelSource`] to have a socket worth reporting on. Gating would make a
 // consumer enable a transport feature to name a state.
 pub use liveness::{LinkState, LivenessReporter, LivenessUpdate};
+pub use parked::{parked, ParkedSource, PARKED_SOURCES};
 pub use record::Batch;
 pub use runner::{
     run, run_until, run_until_with_metrics, run_with_metrics, BatchStats, FeedMetrics, NoopMetrics,
