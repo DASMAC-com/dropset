@@ -56,6 +56,38 @@ pub enum HaltReason {
     /// alarming*. A basis or common-mode verdict derived from a composition
     /// that has lost its anchor is a less trustworthy thing to report than the
     /// plain fact that the anchor is gone.
+    ///
+    /// # Verifying this live, and why the obvious way fails
+    ///
+    /// Stop the localnet Postgres container, wait past
+    /// [`crate::fx_store::MAX_STORE_SILENCE`], and every market should halt
+    /// with this reason and pull its book — `best_bid` / `best_ask` go NULL
+    /// rather than merely widening.
+    ///
+    /// **The evidence cannot be collected while the failure is happening.**
+    /// Telemetry writes to the very database being killed, so every halt tick
+    /// during the outage is dropped by the best-effort sink. Sampling during
+    /// the outage finds nothing, which reads exactly like a drill that
+    /// passed — the most dangerous possible false negative for a fail-closed
+    /// rule.
+    ///
+    /// What makes it observable: the halt does **not** clear the instant
+    /// Postgres returns. It clears on the next *successful store read*, and
+    /// the store polls on `fx_store_poll` (30s) against a 5s tick. So restore
+    /// the database and sample immediately — there is a window of several
+    /// ticks where telemetry is writable again and the maker is still halted,
+    /// and those rows carry this reason. Verified 2026-09-10: nine markets,
+    /// 27 halt ticks, all recovering to `Quote` unaided.
+    ///
+    /// That drill was run **once**, by hand, with its numbers recorded on the
+    /// issue — deliberately not committed as a script, because a one-run
+    /// shape does not clear the measured-recurrence bar and a manual script
+    /// nobody runs reads as coverage while asserting nothing. The next time
+    /// fail-closed is disturbed — the mainnet path, or packaging onto EC2 —
+    /// that second run **is** the recurrence, and the drill becomes a
+    /// legitimate hardening candidate. Reach for `/harden` at that point
+    /// rather than re-deriving this tradeoff or re-discovering the window
+    /// above.
     PriceStoreUnavailable,
     /// This market requires a live FX tape and has none — every source still
     /// contributing to its anchor is a daily fix.
