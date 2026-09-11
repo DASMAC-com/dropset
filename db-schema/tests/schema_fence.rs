@@ -811,7 +811,7 @@ async fn the_instruments_view_derives_a_class_from_the_legs() {
         ("probe", "EURC-EUR"),
         ("probe", "SOL-USDC"),
         ("probe", "ZZZ-USDC"),
-        // The CAD-stablecoin tripwire, seeded by 0011. Registered here so the
+        // The CAD-stablecoin tripwire, seeded by 0013. Registered here so the
         // assertion below reads a real roster product rather than a fixture:
         // losing that seed row is a silent class change, not a missing row.
         ("probe", "QCAD-USD"),
@@ -863,7 +863,7 @@ async fn the_instruments_view_derives_a_class_from_the_legs() {
         // line.
         ("ZZZ-USDC", "ZZZ", "USDC", "unclassified"),
         // A stablecoin against a sovereign currency, so it falls to the
-        // one-of-each arm. This is the assertion that pins 0011's seed: with
+        // one-of-each arm. This is the assertion that pins 0013's seed: with
         // QCAD unseeded the class is `unclassified`, which is not merely a
         // label — the liveness view picks its staleness bound by class, so the
         // unclassified bucket holds the roster's tightest-cadence source to the
