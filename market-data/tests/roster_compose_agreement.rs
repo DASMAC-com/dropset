@@ -38,6 +38,25 @@
 //! re-coupling a venue — or de-coupling one — fails until the declaration says
 //! so deliberately.
 //!
+//! **A third property: services that share one override variable share one
+//! roster.** The two coinbase legs both key off the bare `PRODUCT_IDS` rather
+//! than a per-service name, so an operator override necessarily reaches both —
+//! which makes the unset state the *only* one in which their rosters can differ
+//! at all, and a difference there is never intended. Each nonetheless writes its
+//! own default out in compose, and the equality above pins each copy to its own
+//! Rust constant rather than to the other copy: widening one leg and its
+//! constant together leaves both variable chains identical and every assertion
+//! above green, silently de-rostering the other leg.
+//! `every_shared_override_group_agrees` is what closes that.
+//!
+//! It reads the grouping off `variable_chain`'s outermost entry rather than off
+//! a declared group name, which is the one place this file derives a property
+//! instead of declaring it — because here the coupling is mechanical rather than
+//! a decision: two services keying off one variable *are* co-overridden,
+//! whatever anyone intended. Deriving it covers a future co-overridden pair
+//! without someone remembering to declare it, the same argument
+//! `every_rostered_service_is_pinned` makes for a new collector.
+//!
 //! **This file used to have a second, much weaker mode**, and what it cost is
 //! worth recording. The three keyed FX venues shared one
 //! `fx::DEFAULT_PRODUCTS`, narrowed to the single pair every one of them
@@ -414,6 +433,72 @@ fn every_variable_chain_matches_its_declaration() {
              by editing that declaration",
             wiring.service,
         );
+    }
+}
+
+/// The third property: services sharing one override variable share one roster.
+///
+/// **Byte-identity rather than set-equality**, because these are two copies of
+/// one literal rather than two independently-authored rosters — so an ordering
+/// or case difference between them is drift worth failing on, even though
+/// `parse_roster` normalizes it away at runtime. The other two properties
+/// compare normalized sets because they span two languages; this one does not.
+///
+/// **The Rust side needs no assertion of its own.** Byte-identical compose
+/// defaults plus `every_rust_default_agrees_with_its_compose_default` give
+/// set-equality between the group's Rust constants transitively, and set
+/// semantics are all that survive `parse_roster` there anyway.
+#[test]
+fn every_shared_override_group_agrees() {
+    let compose = compose_defaults();
+    let mut groups: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for wiring in wirings() {
+        // The outermost entry is the service's own override variable; anything
+        // after it is a shared roster it chains through, which couples the
+        // resolved default rather than the override.
+        let Some(&override_var) = wiring.variable_chain.first() else {
+            continue;
+        };
+        groups.entry(override_var).or_default().push(wiring.service);
+    }
+    let shared: BTreeMap<&str, Vec<&str>> = groups
+        .into_iter()
+        .filter(|(_, services)| services.len() > 1)
+        .collect();
+    // Not a vacuous-pass guard for a broken extractor — `variable_chain` is
+    // declared, not extracted. It fails if the coinbase pair is given separate
+    // override variables, which is a real de-coupling and should have to say so
+    // here deliberately, exactly as re-coupling a venue has to edit `wirings()`.
+    assert!(
+        !shared.is_empty(),
+        "no override variable is shared by more than one service, but the two \
+         coinbase legs both key off the bare `PRODUCT_IDS`. If they were \
+         deliberately de-coupled onto their own variables, they are no longer \
+         co-overridden and this test has nothing to pin — say so by removing it",
+    );
+    for (override_var, services) in shared {
+        let mut rosters = services.iter().map(|service| {
+            let roster = compose.get(*service).unwrap_or_else(|| {
+                panic!(
+                    "docker-compose.yml defines no PRODUCT_IDS default for \
+                     service `{service}`"
+                )
+            });
+            (*service, roster)
+        });
+        let (first_service, first_roster) = rosters
+            .next()
+            .expect("a shared group has two or more members");
+        for (service, roster) in rosters {
+            assert_eq!(
+                first_roster, roster,
+                "services `{first_service}` and `{service}` both key off \
+                 `{override_var}`, so any operator override reaches both — the \
+                 unset state is the only one where their rosters can differ at \
+                 all, and here they do. Widen both together, or give them \
+                 separate override variables if the two are meant to diverge",
+            );
+        }
     }
 }
 
