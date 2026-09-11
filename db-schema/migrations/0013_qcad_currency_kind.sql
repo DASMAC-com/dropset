@@ -20,8 +20,9 @@
 -- database cannot corroborate. `docs/dashboards.md` is the mutable home for
 -- it.
 --
--- That inverts the one thing the dashboard exists to prevent: QCAD-USD is the
--- CAD-stablecoin tripwire, whose only job is to notice a peg drifting. A
+-- Holding it to the loosest bound inverts the one thing the dashboard exists
+-- to prevent: QCAD-USD is the CAD-stablecoin tripwire, whose only job is to
+-- notice a peg drifting. A
 -- tripwire on the loosest bound can be dark for days and still read live, which
 -- is a no-data-reads-as-healthy failure on the panel specifically built to
 -- catch a regime change.

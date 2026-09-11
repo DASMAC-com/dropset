@@ -521,7 +521,17 @@ Both directions of drift are real, so both checks are worth running.
    MVP top-of-book spread: `docs/market-making.md` is current and its
    figure is structural there (50 bps each side, plus a worked
    inventory table), while §3's lean figure was the stale side. §3 now
-   states 100 bps, which is what sizes its redundancy panel.
+   states 100 bps.
+
+   **The clause that used to close this item — "which is what sizes its
+   redundancy panel" — is retired**, and it is worth saying why rather
+   than deleting it silently. It was true only under the
+   one-or-two-venues-dark reading, where the spread and the redundancy
+   count were one requirement; the 2026-09-10 ruling separated them, and
+   the shipped panel contains no bps and nothing derived from the spread.
+   Since §3 sends readers here as the spread figure's authority, leaving
+   the clause would have re-coupled the two things §3 now tells them to
+   keep apart.
 
    The same ruling settled the **unit**: bps everywhere, never pips —
    see the note in §3 for why a level-drifting increment is the wrong
