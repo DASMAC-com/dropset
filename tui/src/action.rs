@@ -339,10 +339,15 @@ pub fn dispatch(
                 market::prefund_leader_quotes(&client, &wallet, &repo_root, log)?;
                 // Parallel phase: each pair's create_market → create_vault is an
                 // independent chain against its own market PDA, unique base mint,
-                // and unique amounts, so the seven markets pipeline against the
+                // and unique amounts, so every market pipelines against the
                 // one validator with no colliding transactions (the shared quote
                 // leg was handled by the prelude). `prefunded_quote: true` tells
                 // `seed_vault` to skip that shared top-up.
+                //
+                // Deliberately not a count: this said "the seven markets" and
+                // went stale the moment the roster grew to nine. The roster
+                // length is one `PAIRS.len()` away for anyone who needs it,
+                // and the claim here is about independence, not arity.
                 std::thread::scope(|scope| {
                     let workers: Vec<_> = market::PAIRS
                         .into_iter()

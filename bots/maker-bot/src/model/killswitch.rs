@@ -29,9 +29,9 @@
 //! The TVL floor is expressed as a *fraction of launch TVL* (the
 //! `tvl_floor_frac` config knob) against the launch TVL the caller reads from
 //! the vault at startup — not the spec's literal $80/$100. The demo seeds
-//! ~$100 top-of-book across seven markets whose tokens span ~$1.14 down to
-//! ~$0.00006, so an absolute-dollar floor would be wrong in six of them; a
-//! drawdown fraction is correct in all of them at once.
+//! ~$100 top-of-book across every roster market, whose tokens span ~$1.14
+//! down to ~$0.00006, so an absolute-dollar floor would be wrong in almost
+//! all of them; a drawdown fraction is correct in all of them at once.
 
 use crate::config::KillSwitchConfig;
 use crate::model::inventory::Inventory;

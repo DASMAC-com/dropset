@@ -1,8 +1,9 @@
 # dropset-maker-bot
 
 The localnet market-maker for the FX-stablecoin demo. A supervisor over
-many `<token>/USDC` markets — the seven non-USD FX stablecoins in
-`config::MARKETS` (EURC, VCHF, TGBP, ZARP, MXNe, XSGD, IDRX) — quoting on
+many `<token>/USDC` markets — the non-USD FX stablecoins in
+`config::MARKETS` (EURC, VCHF, TGBP, ZARP, MXNe, XSGD, IDRX, and the MVP
+pair additions AUDD and CADC) — quoting on
 the eCLOB per [`docs/market-making.md`](../../docs/market-making.md).
 One shared leader quotes every market; each cycle the bot refreshes a
 batched, tiered price feed, composes a per-market fair mid, and drives

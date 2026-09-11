@@ -1144,7 +1144,8 @@ mod tests {
     }
 
     /// The inversion flag has to travel with the feed id, not be re-derived —
-    /// five of the seven roster currencies are published as `USD/<ccy>`.
+    /// most roster currencies are published as `USD/<ccy>` and only EUR, GBP
+    /// and AUD the other way, so the direction is a per-market fact.
     #[test]
     fn pyth_feeds_carry_each_markets_own_direction() {
         let markets = args(&["EURC", "ZARP"]).selected();
