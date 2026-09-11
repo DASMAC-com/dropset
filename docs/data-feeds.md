@@ -735,9 +735,10 @@ CHECKs in `0009_instruments.sql` are what make the split unambiguous,
 from opposite directions: a currency symbol is confined to an alphabet
 of `[A-Z0-9]`, which excludes the hyphen, and a `product_id` must be
 exactly two such legs separated by exactly one. So a hyphen inside a
-symbol is refused at intake, rather than silently yielding a truncated
-base, an empty quote, and a pair that reads `unclassified` because
-neither leg joins.
+symbol is refused at intake, rather than silently splitting at the wrong
+hyphen — yielding a truncated base, a quote that is really the symbol's
+own tail, the actual quote leg dropped, and a pair that reads
+`unclassified` because neither leg joins `currency_kinds`.
 
 That is why per-symbol segmentation is *derived* rather than stored, and
 why widening the symbol alphabet would not be a relabelling. Every
