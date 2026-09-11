@@ -20,7 +20,7 @@
       }
     ]
   },
-  "description": "Raw collected series first, then the regime analytics derived from them. The top row answers 'is there data, and can I see it' for one venue and product at a time, plus what the store holds across every venue. The row below answers what that data says about volatility by session, hour, and weekend. Deliberately shows ONE product at a time rather than overlaying the roster, so it stays legible as currencies are added.",
+  "description": "Raw collected series first, then the regime analytics derived from them. Read it top-down: is there data for this venue and product, what does the store hold across every venue, what does the data say about volatility by hour, and how does this currency's whole pair set compare. The candlestick and the vol panel read one product at a time; the cross-pair traversal deliberately reads the whole currency at once.",
   "editable": true,
   "graphTooltip": 1,
   "links": [
@@ -55,7 +55,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "The raw collected candles for the selected venue and product, straight off the store with no derivation. Shows the full open/high/low/close rather than the close alone, because the range within each bucket is most of what a candle records and plotting only the close discards it. Flip Candle style between Candles and OHLC Bars in the panel editor to change how that range is drawn; set Mode to Both to add the volume histogram beneath. This is the panel to check first: if it is empty, nothing below it means anything. A sparse series with visible gaps is not a fault \u2014 a venue emits no candle for a bucket with no trades, so a thinly traded book genuinely looks like scattered marks rather than a continuous run. Over a long window at a small bucket size the candles compress into a solid band; narrow the time range to read individual bars.",
+      "description": "The raw collected candles for the selected venue and product, straight off the store with no derivation. This is the panel to check first: if it is empty, nothing below it means anything. Shows the full open/high/low/close rather than the close alone, because the range within each bucket is most of what a candle records and plotting only the close discards it. This is the panel to check first: if it is empty, nothing below it means anything. A sparse series with visible gaps is not a fault \u2014 a venue emits no candle for a bucket with no trades, so a thinly traded book genuinely looks like scattered marks rather than a continuous run. Over a long window at a small bucket size the candles compress into a solid band; narrow the time range to read individual bars.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -101,8 +101,8 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 9,
-        "w": 16,
+        "h": 10,
+        "w": 24,
         "x": 0,
         "y": 0
       },
@@ -146,12 +146,9 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Everything the store holds, one row per venue and product, independent of the pickers and of the dashboard time range. A table rather than a tile per feed, because the roster grows and a wall of tiles stops being readable well before it stops fitting. The age column is the recency check: a collector that is running keeps it near its own granularity, while a series left behind by a re-pointed or stopped collector shows its age directly. It is rendered as a duration rather than a raw second count, and the two right-hand columns carry fixed widths, because the timestamp beside it is wide enough that in a third-width panel the columns squeeze and the colored age block reads as if it were overlapping its neighbor. Note only one product per collector service is ever current, so several stale rows beside one fresh row is the expected picture today rather than a fault.",
+      "description": "Which sources cover which products in the candle tier, how much history each holds, and how fresh each is. The store-inventory definition for both dashboards.\n\nEvery (source, product, bucket width) the store has EVER held is a row, so a series that stopped entirely stays visible instead of dropping out of a window. Read three columns together: Bars (all time) is how much history exists, Buckets in window is whether it is still arriving, and Age (buckets) is how late it is. All-time bars with zero in-window buckets is a series that STOPPED \u2014 the one reading no windowed panel can give you.\n\nAGE IS COUNTED IN BUCKETS, NOT SECONDS, and that is why the buckets column is the colored one. A daily series is 86400 seconds old just before its next bar lands, so an absolute bound tuned for 60s bars marks a perfectly healthy daily reference red forever. Dividing by the series' own bucket width makes one bound correct for both: about 1 is current, 2 is the bar in progress, orange at 4 and red at 8. Age in seconds is kept beside it as raw context and is deliberately not colored.\n\nThe window is independent of the dashboard time range on purpose: what is arriving now should not change when you pan back to look at history.",
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
           "custom": {
             "align": "auto",
             "cellOptions": {
@@ -164,7 +161,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "text",
+                "color": "green",
                 "value": null
               }
             ]
@@ -174,38 +171,115 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "last_bar"
+              "options": "source"
             },
             "properties": [
               {
-                "id": "custom.width",
-                "value": 165
+                "id": "displayName",
+                "value": "Source"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "age"
+              "options": "product_id"
             },
             "properties": [
               {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-background"
-                }
-              },
+                "id": "displayName",
+                "value": "Product"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "granularity_secs"
+            },
+            "properties": [
               {
-                "id": "custom.align",
-                "value": "center"
-              },
-              {
-                "id": "custom.width",
-                "value": 95
+                "id": "displayName",
+                "value": "Bucket width"
               },
               {
                 "id": "unit",
                 "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bars_all_time"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Bars (all time)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "buckets_in_window"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Buckets in window"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "latest_bucket"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Latest bucket"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_secs"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Age"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_cadences"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Age (buckets)"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
               },
               {
                 "id": "thresholds",
@@ -217,12 +291,12 @@
                       "value": null
                     },
                     {
-                      "color": "yellow",
-                      "value": 300
+                      "color": "orange",
+                      "value": 4
                     },
                     {
                       "color": "red",
-                      "value": 3600
+                      "value": 8
                     }
                   ]
                 }
@@ -233,9 +307,9 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 8,
-        "x": 16,
-        "y": 0
+        "w": 24,
+        "x": 0,
+        "y": 10
       },
       "id": 2,
       "options": {
@@ -259,11 +333,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  source,\n  product_id,\n  count(*) AS bars,\n  to_timestamp(max(bucket_start)) AS last_bar,\n  (extract(epoch FROM now()) - max(bucket_start))::bigint AS age\nFROM cex_prices\nGROUP BY source, product_id\nORDER BY source, product_id",
+          "rawSql": "-- The candle tier's store inventory and its freshness in one definition,\n-- absorbing what the old Last candle age tile and the FX dashboard's What is\n-- in the store table each answered on their own.\n--\n-- DRIVEN FROM ALL TIME, windowed only in a column. A series that stopped\n-- entirely has no rows inside any window, so a windowed GROUP BY drops it and\n-- the reader cannot tell \"stopped\" from \"never configured\" -- that reading is\n-- what the FX table contributed and it has to survive the merge. Here every\n-- (source, product, bucket width) the store has ever held is a row, and\n-- buckets_in_window falling to 0 is what says it stopped.\n--\n-- STALENESS IS CADENCE-RELATIVE, which is why age_secs is not the colored\n-- column. A daily series is 86400 seconds old the moment before its next\n-- bucket lands, so any absolute bound correct for 60s bars paints a healthy\n-- daily reference permanently red -- the defect that made the FX table's\n-- 300/3600 thresholds wrong rather than merely noisy, measured on a source\n-- whose bars are 86400s wide. age_cadences divides by the series' own bucket\n-- width, so one number reads correctly for both: about 1 is current, 2 is the\n-- bucket in progress, and the colored bounds sit at 4 and 8 so a weekend of a\n-- daily reference does not read like an outage.\nWITH lifetime AS (\n  SELECT\n    c.source,\n    c.product_id,\n    c.granularity_secs,\n    count(*) AS bars_all_time,\n    max(c.bucket_start) AS last_bucket\n  FROM cex_prices AS c\n  GROUP BY 1, 2, 3\n),\n\nwindowed AS (\n  SELECT\n    c.source,\n    c.product_id,\n    c.granularity_secs,\n    count(*) AS buckets\n  FROM cex_prices AS c\n  WHERE c.bucket_start\n    >= extract(epoch FROM now()) - (${coverage_mins:sqlstring}::bigint * 60)\n  GROUP BY 1, 2, 3\n)\n\nSELECT\n  l.source,\n  l.product_id,\n  l.granularity_secs,\n  l.bars_all_time,\n  coalesce(w.buckets, 0) AS buckets_in_window,\n  to_timestamp(l.last_bucket) AS latest_bucket,\n  (extract(epoch FROM now()) - l.last_bucket)::bigint AS age_secs,\n  round(\n    (extract(epoch FROM now()) - l.last_bucket) / l.granularity_secs, 1\n  ) AS age_cadences\nFROM lifetime AS l\nLEFT JOIN windowed AS w\n  ON\n    l.source = w.source\n    AND l.product_id = w.product_id\n    AND l.granularity_secs = w.granularity_secs\nORDER BY 1, 2, 3\n",
           "refId": "A"
         }
       ],
-      "title": "What is in the store",
+      "title": "Candle coverage (all time, window $coverage_mins min)",
       "type": "table"
     },
     {
@@ -271,7 +345,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Per-bar realized volatility in bps, by hour of day, split into weekday and weekend. This is the vol-ladder's sigma input. Returns are computed between genuinely ADJACENT buckets only: a venue emits no candle for a minute with no trades, and interbank FX leaves a ~48-hour hole every weekend, so a plain window function would bridge those gaps and dump one enormous pseudo-return into a single hour \u2014 which reads exactly like a real time-of-day effect. On a sparse book these per-hour cells fall to single digits, where a standard deviation is arithmetic rather than information; check the bar count in the summary table below before trusting a thin cell.",
+      "description": "What is this pair's realized volatility by hour of day, and is each hour a measurement or an artefact. Bars are the standard deviation of log-returns per bucket, in basis points; the darker series is the largest single move in that hour.\n\nREAD THE SAMPLE SIZE, on the right axis. A standard deviation over four returns and one over four hundred draw identical bars, so an hour that is merely thinly collected otherwise reads as a real volatility regime. Return pairs is the honest denominator \u2014 returns that survived the adjacent-bucket guard \u2014 and the raw bar count rides along in the tooltip. This is what the Weekend vs weekday table was for, and it is now attached to the reading it qualifies rather than sitting two panels away.\n\nTHE ADJACENT-BUCKET GUARD is why these numbers can be trusted at all. A return is computed only when the previous bar is exactly one bucket earlier, so a gap in collection never yields a return spanning it. Without it, an overnight or weekend gap produces one enormous return attributed to whichever hour the gap ended in \u2014 a convincing and entirely false time-of-day effect, in exactly the hours a reader most wants to understand.\n\nThe weekday/weekend split is gone: it decided nothing once the weekday-only posture was ratified, and splitting each hour into two thin populations halved the sample size of the reading actually used. Hours are in the selected timezone; the underlying session arithmetic is in New York time regardless.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -280,7 +354,7 @@
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
-            "axisLabel": "bps per bar",
+            "axisLabel": "realized vol (bps per bar)",
             "axisPlacement": "auto",
             "fillOpacity": 80,
             "gradientMode": "none",
@@ -302,15 +376,93 @@
                 "value": null
               }
             ]
-          }
+          },
+          "unit": "suffix:bps"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vol_bps"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Realized vol"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_abs_move_bps"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Largest single move"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "return_pairs"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Return pairs (sample size)"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "returns in sample"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bars"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Bars collected"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 9,
-        "w": 12,
+        "h": 10,
+        "w": 24,
         "x": 0,
-        "y": 9
+        "y": 19
       },
       "id": 3,
       "options": {
@@ -341,11 +493,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ${venue_source:sqlstring}\n    AND product_id = ${venue_product:sqlstring}\n    AND granularity_secs::text = ${granularity:sqlstring}\n),\nreturns AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF(${granularity:sqlstring}, '')::bigint\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM bars\n  WINDOW w AS (ORDER BY bucket_start)\n),\nclassified AS (\n  SELECT\n    EXTRACT(HOUR FROM bucket_ts AT TIME ZONE ${hour_tz:sqlstring})::int AS hour_of_day,\n    CASE\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 6\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 0\n           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') < 17\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 5\n           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') >= 17\n        THEN 'weekend'\n      ELSE 'weekday'\n    END AS regime,\n    r\n  FROM returns\n)\nSELECT\n  lpad(hour_of_day::text, 2, '0') AS hour,\n  stddev_samp(r) FILTER (WHERE regime = 'weekday') * 10000 AS weekday,\n  stddev_samp(r) FILTER (WHERE regime = 'weekend') * 10000 AS weekend\nFROM classified\nGROUP BY hour_of_day\nORDER BY hour_of_day",
+          "rawSql": "-- Realized vol by hour of day, with its own sample size beside it -- absorbing\n-- the Weekend vs weekday table, whose remaining job was exactly that sample\n-- size for this panel.\n--\n-- THE ADJACENT-BUCKET GUARD IS LOAD-BEARING, not defensive style. A return is\n-- computed only when the previous bar is exactly one bucket earlier, so a gap\n-- in collection never produces a return spanning it. Without the guard an\n-- overnight or weekend gap yields one enormous \"return\" attributed to whatever\n-- hour the gap happened to end in, which fabricates a convincing and entirely\n-- false time-of-day effect -- and the hours a collector is most likely to have\n-- gaps in are exactly the hours a reader is most interested in.\n--\n-- SAMPLE SIZE RIDES ALONGSIDE for the same reason: a standard deviation over\n-- four returns and one over four hundred render as identical bars, so an hour\n-- that is merely thinly collected reads as a real vol regime. return_pairs is\n-- the honest denominator -- the number of returns that survived the guard --\n-- and bars is the raw count it came from.\n--\n-- THE WEEKDAY/WEEKEND SPLIT IS GONE. It decided nothing once the weekday-only\n-- posture was ratified: the weekend series exists to be ignored, and splitting\n-- every hour into two thin populations halved the sample size of the reading\n-- that is actually used.\nWITH bars AS (\n  SELECT\n    c.bucket_start,\n    c.close\n  FROM cex_prices AS c\n  WHERE $__unixEpochFilter(c.bucket_start)\n    AND c.source = ${venue_source:sqlstring}\n    AND c.product_id = ${venue_product:sqlstring}\n    AND c.granularity_secs::text = ${granularity:sqlstring}\n),\n\nreturns AS (\n  SELECT\n    to_timestamp(b.bucket_start) AS bucket_ts,\n    CASE\n      WHEN\n        lag(b.bucket_start) OVER w\n        = b.bucket_start - nullif(${granularity:sqlstring}, '')::bigint\n        AND lag(b.close) OVER w > 0\n        AND b.close > 0\n        THEN ln(b.close / lag(b.close) OVER w)\n    END AS r\n  FROM bars AS b\n  WINDOW w AS (ORDER BY b.bucket_start)\n),\n\nhourly AS (\n  SELECT\n    extract(HOUR FROM r.bucket_ts AT TIME ZONE ${hour_tz:sqlstring})::int\n      AS hour_of_day,\n    r.r\n  FROM returns AS r\n)\n\nSELECT\n  lpad(h.hour_of_day::text, 2, '0') AS hour,\n  stddev_samp(h.r) * 10000 AS vol_bps,\n  max(abs(h.r)) * 10000 AS max_abs_move_bps,\n  count(h.r) AS return_pairs,\n  count(*) AS bars\nFROM hourly AS h\nGROUP BY h.hour_of_day\nORDER BY h.hour_of_day\n",
           "refId": "A"
         }
       ],
-      "title": "Realized vol by hour ($hour_tz)",
+      "title": "Realized vol by hour (${hour_tz})",
       "type": "barchart"
     },
     {
@@ -353,156 +505,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Per-bar realized volatility in bps, by FX trading session. Answers whether an FX stablecoin inherits the rhythm of its underlying currency's home session or trades on crypto's own flat 24/7 clock. Sessions are local wall-clock windows in each centre, resolved per timestamp, so daylight saving is handled rather than approximated; the hemispheres shift in opposite directions, which no fixed UTC range can express. Sessions OVERLAP and a bar is counted in each it falls in, so the counts sum to more than the total \u2014 deliberate, since the London/New York overlap is the highest-liquidity window of the FX day and collapsing it into an exclusive bucket would hide the effect being measured. Compare sessions to each other; do not add them up.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "bps per bar",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "decimals": 2,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 9
-      },
-      "id": 4,
-      "options": {
-        "barWidth": 0.6,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": false
-        },
-        "orientation": "horizontal",
-        "showValue": "auto",
-        "stacking": "none",
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "dropset-postgres"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ${venue_source:sqlstring}\n    AND product_id = ${venue_product:sqlstring}\n    AND granularity_secs::text = ${granularity:sqlstring}\n),\nreturns AS (\n  SELECT\n    to_timestamp(bucket_start) AS bucket_ts,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF(${granularity:sqlstring}, '')::bigint\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM bars\n  WINDOW w AS (ORDER BY bucket_start)\n),\nsessions (session, tz, open_hour, close_hour) AS (\n  VALUES\n    ('1 Sydney',   'Australia/Sydney', 8, 17),\n    ('2 Tokyo',    'Asia/Tokyo',       9, 18),\n    ('3 London',   'Europe/London',    8, 17),\n    ('4 New York', 'America/New_York', 8, 17)\n)\nSELECT\n  s.session,\n  stddev_samp(r.r) * 10000 AS vol_bps_per_bar\nFROM returns r\nJOIN sessions s\n  ON EXTRACT(HOUR FROM r.bucket_ts AT TIME ZONE s.tz) >= s.open_hour\n AND EXTRACT(HOUR FROM r.bucket_ts AT TIME ZONE s.tz) < s.close_hour\n AND EXTRACT(DOW FROM r.bucket_ts AT TIME ZONE s.tz) BETWEEN 1 AND 5\nGROUP BY s.session\nORDER BY s.session",
-          "refId": "A"
-        }
-      ],
-      "title": "Realized vol by FX session",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "dropset-postgres"
-      },
-      "description": "Weekend against weekday for the selected product. The FX week runs Sunday 17:00 to Friday 17:00 New York time, expressed in that city's local clock so the boundary stays correct across daylight saving. `bars` is the column to read first: it is what tells you whether a volatility number beside it is measurement or arithmetic. `distinct_closes` is texture, NOT a fabrication detector \u2014 a genuinely traded weekend carries very few distinct prices, and on this repo's own data weekends show MORE distinct closes per bar than weekdays, so any rule keyed on that ratio fires on honest data.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "decimals": 2,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 18
-      },
-      "id": 5,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "dropset-postgres"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH bars AS (\n  SELECT bucket_start, close, high, low\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ${venue_source:sqlstring}\n    AND product_id = ${venue_product:sqlstring}\n    AND granularity_secs::text = ${granularity:sqlstring}\n),\nregimes AS (\n  SELECT\n    bucket_start,\n    close,\n    high,\n    low,\n    CASE\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 6\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 0\n           AND EXTRACT(HOUR FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') < 17\n        THEN 'weekend'\n      WHEN EXTRACT(DOW FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') = 5\n           AND EXTRACT(HOUR FROM to_timestamp(bucket_start) AT TIME ZONE 'America/New_York') >= 17\n        THEN 'weekend'\n      ELSE 'weekday'\n    END AS regime\n  FROM bars\n),\nreturns AS (\n  SELECT\n    regime,\n    close,\n    high,\n    low,\n    CASE\n      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF(${granularity:sqlstring}, '')::bigint\n           AND lag(close) OVER w > 0\n           AND close > 0\n      THEN ln(close / lag(close) OVER w)\n    END AS r\n  FROM regimes\n  WINDOW w AS (ORDER BY bucket_start)\n)\nSELECT\n  regime,\n  count(*) AS bars,\n  count(r) AS return_pairs,\n  stddev_samp(r) * 10000 AS vol_bps_per_bar,\n  avg(abs(r)) * 10000 AS mean_abs_move_bps,\n  max(abs(r)) * 10000 AS max_abs_move_bps,\n  count(DISTINCT close) AS distinct_closes,\n  count(*) FILTER (WHERE high = low) AS zero_range_bars\nFROM returns\nGROUP BY regime\nORDER BY regime",
-          "refId": "A"
-        }
-      ],
-      "title": "Weekend vs weekday",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "dropset-postgres"
-      },
-      "description": "Every selected pair on one axis, each indexed to 100 at its first bar inside the visible window. This is the only panel here that reads more than one product at a time, and indexing is what makes that legible: raw closes are not comparable across pairs - EUR-USD sits near 1.08 while EUR-JPY sits near 170 - so an overlay of them is one flat line and one off-scale line. On a percent axis the question 'which of these moved most, and when' has a readable answer. The base is the first bar in the WINDOW rather than the series' first bar ever, so panning or zooming re-bases every series and the comparison always describes the period you are looking at. Pairs come from the Currency picker, so selecting EUR gives every EUR pair this venue carries. A pair with no bar inside the window is dropped rather than drawn flat, so an empty legend entry means 'not collected here', not 'unchanged'.",
+      "description": "Of every pair carrying this currency, which moved most and when. Each is indexed to 100 at its first bar inside the visible window, which is what makes them comparable: raw closes are not \u2014 EUR-USD sits near 1.08 while EUR-JPY sits near 170 \u2014 so an overlay of them is one flat line and one off-scale line. The base is the first bar in the WINDOW rather than the series' first bar ever, so panning or zooming re-bases every series and the comparison always describes the period you are looking at.\n\nQUIET PAIRS ARE NAMED RATHER THAN DROPPED. The pair list is every registered pair for this currency on this venue; one with no bar in the window appears in the legend marked \"registered, no bars in window\" and draws no line. It used to filter through a liveness view that drops the source, so a pair this venue carries but had not printed lately left the picker entirely \u2014 meaning this panel, which is the one discharging the per-symbol acceptance condition, showed FEWER pairs the wider an outage got.\n\nScoped to one venue, matching the rest of this dashboard: two vendors carrying the same pair would draw two nearly identical lines and double the legend for no information.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -542,7 +545,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 29
       },
       "id": 6,
       "options": {
@@ -571,7 +574,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- Cross-pair overlay, indexed to 100 at each series' first bar INSIDE the\n-- window. Absolute levels are not comparable across pairs -- EUR-USD sits\n-- near 1.08 while EUR-JPY sits near 170 -- so an overlay of raw closes is one\n-- flat line and one off-scale line, and \"which moved most\" has no readable\n-- answer. Indexing puts every pair on a common percent axis.\n--\n-- The base is the first bar in the WINDOW, not the series' first bar ever, so\n-- panning or zooming re-bases every series and the comparison stays about the\n-- period actually on screen.\n--\n-- Scoped to the selected venue, matching how the rest of this dashboard\n-- reads: one venue at a time. Two vendors carrying the same pair would\n-- otherwise draw two nearly-identical lines and double the legend for no\n-- information.\nWITH bars AS (\n  SELECT\n    product_id,\n    bucket_start,\n    close\n  FROM cex_prices\n  WHERE $__unixEpochFilter(bucket_start)\n    AND source = ${venue_source:sqlstring}\n    AND product_id = ANY (ARRAY[${pairs:sqlstring}]::text[])\n    AND granularity_secs::text = ${granularity:sqlstring}\n),\n\nbase AS (\n  -- The earliest bar each pair has in the window, which is its index base.\n  SELECT DISTINCT ON (product_id)\n    product_id,\n    close\n  FROM bars\n  ORDER BY product_id, bucket_start\n)\n\nSELECT\n  to_timestamp(b.bucket_start) AS \"time\",\n  b.product_id AS metric,\n  -- nullif guards a zero base. Without it one bad series divides by zero and\n  -- fails the whole panel rather than just itself.\n  100.0 * b.close / nullif(f.close, 0) AS value\nFROM bars b\n-- INNER, not LEFT: a pair with no bar in the window has no base to index\n-- against, and emitting NULLs would add a legend entry that reads as a broken\n-- series rather than one this venue does not carry.\nINNER JOIN base f ON f.product_id = b.product_id\nORDER BY 1, 2",
+          "rawSql": "-- Cross-pair overlay, indexed to 100 at each series' first bar INSIDE the\n-- window. Absolute levels are not comparable across pairs -- EUR-USD sits\n-- near 1.08 while EUR-JPY sits near 170 -- so an overlay of raw closes is one\n-- flat line and one off-scale line, and \"which moved most\" has no readable\n-- answer. Indexing puts every pair on a common percent axis.\n--\n-- The base is the first bar in the WINDOW, not the series' first bar ever, so\n-- panning or zooming re-bases every series and the comparison stays about the\n-- period actually on screen.\n--\n-- QUIET PAIRS ARE NAMED, NOT DROPPED, which is the whole redesign. The pair\n-- list used to run through a liveness view that drops the source, so a pair\n-- this venue carries but has not printed lately simply left the picker -- and\n-- this panel discharges the per-symbol acceptance condition, which means it\n-- showed FEWER pairs as an outage widened. The list is now every registered\n-- pair for the currency on this venue, and a pair with no bar in the window\n-- gets a labelled legend entry with no line instead of vanishing. An earlier\n-- version argued against emitting those rows on the grounds that a NULL series\n-- reads as broken; that was correct while absence meant \"this venue does not\n-- carry it\", and is wrong now that absence means \"registered and quiet\", which\n-- is a reading worth having.\nWITH selected AS (\n  SELECT s.product_id\n  FROM unnest(ARRAY[${pairs:sqlstring}]::text[]) AS s (product_id)\n),\n\nbars AS (\n  SELECT\n    c.product_id,\n    c.bucket_start,\n    c.close\n  FROM cex_prices AS c\n  WHERE $__unixEpochFilter(c.bucket_start)\n    AND c.source = ${venue_source:sqlstring}\n    AND c.product_id = ANY (ARRAY[${pairs:sqlstring}]::text[])\n    AND c.granularity_secs::text = ${granularity:sqlstring}\n),\n\nbase AS (\n  -- The earliest bar each pair has in the window, which is its index base.\n  SELECT DISTINCT ON (b.product_id)\n    b.product_id,\n    b.close\n  FROM bars AS b\n  ORDER BY b.product_id, b.bucket_start\n),\n\nquiet AS (\n  SELECT s.product_id\n  FROM selected AS s\n  WHERE NOT EXISTS (\n    SELECT 1 FROM bars AS b WHERE b.product_id = s.product_id\n  )\n)\n\nSELECT\n  to_timestamp(b.bucket_start) AS \"time\",\n  b.product_id AS metric,\n  -- nullif guards a zero base. Without it one bad series divides by zero and\n  -- fails the whole panel rather than just itself.\n  100.0 * b.close / nullif(f.close, 0) AS value\nFROM bars AS b\nINNER JOIN base AS f ON f.product_id = b.product_id\nUNION ALL\nSELECT\n  to_timestamp($__unixEpochFrom()) AS \"time\",\n  q.product_id || ' (registered, no bars in window)' AS metric,\n  NULL AS value\nFROM quiet AS q\nORDER BY 1, 2\n",
           "refId": "A"
         }
       ],
@@ -598,7 +601,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
-        "description": "The venue whose collected series is being shown. Single-select: this dashboard deliberately reads one product at a time rather than overlaying the roster, so that it stays legible as currencies are added.",
+        "description": "The venue whose collected series is being shown. Single-select: the candlestick and the vol panel each read one venue and product at a time, and the cross-pair traversal reads one venue across many pairs, so two vendors carrying the same pair never draw duplicate lines.",
         "includeAll": false,
         "label": "Venue source",
         "multi": false,
@@ -670,7 +673,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT legs.c\nFROM (\n  SELECT i.product_id, i.base AS c FROM instruments i\n  UNION ALL\n  SELECT i.product_id, i.quote FROM instruments i\n) legs\nWHERE EXISTS (\n  SELECT 1\n  FROM instrument_registry r\n  WHERE r.source = ${venue_source:sqlstring}\n    AND r.product_id = legs.product_id\n)\nORDER BY 1",
-        "description": "The currency umbrella: pick one and the Pairs picker below offers every pair with that currency on either leg. This is the selector the dashboard was built without - it reads one product at a time, and the README recorded that selecting by currency needed products tagged by currency family, which was a schema change rather than a dashboard one. That schema landed as the instruments dimension, so this reads the dimension's base and quote legs rather than splitting the product id, which means EURC and EUR are known to be the stablecoin and the fiat of the same currency instead of two unrelated strings. Scoped to the selected venue, for the same reason the Venue product picker is: an unfiltered list invites choosing a currency this venue does not quote, which renders nothing and reads as a broken panel.",
+        "description": "The currency umbrella: pick one and the Pairs picker below offers every pair with that currency on either leg. This is the selector the dashboard was built without, and the README recorded that selecting by currency needed products tagged by currency family, which was a schema change rather than a dashboard one. That schema landed as the instruments dimension, so this reads the dimension's base and quote legs rather than splitting the product id, which means EURC and EUR are known to be the stablecoin and the fiat of the same currency instead of two unrelated strings. Scoped to the selected venue, for the same reason the Venue product picker is: an unfiltered list invites choosing a currency this venue does not quote, which renders nothing and reads as a broken panel.",
         "includeAll": false,
         "label": "Currency",
         "multi": false,
@@ -686,20 +689,6 @@
       {
         "current": {
           "selected": true,
-          "text": "live only",
-          "value": "live only"
-        },
-        "description": "Whether the Pairs picker offers only pairs currently collecting, or every pair this venue is configured for. Defaults to live only, so the overlay opens on real data rather than on empty series for a pair whose collector is parked - quiet pairs stay reachable, but opt-in. Liveness comes from instrument_liveness, whose staleness bound is chosen by asset class - looser for a fiat cross so an FX weekend is not mistaken for a dead collector, tighter for the always-open ones. The actual numbers are deliberately not repeated here: they are defined once in the view, and a prose copy is the same drift surface as a SQL copy. A custom list rather than a query, so it can never be empty.",
-        "label": "Show",
-        "name": "include_quiet",
-        "options": [],
-        "query": "live only,all",
-        "skipUrlSync": false,
-        "type": "custom"
-      },
-      {
-        "current": {
-          "selected": true,
           "text": [
             "All"
           ],
@@ -711,14 +700,14 @@
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT i.product_id\nFROM instruments i\nINNER JOIN instrument_liveness l ON l.product_id = i.product_id\nWHERE ${currency:sqlstring} IN (i.base, i.quote)\n  AND (${include_quiet:sqlstring} = 'all' OR l.is_live)\n  AND EXISTS (\n    SELECT 1\n    FROM instrument_registry r\n    WHERE r.source = ${venue_source:sqlstring}\n      AND r.product_id = i.product_id\n  )\nORDER BY 1",
-        "description": "The pairs drawn on the cross-pair index panel - every pair carrying the selected Currency on either leg, on the selected venue, filtered by the Show setting. Cost is measured rather than assumed, and it is no longer a caveat: instrument_liveness once left granularity_secs unconstrained, which defeats Postgres's MIN/MAX index transform and range-scanned each series at about 90ms, growing with history. The per-source liveness work has since rewritten the view to iterate the granularity vocabulary, so each lookup is a backward index seek and the whole read is a couple of milliseconds. This query did not change when that landed - it just got fast, which is the point of the thresholds and the traversal living in the view rather than in each panel.",
+        "definition": "SELECT i.product_id FROM instruments AS i WHERE ${currency:sqlstring} IN (i.base, i.quote) AND EXISTS (SELECT 1 FROM instrument_registry AS r WHERE r.source = ${venue_source:sqlstring} AND r.product_id = i.product_id) ORDER BY 1",
+        "description": "Every pair carrying the selected currency on either leg that the selected venue is registered for. NOT filtered by liveness, deliberately: this picker feeds the panel that discharges the per-symbol acceptance condition, and a liveness filter made that panel show fewer pairs as an outage widened. A pair the venue carries but has not printed lately is marked as quiet in the panel's legend instead of leaving this list.",
         "includeAll": true,
         "label": "Pairs",
         "multi": true,
         "name": "pairs",
         "options": [],
-        "query": "SELECT i.product_id\nFROM instruments i\nINNER JOIN instrument_liveness l ON l.product_id = i.product_id\nWHERE ${currency:sqlstring} IN (i.base, i.quote)\n  AND (${include_quiet:sqlstring} = 'all' OR l.is_live)\n  AND EXISTS (\n    SELECT 1\n    FROM instrument_registry r\n    WHERE r.source = ${venue_source:sqlstring}\n      AND r.product_id = i.product_id\n  )\nORDER BY 1",
+        "query": "SELECT i.product_id FROM instruments AS i WHERE ${currency:sqlstring} IN (i.base, i.quote) AND EXISTS (SELECT 1 FROM instrument_registry AS r WHERE r.source = ${venue_source:sqlstring} AND r.product_id = i.product_id) ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
@@ -761,6 +750,20 @@
         "name": "hour_tz",
         "options": [],
         "query": "UTC,Europe/London,America/New_York,Australia/Sydney,Asia/Tokyo",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "15",
+          "value": "15"
+        },
+        "description": "The coverage table's window, in minutes. Independent of the dashboard time range on purpose: 'what is arriving now' should not change when you pan back to look at history.",
+        "label": "Coverage window (min)",
+        "name": "coverage_mins",
+        "options": [],
+        "query": "5,15,60,360,1440",
         "skipUrlSync": false,
         "type": "custom"
       }

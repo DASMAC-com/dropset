@@ -2,47 +2,68 @@
 -- Source: fx-analytics.json
 -- Regenerate: make dashboard-sql
 
+-- Realized vol by hour of day, with its own sample size beside it -- absorbing
+-- the Weekend vs weekday table, whose remaining job was exactly that sample
+-- size for this panel.
+--
+-- THE ADJACENT-BUCKET GUARD IS LOAD-BEARING, not defensive style. A return is
+-- computed only when the previous bar is exactly one bucket earlier, so a gap
+-- in collection never produces a return spanning it. Without the guard an
+-- overnight or weekend gap yields one enormous "return" attributed to whatever
+-- hour the gap happened to end in, which fabricates a convincing and entirely
+-- false time-of-day effect -- and the hours a collector is most likely to have
+-- gaps in are exactly the hours a reader is most interested in.
+--
+-- SAMPLE SIZE RIDES ALONGSIDE for the same reason: a standard deviation over
+-- four returns and one over four hundred render as identical bars, so an hour
+-- that is merely thinly collected reads as a real vol regime. return_pairs is
+-- the honest denominator -- the number of returns that survived the guard --
+-- and bars is the raw count it came from.
+--
+-- THE WEEKDAY/WEEKEND SPLIT IS GONE. It decided nothing once the weekday-only
+-- posture was ratified: the weekend series exists to be ignored, and splitting
+-- every hour into two thin populations halved the sample size of the reading
+-- that is actually used.
 WITH bars AS (
-  SELECT bucket_start, close
-  FROM cex_prices
-  WHERE $__unixEpochFilter(bucket_start)
-    AND source = ${venue_source:sqlstring}
-    AND product_id = ${venue_product:sqlstring}
-    AND granularity_secs::text = ${granularity:sqlstring}
+  SELECT
+    c.bucket_start,
+    c.close
+  FROM cex_prices AS c
+  WHERE $__unixEpochFilter(c.bucket_start)
+    AND c.source = ${venue_source:sqlstring}
+    AND c.product_id = ${venue_product:sqlstring}
+    AND c.granularity_secs::text = ${granularity:sqlstring}
 ),
+
 returns AS (
   SELECT
-    to_timestamp(bucket_start) AS bucket_ts,
+    to_timestamp(b.bucket_start) AS bucket_ts,
     CASE
-      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF(${granularity:sqlstring}, '')::bigint
-           AND lag(close) OVER w > 0
-           AND close > 0
-      THEN ln(close / lag(close) OVER w)
+      WHEN
+        lag(b.bucket_start) OVER w
+        = b.bucket_start - nullif(${granularity:sqlstring}, '')::bigint
+        AND lag(b.close) OVER w > 0
+        AND b.close > 0
+        THEN ln(b.close / lag(b.close) OVER w)
     END AS r
-  FROM bars
-  WINDOW w AS (ORDER BY bucket_start)
+  FROM bars AS b
+  WINDOW w AS (ORDER BY b.bucket_start)
 ),
-classified AS (
+
+hourly AS (
   SELECT
-    EXTRACT(HOUR FROM bucket_ts AT TIME ZONE ${hour_tz:sqlstring})::int AS hour_of_day,
-    CASE
-      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 6
-        THEN 'weekend'
-      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 0
-           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') < 17
-        THEN 'weekend'
-      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 5
-           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') >= 17
-        THEN 'weekend'
-      ELSE 'weekday'
-    END AS regime,
-    r
-  FROM returns
+    extract(HOUR FROM r.bucket_ts AT TIME ZONE ${hour_tz:sqlstring})::int
+      AS hour_of_day,
+    r.r
+  FROM returns AS r
 )
+
 SELECT
-  lpad(hour_of_day::text, 2, '0') AS hour,
-  stddev_samp(r) FILTER (WHERE regime = 'weekday') * 10000 AS weekday,
-  stddev_samp(r) FILTER (WHERE regime = 'weekend') * 10000 AS weekend
-FROM classified
-GROUP BY hour_of_day
-ORDER BY hour_of_day
+  lpad(h.hour_of_day::text, 2, '0') AS hour,
+  stddev_samp(h.r) * 10000 AS vol_bps,
+  max(abs(h.r)) * 10000 AS max_abs_move_bps,
+  count(h.r) AS return_pairs,
+  count(*) AS bars
+FROM hourly AS h
+GROUP BY h.hour_of_day
+ORDER BY h.hour_of_day
