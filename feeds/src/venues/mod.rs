@@ -190,7 +190,7 @@ impl Candle {
     /// test alone would **admit** `NaN`, whereas in Postgres `NaN > 0` holds
     /// because `NaN` sorts above every float. Different mechanisms, same
     /// conclusion — the conjunction is what means "finite and positive", in
-    /// either language. `docs/data-feeds.md` §9 carries the SQL half.
+    /// either language. `docs/data-feeds.md` §8 carries the SQL half.
     ///
     /// `volume` is deliberately unchecked, matching the column: zero volume is
     /// routine — two wired sources publish none at all and their rows carry
