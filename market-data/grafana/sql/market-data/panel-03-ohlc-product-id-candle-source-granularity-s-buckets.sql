@@ -13,5 +13,5 @@ FROM cex_prices
 WHERE $__unixEpochFilter(bucket_start)
   AND source = ${candle_source:sqlstring}
   AND product_id = ${product_id:sqlstring}
-  AND granularity_secs = ${granularity:sqlstring}::bigint
+  AND granularity_secs::text = ${granularity:sqlstring}
 ORDER BY bucket_start

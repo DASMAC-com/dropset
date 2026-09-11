@@ -34,7 +34,7 @@ expected AS (
   FROM cex_prices AS c
   WHERE c.source = ANY (ARRAY[${source:sqlstring}]::text[])
     AND c.product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])
-    AND c.granularity_secs = ${granularity:sqlstring}::bigint
+    AND c.granularity_secs::text = ${granularity:sqlstring}
 ),
 
 seeded AS (
@@ -60,7 +60,7 @@ seeded AS (
   WHERE $__unixEpochFilter(c.bucket_start)
     AND c.source = ANY (ARRAY[${source:sqlstring}]::text[])
     AND c.product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])
-    AND c.granularity_secs = ${granularity:sqlstring}::bigint
+    AND c.granularity_secs::text = ${granularity:sqlstring}
 )
 
 SELECT
