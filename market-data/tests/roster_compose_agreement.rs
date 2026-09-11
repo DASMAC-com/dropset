@@ -78,7 +78,8 @@ struct Wiring {
     ///
     /// **This is the declaration side of the chain-shape property**, and it is
     /// written out per service rather than derived because the shape *is* the
-    /// decision: `["OANDA_PRODUCT_IDS"]` says OANDA's roster is its own, and
+    /// decision: `["OANDA_PRODUCT_IDS"]` says OANDA follows no shared roster,
+    /// and
     /// `["ALPHAVANTAGE_PRODUCT_IDS", "FX_PRODUCT_IDS"]` says Alpha Vantage
     /// follows the shared one. Changing either is a deliberate act that has to
     /// edit this row, which is exactly the friction the compose comments ask
@@ -306,8 +307,8 @@ fn compose_defaults() -> BTreeMap<String, String> {
 /// **Both `${NAME}` and the brace-less `$NAME` count**, because compose
 /// interpolates both and a coupling is a coupling either way. Matching only
 /// the braced form left one shape that escaped every test in this file:
-/// `$FX_PRODUCT_IDS${OANDA_PRODUCT_IDS:-…}` reports a chain of just
-/// `OANDA_PRODUCT_IDS`, *and* resolves byte-identically to the Rust default
+/// `$FX_PRODUCT_IDS${OANDA_PRODUCT_IDS:-…}` reported a chain of just
+/// `OANDA_PRODUCT_IDS`, while resolving byte-identically to the Rust default
 /// (`rfind(":-")` finds the inner one and `trim_end_matches` eats the single
 /// trailing brace) — so a venue could be re-coupled to the shared roster with
 /// the whole suite green. Skipping a zero-length name is what keeps `${}` and
