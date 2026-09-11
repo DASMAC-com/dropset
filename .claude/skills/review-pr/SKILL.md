@@ -2632,6 +2632,30 @@ already being asked to start the review.
      work, the burden it has to meet is naming which lens
      figure it expects to move.
 
+   - **A FIVE-lens fan-out with zero overruns, on a diff that
+     found two blocking defects.** Every lens came in at or
+     under its turn cap. The one thing done differently was a
+     **40-fact** established-facts block passed via
+     `lens_preamble.py --facts-file`. Recorded so a future trim
+     pass has to argue against these figures rather than against
+     silence — and note this is the second independent run where
+     a facts block is what held the caps, which is the pattern
+     rather than a single lucky pass.
+
+     Protective, proposing no change. The burden on a pass that
+     wants to cut the facts-block work is to name which lens
+     figure it expects to move.
+
+   - **The zero-cold-read shape, stated as a target.** Across
+     the runs above, the lenses handed complete facts made **no
+     cold reads at all** — one opened its report saying so
+     explicitly — and the expensive lens in each run was priced
+     by its genuinely *unanswered* questions rather than by
+     brief slippage. That is the ratio worth aiming at and the
+     one a trim pass most easily misreads: a lens that cold-read
+     source is not evidence the brief failed if its brief
+     deliberately left a question open.
+
    When proposing a trim against any of these, say which
    figure you expect to move and by how much.
 
@@ -3584,6 +3608,29 @@ already being asked to start the review.
    decisions — leave those as warnings for the
    human reviewer.
 
+   **A doc fix is a NEW claim, and wants the same verification
+   as the one it replaces.** When the finding is "a comment
+   claims something the code does not do", the corrected comment
+   is itself an assertion — verify it against the code before
+   committing, rather than treating a doc correction as
+   mechanical. Measured: a lens found a stub's doc comment
+   claiming an `Err` contract the code did not honor; the fix made
+   the code true **and added a clause** asserting credential
+   exposure was "impossible by construction", which was itself
+   false — the HTTP client carries secrets as query parameters,
+   and the query string is part of the request line. Only the
+   adversarial cross-check caught the new false claim; nothing in
+   the fix path would have. This is the hedge-is-not-verification
+   failure surfacing inside the review loop itself.
+
+   **And verify an assumed CLI default when the fix shells out.**
+   A flag's default is a fact about someone else's tool, not
+   about this diff, so a fix that relies on one ("it exits
+   non-zero by default", "it writes to stdout unless told
+   otherwise") is a claim to check against `--help` before
+   committing — the same standard the doc rule above applies to
+   prose.
+
    **Group the surviving findings BY FILE before applying
    anything.** Any file carrying three or more findings gets
    **one** section-map read — `read_result.py --headings` for
@@ -4117,6 +4164,27 @@ already being asked to start the review.
    "run a fast suite whole, not per module" rule — that one is
    about scope *within* a compiled target; this is about whether
    the target compiled the code at all.
+
+   **Expect the first fixture not to bite.** A fixture is
+   written from the *description* of the hazard, and the hazard
+   usually needs specific structure to reach — a value that
+   survives to the output, a line that actually matches the
+   pattern. Budget one rewrite per mutation-verified test.
+
+   **A mutation that passes means the TEST is wrong until proven
+   otherwise, not the fix.** That is the load-bearing sentence,
+   because the natural misreading of a passing mutation is that
+   the code change was pointless — and acting on that reading
+   would *remove a correct fix*. Measured: two new tests passed
+   with the code neutered on their first fixture. One appended
+   sibling items carrying no query, so with the branch disabled
+   they were read as rules, produced no SQL and were silently
+   dropped — output identical either way. The other's prose lines
+   never reached the hazard at all: one lacked the trigger
+   prefix, the other's pseudo-header had spaces in the key so it
+   never matched the header pattern. In both cases the fix was
+   correct and the **test** was decorative, which is exactly the
+   state this step exists to detect.
 
    **This lever deliberately adds cost** and must not be
    folded into a saving: budget two extra suite runs per

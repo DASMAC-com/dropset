@@ -93,8 +93,9 @@ order:
   waiting on an answer. Passing `interactive` (e.g.
   `housekeeping interactive`) restores the prompts — the
   perms-cruft removal (step 7), the stale-memory purge
-  (step 8), and the session-metrics (step 9) and
-  purge-conversations (step 10) offers. See "One-shot vs.
+  (step 8), and the purge-conversations **apply** (step 10).
+  Session metrics (step 9) runs unconditionally in both modes
+  and has no prompt to restore. See "One-shot vs.
   interactive mode" for the full mapping.
 
 Any other argument is ignored.
@@ -114,13 +115,26 @@ two modes, and the default is the non-interrupting one:
   label the *unattended* pass.
   Concretely: steps 7
   and 8 **propose / list** the perms cruft and the stale
-  memories and delete nothing; and steps 9 and 10 (the
-  session-metrics and purge-conversations offers) are
-  **skipped**. The deferred items are filed or flagged in
-  the report for a later attended pass — nothing is ever
-  deleted unattended. With the audit step gone, **nothing**
-  interrupts a one-shot pass at all: every step either acts
-  mechanically or defers to the closing gate.
+  memories and delete nothing; and steps 9 and 10 **run** —
+  session-metrics unconditionally, the purge **dry-run**
+  in-pass — with only the purge's destructive apply deferring
+  to the closing gate. The deferred items are filed or
+  flagged in the report for a later attended pass — nothing is
+  ever deleted unattended. With the audit step gone,
+  **nothing** interrupts a one-shot pass at all: every step
+  either acts mechanically or defers to the closing gate.
+
+  This paragraph used to say steps 9 and 10 were **skipped**,
+  which contradicted both steps and the summary sentence three
+  lines above it, and left a pass to adjudicate it mid-run. The
+  two readings produce materially different work: under the
+  stale one a morning pass files no trim levers and produces no
+  purge manifest. Step 9's own text records the skipping
+  behavior as a defect that was deliberately removed —
+  **one-shot mode defers approvals, not work** — so this was
+  stale text left behind by that fix rather than a competing
+  rule.
+
 - **Interactive** (`/housekeeping interactive`). Restores
   every **per-step** `AskUserQuestion` gate listed above, so
   you can act on the candidates as each step reaches them.
@@ -1057,10 +1071,14 @@ more useful than skipping the step and calling it deferred.
   one-line reason each) and, for an attended pass, which
   were purged — or that all are fresh; or that the scan was
   **skipped this pass** (with the cadence-gate reason).
-- Session metrics run: whether a `/session-metrics` run
-  was offered and accepted for this session, or skipped.
-- Purge-conversations: whether a `/purge-conversations` run
-  was offered and accepted (with the MB freed), or skipped.
+- Session metrics: the run's **outcome** — how many trim
+  levers were filed and how many appended to an existing
+  lever. It runs unconditionally, so "offered and accepted"
+  is not a state it can be in; only a tooling failure is.
+- Purge-conversations: that the **dry-run manifest** was
+  produced (with the reclaimable total), and that the
+  destructive apply is deferred to the closing gate — or, on
+  an attended pass that applied it, the MB freed.
 
 There is **no audit line**, because this pass runs no audit.
 If a report ever carries one, something has re-grown the step
