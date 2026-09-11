@@ -385,9 +385,14 @@ fn parked_receiver<T: Clone>() -> broadcast::Receiver<T> {
 /// with a health recorder attached, which is what makes the `feed_health`
 /// table complete by construction: the recorder keys on the source's own name,
 /// so a venue adapter added later reports without this function learning
-/// anything about it. That completeness now covers only the tiers that are not
-/// parked: a source in `PARKED_SOURCES` never reaches this function, so it
-/// contributes no health row at all (see `parked_receiver`). When telemetry is disabled the plain `run_until` is
+/// anything about it. That completeness now has one exception: a caller that
+/// gates on `PARKED_SOURCES` — today only the Pyth tier — skips this function
+/// entirely for a parked venue, which then contributes no health row at all
+/// (see `parked_receiver`). Note the exception is a property of the *call
+/// site*, not of the set: an entry nobody gated on still reaches this function
+/// and still reports.
+///
+/// When telemetry is disabled the plain `run_until` is
 /// used, so a run with no database costs nothing rather than reporting into a
 /// dead channel.
 ///

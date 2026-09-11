@@ -1824,9 +1824,9 @@ mod tests {
     /// engine as "no reading" rather than as an error — and the cascade prices
     /// off the daily FX references. The sibling tests that reach the same end
     /// state do it by calling `hub.pyth.clear()`, which never exercises
-    /// `Closed`, so narrowing the match arm below from `Empty | Closed` to
-    /// `Empty` would leave all of them green while the parked tier started
-    /// panicking on every tick.
+    /// `Closed`, so narrowing `drain_into`'s match arm above from
+    /// `Empty | Closed` to `Empty` would leave all of them green while the
+    /// parked tier started panicking on every tick.
     #[test]
     fn drain_into_treats_a_closed_channel_as_empty() {
         let (tx, mut rx) = broadcast::channel::<HashMap<String, f64>>(8);

@@ -156,6 +156,23 @@ fn unquote(value: &str) -> &str {
 
 /// The services named by a `NAME = a b c` Makefile assignment, or `None` if the
 /// variable is absent.
+///
+/// **Three known blind spots, all of the same shape: this reads one physical
+/// line of literal tokens and silently ignores anything else.** All three lists
+/// it is pointed at are single-line literals today, so none of them fires — and
+/// each would let a parked venue through, which is the direction this check
+/// exists to close, so they are named rather than left to be rediscovered:
+///
+/// * a `$(VAR)` reference is dropped by the filter below, so a partially
+///   indirect list (`KEYLESS_SERVICES = coinbase $(EXTRA)`) is read as its
+///   literal half only;
+/// * `find_map` takes the FIRST matching assignment, so a later `NAME += pyth`
+///   is invisible;
+/// * a `\`-continued list reads only its first physical line.
+///
+/// Closing them properly means expanding make variables, which needs make. The
+/// vacuity guard catches the total-failure case (an all-reference list parses
+/// empty and fails), but not a partial one.
 fn make_list(name: &str) -> Option<BTreeSet<String>> {
     MAKEFILE
         .lines()
@@ -163,6 +180,8 @@ fn make_list(name: &str) -> Option<BTreeSet<String>> {
         .map(|value| {
             value
                 .split_whitespace()
+                // Unexpanded references are not service names; see the blind
+                // spots above for what this costs.
                 .filter(|t| !t.starts_with('$'))
                 .map(str::to_string)
                 .collect()

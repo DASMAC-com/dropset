@@ -269,9 +269,13 @@ token (`pyth`), not the framework feed name (`pyth-hermes`) that
 `instrument_registry` because that table is written only by a *running*
 collector, through `register_instruments` — so a parked source can never
 write the row that would say it is parked. The maker bot reads the set at
-its spawn site and does not start a parked tier, which makes the
-*not-running* half of the rule above hold by construction rather than by
-operator discipline. `feeds/tests/parked_compose_agreement.rs` pins each
+its Pyth spawn site and does not start that tier, which makes the
+*not-running* half of the rule above hold by construction — but only for a
+venue whose spawn site is wired to check. There is no central dispatcher
+that reads the set and suppresses a tier; each call site opts in, so an
+entry for a venue nobody gated on describes a source as parked while it
+goes on running. Add the entry and the check together.
+`feeds/tests/parked_compose_agreement.rs` pins each
 entry against the deployment: the service must sit behind a compose
 profile, that profile must not be the one `collectors-up` enables, and
 the Makefile's start lists must not name it. A deliberate opt-in start

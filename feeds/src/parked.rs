@@ -48,10 +48,17 @@
 //! `instrument_source_liveness.source` (`pyth`, `oanda`, `kraken`) — *not* a
 //! framework [`Source::name`](crate::Source::name), which is prefixed and
 //! per-product for the per-product collectors (`cex:coinbase:EURC-USDC`), and
-//! not a maker-bot fusion tag either (`pyth-hermes`). Those vocabularies are
-//! deliberately separate and coincide only by accident, so a lookup keyed on
-//! the wrong one silently matches nothing — the exact silent-join failure the
-//! schema catalog warns about. Pass the bare token.
+//! not a maker-bot fusion tag either. Those vocabularies are deliberately
+//! separate and coincide only by accident, so a lookup keyed on the wrong one
+//! silently matches nothing — the exact silent-join failure the schema catalog
+//! warns about. Pass the bare token.
+//!
+//! For *this* adapter the second and third happen to be the same string:
+//! `PythHermesSource::name()` and the maker bot's fusion tag are both
+//! `pyth-hermes`, which is why the paragraph above can call it the framework
+//! name and the maker bot's own constant can call it the fusion tag without
+//! either being wrong. Neither is the bare token, which is the only thing that
+//! matters here.
 
 /// A source that is deliberately not running, and why.
 ///
@@ -64,8 +71,9 @@ pub struct ParkedSource {
     /// The bare venue token, as `instrument_source_liveness.source` spells it.
     ///
     /// It must **also** be a compose service key, because that is what ties an
-    /// entry to the deployment that holds the service back —
-    /// `feeds/tests/parked_compose_agreement.rs` asserts both. The two
+    /// entry to the deployment that holds the service back — which
+    /// `feeds/tests/parked_compose_agreement.rs` asserts, while the bare-token
+    /// shape itself is checked by `every_entry_is_well_formed` below. The two
     /// vocabularies are not the same one and only overlap by convention:
     /// `coinbase-ticker` is a compose service that is no venue token, so a park
     /// on a venue whose service is spelled differently needs an explicit
