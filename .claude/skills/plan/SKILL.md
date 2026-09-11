@@ -711,11 +711,25 @@ operator's yes, dispatch it:
 python3 .claude/tools/session_dispatch.py task 1234
 ```
 
-That opens a **new iTerm window** and types the verb, exactly
-as if the operator had typed it. One window per session is
-load-bearing: it is how the operator talks to the fleet.
+That opens a **new tab in this session's own window** and types
+the verb, exactly as if the operator had typed it. The operator
+drives the fleet from **one window**, so a dispatched session
+lands beside the planning session that started it rather than
+as another window to hunt for (operator ruling, 2026-09-10).
 
-Three things about the boundary:
+Several verbs go in one call, separated by a bare `+`, which
+costs one round trip rather than one per tab:
+
+```sh
+python3 .claude/tools/session_dispatch.py task 1234 + plan
+```
+
+The tool prints one `verb -> tty` line per dispatched verb and
+then a roll-call of every open session, which is the
+confirmation to relay — the ttys come from the call that made
+the tabs, so only the roll-call independently shows they exist.
+
+Four things about the boundary:
 
 - **The ask-then-yes IS the authorization**, the same class
   as `fleet go`. There is no second gate inside the tool, and
@@ -727,9 +741,12 @@ Three things about the boundary:
   `docs/conventions/local-integrations.md`.
 - **Best effort.** If iTerm's Python API is off, or macOS has
   not granted Automation access, the tool fails loudly and
-  prints the verb it would have typed — so relay that line to
-  the operator rather than retrying. `--dry-run` shows the
-  line without opening anything.
+  prints every verb it would have typed — so relay those lines
+  to the operator rather than retrying. `--dry-run` shows them
+  without opening anything.
+- **A batch is all-or-nothing on validation.** One bad verb
+  dispatches none of them, so fix the typo and re-run the whole
+  call; there is no half-dispatched batch to reconcile.
 
 **6. Write back — incrementally, then rewritten at the
 gate.**
@@ -825,9 +842,28 @@ file each lever it yields as a **parked lever issue**, the
 same as an implementation session — so the fold mines
 planning-session shapes too, rather than only review shapes:
 
+**COMPUTE this session's id; never list the projects
+directory to find it.** A daily verb's session id is
+deterministic — an md5 of `dropset-<kind>-<YYYYMMDD>` — so
+one call names it:
+
+```sh
+python3 .claude/tools/resolve_session.py --daily-id plan
+```
+
 ```sh
 make session-metrics SESSION=<uuid>
 ```
+
+Searching for it instead is expensive and looks reasonable:
+one planning session ran a bare long-format listing of the
+Claude projects folder to find its own transcript, at
+**≈6.0k** for that single call — its sixth-largest result, and
+≈6.4k across five such calls, making the listing that
+session's top hardening candidate by result size. The next
+bootstrap reproduced the same id by computation at near-zero
+cost. Pass `--date YYYYMMDD` for an earlier day's session;
+`housekeeping` is the other daily kind.
 
 Levers file through `.claude/tools/trim_levers.py` (probe,
 then `file` or `append-evidence`), **not** into a document —

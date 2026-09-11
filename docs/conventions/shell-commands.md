@@ -28,7 +28,19 @@ not to. Brief every agent you spawn on these rules (see
 [the sub-agent brief](sub-agent-brief.md)) so its calls reduce to
 allow-rules too. A session that follows the rules and briefs its
 agents on them prompts only for a genuinely novel command — which
-`firm-perms` then memorializes so it never prompts again.
+`allowlist.py add` then memorializes so it never prompts again.
+
+**Auto permission mode changed the stakes here, and this framing
+predates it.** Every session verb now launches with permission mode
+auto, so a safe command is cleared by a classifier rather than by an
+accumulated allow-rule, and the marginal value of firming each approval
+is much lower than when this rule was written. Keep authoring commands
+that reduce to a stable rule — it is still what keeps a *novel* command
+from prompting, and the guard hooks and deny rules are unaffected — but
+do not treat firming as a step every session owes. Measured 2026-09-10:
+of 60 `allowlist.py add` calls, 53 happened as a direct tool call
+outside any firming pass, which is why the `firm-perms` skill that used
+to wrap them was retired and the tool kept.
 
 **The dedicated Grep / Glob tools aren't always present.** Native macOS
 Claude Code builds (>= 2.1.117) drop them from the default tool palette
@@ -261,16 +273,25 @@ Concrete rules:
   so one rule firms the whole family. Don't approve the per-tag,
   per-arg variant; it only ever matches that one call.
 
-- When per-arg approvals have already piled up in
-  `settings.local.json`, run **`/firm-perms sweep`**. It collapses the
-  one-off entries into globs (per the rules above), dedupes them, and
-  writes the firmed allowlist back — proposing the changes for
-  your approval before it writes. That's the full sweep. To memorialize
-  a *single* just-approved command instead, a bare `/firm-perms` takes
-  the **fast firm** — it firms just that one command immediately, with
-  no propose-then-confirm gate. Both write to
-  the one shared file at the main checkout, so the result is live in
-  every worktree.
+- To memorialize an approved command, write the generalized rule
+  directly:
+
+  ```sh
+  python3 .claude/tools/allowlist.py add 'Bash(gh pr view:*)'
+  ```
+
+  It appends only if the rule is not already covered, prunes narrower
+  entries the new rule subsumes, and refuses a bare-verb wildcard on a
+  hazardous program. Ask `covers '<rule>'` first when you want to know
+  whether a rule is already granted without writing anything. Both
+  resolve the one shared file at the main checkout, so the result is
+  live in every worktree.
+
+  **There is no sweep mode any more.** A `/firm-perms sweep` used to
+  collapse piled-up per-arg entries behind a propose-then-confirm gate,
+  and a bare `/firm-perms` took a single-approval fast firm. Both are
+  retired with that skill; `add` is the whole interface, and
+  `housekeeping` step 7a still prunes accumulated cruft.
 
 ## Patterns that always re-prompt — never author these
 
@@ -363,9 +384,8 @@ reworded here; treat it as "rephrase and retry", never as "this
 question is structurally unanswerable".
 
 If a one-off like these still gets approved during a session, do
-**not** allow-list it (a `*` can't generalize a compound): the
-`firm-perms` skill flags it and points back here so the source stops
-emitting it.
+**not** allow-list it — a `*` can't generalize a compound, so the rule
+would be as single-use as the command. Fix whatever emitted it instead.
 
 ## The guard hooks
 
@@ -411,7 +431,7 @@ other local integrations in
 
 Baseline permission allow-rules (the `Bash(prefix:*)` globs this doc's
 rules produce) go in `.claude/settings.json` or `settings.local.json` —
-the `firm-perms` skill maintains the local allowlist for you.
+`.claude/tools/allowlist.py` maintains the local allowlist for you.
 `settings.local.json` is **one shared file resolved through worktrees
 to the main checkout**, so a firmed rule is live in every worktree at
 once and there is nothing to propagate; see

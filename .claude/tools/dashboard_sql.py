@@ -855,6 +855,152 @@ def collect(
     return found
 
 
+#: The two price tiers a venue can land in. Candle venues write the first, tick
+#: venues the second — so a panel querying one **silently omits every venue in
+#: the other**, which is precisely the failure this reporting exists to surface.
+PRICE_TIER_TABLES = ("cex_prices", "spot_ticks")
+
+#: A panel title claiming to cover sources generally. Such a panel must read both
+#: price tiers, or say which tier it covers.
+#:
+#: Matched against the **mirror path slug**, where the separator is a hyphen
+#: rather than a space — so a whitespace-only pattern never fires and the check
+#: passes vacuously on every panel. That is exactly what a first cut did, and the
+#: only thing that caught it was asserting the committed dashboards contain a
+#: matching panel at all.
+_BY_SOURCE_RE = re.compile(r"by[\s_-]+source", re.IGNORECASE)
+
+#: A title that NAMES its tier, which is the rule's own escape: a panel must read
+#: both tiers **or say which tier it covers**. "Candle rows per minute by source"
+#: declares the candle tier in its title and is complete for what it claims, so
+#: flagging it would be a false positive — found by running the check against the
+#: committed dashboards rather than only against fixtures.
+_TIER_DECLARED_RE = re.compile(r"candle|tick", re.IGNORECASE)
+
+#: A table reference in a `FROM` or `JOIN`, schema-qualified or not.
+_TABLE_REF_RE = re.compile(
+    r"\b(?:from|join)\s+(?:(?:only|lateral)\s+)?([A-Za-z_][A-Za-z0-9_.\"]*)",
+    re.IGNORECASE,
+)
+
+
+def tables_in(sql: str) -> list[str]:
+    """Table names the SQL reads, de-duplicated in order.
+
+    A lexical scan, matching how the rest of this tool reads the SQL. Comments and
+    string literals are stripped first so a table named inside either is not
+    counted — a `-- from cex_prices` note in a comment would otherwise report a
+    dependency the query does not have.
+
+    **The bound, stated rather than papered over: a CTE name is indistinguishable
+    from a table here.** A query with `WITH bars AS (…) SELECT … FROM bars` reports
+    both `cex_prices` and `bars`. That is harmless for the question this exists to
+    answer — a CTE is never named `cex_prices` or `spot_ticks`, so the tier
+    verdict is unaffected — but do not read the list as a schema dependency set.
+    Resolving it would need a real SQL parser, which this tool deliberately is
+    not.
+    """
+    comments, literals = lexical_scan(sql)
+    blanked = list(sql)
+    for start, end in list(comments) + list(literals):
+        for i in range(start, min(end, len(blanked))):
+            blanked[i] = " "
+    cleaned = "".join(blanked)
+
+    found: list[str] = []
+    for match in _TABLE_REF_RE.finditer(cleaned):
+        name = match.group(1).strip('"').rstrip(",")
+        # Keep the bare relation name: a schema qualifier is not what a tier
+        # question turns on, and `public.cex_prices` must match `cex_prices`.
+        name = name.rsplit(".", 1)[-1].strip('"')
+        if name and name not in found:
+            found.append(name)
+    return found
+
+
+def panel_tables(
+    dashboard_dir: pathlib.Path, alerting_dir: pathlib.Path | None = None
+) -> list[dict]:
+    """``[{source, panel, tables, tiers, by_source, violates}, …]``.
+
+    Answers "which panels read which table" in one call. That is not idle
+    curiosity: an operator once reported a venue as invisible on the dashboard
+    while the store showed it live and fresh, and the entire diagnosis turned on
+    the tier split — establishing which panel reads which table **was** the
+    diagnostic, and it took roughly six calls of greps and mirror-file reads.
+    This tool already parses every panel's SQL to build the mirror, so it was one
+    traversal away from reporting it.
+
+    ``violates`` marks the standing rule: a panel whose title claims "by source"
+    must cover **both** price tiers or say which tier it covers.
+    """
+    rows: list[dict] = []
+
+    def add(source: str, rel: str, sql: str) -> None:
+        names = tables_in(sql)
+        tiers = [t for t in PRICE_TIER_TABLES if t in names]
+        # Match the PANEL portion, never the whole mirror path. `rel` is
+        # `<dashboard-stem>/panel-NN-<title>.sql`, so searching it lets a
+        # DASHBOARD FILENAME decide the verdict for every panel inside it: a stem
+        # containing "candle" or "tick" would set `tier_declared` dashboard-wide
+        # and silently disable the rule, and a stem containing "by-source" would
+        # manufacture violations. Same failure as the whitespace-vs-hyphen bug one
+        # level up — a pattern matched against a string that is not what the
+        # comment says it is.
+        panel_name = rel.rsplit("/", 1)[-1]
+        by_source = bool(_BY_SOURCE_RE.search(panel_name))
+        tier_declared = bool(_TIER_DECLARED_RE.search(panel_name))
+        rows.append(
+            {
+                "source": source,
+                "panel": rel,
+                "tables": names,
+                "tiers": tiers,
+                "by_source": by_source,
+                "tier_declared": tier_declared,
+                # Only a panel that reads exactly ONE tier violates, and only when
+                # its title does not declare which tier it covers. Reading NEITHER
+                # tier means it is not a price panel at all — flagging that would
+                # make the check noise rather than a signal.
+                "violates": by_source and len(tiers) == 1 and not tier_declared,
+            }
+        )
+
+    for dashboard in sorted(dashboard_dir.glob("*.json")):
+        for rel, sql in queries(dashboard):
+            add(dashboard.name, rel, sql)
+    if alerting_dir is not None and alerting_dir.is_dir():
+        for rules in sorted(alerting_dir.glob("*.yml")):
+            for rel, sql in parse_alerting(rules):
+                add(rules.name, rel, sql)
+    return rows
+
+
+def cmd_tables(args: argparse.Namespace) -> int:
+    """Print panel -> tables, and with ``--check`` fail on a tier violation."""
+    rows = panel_tables(args.dashboards, args.alerting)
+    for row in rows:
+        tiers = ",".join(row["tiers"]) or "-"
+        print(f"{row['panel']} | tiers: {tiers} | {', '.join(row['tables']) or '-'}")
+
+    violations = [r for r in rows if r["violates"]]
+    print(
+        f"-- {len(rows)} panel(s), {len(violations)} tier violation(s)",
+        file=sys.stderr,
+    )
+    if not args.check:
+        return 0
+    for row in violations:
+        print(
+            f"VIOLATION {row['panel']}: the title claims 'by source' but the "
+            f"query reads only {row['tiers'][0]} — a panel covering sources "
+            f"generally must read both {' and '.join(PRICE_TIER_TABLES)}, or say "
+            f"in its title which tier it covers",
+            file=sys.stderr,
+        )
+    return 1 if violations else 0
+
+
 def cmd_extract(args: argparse.Namespace) -> int:
     wanted = collect(args.dashboards, args.alerting)
     args.mirror.mkdir(parents=True, exist_ok=True)
@@ -964,9 +1110,16 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "command",
-        choices=("extract", "check", "lint", "summary"),
+        choices=("extract", "check", "lint", "summary", "tables"),
         help="extract writes the mirror; check fails if it is stale; lint "
-        "substitutes macros and runs sqlfluff; summary ranks queries by size",
+        "substitutes macros and runs sqlfluff; summary ranks queries by size; "
+        "tables reports panel -> tables read",
+    )
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="with `tables`, exit non-zero when a panel whose title claims 'by "
+        "source' reads only one price tier",
     )
     ap.add_argument("--dashboards", type=pathlib.Path, default=DASHBOARD_DIR)
     ap.add_argument("--alerting", type=pathlib.Path, default=ALERTING_DIR)
@@ -984,6 +1137,7 @@ def main(argv: list[str] | None = None) -> int:
             "check": cmd_check,
             "lint": cmd_lint,
             "summary": cmd_summary,
+            "tables": cmd_tables,
         }[args.command](args)
     except ExtractionError as e:
         print(f"dashboard-sql: {e}", file=sys.stderr)

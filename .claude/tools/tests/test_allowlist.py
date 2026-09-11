@@ -288,7 +288,7 @@ class ClassifyTests(unittest.TestCase):
         self.assertIsNone(classify(allow[0], 0, allow))  # the broad one stays
 
     def test_subsumed_narrow_before_broad_append_pattern(self):
-        # firm-perms appends the broader rule AFTER the narrow one — the narrow
+        # Firming appends the broader rule AFTER the narrow one — the narrow
         # entry is still dead weight and must be flagged regardless of order.
         allow = ["Bash(git status --short:*)", "Bash(git status:*)"]
         self.assertEqual(classify(allow[0], 0, allow)[0], "subsumed")
@@ -516,10 +516,10 @@ class AddTests(unittest.TestCase):
             self.assertTrue(out["added"])
             self.assertEqual(load_allow(p), ["Bash(cargo test:*)"])
 
-    def test_refuses_a_bare_verb_wildcard_the_fast_firm_would_refuse(self):
-        """`firm_into` has no floor of its own — `firm_last` checks it in the
-        caller — so a write path that skipped the check would grant exactly what
-        the fast firm refuses, via one non-prompting pre-approved call."""
+    def test_refuses_a_bare_verb_wildcard(self):
+        """`firm_into` has no floor of its own — it writes what it is given — so a
+        write path that skipped `add`'s check would grant a whole hazardous verb
+        via one non-prompting pre-approved call."""
         for rule in ("Bash(git:*)", "Bash(rm:*)", "Bash(curl:*)"):
             with tempfile.TemporaryDirectory() as d:
                 p = self._path(d, ["Bash(git status:*)"])

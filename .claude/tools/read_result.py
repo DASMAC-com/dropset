@@ -211,15 +211,27 @@ def iter_headings(lines: list[str]):
         )
 
 
-def headings(lines: list[str]) -> list[str]:
+def headings(lines: list[str], max_depth: int | None = None) -> list[str]:
     """Every ATX heading as ``<line>:<indent><text>``, indented by depth.
 
     This is the navigation mode: it turns a 40-part body into a table of
     contents a few hundred bytes wide, which is what makes the follow-up
     ``--section`` read narrow instead of speculative.
+
+    ``max_depth`` keeps only headings at that hash count or shallower. The map
+    itself is the thing that grows without bound here: on a
+    ``trim_levers.py list --bodies-out`` dump every lever contributes its own
+    internal headings (``The lever``, ``Evidence …``, ``Cost label``), so a pool
+    survey that wants only the ``## ENG-#### | <title>`` identifier lines pays
+    for roughly 3.6x the lines it reads — measured at 116 headings where 32 were
+    wanted, and it scales linearly with a pool nothing bounds. The deep headings
+    are not waste in general; they are simply consumed later and selectively,
+    through ``--sections``.
     """
     return [
-        f"{i + 1}:{'  ' * (depth - 1)}{text}" for i, depth, text in iter_headings(lines)
+        f"{i + 1}:{'  ' * (depth - 1)}{text}"
+        for i, depth, text in iter_headings(lines)
+        if max_depth is None or depth <= max_depth
     ]
 
 
@@ -477,6 +489,17 @@ def run(argv: list[str]) -> int:
         "inside a title.",
     )
     mode.add_argument("--grep", default=None, metavar="RE", help="matching lines")
+    parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=None,
+        metavar="N",
+        help="with --headings, keep only headings N hashes deep or shallower. "
+        "`--headings --max-depth 2` over a `trim_levers.py list --bodies-out` "
+        "dump returns exactly the `## ENG-#### | <title>` identifier lines, "
+        "since --bodies-out normalizes each lever's own headings to sit below "
+        "its identifier",
+    )
     mode.add_argument(
         "--slice", default=None, metavar="A:B", help="inclusive line range"
     )
@@ -504,6 +527,15 @@ def run(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv[1:])
 
+    if args.max_depth is not None:
+        # Refused rather than ignored. A flag that silently does nothing on the
+        # wrong mode teaches that it was applied, which on a narrowing flag means
+        # believing a result is smaller than it is.
+        if not args.headings:
+            parser.error("--max-depth applies to --headings")
+        if args.max_depth < 1:
+            parser.error("--max-depth must be at least 1")
+
     text = payload(Path(args.path), args.field)
     lines = text.splitlines()
     summary: str
@@ -516,8 +548,14 @@ def run(argv: list[str]) -> int:
         ]
         summary = "count"
     elif args.headings:
-        out = headings(lines)
+        out = headings(lines, args.max_depth)
         summary = f"{len(out)} heading(s) of {len(lines)} line(s)"
+        if args.max_depth is not None:
+            # Name the filter in the summary. A depth-filtered map looks exactly
+            # like a complete one, so a reader who did not write the call has no
+            # way to tell a shallow document from a deep document read shallowly.
+            deeper = len(headings(lines)) - len(out)
+            summary += f", depth <= {args.max_depth} ({deeper} deeper hidden)"
     elif args.section is not None:
         block, start = section(lines, args.section)
         out = block

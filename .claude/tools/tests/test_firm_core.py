@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import firm_core as fc
 
@@ -67,9 +70,9 @@ class GeneralizeBash(unittest.TestCase):
     def test_interpreter_keeps_script_path(self):
         self.assertEqual(
             fc.generalize(
-                "Bash", {"command": "python3 .claude/tools/firm_last.py exact"}
+                "Bash", {"command": "python3 .claude/tools/allowlist.py exact"}
             ),
-            "Bash(python3 .claude/tools/firm_last.py:*)",
+            "Bash(python3 .claude/tools/allowlist.py:*)",
         )
         self.assertEqual(
             fc.generalize("Bash", {"command": "bash scripts/deploy.sh a b"}),
@@ -135,7 +138,7 @@ class GeneralizeOtherTools(unittest.TestCase):
 
     def test_skill_rule(self):
         self.assertEqual(
-            fc.generalize("Skill", {"skill": "firm-perms"}), "Skill(firm-perms)"
+            fc.generalize("Skill", {"skill": "housekeeping"}), "Skill(housekeeping)"
         )
 
     def test_read_path_worktree_collapsed(self):
@@ -204,6 +207,70 @@ class CollapseWorktree(unittest.TestCase):
 
     def test_no_worktree_unchanged(self):
         self.assertEqual(fc.collapse_worktree_tags("/a/b/c"), "/a/b/c")
+
+
+class SettingsIO(unittest.TestCase):
+    """The settings reader/writer, over a real temp file.
+
+    These moved here from ``test_firm_last.py`` when the fast-firm tool was
+    retired: they were always tests of ``firm_core``'s writer, which survives,
+    and only reached it through the retired module's re-exports.
+    """
+
+    def test_round_trip_preserves_other_keys(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "settings.local.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "permissions": {"allow": ["Bash(ls:*)"], "deny": ["x"]},
+                        "other": 1,
+                    }
+                )
+            )
+            settings, allow = fc.load_settings(path)
+            allow.append("Bash(git add:*)")
+            fc.write_settings(path, settings, allow)
+            reloaded = json.loads(path.read_text())
+            self.assertEqual(reloaded["other"], 1)
+            self.assertEqual(reloaded["permissions"]["deny"], ["x"])
+            self.assertIn("Bash(git add:*)", reloaded["permissions"]["allow"])
+
+    def test_firm_into_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "settings.local.json"
+            self.assertTrue(fc.firm_into(path, "Bash(git add:*)"))
+            self.assertFalse(fc.firm_into(path, "Bash(git add:*)"))
+
+    def test_firm_into_skips_when_covered_by_broader(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "settings.local.json"
+            path.write_text(json.dumps({"permissions": {"allow": ["Bash(git:*)"]}}))
+            self.assertFalse(fc.firm_into(path, "Bash(git status:*)"))
+
+    def test_creates_missing_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "nested" / "settings.local.json"
+            self.assertTrue(fc.firm_into(path, "Bash(cargo test:*)"))
+            self.assertTrue(path.is_file())
+
+    def test_firm_into_prunes_subsumed_existing(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "settings.local.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "permissions": {
+                            "allow": ["Bash(cargo test -p dropset:*)", "Bash(ls:*)"]
+                        }
+                    }
+                )
+            )
+            self.assertTrue(fc.firm_into(path, "Bash(cargo test:*)"))
+            allow = json.loads(path.read_text())["permissions"]["allow"]
+            self.assertIn("Bash(cargo test:*)", allow)
+            self.assertNotIn("Bash(cargo test -p dropset:*)", allow)  # pruned
+            self.assertIn("Bash(ls:*)", allow)  # untouched
 
 
 if __name__ == "__main__":

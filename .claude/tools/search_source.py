@@ -381,6 +381,163 @@ def build_matcher(pattern: str, fixed: bool, ignore_case: bool):
         ) from exc
 
 
+#: Separators that mean "alternation" in one dialect or another. `\|` is BRE's
+#: (and a literal pipe in Python's), `|` is Python's own — a pattern using the
+#: first while this tool compiles the second is the failure the zero-result probe
+#: below exists to catch.
+_BRE_ALTERNATION = r"\|"
+
+
+#: Line-start markers that unambiguously introduce a COMMENT rather than a
+#: declaration: Rust doc comments, C-family `//`, `%` (TeX), `;` (Lisp / ini).
+#: A section map containing one of these as a branch stops being a map — in a
+#: comment-dense file it matches most of the content.
+#:
+#: `#` is handled separately below because it is genuinely ambiguous, and `*` is
+#: omitted entirely: anchored `^*` is an invalid-looking quantifier far more often
+#: than a block-comment continuation, so judging it would misfire.
+COMMENT_MARKERS = ("///", "//!", "//", "%", ";")
+
+#: Extensions whose files are prose, so an anchored `^#` in them is a markdown
+#: heading — the document's declaration shape — rather than a comment marker.
+PROSE_EXTENSIONS = ("md", "markdown", "txt", "rst")
+
+#: A branch shaped like a section map's — anchored at line start. Only anchored
+#: branches are judged, because an unanchored `#` is an ordinary substring search
+#: (a fragment, a channel name) and warning on those would fire constantly.
+_ANCHORED_BRANCH = "^"
+
+
+def is_prose_scope(
+    all_text: bool,
+    exts: tuple[str, ...] | list[str] | None,
+    globs: tuple[str, ...] | list[str] | None,
+) -> bool:
+    """Whether the scope names prose, so ``^#`` is a heading rather than a comment.
+
+    **``--glob`` counts, and leaving it out was a bug.** The inference originally
+    read only ``--all-text`` and ``--ext``, so mapping a doc by path —
+    ``--glob 'docs/ci.md'``, which names markdown about as unambiguously as a
+    scope can — was refused for using the one pattern that is *correct* there.
+    A false refusal is worse than a missing one: the rule's own advice is to
+    re-ask a refused search, so it sends the caller looking for a narrower
+    pattern that does not exist.
+
+    ``any``, not ``all``, matching how ``--ext`` already behaved: a mixed scope
+    resolves in favor of allowing the pattern, and ``--force-comments`` remains
+    for the genuinely ambiguous case.
+    """
+    if all_text:
+        return True
+    for ext in exts or ():
+        if ext.lstrip(".") in PROSE_EXTENSIONS:
+            return True
+    for glob in globs or ():
+        # The suffix of the glob's last path segment, so `docs/**/*.md` and a
+        # bare `docs/ci.md` both read as markdown.
+        tail = glob.rsplit("/", 1)[-1]
+        if "." in tail and tail.rsplit(".", 1)[-1] in PROSE_EXTENSIONS:
+            return True
+    return False
+
+
+def comment_marker_branches(pattern: str, prose: bool = False) -> list[str]:
+    """Anchored comment-marker branches in ``pattern``, in order.
+
+    A section map wants the **declaration** shape only. A marker that
+    *introduces* a declaration is not the declaration — a Rust `///` sits
+    immediately above the item it documents, which is exactly why it reads as part
+    of it and keeps getting included.
+
+    Measured twice: a 563-line `Makefile` mapped with
+    ``^[a-zA-Z0-9_-]*:|^# |^##`` returned every comment line in a file that is
+    mostly prose comments (≈5.4k, that session's largest single result), and a
+    Rust test file mapped with a pattern including ``^///`` and ``^//!`` came back
+    about as large as the region the map was meant to help choose.
+
+    The rule was already written in two places and violated by sessions that had
+    read it, which is why this is a check rather than more prose.
+
+    **Two shapes are deliberately NOT flagged, and both would be wrong to flag.**
+    ``^#[`` is a Rust **attribute** — ``^#[test]`` is part of the declaration
+    shape a Rust map wants, not a comment. And on a prose sweep ``^#`` is the
+    *correct* declaration shape, since a markdown heading is a document's
+    declaration; ``prose`` says so, and it is set when the caller asked for
+    markdown or for all text.
+
+    Returns ``[]`` for a single-branch pattern whatever it contains: one anchored
+    ``^///`` is a deliberate search for doc-comment lines, and only an
+    *alternation* is a section map.
+    """
+    # Left-strip only: a TRAILING space is part of the branch and distinguishes
+    # `^# ` from `^#`, so the refusal must quote back what was actually written.
+    branches = [raw.lstrip() for raw in pattern.split("|")]
+    if len(branches) < 2:
+        return []
+    found = []
+    for branch in branches:
+        if not branch.startswith(_ANCHORED_BRANCH):
+            continue
+        # Escapes are stripped before the comparison, not just leading ones. A
+        # caller writing `^#\[test\]` has escaped the bracket for the regex, and
+        # testing the raw text would miss the `#[` and misfire on the one Rust
+        # shape that most needs to be allowed.
+        body = branch[len(_ANCHORED_BRANCH) :].replace("\\", "")
+        if body.startswith("#"):
+            # A Rust attribute, or a heading on a prose sweep: both are
+            # declarations. Anything else starting `#` is a comment.
+            if not body.startswith("#[") and not prose:
+                found.append(branch)
+            continue
+        if body.startswith(COMMENT_MARKERS):
+            found.append(branch)
+    return found
+
+
+def first_alternation_branch(pattern: str) -> str | None:
+    """The first branch of ``pattern``'s alternation, or None if it has none.
+
+    Only the ``\\|`` form is probed. A plain ``|`` already means alternation to
+    this tool, so a zero result from one is an ordinary absence and re-probing it
+    would fire on almost every empty search — the point is to catch the pattern
+    whose separator did NOT do what the caller intended.
+
+    Returns None for a branch that is empty or that still holds a
+    special regex character this cannot reason about, so the probe stays a cheap
+    literal check rather than a second guess.
+
+    **Anchors are exempt from that exclusion, and excluding them defeated the
+    probe on its main case.** ``^`` and ``$`` mean the same thing in BRE and in
+    Python, so probing ``^fn `` asks exactly the intended question — whereas the
+    grouping and quantifier metacharacters do differ (BRE reads a bare ``(`` as a
+    literal, Python as a group), which is why those still disqualify a branch. A
+    section map is anchored by construction, and a section map is the pattern most
+    likely to be written with BRE separators in the first place, so the original
+    exclusion list silenced the hint precisely where it was needed. Measured: a
+    ``\\|``-separated map returned a bare zero and cost a round to re-derive.
+
+    An anchor mid-branch is still safe: BRE treats it as a literal there while
+    Python treats it as an anchor that cannot match, so the probe finds nothing
+    and stays silent — no worse than not probing.
+    """
+    if _BRE_ALTERNATION not in pattern:
+        return None
+    branch = pattern.split(_BRE_ALTERNATION, 1)[0].strip()
+    if not branch or any(ch in branch for ch in "|()[]{}*+?"):
+        return None
+    return branch
+
+
+def alternation_hint(pattern: str) -> str:
+    """``pattern`` with BRE alternation rewritten as Python's, for the advisory.
+
+    Shown rather than described: the correction is one character per separator,
+    and a caller who is handed the fixed pattern can re-issue it directly instead
+    of re-deriving it from a rule about dialects.
+    """
+    return pattern.replace(_BRE_ALTERNATION, "|")
+
+
 def search(
     pattern: str,
     root: Path,
@@ -843,6 +1000,13 @@ def run(argv: list[str]) -> int:
         "--files-only for size — the escape hatch for an adjudication read "
         "where the surrounding lines ARE the question",
     )
+    parser.add_argument(
+        "--force-comments",
+        action="store_true",
+        help="allow a comment-marker branch in an alternation — the escape hatch "
+        "for deliberately searching comment lines, as opposed to writing a "
+        "section map that accidentally matches them all",
+    )
     parser.add_argument("--fixed", action="store_true", help="literal, not regex")
     parser.add_argument("--ignore-case", action="store_true")
     parser.add_argument(
@@ -914,6 +1078,33 @@ def run(argv: list[str]) -> int:
         # unspecified extension set means under `--glob`.
         extensions = DEFAULT_EXTENSIONS
 
+    # REFUSE a section map whose alternation includes a COMMENT marker.
+    #
+    # Refused before the search rather than warned after it, which is the whole
+    # point: an advisory can only arrive *with* the payload already paid for, and
+    # the payload here IS the harm — such a map comes back roughly as large as
+    # the region it was meant to help choose. The same act-rather-than-advise
+    # reasoning behind the single-file clamp and the size degrade above.
+    #
+    # The rule this enforces is written in two places already and was violated by
+    # sessions that had read it, which is what moved it into the tool.
+    if not args.fixed and not args.force_comments:
+        prose = is_prose_scope(args.all_text, exts, globs)
+        offenders = comment_marker_branches(args.pattern, prose=prose)
+        if offenders:
+            raise SearchSourceError(
+                f"pattern contains comment-marker branch(es) "
+                f"{', '.join(repr(o) for o in offenders)} in an alternation — a "
+                f"section map wants the DECLARATION shape only, and a marker that "
+                f"introduces a declaration is not the declaration. In a "
+                f"comment-dense file this matches most of the content: a "
+                f"Makefile mapped this way returned every comment line for "
+                f"≈5.4k. Drop those branches (for Rust: "
+                f"'^fn |^pub fn |^impl |^enum |^struct |^const'; for a markdown "
+                f"doc use read_result.py --headings). Pass --force-comments if you "
+                f"really are searching for comment lines."
+            )
+
     result = search(
         args.pattern,
         Path(args.root),
@@ -977,7 +1168,7 @@ def run(argv: list[str]) -> int:
     # (The lever behind this proposed tracking first-time *patterns* per
     # session instead. That is not implementable here: this tool has no way to
     # identify its session — `CLAUDE_SESSION_ID` is not set in a Bash tool call
-    # — and guessing by newest-mtime is the same race `firm_last.py` documents.)
+    # — and guessing by newest-mtime is a race under a fleet of sessions.)
     if (
         args.context
         and not files_only
@@ -995,6 +1186,45 @@ def run(argv: list[str]) -> int:
             "answer to it. Narrow with --glob/--dir and ask again if you then "
             "need the surrounding lines, or re-run with --force-context."
         )
+
+    # A ZERO result from a pattern whose dialect may be wrong.
+    #
+    # This is the worst of the false-negative shapes, because it does not look
+    # like one: a refusal is visibly a refusal, while this is a well-formed
+    # answer with a plausible advisory attached. Measured twice — a `\|`
+    # alternation returned `0 match(es) in 0 file(s)` for a symbol that existed
+    # in four files, and the default-narrowed note that printed alongside blamed
+    # the extension set, steering the caller toward a second wrong retry.
+    #
+    # It matters more than one round trip: this is how a "nothing references this
+    # any more" conclusion gets reached wrongly, and that conclusion licenses
+    # deletions.
+    #
+    # The probe re-runs ONE branch rather than guessing, so the advisory carries
+    # evidence. A branch that matches proves the alternation was the problem; a
+    # branch that does not leaves the zero standing, and saying nothing then is
+    # correct — an advisory on every zero would be noise.
+    if not result["total"] and not args.fixed:
+        branch = first_alternation_branch(args.pattern)
+        if branch:
+            probe = search(
+                branch,
+                Path(args.root),
+                dirs=list(dirs) if dirs is not None else None,
+                extensions=extensions,
+                fixed=args.fixed,
+                ignore_case=args.ignore_case,
+                limit=1,
+                globs=globs,
+            )
+            if probe["total"]:
+                notes.append(
+                    f"WARNING: 0 matches, but the single branch {branch!r} "
+                    f"matches — so this pattern's ALTERNATION did not parse as "
+                    f"you meant, and the zero is not an absence. This tool takes "
+                    f"PYTHON regex: use plain `|`, not BRE `\\|`. Re-issue as "
+                    f"`{alternation_hint(args.pattern)}`."
+                )
 
     print_result(result, files_only, args.context, notes)
     # 0 when something matched, 1 when nothing did — grep's convention, so a

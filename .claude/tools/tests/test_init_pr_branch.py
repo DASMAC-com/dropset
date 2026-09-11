@@ -206,6 +206,46 @@ class NodeModulesState(unittest.TestCase):
         self.assertEqual(ipb.node_modules_state(str(self.root)), "absent")
 
 
+class ProgramSoState(unittest.TestCase):
+    """The built program artifact, measured the same way node_modules is.
+
+    A cold worktree has none, so every litesvm test fails at once with a message
+    about a missing keypair — which reads like a broken harness rather than a
+    missing build. And a diff-keyed conditional loses here too: the branch that
+    measured this changed only `programs/dropset/tests/**`, so "does the diff
+    touch the program source" answers no while the artifact is still required.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def test_a_cold_worktree_reports_absent(self):
+        (self.root / "programs").mkdir()
+        self.assertEqual(ipb.program_so_state(str(self.root)), "absent")
+
+    def test_a_built_worktree_reports_present(self):
+        (self.root / "programs").mkdir()
+        (self.root / "target" / "deploy").mkdir(parents=True)
+        (self.root / "target" / "deploy" / "dropset.so").write_text(
+            "", encoding="utf-8"
+        )
+        self.assertEqual(ipb.program_so_state(str(self.root)), "present")
+
+    def test_no_program_tree_is_distinguished_from_a_cold_worktree(self):
+        # Distinct from `absent`: there is nothing to build, so a skill must not
+        # report a missing prerequisite.
+        self.assertEqual(ipb.program_so_state(str(self.root)), "no-program")
+
+    def test_a_directory_named_like_the_artifact_is_not_a_build(self):
+        # `isfile`, not `exists`: reporting `present` for a stray directory would
+        # send the session into the test failure this field exists to prevent.
+        (self.root / "programs").mkdir()
+        (self.root / "target" / "deploy" / "dropset.so").mkdir(parents=True)
+        self.assertEqual(ipb.program_so_state(str(self.root)), "absent")
+
+
 class SigningState(unittest.TestCase):
     """All three signing configurations, because the bug was covering one.
 

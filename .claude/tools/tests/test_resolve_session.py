@@ -41,9 +41,9 @@ class Fixture:
     Takes the TestCase so the `CLAUDE_CONFIG_DIR` override is registered for
     cleanup. Mutating `os.environ` unguarded leaked the temp path into every
     module loaded after this one in the single `make tools-tests` process —
-    and `resolve_session` itself names two other readers of that variable
-    (`firm_last.py`, `prune_conversations.py`), so a green suite was only
-    green by alphabetical load order rather than by isolation.
+    and `resolve_session` itself names another reader of that variable
+    (`prune_conversations.py`), so a green suite was only green by
+    alphabetical load order rather than by isolation.
     """
 
     def __init__(self, case: unittest.TestCase):
@@ -295,6 +295,89 @@ class CliTests(unittest.TestCase):
             sys.argv = real
         self.assertEqual(rc, 2)
         self.assertIn("error:", err.getvalue())
+
+
+class DailySessionIdTests(unittest.TestCase):
+    """The daily id is computed, never searched.
+
+    A planning session that lists the Claude projects directory to find its own
+    transcript pays ≈6.0k for one call. The id is an md5 of the launcher's own
+    seed, so it is a one-line computation.
+    """
+
+    #: Pinned against `md5 -qs 'dropset-plan-20260910'`, run directly. This is the
+    #: parity that matters: `_ds_daily_sid` in `.claude/shell/init.zsh` is what
+    #: actually names the session at launch, so a drift here means the tool
+    #: confidently reports an id no session ever had.
+    def test_the_seed_matches_the_shell_launcher_byte_for_byte(self):
+        self.assertEqual(
+            rs.daily_session_id("plan", "20260910"),
+            "90195a08-2348-adba-e976-f4b4a7aa6bf9",
+        )
+
+    def test_the_shape_is_a_uuid(self):
+        got = rs.daily_session_id("housekeeping", "20260101")
+        self.assertRegex(got, r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
+
+    def test_the_kind_and_the_date_both_change_the_id(self):
+        # The kind keeps a day's planning and housekeeping sessions apart; the
+        # full date keeps `plan-18` in August from colliding with September's.
+        base = rs.daily_session_id("plan", "20260910")
+        self.assertNotEqual(base, rs.daily_session_id("housekeeping", "20260910"))
+        self.assertNotEqual(base, rs.daily_session_id("plan", "20260911"))
+
+    def test_the_cli_prints_just_the_id(self):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = rs.run(
+                ["resolve_session.py", "--daily-id", "plan", "--date", "20260910"]
+            )
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().strip(), "90195a08-2348-adba-e976-f4b4a7aa6bf9")
+
+    def test_daily_id_needs_no_tag(self):
+        # The two modes are independent; requiring --tag here would defeat it.
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = rs.run(["resolve_session.py", "--daily-id", "plan"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.getvalue().strip())
+
+    def test_the_resolution_path_still_requires_a_tag(self):
+        with self.assertRaises(rs.ResolveSessionError):
+            rs.run(["resolve_session.py"])
+
+    def test_an_unknown_KIND_is_refused_rather_than_hashed(self):
+        """A wrong kind is undetectable downstream, so it has to be caught here.
+
+        Every string hashes to a well-formed UUID, so the wrong one prints
+        something indistinguishable from an answer and names a session that never
+        existed — which the caller then reads as a lost transcript. `architect` is
+        included because it is the plausible wrong guess: it *is* a seat verb, but
+        it is seeded by topic rather than by day.
+        """
+        for kind in ("Plan", "PLAN", "plan-18", "architect", "explore", ""):
+            with self.assertRaises(rs.ResolveSessionError, msg=kind):
+                rs.daily_session_id(kind, "20260910")
+
+    def test_a_malformed_DATE_is_refused(self):
+        for date in ("2026-09-10", "20260910 ", "260910", "2026/09/10", "today", ""):
+            with self.assertRaises(rs.ResolveSessionError, msg=date):
+                rs.daily_session_id("plan", date)
+
+    def test_both_launcher_kinds_are_accepted(self):
+        # The other half: the guard must not reject what the launcher really seeds.
+        for kind in rs.DAILY_KINDS:
+            self.assertRegex(
+                rs.daily_session_id(kind, "20260910"),
+                r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            )
+
+    def test_DAILY_KINDS_matches_the_launcher(self):
+        # Pinned against the `_ds_daily_session` callers in
+        # `.claude/shell/init.zsh`. If a third daily verb is added there, this
+        # fails and points at the list that needs it.
+        self.assertEqual(rs.DAILY_KINDS, ("plan", "housekeeping"))
 
 
 if __name__ == "__main__":

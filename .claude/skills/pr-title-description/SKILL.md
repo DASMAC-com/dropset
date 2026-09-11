@@ -71,6 +71,8 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    3–4 verbatim rather than mirroring whatever the last few
    PRs happened to do.
 
+### The title format
+
 1. Write the PR title using the **Semantic PR /
    Conventional Commits** format:
 
@@ -102,6 +104,8 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    `type(ENG-###): Subject` form even when the linked issue
    title starts with `Claude:`. Drop the token — don't
    copy it from the issue title into the PR title.
+
+### The description format
 
 1. Write a concise PR description in the **standard
    format**: a `# Changes` section with a numbered list

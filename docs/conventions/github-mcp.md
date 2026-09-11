@@ -9,9 +9,9 @@ reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI, **with the deliberate exceptions below**. The skills (`init-pr`,
 `pr-title-description`, `review-pr`, `housekeeping`, `linear-task`)
-are written against it. `gh` survives in four places — two in
-`review-pr`, one in `init-pr`, and the field-selected `gh pr list`
-read used by `housekeeping`:
+are written against it. `gh` survives in the cases enumerated below —
+count them from the list rather than from a number in this sentence,
+which drifted behind it twice:
 
 - **The merge-queue handoff** — the enqueue (a `gh pr merge --auto`
   write, **no** strategy flag: this repo's merge queue sets the
@@ -19,7 +19,7 @@ read used by `housekeeping`:
   (a `gh api graphql … mergeQueueEntry` read). The enqueue stays on
   `gh` because the server exposes no auto-merge / merge-queue tool
   (`merge_pull_request` does an *immediate* merge, which bypasses the
-  queue); the probe stays on `gh` because the hosted MCP's
+  queue); the probe stays on `gh` because the server's
   `pull_request_read` omits the merge-queue state — and on a
   merge-queue repo a still-queued PR reports `autoMergeRequest: null`,
   so the probe must read `mergeQueueEntry` (non-null while queued)
@@ -147,6 +147,17 @@ read used by `housekeeping`:
   `Bash(gh api graphql:*)` for the mutation — so no new permission is
   needed.
 
+- **The credential pre-check** (`init-pr` step 0b) — `gh auth status`,
+  run before anything that mutates the worktree. This one needs no
+  payload or transport argument at all: the question *is* whether the
+  `gh` CLI itself holds a working credential, so there is nothing for
+  the MCP to answer. The server carries its own PAT (see
+  "Authentication" below) and so stays connected while `gh`'s token is
+  expired — which is exactly the state this check exists to catch, and
+  why an MCP call would give a **false all-clear**. The same output
+  reports the **scope set**, which is where the `notifications` scope
+  above is confirmed. Covered by `Bash(gh auth status:*)`.
+
 - **The field-selected `gh pr list --json` read** (`housekeeping`) —
   `gh` has a `merged` state filter the MCP `list_pull_requests` lacks
   **and** selects only the fields the decision needs, so one
@@ -241,6 +252,23 @@ dispatched by a `method` enum — `pull_request_read` covers `get` /
 reads.
 
 ## Authentication (PAT header, not OAuth)
+
+**Remote, but locally configured — which is what makes it usable
+everywhere.** The server runs at a GitHub URL, yet it is registered in
+user-local settings with our own credential rather than riding claude.ai
+account auth. That distinction, not MCP-vs-CLI, is the one that
+determines availability: a locally configured server is offered to a
+**Bedrock** session and a subscription session alike, while a
+claude.ai-hosted connector is structurally absent on Bedrock. Confirmed
+2026-09-10 on a Bedrock worktree session, which received this server
+along with the other eight locally configured ones and neither hosted
+connector.
+
+So **this server stays as-is**, and an operator-reported failure of it on
+a Bedrock session should be diagnosed against that split before anyone
+edits config. The same reasoning is set out at length, with the separate
+context-economy argument kept apart from it, in
+[aws-infra](aws-infra.md) → "Hosted versus locally configured".
 
 The server is added at **user scope** with a PAT in an `Authorization`
 header, read from `GITHUB_MCP_PAT` — never a committed file or
@@ -359,7 +387,8 @@ allow-rule per read tool covers all of its methods. They go in
 resolved through worktrees to the main checkout** — so firming them
 once makes them live in every worktree, with nothing to propagate
 (see `local-integrations.md` → "How settings files resolve across
-worktrees"). `firm-perms` writes them at session end.
+worktrees"). Write one with
+`python3 .claude/tools/allowlist.py add '<rule>'`.
 
 ## Actions: secrets, variables, and required checks
 

@@ -891,5 +891,155 @@ class RealAlerting(unittest.TestCase):
         )
 
 
+class TablesIn(unittest.TestCase):
+    def test_from_and_join_are_both_read(self):
+        got = ds.tables_in("SELECT * FROM cex_prices JOIN spot_ticks USING (ts)")
+        self.assertEqual(got, ["cex_prices", "spot_ticks"])
+
+    def test_a_schema_qualifier_is_stripped(self):
+        # The tier question turns on the relation name, not the schema.
+        self.assertEqual(
+            ds.tables_in("SELECT * FROM public.cex_prices"), ["cex_prices"]
+        )
+
+    def test_a_table_named_in_a_comment_is_not_counted(self):
+        # Otherwise a `-- from cex_prices` note reports a dependency that is not
+        # there, which on the tier check is a false verdict.
+        self.assertEqual(
+            ds.tables_in("-- from cex_prices\nSELECT * FROM spot_ticks"),
+            ["spot_ticks"],
+        )
+
+    def test_a_table_named_in_a_string_literal_is_not_counted(self):
+        self.assertEqual(
+            ds.tables_in("SELECT 'from cex_prices' FROM spot_ticks"), ["spot_ticks"]
+        )
+
+    def test_duplicates_collapse_in_order(self):
+        got = ds.tables_in("SELECT * FROM a JOIN b ON 1 JOIN a ON 2")
+        self.assertEqual(got, ["a", "b"])
+
+    def test_a_cte_name_is_reported_too_which_is_the_documented_bound(self):
+        # Harmless for the tier verdict — a CTE is never named for a price
+        # table — but the list is not a schema dependency set, and the docstring
+        # says so.
+        got = ds.tables_in("WITH bars AS (SELECT * FROM cex_prices) SELECT * FROM bars")
+        self.assertIn("cex_prices", got)
+        self.assertIn("bars", got)
+
+
+class PanelTierRule(unittest.TestCase):
+    """A panel claiming "by source" must read both price tiers.
+
+    This is a real diagnostic, not a style rule: a venue once looked invisible on
+    the dashboard while the store showed it live, and the whole cause was that a
+    panel read one tier while that venue wrote the other.
+    """
+
+    def _dashboard(self, title, sql, name="x.json"):
+        d = pathlib.Path(tempfile.mkdtemp())
+        (d / name).write_text(
+            json.dumps(
+                {
+                    "title": "d",
+                    "panels": [
+                        # `id` is required: the mirror filename is keyed on it.
+                        {"id": 1, "title": title, "targets": [{"rawSql": sql}]},
+                    ],
+                }
+            )
+        )
+        return d
+
+    def test_a_by_source_panel_reading_one_tier_violates(self):
+        rows = ds.panel_tables(
+            self._dashboard("Price by source", "SELECT * FROM cex_prices")
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["by_source"])
+        self.assertTrue(rows[0]["violates"])
+
+    def test_a_by_source_panel_reading_both_tiers_is_fine(self):
+        rows = ds.panel_tables(
+            self._dashboard(
+                "Price by source",
+                "SELECT * FROM cex_prices UNION ALL SELECT * FROM spot_ticks",
+            )
+        )
+        self.assertFalse(rows[0]["violates"])
+
+    def test_a_panel_not_claiming_by_source_is_not_judged(self):
+        rows = ds.panel_tables(
+            self._dashboard("Last candle age", "SELECT * FROM cex_prices")
+        )
+        self.assertFalse(rows[0]["by_source"])
+        self.assertFalse(rows[0]["violates"])
+
+    def test_a_title_declaring_its_tier_satisfies_the_rule(self):
+        # The rule's own escape: both tiers OR say which tier you cover. Found by
+        # running the check against the committed dashboards, where
+        # "candle rows per minute by source" is complete for what it claims.
+        rows = ds.panel_tables(
+            self._dashboard(
+                "Candle rows per minute by source", "SELECT * FROM cex_prices"
+            )
+        )
+        self.assertTrue(rows[0]["by_source"])
+        self.assertTrue(rows[0]["tier_declared"])
+        self.assertFalse(rows[0]["violates"])
+
+    def test_a_by_source_panel_reading_NEITHER_tier_is_not_flagged(self):
+        # It is not a price panel at all; flagging it would make the check noise.
+        rows = ds.panel_tables(
+            self._dashboard("Fusion weight by source", "SELECT * FROM contributions")
+        )
+        self.assertTrue(rows[0]["by_source"])
+        self.assertFalse(rows[0]["violates"])
+
+    def test_a_dashboard_FILENAME_cannot_excuse_its_panels(self):
+        # Every fixture in this class used `x.json`, so no test could see that the
+        # classifiers were reading the whole mirror path. A stem containing
+        # "candle" would have set tier_declared for every panel in the file and
+        # silently disabled the rule dashboard-wide.
+        rows = ds.panel_tables(
+            self._dashboard(
+                "Price by source",
+                "SELECT * FROM cex_prices",
+                name="candle-freshness.json",
+            )
+        )
+        self.assertTrue(rows[0]["by_source"])
+        self.assertFalse(
+            rows[0]["tier_declared"], "the dashboard stem must not declare a tier"
+        )
+        self.assertTrue(rows[0]["violates"])
+
+    def test_a_dashboard_FILENAME_cannot_manufacture_a_violation(self):
+        # The symmetric direction: a stem containing "by-source" must not make
+        # every panel in the file claim to cover sources generally.
+        rows = ds.panel_tables(
+            self._dashboard(
+                "Last candle age",
+                "SELECT * FROM cex_prices",
+                name="price-by-source.json",
+            )
+        )
+        self.assertFalse(rows[0]["by_source"])
+        self.assertFalse(rows[0]["violates"])
+
+    def test_the_committed_dashboards_satisfy_the_rule(self):
+        # The CALIBRATION check, and it is the important one. A first cut of the
+        # title pattern required whitespace while the mirror path separates words
+        # with hyphens, so `by_source` was never true and this assertion passed
+        # for the wrong reason. So assert the classifier actually fires on the
+        # committed set — at least one panel recognized as "by source", and at
+        # least one real tier reference — before asserting zero violations.
+        rows = ds.panel_tables(ds.DASHBOARD_DIR, ds.ALERTING_DIR)
+        self.assertGreaterEqual(len(rows), 20)
+        self.assertTrue(any(r["tiers"] for r in rows), "no tier reference found")
+        self.assertTrue(any(r["by_source"] for r in rows), "classifier never fired")
+        self.assertEqual([r["panel"] for r in rows if r["violates"]], [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -62,9 +62,12 @@ tooling"). Tests live in ``tests/test_resolve_session.py``, run via
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # How many leading records of a candidate transcript are scanned for a `cwd`
@@ -87,8 +90,8 @@ class ResolveSessionError(Exception):
 def claude_home() -> Path:
     """The Claude Code state directory — ``CLAUDE_CONFIG_DIR`` or ``~/.claude``.
 
-    Mirrors ``firm_last.py`` and ``prune_conversations.py`` rather than
-    re-deciding it: three tools reading the same tree must agree on where it is.
+    Mirrors ``prune_conversations.py`` rather than re-deciding it: two tools
+    reading the same tree must agree on where it is.
     """
     configured = os.environ.get("CLAUDE_CONFIG_DIR")
     if configured:
@@ -101,7 +104,9 @@ def claude_home() -> Path:
 
 def slugify(path: Path) -> str:
     """Claude Code names each project's transcript dir after the working dir,
-    replacing every ``/`` and ``.`` with ``-``. Same scheme as ``firm_last.py``.
+    replacing every ``/`` and ``.`` with ``-``. Same scheme as
+    ``prune_conversations.py``, and the one
+    ``docs/conventions/local-integrations.md`` points at for the rule.
     """
     return "".join("-" if c in "/." else c for c in str(path))
 
@@ -262,12 +267,85 @@ def resolve(tag: str, repo: Path) -> dict:
     return verdict
 
 
+#: The kinds `.claude/shell/init.zsh` actually seeds a daily id with — the only
+#: two `_ds_daily_session` callers. Anything else has no session to name.
+DAILY_KINDS = ("plan", "housekeeping")
+
+_DAILY_DATE_RE = re.compile(r"^\d{8}$")
+
+
+def daily_session_id(kind: str, date: str) -> str:
+    """The session id a daily verb (`plan`, `housekeeping`) computes for itself.
+
+    A seat session's id is **deterministic**, not discovered: an md5 of
+    ``dropset-<kind>-<YYYYMMDD>`` formatted as a UUID. So a session wanting its
+    own transcript — to run the metrics tool over it at close-out — computes the
+    id rather than searching for it.
+
+    That distinction is worth a subcommand because the search is expensive and
+    looks reasonable: one planning session listed the Claude projects directory
+    to find its own transcript id, at **≈6.0k** for that one call and ≈6.4k
+    across five, making a bare directory listing its top hardening candidate by
+    result size. The next bootstrap reproduced the same id by computation at
+    near-zero cost.
+
+    **The seed must match `_ds_daily_sid` in `.claude/shell/init.zsh` exactly**,
+    since that is what actually names the session at launch. The full date is in
+    it so `plan-18` in August and `plan-18` in September cannot collide — the
+    display name is day-only by operator choice, and this id is what
+    disambiguates. An `architect` session deliberately uses a *topic* seed with no
+    date, because it is meant to be resumed days later.
+
+    **Both inputs are validated, because a wrong one is not detectable
+    downstream.** Any string hashes to a well-formed UUID, so ``--daily-id Plan``
+    or ``--date 2026-09-10`` prints something that looks exactly like an answer
+    and names a session that does not exist. The caller then reads the missing
+    transcript as "my transcript is gone" rather than "I asked the wrong
+    question" — and the whole point of this function is to replace a *search*,
+    which would at least have come back visibly empty. Refusing is the only
+    signal available.
+    """
+    if kind not in DAILY_KINDS:
+        raise ResolveSessionError(
+            f"unknown daily kind {kind!r} — the launcher seeds only "
+            f"{', '.join(DAILY_KINDS)}. Any string would hash to a well-formed id "
+            f"naming no session, so this refuses rather than guessing. (An "
+            f"`architect` session is seeded by topic, not by day, and has no "
+            f"daily id.)"
+        )
+    if not _DAILY_DATE_RE.match(date):
+        raise ResolveSessionError(
+            f"--date must be YYYYMMDD with no separators, got {date!r} — the seed "
+            f"is a literal `date +%Y%m%d`, so any other spelling hashes to the "
+            f"wrong id."
+        )
+    digest = hashlib.md5(f"dropset-{kind}-{date}".encode("utf-8")).hexdigest()  # noqa: S324 - a naming seed, not a security primitive
+    return (
+        f"{digest[0:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
+    )
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="resolve_session.py",
         description="Resolve how to reach a worktree tag's Claude Code session.",
     )
-    parser.add_argument("--tag", required=True, help="eng-### or a bare number")
+    parser.add_argument(
+        "--daily-id",
+        default=None,
+        metavar="KIND",
+        help="print the deterministic session id for a daily verb (plan, "
+        "housekeeping) and exit — compute your own id rather than listing the "
+        "projects directory to find it",
+    )
+    parser.add_argument(
+        "--date",
+        default=None,
+        metavar="YYYYMMDD",
+        help="the date for --daily-id (default: today, local time, matching "
+        "what the launcher used)",
+    )
+    parser.add_argument("--tag", help="eng-### or a bare number")
     parser.add_argument(
         "--repo",
         default=None,
@@ -281,6 +359,16 @@ def run(argv: list[str]) -> int:
         "and run-from directory on three lines, for a shell `read`",
     )
     args = parser.parse_args(argv[1:])
+
+    if args.daily_id:
+        date = args.date or datetime.now().strftime("%Y%m%d")
+        print(daily_session_id(args.daily_id, date))
+        return 0
+
+    # `--tag` is required for the resolution path but not for `--daily-id`, so it
+    # is validated here rather than by argparse.
+    if not args.tag:
+        raise ResolveSessionError("--tag is required (or pass --daily-id KIND)")
 
     # `abspath`, NOT `resolve()`. Claude Code derives the slug from the working
     # directory **string** it was given, so the slug has to be computed from

@@ -43,6 +43,10 @@ Ops file — a JSON array, applied in order, capped at 50::
      {"op": "replace",       "anchor": "...", "text": "..."},
      {"op": "replace_range", "start": "...", "end": "...", "text": "..."}]
 
+The MCP `patch` spellings are accepted as aliases — ``old_string`` for ``anchor``,
+``new_string`` for ``text``, ``from`` / ``to`` for ``start`` / ``end`` — so an ops
+file assembled for either path applies here unchanged.
+
 Stdlib only, and deliberately **not** a Cargo workspace member — see
 ``docs/conventions/skill-tooling.md``. Tests live in
 ``tests/test_linear_patch.py``, run via ``make tools-tests``.
@@ -133,6 +137,36 @@ def _require_anchor(op_index: int, op: dict, key: str) -> str:
     return value
 
 
+#: The MCP `patch` argument names, mapped to this tool's. Two committed producers
+#: disagreed on the shape of a `replace`, and the disagreement was only
+#: discovered when an assembled ops file was rejected on its first op with
+#: "'replace' needs a string 'text'" — after the fold that produced it had
+#: already been composed. Accepting both vocabularies settles it here, once,
+#: rather than in every producer.
+_OP_KEY_ALIASES = {
+    "old_string": "anchor",
+    "new_string": "text",
+    "from": "start",
+    "to": "end",
+}
+
+
+def _normalize_op_keys(op: dict) -> dict:
+    """``op`` with MCP-shaped argument names translated to this tool's.
+
+    Only translates a key the op does not already carry, so an op written in this
+    tool's own vocabulary is untouched and a mixed op cannot have its explicit key
+    silently overridden by an alias.
+    """
+    if not any(alias in op for alias in _OP_KEY_ALIASES):
+        return op
+    translated = dict(op)
+    for alias, canonical in _OP_KEY_ALIASES.items():
+        if alias in translated and canonical not in translated:
+            translated[canonical] = translated.pop(alias)
+    return translated
+
+
 def _locate(body: str, anchor: str, op_index: int, key: str = "anchor") -> int:
     """The unique offset of ``anchor`` in ``body``, or a hard error.
 
@@ -176,6 +210,7 @@ def apply_ops(body: str, ops: list) -> str:
     for index, op in enumerate(ops):
         if not isinstance(op, dict):
             raise LinearPatchError(f"op {index}: each op must be a JSON object")
+        op = _normalize_op_keys(op)
         kind = op.get("op")
         text = op.get("text")
         if not isinstance(text, str):
@@ -366,7 +401,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     patch = sub.add_parser("patch", help="apply an ops file to the description")
     patch.add_argument("identifier")
-    patch.add_argument("--ops", required=True, help="JSON array of patch ops")
+    patch.add_argument(
+        "--ops",
+        required=True,
+        metavar="FILE",
+        # "JSON array of patch ops" described the file's CONTENT and read as
+        # though it took inline JSON, which is what made a correct
+        # zero-echo claim in the calling skill unverifiable from `--help`.
+        help="path to a file holding a JSON array of patch ops (read in this "
+        "tool's own process, so the ops never enter the caller's context)",
+    )
     patch.add_argument("--dry-run", action="store_true")
 
     comment = sub.add_parser("comment", help="add a comment from a file")

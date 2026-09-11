@@ -384,8 +384,9 @@ _ds_session() {
   _ds_secrets
 
   # The transcript path Claude Code writes: the project slug replaces every `/`
-  # and `.` in the cwd with `-` — the same rule .claude/tools/firm_last.py
-  # encodes for reading transcripts back.
+  # and `.` in the cwd with `-` — the same rule
+  # .claude/tools/resolve_session.py's `slugify` encodes for finding a
+  # transcript back.
   slug="${PWD//[\/.]/-}"
   transcript="$HOME/.claude/projects/$slug/$sid.jsonl"
 

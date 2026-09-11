@@ -77,10 +77,11 @@ over iTerm's Python API — the library is not stdlib and is not
 installed, so this stays importable from ordinary `python3` and shells
 out to the interpreter iTerm ships, which carries it; consolidating
 `fleet_resume.py` and `session_dispatch.py` here retired AppleScript
-from the toolbox entirely), `session_dispatch.py` (opens a new iTerm
-window and types one session verb — the planning session's dispatch
-arm, authorized by the operator's yes, and loud enough on failure to
-print the verb it would have typed),
+from the toolbox entirely), `session_dispatch.py` (opens an iTerm tab
+per session verb, in the dispatching session's own window, and types
+each — the planning session's dispatch arm, authorized by the
+operator's yes, and loud enough on failure to print the verbs it would
+have typed),
 `migration_collisions.py` (compares this branch's new
 migration numbers
 against other open PRs' before an enqueue — `--others-from-gh` runs that
@@ -107,7 +108,7 @@ section, so a skill never reads either to quote it), and
 `render_review.py` (measures or contact-sheets rendered deck pages
 instead of reading them at print resolution — the one tool with an
 optional dependency, per the lazy-import rule above), alongside the
-`firm-perms` / `housekeeping` / `cspell-audit` glue.
+`allowlist.py` / `housekeeping` / `cspell-audit` glue.
 `.claude/tools/` is the single home for skill glue: there is **no**
 top-level `tools/` tree.
 
@@ -147,24 +148,19 @@ literal firmed path under it can never survive a reboot. The leading
 `**` is what absorbs the rotating prefix; a per-tool directory name is
 what keeps the glob narrow enough to grant. The broad
 `Read(/var/folders/**)` form stays **refused** — an unscoped root over
-the whole system temp tree is exactly what the `firm-perms` safety
-floor exists to reject.
+the whole system temp tree is exactly what the allowlist safety floor
+exists to reject.
 
-**Nothing will catch it later.** `firm-perms`' sweep can only
-generalize approvals it can *see*; a recurring prompt that the operator
-keeps approving one-off never surfaces as a pattern to harvest. This
-one was found by hand-probing after the prompts got annoying, not by
-any tooling. So the allow-rule is part of adding the tool, in the same
-PR, or it does not happen.
+**Nothing will catch it later.** Nothing sweeps approvals into rules any
+more — the `firm-perms` skill that used to is retired, and firming is now
+an explicit `allowlist.py add`. So a recurring prompt that the operator
+keeps approving one-off never surfaces as a pattern at all. This one was
+found by hand-probing after the prompts got annoying, not by any
+tooling. So the allow-rule is part of adding the tool, in the same PR,
+or it does not happen.
 
-Two related notes, so neither gets re-diagnosed:
+One related note, so it does not get re-diagnosed:
 
-- **The harvest blind spot is a known bound, not a bug to fix.** A
-  sweep over approvals cannot see a prompt that was approved without
-  being firmed. Rather than have `firm-perms` probe the known
-  `claude-*` temp directories on every run — speculative work for a
-  case this convention now prevents at the source — the limitation is
-  recorded here and the fix is placed at tool-authoring time.
 - **After a reboot, `allowlist.py cruft` flags previously-firmed
   literal `/var/folders/<old-hash>` rules under its
   `machine-path-stale` category.** That is **expected rot**, resolved
@@ -209,6 +205,51 @@ glue lives **with what it serves**, not in a tooling tree:
   broad reference surface (`pre-commit-lint.yml`'s own `--config`
   paths, `Makefile`, both CI workflows, `.claude/tools/cspell_place.py`,
   and the docs) for no structural gain.
+
+### Exercising a Makefile macro — nothing lints or tests one
+
+A Makefile **macro** (a multi-line shell fragment expanded into recipes)
+sits in a gap: `shellcheck` reports "no files to check" for a diff that
+only touches the `Makefile`, because it does not cover recipe or macro
+shell, and the Makefile linter hook passes without analyzing shell
+semantics at all. There is no harness either — `.claude/tools/tests/` is
+Python-only. So a 16-line POSIX-sh macro can land with **no automated
+check having read it**.
+
+The only verification available is to run it, which means adding a
+temporary driver target:
+
+```make
+.PHONY: macro-check
+macro-check:
+ @$(THE_MACRO); echo "result=[$$result]"
+```
+
+Three things to get right, because the improvised version is repeated and
+easy to leave behind:
+
+- **Write the target once and delete it in the same session.** One run
+  added an equivalent target three separate times and invoked it eleven
+  times; each variant is a fresh permission prompt, since the target name
+  is part of the command.
+- **Escape `$` as `$$`** in the recipe, or make expands it and the shell
+  never sees the variable.
+- **The `;` in that recipe is deliberate and is not a shell-rule
+  violation.** Make runs each recipe *line* in its own shell, so the
+  macro and the `echo` that reads its variable have to share one line;
+  splitting them would put `$$result` in a shell that never set it. The
+  one-bare-command rule is about what reaches the **Bash tool**, whose
+  reusable allow-rule is what it protects — and that command here is
+  `make macro-check`, which is bare. Recipe-internal shell is out of its
+  reach, and `no_compound_bash.py` never sees it.
+- **Say in the PR that the macro was verified this way**, since no gate
+  records it — otherwise the diff looks checked when only the Python and
+  Rust around it was.
+
+The durable fix, when a macro becomes load-bearing, is the same one this
+document argues for everywhere else: move the logic into a Python tool
+under `.claude/tools/` where it can be tested, and let the Makefile
+target call it.
 
 ## MCP first for prototyping and fallback; harden settled workflows
 

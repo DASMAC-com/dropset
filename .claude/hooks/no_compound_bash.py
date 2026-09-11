@@ -5,7 +5,7 @@ CLAUDE.md's shell rules require one bare command per Bash call — no pipes,
 redirects, `;`, `&&` / `||`, command substitution, or backticks. The
 individual sub-commands are usually already allow-listed; it is only the
 *compounding* that makes each invocation unique and un-globbable, so it
-re-prompts every time and `firm-perms` cannot firm it (a `*` can't
+re-prompts every time and no allow-rule can ever cover it (a `*` can't
 generalize a compound). This hook enforces that convention mechanically,
 so a model slip can't silently produce a forever-re-prompting command.
 

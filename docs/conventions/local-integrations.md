@@ -147,7 +147,8 @@ but its `PreToolUse` **wiring** is not. To turn the guard on, add this
 
 Baseline permission allow-rules (the `Bash(prefix:*)` globs the shell
 rules produce) go in the same file, or in `settings.local.json` — the
-`firm-perms` skill maintains the local allowlist for you. See
+`.claude/tools/allowlist.py` tool maintains the local allowlist for
+you. See
 "How settings files resolve across worktrees" below for *which* file a
 worktree session actually reads and writes: it is one shared file, not
 a per-worktree copy.
@@ -192,13 +193,13 @@ which is a distinct, explicitly documented mechanism.
 
 **This corrects a superseded model.** An earlier version of this doc
 claimed a worktree "does not inherit the base repo's copy
-automatically" and that `firm-perms`' sweep was what propagated it.
+automatically" and that a firming sweep was what propagated it.
 That was wrong: there is nothing to propagate, because there is only
-one file. Two consequences follow, both fixed in the skills:
+one file. Two consequences follow:
 
-- `firm-perms`' worktree-plus-base **dual-write is redundant by
-  design** — the worktree write already lands in the main checkout's
-  file.
+- A worktree-plus-base **dual-write is redundant by design** — the
+  worktree write already lands in the main checkout's file, which is why
+  `allowlist.py` resolves that one path rather than writing twice.
 - "User scope is the only thing a fresh worktree inherits" is
   **false**. The real criterion for putting a rule in
   `~/.claude/settings.json` is **cross-*repo* portability** — a rule
@@ -435,8 +436,8 @@ instead. A `Read` of a base path is merely wasteful, not corrupting, so
 it is left alone.
 
 Two carve-outs pass through: the base `.claude/settings.json` /
-`settings.local.json` files (which `firm-perms` and `firm_last.py` write
-on purpose), and the env escape `ALLOW_BASE_REPO_EDITS` for a rare
+`settings.local.json` files (which `allowlist.py add` writes on
+purpose), and the env escape `ALLOW_BASE_REPO_EDITS` for a rare
 deliberate base edit. The escape needs an **explicit affirmative** —
 `1`, `true`, `yes` or `on`. It used to test the variable for mere
 truthiness, which disabled the guard for `0`, `false` and `no`, the
@@ -758,11 +759,30 @@ under the hood, so on a new machine it needs, in order:
    Settings → Developer → "Integrate with 1Password CLI") or a
    `op signin` session, so a read can actually authorize.
 
-Verify with a real read before blaming anything else:
+Verify with a real read before blaming anything else — **writing the
+value to `/dev/null`, never to your terminal**:
 
 ```sh
-op read "$DS_OP_LINEAR_REF" --account "$DS_OP_ACCOUNT"
+op read "$DS_OP_LINEAR_REF" --account "$DS_OP_ACCOUNT" --out-file /dev/null
 ```
+
+Exit 0 means the reference resolved; a non-zero exit names the failing
+reference. `--out-file` rather than a shell redirect keeps this a single
+bare command, so it needs no compound.
+
+**Never `op read` a credential into the transcript.** This used to be
+written here without the `--out-file`, which is the whole hazard: a
+credential echoed into a transcript is in the session log, in any
+transcript-mining pass, and in whatever the operator keeps — and
+**rotation is the only remedy**. To check that a reference resolves,
+discard the output as above, or let `op run` fail, which names the
+failing reference without printing the value. To *use* a credential,
+wrap the consumer in `op run --env-file`, so the value exists only in
+the child process's environment.
+
+Same principle as keeping real `op://` item names out of committed docs,
+applied to a different surface: there the risk is the repo, here it is
+the transcript.
 
 This is worth stating first because the failure is quiet and lands far
 away. The helper calls `op read`, and if it resolves nothing it prints
@@ -1226,13 +1246,14 @@ drives the real zsh functions.
     regardless of permission mode — the policy layers compose rather
     than substitute, so `auto` is not a way around a guard.
 
-    One interaction worth knowing when reading `firm-perms` output:
-    entering auto mode **drops overly broad allow-rules** (a bare
-    `Bash(*)`, a wildcard interpreter) while keeping narrow ones like
+    One interaction worth knowing when firming a rule: entering auto
+    mode **drops overly broad allow-rules** (a bare `Bash(*)`, a
+    wildcard interpreter) while keeping narrow ones like
     `Bash(python3 .claude/tools/*)`, restoring them on exit. A firmed
     rule that is too broad therefore stops taking effect in the mode
-    every session now runs in, which is one more reason the fast firm
-    refuses to generalize a bare verb.
+    every session now runs in, which is one more reason
+    `allowlist.py add` refuses a bare-verb wildcard on a hazardous
+    program.
 
   This **supersedes** hand-naming a base-repo session `planning-<day>`
   and resuming it by that name. `explore` / `explore resume` remain, for
@@ -1314,9 +1335,33 @@ drives the real zsh functions.
     a launcher wants green, not "the other one".
 
   The deterministic half — the Linear query, the tag derivation, the
-  already-live check, the window driving — is the committed tool
+  already-live check, the tab driving — is the committed tool
   `.claude/tools/fleet_resume.py`; `fleet` is the thin verb over it, per
   the skill-tooling convention.
+
+  **A planning session's dispatch opens a TAB, never a window.**
+  `.claude/tools/session_dispatch.py` is the dispatch arm — it types a
+  ready task's verb into a new tab, authorized by the operator's yes
+  exactly as `fleet go` is. The tab lands in the **dispatching session's
+  own window**: the operator drives the fleet from one window, so a
+  dispatched session has to appear beside the planning session that
+  started it rather than as another window to find. That is an operator
+  ruling of 2026-09-10, made on seeing two resumes arrive as separate
+  windows, and it **reverses** an earlier "one iTerm window per session
+  is load-bearing" rule that this doc, the `plan` skill and the tool's
+  own docstring all used to state. The reversal retired
+  `iterm_api.open_window` outright, since the dispatcher was its only
+  caller and the launcher already opened tabs.
+
+  Two properties worth keeping when editing it. It takes **several verbs
+  in one call**, separated by a bare `+`, for one driver round trip
+  instead of one per tab — and it validates every verb before opening
+  anything, so a batch with one typo dispatches nothing rather than half
+  of itself. And it still **never types into the current session**: on a
+  blocked dispatch it prints the verbs for the operator to run by hand.
+  That hazard — a launch verb typed into a session already running
+  something — is what the failure path guards, and it was never what the
+  window-per-session rule bought.
 
   **No AppleScript.** iTerm is driven through its Python API via the
   shared `.claude/tools/iterm_api.py`, the one owner of iTerm automation
@@ -1361,7 +1406,8 @@ transcript as the existence check. The seed carries the **full** date so
 `plan-18` in August and `plan-18` in September cannot collide — the
 display name stays day-only by operator choice, and the id is what
 disambiguates. The transcript-path slug replaces every `/` and `.` with
-`-`, the same rule `.claude/tools/firm_last.py`'s slugify encodes.
+`-`, the same rule `.claude/tools/resolve_session.py`'s `slugify`
+encodes.
 
 The lesson generalizes past this one block: **a committed code block
 that invokes a CLI flag is checkable against that CLI's `--help`**, and
@@ -1373,6 +1419,48 @@ sessions (`task` / `task resume`) run one deterministic spec to completion and
 are addressed by their Linear number; the standing sessions (`plan`,
 `housekeeping`) run in the base repo, recur daily, and are addressed by the day
 they started.
+
+### Driving a headless browser — the two paths that are not guessable
+
+Browser verification is a standing need rather than an accident of one PR,
+and reaching a browser here costs three failed module resolutions before
+the first assertion can run unless you already know these:
+
+- **`puppeteer-core` is a transitive dependency**, so it is *not* at
+  `node_modules/puppeteer-core`. It resolves only through the pnpm store
+  — under `frontend/node_modules/.pnpm/`, in a directory named
+  `puppeteer-core@<version>`, then its own `node_modules/puppeteer-core`.
+- **Its ESM entry is `lib/puppeteer/puppeteer-core.js`** — not the
+  `lib/esm/…` path the directory layout suggests.
+- **There is no browser in `/Applications`.** The only one present is
+  Chrome for Testing under the puppeteer cache,
+  `~/.cache/puppeteer/chrome/<platform-version>/chrome-mac-arm64/`, and it
+  must be passed as `executablePath`.
+
+Both paths are **version-stamped**, so glob for them rather than pinning
+a literal. Each wrong guess is a full round trip, and the failure text
+names the path rather than the layout, so it does not self-correct.
+
+**Assert on the DOM, not on a screenshot.** Reading a rendered link's
+`href` and counting markers settled three verifications exactly for a few
+hundred tokens; the alternative is a full-viewport capture, measured
+elsewhere at ≈105k for five images. The exception is a pseudo-state style
+(`:hover`, `:focus`), where a computed-style read returns the resting
+value with no error — see
+[context economy](context-economy.md) → "The levers".
+
+**Why this is a recipe and not yet a tool.** A
+`.claude/tools/browser_assert.py` that globs both paths and takes a URL
+plus an expression would be better, since the paths drift. It is not
+built because the provenance is a single session (7 invocations across 3
+throwaway scripts), which is below the recurrence bar `/harden` demands —
+and that refusal is correct. What argues for building it anyway is the
+**hazard class** rather than the token count: the current technique's only
+workaround writes untracked scripts into the tree under review. That is a
+human's call, so it is recorded here rather than decided.
+
+Note the honest cost label: the dominant cost is **failed round trips and
+wall-clock**, not payload. A fold should not score this as a token saving.
 
 ### iTerm2 manual setup (can't be committed)
 

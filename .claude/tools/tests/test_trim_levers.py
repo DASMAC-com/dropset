@@ -1107,6 +1107,32 @@ class BodiesBearingReadTests(unittest.TestCase):
         self.assertIn("BODY-ONE", written)
         self.assertIn("alpha:one", written)
 
+    def test_targets_alongside_a_spill_is_REFUSED_not_silently_dropped(self):
+        """`--targets` has no counterpart in either written file, so it is refused.
+
+        This is the asymmetry with `--fingerprints` above, and the reason the two
+        are treated differently: a fingerprint rides the spilled file either way,
+        so passing the flag is merely redundant. The extracted target list is
+        emitted by neither renderer, so a silently-dropped `--targets` reads as
+        "this pool touches nothing" — a wrong answer rather than a wasted flag.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            for spill in ("--bodies-out", "--levers-out"):
+                path = os.path.join(d, "out.md")
+                with self.assertRaises(tl.TrimLeversError) as caught:
+                    self._run(["list", "--targets", spill, path])
+                message = str(caught.exception)
+                self.assertIn("--targets", message)
+                self.assertIn(spill, message)
+                # And it refuses BEFORE writing, so there is no half-done spill.
+                self.assertFalse(os.path.exists(path), spill)
+
+    def test_targets_alone_still_works(self):
+        """The refusal must not disarm the flag's own use."""
+        code, out, _err = self._run(["list", "--targets"])
+        self.assertEqual(code, 0)
+        self.assertIn("targets:", out)
+
     def test_the_bare_listing_still_prints_rows(self):
         """The is-anything-parked check is the one job the rows are for."""
         _, out, _err = self._run(["list"])
@@ -1392,6 +1418,213 @@ class ComposeFoldTests(unittest.TestCase):
                     ["trim_levers.py", "compose", "--bodies-file", src, "--out", dst]
                 )
             self.assertEqual(os.stat(dst).st_mode & 0o777, 0o600)
+
+
+#: A lever body using HEADINGS. Six of one real 18-lever pool looked like this.
+HEADING_BODY = """**Fingerprint**: alpha:one
+
+## The lever
+
+State the rule per act, not per tool.
+
+## Evidence
+
+Some long evidence prose nobody folds.
+
+## The edit this implies
+
+Edit context-economy.md and init-pr.
+"""
+
+#: A lever body using BOLD SPANS and no headings at all. The other twelve looked
+#: like this, which is why a heading-only `--sections` read failed outright.
+SPAN_BODY = """**Fingerprint**: beta:two
+
+Some evidence paragraph first, with figures.
+
+**The lever — fix it at the producer, not with a wider regex.** A regex
+covering bold spans would rot the same way.
+
+**The concrete edit.** Add a `--levers-out` mode.
+
+**Cost label:** `context`
+"""
+
+
+class FindLabelledBlockTests(unittest.TestCase):
+    def test_a_heading_block_is_found_and_stops_at_the_next_heading(self):
+        got = tl.find_labelled_block(HEADING_BODY, tl.STATEMENT_LABELS)
+        self.assertIn("State the rule per act", got)
+        # The evidence section must not be dragged in — that is the payload the
+        # whole pipeline exists to keep out of a transcript.
+        self.assertNotIn("evidence prose", got)
+
+    def test_a_heading_edit_block_is_found(self):
+        got = tl.find_labelled_block(HEADING_BODY, tl.EDIT_LABELS)
+        self.assertIn("Edit context-economy.md", got)
+
+    def test_a_bold_span_statement_is_found(self):
+        got = tl.find_labelled_block(SPAN_BODY, tl.STATEMENT_LABELS)
+        self.assertIn("fix it at the producer", got)
+        self.assertNotIn("evidence paragraph", got)
+
+    def test_a_bold_span_edit_is_found(self):
+        got = tl.find_labelled_block(SPAN_BODY, tl.EDIT_LABELS)
+        self.assertIn("--levers-out", got)
+        # It stops at the next bold span rather than swallowing the cost label.
+        self.assertNotIn("Cost label", got)
+
+    def test_an_absent_label_is_none_not_an_empty_string(self):
+        self.assertIsNone(
+            tl.find_labelled_block("just prose, no lever anywhere\n", tl.EDIT_LABELS)
+        )
+
+    def test_a_FENCED_hash_does_not_end_the_block_early(self):
+        """The under-capture that passed as complete.
+
+        Lever bodies quote shell constantly, so a fenced `# comment` is ordinary
+        content — but a fence-blind boundary regex read it as the next heading and
+        returned a fragment. `render_levers` reports a section it cannot find at
+        all; a section it found and cut short looks complete, which makes this the
+        dangerous direction.
+        """
+        body = (
+            "## The lever\n"
+            "\n"
+            "Wrap the runner so the log never lands in context.\n"
+            "\n"
+            "```sh\n"
+            "# this comment is NOT a heading\n"
+            "make lint\n"
+            "```\n"
+            "\n"
+            "And this trailing line is still part of the statement.\n"
+            "\n"
+            "## Evidence\n"
+            "\n"
+            "evidence prose\n"
+        )
+        got = tl.find_labelled_block(body, tl.STATEMENT_LABELS)
+        self.assertIn("Wrap the runner", got)
+        self.assertIn("# this comment is NOT a heading", got)
+        self.assertIn("still part of the statement", got)
+        # The real heading is still the boundary.
+        self.assertNotIn("evidence prose", got)
+
+    def test_a_label_inside_a_fence_is_not_treated_as_the_section(self):
+        """A lever *about* filing conventions quotes the heading it describes."""
+        body = (
+            "```md\n"
+            "## The lever\n"
+            "a quoted illustration, not this body's own statement\n"
+            "```\n"
+            "\n"
+            "## The lever\n"
+            "\n"
+            "the real statement\n"
+        )
+        got = tl.find_labelled_block(body, tl.STATEMENT_LABELS)
+        self.assertIn("the real statement", got)
+        self.assertNotIn("quoted illustration", got)
+
+    def test_matching_is_case_insensitive(self):
+        self.assertIsNotNone(
+            tl.find_labelled_block("## THE LEVER\n\nbody\n", tl.STATEMENT_LABELS)
+        )
+
+
+class LeverTargetsTests(unittest.TestCase):
+    def test_tool_and_doc_paths_are_collected_in_order(self):
+        body = (
+            "Edit `docs/conventions/context-economy.md` and the mirrored block in "
+            "`.claude/skills/init-pr/SKILL.md`, driven by `review_diff.py`.\n"
+        )
+        self.assertEqual(
+            tl.lever_targets(body),
+            [
+                "docs/conventions/context-economy.md",
+                ".claude/skills/init-pr/SKILL.md",
+                "review_diff.py",
+            ],
+        )
+
+    def test_duplicates_collapse(self):
+        body = "`allowlist.py` then `allowlist.py` again\n"
+        self.assertEqual(tl.lever_targets(body), ["allowlist.py"])
+
+    def test_a_span_wrapping_prose_keeps_the_path(self):
+        self.assertEqual(
+            tl.lever_targets("the committed `.claude/tools/x.py`\n"),
+            [".claude/tools/x.py"],
+        )
+
+    def test_a_body_naming_nothing_yields_nothing(self):
+        self.assertEqual(tl.lever_targets("prose with `--flag` and `cargo`\n"), [])
+
+    def test_trailing_punctuation_is_trimmed(self):
+        self.assertEqual(
+            tl.lever_targets("see `read_result.py.`\n"), ["read_result.py"]
+        )
+
+
+class RenderLeversTests(unittest.TestCase):
+    def _levers(self):
+        return [
+            {
+                "identifier": "ENG-1",
+                "title": "Heading-shaped lever",
+                "url": "https://linear.app/x/ENG-1",
+                "description": HEADING_BODY,
+            },
+            {
+                "identifier": "ENG-2",
+                "title": "Span-shaped lever",
+                "url": "https://linear.app/x/ENG-2",
+                "description": SPAN_BODY,
+            },
+        ]
+
+    def test_both_shapes_render_under_one_uniform_structure(self):
+        # The point of the mode: one `--sections '^(Statement|Edit)$'` read works
+        # across the pool however each lever was written.
+        text, report = tl.render_levers(self._levers())
+        self.assertEqual(text.count("### Statement"), 2)
+        self.assertEqual(text.count("### Edit"), 2)
+        self.assertEqual(report["missing_statement"], [])
+        self.assertEqual(report["missing_edit"], [])
+
+    def test_the_fingerprint_travels_with_each_lever(self):
+        text, _ = tl.render_levers(self._levers())
+        self.assertIn("**Fingerprint**: alpha:one", text)
+        self.assertIn("**Fingerprint**: beta:two", text)
+
+    def test_evidence_prose_is_left_behind(self):
+        # This is the saving. The evidence is cited by reference, never inlined.
+        text, _ = tl.render_levers(self._levers())
+        self.assertNotIn("evidence prose nobody folds", text)
+        self.assertNotIn("evidence paragraph first", text)
+
+    def test_a_lever_missing_a_section_is_named_not_dropped(self):
+        levers = self._levers()
+        levers.append(
+            {
+                "identifier": "ENG-3",
+                "title": "Unparseable",
+                "url": "https://linear.app/x/ENG-3",
+                "description": "**Fingerprint**: gamma:three\n\nprose only\n",
+            }
+        )
+        text, report = tl.render_levers(levers)
+        # Present in the output, so the fold still sees it exists...
+        self.assertIn("ENG-3 | Unparseable", text)
+        self.assertIn("(not found)", text)
+        # ...and named in the report, so it gets sliced from the bodies dump.
+        self.assertEqual(report["missing_statement"], ["ENG-3"])
+        self.assertEqual(report["missing_edit"], ["ENG-3"])
+
+    def test_levers_are_ordered_by_identifier(self):
+        text, _ = tl.render_levers(list(reversed(self._levers())))
+        self.assertLess(text.index("ENG-1"), text.index("ENG-2"))
 
 
 if __name__ == "__main__":

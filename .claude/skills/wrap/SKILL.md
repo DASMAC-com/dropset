@@ -23,9 +23,9 @@ end of every session and reading the answer out of the
 transcript; this makes it a checklist with a verdict.
 
 **`review-pr` covers the happy path** — its merge-queue
-handoff already runs session metrics and `firm-perms` while
-the PR sits in the queue, and its outcome watch reports the
-merge. So this verb exists for the **ragged endings**:
+handoff already runs session metrics while the PR sits in the
+queue, and its outcome watch reports the merge. So this verb
+exists for the **ragged endings**:
 
 - a session that kept talking after its PR landed;
 - a session that coordinated with a planning session

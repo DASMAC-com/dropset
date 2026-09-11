@@ -93,8 +93,9 @@ order:
   waiting on an answer. Passing `interactive` (e.g.
   `housekeeping interactive`) restores the prompts — the
   perms-cruft removal (step 7), the stale-memory purge
-  (step 8), and the session-metrics (step 9) and
-  purge-conversations (step 10) offers. See "One-shot vs.
+  (step 8), and the purge-conversations **apply** (step 10).
+  Session metrics (step 9) runs unconditionally in both modes
+  and has no prompt to restore. See "One-shot vs.
   interactive mode" for the full mapping.
 
 Any other argument is ignored.
@@ -114,13 +115,26 @@ two modes, and the default is the non-interrupting one:
   label the *unattended* pass.
   Concretely: steps 7
   and 8 **propose / list** the perms cruft and the stale
-  memories and delete nothing; and steps 9 and 10 (the
-  session-metrics and purge-conversations offers) are
-  **skipped**. The deferred items are filed or flagged in
-  the report for a later attended pass — nothing is ever
-  deleted unattended. With the audit step gone, **nothing**
-  interrupts a one-shot pass at all: every step either acts
-  mechanically or defers to the closing gate.
+  memories and delete nothing; and steps 9 and 10 **run** —
+  session-metrics unconditionally, the purge **dry-run**
+  in-pass — with only the purge's destructive apply deferring
+  to the closing gate. The deferred items are filed or
+  flagged in the report for a later attended pass — nothing is
+  ever deleted unattended. With the audit step gone,
+  **nothing** interrupts a one-shot pass at all: every step
+  either acts mechanically or defers to the closing gate.
+
+  This paragraph used to say steps 9 and 10 were **skipped**,
+  which contradicted both steps and the summary sentence three
+  lines above it, and left a pass to adjudicate it mid-run. The
+  two readings produce materially different work: under the
+  stale one a morning pass files no trim levers and produces no
+  purge manifest. Step 9's own text records the skipping
+  behavior as a defect that was deliberately removed —
+  **one-shot mode defers approvals, not work** — so this was
+  stale text left behind by that fix rather than a competing
+  rule.
+
 - **Interactive** (`/housekeeping interactive`). Restores
   every **per-step** `AskUserQuestion` gate listed above, so
   you can act on the candidates as each step reaches them.
@@ -387,9 +401,13 @@ board:
   then read the status type with **one field-selected
   `list_issues`** — `fields: ["statusType"]`, plus `status` for
   the report line — and prune only when the type is
-  **`completed`** or **`canceled`**. Marked-duplicate is a
-  canceled-type state carrying `duplicateOf`, so it is covered
-  by construction.
+  **`completed`** or **`canceled`**. Marking an issue a
+  duplicate puts it in a **canceled-type state**, so it is
+  covered by construction — and the status type is the whole
+  test. Don't reach for `duplicateOf`: it is a *relation*, not
+  an issue field, so it neither appears in a `fields` selection
+  nor needs to (see `docs/conventions/linear-automation.md` →
+  the fold's cancels).
 
   **Never a whole-issue read here.** This step used to say
   only "read that issue's status type" without naming the
@@ -719,10 +737,9 @@ the same git-ignored pair, both of which only this session is
 positioned to run — it is the one that works from the base
 repo, where those files resolve.
 
-**7a. The permission allowlist, for cruft.**
-`firm-perms` only ever **adds** to
-`<base>/.claude/settings.local.json` (unions, generalizes),
-never prunes — so dead weight accumulates. Get the suspicious
+**7a. The permission allowlist, for cruft.** Firming only ever
+**adds** to `<base>/.claude/settings.local.json` (unions,
+generalizes), never prunes — so dead weight accumulates. Get the suspicious
 shortlist from the helper (`<base>` was resolved in step 1)
 rather than whole-reading the ~250-entry array into context
 (per `CLAUDE.md` → "Context economy" / "Skill tooling"):
@@ -753,7 +770,7 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
 
 - **stale single-use commands** (`category: subsumed`) — a
   narrower rule an earlier one already covers (the dead weight
-  `firm-perms` never removes);
+  a firming pass never removes);
 
 - **guard conflicts** (`category: guard-conflict`) — a rule
   granting a command shape a committed `PreToolUse` guard
@@ -796,8 +813,9 @@ first.** A read-only verb with no subcommand (`grep`, `tail`,
 `firm_core.NO_BARE_WILDCARD` is a deny-list of *hazardous*
 programs, not a floor over every verb, so `Bash(grep:*)` is
 acceptable, `cruft` correctly does not flag it, and
-`firm_last` would firm it. Both halves of the floor agree —
-a filed finding once claimed they disagreed, and they do not.
+`allowlist.py add` would firm it. Both halves of the floor
+agree — a filed finding once claimed they disagreed, and they
+do not.
 What *is* true is that a shell filter prints its output into
 the tool result, so preferring the Grep tool or
 `run_quiet.py inspect` is a **context-economy** rule, never a
@@ -814,7 +832,7 @@ still parses with an **exit-code-only** check,
 through `run_quiet`, never a full pretty-print echo that
 re-dumps the array into context; in an **unattended** pass,
 file the candidates **propose-only** (or just list them) and
-delete nothing. This is the pruning half; `firm-perms` is
+delete nothing. This is the pruning half; `allowlist.py add` is
 the add-only half, and the allowlist is `settings.local.json`
 (git-ignored per the settings.json decision). The
 `allowlist.py cruft` helper above is what keeps the full file
@@ -911,17 +929,52 @@ is `false`, skip the rest of this step** and note "memory
 scan skipped (`<reason>`)" in the report. Only when `scan`
 is `true`, do the review below.
 
-Read the memory bodies **in this step's own pass** and flag
-a memory as stale when it:
+**Then run the scan as a tool call, not by hand:**
 
-- names a **file / function / flag / `ENG-###`** that no
-  longer exists (a dangling reference — the same check the
-  memory-recall caveat demands before acting on a memory);
-- is **superseded or contradicted** by a newer memory or by
-  current code / conventions;
-- describes work that has since **shipped and is now
-  derivable from the repo**, so it no longer earns its
-  context slot.
+```sh
+python3 .claude/tools/memory_audit.py <memory_dir>
+```
+
+It prints one `kind: slug — reason` line per candidate plus a
+summary, and **never a memory body**. Run it from the base
+repo root so cited paths resolve against the checkout
+(`--repo-root` overrides). Four kinds, and their confidence
+is **not** equal — the report labels each:
+
+- **`index-desync`** (exact) — a `MEMORY.md` pointer with no
+  file, or a file with no pointer. A half-done purge is
+  exactly this.
+- **`over-long-index`** (exact) — reported as a **count plus
+  the worst few**, never every row.
+- **`dangling-path`** (exact, bounded) — a code-span
+  repo-relative path that no longer resolves. Bounded because
+  a candidate must start with a real top-level repo entry: a
+  looser "contains a slash" test reported 25 candidates
+  against the live store of which ~4 were real, the rest
+  being currency pairs, CIDR blocks, Action refs and git
+  refs. The accepted blind spot is a path whose own top-level
+  directory was deleted.
+- **`superseded-candidate`** (heuristic) — memories sharing an
+  `eng-<digits>` stem. A candidate to look at, never a
+  verdict.
+
+**An `ENG-###` reference is deliberately NOT checked** — issue
+existence lives in Linear and the tool is offline, so a check
+that cannot run would pass silently. If a candidate's reason
+turns on an issue, verify that one through the Linear MCP.
+
+This step used to be prescribed as prose, and was the last
+one in the pass that was: every pass then improvised the same
+shapes, which cost **≈3.2k of ≈8.3k total Bash bytes (~39%)**
+on one measured pass and took four of its top six results —
+including an `ls` that printed all 97 filenames to answer
+what the already-in-context index answers, and an `awk` that
+returned 56 rows when the decision needed a count.
+
+Judgement the tool does not make: whether a memory
+**describes work that has since shipped** and so no longer
+earns its context slot. That one still wants a read, and it
+is the reason this step is a review rather than a report.
 
 For each stale candidate, **purge** = delete the memory
 `.md` file **and** remove its one-line `MEMORY.md` pointer
@@ -1022,10 +1075,14 @@ more useful than skipping the step and calling it deferred.
   one-line reason each) and, for an attended pass, which
   were purged — or that all are fresh; or that the scan was
   **skipped this pass** (with the cadence-gate reason).
-- Session metrics run: whether a `/session-metrics` run
-  was offered and accepted for this session, or skipped.
-- Purge-conversations: whether a `/purge-conversations` run
-  was offered and accepted (with the MB freed), or skipped.
+- Session metrics: the run's **outcome** — how many trim
+  levers were filed and how many appended to an existing
+  lever. It runs unconditionally, so "offered and accepted"
+  is not a state it can be in; only a tooling failure is.
+- Purge-conversations: that the **dry-run manifest** was
+  produced (with the reclaimable total), and that the
+  destructive apply is deferred to the closing gate — or, on
+  an attended pass that applied it, the MB freed.
 
 There is **no audit line**, because this pass runs no audit.
 If a report ever carries one, something has re-grown the step

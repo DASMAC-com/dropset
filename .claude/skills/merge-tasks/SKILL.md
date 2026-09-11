@@ -1,6 +1,6 @@
 ---
 name: merge-tasks
-description: Consolidate several Linear issues into one, given their numbers. Folds each non-survivor's body into the lowest-numbered survivor as a labeled # Part section (preserving every Fingerprint), carries a legacy Touches line forward as one consolidated union when the folded bodies have one (the field is retired, so nothing invents one), carries relatedTo append-only while surfacing every inherited blockedBy/blocks as a proposal for the user to approve (blocking is human-curated), applies the Claude: prefix when every issue is meta-work, and cancels the folded issues as duplicateOf the survivor. Files no collision links — the automated file-overlap machinery is retired. Confirms the plan via AskUserQuestion before any write. The deterministic parsing/assembly lives in the merge_tasks.py tool.
+description: Consolidate several Linear issues into one, given their numbers. Folds each non-survivor's body into the lowest-numbered survivor as a labeled # Part section (preserving every Fingerprint), carries a legacy Touches line forward as one consolidated union when the folded bodies have one (the field is retired, so nothing invents one), carries relatedTo append-only while surfacing every inherited blockedBy/blocks as a proposal for the user to approve (blocking is human-curated), applies the Claude: prefix when every issue is meta-work, and cancels the folded issues through the zero-echo field batch. Both writes stay off the body-echoing MCP path: the survivor's body goes through linear_patch.py and the cancels through board_batch.py. Files no collision links — the automated file-overlap machinery is retired. Confirms the plan via AskUserQuestion before any write. The deterministic parsing/assembly lives in the merge_tasks.py tool.
 user-invocable: true
 ---
 
@@ -275,25 +275,81 @@ approval:
   approved** in step 4 (these args are append-only, so
   passing them is safe).
 
-  **Prefer the `patch` path.** When step 3 reported a
-  `patch_ops_path`, `Read` that file and pass its array as
-  **`patch`** — the survivor's existing body is then never
-  re-sent, only the folded parts and one short anchor. Never
-  pass `patch` alongside `description`; they are alternatives
-  (per `docs/conventions/linear-automation.md` → "Partial
-  edits"). Note the `title` still goes as an ordinary
-  argument — `patch` governs the body only.
+  **Apply the body through the ZERO-ECHO patch tool, not the
+  MCP.** When step 3 reported a `patch_ops_path`, hand that
+  path straight to the committed writer — never `Read` the ops
+  file to pass its array through the MCP:
+
+  ```sh
+  python3 .claude/tools/linear_patch.py patch \
+    --ops <patch_ops_path> <survivor>
+  ```
+
+  Note the shape: `patch` is a **subcommand**, the identifier is
+  **positional**, and `--ops` takes the ops **file path** (the
+  tool reads it in its own process — that is what makes this
+  zero-echo).
+
+  It applies the same ops and prints only a size. Two
+  body-sized transits disappear: reading the ops file into
+  context, and the MCP's echo of the survivor's whole stored
+  body. Measured on one fold — the ops file was **≈9.5k**, the
+  session's second-largest result, and the `save_issue` echo
+  **≈10.4k**, its largest; 24 `save_issue` calls totalled 35.1k
+  and were the costliest tool of that session. A later fold's
+  ops file reached **≈53k** (148 KB of folded bodies), where
+  reading it to pass it through was simply infeasible.
+
+  The MCP `patch`'s safety argument is preserved, not traded
+  away: the tool does the same anchor matching with the same
+  atomic abort, refusing the whole sequence if any single op
+  cannot be applied.
+
+  **The op vocabulary is settled** — `linear_patch.py` now
+  accepts the MCP spellings (`old_string` / `new_string`,
+  `from` / `to`) as aliases, so an assembled ops file applies
+  either way. It did not always: a fold was once rejected on
+  its first op with `'replace' needs a string 'text'`.
+
+  **A post-retirement fold is appends only.** The single
+  `replace` a fold can emit is the legacy `**Touches**:`
+  consolidation, and `merge_tasks.py` emits it only when the
+  survivor actually carries such a line — so a fold of issues
+  filed since the field was retired produces no `replace` at
+  all. That is why the alias above mattered: the one op whose
+  vocabulary differed was also the only one a legacy fold
+  needed.
 
   **Fall back to wholesale** when `patch_ops_path` is `null`:
   `Read` `description_path` and pass its contents as
-  `description`. `patch_fallback_reason` says why the anchor
-  couldn't be made safe; relay it in the step-6 report so a
-  recurring cause (e.g. survivors accumulating a second
-  `**Touches**:` line) is visible rather than silent.
+  `description` through `save_issue`. `patch_fallback_reason`
+  says why the anchor couldn't be made safe; relay it in the
+  step-6 report so a recurring cause is visible rather than
+  silent. Note the `title` goes through `board_batch.py fields`
+  or the same `save_issue` — the patch tool governs the body
+  only.
 
-- For **each** non-survivor, `save_issue` (id = that issue)
-  with `state: "Canceled"` and `duplicateOf: "<survivor>"`,
-  so the board shows it folded into the survivor.
+- **Cancel the non-survivors through the zero-echo field
+  batch, in one call** — never a `save_issue` per issue:
+
+  ```sh
+  python3 .claude/tools/board_batch.py fields \
+    --updates <scratchpad>/cancel.json
+  ```
+
+  with `{"<number>": {"state": "Canceled"}}` per non-survivor.
+  A `save_issue` cancel re-echoes the whole body to change one
+  enum: measured at ≈6.0k for one cancel plus ≈6.1k for the
+  `get_issue` before it, and a later fold would have paid
+  roughly **33k** to cancel a survivor whose body had reached
+  130 KB.
+
+  **The `duplicateOf` marker is dropped deliberately.** It is
+  not an issue field, so it cannot ride `fields`, and the
+  survivor's `# Part` headings already name every folded issue
+  — which is the same information, in the artifact a reader
+  actually opens. Do not reintroduce a body-echoing write to
+  restore a marker the body already carries.
 
 **6. Report.** One line: the survivor (with its final
 title), the issues folded in and canceled, and which

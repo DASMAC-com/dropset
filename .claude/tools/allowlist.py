@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""``settings.local.json`` allowlist parser — the shared, context-cheap reader
-for the ``permissions.allow`` array that both ``firm-perms`` and
-``housekeeping`` step 7 need, without either whole-reading the ~250-entry file
-into the model's context (per ``CLAUDE.md`` → "Context economy" / "Skill
-tooling").
+"""``settings.local.json`` allowlist parser and writer — the context-cheap way to
+read or extend the ``permissions.allow`` array without whole-reading the
+~400-entry file into the model's context (per ``CLAUDE.md`` → "Context economy" /
+"Skill tooling").
+
+This is now the **whole** firming interface: the ``firm-perms`` skill that used to
+wrap it was retired on 2026-09-10, measured unused as a verb while the tool itself
+stayed in daily use. ``housekeeping`` step 7a drives ``cruft``; anything else
+firms a rule with ``add``.
 
 Three subcommands. All three print JSON to stdout; ``covers`` and ``cruft``
 only read the settings file, while ``add`` **writes** it (and deliberately does
@@ -17,12 +21,12 @@ option, so it precedes the subcommand
   where an uncovered rule would append (end of the array), and
   ``would_subsume`` lists the indices of existing narrower entries the new rule
   would make redundant. The membership + subsumption logic is ``firm_core``'s,
-  so it matches what ``firm_last.py`` writes.
+  so ``covers`` and ``add`` can never disagree about what a rule already grants.
 * ``add RULE`` — the **write** counterpart of ``covers``, closing the loop so a
   hand-firm never has to read the allowlist at all. ``covers`` already computes
   where the rule would land; ``add`` performs that append (via
-  ``firm_core.firm_into``, the same writer the fast firm uses, so subsumed narrower
-  entries are pruned in the same pass) and prints
+  ``firm_core.firm_into``, now the only writer of the allowlist, so subsumed
+  narrower entries are pruned in the same pass) and prints
   ``{rule, added, covered, refused, count}``. This exists because ``Edit``
   requires a prior ``Read`` of the file it edits: firming one Bash rule by hand
   cost a whole-file ``Read`` of a 338-entry ``settings.local.json``, which is
@@ -36,7 +40,7 @@ option, so it precedes the subcommand
   reasons over a short shortlist instead of the whole array. Categories mirror
   ``housekeeping`` step 7: ``over-broad`` (a bare-verb wildcard or an unscoped
   file-access root), ``subsumed`` (a narrower rule an earlier one already
-  covers — the dead weight ``firm-perms`` never prunes), ``dangerous`` (an
+  covers — the dead weight ``add`` never prunes), ``dangerous`` (an
   ``rm -rf`` / force-push / pipe-to-shell one-off), ``machine-path`` (a
   malformed path, or an absolute home path in a settings file where one does
   not belong), ``machine-path-stale`` (a path that no longer resolves on
@@ -158,7 +162,7 @@ class AllowlistError(Exception):
 
 
 # Re-exported so callers and tests have one name for it; the implementation
-# lives in firm_core because firm_last.py needs the identical answer, and two
+# lives in firm_core because hook_wiring.py needs the identical answer, and two
 # separately-written copies of it drifted.
 find_main_checkout = firm_core.main_checkout
 
@@ -175,8 +179,7 @@ def resolve_settings_path(path: Path | None, *, explicit: bool = False) -> Path:
     ``resolved.exists()`` looked safer but inverted the fix: on a main checkout
     with no allowlist yet, ``add`` would scaffold into the *worktree* instead —
     a file nothing ever reads, which then exists forever and shadows the real
-    one on every later call. ``firm_last`` refuses outright in that situation;
-    this now agrees with it by writing where the file belongs.
+    one on every later call. So this writes where the file belongs instead.
 
     An ``explicit`` ``--settings`` path is **never** redirected, even when it
     does not exist. A caller that names a file means that file: silently
@@ -239,15 +242,14 @@ def covers(rule: str, allow: list[str]) -> dict:
 def add(rule: str, path: Path) -> dict:
     """Append ``rule`` to ``path``'s allow array unless already covered.
 
-    Delegates the write to ``firm_core.firm_into`` — the writer the fast firm uses,
-    so subsumed narrower entries are pruned identically — and neither path needs
-    the allowlist in context. Re-reads the array afterwards only to report the
-    new ``count``; the array itself never leaves this process.
+    Delegates the write to ``firm_core.firm_into``, so subsumed narrower entries
+    are pruned in the same pass, and without needing the allowlist in context.
+    Re-reads the array afterwards only to report the new ``count``; the array
+    itself never leaves this process.
 
     **The safety floor is enforced here, not in the writer.** ``firm_into`` has
-    no floor of its own — ``firm_last.py`` checks ``is_bareverb_wildcard`` in its
-    *caller* and returns before writing. So a write path that called
-    ``firm_into`` directly would grant exactly what the fast firm refuses, and because
+    no floor of its own — it writes what it is given. So a write path that called
+    it directly would grant exactly what this tool refuses, and because
     this tool runs under the pre-approved directory-wide
     ``Bash(python3 .claude/tools/:*)`` rule, that would be a single
     non-prompting call that widens the agent's own Bash grant to a whole
@@ -296,9 +298,11 @@ def _over_broad_reason(rule: str) -> str | None:
 
 def _is_subsumed(index: int, allow: list[str]) -> bool:
     """Whether ``allow[index]`` is dead weight another entry already covers.
-    Checks the **whole** list, not just earlier entries — ``firm-perms``
-    *appends* generalized rules, so the common layout is a narrow rule with the
-    broader one that subsumes it sitting *after* it. A **strictly broader**
+    Checks the **whole** list, not just earlier entries: a narrow rule can have
+    the broader one that subsumes it sitting *after* it. ``firm_into`` prunes
+    that pair as it writes, so firming no longer *creates* the layout — but a
+    hand-edited entry still can, and entries predating the pruning remain. A
+    **strictly broader**
     coverer flags the narrow rule regardless of position; an **exact-equivalent**
     duplicate flags only the later copy (so one survives). A coverer that is
     itself **over-broad** is skipped — it's flagged for removal on its own, so

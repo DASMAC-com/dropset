@@ -16,10 +16,12 @@ work continues.
 This is the first skill an agent should run after
 `claude --worktree <tag>` starts.
 
-Two cheap pre-checks come **first**, before anything that
+Three cheap pre-checks come **first**, before anything that
 mutates the worktree — the model tier this session is running
-as, and the `gh` credential. Both exist because the failure
-they catch is otherwise discovered late and expensively.
+as, the `gh` credential, and whether the issue already has a
+merged PR. All three exist because the failure they catch is
+otherwise discovered late and expensively; the third catches a
+session that had nothing to build at all.
 
 ## Step 0: check which model this session is running as
 
@@ -213,6 +215,59 @@ fan-out and its CI wait, rather than from any probe. A signed
 commit is the only check that proves signing works, which is
 also why step 6 is where a real failure surfaces.
 
+## Step 0c: pre-check that the issue is not already merged
+
+Still before anything that mutates the worktree, confirm the
+issue does not already have a **merged** PR against it:
+
+```sh
+gh pr list --repo DASMAC-com/dropset --search "<ENG-###>" \
+  --state all --json number,title,state,mergedAt
+```
+
+Read the result:
+
+- **A merged PR is a STOP.** Do not rename, rebase, commit or
+  map anything. Surface it in one sentence — "ENG-### already
+  merged as PR #N; the issue looks mis-stated or mis-queued" —
+  and ask via `AskUserQuestion` whether to stand down or to
+  proceed anyway because there is genuinely follow-up scope.
+  The issue being pullable is not evidence that work remains:
+  per `docs/conventions/linear-automation.md`, **Done means
+  operator-ratified, not merged**, so a merged issue sitting in
+  Backlog is a contradiction, not an instruction.
+- **A closed-not-merged PR is a WARNING, not a stop.** A
+  legitimate retry exists — an abandoned attempt, a superseded
+  approach — so name it and carry on.
+- **No PRs, or only open ones, is the normal case.** Say
+  nothing and proceed. (An open PR on this branch is what a
+  resumed session looks like.)
+
+**Why this is a pre-check and not a step-12 concern.** Measured
+(2026-09-03, the ENG-1060 session): the issue was implemented
+and merged as PR #381 and landed In Review per convention, then
+moved **backwards to Backlog fourteen minutes later** — In
+Progress 09-01 22:45, In Review 09-02 00:14, Backlog 09-02
+00:28. That made merged scope look pullable. A worker session
+launched against it a day later, bootstrapped a worktree, hit
+the signing pre-check, consumed an operator round trip, and
+only then discovered there was nothing to build.
+
+**The root cause of the backwards move is unknown** — an
+automation write-back, an integration setting, or a stray
+click; the state history alone cannot distinguish them, and the
+convention was working as stated everywhere else that day. The
+guard is worth having regardless of cause, because it catches
+the whole class: any path that re-queues completed scope,
+including a human re-opening the wrong issue.
+
+**Why `gh` here rather than the GitHub MCP.** This is a
+field-selected read of at most a few rows, and the MCP search
+getter returns whole PR objects — the same
+orders-of-magnitude argument `docs/conventions/github-mcp.md`
+records for `gh api --jq`. It also reuses an existing
+`Bash(gh pr list:*)` allow-rule, so it costs no new prompt.
+
 ## Input
 
 Accepts an optional Linear tag like `eng-123`.
@@ -268,10 +323,38 @@ whole-file** into context (e.g. an entire reference repo at
 (per `CLAUDE.md` → "Context economy"). Whole-repo ingestion
 is somewhat inherent to "survey N references," but `Explore`
 plus a scoped allowlist is the lever that bounds it. Give
-the agent the canonical sub-agent brief
-(`docs/conventions/sub-agent-brief.md`) and name the
+the agent the canonical sub-agent brief and name the
 specific paths it should look at, rather than turning it
 loose on a whole tree.
+
+**Compose that brief with the committed tool, not by reading
+the convention doc.** `review-pr` already does this and the
+implement phase was left to hand-quote:
+
+```sh
+python3 .claude/tools/lens_preamble.py --out <scratchpad>/brief.md \
+  --no-facts
+```
+
+**`--no-facts` is not optional here.** The tool **refuses** a run with
+neither `--fact` nor `--facts-file` nor `--no-facts`, exiting 2 — and a
+research fan-out in the implement phase usually has no facts block to
+pass, so the bare form fails at exactly the moment you are spawning.
+If you *do* hold verified facts, pass them instead: they are worth far
+more than the flag.
+
+It assembles the standing brief from
+`docs/conventions/sub-agent-brief.md` so a session never reads
+that file in order to quote it — which is the whole point, since
+the file is prose a caller would otherwise buy in full just to
+paste it. Hand the agent the path.
+
+**And cap a research fan-out in TURNS and TOOL CALLS, not only
+in report length.** A length cap bounds what comes back and
+says nothing about what the agent spends getting there; the
+turn and tool-call caps are what actually bound a survey. State
+both (e.g. "≤ 8 turns, ≤ 12 tool calls, then report") — the same
+pair `review-pr`'s lens briefs use.
 
 **In-repo / in-workspace surveys need the same scoping —
 they are not exempt.** An open-ended "map how the TUI + the
@@ -408,6 +491,25 @@ not only to the sub-agents you brief:
   *introduces* a declaration is not the declaration**, and only
   the declaration belongs in a section map.
 
+  **`search_source.py` now REFUSES both of those patterns**, so
+  this pair is enforced rather than merely advised — a comment
+  marker (`///`, `//!`, `//`, `%`, `;`, or a bare `#`) in an
+  **anchored** branch of an **alternation** exits non-zero and
+  names the narrower pattern to use instead. Three things follow.
+  A refusal is an **unanswered question, not zero hits**: re-ask
+  it with the declaration shape rather than reading the exit code
+  as "no matches". A **single-branch** pattern is never refused —
+  one `^///` is a deliberate search for doc-comment lines, and
+  only an alternation is a section map. And two shapes are
+  allowed on purpose: `^#[` (a Rust attribute *is* declaration
+  shape), and `^#` on a **prose** sweep, where a markdown heading
+  is the declaration — which the tool infers from `--all-text`,
+  a prose `--ext`, or a `--glob` naming a prose file, so scope
+  the sweep rather than expecting it to guess. If the comment
+  marker genuinely
+  *is* the target — auditing doc comments themselves, say —
+  `--force-comments` says so explicitly.
+
   **On a prose file, the declaration shape IS the heading
   marker — `^#`, and nothing else.** The rule above reads as
   being about source, so a doc gets mapped with an alternation
@@ -479,6 +581,31 @@ not only to the sub-agents you brief:
   was followed by slices rather than a whole read. The saving
   is modest in raw tokens; the stronger case is fewer round
   trips.
+
+  **Count the ACT, not the tool.** This rule is phrased around
+  `Read` with `offset`/`limit`, so a session slicing some other
+  way reads it as inapplicable — and its purpose is bounding
+  the accumulation, not the mechanism. A shell slice costs the
+  same. The tally counts every mechanism together:
+  `Read offset/limit`, `sed -n 'A,Bp'`, `head`,
+  `read_result.py --slice`, `show_at_ref.py`.
+
+  A `cat -n` of a file belongs on that list as a **whole-file
+  read**, subject to the four conditions below — it does not
+  look like one at the call site, which is how a 99-line file
+  got bought whole for a one-region edit.
+
+  **The tally is per file, per SESSION, not per burst** — a
+  file revisited in a later phase carries its earlier slices
+  forward. **And a formatter autofix invalidates offsets but
+  does NOT reset the budget**; counting "since the last format"
+  makes every autofix a laundering step.
+
+  The case that settles it in advance: **when you already
+  intend to rewrite a file, decide the whole-read license
+  before the first slice.** A rewrite is a planned multi-region
+  read by definition, so reaching that conclusion after paying
+  for slices means paying for both.
 
 - **If you already ran the map, slice from it.** A map
   followed by a whole-file Read means the map was wasted —
@@ -638,6 +765,33 @@ not only to the sub-agents you brief:
   drove real decisions. See
   `docs/conventions/context-economy.md` → "The levers".
 
+  **Capture at `deviceScaleFactor: 1`.** The rule above bounds
+  the capture's *extent* and says nothing about its
+  **resolution**, which reads as complete — clipping is the
+  salient waste, so it gets followed while the scale factor goes
+  unexamined. A 2x capture is four times the bytes for a
+  judgement 1x already answers. Reserve 2x for a question
+  genuinely about rendering fidelity — hinting, sub-pixel
+  spacing, a hairline border — and say so when you take one.
+
+  **The one case where the image IS the cheaper evidence: a
+  pseudo-state style.** Verifying `:hover` / `:focus` /
+  `:active`, do **not** read it back with `getComputedStyle`,
+  page-side or over CDP. A forced pseudo-state does not surface
+  in any computed-style read, and `page.hover()` does not
+  produce `:hover` in headless at all — both return the
+  **resting** value with no error, which looks exactly like a
+  broken CSS rule. So the cheap assertion is not just weaker
+  here, it actively misleads. Force the state with CDP
+  `CSS.forcePseudoState` and **compare rendered captures**, or
+  read `CSS.getMatchedStylesForNode`. Assert-don't-screenshot is
+  right for layout and wrong for state styling.
+
+  **Otherwise, assert on the DOM rather than on an image.**
+  Reading a rendered link's `href` and counting annotation
+  markers settled three verifications exactly, for a few hundred
+  tokens.
+
 - **Before `replace_all`, check whether the replacement
   CONTAINS the search string.** If it does, the call is not
   idempotent: sites already carrying the new name get rewritten
@@ -769,6 +923,34 @@ not only to the sub-agents you brief:
   *after* `--files-only` had already identified it. When matches
   cluster in one file, take `--files-only` then slice-read the
   region.
+
+  **Say the widest branch of your pattern out loud before you
+  issue it.** If it is an ordinary English word — `age`, `time`,
+  `state`, `value`, `elapsed`, `drain` — it matches prose and
+  identifiers throughout and the result is the file. Anchor it
+  (`\.age`, `fn drain`, `age:`), or grep the distinctive branch
+  alone and widen only if that comes back empty. The
+  generalizable half: **an alternation's cost is set by its
+  worst branch, not by its intent** — a pattern is only as
+  narrow as the commonest word in it.
+
+  **A token under about five characters needs a word-boundary
+  anchor.** Ask what common words contain it: `pip` returns
+  `pipeline` and `piped`; `sig` returns `signature`, `signer`;
+  `env` returns `environment`, `envelope`. Anchor with `\b…\b`
+  (`\bpips?\b` for a plural). Measured at ≈2.1k for a ~10-line
+  answer the anchored form gave for a few hundred. This bounds
+  **what matches at all** — a different axis from the two above.
+
+  **Sweep for call sites BEFORE compiling, not by compiling.**
+  When a change alters a signature, a public type, or a field
+  shape, name the consuming files in one call —
+  `search_source.py '<symbol>' --files-only` — and fix them in
+  one pass; the compile then *verifies* rather than *discovers*.
+  "Let the compiler find it" is a good habit for **checking**;
+  the anti-pattern is using it to **enumerate**, and the tell is
+  consecutive compiles returning the same error class at
+  different sites, each one a full build plus a result.
 
   **That advisory line is a DIRECTIVE — do not consume a
   result it flags.** `search_source.py` prints it when the
@@ -1057,6 +1239,35 @@ per-directory *content* — `frontend/node_modules`,
    act on it — do not predict from the diff.** On `"absent"`,
    run the install now, as part of the bootstrap. On
    `"present"` or `"no-frontend"` there is nothing to do.
+
+   **`program_so` is the same shape, with the opposite
+   action.** The field reports `present` / `absent` /
+   `no-program` from the same JSON. On `absent`, do **not**
+   build it at bootstrap — note that any litesvm test under
+   `programs/dropset/tests/` needs
+   `python3 .claude/tools/run_quiet.py -- make program` first,
+   and leave it there. That asymmetry with `pnpm install` is
+   deliberate: the BPF build takes minutes and most tasks never
+   touch `programs/**`, whereas the install is one quiet command
+   the first full lint needs regardless.
+
+   Why it is worth reporting at all: a cold worktree fails
+   **every** litesvm test at once, with a 125-line tail
+   complaining about a missing program keypair and suggesting
+   `anchor keys sync && anchor build` — which is *not* the
+   command this repo uses (`make program` copies the committed
+   keypair from `keys/` first). Every test failing together
+   reads like a broken harness rather than a missing artifact.
+   And the diff-keyed conditional loses here exactly as it does
+   for the frontend: the branch that measured this changed only
+   `programs/dropset/tests/**`, never `programs/dropset/src/**`.
+
+   One related trap worth knowing in the same breath:
+   `make test-no-teardown` leaves a `--no-default-features`
+   `.so` behind, so a later scoped `cargo test` fails ~15
+   unrelated teardown tests. `review-pr` step 11 documents that
+   ordering; a cold worktree reaches the same class from the
+   other direction.
 
    This used to say "install when the surfaced task touches
    `frontend/**`, or before the first full lint", and the

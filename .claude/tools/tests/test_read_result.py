@@ -75,6 +75,21 @@ def _invoke(*argv):
     return rc, out.getvalue(), err.getvalue()
 
 
+def _invoke_usage_error(*argv):
+    """Run the CLI expecting an argparse usage error, returning ``(code, stderr)``.
+
+    `parser.error` raises SystemExit rather than returning, so a usage-error test
+    cannot go through `_invoke`.
+    """
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with redirect_stdout(out), redirect_stderr(err):
+            run(["read_result.py", *argv])
+    except SystemExit as exc:
+        return exc.code, err.getvalue()
+    raise AssertionError("expected a usage error, but the call returned")
+
+
 class UnwrapTests(unittest.TestCase):
     def test_the_block_array_envelope_is_unwrapped(self):
         raw = json.dumps([{"type": "text", "text": "hello"}])
@@ -147,6 +162,71 @@ class HeadingsTests(unittest.TestCase):
 
     def test_a_hash_inside_prose_is_not_a_heading(self):
         self.assertEqual(headings(["a # b", "#nospace"]), [])
+
+
+#: A pool-survey shape: two levers, each with its own internal headings below its
+#: identifier. This is what `trim_levers.py list --bodies-out` emits, and the case
+#: `--max-depth` exists for — the identifier lines are the answer, the per-lever
+#: internals are consumed later and selectively through `--sections`.
+POOL_DUMP = """# Trim levers
+
+## ENG-1001 | Slice the dispatcher
+
+### The lever
+
+Body.
+
+#### Deeper still
+
+More.
+
+## ENG-1002 | Anchor the sweep
+
+### The lever
+
+Body.
+
+### Cost label
+
+context
+"""
+
+
+class HeadingsMaxDepthTests(unittest.TestCase):
+    def test_depth_two_returns_the_identifier_lines_only(self):
+        # The measured case: 116 headings where 32 were wanted.
+        got = headings(POOL_DUMP.splitlines(), 2)
+        self.assertEqual(
+            got,
+            [
+                "1:Trim levers",
+                "3:  ENG-1001 | Slice the dispatcher",
+                "13:  ENG-1002 | Anchor the sweep",
+            ],
+        )
+
+    def test_depth_one_returns_only_the_top_heading(self):
+        self.assertEqual(headings(POOL_DUMP.splitlines(), 1), ["1:Trim levers"])
+
+    def test_no_depth_returns_everything_as_before(self):
+        # The filter is opt-in; the default must not change.
+        self.assertEqual(
+            len(headings(POOL_DUMP.splitlines())),
+            len(headings(POOL_DUMP.splitlines(), 4)),
+        )
+        self.assertEqual(len(headings(POOL_DUMP.splitlines())), 7)
+
+    def test_a_depth_deeper_than_the_document_keeps_every_heading(self):
+        self.assertEqual(
+            headings(POOL_DUMP.splitlines(), 9), headings(POOL_DUMP.splitlines())
+        )
+
+    def test_the_indent_still_reflects_true_depth_not_the_filter(self):
+        # A depth-2 heading stays indented one level even when depth 1 is the
+        # shallowest thing shown, so the map cannot imply a flatter document
+        # than the file has.
+        got = headings(POOL_DUMP.splitlines(), 2)
+        self.assertTrue(got[1].startswith("3:  ENG-1001"))
 
 
 class SectionTests(unittest.TestCase):
@@ -397,6 +477,37 @@ class CliTests(unittest.TestCase):
         self.assertIn("Part 2 — second", out)
         self.assertNotIn("body of two", out)
         self.assertIn("3 heading(s)", err)
+
+    def test_max_depth_narrows_the_map_and_says_what_it_hid(self):
+        path = _persisted({"description": POOL_DUMP})
+        rc, out, err = _invoke(
+            path, "--field", "description", "--headings", "--max-depth", "2"
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("ENG-1001 | Slice the dispatcher", out)
+        self.assertNotIn("Cost label", out)
+        # The count of hidden headings is the part that keeps a filtered map from
+        # reading as a complete one.
+        self.assertIn("depth <= 2", err)
+        self.assertIn("4 deeper hidden", err)
+
+    def test_max_depth_without_headings_is_refused_not_ignored(self):
+        path = _persisted({"description": POOL_DUMP})
+        code, err = _invoke_usage_error(
+            path, "--field", "description", "--slice", "1:3", "--max-depth", "2"
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("--max-depth applies to --headings", err)
+
+    def test_a_zero_max_depth_is_refused(self):
+        # No heading has zero hashes, so this would silently return nothing —
+        # indistinguishable from a document with no headings at all.
+        path = _persisted({"description": POOL_DUMP})
+        code, err = _invoke_usage_error(
+            path, "--field", "description", "--headings", "--max-depth", "0"
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("at least 1", err)
 
     def test_section_emits_one_part_only(self):
         path = _persisted({"description": BODY})

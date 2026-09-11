@@ -193,8 +193,13 @@ for a rejected call; the table is in the convention doc. `patch` does
 **not** shrink that echo (a fixed cost per call), so for a body
 **append** — which has no anchor and so nothing for an ambiguity abort
 to protect — the zero-echo path is
-`.claude/tools/linear_issue.py append`; **anchored** edits stay on
-`patch`, where that abort is worth the echo. Non-body field writes go
+`.claude/tools/linear_issue.py append`. **Anchored** edits stay on the
+MCP `patch` for a one-off, where that abort is worth the echo; a
+**fold**, whose ops are assembled as a file, instead goes through
+`.claude/tools/linear_patch.py patch --ops <path> ENG-###`, which
+applies the same ops with the same atomic abort while paying neither
+the echo nor the cost of reading the ops file into context (it also
+accepts the MCP argument spellings as aliases). Non-body field writes go
 through `board_batch.py` (`state` is a single-issue alias). Anchors must
 match the **stored** text exactly once, and Linear rewrites an
 `ENG-###` into a mention node, so never anchor on one. Detail:
@@ -325,9 +330,14 @@ top). Templates pass **both** `cfn-lint` (scoped hook) and the repo's
 strict `yamllint`, so they are written to fit the latter — alphabetical
 keys, single-quoted strings, block style, folded block scalars for long
 ARNs. Authoring is
-agent-assisted through **two** MCP servers: documentation lookups go to
-the credential-free `aws-docs` server; account actions (deploy /
-inspect / CLI, skill retrieval) go to the SigV4 `aws-mcp` server. Search
+agent-assisted: documentation lookups go to the credential-free
+`aws-docs` MCP server; account actions go to the **AWS CLI** under an
+SSO profile, with the SigV4 `aws-mcp` server (deploy / inspect / skill
+retrieval) as the richer path when it is up — it has been failing to
+connect across sessions, and that is **its own bug, not a substrate
+one**, since a locally configured server reaches Bedrock too. The real
+loss while it is down is `aws___retrieve_skill`, which has no CLI
+equivalent. Search
 the AWS docs before acting and keep to least privilege (the MCP-gated
 `*-agent-provisioning` role, deploys via the passed `*-cfn-deployment`
 role). Both servers' wiring is user-local, never committed. Full detail:
@@ -475,9 +485,11 @@ never reported. Detail, and the verb table:
 `docs/conventions/local-integrations.md`.
 
 A planning session may **dispatch** a ready task — `session_dispatch.py`
-opens a new iTerm window and types the verb, authorized by the
-operator's yes exactly as `fleet go` is. iTerm is driven through its
-Python API via `.claude/tools/iterm_api.py`, the one owner of that
+opens a **tab in the dispatching session's own window** (never a new
+window: the operator drives the fleet from one window) and types the
+verb, authorized by the operator's yes exactly as `fleet go` is. Several
+verbs go in one call, separated by a bare `+`. iTerm is driven through
+its Python API via `.claude/tools/iterm_api.py`, the one owner of that
 automation; **AppleScript is retired** from the toolbox.
 
 ## What a skill may decide alone

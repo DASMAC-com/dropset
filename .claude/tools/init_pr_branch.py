@@ -12,9 +12,10 @@ a tag, it resolves three things the skill no longer has to hand-parse:
 * **tag validation** — the resolved tag must match ``eng-###``
   (case-insensitive), normalized to lowercase.
 
-It also reports two **measured facts** the skill would otherwise have to
+It also reports three **measured facts** the skill would otherwise have to
 predict, each read-only and so present on every run: whether this worktree has
-``frontend/node_modules`` (``frontend_node_modules``), and which commit-signing
+``frontend/node_modules`` (``frontend_node_modules``), whether it has a built
+program artifact (``program_so``), and which commit-signing
 configuration the machine has and whether it can sign right now (``signing``,
 plus the configured signer path as ``signing_program``). The signing field
 replaces an unconditional ``ssh-add -l`` in the skill's prose that was an
@@ -82,6 +83,9 @@ _WORKTREE_PREFIX = "worktree-"
 _ENV_REL = os.path.join("frontend", ".env.local")
 _SECRETS_ENV_REL = os.path.join("infra", "localnet", "secrets.local.env")
 _NODE_MODULES_REL = os.path.join("frontend", "node_modules")
+# The built program artifact every litesvm test needs. `make program` produces
+# it; a cold worktree has neither it nor the deploy keypair beside it.
+_PROGRAM_SO_REL = os.path.join("target", "deploy", "dropset.so")
 
 # The one `gpg.format` value that routes signing through SSH. Anything else —
 # including unset, which git defaults to `openpgp` — is gpg signing, where an
@@ -215,6 +219,37 @@ def node_modules_state(worktree_root: str) -> str:
     if not os.path.isdir(os.path.join(worktree_root, "frontend")):
         return "no-frontend"
     if os.path.isdir(os.path.join(worktree_root, _NODE_MODULES_REL)):
+        return "present"
+    return "absent"
+
+
+def program_so_state(worktree_root: str) -> str:
+    """Whether this worktree has a built program artifact.
+
+    The same reporting-not-predicting design as
+    :func:`node_modules_state`, for the same reason: a cold worktree has no
+    ``target/deploy/`` artifact, so **every** litesvm test under
+    ``programs/dropset/tests/`` fails until ``make program`` runs. Measured: a
+    first scoped test run failed with **17 tests panicking identically** at
+    ``program keypair (run 'anchor keys sync && anchor build'): NotFound`` — a
+    125-line tail whose suggested remediation is not even the one this repo uses
+    (``make program``, which copies the committed keypair from ``keys/`` first).
+    Every test in the file failing at once reads like a broken harness rather
+    than a missing artifact, which is the diagnosis beat this field removes.
+
+    **A conditional keyed on the diff loses here exactly as it does for the
+    frontend.** The branch that measured this changed only
+    ``programs/dropset/tests/**`` and never ``programs/dropset/src/**`` — so
+    "does the diff touch the program source" answers *no* while the built
+    artifact is still required.
+
+    Reported, never acted on unconditionally: unlike ``pnpm install`` this is a
+    multi-minute BPF build and most tasks never touch ``programs/**``, which is
+    the asymmetry that keeps it a note rather than a bootstrap step.
+    """
+    if not os.path.isdir(os.path.join(worktree_root, "programs")):
+        return "no-program"
+    if os.path.isfile(os.path.join(worktree_root, _PROGRAM_SO_REL)):
         return "present"
     return "absent"
 
@@ -470,6 +505,9 @@ def main(argv: list[str] | None = None) -> int:
         else None,
         # Read-only, so unconditional: `present` / `absent` / `no-frontend`.
         "frontend_node_modules": node_modules_state(args.worktree_root),
+        # Read-only too: `present` / `absent` / `no-program`. Reported rather than
+        # acted on — building it is multi-minute and most tasks never need it.
+        "program_so": program_so_state(args.worktree_root),
         # Read-only too. `gpg.format` selects the family and is read first;
         # within the ssh family `gpg.ssh.program` decides whether the agent is
         # in the signing path — except for an agent-delegating signer, which

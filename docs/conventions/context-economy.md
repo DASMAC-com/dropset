@@ -226,6 +226,41 @@ argument was *not* the reason — see that step for why.)
   slices at ~413 lines were not obviously worse in raw tokens. The
   stronger case is fewer round trips.
 
+  Three bounds on that tally, each of which has been missed on its own:
+
+  **Count the ACT, not the tool.** This rule is phrased around `Read`
+  with `offset`/`limit`, so it does not fire when the slicing is done some
+  other way — and the rule's purpose is bounding the accumulation, not
+  the mechanism. A shell slice costs the same as a tool slice. So the
+  tally counts every mechanism together: `Read offset/limit`,
+  `sed -n 'A,Bp'`, `head`, `read_result.py --slice`, `show_at_ref.py`,
+  and `cat -n <file>` — that last one being a **whole-file read** subject
+  to the four licensing conditions below, which it does not look like at
+  the call site, and which is how a 99-line file got bought whole for a
+  one-region edit. Sixty small `sed` reads of one file are a whole-file
+  read with extra steps and sixty round trips.
+
+  This is the second measured instance of a rule missing because it named
+  a transport. The general principle is worth stating: this document opens
+  by saying tool *results* are transport-agnostic, and that framing was
+  never carried into the *read* rules. It applies to both.
+
+  **The tally is per file, per SESSION — not per burst.** A file
+  revisited in a later phase carries its earlier slices forward. This
+  bites hardest in a review's fix phase, where a findings catalogue names
+  a file the study phase already sliced several times, and each finding
+  then looks like a fresh first slice.
+
+  **A formatter autofix invalidates offsets but does NOT reset the
+  budget.** Counting "since the last format" makes every autofix a
+  laundering step; count the whole run.
+
+  And the case that decides all three in advance: **when you already
+  intend to rewrite a file, decide the whole-read license before the
+  first slice, not after the third.** A rewrite is a planned multi-region
+  read by definition, so it is licensed up front — reaching that
+  conclusion after paying for slices means paying for both.
+
   **An identifier that names something on both sides of the chain
   boundary spans two domains.** At least `leader`, `market` and `vault`
   each name a host-side Rust binding *and* an on-chain account or field
@@ -236,6 +271,25 @@ argument was *not* the reason — see that step for why.)
   next call, anchored to the host-side use, answered it in one file.
   Anchor to the use (`ctx.leader`) or scope with `--dir` to the crate.
   This is pattern precision, a separate axis from output width.
+
+  **Before grepping for a concept, say the widest branch of your pattern
+  out loud.** If it is an ordinary English word — `age`, `time`, `state`,
+  `value`, `elapsed`, `drain` — it matches prose and identifiers
+  throughout, and the result is the file. Anchor it (`\.age`, `fn drain`,
+  `age:`), or grep the distinctive branch alone and widen only if that
+  comes back empty. The generalizable half: **an alternation's cost is set
+  by its worst branch, not by its intent** — a pattern is only as narrow
+  as the commonest word in it.
+
+  **A short token that is a prefix or substring of common identifiers
+  needs a word-boundary anchor.** Before sweeping for a token under about
+  five characters, ask what common words contain it: `pip` returns
+  `pipeline`, `piped`, `pip install`; `sig` returns `signature`,
+  `signer`; `env` returns `environment`, `envelope`. Anchor with
+  `\b…\b` — `\bpips?\b` for a plural — or accept that most of the result
+  is noise you will pay to skim. Measured at ~2.1k for a ~10-line answer
+  where the anchored form was a few hundred tokens. This bounds **what
+  matches at all**, which is a different axis from the width rules above.
 
   **A whole-issue read is for an issue's CONTENT; a decision that turns
   on a field is a field-selected `list_issues`.** Reading an issue whole
@@ -410,10 +464,37 @@ argument was *not* the reason — see that step for why.)
     column zero and never with a leading-space alternative; the map
     tells you which slice you actually want.
 
+    **Make the map a PRECONDITION, not a recommendation.** A purpose
+    trigger is a judgement the reader makes about themselves, which is
+    exactly what the line-count trigger was replaced for being — and the
+    session that landed the purpose reframing violated it on its own
+    second-largest result. So state the mechanical form: a `Read` with no
+    `offset`/`limit` on a file over ~300 lines should be **preceded by a
+    map in the same turn**. That makes the omission visible in the
+    transcript rather than being a private call, which is the only part of
+    this a later pass can check.
+
+    Note the asymmetry that motivates it: the search rules **act** —
+    `search_source.py` clamps a wide `--context` on a single named file,
+    degrades past a size threshold, and refuses a comment-marker section
+    map — while the read rules only advise. That gap is the finding, and
+    the honest fix is a read tool that degrades a whole-file request the
+    way the search tool does; the precondition above is the cheap step
+    available without one.
+
     **Trigger that on the QUESTION you are asking, not the line
-    count.** Written as a size threshold ("any `Read` over ~300 lines")
-    it becomes a judgement call exactly at the boundary, and it silently
-    exempts the files most often read to *learn a convention*. Measured:
+    count** — the two compose, and the precondition above does not
+    reinstate the threshold as the *decision*. Read them as a floor and
+    a rule: the ~300-line precondition is a **mechanical,
+    transcript-visible** check that a map was taken, and it decides
+    nothing about whether the read was warranted; the purpose trigger is
+    what decides that, at any size. A read can satisfy the floor and
+    still be wrong, and a 200-line read to learn a convention is still a
+    slice.
+
+    Written as a size threshold *on its own* ("any `Read` over ~300
+    lines") it becomes a judgement call exactly at the boundary, and it
+    quietly exempts the files most often read to *learn a convention*. Measured:
     a **310-line** module — one line past the threshold, and reading as
     a small file — was read whole at **~3.4k**, that session's single
     largest result of any kind, when what was needed was three regions
@@ -468,6 +549,41 @@ argument was *not* the reason — see that step for why.)
     values were never used from the map and both came from the slice
     that followed. Pick the single field that **identifies** a record,
     and take everything else from the slice.
+
+    **A SQL migration is a comment-heavy file, and reads as if it is
+    not.** The comment-alternation rule above names a `Makefile` and a
+    prose doc, so a `.sql` file looks like source and gets mapped with
+    `--` included — but this repo's migrations carry the explanatory
+    prose the house style asks for, so the comments routinely outweigh
+    the statements. Map a migration on its **statement** shape
+    (`^CREATE|^ALTER|^INSERT|^DROP|^COMMENT ON`) and never on `^--`.
+    Committed `search_source.py` now refuses the latter outright.
+
+    **Merge ADJACENT regions off the map into one slice read.** Once the
+    map has named the regions, two that sit a few lines apart are one
+    read, not two: the gap between them is cheaper than a second round
+    trip and a second result header. The map is what makes this visible —
+    it gives you the line numbers before you spend anything, which is
+    precisely when the merge is free to notice.
+
+- **Sweep for call sites before compiling, not by compiling.** When a
+  change alters a signature, a public type, or a field shape, name the
+  consuming files in one call and fix them in one pass:
+
+  ```sh
+  python3 .claude/tools/search_source.py '<symbol>' --files-only
+  ```
+
+  That is a few hundred tokens; the compile then **verifies** rather than
+  **discovers**. Same reasoning as hoisting a repeated sweep into one
+  call — run it once, centrally, instead of letting a slow oracle dribble
+  the answer out one error at a time.
+
+  State the trigger precisely, because "let the compiler find it" is a
+  genuinely good habit for *checking*: the anti-pattern is using it to
+  **enumerate**. The tell is consecutive compiles returning the **same
+  error class at different sites**. Each of those builds is wall-clock
+  plus a result, and the sweep would have named all of them at once.
 
 - **Don't read a file you are about to delete, or one you just
   authored.** Two cases adjacent to "never re-fetch what's already in
@@ -815,6 +931,17 @@ argument was *not* the reason — see that step for why.)
   retries and peer-dependency trees: route it through the quiet runner
   (`python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`).
 
+  **A log tail's depth follows the log's HOMOGENEITY, not its length.** A
+  crash-loop, a retry backoff or a poll loop repeats one line, so
+  `--tail 5` is the whole signal; widen only when the tail is
+  heterogeneous — a startup sequence, a stack trace, interleaved
+  services. Start narrow and widen: re-reading a log is cheap, un-reading
+  one is impossible. This is the same shape as taking `--files-only`
+  before context on a search, applied to a transport the rules above do
+  not reach — a container log is verbose by **repetition** rather than by
+  cascade. It covers `docker logs --tail`, a systemd journal read,
+  `kubectl logs --tail`, and `tail -n` on any service log alike.
+
 - **Verifying a UI change: assert programmatically, screenshot
   CLIPPED.** A screenshot read back is a top-tier context sink and
   nothing here said so. Measured: five full-viewport PNGs cost **≈105k
@@ -841,10 +968,29 @@ argument was *not* the reason — see that step for why.)
   - **Reserve a full viewport** for when the composition itself is the
     question, take **at most one**, and consider a smaller viewport or a
     reduced `deviceScaleFactor`.
+  - **Capture at `deviceScaleFactor: 1`.** This is the second dimension,
+    and the rule above bounded only the *extent* — which reads as
+    complete, because clipping is the salient waste and gets followed
+    while the resolution goes unexamined. A 2x capture is **four times the
+    bytes** for a judgement 1x already answers. Reserve 2x for a question
+    genuinely about rendering fidelity — hinting, sub-pixel spacing, a
+    hairline border — and say so when you take one.
 
   The lever is *not* "don't screenshot" — those full-frame images were
   shown to the operator and drove real design decisions. It is that the
   default should be clipped and the count deliberate.
+
+  **And one case where the image IS the cheaper reliable evidence.**
+  Verifying a `:hover` / `:focus` / `:active` style, do **not** read it
+  back with `getComputedStyle`, page-side or over CDP: a forced
+  pseudo-state does not surface in any computed-style read, and
+  `page.hover()` does not produce `:hover` in headless at all. Both return
+  the **resting** value with no error, which looks exactly like a broken
+  CSS rule — so the cheap assertion is not merely weaker here, it is
+  actively misleading. Force the state with CDP `CSS.forcePseudoState` and
+  **compare rendered captures**, or read `CSS.getMatchedStylesForNode`.
+  The assert-don't-screenshot rule above is right for layout and wrong for
+  state styling, and this is the exception that says which is which.
 
 - **After a formatter rewrites a file you are still editing, take ONE
   bounded read covering all the remaining edits' regions.** A formatter
@@ -1096,6 +1242,30 @@ argument was *not* the reason — see that step for why.)
   echo — `json.tool` re-emits the **whole file** into context, and on
   a large `settings.local.json` that dump has landed twice in one
   pass.
+
+## When the harness prefers Bash
+
+A harness may nudge toward doing things in the shell, and in general that
+is fine — but three of this repo's conventions **win** wherever the two
+disagree, because each is either a hard guard or a capability Bash lacks.
+This is a precedence note, not a new rule; it is written from the
+context-economy side because that is where the reader actually is when the
+nudge arrives.
+
+- **File mutation goes through `Edit` / `Write` regardless.** A `sed -i`
+  or a heredoc redirect is blocked or refused here, so "Bash can do the
+  job" is simply false in this repo. Implied by the shell-commands guard
+  docs; it needs saying here too.
+- **A first read of an unknown region uses `Read` with
+  `offset`/`limit`.** `cat` cannot slice, and the slice is the whole rule.
+  Reach for `sed -n 'A,Bp'` only once a map has given you the range — and
+  when you do, it counts against the slice tally above like any other
+  slice.
+- **A section map still comes first**, whichever tool draws it.
+
+One occurrence of each is enough to justify writing this down, because the
+two blocked calls can never be firmed into an allow-rule: every
+repetition is a fresh prompt or a fresh refusal.
 
 **Track consumption ideas as you go.** When something reads as
 wasteful mid-session — a payload you only needed a slice of, a call

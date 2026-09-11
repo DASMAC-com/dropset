@@ -168,11 +168,22 @@ spec while missing a criterion, with nothing signalling the omission.
 **What this verification does and does not establish.** The registration
 above was confirmed `✔ Connected` at user scope, which proves the
 credential, the endpoint and the `${LINEAR_API_KEY}` expansion. It was
-confirmed from a **subscription** session, not a Bedrock one; that
-Bedrock sessions receive it follows from the spike's established fact
-that they receive all locally configured servers, and is an inference
-rather than a direct observation. Confirm it on the next Bedrock
-session — it costs one `claude mcp list`.
+first confirmed from a **subscription** session, not a Bedrock one, so
+that Bedrock sessions receive it was initially an inference from the
+spike's established fact that they receive all locally configured
+servers.
+
+**Confirmed directly on Bedrock, 2026-09-10.** A worktree session running
+with `CLAUDE_CODE_USE_BEDROCK=1` on the `us.`-profile Opus 5 model
+received the locally configured `linear` server and drove the whole
+Linear half of its work through it — `save_issue` state transitions, two
+anchored body `patch` writes, and `list_comments`. So the inference is now
+an observation, and the `list_comments` gap named above is closed for a
+Bedrock session that has this server registered: the tool the zero-echo
+writers cannot replace is the one that was exercised.
+
+That session also received all nine locally configured servers and
+neither claude.ai connector, which is the same split the spike measured.
 
 ## Structured filing fields
 
@@ -946,6 +957,44 @@ mechanism over an arbitrary issue, and its `find` subcommand is the
 title-only projection the MCP does not offer — a compliant dedup probe
 with `limit: 5` still returns five whole issue objects (~1.9k) to answer
 a question the five titles answer alone.
+
+**A FOLD is the second exception, and it is the primary path for one.**
+A `merge-tasks` fold assembles its ops as a file, so passing them through
+the MCP costs *two* body-sized transits — reading the ops file into
+context, then the MCP's echo of the survivor's whole stored body. Both go
+away by handing the path to the committed writer:
+
+```sh
+python3 .claude/tools/linear_patch.py patch --ops <path> ENG-###
+```
+
+`patch` is a subcommand, the identifier is positional, and `--ops` takes
+the ops **file path** — the tool reads it in its own process, which is
+what makes the fold zero-echo rather than merely fewer calls.
+
+Measured on one fold: the ops file was **≈9.5k** (that session's
+second-largest result) and the `save_issue` echo **≈10.4k** (its
+largest), with 24 `save_issue` calls totalling 35.1k as the session's
+costliest tool. A later fold's ops file reached **≈53k** — 148 KB of
+folded bodies — where reading it to pass it through was not merely
+expensive but infeasible.
+
+**The safety argument survives the move**, which is why this is not a
+carve-out from the paragraph above: the tool applies the same ops with
+the same anchor matching and the same atomic abort, refusing the whole
+sequence if any single op cannot be applied. It also accepts the MCP's
+argument spellings (`old_string` / `new_string`, `from` / `to`) as
+aliases, so an ops file assembled for either path applies unchanged —
+which it did not always: a fold was once rejected on its first op with
+`'replace' needs a string 'text'`, after the fold had been composed.
+
+**And a fold's CANCELS are not body writes at all.** Canceling a
+non-survivor through `save_issue` re-echoes its whole body to change one
+enum — ≈6.0k for one cancel plus ≈6.1k for the `get_issue` before it, and
+roughly **33k** for a survivor whose body had reached 130 KB. Cancel them
+through `board_batch.py fields` in a single call. The `duplicateOf`
+marker is dropped with the echo: it is not an issue field, and the
+survivor's `# Part` headings already name every folded issue.
 
 `edges` is covered under "Blocking relations" below — it executes an
 operator's decision and is never called by automation.

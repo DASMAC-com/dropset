@@ -158,21 +158,15 @@ class CallContract(DriverStub, unittest.TestCase):
         self._stub(stdout=json.dumps({"ok": True, "names": ["◐ eng-914", "Default"]}))
         self.assertEqual(iterm_api.session_names(), ["◐ eng-914", "Default"])
 
-    def test_open_window_returns_the_tty(self):
+    def test_open_tabs_returns_the_ttys(self):
         self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/ttys004"]}))
-        self.assertEqual(iterm_api.open_window("task 1"), "/dev/ttys004")
+        self.assertEqual(iterm_api.open_tabs(["task 1"]), ["/dev/ttys004"])
 
-    def test_an_empty_ttys_list_is_none_not_an_IndexError(self):
-        # `.get("ttys", [None])[0]` applies its default only when the key is
-        # ABSENT, so `"ttys": []` used to raise IndexError — escaping past
-        # session_dispatch, which catches only ItermUnavailable and whose whole
-        # job on that path is printing the verb you can run by hand.
-        self._stub(stdout=json.dumps({"ok": True, "ttys": []}))
-        self.assertIsNone(iterm_api.open_window("task 1"))
-
-    def test_a_null_ttys_is_none_not_a_TypeError(self):
-        self._stub(stdout=json.dumps({"ok": True, "ttys": None}))
-        self.assertIsNone(iterm_api.open_window("task 1"))
+    # A retired `open_window` op used to need its own defensive tty-reading
+    # tests here, because it indexed `ttys[0]` directly. `open_tabs` reads the
+    # list positionally and pads it, and `OpenTabsPositional` below covers an
+    # empty, a null, a short and an over-long response — so nothing was lost
+    # with those cases; the coverage moved rather than going away.
 
     # --- what _call SENDS, not just what it parses ---------------------------
 
@@ -185,12 +179,15 @@ class CallContract(DriverStub, unittest.TestCase):
         self.assertIn("--_driver", self.sent["argv"])
         self.assertNotIn("session_names", " ".join(self.sent["argv"]))
 
-    def test_open_window_sends_its_command_verbatim(self):
+    def test_open_tabs_sends_a_lone_command_verbatim(self):
+        # The substrate word has to survive the wire intact: a dispatched
+        # `task local` that arrived as a bare `task` would silently move the
+        # session onto Bedrock.
         self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a"]}))
-        iterm_api.open_window("task local 1234")
+        iterm_api.open_tabs(["task local 1234"])
         self.assertEqual(
             self.sent_request(),
-            {"op": "open_window", "command": "task local 1234"},
+            {"op": "open_tabs", "commands": ["task local 1234"]},
         )
 
     def test_open_tabs_sends_every_command_in_order(self):
@@ -206,7 +203,7 @@ class CallContract(DriverStub, unittest.TestCase):
         # the failure it produces is the bad kind: the driver is killed
         # mid-batch with tabs already open and typed into.
         self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a"]}))
-        iterm_api.open_window("task 1")
+        iterm_api.open_tabs(["task 1"])
         one_shot = self.sent["timeout"]
 
         self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a"] * 5}))

@@ -1,19 +1,26 @@
 """Permission-rule generalization and coverage — the source of truth.
 
-Pure-stdlib helpers shared by ``firm_last.py`` (the fast-firm tool) and
-``allowlist.py`` (the ``firm-perms`` / ``housekeeping`` reader), and pointed at
-by the ``firm-perms`` skill's prose. Turns a just-approved tool call into the
+Pure-stdlib helpers behind ``allowlist.py`` (the firming and ``housekeeping``
+reader) and ``hook_wiring.py``. Turns a just-approved tool call into the
 reusable allow-rule it should have been (``generalize``), decides whether an
 allowlist already covers a rule (``is_covered``), and flags the one dangerous
 outcome the safety floor forbids (``is_bareverb_wildcard``).
+
+**The ``generalize`` half currently has no caller.** It served
+``firm_last.py``, the fast-firm tool retired with the ``firm-perms`` skill on
+2026-09-10; ``allowlist.py`` uses only the coverage and settings halves. It is
+kept for now because the generalization rules it encodes are the ones
+``docs/conventions/shell-commands.md`` states, and a caller that firms a rule
+from a raw tool call would need them again — but treat it as unreferenced, not
+as load-bearing.
 
 It also owns the ``settings.local.json`` read/write pair
 (``load_settings`` / ``write_settings`` / ``firm_into``) so every tool that
 appends a rule does it one way — and, crucially, does it **without a prior
 whole-file read** of an allowlist that can run to several hundred entries.
 
-The generalization rules mirror ``docs/conventions/shell-commands.md`` and the
-``firm-perms`` skill: widen the *variable* parts (worktree tag, trailing args)
+The generalization rules mirror ``docs/conventions/shell-commands.md``:
+widen the *variable* parts (worktree tag, trailing args)
 while keeping the command + subcommand prefix literal, so a rule never grants
 more verb than the approval did.
 """
@@ -95,7 +102,7 @@ def main_settings_path() -> Path | None:
 # subcommand to pin, so "keep the subcommand literal" has nothing to bite on,
 # and granting the whole program grants only reading. So ``Bash(grep:*)`` is
 # **acceptable by design**; the `cruft` audit not flagging it is correct, and so
-# is `firm_last` firming it.
+# is `allowlist.py add` firming it.
 #
 # Recorded because a filed finding asserted the opposite — that the write path
 # refuses such a rule while the audit path lets it through, making "the two

@@ -216,6 +216,134 @@ class ListingTests(unittest.TestCase):
         self.assertIn("[Hardening]", lines[0])
 
 
+class BlockedMarkerTests(unittest.TestCase):
+    """The listing answers "is this blocked" without a full-body fetch.
+
+    Both directions have to be read: Linear models one edge from both ends, and
+    which side carries it depends on which issue it was created from — so reading
+    one side is right only half the time.
+    """
+
+    @staticmethod
+    def _blocker(identifier, state_type="unstarted"):
+        return {"identifier": identifier, "state": {"type": state_type}}
+
+    def test_a_blocked_by_relation_on_the_issue_is_read(self):
+        issue = _issue(10)
+        issue["relations"] = {
+            "nodes": [{"type": "blocked_by", "relatedIssue": self._blocker("ENG-9")}]
+        }
+        self.assertEqual(bb.blockers_of(issue), ["ENG-9"])
+        self.assertIn("[blocked by ENG-9]", format_listing([issue])[0])
+
+    def test_an_inverse_blocks_relation_is_read_too(self):
+        issue = _issue(10)
+        issue["inverseRelations"] = {
+            "nodes": [{"type": "blocks", "issue": self._blocker("ENG-8")}]
+        }
+        self.assertEqual(bb.blockers_of(issue), ["ENG-8"])
+
+    def test_a_COMPLETED_blocker_no_longer_blocks(self):
+        # The case the first eight tests all missed, because every one of them
+        # used an open blocker. A finished blocker is the STEADY STATE of a
+        # curated edge, so counting it makes the marker permanent — and a
+        # permanent marker is a spurious edge, which drops the issue out of the
+        # operator's available view. That is the expensive direction.
+        for state_type in ("completed", "canceled"):
+            with self.subTest(state=state_type):
+                issue = _issue(10)
+                issue["inverseRelations"] = {
+                    "nodes": [
+                        {"type": "blocks", "issue": self._blocker("ENG-8", state_type)}
+                    ]
+                }
+                self.assertEqual(bb.blockers_of(issue), [])
+                self.assertNotIn("blocked by", format_listing([issue])[0])
+
+    def test_a_completed_blocker_on_the_defensive_branch_is_also_excluded(self):
+        issue = _issue(10)
+        issue["relations"] = {
+            "nodes": [
+                {
+                    "type": "blocked_by",
+                    "relatedIssue": self._blocker("ENG-9", "completed"),
+                }
+            ]
+        }
+        self.assertEqual(bb.blockers_of(issue), [])
+
+    def test_a_live_blocker_survives_beside_a_completed_one(self):
+        # The mixed case: filtering must not be all-or-nothing.
+        issue = _issue(10)
+        issue["inverseRelations"] = {
+            "nodes": [
+                {"type": "blocks", "issue": self._blocker("ENG-7", "completed")},
+                {"type": "blocks", "issue": self._blocker("ENG-8", "started")},
+            ]
+        }
+        self.assertEqual(bb.blockers_of(issue), ["ENG-8"])
+
+    def test_a_blocker_with_no_state_selected_is_treated_as_live(self):
+        # Fail-safe direction: if the query ever stops selecting state, report the
+        # blocker rather than silently clearing every marker.
+        issue = _issue(10)
+        issue["inverseRelations"] = {
+            "nodes": [{"type": "blocks", "issue": {"identifier": "ENG-8"}}]
+        }
+        self.assertEqual(bb.blockers_of(issue), ["ENG-8"])
+
+    def test_the_listing_query_selects_the_nested_state(self):
+        # The filter is worthless if the query does not fetch what it filters on.
+        self.assertIn("state { type }", bb._ISSUES_QUERY)
+
+    def test_an_unblocked_issue_gets_no_marker(self):
+        issue = _issue(10)
+        issue["relations"] = {"nodes": []}
+        self.assertEqual(bb.blockers_of(issue), [])
+        self.assertNotIn("blocked by", format_listing([issue])[0])
+
+    def test_a_non_blocking_relation_is_ignored(self):
+        # A `related` edge is not a blocker, and treating it as one would drop an
+        # available issue out of the Next view — the expensive direction.
+        issue = _issue(10)
+        issue["relations"] = {
+            "nodes": [{"type": "related", "relatedIssue": {"identifier": "ENG-7"}}]
+        }
+        self.assertEqual(bb.blockers_of(issue), [])
+
+    def test_the_same_blocker_from_both_sides_appears_once(self):
+        issue = _issue(10)
+        issue["relations"] = {
+            "nodes": [{"type": "blocked_by", "relatedIssue": {"identifier": "ENG-9"}}]
+        }
+        issue["inverseRelations"] = {
+            "nodes": [{"type": "blocks", "issue": {"identifier": "ENG-9"}}]
+        }
+        self.assertEqual(bb.blockers_of(issue), ["ENG-9"])
+
+    def test_several_blockers_are_all_named(self):
+        issue = _issue(10)
+        issue["relations"] = {
+            "nodes": [
+                {"type": "blocked_by", "relatedIssue": {"identifier": "ENG-1"}},
+                {"type": "blocked_by", "relatedIssue": {"identifier": "ENG-2"}},
+            ]
+        }
+        self.assertEqual(bb.blockers_of(issue), ["ENG-1", "ENG-2"])
+
+    def test_missing_relation_keys_are_not_an_error(self):
+        # An issue fetched by a path that does not select relations must not crash
+        # the listing.
+        self.assertEqual(bb.blockers_of(_issue(10)), [])
+
+    def test_the_listing_still_carries_no_description(self):
+        issue = _issue(10)
+        issue["relations"] = {
+            "nodes": [{"type": "blocked_by", "relatedIssue": {"identifier": "ENG-9"}}]
+        }
+        self.assertNotIn("description", "\n".join(format_listing([issue])))
+
+
 class ApplyFieldsTests(unittest.TestCase):
     def setUp(self):
         self.by_number = index_by_number([_issue(10), _issue(11)])

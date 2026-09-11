@@ -53,6 +53,7 @@ Prints JSON::
                          "has_source": true}},
       "code_crates": 1,           // trees with an actual source change
       "runs_rust_suites": false,   // any path outside the CI code filter?
+      "rust_reachable": false,     // any path a cargo build actually consumes?
       "runs_artifact_gates": false,// any generation input touched?
       "ready": true,               // exactly `not blockers`
       "blockers": []               // why ready is false, if it is
@@ -120,6 +121,18 @@ DIFF_EXCLUDES = (
     # read. The JSON it is generated FROM stays in the diff, which is where a
     # query change should be reviewed.
     "market-data/grafana/sql",
+    # The conformance vectors, emitted by the committed generators and gated by
+    # `make check-conformance-vectors` — generated output in exactly the sense the
+    # entries above are, and reviewing their diff by eye adds nothing.
+    #
+    # On a vectors PR the omission dominated the fan-out: a 5783-line diff of
+    # which ~3460 lines were regenerated vector JSON, so even the `--split` tests
+    # slice came out at 4872 lines and the category split could not isolate the
+    # 1532 lines of hand-written material either. The two lenses handed the full
+    # diff were the two most expensive of that review, at 2.6-2.9x the cheapest,
+    # and both had been told to "skim past" the JSON — prompt discipline standing
+    # in for a slice that should not have contained it.
+    "sdk/conformance",
 )
 
 # Directories a recursive source search must never descend into. These are
@@ -265,6 +278,65 @@ def touches_ci_code(paths) -> bool:
     wrong.
     """
     return any(not matches_any(p, CODE_FILTER_EXCLUDES) for p in paths)
+
+
+#: Paths a `cargo` build or test can actually reach. Deliberately a positive
+#: list, unlike `CODE_FILTER_EXCLUDES`: the question here is "can this diff move
+#: a Rust suite's result", which is answered by what the build *consumes*, not by
+#: what CI's filter happens not to exclude.
+#: Note this is deliberately NOT "Rust source" — a Rust suite's result also moves
+#: with the DATA it reads, and a source-only list would license skipping the one
+#: suite such a diff can break. The migration fence tests are Rust tests whose
+#: input is `.sql`; the conformance gate replays committed vector JSON; and cargo
+#: consumes `.cargo/config.toml` on every invocation.
+RUST_REACHABLE = (
+    "**/*.rs",
+    "**/Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "**/build.rs",
+    "**/*.s",
+    # Data inputs a Rust suite reads. Omitting these made the skip the flag
+    # licenses unsound for exactly the diffs most able to break a suite.
+    "**/migrations/**",
+    "sdk/conformance/**",
+    ".cargo/config.toml",
+)
+
+
+def rust_is_reachable(paths) -> bool:
+    """Whether any path in the diff is reachable from the Rust build.
+
+    **This is a different question from `touches_ci_code`, and conflating them
+    misfires in both directions.** That flag mirrors CI's path filter — "will CI
+    run the suites" — and is fail-open by design; it does not answer "can this
+    diff change the suites' outcome", which is the only thing local mirroring
+    buys.
+
+    Measured on one 45-file diff with **zero** Rust files: `runs_rust_suites`
+    read true solely because `.dockerignore` is not on the test workflow's
+    exclude list — correctly, since it affects the Docker build context — and the
+    session ran both Rust suites against what was effectively the base's code,
+    where they could not have failed. That misfire is common rather than exotic:
+    the flag reads true for any diff touching the dockerignore, a Makefile, or
+    any non-Rust path the filter does not exclude.
+
+    So a caller mirroring CI's Rust suites should skip when this is ``False``
+    even though `runs_rust_suites` is ``True``, and record the skip with its
+    reason. The inverse half of the same principle — run a cheap check the diff
+    *can* break even when it misses an enumerated trigger list — is a judgement
+    the skill still makes, since it spans checks this tool does not model.
+
+    **The list covers DATA inputs, not only Rust source, and that is the part
+    worth stating.** A source-only list reads as complete and is not: a
+    migration-only diff, or a conformance-vectors regeneration, moves a Rust
+    suite's result while touching no ``.rs`` file at all — so it would have read
+    ``False`` here and, per the rule above, skipped the only suite it could
+    break. Anything else a Rust test reads as a fixture belongs here too; when in
+    doubt, add it, because the failure direction of an over-broad entry is a
+    suite that runs unnecessarily.
+    """
+    return any(matches_any(p, RUST_REACHABLE) for p in paths)
 
 
 def matches(path: str, pattern: str) -> bool:
@@ -1055,7 +1127,18 @@ def gate(
     else:
         gate_paths = [f["path"] for f in files]
     runs_rust_suites = touches_ci_code(gate_paths)
-    runs_artifact_gates = touches_generation_input(gate_paths)
+    rust_reachable = rust_is_reachable(gate_paths)
+    # The artifact gate consults only the SOURCE-bearing paths. A docs-only path
+    # under a generation-input tree is provably incapable of staling the artifact
+    # generated from that tree, and firing the gate for one buys three multi-minute
+    # builds to confirm nothing moved.
+    #
+    # The flag stays fail-OPEN everywhere else — that generosity is correct for
+    # the marginal case, such as a Rust crate a generator depends on
+    # transitively. This narrows exactly one case: the matching paths carry no
+    # source at all.
+    gate_source_paths = [p for p in gate_paths if slice_for(p) != "docs"]
+    runs_artifact_gates = touches_generation_input(gate_source_paths)
 
     base_fresh = not base_ahead
     diff_empty = diff_lines == 0
@@ -1133,6 +1216,7 @@ def gate(
         "crates": crates,
         "code_crates": sum(1 for b in crates.values() if b["has_source"]),
         "runs_rust_suites": runs_rust_suites,
+        "rust_reachable": rust_reachable,
         "runs_artifact_gates": runs_artifact_gates,
         "ready": not blockers,
         "blockers": blockers,
@@ -1163,6 +1247,7 @@ GATE_ONLY_FIELDS = (
     "ready",
     "blockers",
     "runs_rust_suites",
+    "rust_reachable",
     "runs_artifact_gates",
 )
 

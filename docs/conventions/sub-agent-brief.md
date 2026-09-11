@@ -167,6 +167,7 @@ on-topic agent from straying into an expensive tangent.
 
 A sub-agent approval that still re-prompts despite this brief means
 the brief **leaked** — the agent emitted shell the brief forbids.
-That's a prompt to tighten, not a rule to allow-list; `firm-perms`
-sets such approvals aside and names the emitting agent so its prompt
-gets fixed at the source.
+That's a prompt to tighten, not a rule to allow-list: a malformed
+shape (a pipe into `head`, a heredoc) can never reduce to a stable
+allow-rule at all, so fix the emitting agent's prompt at the source
+rather than trying to firm the approval.
