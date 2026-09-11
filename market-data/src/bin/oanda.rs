@@ -29,8 +29,20 @@ use std::time::Duration;
 /// The value written to `cex_prices.source`.
 const SOURCE: &str = "oanda";
 
+/// The roster polled when `PRODUCT_IDS` is unset, matching this service's
+/// `OANDA_PRODUCT_IDS` default in `infra/localnet/docker-compose.yml` —
+/// `market-data/tests/roster_compose_agreement.rs` pins the two together.
+///
+/// **Deliberately its own, not shared with the other two keyed FX venues.**
+/// v20 is direction-fixed, so `CAD-USD` is served as `USD_CAD` inverted
+/// (`fx::oanda_instrument`) and a pair this vendor lists the other way round is
+/// a fact about the venue. Compose keeps `OANDA_PRODUCT_IDS` off the shared
+/// `FX_PRODUCT_IDS` chain for the same reason, and this mirrors it.
+const DEFAULT_PRODUCTS: &str = "AUD-USD,CAD-USD,EUR-USD,GBP-USD";
+
 const DEFAULTS: FxDefaults = FxDefaults {
     base_url: "https://api-fxpractice.oanda.com",
+    default_products: DEFAULT_PRODUCTS,
     granularity_secs: 60,
     poll_interval_secs: 60,
     max_buckets_per_request: 5_000,
