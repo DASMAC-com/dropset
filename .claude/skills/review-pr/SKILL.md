@@ -959,8 +959,22 @@ already being asked to start the review.
    rebase that leaves the merge-union dictionary unsorted
    produces exactly the same benign one-round fail-then-fix.
 
-   **Run cspell over the changed files FIRST when the change
-   authors prose.** New technical terms are known to the author
+   **Run cspell over the changed files FIRST whenever the diff
+   adds ANY comment, doc-comment or markdown** — which in this
+   repo is nearly every diff, since the migrations and tests
+   carry the explanatory prose the house style asks for. Do
+   **not** reserve this for changes that look like
+   documentation: the trigger is the condition, not the diff's
+   perceived category. Stated as "when the change authors prose"
+   it read as a docs-diff rule and was skipped by a session that
+   then paid the documented cost twice, in two separate rounds —
+   four unknown words, then two more. All six were authored by
+   that session and knowable up front, and **three of the first
+   four were British spellings** (an `-our` ending, an `-ise`
+   verb), which fail by construction against a US dictionary and
+   are the most predictable category there is.
+
+   New technical terms are known to the author
    in advance, so discovering them one per round is pure
    waste — measured at three serial rounds for three words, and
    at **26 `make lint` runs (~12.8k of failure tails)** on a
@@ -1073,6 +1087,29 @@ already being asked to start the review.
      Cheaper still where it is possible: **order the edits
      before the formatter runs** — batch them, then let the
      hook reformat once at the end.
+
+     **The count is SESSION-CUMULATIVE, not since the last
+     format.** Track total lines read of a file for the whole
+     run, and once that passes roughly half the file take one
+     bounded read of the remaining regions instead of another
+     slice — *regardless* of how many formatter runs intervened.
+     An autofix invalidates offsets; it does **not** reset the
+     budget. Counting from the last format makes every autofix a
+     laundering step.
+
+     **A markdown TABLE is the sharp case, because an autofix
+     realigns every row.** So collect every row you intend to
+     change and apply them in **one** edit pass before linting;
+     where several rows must change, rewrite the whole table body
+     in a single `Edit` rather than one `Edit` per row. This
+     composes with the plan-the-remaining-edits rule rather than
+     replacing it — the addition is the **trigger**, which is
+     *editing a markdown table at all*, not the file's size.
+
+     And name `cat -n <file>` as a whole-file read subject to the
+     same four licensing conditions as `Read`. It does not read
+     as one at the call site, which is how a 99-line file got
+     bought whole for a one-region edit.
 
      **To SEE what a formatter changed, read the slice
      files — never `git diff` the file.** A formatter that
@@ -1264,6 +1301,19 @@ already being asked to start the review.
    and returns **one** compact JSON object instead of six tool
    results:
 
+   **Finish your own edits to the diff before generating
+   slices.** Composing the lens briefs is when you notice your
+   own stale prose — fix it first, in one pass, then generate. A
+   slice regenerated mid-composition invalidates every brief
+   already written against it, and a lens handed a stale slice
+   reviews a tree that no longer exists. The sharper form: take a
+   first read-through of the diff looking specifically for
+   self-inflicted staleness before generating; on one measured
+   run that would have caught three of four regenerations in one
+   go. The correctness argument is stronger than the token one —
+   a lens spawned against a stale slice is a **silent** failure
+   of that lens.
+
    ```sh
    python3 .claude/tools/review_diff.py --base <base> --split \
      --out <scratchpad>/review-diff.txt
@@ -1313,7 +1363,21 @@ already being asked to start the review.
    receives `--only '.claude/tools/**'`, a
    conventions-freshness lens receives `docs/conventions/**`
    plus `CLAUDE.md`. The step already computes the split and
-   the failure is simply not routing it. Measured: seven
+   the failure is simply not routing it.
+
+   **Default each lens to exactly ONE slice**, and require a
+   one-line justification in the brief for any lens receiving
+   more — stating why its question spans the seam between them.
+   Print the **slice count** beside the byte count below, so an
+   over-broad hand-in is visible at fan-out time. Inverting the
+   default is the point: handing a second slice "for context" is
+   the cheapest thing to do and the most expensive to have done.
+   This is a scoping lever only — the run that produced it had
+   all five lenses at or under cap, every one returning real
+   findings including two convergent blocking defects, so
+   nothing here argues for fewer lenses or shallower ones.
+
+   Measured: seven
    sub-agents summing **≈2.28M** of per-turn input —
    cross-check 504.8k/6, test adequacy 502.8k/6, conventions
    freshness 357.7k/5, correctness-modified 304.6k/4, skill
@@ -1341,6 +1405,17 @@ already being asked to start the review.
    agent of its session and 2.5× the cheapest substantive lens
    on the same diff (249.6k / 4 turns).
 
+   **Carry LINE NUMBERS with any inlined excerpt.** A claim
+   table gets a line-number column; a pasted excerpt states its
+   starting line. The main loop already knows them — it grepped
+   or sliced to produce the excerpt in the first place — so this
+   is a hoist of something already paid for, exactly like the
+   repo-wide-grep hoist below. The reason is not obvious from
+   either rule alone: the pre-emit gate makes `file:line` a
+   **deliverable**, so a brief that omits line numbers has
+   silently made a file read mandatory however complete its
+   excerpts are.
+
    A doc-accuracy lens adjudicates a bounded list of
    **claims**, not a codebase — and the main loop wrote those
    docs, so it already knows which code each claim rests on.
@@ -1366,12 +1441,40 @@ already being asked to start the review.
    **3,297 lines**. No prompt discipline reaches that; the
    input floor is the slice.
 
-   So treat slice size as its own dial. When a slice runs past
-   roughly a thousand lines, subdivide it — by crate, by
-   directory, or by the natural seam the diff already has — and
-   give each sub-slice its own lens instance, rather than
-   spending another round rewording the brief. Prompt
-   tightening has saturated; slice granularity has not.
+   So treat slice size as its own dial. **The ceiling is roughly
+   500 lines per lens slice**, and past it the slice is
+   subdivided by `--only` rather than the brief being reworded
+   again — by crate, by directory, or by the natural seam the
+   diff already has, giving each sub-slice its own lens
+   instance. Prompt tightening has saturated; slice granularity
+   has not.
+
+   This used to say "past roughly a thousand lines", and that
+   threshold is too loose: one run cleared it on two slices
+   while still overrunning. Measured with **every** prompt-side
+   discipline applied simultaneously, lens input ran
+   **2.2–3.6× the documented exemplars** and **four of six**
+   agents overran their turn cap by exactly one. The residual
+   variance tracked **slice size**, not brief quality.
+
+   Two bounds on that number, both of which stop it being
+   applied mechanically:
+
+   - **A prose or cross-file-consistency lens is the hardest to
+     subdivide, and usually should not be.** Cross-file
+     consistency *is* its question, so splitting the slice
+     destroys the relation it checks. In that same run the prose
+     lens was the most expensive, was deliberately handed the
+     whole 1,536-line prose slice for exactly that reason, and
+     found six real contradictions. Accept the cost there and
+     subdivide everywhere else — which is a different
+     instruction from applying one ceiling uniformly.
+   - **Expect the exemplar band to shift with diff size.** At a
+     509-line slice with every discipline applied, expect
+     ~440k, not ~200k. The published exemplars (90.4k / 102.9k /
+     ~145k) came from *much* smaller diffs, so comparing a
+     large-diff lens against them reads as a failure when it is
+     the floor.
 
    **The subdivision decision is PER LENS, not per fan-out.**
    Stated only as "subdivide an oversized slice", it reads as
@@ -1772,6 +1875,31 @@ already being asked to start the review.
    A missing preamble is a **stop**, exactly as a stale base
    is. Re-emit it and re-check; do not spawn a lens that will
    have to invent its own framing.
+
+   **Make that check mechanical, not a remembered step.** The
+   failure above was a *session resume* silently stripping the
+   file, and a step that says "confirm the file exists" is
+   satisfied by a reader who believes it does. So assert it the
+   way the `ready` gate is asserted: check the path in the same
+   command sequence that spawns, and let a missing file fail
+   loudly there. A resume cannot strip a check that runs at the
+   spawn gate; it can always strip one that ran earlier.
+
+   **Scope the whole-read license to the EXCERPT, not the
+   file.** Before reading a file whole in order to brief a lens,
+   **name the region you expect to excerpt**. If that region is a
+   known section rather than the file, map and slice — the
+   excerpt is what gets briefed either way, so the license should
+   extend to the excerpt's span, not the file's. The
+   edit-plus-brief condition is easy to read as licensing the
+   whole file whenever a brief is involved, and that is one step
+   too generous.
+
+   And the case worth naming, because it recurs whenever a diff
+   touches sibling implementations: **when two files are
+   near-identical in the region of interest, read one and diff
+   the other against it.** A near-duplicate sibling is the
+   cheapest possible slice.
 
    Then give each Agent the paths plus its own scope:
 
@@ -2256,6 +2384,40 @@ already being asked to start the review.
    Waiting is sometimes right and sometimes not; what is never
    right is spending the fan-out without knowing.
 
+   **And gate a consolidation straggler fix on that same
+   report.** When this diff consolidates something — a renamed
+   convention, a retired helper, a moved rule — the last
+   straggler references are exactly what an in-flight PR is most
+   likely to reintroduce, so fixing them before the overlap
+   report is in is work that may need redoing. Read the report
+   first, then decide whether the stragglers are yours to fix now
+   or belong to whichever PR lands second.
+
+   **Ask whether an AMENDMENT is pending before you spawn.** If
+   a planning session, a peer, or the operator has work queued
+   for this branch — a measurement in flight, a decision
+   expected, a review of a related PR that might change this one
+   — the fan-out is about to review a diff that changes.
+   `ListAgents` shows whether a planning session is live, and one
+   message costs a fraction of one lens. Either fold the
+   amendment in first, or spawn knowing a re-spawn is coming and
+   say so in the summary.
+
+   Measured: a planning session sent a performance rewrite of a
+   change's core query **after** the five-lens fan-out and the
+   adversarial cross-check had both completed. The rewrite was
+   correct and landed — but absorbing it cost a **sixth
+   sub-agent** (316.5k / 5 turns) because the cross-check had
+   reviewed a diff that no longer existed, plus two further full
+   re-verify cycles and a lint failure cycle each time. Against a
+   fan-out of 2.41M across seven agents, that sixth agent was
+   ~13% — spent entirely on **arrival order**, not content.
+
+   When an amendment does land after the fan-out, the answer is
+   a **scoped re-review of just the amendment**, not a full
+   re-fan-out. That is what the measured session did, and it
+   worked; it simply had no rule telling it to.
+
    **Scale the fan-out to the diff.** The full lens set
    below plus the step-6 cross-check is the right spend for
    a substantial diff with real new logic (a new
@@ -2716,6 +2878,19 @@ already being asked to start the review.
      "nobody told me" from "I must go check", and it will
      always choose to check.
 
+     **The credential negative is the standing instance of
+     this**, so pre-compute it rather than judging it per run.
+     Before spawning a security lens, run one scoped sweep for
+     credential-shaped strings over the diff's files and pass
+     the result as an established fact, phrased as the negative:
+     "no real vault name, item name or key id appears in any
+     tracked file in this diff; only placeholder shapes, at
+     these four lines". Every security lens on an infra diff
+     needs it and it is cheap to compute centrally. This is
+     **input** scoping, not lens-count scoping — the lens that
+     produced this was right to run and returned a clean verdict
+     on a genuine trust boundary.
+
    - **Hoist every repo-wide grep into the main loop — run it
      once, here, and hand the lens the hit-list.** This is
      **unconditional for any "verify X across the repo" ask**,
@@ -3068,8 +3243,28 @@ already being asked to start the review.
 
    Spawn parallel sub-agents via the `Agent` tool
    (single message, multiple calls) to review the
-   diff — each with the brief above prepended. At
-   minimum:
+   diff — each with the brief above prepended.
+
+   **While the fan-out is in flight, do not re-read git state,
+   CI state, or agent liveness.** The harness notifies on
+   completion; the base-freshness re-check is already prescribed
+   for *after* the fan-out; and nothing a poll returns can change
+   what the lenses are doing. Since "wait" is an unnatural
+   instruction, state the positive alternative: if there is
+   genuinely independent work — an existence probe whose answer
+   goes into the findings catalogue, the migration-collision
+   check, a title draft — do that. Otherwise say once that you
+   are waiting, and stop calling tools.
+
+   Two reads this does **not** forbid. The single post-push
+   `wait_for_checks --no-watch` is worth keeping, because
+   `init-pr`'s draft PR starts CI at push time, so reading the
+   state once beats assuming a wait is needed. And `ListAgents`
+   remains right when the question is which **peer sessions**
+   are live, as opposed to whether your own sub-agent has
+   finished.
+
+   At minimum:
 
    - **Correctness** — logic errors, off-by-ones,
      unhandled edge cases, incorrect assumptions,
@@ -3388,6 +3583,28 @@ already being asked to start the review.
    Do **not** fix issues that require design
    decisions — leave those as warnings for the
    human reviewer.
+
+   **Group the surviving findings BY FILE before applying
+   anything.** Any file carrying three or more findings gets
+   **one** section-map read — `read_result.py --headings` for
+   markdown, a declaration grep for source — and every
+   subsequent slice comes off that map, rather than a fresh
+   window per finding. The catalogue already exists at this point
+   and already lists a `file:line` per finding, so the grouping is
+   free. On one measured session it would have replaced ~13
+   per-finding slice calls with two maps plus targeted reads.
+
+   Two rules from the implement phase apply here unchanged, and
+   are missed because they read as belonging elsewhere. **The
+   slice tally is per file per session**, so a file this run
+   already sliced during the study phase carries those slices
+   forward — a finding naming it is not a fresh first read. And
+   **when a fix changes a signature, a public type, or a field
+   shape, sweep for the call sites before compiling**
+   (`search_source.py '<symbol>' --files-only`) and fix them in
+   one pass; the tell that you are using the compiler to
+   *enumerate* rather than to *check* is consecutive builds
+   returning the same error class at different sites.
 
    Any inline quick-check you run to confirm a fix — a bare
    `cargo check`, a scoped `cargo test -p <crate> --lib`, a
@@ -3868,6 +4085,39 @@ already being asked to start the review.
    fails **on its behavioral assertion**, not on a
    precondition. Failing on a precondition is not evidence.
 
+   **First confirm the mutated code was compiled at all.**
+   Compare the reported test count between the baseline and the
+   mutated run: equal counts plus a failure is the valid signal,
+   and a **lower** count means the invocation's scope excluded
+   the target, so the run is *inconclusive* rather than a pass. A
+   green exit is exactly what a suite that compiled nothing
+   produces.
+
+   Two shapes this catches, both of which look like a pass:
+
+   - **A feature-gated target.** When the code under test sits
+     behind a non-default feature, the command needs
+     `--all-features` (or the explicit `--features`), because the
+     default invocation is not a *narrower* run — it is a
+     **different and empty** one. Measured: a bare
+     `cargo test -p dropset-feeds` silently skips all 122
+     http-gated venue adapter tests.
+   - **A narrowed package set.** This is the same hazard on the
+     test axis that the step already documents for clippy, where
+     a crate-scoped run reported five false dead-code errors. The
+     fix is the same: take the invocation CI uses, and if you
+     must narrow, narrow `--files` / `--test`, never the package
+     set.
+
+   So: **verify by test count, not by exit code**, and after
+   adding tests confirm the reported `N passed` moved by the
+   number added. That is the assertion which turns a four-call
+   diagnosis into one. It generalizes past cargo features to any
+   conditional compilation, and it is distinct from the existing
+   "run a fast suite whole, not per module" rule — that one is
+   about scope *within* a compiled target; this is about whether
+   the target compiled the code at all.
+
    **This lever deliberately adds cost** and must not be
    folded into a saving: budget two extra suite runs per
    mutation and say so, so a later metrics pass does not read
@@ -3923,7 +4173,44 @@ already being asked to start the review.
    When it is **`false`**, **skip both Rust targets** and
    record the skip with its reason in the summary — running
    them mirrors nothing, because CI isn't running them either.
-   When it is `true`, run both.
+
+   **And skip them when `rust_reachable` is `false`, even if
+   `runs_rust_suites` is `true`.** These answer different
+   questions, and mirroring only buys something when the local
+   run *could fail because of the diff*. `runs_rust_suites`
+   mirrors CI's path filter — "will CI run the suites" — and is
+   fail-open by design; `rust_reachable` is the measured answer
+   to "does this diff touch anything a `cargo` build consumes"
+   (a `.rs` file, a `Cargo.toml`, the lockfile, a toolchain file,
+   a `build.rs`, an `.s` source). Read the flag; do not re-derive
+   it. Record the skip and its reason either way.
+
+   Measured: a 45-file diff with **zero** Rust files, zero
+   `programs/**` paths and `runs_artifact_gates: false` still
+   read `runs_rust_suites: true`, solely because `.dockerignore`
+   is not on `test.yml`'s exclude list — correctly, since it
+   affects the Rust services' Docker build context. Both suites
+   ran against what was effectively the base's code and could not
+   have failed. That misfire is common rather than exotic: the
+   flag reads true for any diff touching the dockerignore, a
+   Makefile, or any non-Rust path the filter does not exclude.
+
+   **The inverse half is a judgement you still have to make.**
+   The same session *skipped* a cheap suite the diff demonstrably
+   could break: it edited `test.yml`'s `code` filter, and
+   `review_diff.py` owns a mirror of that list which a tools test
+   asserts parity against — but step 4's trigger for running that
+   suite enumerates trees (`.claude/tools/**`,
+   `market-data/grafana/**`) and this diff touched neither. Cost
+   was a full CI round trip and a re-push. So the general
+   predicate is **reachability in both directions**: skip when no
+   path is reachable from the check even if a path filter says CI
+   will run it, and **run when some path is reachable even if the
+   diff misses the trigger's enumerated tree list**. Only the
+   first half is a flag; the second spans checks the tool does
+   not model.
+
+   When both flags are `true`, run both targets.
 
    Keep the `sdk/ts` node suite below in mind separately:
    `sdk/ts/**` sits inside the excluded set, but the **SDK**
@@ -4461,6 +4748,25 @@ already being asked to start the review.
         genuinely where the error lives.
      1. It distinguishes "the step ran and failed" from "the
         step never ran", which a tail cannot show.
+
+     **Route on what the failing step IS, because a tail does
+     not always contain the failure.** The step-conclusion read
+     you just did already supplies the discriminator — the step's
+     name — so this needs no extra information:
+
+     - **A test runner, or any command with its own trailing
+       summary** (`make tools-tests`, `cargo nextest`,
+       `pnpm test`) → skip `get_job_logs` entirely. A test runner
+       prints its summary *after* the failure detail, and the
+       post-job cleanup after that, so `tail_lines` returns the
+       **epilogue** rather than the failure. Go straight to
+       `gh run view <run-id> --log-failed` through the quiet
+       runner, then grep the captured log. Cost of getting this
+       wrong is one wasted ≈1.6k fetch per occurrence, and it
+       recurs on any CI failure whose failing step is a test
+       target.
+     - **A single command whose last output is its error** → the
+       `tail_lines` path below is fine.
 
      Then, with the step known, fetch the log over the MCP
      (this failure path stays on the MCP — `get_job_logs` caps

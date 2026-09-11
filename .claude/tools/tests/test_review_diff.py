@@ -1334,5 +1334,85 @@ class OverlappingPrsTests(unittest.TestCase):
         self.assertIn("not authenticated", result["error"])
 
 
+class RustReachableTests(unittest.TestCase):
+    """`rust_reachable` answers a different question from `runs_rust_suites`.
+
+    The latter mirrors CI's path filter — will CI run the suites — and is
+    fail-open. The former answers whether the diff can move the result, which is
+    the only thing mirroring the suites locally buys.
+    """
+
+    def test_rust_sources_and_manifests_are_reachable(self):
+        for path in (
+            "programs/dropset/src/lib.rs",
+            "feeds/Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "programs/dropset/build.rs",
+            "programs/dropset/src/asm/entry.s",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(rd.rust_is_reachable([path]))
+
+    def test_the_measured_misfire_is_not_reachable(self):
+        # The case this exists for: a 45-file diff with zero Rust whose
+        # `runs_rust_suites` read true only because `.dockerignore` is not on the
+        # test workflow's exclude list. Both suites ran and could not have failed.
+        paths = [".dockerignore", "Makefile", "docs/conventions/context-economy.md"]
+        self.assertTrue(rd.touches_ci_code(paths))
+        self.assertFalse(rd.rust_is_reachable(paths))
+
+    def test_an_empty_diff_is_not_reachable(self):
+        self.assertFalse(rd.rust_is_reachable([]))
+
+    def test_the_flag_rides_the_gate_only_projection(self):
+        # A caller taking `--gate-only` must still be able to make the skip
+        # decision, so the field has to survive the projection.
+        self.assertIn("rust_reachable", rd.GATE_ONLY_FIELDS)
+
+
+class ArtifactGateSourceOnlyTests(unittest.TestCase):
+    """A docs-only change under a generation-input tree cannot stale the artifact.
+
+    Firing the gate for one buys three multi-minute builds to confirm that
+    nothing moved. The flag stays fail-open everywhere else.
+    """
+
+    #: A markdown file under `programs/**`, which IS a generation-input tree.
+    DOCS_UNDER_INPUT = "programs/dropset/README.md"
+    SOURCE_UNDER_INPUT = "programs/dropset/src/lib.rs"
+
+    def test_the_fixture_really_is_a_generation_input_classified_as_docs(self):
+        # Both halves have to hold or the test below proves nothing.
+        self.assertTrue(rd.touches_generation_input([self.DOCS_UNDER_INPUT]))
+        self.assertEqual(rd.slice_for(self.DOCS_UNDER_INPUT), "docs")
+
+    def test_a_docs_only_generation_input_path_does_not_fire_the_gate(self):
+        # The narrowing: the raw predicate says yes, the source-filtered one says
+        # no, and the source-filtered one is what the verdict now reports.
+        filtered = [p for p in [self.DOCS_UNDER_INPUT] if rd.slice_for(p) != "docs"]
+        self.assertEqual(filtered, [])
+        self.assertFalse(rd.touches_generation_input(filtered))
+
+    def test_a_source_change_under_the_same_tree_still_fires(self):
+        # The load-bearing half: narrowing must not make the gate blind.
+        filtered = [p for p in [self.SOURCE_UNDER_INPUT] if rd.slice_for(p) != "docs"]
+        self.assertEqual(filtered, [self.SOURCE_UNDER_INPUT])
+        self.assertTrue(rd.touches_generation_input(filtered))
+
+    def test_a_mixed_diff_still_fires_on_its_source_half(self):
+        paths = [self.DOCS_UNDER_INPUT, self.SOURCE_UNDER_INPUT]
+        filtered = [p for p in paths if rd.slice_for(p) != "docs"]
+        self.assertTrue(rd.touches_generation_input(filtered))
+
+    def test_tests_under_an_input_tree_are_not_discounted(self):
+        # Only docs are discounted. A test change under a generation-input tree
+        # still fires, matching the crate rollup's own docs-only asymmetry.
+        path = "programs/dropset/tests/swap.rs"
+        self.assertNotEqual(rd.slice_for(path), "docs")
+        filtered = [p for p in [path] if rd.slice_for(p) != "docs"]
+        self.assertTrue(rd.touches_generation_input(filtered))
+
+
 if __name__ == "__main__":
     unittest.main()
