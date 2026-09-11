@@ -292,23 +292,27 @@ fn window_end(
 /// inside `[next_start, end)`, oldest-first. An undecodable bar is dropped
 /// rather than failing the batch, for the same reason as the OANDA adapter.
 ///
-/// A bar that decodes but carries an unusable value — this venue publishes
-/// prices as strings and Rust's float parser accepts `"NaN"` and `"inf"`, so a
-/// sentinel survives the parse — is dropped the same way, by
-/// [`Candle::checked`]. Both drops now warn: the value check is the reason a
-/// silent `.ok()` was no longer good enough, since a venue emitting sentinels
-/// would otherwise shrink every batch with nothing in the log to say so.
+/// A bar that decodes but carries an unusable value is dropped the same way, by
+/// [`Candle::validated`] — this venue publishes prices as strings, and a
+/// successful parse is not evidence of a usable price (see that method). Both
+/// drops now warn, where the decode drop used to be silent: a venue emitting
+/// sentinels would otherwise shrink every batch with nothing in the log to say
+/// so.
 fn assemble(raw: Vec<RawBar>, next_start: i64, end: i64) -> Vec<Candle> {
     let mut records: Vec<Candle> = raw
         .into_iter()
         .filter_map(|bar| {
             decode(&bar)
-                .and_then(Candle::checked)
+                .and_then(Candle::validated)
                 .inspect_err(|err| {
                     tracing::warn!(
-                        datetime = %bar.datetime,
+                        venue = "twelvedata",
+                        // `?`, not `%`: this is the venue's own string, and this
+                        // branch is reached precisely when it failed to parse,
+                        // so it is unvalidated by construction.
+                        datetime = ?bar.datetime,
                         error = %err,
-                        "dropping a Twelve Data candle"
+                        "dropping a candle that is not storable"
                     );
                 })
                 .ok()

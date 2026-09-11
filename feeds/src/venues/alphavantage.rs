@@ -240,11 +240,13 @@ fn check_response(body: FxDailyResponse) -> Result<BTreeMap<String, RawBar>> {
 /// `[next_start, closed_boundary)`, oldest-first. An undecodable bar is dropped
 /// rather than failing the batch, matching the other candle adapters.
 ///
-/// So is a bar that decodes but carries an unusable value — this venue publishes
-/// prices as strings and Rust's float parser accepts `"NaN"` and `"inf"`, so a
-/// sentinel survives the parse — which [`Candle::checked`] rejects. Both drops
-/// warn, so a venue that starts emitting sentinels shows up as a shrinking batch
-/// *with* a reason rather than as quiet attrition.
+/// So is a bar that decodes but carries an unusable value, which
+/// [`Candle::validated`] rejects — this venue publishes prices as strings, and a
+/// successful parse is not evidence of a usable price (see that method). Both
+/// drops warn, so a venue that starts emitting sentinels shows up as a shrinking
+/// batch *with* a reason rather than as quiet attrition.
+///
+/// The three stages are ordered deliberately; the body says why.
 fn assemble(
     series: BTreeMap<String, RawBar>,
     next_start: i64,
@@ -252,19 +254,46 @@ fn assemble(
 ) -> Vec<Candle> {
     let mut records: Vec<Candle> = series
         .iter()
+        // Decode first, because the window predicate below needs `bucket_start`,
+        // which does not exist until a bar has been decoded.
         .filter_map(|(date, bar)| {
             decode(date, bar)
-                .and_then(Candle::checked)
                 .inspect_err(|err| {
                     tracing::warn!(
-                        date = %date,
+                        venue = "alphavantage",
+                        // `?`, not `%`: the venue's own key, and this branch is
+                        // reached precisely when it failed to decode.
+                        date = ?date,
                         error = %err,
-                        "dropping an Alpha Vantage candle"
+                        "dropping an undecodable bar"
                     );
                 })
                 .ok()
         })
+        // Then the window, and only then the value check. The order matters
+        // *here* in a way it does not for the other candle adapters: this source
+        // asks for the venue's whole published history on every poll (see the
+        // module note on `outputsize`), so checking values first would re-warn
+        // about every bad historical bar on every poll — for buckets this filter
+        // is about to discard, and which were never going to be stored.
+        //
+        // The decode warning above is deliberately left history-wide: a bar
+        // whose fields do not parse cannot report a `bucket_start` to be
+        // filtered on, and a malformed bar is worth seeing.
         .filter(|c| c.bucket_start >= next_start && c.bucket_start < closed_boundary)
+        .filter_map(|c| {
+            let bucket_start = c.bucket_start;
+            c.validated()
+                .inspect_err(|err| {
+                    tracing::warn!(
+                        venue = "alphavantage",
+                        bucket_start,
+                        error = %err,
+                        "dropping a candle that is not storable"
+                    );
+                })
+                .ok()
+        })
         .collect();
     records.sort_by_key(|c| c.bucket_start);
     records

@@ -409,13 +409,11 @@ fn assemble(raw: Vec<RawCandle>, next_start: i64, end: i64, invert: bool) -> Vec
             // high and low, so an inversion that failed to swap them yields
             // exactly the bar `cex_prices` refuses on its ordering constraint.
             //
-            // This adapter is the reason that constraint exists, and it was the
-            // one candle path with no ordering guard — `decode` covering the
-            // per-field floor reads as covering the bar.
             let bucket_start = c.bucket_start;
-            c.checked()
+            c.validated()
                 .inspect_err(|err| {
                     tracing::warn!(
+                        venue = "oanda",
                         bucket_start,
                         error = %err,
                         "dropping a candle that is not storable"
@@ -864,11 +862,15 @@ mod tests {
     fn a_non_finite_price_is_dropped_on_the_direct_path_too_not_only_inverted() {
         // The point of putting the floor in `decode` rather than beside the
         // inversion: `str::parse::<f64>()` accepts all four of these as `Ok`,
-        // and `cex_prices` has no CHECK constraint, so before the floor
-        // existed each one would have been STORED on any non-inverted pair —
-        // which is every pair on a default roster except CAD-USD. Guarding
-        // only the inverted path would have made validation depend on quote
-        // direction.
+        // so before the floor existed each one would have reached the store on
+        // any non-inverted pair — which is every pair on a default roster
+        // except CAD-USD. Guarding only the inverted path would have made
+        // validation depend on quote direction.
+        //
+        // Stated without appeal to what the column does or does not enforce:
+        // the schema gained its own price CHECKs later, so an argument resting
+        // on their absence would have expired. The floor earns its place by
+        // being the layer that can drop one bar instead of failing the batch.
         for bad in ["0", "-1.5", "inf", "NaN"] {
             let body: CandlesResponse = serde_json::from_value(serde_json::json!({
                 "instrument": "AUD_USD",

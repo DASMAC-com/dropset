@@ -147,39 +147,32 @@ impl Candle {
     /// bucket's high sits at or above its low; otherwise say why, so a caller
     /// can **drop** the bar at intake rather than pass it to a store.
     ///
-    /// **This exists so the rule lives once rather than once per adapter.**
-    /// Every candle adapter needs it and they were not converging on it: the
-    /// OANDA adapter checked the value, while two adapters checked only that
-    /// the bytes parsed as a float — and Rust's float parser accepts `"NaN"`
-    /// and `"inf"`, so a venue sentinel reached the column intact — and a third
-    /// mapped the venue's own numbers straight through, its finiteness filter
-    /// covering a different endpoint on the same venue. That is the shape a
-    /// per-adapter guard reliably produces, because nothing makes the omission
-    /// visible at the call site.
+    /// One rule, in one place, so an adapter cannot silently omit it — nothing
+    /// makes a missing per-adapter guard visible at the call site.
     ///
     /// **Returning the candle rather than `()`** is what keeps a call site to
     /// one combinator: a decode already yielding `Result<Candle>` chains
-    /// straight through `and_then(Candle::checked)`, and an adapter that builds
-    /// the record inline calls it on the value it just built.
+    /// straight through `and_then(Candle::validated)`, and an adapter that
+    /// builds the record inline calls it on the value it just built.
     ///
     /// # What it fronts, and why it is not the only guard
     ///
     /// `cex_prices` asserts the same three things as CHECK constraints
     /// (`0012_candle_price_checks.sql`), and they remain the authority: a
-    /// constraint cannot be bypassed by adding a writer, and this method
-    /// can — it guards the adapters that call it and nothing else. The reason
-    /// to *also* check here is the cost of a rejection rather than a doubt
-    /// about coverage. The store writes a batch in one transaction and the feed
-    /// cursor advances only after a successful commit, so a bar the database
-    /// refuses aborts its whole batch and leaves the cursor unmoved; nothing on
-    /// this path wraps the store sink in the best-effort sink, so the error
-    /// reaches the runner and stops that venue's collector, which then re-fetches
-    /// the same bar. Dropping the bar here turns that stop into a warning and
-    /// one missing bucket.
+    /// constraint cannot be bypassed by adding a writer, and this method can —
+    /// it guards the adapters that call it and nothing else. The reason to
+    /// *also* check here is the **cost of a rejection**, not any doubt about
+    /// coverage: a bar the database refuses takes its whole batch down with it
+    /// and stops that venue's collector until the code or the data changes.
+    /// `docs/data-feeds.md` §8 carries that chain, and owns it — the mechanism
+    /// belongs to the store sink and the runner rather than to this method.
     ///
     /// So this is the lenient layer and the constraint is the strict one, which
     /// is the right way round: intake knows which bar it is and can skip it,
-    /// while the database knows only that a batch is bad.
+    /// while the database knows only that a batch is bad. Note what the lenient
+    /// layer costs — a dropped bucket is **not** re-fetched, because the cursor
+    /// advances past the window regardless, so a bar dropped over a transient
+    /// venue glitch is gone rather than deferred.
     ///
     /// # Why finiteness is a separate clause from positivity
     ///
@@ -206,7 +199,7 @@ impl Candle {
     /// adapter assembles a bar, so it is its own decision rather than a rider
     /// on this one. Only `high >= low` is checked, which is the ordering the
     /// stored table also asserts.
-    pub fn checked(self) -> Result<Self> {
+    pub fn validated(self) -> Result<Self> {
         for (field, value) in [
             ("low", self.low),
             ("high", self.high),
@@ -215,7 +208,7 @@ impl Candle {
         ] {
             if !value.is_finite() || value <= 0.0 {
                 return Err(anyhow!(
-                    "{field} price {value} is not a finite positive number"
+                    "{field} price {value} is not a positive finite number"
                 ));
             }
         }
@@ -256,8 +249,7 @@ pub(crate) fn requests_per_window(
     window.as_secs_f64() / interval.as_secs_f64()
 }
 
-/// A well-formed bar, for the guard's own tests and any adapter test that wants
-/// a valid record to perturb one field of.
+/// A well-formed bar, for the guard's own tests to perturb one field of.
 #[cfg(test)]
 fn well_formed_candle() -> Candle {
     Candle {
@@ -279,23 +271,13 @@ mod candle_guard_tests {
         let bar = well_formed_candle();
         assert_eq!(
             bar.clone()
-                .checked()
+                .validated()
                 .expect("a well-formed bar is storable"),
             bar,
             "the guard must return the bar it was given, not a normalized one"
         );
     }
 
-    /// Every price field is checked, not just the first — the guard is a loop,
-    /// and the regression worth catching is one that narrows to `low` while
-    /// still passing a test that only perturbs `low`.
-    ///
-    /// The value set is the one a bare float parse admits. `"NaN"` and `"inf"`
-    /// both parse successfully in Rust, so a venue sentinel arrives as an
-    /// ordinary `f64`; and a positivity test *alone* would let `NaN` through,
-    /// because `NaN <= 0.0` is false like every other `NaN` comparison. That is
-    /// the Rust-side mirror of the Postgres trap, where the same value passes
-    /// for the opposite reason (`NaN > 0` is true there).
     /// Place `value` in the named price field of an otherwise sound bar.
     fn with_price(field: &str, value: f64) -> Candle {
         let mut candle = well_formed_candle();
@@ -309,20 +291,34 @@ mod candle_guard_tests {
         candle
     }
 
+    /// Every price field is checked, not just the first — the guard is a loop,
+    /// and the regression worth catching is one that narrows to `low` while
+    /// still passing a test that only perturbs `low`.
+    ///
+    /// The value set is the one a bare float parse admits. `"NaN"` and `"inf"`
+    /// both parse successfully in Rust, so a venue sentinel arrives as an
+    /// ordinary `f64`; and a positivity test *alone* would let `NaN` through,
+    /// because `NaN <= 0.0` is false like every other `NaN` comparison. That is
+    /// the Rust-side mirror of the Postgres trap, where the same value passes
+    /// for the opposite reason (`NaN > 0` is true there).
     #[test]
     fn rejects_a_bad_value_in_any_of_the_four_price_fields() {
         for field in ["low", "high", "open", "close"] {
             for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
                 let err = with_price(field, value)
-                    .checked()
+                    .validated()
                     .err()
                     .unwrap_or_else(|| panic!("{field} = {value} was accepted"))
                     .to_string();
+                // Both the field name *and* the value-arm wording, because the
+                // ordering arm's message also contains the word "high" — so a
+                // bare field-name assertion would still pass for a `high` of
+                // `0.0` or a negative if the value loop were deleted.
                 assert!(
-                    err.contains(field),
-                    "a bad {field} was refused, but the message names another \
-                     field, and that name is the whole diagnostic a drop \
-                     carries: {err}"
+                    err.contains(field) && err.contains("not a positive finite number"),
+                    "a bad {field} must be refused by the VALUE arm, naming that \
+                     field — the name is the whole diagnostic a drop carries, and \
+                     the wording is what distinguishes the two arms: {err}"
                 );
             }
         }
@@ -336,7 +332,7 @@ mod candle_guard_tests {
         let mut candle = well_formed_candle();
         candle.high = candle.low - 0.01;
         let err = candle
-            .checked()
+            .validated()
             .expect_err("an inverted bar is not storable");
         assert!(
             err.to_string().contains("below low"),
@@ -360,7 +356,7 @@ mod candle_guard_tests {
             ..well_formed_candle()
         };
         assert!(
-            candle.checked().is_ok(),
+            candle.validated().is_ok(),
             "a bucket that never moved is real data, not a malformed bar"
         );
     }
@@ -374,6 +370,6 @@ mod candle_guard_tests {
             volume: 0.0,
             ..well_formed_candle()
         };
-        assert!(candle.checked().is_ok());
+        assert!(candle.validated().is_ok());
     }
 }
