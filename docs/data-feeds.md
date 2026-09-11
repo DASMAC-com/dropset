@@ -684,18 +684,29 @@ float**, so `NaN > 0` holds and a positivity test alone admits it — and
 detect one either. The constraint therefore carries an explicit
 `< 'Infinity'` bound, which is false for both `NaN` and `Infinity`.
 
+Read the two as a **pair**, because the boundary between them is not
+where their names put it: a *negative* infinity satisfies the finiteness
+bound (`-Infinity` really is less than `Infinity`) and is refused by the
+positivity check instead. Nothing escapes — the pair is jointly
+exhaustive — but a division artefact can surface under either name, so
+only the conjunction means "finite and positive". The general rule for
+any later numeric CHECK in this schema: positivity does not imply
+finiteness in Postgres, and `x = x` is not a NaN test here.
+
 **Know what a rejection costs, because it is not a dropped row.** A
 candle the constraints refuse aborts the whole batch it arrived in — the
 writer runs every insert in one transaction — and the feed position is
 saved only after a successful commit, so it does not advance and the row
 is not skipped. The store sink is not wrapped in the best-effort adapter
 on this path, so the error reaches the runner and stops that venue's
-collector. How long that persists depends on how the source derives its
-next request window, so treat it as "stops, and stops again on restart
-while the bad bar is still being fetched" rather than assuming either a
-self-clearing blip or a permanent wedge. That is the intended direction
-(refusing bad data beats storing it), but it makes an intake-side guard
-the right place to *drop* a bad bar, with these constraints as the
+collector. **And it does not age out.** Every candle source takes its
+window start from that same saved position, and Alpha Vantage does not
+take a date range at all — it asks `outputsize=full` on every poll — so
+the offending bar is re-fetched indefinitely rather than falling out of
+a moving window. A rejection therefore stops that venue's collection
+until the code or the data changes. That is the intended direction
+(refusing bad data beats storing it), but it is why an intake-side guard
+is the right place to *drop* a bad bar, with these constraints as the
 backstop that catches what intake misses.
 
 Three details worth keeping straight. **Volume is deliberately
