@@ -965,8 +965,12 @@ context, then the MCP's echo of the survivor's whole stored body. Both go
 away by handing the path to the committed writer:
 
 ```sh
-python3 .claude/tools/linear_patch.py --id ENG-### --ops-file <path>
+python3 .claude/tools/linear_patch.py patch --ops <path> ENG-###
 ```
+
+`patch` is a subcommand, the identifier is positional, and `--ops` takes
+the ops **file path** — the tool reads it in its own process, which is
+what makes the fold zero-echo rather than merely fewer calls.
 
 Measured on one fold: the ops file was **≈9.5k** (that session's
 second-largest result) and the `save_issue` echo **≈10.4k** (its

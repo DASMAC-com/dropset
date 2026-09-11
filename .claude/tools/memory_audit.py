@@ -42,6 +42,8 @@ Stdlib only; a Python skill-tool under ``.claude/tools/`` — deliberately **not
 Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
 """
 
+# cspell:word strerror
+
 from __future__ import annotations
 
 import json
@@ -70,7 +72,14 @@ DEFAULT_WORST = 3
 #: `index-desync` finding against the live store for a memory that is indexed
 #: perfectly well — the worst kind of false positive, since this is one of the two
 #: checks reported as exact.
-POINTER_RE = re.compile(r"^\s*[-*]\s*\[.*?\]\(([^)]*\.md)\)")
+#: Two residuals closed after the bracket fix, both the same family — the title
+#: class is permissive, so it can wander past the link it should have matched:
+#: a title may not contain `](`, which stops `.*?` skipping a non-`.md` first
+#: link and latching onto a later one (`- [T](x.png) — see [y](z.md)` used to
+#: yield `z.md`); and the target tolerates a trailing `#anchor`, which otherwise
+#: failed `\.md\)` outright and reproduced the same false `index-desync` the
+#: bracket bug caused.
+POINTER_RE = re.compile(r"^\s*[-*]\s*\[(?:(?!\]\().)*\]\(([^)#]*\.md)(?:#[^)]*)?\)")
 
 #: A code-span token. Path candidates are drawn only from inside a code span —
 #: prose naming a file without them is too loose to check without false alarms,
@@ -118,6 +127,27 @@ def over_long_index_lines(index_text: str, max_width: int) -> list[tuple[int, in
     return rows
 
 
+def path_shaped_spans(body: str) -> list[str]:
+    """Every code-span token that LOOKS like a repo-relative path, pre-anchor.
+
+    Separate from :func:`path_candidates` so the caller can tell "this store cites
+    no paths" from "every path it cites was dropped by the anchor". Those are
+    indistinguishable in the candidate list and mean opposite things: the first is
+    a clean store, the second is a check that did not run.
+    """
+    out: list[str] = []
+    for raw in BACKTICK_RE.findall(body):
+        token = raw.strip().rstrip(TRAILING_PUNCTUATION)
+        if not token or "/" not in token:
+            continue
+        if "://" in token or token.startswith(("~", "/", "op:")):
+            continue
+        if not PATH_SHAPE_RE.match(token):
+            continue
+        out.append(token.rstrip("/"))
+    return out
+
+
 def path_candidates(body: str, top_level: frozenset[str]) -> list[str]:
     """Repo-relative path-shaped tokens from a memory body's code spans.
 
@@ -140,21 +170,11 @@ def path_candidates(body: str, top_level: frozenset[str]) -> list[str]:
     directory** has been deleted is no longer seen. That is the rarer event and a
     far louder one — and the alternative was a report nobody could trust.
     """
-    out: list[str] = []
-    for raw in BACKTICK_RE.findall(body):
-        token = raw.strip().rstrip(TRAILING_PUNCTUATION)
-        if not token or "/" not in token:
-            continue
-        if "://" in token or token.startswith(("~", "/", "op:")):
-            continue
-        if not PATH_SHAPE_RE.match(token):
-            continue
-        token = token.rstrip("/")
-        first = token.split("/", 1)[0]
-        if first not in top_level:
-            continue
-        out.append(token)
-    return out
+    return [
+        token
+        for token in path_shaped_spans(body)
+        if token.split("/", 1)[0] in top_level
+    ]
 
 
 def repo_top_level(repo_root: Path) -> frozenset[str]:
@@ -237,6 +257,11 @@ def audit(
             )
 
     # --- dangling repo paths (exact, bounded) --------------------------------
+    # Counted so the report can distinguish "cites no paths" from "every cited
+    # path was dropped by the anchor" — the second is a check that did not run,
+    # and the two look identical in the findings list.
+    path_shaped_total = 0
+    anchored_total = 0
     for path in memories:
         try:
             body = path.read_text(encoding="utf-8")
@@ -245,13 +270,22 @@ def audit(
                 {
                     "kind": "unreadable",
                     "slug": _slug(path),
-                    "reason": f"cannot read the memory file: {exc}",
+                    # `exc.strerror`, never `str(exc)`. The latter is
+                    # `[Errno N] msg: '<full path>'`, and this store lives under
+                    # the operator's home — so it would put an absolute
+                    # `/Users/<name>/…` path into a report that `housekeeping`
+                    # files, one copy-paste from a Linear body. The slug already
+                    # names which memory it was.
+                    "reason": f"cannot read the memory file: "
+                    f"{exc.strerror or 'unreadable'}",
                 }
             )
             continue
-        missing = sorted(
-            {t for t in path_candidates(body, top_level) if not resolves(repo_root, t)}
-        )
+        shaped = path_shaped_spans(body)
+        candidates = [t for t in shaped if t.split("/", 1)[0] in top_level]
+        path_shaped_total += len(shaped)
+        anchored_total += len(candidates)
+        missing = sorted({t for t in candidates if not resolves(repo_root, t)})
         if missing:
             shown = ", ".join(missing[:3])
             if len(missing) > 3:
@@ -293,14 +327,67 @@ def audit(
         "over_long_index_lines": len(long_lines),
         "over_long_worst": long_lines,
         "max_index_line": max_index_line,
+        # Carried so `render` can say the path check DID NOT RUN. With an empty
+        # anchor set every candidate is dropped, so the check reports zero
+        # findings — indistinguishable from a pass. `--repo-root` defaults to the
+        # cwd, so being invoked from the wrong directory produces exactly that,
+        # with no OSError involved. This tool's own docstring states the
+        # principle: a check that cannot run is worse than an absent one, because
+        # its silence reads as a pass.
+        "repo_top_level": len(top_level),
+        "paths_shaped": path_shaped_total,
+        "paths_anchored": anchored_total,
     }
 
 
 def render(result: dict, worst: int) -> list[str]:
-    """The report: one line per finding, then a summary. No bodies, ever."""
+    """The report: one line per finding, then a summary. No bodies, ever.
+
+    Every list here is **bounded by ``worst``**, including the findings. The
+    over-long check was capped from the start and the findings list was not, which
+    left the tool's own worst failure mode unbounded: a missing or reformatted
+    ``MEMORY.md`` — or any regression in ``POINTER_RE``, the bug already fixed once
+    here — makes *every* memory report "no pointer", which is ~96 lines into the
+    main loop. That is more than the improvised shapes this tool replaced.
+    """
     lines = []
+
+    # Say it when the path check did not actually run. Zero dangling-path findings
+    # from a disabled check reads exactly like a clean store, and the wrong-root
+    # case does NOT raise: a readable directory that simply is not this repo has a
+    # perfectly good top-level listing, and every cited path is then dropped for
+    # having an unknown first segment. So the signal is the DROP RATE, not the
+    # root — an unreadable root is only the degenerate case of it.
+    shaped = result.get("paths_shaped", 0)
+    if not result.get("repo_top_level"):
+        lines.append(
+            "path-check-DISABLED: the repo root could not be listed, so no cited "
+            "path was checked — pass --repo-root, or run from the repo root"
+        )
+    elif shaped and not result.get("paths_anchored", 0):
+        lines.append(
+            f"path-check-DISABLED: all {shaped} cited path(s) were dropped as "
+            f"unrecognized, which means --repo-root is almost certainly not this "
+            f"repo — no dangling path was checked"
+        )
+
+    # Grouped by kind so the cap applies per kind: capping the flat list would let
+    # a flood of one kind hide a single finding of another.
+    by_kind: dict[str, list[dict]] = {}
     for f in result["findings"]:
-        lines.append(f"{f['kind']}: {f['slug']} — {f['reason']}")
+        by_kind.setdefault(f["kind"], []).append(f)
+    for kind in sorted(by_kind):
+        group = by_kind[kind]
+        for f in group[:worst]:
+            lines.append(f"{f['kind']}: {f['slug']} — {f['reason']}")
+        if len(group) > worst:
+            # Deliberately NOT prefixed `{kind}:` — an overflow marker sharing the
+            # finding prefix is indistinguishable from a finding to anything
+            # counting lines, including a test.
+            lines.append(
+                f"-- +{len(group) - worst} more {kind} not shown "
+                f"(raise --worst to see them)"
+            )
 
     count = result["over_long_index_lines"]
     if count:
@@ -394,7 +481,14 @@ def run(argv: list[str]) -> int:
     memory_dir, repo_root, worst, max_index_line, as_json = _parse_args(args)
     result = audit(memory_dir, repo_root, max_index_line)
     if as_json:
-        print(json.dumps(result, indent=2))
+        # `--worst` binds here too. Dumping `result` whole emitted EVERY over-long
+        # row — measured at 51 against the live store — which is the same
+        # unbounded shape this tool was built to replace, and it silently
+        # contradicted the docstring's "never all of them". The full count stays
+        # in `over_long_index_lines`, so nothing is lost but the volume.
+        bounded = dict(result)
+        bounded["over_long_worst"] = result["over_long_worst"][:worst]
+        print(json.dumps(bounded, indent=2))
     else:
         for line in render(result, worst):
             print(line)

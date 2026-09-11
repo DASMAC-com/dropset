@@ -398,10 +398,47 @@ _BRE_ALTERNATION = r"\|"
 #: than a block-comment continuation, so judging it would misfire.
 COMMENT_MARKERS = ("///", "//!", "//", "%", ";")
 
+#: Extensions whose files are prose, so an anchored `^#` in them is a markdown
+#: heading — the document's declaration shape — rather than a comment marker.
+PROSE_EXTENSIONS = ("md", "markdown", "txt", "rst")
+
 #: A branch shaped like a section map's — anchored at line start. Only anchored
 #: branches are judged, because an unanchored `#` is an ordinary substring search
 #: (a fragment, a channel name) and warning on those would fire constantly.
 _ANCHORED_BRANCH = "^"
+
+
+def is_prose_scope(
+    all_text: bool,
+    exts: tuple[str, ...] | list[str] | None,
+    globs: tuple[str, ...] | list[str] | None,
+) -> bool:
+    """Whether the scope names prose, so ``^#`` is a heading rather than a comment.
+
+    **``--glob`` counts, and leaving it out was a bug.** The inference originally
+    read only ``--all-text`` and ``--ext``, so mapping a doc by path —
+    ``--glob 'docs/ci.md'``, which names markdown about as unambiguously as a
+    scope can — was refused for using the one pattern that is *correct* there.
+    A false refusal is worse than a missing one: the rule's own advice is to
+    re-ask a refused search, so it sends the caller looking for a narrower
+    pattern that does not exist.
+
+    ``any``, not ``all``, matching how ``--ext`` already behaved: a mixed scope
+    resolves in favor of allowing the pattern, and ``--force-comments`` remains
+    for the genuinely ambiguous case.
+    """
+    if all_text:
+        return True
+    for ext in exts or ():
+        if ext.lstrip(".") in PROSE_EXTENSIONS:
+            return True
+    for glob in globs or ():
+        # The suffix of the glob's last path segment, so `docs/**/*.md` and a
+        # bare `docs/ci.md` both read as markdown.
+        tail = glob.rsplit("/", 1)[-1]
+        if "." in tail and tail.rsplit(".", 1)[-1] in PROSE_EXTENSIONS:
+            return True
+    return False
 
 
 def comment_marker_branches(pattern: str, prose: bool = False) -> list[str]:
@@ -468,11 +505,25 @@ def first_alternation_branch(pattern: str) -> str | None:
     Returns None for a branch that is empty or that still holds a
     special regex character this cannot reason about, so the probe stays a cheap
     literal check rather than a second guess.
+
+    **Anchors are exempt from that exclusion, and excluding them defeated the
+    probe on its main case.** ``^`` and ``$`` mean the same thing in BRE and in
+    Python, so probing ``^fn `` asks exactly the intended question — whereas the
+    grouping and quantifier metacharacters do differ (BRE reads a bare ``(`` as a
+    literal, Python as a group), which is why those still disqualify a branch. A
+    section map is anchored by construction, and a section map is the pattern most
+    likely to be written with BRE separators in the first place, so the original
+    exclusion list silenced the hint precisely where it was needed. Measured: a
+    ``\\|``-separated map returned a bare zero and cost a round to re-derive.
+
+    An anchor mid-branch is still safe: BRE treats it as a literal there while
+    Python treats it as an anchor that cannot match, so the probe finds nothing
+    and stays silent — no worse than not probing.
     """
     if _BRE_ALTERNATION not in pattern:
         return None
     branch = pattern.split(_BRE_ALTERNATION, 1)[0].strip()
-    if not branch or any(ch in branch for ch in "|()[]{}^$*+?"):
+    if not branch or any(ch in branch for ch in "|()[]{}*+?"):
         return None
     return branch
 
@@ -1038,9 +1089,7 @@ def run(argv: list[str]) -> int:
     # The rule this enforces is written in two places already and was violated by
     # sessions that had read it, which is what moved it into the tool.
     if not args.fixed and not args.force_comments:
-        prose = args.all_text or any(
-            e.lstrip(".") in ("md", "markdown", "txt", "rst") for e in (exts or ())
-        )
+        prose = is_prose_scope(args.all_text, exts, globs)
         offenders = comment_marker_branches(args.pattern, prose=prose)
         if offenders:
             raise SearchSourceError(

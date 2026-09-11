@@ -483,9 +483,18 @@ argument was *not* the reason — see that step for why.)
     available without one.
 
     **Trigger that on the QUESTION you are asking, not the line
-    count.** Written as a size threshold ("any `Read` over ~300 lines")
-    it becomes a judgement call exactly at the boundary, and it silently
-    exempts the files most often read to *learn a convention*. Measured:
+    count** — the two compose, and the precondition above does not
+    reinstate the threshold as the *decision*. Read them as a floor and
+    a rule: the ~300-line precondition is a **mechanical,
+    transcript-visible** check that a map was taken, and it decides
+    nothing about whether the read was warranted; the purpose trigger is
+    what decides that, at any size. A read can satisfy the floor and
+    still be wrong, and a 200-line read to learn a convention is still a
+    slice.
+
+    Written as a size threshold *on its own* ("any `Read` over ~300
+    lines") it becomes a judgement call exactly at the boundary, and it
+    quietly exempts the files most often read to *learn a convention*. Measured:
     a **310-line** module — one line past the threshold, and reading as
     a small file — was read whole at **~3.4k**, that session's single
     largest result of any kind, when what was needed was three regions

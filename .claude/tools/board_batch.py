@@ -207,11 +207,17 @@ query($filter: IssueFilter, $first: Int!, $after: String) {
       #
       # Selecting `relations` here costs one nested field on a query that was
       # already being made, and still never selects `description`.
+      # `state { type }` on the nested issue is load-bearing, not decoration: a
+      # blocker that has been COMPLETED no longer blocks, and that is the steady
+      # state of a curated edge — the blocker gets done, the blocked issue becomes
+      # available. Without it the marker fires forever, which renders a spurious
+      # edge, and per `CLAUDE.md` a spurious edge costs more than a missing one
+      # because it drops an issue out of the set the operator schedules from.
       relations {
-        nodes { type relatedIssue { identifier } }
+        nodes { type relatedIssue { identifier state { type } } }
       }
       inverseRelations {
-        nodes { type issue { identifier } }
+        nodes { type issue { identifier state { type } } }
       }
     }
   }
@@ -369,24 +375,54 @@ def index_by_number(issues: list[dict]) -> dict[int, dict]:
     return index
 
 
-def blockers_of(issue: dict) -> list[str]:
-    """Identifiers of the issues blocking ``issue``, from the listing selection.
+#: Workflow-state TYPES that mean a blocker no longer blocks. Deliberately the
+#: same status types `housekeeping` prunes a worktree on: both are answering "is
+#: this finished?", and answering it two different ways would be a drift nobody
+#: would notice.
+RESOLVED_STATE_TYPES = ("completed", "canceled")
 
-    Linear models one edge from both ends, and which side carries it depends on
-    which issue it was created from — so both directions have to be read or the
-    answer is right only half the time. On the issue's own ``relations`` a
-    ``blocked_by`` type names its blocker; on ``inverseRelations`` a ``blocks``
-    type does.
+
+def _live_blocker(node: dict, key: str) -> str | None:
+    """A blocker's identifier, or ``None`` when it no longer blocks.
+
+    The state filter is the whole point. A **completed** blocker is the steady
+    state of a curated edge — the blocker gets done and the blocked issue becomes
+    available — so counting one makes the marker permanent. A permanent marker is
+    a *spurious* edge, and per ``CLAUDE.md`` that is the expensive direction: a
+    missing edge costs a rebase, a spurious one costs work never being scheduled
+    at all, because the operator's available view is the unblocked Backlog.
+    """
+    related = node.get(key) or {}
+    ident = related.get("identifier")
+    if not ident:
+        return None
+    if (related.get("state") or {}).get("type") in RESOLVED_STATE_TYPES:
+        return None
+    return ident
+
+
+def blockers_of(issue: dict) -> list[str]:
+    """Identifiers of the issues **still** blocking ``issue``.
+
+    Both edge directions are read, but they are not symmetric and claiming they
+    were would be misleading. `IssueRelationType` is a *forward* vocabulary and
+    this repo only ever creates ``blocks`` (see :func:`place_edges`), so a blocked
+    issue's blocker arrives on ``inverseRelations`` with type ``blocks`` — that is
+    the load-bearing path. The ``relations`` / ``blocked_by`` branch is a
+    defensive read for an edge shaped that way by hand or by Linear's UI.
+
+    A blocker in a completed or canceled state is excluded; see
+    :func:`_live_blocker` for why that is the case that actually matters.
     """
     found: list[str] = []
     for node in (issue.get("relations") or {}).get("nodes") or []:
         if node.get("type") == "blocked_by":
-            ident = (node.get("relatedIssue") or {}).get("identifier")
+            ident = _live_blocker(node, "relatedIssue")
             if ident and ident not in found:
                 found.append(ident)
     for node in (issue.get("inverseRelations") or {}).get("nodes") or []:
         if node.get("type") == "blocks":
-            ident = (node.get("issue") or {}).get("identifier")
+            ident = _live_blocker(node, "issue")
             if ident and ident not in found:
                 found.append(ident)
     return found

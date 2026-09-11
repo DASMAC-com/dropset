@@ -1296,6 +1296,33 @@ class AlternationBranchTests(unittest.TestCase):
     def test_an_empty_first_branch_is_not_probed(self):
         self.assertIsNone(ss.first_alternation_branch(r"\|beta"))
 
+    def test_an_ANCHORED_branch_is_probed(self):
+        # The case the exclusion list used to silence, and the one that matters
+        # most: a section map is anchored by construction, and is the pattern most
+        # likely to be written with BRE separators. `^` and `$` mean the same in
+        # both dialects, so probing them asks exactly the intended question.
+        # The branch comes back `strip`ped, so `^fn ` probes as `^fn` — a
+        # slightly BROADER probe, which is harmless: a `\|` never means
+        # alternation in Python, so the mistake is certain however wide the
+        # probe, and widening it can only make the hint more likely to appear.
+        self.assertEqual(ss.first_alternation_branch(r"^fn \|^impl "), "^fn")
+        self.assertEqual(ss.first_alternation_branch(r"alpha$\|beta$"), "alpha$")
+
+    def test_grouping_and_quantifiers_still_disqualify_a_branch(self):
+        # These genuinely differ between the dialects — BRE reads a bare `(` as a
+        # literal — so the probe would be answering a different question.
+        # Each special character is appended rather than infixed, so the fixtures
+        # do not manufacture word fragments for the spell checker to flag.
+        for pattern in (
+            r"(alpha)\|beta",
+            r"alpha*\|beta",
+            r"alpha+\|beta",
+            r"alpha?\|beta",
+            r"alpha[ab]\|beta",
+            r"alpha{2}\|beta",
+        ):
+            self.assertIsNone(ss.first_alternation_branch(pattern), pattern)
+
     def test_the_hint_rewrites_every_separator(self):
         self.assertEqual(ss.alternation_hint(r"a\|b\|c"), "a|b|c")
 
@@ -1334,6 +1361,51 @@ class CommentMarkerBranchTests(unittest.TestCase):
 
     def test_several_offenders_are_all_reported(self):
         self.assertEqual(ss.comment_marker_branches("^fn |^///|^//!"), ["^///", "^//!"])
+
+
+class ProseScopeTests(unittest.TestCase):
+    """Which scopes make `^#` a heading rather than a comment marker.
+
+    `--glob` is the case that was missing: naming a markdown file by path is
+    about as unambiguous as a scope gets, and the refusal fired on the one
+    pattern that is correct there.
+    """
+
+    def test_all_text_is_prose(self):
+        self.assertTrue(ss.is_prose_scope(True, None, None))
+
+    def test_a_prose_ext_is_prose(self):
+        self.assertTrue(ss.is_prose_scope(False, ["md"], None))
+        self.assertTrue(ss.is_prose_scope(False, [".md"], None))
+
+    def test_a_source_ext_is_not_prose(self):
+        self.assertFalse(ss.is_prose_scope(False, ["rs"], None))
+
+    def test_a_glob_naming_a_markdown_file_is_prose(self):
+        self.assertTrue(ss.is_prose_scope(False, None, ["docs/ci.md"]))
+
+    def test_a_globstar_markdown_glob_is_prose(self):
+        self.assertTrue(ss.is_prose_scope(False, None, ["docs/**/*.md"]))
+
+    def test_a_rust_glob_is_not_prose(self):
+        self.assertFalse(ss.is_prose_scope(False, None, ["programs/**/*.rs"]))
+
+    def test_a_glob_with_no_extension_is_not_prose(self):
+        # A directory-shaped glob says nothing about the file kind.
+        self.assertFalse(ss.is_prose_scope(False, None, ["docs/**"]))
+
+    def test_a_dotted_directory_segment_does_not_count(self):
+        # The suffix is read from the LAST segment, so `docs.md/x` is not prose.
+        self.assertFalse(ss.is_prose_scope(False, None, ["docs.md/thing"]))
+
+    def test_a_mixed_scope_resolves_toward_prose(self):
+        # `any`, matching how `--ext` already behaved; `--force-comments` covers
+        # the genuinely ambiguous case.
+        self.assertTrue(ss.is_prose_scope(False, None, ["a.rs", "b.md"]))
+
+    def test_no_scope_at_all_is_not_prose(self):
+        self.assertFalse(ss.is_prose_scope(False, None, None))
+        self.assertFalse(ss.is_prose_scope(False, (), ()))
 
 
 class CommentMarkerRefusalTests(unittest.TestCase):
@@ -1395,6 +1467,24 @@ class CommentMarkerRefusalTests(unittest.TestCase):
         # nothing.
         _, printed = self._run(["^fn |^///", "--fixed"])
         self.assertNotIn("DECLARATION shape only", printed)
+
+    def test_a_markdown_glob_is_not_refused(self):
+        # The wiring, not the predicate: `is_prose_scope` is unit-tested above,
+        # but the bug was that `main` never passed `globs` to it, so a heading
+        # map scoped by path was refused. Assert the absence of the REFUSAL
+        # rather than a match, so the test cannot pass because the file is empty.
+        (self.root / "d.md").write_text("# Title\n## Sub\n", encoding="utf-8")
+        code, printed = self._run(["^#|^##", "--glob", "d.md"])
+        self.assertNotIn("DECLARATION shape only", printed)
+        self.assertEqual(code, 0)
+        self.assertIn("Title", printed)
+
+    def test_a_rust_glob_is_still_refused(self):
+        # The other half: widening the prose signal must not disarm the guard on
+        # the scope it was written for.
+        code, printed = self._run(["^fn |^///", "--glob", "a.rs"])
+        self.assertEqual(code, 1)
+        self.assertIn("DECLARATION shape only", printed)
 
 
 class ZeroResultDialectTests(unittest.TestCase):

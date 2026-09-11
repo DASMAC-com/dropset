@@ -13,6 +13,7 @@ step's autonomy bound makes a human confirm every candidate.
 from __future__ import annotations
 
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -262,6 +263,84 @@ class SupersededHeuristic(unittest.TestCase):
         self.assertEqual(slug_stem("eng-1194-thing"), "eng-1194")
 
 
+class DisabledPathCheck(unittest.TestCase):
+    """A path check that did not run must not read as a clean store.
+
+    The wrong-root case does NOT raise: a readable directory that simply is not
+    this repo has a perfectly good top-level listing, so every cited path is
+    dropped for an unknown first segment and the findings list comes back empty.
+    That is why the signal is the drop rate rather than the root itself.
+    """
+
+    def test_a_wrong_but_readable_root_is_announced(self):
+        memory_dir = _store({"m.md": "cites `docs/conventions/thing.md`\n"})
+        # A real directory that is not this repo — the measured failure shape.
+        wrong = _repo(["unrelated/file.txt"])
+        result = audit(memory_dir, wrong)
+        self.assertEqual(result["paths_shaped"], 1)
+        self.assertEqual(result["paths_anchored"], 0)
+        text = "\n".join(render(result, worst=3))
+        self.assertIn("path-check-DISABLED", text)
+
+    def test_a_correct_root_is_not_announced(self):
+        result = audit(_store(HEALTHY), _repo(HEALTHY_REPO))
+        self.assertTrue(result["paths_anchored"])
+        self.assertNotIn("DISABLED", "\n".join(render(result, worst=3)))
+
+    def test_a_store_citing_no_paths_at_all_is_not_announced(self):
+        # The other half: zero shaped candidates is a clean store, not a broken
+        # check, and conflating them would make the warning permanent noise.
+        result = audit(_store({"m.md": "prose with no paths\n"}), _repo(HEALTHY_REPO))
+        self.assertEqual(result["paths_shaped"], 0)
+        self.assertNotIn("DISABLED", "\n".join(render(result, worst=3)))
+
+
+class BoundedReport(unittest.TestCase):
+    def test_a_flood_of_one_kind_is_capped_and_counted(self):
+        # The tool's own worst failure mode: a POINTER_RE regression makes EVERY
+        # memory report "no pointer". Uncapped that is ~96 lines into the main
+        # loop — more than the improvised shapes this tool replaced.
+        memories = {f"m{i}.md": "body\n" for i in range(12)}
+        memory_dir = _store(memories, index="- [none](none.md) — hook")
+        result = audit(memory_dir, _repo(HEALTHY_REPO))
+        text = render(result, worst=3)
+        desync = [line for line in text if line.startswith("index-desync:")]
+        self.assertEqual(len(desync), 3)
+        # The overflow marker must not share the finding prefix, or nothing
+        # counting findings can tell them apart.
+        self.assertTrue(
+            any(line.startswith("-- +10 more index-desync") for line in text)
+        )
+
+    def test_the_summary_still_reports_the_true_total(self):
+        memories = {f"m{i}.md": "body\n" for i in range(12)}
+        memory_dir = _store(memories, index="- [none](none.md) — hook")
+        result = audit(memory_dir, _repo(HEALTHY_REPO))
+        # 12 files with no pointer, plus the one dangling pointer.
+        self.assertEqual(len(result["findings"]), 13)
+        self.assertIn("13 finding(s)", render(result, worst=3)[-1])
+
+    def test_json_mode_bounds_the_over_long_list(self):
+        long_index = "\n".join(f"- [a{i}](a{i}.md) — " + "x" * 300 for i in range(10))
+        memory_dir = _store({f"a{i}.md": "" for i in range(10)}, index=long_index)
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            run(
+                [
+                    "memory_audit.py",
+                    str(memory_dir),
+                    "--repo-root",
+                    str(_repo(HEALTHY_REPO)),
+                    "--json",
+                    "--worst",
+                    "3",
+                ]
+            )
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["over_long_index_lines"], 10)
+        self.assertEqual(len(payload["over_long_worst"]), 3)
+
+
 class Reporting(unittest.TestCase):
     def test_no_memory_body_ever_reaches_the_report(self):
         # The whole reason the tool exists: the report enters the main loop.
@@ -370,6 +449,18 @@ class IndexPointerParsing(unittest.TestCase):
 
     def test_a_non_md_link_in_the_hook_text_is_not_taken_as_the_target(self):
         text = "- [Title](thing.md) — see [docs](https://example.com/x)\n"
+        self.assertEqual(index_pointers(text), ["thing.md"])
+
+    def test_a_non_md_FIRST_link_does_not_latch_onto_a_later_one(self):
+        # The permissive title class used to skip the first link entirely and
+        # return `z.md` — the same wander-past-the-link family as the bracket bug.
+        text = "- [T](x.png) — see [y](z.md)\n"
+        self.assertEqual(index_pointers(text), [])
+
+    def test_a_target_carrying_an_anchor_still_parses(self):
+        # `(file.md#section)` used to fail the `.md)` requirement outright, which
+        # reproduced exactly the false index-desync the bracket fix removed.
+        text = "- [Title](thing.md#a-section) — hook\n"
         self.assertEqual(index_pointers(text), ["thing.md"])
 
 

@@ -65,6 +65,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -266,6 +267,13 @@ def resolve(tag: str, repo: Path) -> dict:
     return verdict
 
 
+#: The kinds `.claude/shell/init.zsh` actually seeds a daily id with — the only
+#: two `_ds_daily_session` callers. Anything else has no session to name.
+DAILY_KINDS = ("plan", "housekeeping")
+
+_DAILY_DATE_RE = re.compile(r"^\d{8}$")
+
+
 def daily_session_id(kind: str, date: str) -> str:
     """The session id a daily verb (`plan`, `housekeeping`) computes for itself.
 
@@ -287,7 +295,30 @@ def daily_session_id(kind: str, date: str) -> str:
     display name is day-only by operator choice, and this id is what
     disambiguates. An `architect` session deliberately uses a *topic* seed with no
     date, because it is meant to be resumed days later.
+
+    **Both inputs are validated, because a wrong one is not detectable
+    downstream.** Any string hashes to a well-formed UUID, so ``--daily-id Plan``
+    or ``--date 2026-09-10`` prints something that looks exactly like an answer
+    and names a session that does not exist. The caller then reads the missing
+    transcript as "my transcript is gone" rather than "I asked the wrong
+    question" — and the whole point of this function is to replace a *search*,
+    which would at least have come back visibly empty. Refusing is the only
+    signal available.
     """
+    if kind not in DAILY_KINDS:
+        raise ResolveSessionError(
+            f"unknown daily kind {kind!r} — the launcher seeds only "
+            f"{', '.join(DAILY_KINDS)}. Any string would hash to a well-formed id "
+            f"naming no session, so this refuses rather than guessing. (An "
+            f"`architect` session is seeded by topic, not by day, and has no "
+            f"daily id.)"
+        )
+    if not _DAILY_DATE_RE.match(date):
+        raise ResolveSessionError(
+            f"--date must be YYYYMMDD with no separators, got {date!r} — the seed "
+            f"is a literal `date +%Y%m%d`, so any other spelling hashes to the "
+            f"wrong id."
+        )
     digest = hashlib.md5(f"dropset-{kind}-{date}".encode("utf-8")).hexdigest()  # noqa: S324 - a naming seed, not a security primitive
     return (
         f"{digest[0:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"

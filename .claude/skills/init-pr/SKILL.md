@@ -332,8 +332,16 @@ the convention doc.** `review-pr` already does this and the
 implement phase was left to hand-quote:
 
 ```sh
-python3 .claude/tools/lens_preamble.py --out <scratchpad>/brief.md
+python3 .claude/tools/lens_preamble.py --out <scratchpad>/brief.md \
+  --no-facts
 ```
+
+**`--no-facts` is not optional here.** The tool **refuses** a run with
+neither `--fact` nor `--facts-file` nor `--no-facts`, exiting 2 — and a
+research fan-out in the implement phase usually has no facts block to
+pass, so the bare form fails at exactly the moment you are spawning.
+If you *do* hold verified facts, pass them instead: they are worth far
+more than the flag.
 
 It assembles the standing brief from
 `docs/conventions/sub-agent-brief.md` so a session never reads
@@ -482,6 +490,25 @@ not only to the sub-agents you brief:
   The one-line generalization worth carrying: **a marker that
   *introduces* a declaration is not the declaration**, and only
   the declaration belongs in a section map.
+
+  **`search_source.py` now REFUSES both of those patterns**, so
+  this pair is enforced rather than merely advised — a comment
+  marker (`///`, `//!`, `//`, `%`, `;`, or a bare `#`) in an
+  **anchored** branch of an **alternation** exits non-zero and
+  names the narrower pattern to use instead. Three things follow.
+  A refusal is an **unanswered question, not zero hits**: re-ask
+  it with the declaration shape rather than reading the exit code
+  as "no matches". A **single-branch** pattern is never refused —
+  one `^///` is a deliberate search for doc-comment lines, and
+  only an alternation is a section map. And two shapes are
+  allowed on purpose: `^#[` (a Rust attribute *is* declaration
+  shape), and `^#` on a **prose** sweep, where a markdown heading
+  is the declaration — which the tool infers from `--all-text`,
+  a prose `--ext`, or a `--glob` naming a prose file, so scope
+  the sweep rather than expecting it to guess. If the comment
+  marker genuinely
+  *is* the target — auditing doc comments themselves, say —
+  `--force-comments` says so explicitly.
 
   **On a prose file, the declaration shape IS the heading
   marker — `^#`, and nothing else.** The rule above reads as

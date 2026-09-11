@@ -939,8 +939,17 @@ def panel_tables(
     def add(source: str, rel: str, sql: str) -> None:
         names = tables_in(sql)
         tiers = [t for t in PRICE_TIER_TABLES if t in names]
-        by_source = bool(_BY_SOURCE_RE.search(rel))
-        tier_declared = bool(_TIER_DECLARED_RE.search(rel))
+        # Match the PANEL portion, never the whole mirror path. `rel` is
+        # `<dashboard-stem>/panel-NN-<title>.sql`, so searching it lets a
+        # DASHBOARD FILENAME decide the verdict for every panel inside it: a stem
+        # containing "candle" or "tick" would set `tier_declared` dashboard-wide
+        # and silently disable the rule, and a stem containing "by-source" would
+        # manufacture violations. Same failure as the whitespace-vs-hyphen bug one
+        # level up — a pattern matched against a string that is not what the
+        # comment says it is.
+        panel_name = rel.rsplit("/", 1)[-1]
+        by_source = bool(_BY_SOURCE_RE.search(panel_name))
+        tier_declared = bool(_TIER_DECLARED_RE.search(panel_name))
         rows.append(
             {
                 "source": source,

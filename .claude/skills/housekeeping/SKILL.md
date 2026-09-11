@@ -401,9 +401,13 @@ board:
   then read the status type with **one field-selected
   `list_issues`** — `fields: ["statusType"]`, plus `status` for
   the report line — and prune only when the type is
-  **`completed`** or **`canceled`**. Marked-duplicate is a
-  canceled-type state carrying `duplicateOf`, so it is covered
-  by construction.
+  **`completed`** or **`canceled`**. Marking an issue a
+  duplicate puts it in a **canceled-type state**, so it is
+  covered by construction — and the status type is the whole
+  test. Don't reach for `duplicateOf`: it is a *relation*, not
+  an issue field, so it neither appears in a `fields` selection
+  nor needs to (see `docs/conventions/linear-automation.md` →
+  the fold's cancels).
 
   **Never a whole-issue read here.** This step used to say
   only "read that issue's status type" without naming the

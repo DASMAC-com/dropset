@@ -1507,6 +1507,23 @@ already being asked to start the review.
      found six real contradictions. Accept the cost there and
      subdivide everywhere else — which is a different
      instruction from applying one ceiling uniformly.
+
+     **An exemption from the slice ceiling must LIFT THAT LENS'S
+     TURN CAP with it.** Otherwise the exemption is only half
+     granted: the lens keeps a slice three times the ceiling
+     while being held to a cap calibrated for one at the
+     ceiling, so it overruns *by construction* and the overrun
+     reads as indiscipline rather than as the arithmetic it is.
+     This is what the "four of six overran by exactly one"
+     figure above is measuring — an off-by-one that tracked
+     slice size, not brief quality. Scale the cap roughly with
+     the slice: at ~3× the ceiling, allow ~3× the turns, and say
+     so **in the brief** so the agent is not
+     hard-stopped mid-question. A hard stop that fires because
+     the cap was never raised discards the lens's findings, and
+     the cross-file lens is the one whose findings are least
+     recoverable by re-running a narrower slice.
+
    - **Expect the exemplar band to shift with diff size.** At a
      509-line slice with every discipline applied, expect
      ~440k, not ~200k. The published exemplars (90.4k / 102.9k /

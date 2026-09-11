@@ -281,9 +281,14 @@ approval:
   file to pass its array through the MCP:
 
   ```sh
-  python3 .claude/tools/linear_patch.py --id <survivor> \
-    --ops-file <patch_ops_path>
+  python3 .claude/tools/linear_patch.py patch \
+    --ops <patch_ops_path> <survivor>
   ```
+
+  Note the shape: `patch` is a **subcommand**, the identifier is
+  **positional**, and `--ops` takes the ops **file path** (the
+  tool reads it in its own process — that is what makes this
+  zero-echo).
 
   It applies the same ops and prints only a size. Two
   body-sized transits disappear: reading the ops file into

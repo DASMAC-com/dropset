@@ -234,6 +234,14 @@ easy to leave behind:
   is part of the command.
 - **Escape `$` as `$$`** in the recipe, or make expands it and the shell
   never sees the variable.
+- **The `;` in that recipe is deliberate and is not a shell-rule
+  violation.** Make runs each recipe *line* in its own shell, so the
+  macro and the `echo` that reads its variable have to share one line;
+  splitting them would put `$$result` in a shell that never set it. The
+  one-bare-command rule is about what reaches the **Bash tool**, whose
+  reusable allow-rule is what it protects — and that command here is
+  `make macro-check`, which is bare. Recipe-internal shell is out of its
+  reach, and `no_compound_bash.py` never sees it.
 - **Say in the PR that the macro was verified this way**, since no gate
   records it — otherwise the diff looks checked when only the Python and
   Rust around it was.

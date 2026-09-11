@@ -680,6 +680,24 @@ def _label_alternation(labels: tuple[str, ...]) -> str:
     return "|".join(re.escape(label) for label in labels)
 
 
+def _fenced_line_flags(body: str) -> list[bool]:
+    """Per-line "this line is fence syntax or inside a fence" flags.
+
+    Uses the same ``FENCE_RE`` toggle as ``field_values`` and ``demote_headings``,
+    so the four sites can never disagree about what a fence is — including how
+    they degrade on an *unbalanced* fence (everything after it reads as fenced).
+    """
+    flags: list[bool] = []
+    in_fence = False
+    for line in body.split("\n"):
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            flags.append(True)
+            continue
+        flags.append(in_fence)
+    return flags
+
+
 def find_labelled_block(body: str, labels: tuple[str, ...]) -> str | None:
     """The block a lever body introduces with one of ``labels``, or None.
 
@@ -699,16 +717,30 @@ def find_labelled_block(body: str, labels: tuple[str, ...]) -> str | None:
     """
     alternation = _label_alternation(labels)
 
-    # Heading form. Ends at the next heading of any depth.
-    heading = re.search(
-        rf"^(#{{1,6}})\s*(?:{alternation})\s*$(?P<body>.*?)(?=^#{{1,6}}\s|\Z)",
-        body,
-        re.MULTILINE | re.IGNORECASE | re.DOTALL,
-    )
-    if heading:
-        text = heading.group("body").strip()
+    # Heading form. Ends at the next heading of any depth — scanned line by line
+    # and **fence-aware**, because a `#` inside a fenced block is not a heading.
+    # A whole-body regex here was truncating real statements: lever bodies quote
+    # shell constantly, and a fenced `# comment` line ended the block early,
+    # silently returning a fragment. Under-capture is the dangerous direction —
+    # `render_levers` reports a section it cannot find at all, but a section it
+    # found and cut short passes as complete.
+    lines = body.split("\n")
+    fenced = _fenced_line_flags(body)
+    label_re = re.compile(rf"^#{{1,6}}\s*(?:{alternation})\s*$", re.IGNORECASE)
+    for start, line in enumerate(lines):
+        if fenced[start] or not label_re.match(line):
+            continue
+        end = len(lines)
+        for j in range(start + 1, len(lines)):
+            if not fenced[j] and ATX_HEADING_RE.match(lines[j]):
+                end = j
+                break
+        text = "\n".join(lines[start + 1 : end]).strip()
         if text:
             return text
+        # An empty labelled section falls through to the bold-span form, which is
+        # what the whole-body regex did too.
+        break
 
     # Bold-span form. The label may be followed by more bold text on the same
     # line (`**The lever — fix it at the producer, not with a wider regex.**`),
@@ -1332,6 +1364,27 @@ def run(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "list":
+        # `--targets` is a column of the PRINTED listing, and the rows are
+        # suppressed whenever output goes to a file — so pairing it with a
+        # `--*-out` dropped it in silence, which reads as "this pool has no
+        # targets" rather than "you asked for a column that was never printed".
+        # Refuse instead: a flag that cannot take effect is a mistake worth
+        # naming, the same way `read_result.py` refuses `--max-depth` without
+        # `--headings`.
+        #
+        # `--fingerprints` is deliberately NOT refused here even though its column
+        # is suppressed too: both renderers write a `**Fingerprint**:` line into
+        # the file itself, so the key is still delivered and the flag is merely
+        # redundant. `--targets` has no such counterpart — neither renderer emits
+        # the extracted path list.
+        if args.targets and (args.bodies_out or args.levers_out):
+            spill = "--bodies-out" if args.bodies_out else "--levers-out"
+            raise TrimLeversError(
+                f"--targets is a column of the printed listing, which {spill} "
+                f"suppresses — so it would have no effect. Drop it, or run "
+                f"`list --targets` as a separate call."
+            )
+
         # Bodies are fetched only when asked for, and a fingerprints-only read
         # needs them (the key lives in the body) — so one query serves both.
         wants_bodies = (

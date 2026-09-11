@@ -284,6 +284,11 @@ def touches_ci_code(paths) -> bool:
 #: list, unlike `CODE_FILTER_EXCLUDES`: the question here is "can this diff move
 #: a Rust suite's result", which is answered by what the build *consumes*, not by
 #: what CI's filter happens not to exclude.
+#: Note this is deliberately NOT "Rust source" — a Rust suite's result also moves
+#: with the DATA it reads, and a source-only list would license skipping the one
+#: suite such a diff can break. The migration fence tests are Rust tests whose
+#: input is `.sql`; the conformance gate replays committed vector JSON; and cargo
+#: consumes `.cargo/config.toml` on every invocation.
 RUST_REACHABLE = (
     "**/*.rs",
     "**/Cargo.toml",
@@ -291,6 +296,11 @@ RUST_REACHABLE = (
     "rust-toolchain.toml",
     "**/build.rs",
     "**/*.s",
+    # Data inputs a Rust suite reads. Omitting these made the skip the flag
+    # licenses unsound for exactly the diffs most able to break a suite.
+    "**/migrations/**",
+    "sdk/conformance/**",
+    ".cargo/config.toml",
 )
 
 
@@ -316,6 +326,15 @@ def rust_is_reachable(paths) -> bool:
     reason. The inverse half of the same principle — run a cheap check the diff
     *can* break even when it misses an enumerated trigger list — is a judgement
     the skill still makes, since it spans checks this tool does not model.
+
+    **The list covers DATA inputs, not only Rust source, and that is the part
+    worth stating.** A source-only list reads as complete and is not: a
+    migration-only diff, or a conformance-vectors regeneration, moves a Rust
+    suite's result while touching no ``.rs`` file at all — so it would have read
+    ``False`` here and, per the rule above, skipped the only suite it could
+    break. Anything else a Rust test reads as a fixture belongs here too; when in
+    doubt, add it, because the failure direction of an over-broad entry is a
+    suite that runs unnecessarily.
     """
     return any(matches_any(p, RUST_REACHABLE) for p in paths)
 

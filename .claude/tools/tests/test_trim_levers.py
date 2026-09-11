@@ -1107,6 +1107,32 @@ class BodiesBearingReadTests(unittest.TestCase):
         self.assertIn("BODY-ONE", written)
         self.assertIn("alpha:one", written)
 
+    def test_targets_alongside_a_spill_is_REFUSED_not_silently_dropped(self):
+        """`--targets` has no counterpart in either written file, so it is refused.
+
+        This is the asymmetry with `--fingerprints` above, and the reason the two
+        are treated differently: a fingerprint rides the spilled file either way,
+        so passing the flag is merely redundant. The extracted target list is
+        emitted by neither renderer, so a silently-dropped `--targets` reads as
+        "this pool touches nothing" — a wrong answer rather than a wasted flag.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            for spill in ("--bodies-out", "--levers-out"):
+                path = os.path.join(d, "out.md")
+                with self.assertRaises(tl.TrimLeversError) as caught:
+                    self._run(["list", "--targets", spill, path])
+                message = str(caught.exception)
+                self.assertIn("--targets", message)
+                self.assertIn(spill, message)
+                # And it refuses BEFORE writing, so there is no half-done spill.
+                self.assertFalse(os.path.exists(path), spill)
+
+    def test_targets_alone_still_works(self):
+        """The refusal must not disarm the flag's own use."""
+        code, out, _err = self._run(["list", "--targets"])
+        self.assertEqual(code, 0)
+        self.assertIn("targets:", out)
+
     def test_the_bare_listing_still_prints_rows(self):
         """The is-anything-parked check is the one job the rows are for."""
         _, out, _err = self._run(["list"])
@@ -1452,6 +1478,54 @@ class FindLabelledBlockTests(unittest.TestCase):
         self.assertIsNone(
             tl.find_labelled_block("just prose, no lever anywhere\n", tl.EDIT_LABELS)
         )
+
+    def test_a_FENCED_hash_does_not_end_the_block_early(self):
+        """The under-capture that passed as complete.
+
+        Lever bodies quote shell constantly, so a fenced `# comment` is ordinary
+        content — but a fence-blind boundary regex read it as the next heading and
+        returned a fragment. `render_levers` reports a section it cannot find at
+        all; a section it found and cut short looks complete, which makes this the
+        dangerous direction.
+        """
+        body = (
+            "## The lever\n"
+            "\n"
+            "Wrap the runner so the log never lands in context.\n"
+            "\n"
+            "```sh\n"
+            "# this comment is NOT a heading\n"
+            "make lint\n"
+            "```\n"
+            "\n"
+            "And this trailing line is still part of the statement.\n"
+            "\n"
+            "## Evidence\n"
+            "\n"
+            "evidence prose\n"
+        )
+        got = tl.find_labelled_block(body, tl.STATEMENT_LABELS)
+        self.assertIn("Wrap the runner", got)
+        self.assertIn("# this comment is NOT a heading", got)
+        self.assertIn("still part of the statement", got)
+        # The real heading is still the boundary.
+        self.assertNotIn("evidence prose", got)
+
+    def test_a_label_inside_a_fence_is_not_treated_as_the_section(self):
+        """A lever *about* filing conventions quotes the heading it describes."""
+        body = (
+            "```md\n"
+            "## The lever\n"
+            "a quoted illustration, not this body's own statement\n"
+            "```\n"
+            "\n"
+            "## The lever\n"
+            "\n"
+            "the real statement\n"
+        )
+        got = tl.find_labelled_block(body, tl.STATEMENT_LABELS)
+        self.assertIn("the real statement", got)
+        self.assertNotIn("quoted illustration", got)
 
     def test_matching_is_case_insensitive(self):
         self.assertIsNotNone(

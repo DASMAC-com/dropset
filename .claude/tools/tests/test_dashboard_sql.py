@@ -936,9 +936,9 @@ class PanelTierRule(unittest.TestCase):
     panel read one tier while that venue wrote the other.
     """
 
-    def _dashboard(self, title, sql):
+    def _dashboard(self, title, sql, name="x.json"):
         d = pathlib.Path(tempfile.mkdtemp())
-        (d / "x.json").write_text(
+        (d / name).write_text(
             json.dumps(
                 {
                     "title": "d",
@@ -994,6 +994,37 @@ class PanelTierRule(unittest.TestCase):
             self._dashboard("Fusion weight by source", "SELECT * FROM contributions")
         )
         self.assertTrue(rows[0]["by_source"])
+        self.assertFalse(rows[0]["violates"])
+
+    def test_a_dashboard_FILENAME_cannot_excuse_its_panels(self):
+        # Every fixture in this class used `x.json`, so no test could see that the
+        # classifiers were reading the whole mirror path. A stem containing
+        # "candle" would have set tier_declared for every panel in the file and
+        # silently disabled the rule dashboard-wide.
+        rows = ds.panel_tables(
+            self._dashboard(
+                "Price by source",
+                "SELECT * FROM cex_prices",
+                name="candle-freshness.json",
+            )
+        )
+        self.assertTrue(rows[0]["by_source"])
+        self.assertFalse(
+            rows[0]["tier_declared"], "the dashboard stem must not declare a tier"
+        )
+        self.assertTrue(rows[0]["violates"])
+
+    def test_a_dashboard_FILENAME_cannot_manufacture_a_violation(self):
+        # The symmetric direction: a stem containing "by-source" must not make
+        # every panel in the file claim to cover sources generally.
+        rows = ds.panel_tables(
+            self._dashboard(
+                "Last candle age",
+                "SELECT * FROM cex_prices",
+                name="price-by-source.json",
+            )
+        )
+        self.assertFalse(rows[0]["by_source"])
         self.assertFalse(rows[0]["violates"])
 
     def test_the_committed_dashboards_satisfy_the_rule(self):

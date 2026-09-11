@@ -401,7 +401,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     patch = sub.add_parser("patch", help="apply an ops file to the description")
     patch.add_argument("identifier")
-    patch.add_argument("--ops", required=True, help="JSON array of patch ops")
+    patch.add_argument(
+        "--ops",
+        required=True,
+        metavar="FILE",
+        # "JSON array of patch ops" described the file's CONTENT and read as
+        # though it took inline JSON, which is what made a correct
+        # zero-echo claim in the calling skill unverifiable from `--help`.
+        help="path to a file holding a JSON array of patch ops (read in this "
+        "tool's own process, so the ops never enter the caller's context)",
+    )
     patch.add_argument("--dry-run", action="store_true")
 
     comment = sub.add_parser("comment", help="add a comment from a file")

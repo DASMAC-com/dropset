@@ -25,8 +25,8 @@ option, so it precedes the subcommand
 * ``add RULE`` — the **write** counterpart of ``covers``, closing the loop so a
   hand-firm never has to read the allowlist at all. ``covers`` already computes
   where the rule would land; ``add`` performs that append (via
-  ``firm_core.firm_into``, the same writer the fast firm uses, so subsumed narrower
-  entries are pruned in the same pass) and prints
+  ``firm_core.firm_into``, now the only writer of the allowlist, so subsumed
+  narrower entries are pruned in the same pass) and prints
   ``{rule, added, covered, refused, count}``. This exists because ``Edit``
   requires a prior ``Read`` of the file it edits: firming one Bash rule by hand
   cost a whole-file ``Read`` of a 338-entry ``settings.local.json``, which is
@@ -298,9 +298,11 @@ def _over_broad_reason(rule: str) -> str | None:
 
 def _is_subsumed(index: int, allow: list[str]) -> bool:
     """Whether ``allow[index]`` is dead weight another entry already covers.
-    Checks the **whole** list, not just earlier entries — firming *appends*
-    generalized rules, so the common layout is a narrow rule with the
-    broader one that subsumes it sitting *after* it. A **strictly broader**
+    Checks the **whole** list, not just earlier entries: a narrow rule can have
+    the broader one that subsumes it sitting *after* it. ``firm_into`` prunes
+    that pair as it writes, so firming no longer *creates* the layout — but a
+    hand-edited entry still can, and entries predating the pruning remain. A
+    **strictly broader**
     coverer flags the narrow rule regardless of position; an **exact-equivalent**
     duplicate flags only the later copy (so one survives). A coverer that is
     itself **over-broad** is skipped — it's flagged for removal on its own, so

@@ -164,7 +164,7 @@ class CallContract(DriverStub, unittest.TestCase):
 
     # A retired `open_window` op used to need its own defensive tty-reading
     # tests here, because it indexed `ttys[0]` directly. `open_tabs` reads the
-    # list positionally and pads it, and the OpenTabs class below covers an
+    # list positionally and pads it, and `OpenTabsPositional` below covers an
     # empty, a null, a short and an over-long response — so nothing was lost
     # with those cases; the coverage moved rather than going away.
 

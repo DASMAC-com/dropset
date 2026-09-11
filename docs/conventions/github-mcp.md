@@ -9,9 +9,9 @@ reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI, **with the deliberate exceptions below**. The skills (`init-pr`,
 `pr-title-description`, `review-pr`, `housekeeping`, `linear-task`)
-are written against it. `gh` survives in four places — two in
-`review-pr`, one in `init-pr`, and the field-selected `gh pr list`
-read used by `housekeeping`:
+are written against it. `gh` survives in the cases enumerated below —
+count them from the list rather than from a number in this sentence,
+which drifted behind it twice:
 
 - **The merge-queue handoff** — the enqueue (a `gh pr merge --auto`
   write, **no** strategy flag: this repo's merge queue sets the
@@ -146,6 +146,17 @@ read used by `housekeeping`:
   `Bash(gh pr view:*)` for the node-id lookup and
   `Bash(gh api graphql:*)` for the mutation — so no new permission is
   needed.
+
+- **The credential pre-check** (`init-pr` step 0b) — `gh auth status`,
+  run before anything that mutates the worktree. This one needs no
+  payload or transport argument at all: the question *is* whether the
+  `gh` CLI itself holds a working credential, so there is nothing for
+  the MCP to answer. The server carries its own PAT (see
+  "Authentication" below) and so stays connected while `gh`'s token is
+  expired — which is exactly the state this check exists to catch, and
+  why an MCP call would give a **false all-clear**. The same output
+  reports the **scope set**, which is where the `notifications` scope
+  above is confirmed. Covered by `Bash(gh auth status:*)`.
 
 - **The field-selected `gh pr list --json` read** (`housekeeping`) —
   `gh` has a `merged` state filter the MCP `list_pull_requests` lacks

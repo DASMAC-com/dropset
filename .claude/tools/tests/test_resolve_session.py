@@ -347,6 +347,38 @@ class DailySessionIdTests(unittest.TestCase):
         with self.assertRaises(rs.ResolveSessionError):
             rs.run(["resolve_session.py"])
 
+    def test_an_unknown_KIND_is_refused_rather_than_hashed(self):
+        """A wrong kind is undetectable downstream, so it has to be caught here.
+
+        Every string hashes to a well-formed UUID, so the wrong one prints
+        something indistinguishable from an answer and names a session that never
+        existed — which the caller then reads as a lost transcript. `architect` is
+        included because it is the plausible wrong guess: it *is* a seat verb, but
+        it is seeded by topic rather than by day.
+        """
+        for kind in ("Plan", "PLAN", "plan-18", "architect", "explore", ""):
+            with self.assertRaises(rs.ResolveSessionError, msg=kind):
+                rs.daily_session_id(kind, "20260910")
+
+    def test_a_malformed_DATE_is_refused(self):
+        for date in ("2026-09-10", "20260910 ", "260910", "2026/09/10", "today", ""):
+            with self.assertRaises(rs.ResolveSessionError, msg=date):
+                rs.daily_session_id("plan", date)
+
+    def test_both_launcher_kinds_are_accepted(self):
+        # The other half: the guard must not reject what the launcher really seeds.
+        for kind in rs.DAILY_KINDS:
+            self.assertRegex(
+                rs.daily_session_id(kind, "20260910"),
+                r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            )
+
+    def test_DAILY_KINDS_matches_the_launcher(self):
+        # Pinned against the `_ds_daily_session` callers in
+        # `.claude/shell/init.zsh`. If a third daily verb is added there, this
+        # fails and points at the list that needs it.
+        self.assertEqual(rs.DAILY_KINDS, ("plan", "housekeeping"))
+
 
 if __name__ == "__main__":
     unittest.main()
