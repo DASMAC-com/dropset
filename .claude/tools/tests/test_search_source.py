@@ -1276,5 +1276,186 @@ class ContextDegradeTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
+class AlternationBranchTests(unittest.TestCase):
+    def test_a_bre_alternation_yields_its_first_branch(self):
+        self.assertEqual(ss.first_alternation_branch(r"alpha\|beta"), "alpha")
+
+    def test_a_python_alternation_is_not_probed(self):
+        # A plain `|` already means alternation here, so a zero from one is an
+        # ordinary absence. Probing it would fire on nearly every empty search.
+        self.assertIsNone(ss.first_alternation_branch("alpha|beta"))
+
+    def test_a_pattern_without_alternation_is_not_probed(self):
+        self.assertIsNone(ss.first_alternation_branch("alpha"))
+
+    def test_a_branch_carrying_a_special_regex_character_is_not_probed(self):
+        # Keeps the probe a cheap literal check rather than a second guess.
+        self.assertIsNone(ss.first_alternation_branch(r"^al.*pha\|beta"))
+        self.assertIsNone(ss.first_alternation_branch(r"(alpha)\|beta"))
+
+    def test_an_empty_first_branch_is_not_probed(self):
+        self.assertIsNone(ss.first_alternation_branch(r"\|beta"))
+
+    def test_the_hint_rewrites_every_separator(self):
+        self.assertEqual(ss.alternation_hint(r"a\|b\|c"), "a|b|c")
+
+
+class CommentMarkerBranchTests(unittest.TestCase):
+    def test_a_doc_comment_branch_is_found(self):
+        self.assertEqual(ss.comment_marker_branches("^fn |^///|^impl "), ["^///"])
+
+    def test_every_unambiguous_marker_family(self):
+        for marker in ("///", "//!", "//", "%", ";"):
+            with self.subTest(marker=marker):
+                self.assertEqual(
+                    ss.comment_marker_branches(f"^fn |^{marker}"), [f"^{marker}"]
+                )
+
+    def test_a_rust_attribute_is_a_declaration_not_a_comment(self):
+        # `^#[test]` is part of the declaration shape a Rust map wants.
+        self.assertEqual(ss.comment_marker_branches(r"^fn |^#\[test\]"), [])
+        self.assertEqual(ss.comment_marker_branches("^fn |^#[test]"), [])
+
+    def test_a_hash_is_a_comment_on_source_and_a_heading_on_prose(self):
+        # The same branch, opposite verdicts — on a markdown sweep `^#` IS the
+        # declaration shape, because a heading is a document's declaration.
+        self.assertEqual(ss.comment_marker_branches("^rule:|^# "), ["^# "])
+        self.assertEqual(ss.comment_marker_branches("^rule:|^# ", prose=True), [])
+
+    def test_a_single_branch_pattern_is_never_flagged(self):
+        # One anchored `^///` is a deliberate search for doc-comment lines.
+        # Only an alternation is a section map.
+        self.assertEqual(ss.comment_marker_branches("^///"), [])
+        self.assertEqual(ss.comment_marker_branches("^# "), [])
+
+    def test_an_unanchored_marker_is_not_judged(self):
+        # An unanchored `#` is an ordinary substring search.
+        self.assertEqual(ss.comment_marker_branches("fn |# "), [])
+
+    def test_several_offenders_are_all_reported(self):
+        self.assertEqual(ss.comment_marker_branches("^fn |^///|^//!"), ["^///", "^//!"])
+
+
+class CommentMarkerRefusalTests(unittest.TestCase):
+    """A section map with a comment-marker branch is refused BEFORE the search.
+
+    Refused rather than warned, because an advisory can only arrive with the
+    payload already paid for and the payload is the harm — such a map comes back
+    roughly as large as the region it was meant to help choose. The rule was
+    already written in two places and violated by sessions that had read it.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "a.rs").write_text("/// doc\nfn thing() {}\n", encoding="utf-8")
+        self.cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self.cwd)
+
+    def _run(self, argv):
+        """Run the CLI the way `main` does — catching the refusal it raises."""
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            try:
+                code = ss.run(["search_source.py"] + argv)
+            except ss.SearchSourceError as exc:
+                print(f"error: {exc}", file=err)
+                code = 1
+        return code, out.getvalue() + err.getvalue()
+
+    def test_the_refusal_names_the_branch_and_the_alternative(self):
+        code, printed = self._run(["^fn |^///"])
+        self.assertEqual(code, 1)
+        self.assertIn("^///", printed)
+        self.assertIn("DECLARATION shape only", printed)
+        self.assertIn("--force-comments", printed)
+
+    def test_nothing_is_searched_when_it_refuses(self):
+        # The load-bearing property: no results are printed. A warning that still
+        # emitted them would be the behavior being fixed.
+        _, printed = self._run(["^fn |^///"])
+        self.assertNotIn("a.rs:", printed)
+
+    def test_force_comments_searches_anyway(self):
+        code, printed = self._run(["^fn |^///", "--force-comments"])
+        self.assertEqual(code, 0)
+        self.assertIn("a.rs", printed)
+
+    def test_a_declaration_only_map_is_untouched(self):
+        code, printed = self._run(["^fn |^impl "])
+        self.assertEqual(code, 0)
+        self.assertIn("fn thing", printed)
+
+    def test_fixed_mode_is_not_judged(self):
+        # Under --fixed the pattern is a literal, so there is no alternation to
+        # judge. Assert it is not a REFUSAL rather than asserting the exit code,
+        # which would pass for the unrelated reason that the literal matches
+        # nothing.
+        _, printed = self._run(["^fn |^///", "--fixed"])
+        self.assertNotIn("DECLARATION shape only", printed)
+
+
+class ZeroResultDialectTests(unittest.TestCase):
+    """A zero result from a wrong-dialect pattern says so, with evidence.
+
+    The worst false-negative shape, because it does not look like one: a refusal
+    is visibly a refusal, while this is a well-formed answer. Measured — a `\\|`
+    sweep returned `0 match(es) in 0 file(s)` for a symbol present in four files,
+    and the note that did print blamed the extension set, steering toward a
+    second wrong retry. It licenses deletions, which is why it is worth a probe.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "a.rs").write_text("fn open_window() {}\n", encoding="utf-8")
+        self.cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self.cwd)
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = ss.run(["search_source.py"] + argv)
+        return code, out.getvalue() + err.getvalue()
+
+    def test_a_bre_alternation_zero_is_flagged_with_the_matching_branch(self):
+        code, printed = self._run([r"open_window\|open_tabs", "--files-only"])
+        self.assertEqual(code, 1)
+        self.assertIn("ALTERNATION did not parse", printed)
+        self.assertIn("open_window", printed)
+        # The corrected pattern is handed over, not merely described.
+        self.assertIn("open_window|open_tabs", printed)
+
+    def test_the_warning_precedes_the_misleading_extension_note(self):
+        # The measured harm was ordering: the extension note blamed the wrong
+        # cause, and a clipped summary keeps its head.
+        _, printed = self._run([r"open_window\|open_tabs", "--files-only"])
+        self.assertLess(
+            printed.index("ALTERNATION did not parse"),
+            printed.index("searched the source set only"),
+        )
+
+    def test_a_genuine_absence_is_not_flagged(self):
+        # The probe must stay quiet when the zero is real, in both dialects.
+        for pattern in (r"zzz_absent\|zzz_missing", "zzz_absent|zzz_missing"):
+            with self.subTest(pattern=pattern):
+                _, printed = self._run([pattern, "--files-only"])
+                self.assertNotIn("ALTERNATION did not parse", printed)
+
+    def test_a_matching_sweep_is_not_flagged(self):
+        _, printed = self._run(["open_window", "--files-only"])
+        self.assertNotIn("ALTERNATION did not parse", printed)
+
+    def test_fixed_string_mode_is_not_probed(self):
+        # Under --fixed a backslash-pipe is a legitimate literal to search for,
+        # so a zero means what it says.
+        _, printed = self._run([r"open_window\|open_tabs", "--fixed", "--files-only"])
+        self.assertNotIn("ALTERNATION did not parse", printed)
+
+
 if __name__ == "__main__":
     unittest.main()
