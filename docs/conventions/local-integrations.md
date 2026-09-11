@@ -1420,6 +1420,48 @@ are addressed by their Linear number; the standing sessions (`plan`,
 `housekeeping`) run in the base repo, recur daily, and are addressed by the day
 they started.
 
+### Driving a headless browser — the two paths that are not guessable
+
+Browser verification is a standing need rather than an accident of one PR,
+and reaching a browser here costs three failed module resolutions before
+the first assertion can run unless you already know these:
+
+- **`puppeteer-core` is a transitive dependency**, so it is *not* at
+  `node_modules/puppeteer-core`. It resolves only through the pnpm store
+  — under `frontend/node_modules/.pnpm/`, in a directory named
+  `puppeteer-core@<version>`, then its own `node_modules/puppeteer-core`.
+- **Its ESM entry is `lib/puppeteer/puppeteer-core.js`** — not the
+  `lib/esm/…` path the directory layout suggests.
+- **There is no browser in `/Applications`.** The only one present is
+  Chrome for Testing under the puppeteer cache,
+  `~/.cache/puppeteer/chrome/<platform-version>/chrome-mac-arm64/`, and it
+  must be passed as `executablePath`.
+
+Both paths are **version-stamped**, so glob for them rather than pinning
+a literal. Each wrong guess is a full round trip, and the failure text
+names the path rather than the layout, so it does not self-correct.
+
+**Assert on the DOM, not on a screenshot.** Reading a rendered link's
+`href` and counting markers settled three verifications exactly for a few
+hundred tokens; the alternative is a full-viewport capture, measured
+elsewhere at ≈105k for five images. The exception is a pseudo-state style
+(`:hover`, `:focus`), where a computed-style read returns the resting
+value with no error — see
+[context economy](context-economy.md) → "The levers".
+
+**Why this is a recipe and not yet a tool.** A
+`.claude/tools/browser_assert.py` that globs both paths and takes a URL
+plus an expression would be better, since the paths drift. It is not
+built because the provenance is a single session (7 invocations across 3
+throwaway scripts), which is below the recurrence bar `/harden` demands —
+and that refusal is correct. What argues for building it anyway is the
+**hazard class** rather than the token count: the current technique's only
+workaround writes untracked scripts into the tree under review. That is a
+human's call, so it is recorded here rather than decided.
+
+Note the honest cost label: the dominant cost is **failed round trips and
+wall-clock**, not payload. A fold should not score this as a token saving.
+
 ### iTerm2 manual setup (can't be committed)
 
 Some of this lives only in iTerm2's own preferences:
