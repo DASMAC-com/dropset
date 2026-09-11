@@ -323,10 +323,30 @@ whole-file** into context (e.g. an entire reference repo at
 (per `CLAUDE.md` → "Context economy"). Whole-repo ingestion
 is somewhat inherent to "survey N references," but `Explore`
 plus a scoped allowlist is the lever that bounds it. Give
-the agent the canonical sub-agent brief
-(`docs/conventions/sub-agent-brief.md`) and name the
+the agent the canonical sub-agent brief and name the
 specific paths it should look at, rather than turning it
 loose on a whole tree.
+
+**Compose that brief with the committed tool, not by reading
+the convention doc.** `review-pr` already does this and the
+implement phase was left to hand-quote:
+
+```sh
+python3 .claude/tools/lens_preamble.py --out <scratchpad>/brief.md
+```
+
+It assembles the standing brief from
+`docs/conventions/sub-agent-brief.md` so a session never reads
+that file in order to quote it — which is the whole point, since
+the file is prose a caller would otherwise buy in full just to
+paste it. Hand the agent the path.
+
+**And cap a research fan-out in TURNS and TOOL CALLS, not only
+in report length.** A length cap bounds what comes back and
+says nothing about what the agent spends getting there; the
+turn and tool-call caps are what actually bound a survey. State
+both (e.g. "≤ 8 turns, ≤ 12 tool calls, then report") — the same
+pair `review-pr`'s lens briefs use.
 
 **In-repo / in-workspace surveys need the same scoping —
 they are not exempt.** An open-ended "map how the TUI + the

@@ -759,11 +759,30 @@ under the hood, so on a new machine it needs, in order:
    Settings → Developer → "Integrate with 1Password CLI") or a
    `op signin` session, so a read can actually authorize.
 
-Verify with a real read before blaming anything else:
+Verify with a real read before blaming anything else — **writing the
+value to `/dev/null`, never to your terminal**:
 
 ```sh
-op read "$DS_OP_LINEAR_REF" --account "$DS_OP_ACCOUNT"
+op read "$DS_OP_LINEAR_REF" --account "$DS_OP_ACCOUNT" --out-file /dev/null
 ```
+
+Exit 0 means the reference resolved; a non-zero exit names the failing
+reference. `--out-file` rather than a shell redirect keeps this a single
+bare command, so it needs no compound.
+
+**Never `op read` a credential into the transcript.** This used to be
+written here without the `--out-file`, which is the whole hazard: a
+credential echoed into a transcript is in the session log, in any
+transcript-mining pass, and in whatever the operator keeps — and
+**rotation is the only remedy**. To check that a reference resolves,
+discard the output as above, or let `op run` fail, which names the
+failing reference without printing the value. To *use* a credential,
+wrap the consumer in `op run --env-file`, so the value exists only in
+the child process's environment.
+
+Same principle as keeping real `op://` item names out of committed docs,
+applied to a different surface: there the risk is the repo, here it is
+the transcript.
 
 This is worth stating first because the failure is quiet and lands far
 away. The helper calls `op read`, and if it resolves nothing it prints

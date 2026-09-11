@@ -194,6 +194,25 @@ query($filter: IssueFilter, $first: Int!, $after: String) {
       state { name type }
       projectMilestone { name }
       team { id }
+      # Blocking edges, in the SAME query as the listing.
+      #
+      # "Is this issue blocked" is the planning session's most-asked question by
+      # construction — Next IS the unblocked Backlog, and edge curation is that
+      # session's own job — yet the cheap listing used to be blind to edges, so
+      # the answer came either from the previous close-out's prose summary or
+      # from a full issue fetch. Measured: a session asked about three Next
+      # issues answered from the summary and was **wrong** (an edge existed the
+      # summary never carried), then paid two full-body echoes (~5k) to recover
+      # the truth.
+      #
+      # Selecting `relations` here costs one nested field on a query that was
+      # already being made, and still never selects `description`.
+      relations {
+        nodes { type relatedIssue { identifier } }
+      }
+      inverseRelations {
+        nodes { type issue { identifier } }
+      }
     }
   }
 }
@@ -350,11 +369,41 @@ def index_by_number(issues: list[dict]) -> dict[int, dict]:
     return index
 
 
+def blockers_of(issue: dict) -> list[str]:
+    """Identifiers of the issues blocking ``issue``, from the listing selection.
+
+    Linear models one edge from both ends, and which side carries it depends on
+    which issue it was created from — so both directions have to be read or the
+    answer is right only half the time. On the issue's own ``relations`` a
+    ``blocked_by`` type names its blocker; on ``inverseRelations`` a ``blocks``
+    type does.
+    """
+    found: list[str] = []
+    for node in (issue.get("relations") or {}).get("nodes") or []:
+        if node.get("type") == "blocked_by":
+            ident = (node.get("relatedIssue") or {}).get("identifier")
+            if ident and ident not in found:
+                found.append(ident)
+    for node in (issue.get("inverseRelations") or {}).get("nodes") or []:
+        if node.get("type") == "blocks":
+            ident = (node.get("issue") or {}).get("identifier")
+            if ident and ident not in found:
+                found.append(ident)
+    return found
+
+
 def format_listing(issues: list[dict], *, show_milestone: bool = False) -> list[str]:
     """One compact ``number | priority | title`` line per issue.
 
     This is the whole reason `list` exists: the same information the MCP
     listing carries, minus the bodies nobody asked for.
+
+    A blocked issue is marked ``[blocked by ENG-###]``, so the question the
+    planning session asks every bootstrap — "is this blocked" — is answered by
+    the cheap listing rather than by a full-body fetch or by the previous
+    close-out's prose summary. That summary stays useful as context and is **not**
+    the authority: it was measured giving a wrong answer about three Next issues,
+    because an edge existed that it never carried.
     """
     lines = []
     for issue in sorted(issues, key=lambda i: int(i.get("number") or 0)):
@@ -365,6 +414,9 @@ def format_listing(issues: list[dict], *, show_milestone: bool = False) -> list[
         if show_milestone:
             milestone = (issue.get("projectMilestone") or {}).get("name") or "-"
             row = f"{row}  [{milestone}]"
+        blockers = blockers_of(issue)
+        if blockers:
+            row = f"{row}  [blocked by {', '.join(blockers)}]"
         lines.append(row)
     return lines
 

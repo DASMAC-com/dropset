@@ -541,6 +541,15 @@ argument was *not* the reason — see that step for why.)
     that followed. Pick the single field that **identifies** a record,
     and take everything else from the slice.
 
+    **A SQL migration is a comment-heavy file, and reads as if it is
+    not.** The comment-alternation rule above names a `Makefile` and a
+    prose doc, so a `.sql` file looks like source and gets mapped with
+    `--` included — but this repo's migrations carry the explanatory
+    prose the house style asks for, so the comments routinely outweigh
+    the statements. Map a migration on its **statement** shape
+    (`^CREATE|^ALTER|^INSERT|^DROP|^COMMENT ON`) and never on `^--`.
+    Committed `search_source.py` now refuses the latter outright.
+
     **Merge ADJACENT regions off the map into one slice read.** Once the
     map has named the regions, two that sit a few lines apart are one
     read, not two: the gap between them is cheaper than a second round
