@@ -1617,6 +1617,21 @@ per-directory *content* — `frontend/node_modules`,
    **numbers, not filenames**, so `0003_telemetry.sql` and
    `0003_roster.sql` collide.
 
+   **Read `next_free_number` — that is what this call is
+   for.** At branch time the file does not exist yet, so the
+   tool reports `status: "nothing_claimed"` rather than a
+   verdict, and hands back the lowest number nothing else
+   claims (one past the highest in the tree *or* in any open
+   PR). Take it, and re-run once the file is written so the
+   compare actually runs.
+
+   This is a fix, not a nicety: the tool used to answer
+   `clear: true` here, which is a **vacuous all-clear in the
+   one place the answer is load-bearing** — nothing had been
+   compared, because there was nothing to compare, and a real
+   collision surfaced only on the re-run afterwards. A
+   `nothing_claimed` status cannot be misread as a pass.
+
    **This used to be two commands with no way to connect
    them.** The step named a `gh pr list` and a
    `--others <file>.json` compare and left the gap to the

@@ -88,18 +88,57 @@ class Collisions(unittest.TestCase):
 
 
 class Summary(unittest.TestCase):
-    def _result(self, mine, numbers, found, prs=2):
+    def _result(
+        self,
+        mine,
+        numbers,
+        found,
+        prs=2,
+        self_branch="feature",
+        self_prs=(),
+        next_free=14,
+    ):
         return {
             "mine": mine,
             "mine_numbers": numbers,
             "prs_checked": prs,
+            "self_branch": self_branch,
+            "self_prs": list(self_prs),
             "collisions": found,
+            "next_free_number": next_free,
             "clear": not found,
+            "status": (
+                "collision" if found else ("clear" if mine else "nothing_claimed")
+            ),
         }
 
-    def test_no_migration_says_so(self):
-        line = mc.summarize(self._result([], [], []))
+    def test_no_migration_says_so_without_claiming_to_be_clear(self):
+        # The fail-open half of ENG-1336: this is the state `init-pr` calls the
+        # tool in, before the migration file exists. Saying "nothing to check"
+        # and nothing else reads as an all-clear, so the line has to disclaim
+        # the verdict AND carry the number the caller actually came for.
+        line = mc.summarize(self._result([], [], [], next_free=14))
         self.assertIn("adds no migration", line)
+        self.assertIn("nothing was compared", line)
+        self.assertIn("NOT a clear verdict", line)
+        self.assertIn("0014", line)
+        self.assertNotIn("safe to enqueue", line)
+
+    def test_a_clear_verdict_names_the_excluded_self_pr(self):
+        # The count is only trustworthy if the reader can tell whether their own
+        # PR was among those compared.
+        line = mc.summarize(
+            self._result(["m/0004_a.sql"], [4], [], prs=2, self_prs=[427])
+        )
+        self.assertIn("excluding this branch's own PR #427", line)
+        self.assertIn("safe to enqueue", line)
+
+    def test_a_detached_head_says_the_self_exclusion_was_not_applied(self):
+        # Silence here would put the old fail-closed behavior back with no way
+        # to recognize it from the output.
+        line = mc.summarize(self._result(["m/0004_a.sql"], [4], [], self_branch=None))
+        self.assertIn("detached HEAD", line)
+        self.assertIn("not excluded", line)
 
     def test_a_clear_verdict_names_the_number_and_the_pr_count(self):
         line = mc.summarize(self._result(["m/0004_a.sql"], [4], []))
@@ -200,6 +239,7 @@ class OthersFromGh(unittest.TestCase):
             [
                 {
                     "number": 351,
+                    "headRefName": "eng-351",
                     "files": [
                         {"path": "db-schema/migrations/0004_pyth.sql"},
                         {"path": "README.md"},
@@ -218,15 +258,23 @@ class OthersFromGh(unittest.TestCase):
                         "db-schema/migrations/0004_pyth.sql",
                         "README.md",
                     ],
+                    "headRefName": "eng-351",
                 }
             ],
         )
 
+    def test_the_head_ref_is_requested_from_gh(self):
+        # Self-exclusion is matched on the branch, so the field has to be in the
+        # --json list. Without it every entry's headRefName is None, nothing is
+        # ever excluded, and the fail-closed bug is silently back.
+        self.assertIn("headRefName", " ".join(mc.GH_OPEN_PRS))
+
     def test_a_pr_touching_no_files_yields_an_empty_list_not_a_crash(self):
+        empty = {"pr": 9, "files": [], "headRefName": None}
         with self._gh(json.dumps([{"number": 9, "files": []}])):
-            self.assertEqual(mc.others_from_gh(), [{"pr": 9, "files": []}])
+            self.assertEqual(mc.others_from_gh(), [empty])
         with self._gh(json.dumps([{"number": 9}])):
-            self.assertEqual(mc.others_from_gh(), [{"pr": 9, "files": []}])
+            self.assertEqual(mc.others_from_gh(), [empty])
 
     def test_the_normalized_output_feeds_collisions(self):
         """The point of normalizing: the fetched shape must work with the same
@@ -290,6 +338,84 @@ class OthersFromGh(unittest.TestCase):
             with self.subTest(argv=argv), self.assertRaises(SystemExit):
                 with redirect_stderr(io.StringIO()):
                     mc.run(argv)
+
+
+class ExcludeSelf(unittest.TestCase):
+    """The fail-closed half of ENG-1336, reproduced offline.
+
+    A pushed branch's own PR is in the open-PR listing, so the tool compared its
+    migration against itself and exited non-zero on every run — refusing provably
+    clean enqueues at least five times across three sessions in one day.
+    """
+
+    def _pr(self, number, branch, *files):
+        return {"pr": number, "headRefName": branch, "files": list(files)}
+
+    def test_the_callers_own_pr_is_dropped(self):
+        others = [
+            self._pr(427, "eng-1336", "db-schema/migrations/0014_mine.sql"),
+            self._pr(351, "eng-351", "db-schema/migrations/0009_theirs.sql"),
+        ]
+        kept, dropped = mc.exclude_self(others, "eng-1336")
+        self.assertEqual([e["pr"] for e in kept], [351])
+        self.assertEqual(dropped, [427])
+
+    def test_without_the_exclusion_a_branch_collides_with_itself(self):
+        """The bug, stated as a test: this is what the gate used to see."""
+        mine = ["db-schema/migrations/0014_mine.sql"]
+        others = [self._pr(427, "eng-1336", "db-schema/migrations/0014_mine.sql")]
+        self.assertEqual(len(mc.collisions(mine, others)), 1)
+        kept, _ = mc.exclude_self(others, "eng-1336")
+        self.assertEqual(mc.collisions(mine, kept), [])
+
+    def test_a_real_collision_survives_the_exclusion(self):
+        """Excluding self must not become a way to miss the actual thing.
+
+        Another PR claiming the same number is a different branch, so it stays in
+        the set — which is why the match is on the branch and never on "their
+        files look like mine".
+        """
+        mine = ["db-schema/migrations/0014_mine.sql"]
+        others = [
+            self._pr(427, "eng-1336", "db-schema/migrations/0014_mine.sql"),
+            self._pr(430, "eng-999", "db-schema/migrations/0014_theirs.sql"),
+        ]
+        kept, dropped = mc.exclude_self(others, "eng-1336")
+        found = mc.collisions(mine, kept)
+        self.assertEqual(dropped, [427])
+        self.assertEqual([c["pr"] for c in found], [430])
+
+    def test_an_unresolved_branch_excludes_nothing(self):
+        others = [self._pr(427, "eng-1336", "db-schema/migrations/0014_mine.sql")]
+        kept, dropped = mc.exclude_self(others, None)
+        self.assertEqual(kept, others)
+        self.assertEqual(dropped, [])
+
+    def test_an_entry_with_no_head_ref_is_kept(self):
+        # A hand-assembled --others payload may omit it; that entry is simply
+        # not self-excluded rather than crashing the compare.
+        others = [{"pr": 42, "files": ["db-schema/migrations/0014_x.sql"]}]
+        kept, dropped = mc.exclude_self(others, "eng-1336")
+        self.assertEqual(kept, others)
+        self.assertEqual(dropped, [])
+
+
+class NextFreeNumber(unittest.TestCase):
+    def test_it_is_one_past_the_highest_taken(self):
+        self.assertEqual(mc.next_free_number({1, 2, 3, 13}), 14)
+
+    def test_it_does_not_fill_a_gap(self):
+        """One past the maximum, never the first gap.
+
+        A gap may be held by something neither comparison set can see — a
+        sibling merged since the merge-base is in neither — so only one past the
+        maximum is unclaimed everywhere this tool looked.
+        """
+        self.assertEqual(mc.next_free_number({1, 2, 3, 13}), 14)
+        self.assertNotEqual(mc.next_free_number({1, 2, 3, 13}), 4)
+
+    def test_an_empty_tree_starts_at_one(self):
+        self.assertEqual(mc.next_free_number(set()), 1)
 
 
 class AddedMigrations(unittest.TestCase):
@@ -414,8 +540,128 @@ class AddedMigrations(unittest.TestCase):
                 ["migration_collisions.py", "--others", others, "--base", "main"]
             )
         self.assertEqual(code, 0)
-        self.assertTrue(json.loads(out.getvalue())["clear"])
+        parsed = json.loads(out.getvalue())
+        self.assertTrue(parsed["clear"])
+        self.assertEqual(parsed["status"], "clear")
         self.assertIn("safe to enqueue", err.getvalue())
+
+    def _run(self, others_payload, *extra):
+        """Drive the CLI against this throwaway repo, returning (code, json)."""
+        others = os.path.join(self.root, "others.json")
+        with open(others, "w", encoding="utf-8") as fh:
+            json.dump(others_payload, fh)
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = mc.run(
+                [
+                    "migration_collisions.py",
+                    "--others",
+                    others,
+                    "--base",
+                    "main",
+                    *extra,
+                ]
+            )
+        return code, json.loads(out.getvalue()), err.getvalue()
+
+    def test_the_cli_exits_ZERO_on_the_self_pr_false_positive(self):
+        """The regression that matters most: a clean tree must exit 0.
+
+        The tool used to compare the branch's migration against its own PR and
+        exit non-zero, which is exactly how a skill gates an enqueue — so it
+        blocked every enqueue on a migration-carrying branch. Quieting the
+        message would not have been enough; the exit status is the contract.
+        """
+        self._commit("0002_new.sql", "create table b();")
+        # The branch's own PR, as `gh pr list` reports it once pushed.
+        payload = [
+            {
+                "pr": 427,
+                "headRefName": "feature",
+                "files": [f"{mc.DEFAULT_DIR}/0002_new.sql"],
+            }
+        ]
+        code, parsed, err = self._run(payload, "--self-branch", "feature")
+        self.assertEqual(code, 0)
+        self.assertEqual(parsed["status"], "clear")
+        self.assertEqual(parsed["collisions"], [])
+        self.assertEqual(parsed["self_prs"], [427])
+        self.assertEqual(parsed["prs_checked"], 0)
+        self.assertIn("safe to enqueue", err)
+
+    def test_the_self_exclusion_resolves_the_branch_from_git_by_default(self):
+        # setUp leaves the repo on `feature`, so no --self-branch is needed;
+        # this is the shape the real --others-from-gh call takes.
+        self._commit("0002_new.sql", "create table b();")
+        payload = [
+            {
+                "pr": 427,
+                "headRefName": "feature",
+                "files": [f"{mc.DEFAULT_DIR}/0002_new.sql"],
+            }
+        ]
+        code, parsed, _ = self._run(payload)
+        self.assertEqual(code, 0)
+        self.assertEqual(parsed["self_branch"], "feature")
+        self.assertEqual(parsed["self_prs"], [427])
+
+    def test_another_prs_collision_still_exits_non_zero(self):
+        """The guard must still guard: self-exclusion is not a blanket pass."""
+        self._commit("0002_new.sql", "create table b();")
+        payload = [
+            {
+                "pr": 427,
+                "headRefName": "feature",
+                "files": [f"{mc.DEFAULT_DIR}/0002_new.sql"],
+            },
+            {
+                "pr": 430,
+                "headRefName": "eng-999",
+                "files": [f"{mc.DEFAULT_DIR}/0002_theirs.sql"],
+            },
+        ]
+        code, parsed, err = self._run(payload, "--self-branch", "feature")
+        self.assertEqual(code, 1)
+        self.assertEqual(parsed["status"], "collision")
+        self.assertEqual([c["pr"] for c in parsed["collisions"]], [430])
+        self.assertIn("COLLISION", err)
+
+    def test_a_branch_with_no_migration_reports_nothing_claimed_and_the_number(self):
+        """The fail-open half, end to end.
+
+        `init-pr` calls the tool here on purpose — before the file exists — so
+        the answer it needs is the number to take, not the word "clear".
+        """
+        payload = [
+            {
+                "pr": 430,
+                "headRefName": "eng-999",
+                "files": [f"{mc.DEFAULT_DIR}/0004_theirs.sql"],
+            }
+        ]
+        code, parsed, err = self._run(payload)
+        self.assertEqual(code, 0)
+        self.assertEqual(parsed["status"], "nothing_claimed")
+        self.assertEqual(parsed["mine"], [])
+        # 0001 is in the tree and an open PR claims 0004, so the free number is
+        # past both -- the open-PR set feeds the answer, not just the tree.
+        self.assertEqual(parsed["next_free_number"], 5)
+        self.assertIn("NOT a clear verdict", err)
+        self.assertIn("0005", err)
+
+    def test_an_uncommitted_migration_still_counts_as_taken(self):
+        # `tree_numbers` reads the directory rather than git, so a number this
+        # branch has written but not committed cannot be handed out again.
+        with open(
+            os.path.join(self.root, mc.DEFAULT_DIR, "0007_wip.sql"),
+            "w",
+            encoding="utf-8",
+        ) as fh:
+            fh.write("-- wip\n")
+        self.assertEqual(mc.tree_numbers(), [1, 7])
+        code, parsed, _ = self._run([])
+        self.assertEqual(code, 0)
+        self.assertEqual(parsed["next_free_number"], 8)
 
 
 if __name__ == "__main__":

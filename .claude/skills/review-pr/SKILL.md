@@ -5131,6 +5131,29 @@ already being asked to start the review.
    collision, so a caller checking only the status cannot
    enqueue through one.
 
+   **Gate on the exit status, and trust it.** It is 1 for a
+   `status: "collision"` and 0 for everything else, including
+   `nothing_claimed`. That is worth stating because it was not
+   true until ENG-1336: a pushed branch's own PR is in the
+   open-PR listing, so the tool matched the branch's migration
+   **against itself** and exited non-zero on every run,
+   blocking every enqueue on a migration-carrying branch. It
+   fired at least five times across three sessions in one day,
+   each one interpreted by hand.
+
+   Read the summary line rather than working around it — it
+   names the PR it excluded, so the reported open-PR count is
+   the number actually compared. Do **not** adapt to a blocking
+   guard by ignoring its exit status: that deletes the
+   protection, and the failure it guards against is recoverable
+   only by manual surgery or a data-destroying wipe.
+
+   One residual case is reported rather than hidden: on a
+   **detached HEAD** the branch cannot be resolved, so no
+   self-exclusion happens and the line says so. A collision
+   naming exactly one PR whose file matches this branch's is
+   that self-match.
+
    **This step used to prescribe two commands with no way to
    connect them**, and every sanctioned route across the gap is
    closed: a `>` redirect is a compound the shell guard blocks,
@@ -5151,7 +5174,10 @@ already being asked to start the review.
    the applied one is the move that wedges the database.
 
    Skip this entirely when the branch adds no migration — the
-   tool says so and exits zero.
+   tool reports `nothing_claimed` and exits zero. Note that is
+   **not** a clear verdict, just an empty one; nothing was
+   compared, which is exactly right here and is why `init-pr`
+   reads `next_free_number` from the same call instead.
 
    **A rebase-forced re-run may enqueue BEFORE re-verifying.**
    The normal gate is "everything green locally, then
