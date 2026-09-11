@@ -1426,10 +1426,15 @@ fn violated_constraint(err: &sqlx::Error) -> String {
 ///     highest-consequence regression available here, because a refused candle
 ///     aborts its whole batch and stops that venue's collector rather than
 ///     dropping one row.
-///   * **Non-finite is rejected.** Postgres orders `NaN` above every other
-///     float, so `NaN > 0` holds; without the explicit `< 'Infinity'` bound a
-///     `NaN` price would store while the constraint name claimed positivity.
-///     This arm is why `prices_are_finite` exists at all.
+///   * **`NaN` and a positive infinity are rejected.** Postgres orders `NaN`
+///     above every other float, so `NaN > 0` holds; without the explicit
+///     `< 'Infinity'` bound a `NaN` price would store while the constraint
+///     name claimed positivity. This arm is why `prices_are_finite` exists at
+///     all. Stated as those two values rather than as "non-finite" because a
+///     NEGATIVE infinity satisfies that bound and is caught by
+///     `prices_are_positive` instead, so it is deliberately absent from the
+///     loop below: it violates two constraints, which would make the expected
+///     name depend on evaluation order.
 ///
 /// Every accepted row here carries `volume = 0.0`, which also pins the
 /// deliberate volume exemption: some wired sources publish no volume, so a

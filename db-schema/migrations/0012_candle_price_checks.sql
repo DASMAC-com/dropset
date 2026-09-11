@@ -41,11 +41,19 @@
 -- what makes these columns mean "a real price". Without it these constraint
 -- names would assert more than they check.
 --
+-- Read those two as a PAIR, because neither is exhaustive alone and the
+-- boundary between them is not where the names suggest. A negative infinity
+-- satisfies `x < 'Infinity'` and is refused by the positivity check instead
+-- — which is not a gap, since a negative infinity is genuinely not positive,
+-- but it does mean a division artefact can surface under either name. Only
+-- the conjunction says "finite and positive".
+--
 -- **Volume is deliberately unconstrained.** Zero volume is legitimate and
 -- routine — some sources publish none at all — so the column carries no
 -- positivity invariant. Which sources, and why, is a property of the feed
--- roster and changes with it, so it lives in docs/data-feeds.md §8 rather
--- than here.
+-- roster and changes with it, so it lives in docs/data-feeds.md rather than
+-- here. Named without a section number deliberately: headings renumber, and
+-- this file cannot be corrected when they do.
 --
 -- **Deliberately NOT here: the full OHLC ordering**, that `open` and `close`
 -- each sit within `[low, high]`. It is a coherent stronger invariant and a

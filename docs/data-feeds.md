@@ -686,14 +686,17 @@ detect one either. The constraint therefore carries an explicit
 
 **Know what a rejection costs, because it is not a dropped row.** A
 candle the constraints refuse aborts the whole batch it arrived in — the
-writer runs every insert in one transaction — and the feed cursor is
-saved only after a successful commit, so the batch is retried rather
-than skipped. The store sink is not wrapped in the best-effort adapter
+writer runs every insert in one transaction — and the feed position is
+saved only after a successful commit, so it does not advance and the row
+is not skipped. The store sink is not wrapped in the best-effort adapter
 on this path, so the error reaches the runner and stops that venue's
-collector. That is the intended direction (refusing bad data beats
-storing it), but it makes an intake-side guard the right place to *drop*
-a bad bar, with these constraints as the backstop that catches what
-intake misses.
+collector. How long that persists depends on how the source derives its
+next request window, so treat it as "stops, and stops again on restart
+while the bad bar is still being fetched" rather than assuming either a
+self-clearing blip or a permanent wedge. That is the intended direction
+(refusing bad data beats storing it), but it makes an intake-side guard
+the right place to *drop* a bad bar, with these constraints as the
+backstop that catches what intake misses.
 
 Three details worth keeping straight. **Volume is deliberately
 unconstrained** — zero volume is legitimate and routine, since some
