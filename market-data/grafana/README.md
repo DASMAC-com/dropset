@@ -34,20 +34,29 @@ the ingestion view in particular, whose value is that a wall of green
 means a feeds change works; mixing regime analytics into it would
 dilute that read.
 
-`FX analytics` is ordered **raw first**. The top row is the plain price
-series for one selected venue and product, beside a table of everything
-the store holds — per source and product, its bar count, newest bar, and
-age. Those answer *is there data and does it make sense* before
-anything derived is shown, and the table is a table rather than a tile
-per feed precisely because the roster grows. Below them sit the three
-regime panels: realized volatility by hour, by FX trading session, and
-weekend against weekday.
+`FX analytics` is ordered **raw first**. The top panel is the plain price
+series for one selected venue and product, and below it the candle
+coverage table — the same store-inventory definition the ingestion
+dashboard carries, per source, product and bucket width, with its
+all-time bar count and its freshness. Those answer *is there data and
+does it make sense* before anything derived is shown, and the table is a
+table rather than a tile per feed precisely because the roster grows.
+Then realized volatility by hour, and last the cross-pair traversal.
 
-It deliberately reads **one product at a time** rather than overlaying
-the roster. Selecting a currency and getting every pair that involves it
-is a better interface and is tracked separately; it needs products
-tagged by currency family, which is a schema change rather than a
-dashboard one.
+Most of it reads **one product at a time**, but the **cross-pair index**
+does not: pick a currency and it overlays every pair carrying it on
+either leg, each indexed to 100 at its first bar in the window so pairs
+at different absolute levels stay comparable. That is the panel
+discharging the per-symbol acceptance condition, and it is reachable
+from a link on `Market data` so a walkthrough need not know which
+dashboard to open. It offers every **registered** pair rather than only
+live ones, and names a quiet pair in the legend instead of dropping it —
+a liveness filter there made the panel show fewer pairs the wider an
+outage got.
+
+Selecting by currency needed products tagged by currency family, which
+was a schema change rather than a dashboard one; it landed as the
+instruments dimension, which is what the currency picker reads.
 
 The **basis against an FX anchor** is not a panel in this pass. Its
 query is committed and works — see `market-data/analytics/` — but a
@@ -207,84 +216,103 @@ Two deliberate safeguards are already in place, and are worth keeping:
 
 ## Reading the dashboard
 
-Top-down: the two fair-price panels at the top answer *what does the
-system believe, and why*, the two stat tiles below them answer *is
-ingestion alive right now*, and everything after that answers *is it any
-good*.
+`Market data` is three collapsible rows, **quotability first**:
 
-### The two fair-price panels
+1. **Can I quote right now** — the go/no-go verdict per pair.
+1. **Are the feeds alive** — which collectors and sources stand behind
+   that verdict.
+1. **Does the price look right** — the shape read.
 
-These are the estimator's output (`docs/market-making.md` §1
-"Fair-price estimation"), and they read together.
+The rows default to expanded, deliberately: a hidden panel is an
+invisible panel, and a source that is wired but invisible is
+indistinguishable from one that is down. Collapse the half you are not
+using — a bring-up reader wants the middle row, a live-quoting reader
+the top one.
 
-- **Fair price over its sources** draws three lines per market — the
-  composed fair price, the FX leg's fused estimate, and the FX leg's fast
-  consensus median — over every selected source's raw ticks. **Read the
-  gaps**, which is why all three are drawn rather than just the answer.
-  Fused-vs-fast is the estimator's whole contribution: the two sit on top
-  of each other while the sources agree and separate exactly when a
-  source is being ignored or a dislocation is being adopted.
-  Fused-vs-scatter is the estimator declining to chase a stray print.
-- **Fusion weight by source** explains the first panel: when the fused
-  line stops tracking a source, this says by how much and from when.
+### The go/no-go verdict
 
-Two things to know before reading either:
+**Live venues per pair** is the whole criterion: **one live trusted
+tape**, halt at zero. Only the tape column decides anything; everything
+beside it is context for diagnosing why.
 
-- **A weight series pinned at zero is the interesting case**, not an
-  empty one. Zero means the source answered and was **trimmed** — it sat
-  outside the dispersion band of the fast consensus, so the estimator
-  declined to believe it. That is a sick feed, a mis-mapped product, or a
-  real disagreement between an official reference rate and the tape. A
-  source that simply stopped answering has no row at all and leaves a
-  gap instead, so the two states are distinguishable on sight.
-- **The Market picker and the Product/Source pickers are independent.**
-  A market is keyed by token symbol (`EURC`), a feed product by pair id
-  (`EUR-USD`), and the schema holds no mapping between the two
-  vocabularies — so pairing them is yours to do. A fused line drawn over
-  an empty scatter means the pickers disagree, not that data is missing.
+- **OANDA is the designated tape.** That is a *designation*, not a
+  measurement — no column in the store records it, so it is a literal in
+  the query. Twelve Data carries the same pairs intraday and is
+  deliberately not believable alone, which is why the two are never
+  pooled into one count: one-live-of-two says nothing until you know
+  which one. A daily reference can never reach the tape column, so it
+  can never clear the halt.
+- **Tape age is the halt bound made readable.** The freshness picker is
+  the halt's *detection latency*, not a display preference, so the
+  column shows how far past that bound the tape has actually gone —
+  which separates *quiet for a minute* from *quiet since Friday*. The
+  picker is capped at the bound, so it can only tighten the test.
+- **Expect a no-go on every FX pair across a weekend.** The tape stops
+  at the Friday close by design. Measured: OANDA's last candle lands at
+  Friday 16:59 ET, the FX week-close boundary, so from Friday evening to
+  Sunday every FX pair reads no-go and that is *correct* rather than an
+  incident. The weekend annotation on the time-series panels is the
+  context for it.
+- **The long tail is withheld**, counted in a final row. Pairs with no
+  trusted tape and no live source were thirty-odd rows of zeros whose
+  only effect was to teach the eye to skip the table.
 
-The Market variable reads `maker_legs`, so on a database no maker has run
-against it is empty. **Fusion weight by source** then goes blank; **Fair price
-over its sources** does *not* — its raw-tick arm carries no market predicate, so
-it still draws the full source scatter with no fused line over it. That is the
-same picture a picker mismatch produces, and the two are told apart by whether
-the Market picker has any values to offer at all. Either way it is isolated:
-the collectors and the maker are independent writers, and every ingestion panel
-below is unaffected.
+### The freshness readings
 
-### The two freshness tiles
+They look redundant and are not, which matters most on first contact.
 
-They look redundant and are not, which matters most on first contact:
+- **Collector cursor age** is wall-clock, from `feed_cursors.updated_at`
+  — the only true liveness signal in the schema. It says the *process*
+  is running and committing. It covers only the paged collectors: an
+  HTTP live source never commits a cursor at all, and neither does a
+  parked one, so the roster is the registry scoped to the
+  cursor-capable sources. Fourteen rows today.
+- **Candle coverage** is data recency, from `max(bucket_start)`, driven
+  from all-time history with the window as a column. A series that
+  stopped entirely stays visible instead of dropping out of a grouped
+  query, and all-time bars with zero in-window buckets is the one
+  reading no windowed panel can give you.
+- **Source coverage** accounts for every declared source **by name**,
+  eight rows always, whatever any of them has done. Read *Printing now*
+  and not *Covered*: the latter is a 48-to-72-hour class bound that
+  answers "should this be producing at all" and tolerates an FX
+  weekend, and it was measured reading true at 24.6 hours old.
 
-- **Feed cursor age** is wall-clock, from `feed_cursors.updated_at` —
-  the only true liveness signal in the schema. It says the process is
-  running and committing.
-- **Last candle age** is data recency, from `max(bucket_start)`. Its
-  floor is one granularity, because the collector persists only
-  *closed* buckets: a perfectly healthy 60s feed reads 60–120s and
-  never 0. The thresholds are set above that floor accordingly.
+**Age is counted in cadences, not seconds**, on every one of them. A
+daily series is 86 400 seconds old the moment before its next bar lands,
+so any absolute bound tuned for 60s bars marks a healthy daily reference
+permanently red. Dividing by the series' own expected interval makes one
+bound correct for both: the 300-second store-silence bound is five
+commits for a 60s poller, and preserved exactly there.
 
-**During a backfill they deliberately disagree**, and that is the single
-most confusing state to walk into. A cold collector starts 60 days back
-and works forward, so cursor age reads green (it is very much alive)
-while candle age reads red (the newest bucket is weeks old) and the
-throughput panel is empty (no buckets land in the last 15 minutes).
-Nothing is broken; give it a few minutes and all three converge.
+**Wall-clock and data recency deliberately disagree in two states**, and
+both are confusing to walk into:
+
+- **During a backfill.** A cold collector starts 60 days back and works
+  forward, so cursor age reads green while candle age reads red and
+  throughput is flat at zero. Nothing is broken; give it a few minutes.
+- **When a venue closes.** Measured after the Friday FX close: OANDA's
+  cursor was 33 seconds old while its newest candle was two hours old.
+  The collector was fine and the market was shut. Reading the two as one
+  number would report a collector outage that is not happening.
 
 Two other honest limits worth knowing before you trust a panel:
 
 - **Throughput is measured in candle-bucket time, not insert time.**
   `cex_prices` records no insert timestamp, so "rows per minute" counts
   buckets by the minute they *cover*. For a live 60s feed that is a flat
-  line at one row per product per minute. A collector that dies
-  mid-window visibly drops to zero; one that was already dead for the
-  whole window contributes no series at all rather than a zero line —
-  which is what the freshness tiles are for.
+  line at one row per product per minute. Every source that has ever
+  written the selected shape is seeded across the window, so a collector
+  dead for the whole window is a **flat line at zero** rather than a
+  series that is simply not drawn — an outage adds ink instead of
+  removing it.
 - **The candlestick panel reads one source at a time.** Candles from two
   venues share a bucket key but are different series, so overlaying them
   would interleave bars rather than compare them. Compare sources on the
   overlay panel instead; the `Candle source` variable picks which venue
-  gets bars.
+  gets bars. That overlay marks the tape thick and the daily references
+  dotted, because three of the five FX sources are daily and their
+  divergence is their nature rather than a fault.
 
 The multi-source panels are written source-generic — grouped by
 `source`, driven by template variables — so a second collector appears
@@ -300,10 +328,53 @@ maker bot's own telemetry rather than the collectors' — the tables
 the panels without being misled.
 
 Rows answer, top to bottom: *is it quoting near fair value and is it
-alive*, *what did each tick decide and under which regime*, *how is
-inventory tracking*, *are the feeds healthy*. A `Market` selector drives
-the per-market panels; the heartbeat, feed-health, and tick-error panels
-are process-wide by design.
+alive*, *is the fair itself defensible*, *what did each tick decide and
+under which regime*, *how is inventory tracking*, *are the feeds
+healthy*. A `Market` selector drives the per-market panels; the
+heartbeat, feed-health, and tick-error panels are process-wide by
+design.
+
+### The estimator card
+
+**Fair price over its sources** is the estimator's output
+(`docs/market-making.md` §1 "Fair-price estimation"). It lives here
+rather than on the ingestion dashboard because it reads maker tables,
+and a panel whose writer does not exist renders blank by construction.
+
+Do not confuse it with **Quotes vs fair value** directly above: that
+asks whether our *quotes* track our fair, this asks whether the *fair*
+is defensible against the prints it was built from. Read them in that
+order during an incident.
+
+- **Price arms, left axis.** Three series per market — the composed fair
+  price, the FX leg's fused estimate, and the FX leg's fast consensus
+  median — over every selected source's raw ticks. **Read the gaps**,
+  which is why all three are drawn rather than just the answer.
+  Fused-vs-fast is the estimator's whole contribution: the two sit on
+  top of each other while the sources agree and separate exactly when a
+  source is being ignored or a dislocation is being adopted.
+- **Weight arms, right axis.** Each source's share of its leg's fused
+  estimate, which names what the price arms only imply. **A weight
+  series pinned at zero is the interesting case**, not an empty one:
+  zero means the source answered and was **trimmed**, sitting outside
+  the dispersion band of the fast consensus. That is a sick feed, a
+  mis-mapped product, or a real disagreement between an official
+  reference rate and the tape. A source that stopped answering has no
+  row at all and leaves a **gap** instead, so the two are
+  distinguishable on sight.
+
+**Two ways it renders empty, and they are different facts.** If the
+`Market` picker itself is empty, no maker has ever written to this
+database — the picker is driven from maker telemetry, so it has nothing
+to offer, and Heartbeat reads dead for the same reason. That is a
+bring-up state and nothing you select will fix it. Only if a market *is*
+selected and the fair line still draws over an empty scatter is this a
+picker pairing: a market is keyed by token symbol (`EURC`), a feed
+product by pair id (`EUR-USD`), and the schema holds no mapping between
+the two vocabularies, so pairing them is yours to do.
+
+Either way it is isolated: the collectors and the maker are independent
+writers, and every ingestion panel on the other dashboard is unaffected.
 
 Four things that read wrong on first contact:
 
@@ -336,9 +407,10 @@ Four things that read wrong on first contact:
   must never be conflated with `SingleTrusted`.
 
   Per-source *weights* do now exist, in `maker_leg_contributions`, and
-  are plotted on the market-data dashboard's **Fusion weight by source**
-  panel. That is not the same claim as "which feed answered" and does not
-  reinstate it: the weights describe how the **estimate** was built,
+  are plotted on the weight arms of this dashboard's **Fair price over
+  its sources** card. That is not the same claim as "which feed
+  answered" and does not reinstate it: the weights describe how the
+  **estimate** was built,
   while `consensus_state` and `contributor_count` describe the **fast
   signal**. The two legitimately disagree — a daily reference fix is
   fused but corroborates nothing, and a trimmed outlier corroborates the
