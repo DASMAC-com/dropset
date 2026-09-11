@@ -11,6 +11,29 @@ the program's relative-quoting hot path (`set_reference_price`, with an
 inventory skew) and cold path (`set_liquidity_profile`) under the spec's
 inventory / peg / staleness kill switches.
 
+## `DROPSET_DATABASE_URL` is required — the bot will not start without it
+
+The intraday FX anchor is read from the shared market-data store, so the
+connection string is a **startup requirement**, not an optional
+telemetry nicety. Run the binary without it and it exits immediately
+naming the variable.
+
+Most paths supply it already and you will never notice: compose sets it
+for the containerized maker, and the TUI defaults it to the localnet
+store for the makers it spawns. The path that does notice is a bare
+`cargo run -p dropset-maker-bot` from a shell that has not exported it.
+
+```sh
+DROPSET_DATABASE_URL='postgres://dropset:dropset@127.0.0.1:5432/dropset' \
+  cargo run -p dropset-maker-bot -- --dry-run
+```
+
+Failing closed here is deliberate. The alternative is a maker that
+starts, finds no intraday anchor, and quotes the MVP pairs off a daily
+ECB fix — which is the risk the fail-closed posture exists to decline.
+The same reasoning halts a running bot when the store goes silent; see
+`HaltReason::PriceStoreUnavailable`.
+
 ## The tiered price feed
 
 Each market's USD reference cascades through four sources, primary-first,

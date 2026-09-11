@@ -142,6 +142,37 @@ pub fn is_tape_source(source: &str) -> bool {
 /// `tasks`, so the value cannot drift.
 const PYTH_SOURCE: &str = "pyth-hermes";
 
+/// Turn one store row into the [`Reading`] the engine should see, or `None`
+/// if the row must not be offered at all.
+///
+/// **Both consumers must go through this, and unifying only the dispatch was
+/// not enough.** The live path and the dry run each build the FX leg, and an
+/// earlier pass gave them a shared function for *which push method* a venue
+/// gets while leaving *how the reading is constructed* duplicated. That is
+/// the half that decides whether a candidate survives `resolve` — so the dry
+/// run, which stamped every store row at age zero and applied no skew
+/// refusal, could never reproduce a staleness-driven halt the live bot would
+/// take. A dry run that gets the live decision wrong is worse than one that
+/// omits it.
+///
+/// `receipt_age` is the only thing the two callers legitimately differ on:
+/// the tick loop knows when it last read each cached row, while a dry run
+/// polls once and has just fetched everything.
+pub fn store_reading(
+    close: f64,
+    published_at: i64,
+    now_unix: i64,
+    receipt_age: Duration,
+) -> Option<Reading> {
+    if future_stamped(published_at, now_unix) {
+        return None;
+    }
+    Some(Reading::new(
+        close,
+        store_reading_age(published_at, now_unix, receipt_age),
+    ))
+}
+
 /// Offer one store venue's reading to a candidate set, at its ruled
 /// designation.
 ///
@@ -283,11 +314,18 @@ pub fn store_reading_age(published_at: i64, now_unix: i64, receipt_age: Duration
 /// How far ahead of this host's clock a row's publication stamp may sit
 /// before the row is refused outright.
 ///
-/// Generous, because the honest causes are small: NTP skew between a
-/// collector host and this one is sub-second, and the widest legitimate
-/// overshoot is one bucket width (a collector writing a bucket whose close is
-/// a minute out). Anything beyond that is a wrong clock or a wrong
-/// `granularity_secs`, and neither should price a book.
+/// Generous against the honest causes, which are small: NTP skew between a
+/// collector host and this one is sub-second, and a minute-bar collector's
+/// widest legitimate overshoot is one bucket width.
+///
+/// Deliberately **not** derived from the bucket width, because the widths
+/// differ by three orders of magnitude across the venues this governs — a
+/// minute for OANDA and Twelve Data, a day for Alpha Vantage. A per-venue
+/// bound would let a daily series carry a stamp a day ahead, which is
+/// exactly the shape the refusal exists to catch. A flat bound is stricter
+/// than one bucket for the daily tier, and that is the safe direction:
+/// Alpha Vantage is a `Reference`, so dropping it costs breadth rather than
+/// the live signal.
 pub const MAX_PUBLICATION_SKEW: Duration = Duration::from_secs(120);
 
 /// Whether a row's publication stamp is implausibly far in the future.
@@ -424,6 +462,30 @@ mod tests {
         );
     }
 
+    /// The shared constructor both call sites go through: it refuses a
+    /// skewed row and ages an honest one.
+    ///
+    /// This is what makes the dry run able to reproduce a live halt. With
+    /// the reading construction duplicated, the dry run stamped every store
+    /// row at age zero, so a stale row always survived `resolve` and its
+    /// HALT column could never fire on staleness — reporting a market fine
+    /// that the live bot would refuse to quote.
+    #[test]
+    fn the_shared_constructor_refuses_skew_and_ages_the_rest() {
+        // Fresh: aged from the publication stamp.
+        let fresh = store_reading(1.16, 1_000, 1_060, secs(1)).expect("offered");
+        assert_eq!(fresh.age, secs(60));
+        assert_eq!(fresh.value, 1.16);
+
+        // Stale: still offered, but aged so the engine can drop it. Refusing
+        // here would hide a genuine outage behind an absent candidate.
+        let stale = store_reading(1.16, 1_000, 1_000 + 6 * 3600, secs(1)).expect("offered");
+        assert_eq!(stale.age, secs(6 * 3600));
+
+        // Skewed: refused outright, because no age makes it safe.
+        assert!(store_reading(1.16, 2_000, 1_000, secs(1)).is_none());
+    }
+
     /// So the rejection is what has to catch it.
     #[test]
     fn a_future_stamped_row_is_refused() {
@@ -536,6 +598,24 @@ mod tests {
         assert!(
             STARTUP_TAPE_GRACE < MAX_STORE_SILENCE,
             "a grace longer than the silence bound leaves a cold-start hole"
+        );
+    }
+
+    /// And the grace must outlast the poll it is waiting for.
+    ///
+    /// This is the other end of the same ordering chain, and it was the
+    /// unpinned one: `fx_store_poll` is a **config knob**, not a constant, so
+    /// raising it above the grace would arm the tape guard before the first
+    /// poll could possibly land — reinstating the measured "alarm and pull
+    /// the book on every startup" regression the grace exists to prevent.
+    /// Two intervals, so a single slow or missed poll does not arm it either.
+    #[test]
+    fn the_startup_grace_outlasts_two_store_polls() {
+        let poll = crate::config::BotConfig::default().feeds.fx_store_poll;
+        assert!(
+            STARTUP_TAPE_GRACE >= 2 * poll,
+            "the grace ({STARTUP_TAPE_GRACE:?}) must cover two store polls ({poll:?}), \
+             or a boot arms the tape guard before the store has had a chance to answer"
         );
     }
 

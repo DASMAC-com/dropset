@@ -449,17 +449,35 @@ impl FeedHub {
                 let reading = self
                     .fx_store
                     .get(&(source.to_string(), product.clone()))
-                    // A stamp implausibly far ahead of this host's clock is
-                    // refused outright rather than aged. Ageing cannot make
-                    // it safe: the receipt floor resets on every poll, so a
-                    // future-stamped row would read as seconds old forever,
-                    // never cross the tape bound, and keep the fail-closed
-                    // tape guard satisfied on a price nobody published.
-                    .filter(|(_, published, _)| {
-                        !fx_store::future_stamped(*published, tick.now_unix)
-                    })
-                    .map(|(value, published, read_at)| {
-                        fx_store_reading(*value, *published, *read_at, now, tick.now_unix)
+                    // Through the shared constructor, which owns BOTH the
+                    // skew refusal and the ageing. Unifying only the
+                    // push-method dispatch was not enough: how the reading is
+                    // built is what decides whether a candidate survives
+                    // `resolve`, so leaving that duplicated let the dry run
+                    // reach a different verdict than this one.
+                    .and_then(|(value, published, read_at)| {
+                        let reading = fx_store::store_reading(
+                            *value,
+                            *published,
+                            tick.now_unix,
+                            now.duration_since(*read_at),
+                        );
+                        if reading.is_none() {
+                            // A refusal is otherwise indistinguishable from a
+                            // venue that never wrote the pair — the candidate
+                            // is simply absent either way. That matters most
+                            // in the partial case: if only OANDA's stamp
+                            // skews, the leg silently drops the one source
+                            // designated believable alone and rests on the
+                            // untrusted tape, with `tape_shortfall` still
+                            // false and nothing halting. Say so.
+                            eprintln!(
+                                "[{}] refused a {source} row: publication stamp is \
+                                 implausibly far ahead of this host's clock",
+                                market.symbol
+                            );
+                        }
+                        reading
                     });
                 fx = fx_store::push_store_candidate(fx, source, reading);
             }
@@ -681,33 +699,13 @@ pub fn tape_shortfall_for_dry_run(requires_live_tape: bool, fx_leg: &LegReport) 
             .any(|c| fx_store::is_tape_source(c.source))
 }
 
-/// Turn a cached market-data store row into a [`Reading`].
-///
-/// The fourth sibling of [`pyth_reading`] and friends, holding the same
-/// contract they do: `age = max(publication_age, receipt_age)`.
-///
-/// The publication instant here is the **bucket close** the collector wrote,
-/// not the database write — a stalled collector keeps serving the same row, so
-/// ageing from the write would report an hours-old print as fresh every time
-/// it was re-read. The receipt floor covers the other direction, a poller of
-/// ours that has died sitting on a stamp that no longer moves. Taking the
-/// `max` is also the forward-skew guard: a stamp can only ever make a reading
-/// older, so a bogus future bucket cannot pin the age at zero.
-///
-/// Unlike [`pyth_reading`] this needs no explicit skew branch or absolute
-/// ceiling — the `max` handles skew by construction, and there is no
-/// weekend-publication subtlety because a closed FX market simply stops
-/// producing buckets, which ages the candidate out on its own.
-fn fx_store_reading(
-    value: f64,
-    published_at: i64,
-    read_at: Instant,
-    now: Instant,
-    now_unix: i64,
-) -> Reading {
-    let age = fx_store::store_reading_age(published_at, now_unix, now.duration_since(read_at));
-    Reading::new(value, age)
-}
+// The store's fourth-sibling reader lives in `fx_store::store_reading`, not
+// here beside `pyth_reading` and friends. It holds the same
+// `age = max(publication_age, receipt_age)` contract they do, and additionally
+// refuses a forward-skewed stamp — which the `max` alone does NOT handle,
+// contrary to what this comment used to claim. It sits in `fx_store` because
+// the dry run needs the identical construction: duplicating it here is what
+// let the two reach different verdicts about the same row.
 
 /// A ceiling on the age [`pyth_reading`] will report, so a wildly skewed clock
 /// or a bogus `publish_time` degrades to "stale" rather than to a negative or
@@ -1441,7 +1439,16 @@ fn quote_market_inner(
     };
 
     let tape_shortfall = tape_shortfall(ctx.cfg.requires_live_tape, store, &fair.fx_leg);
-    if tape_shortfall {
+    // Suppressed while the store is silent, because `evaluate` reports
+    // `PriceStoreUnavailable` in that case and this line would name a venue
+    // failure for what is an infrastructure one. The two halt reasons are
+    // deliberately distinct — the operator response differs completely — and
+    // an alert that disagrees with the decision it accompanies is worse than
+    // no alert. Observed in the 2026-09-10 drill: telemetry recorded
+    // `PriceStoreUnavailable` while stderr carried three "no live FX tape"
+    // lines per tick, and the drill passed only because the telemetry
+    // channel was the one being read.
+    if tape_shortfall && !store.silent {
         eprintln!(
             "[{}] halting: no live FX tape — every contributor to the anchor \
              is a daily fix, and this pair is not allowed to quote off one",
@@ -2256,7 +2263,8 @@ mod tests {
     }
 
     /// `fx_store` duplicates the Pyth tag rather than importing it, to keep
-    /// that module free of a cycle back into this one. Pin them equal: if they
+    /// that module a leaf — it knows venue tags and nothing about this tick
+    /// loop. (Not a cycle: none is possible between modules of one crate.) Pin them equal: if they
     /// drifted, a Pyth-only FX leg would read as having no live tape and an
     /// MVP market would halt with its anchor working.
     #[test]

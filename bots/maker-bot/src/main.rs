@@ -902,6 +902,13 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
 
     let now = Duration::from_secs(0);
     let q = |v: Option<f64>| v.map(|v| Reading::new(v, now));
+    // The wall clock, for the one tier whose age the dry run computes rather
+    // than assumes: store rows carry their own publication stamp, so they can
+    // be aged truthfully where a polled tier cannot.
+    let dry_run_now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
 
     /// One leg's consensus, rendered for the dry-run table. A dry run is the
     /// wiring check, so how many sources answered and which one disagrees is
@@ -947,10 +954,22 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         let mut fx_q = Candidates::none().push_trusted(SOURCE_PYTH, fx_pyth);
         if let Some(product) = fx_store::fx_product_id(m.currency) {
             for source in fx_store::FX_STORE_SOURCES {
+                // Aged honestly from the row's own publication stamp, NOT at
+                // the age-zero convention the other tiers use here. That
+                // convention is harmless for a tier whose freshness the dry
+                // run does not adjudicate, and harmful for this one: the HALT
+                // column below turns on which sources actually contribute,
+                // contribution turns on staleness, and a forced age of zero
+                // means every offered row always survives — so the dry run
+                // could never reproduce a staleness-driven halt the live bot
+                // would take. The receipt age is genuinely ~0 (these rows
+                // were just fetched); the publication age is the real signal.
                 let reading = fx_store_rows
                     .iter()
                     .find(|r| r.source == source && r.product_id == product)
-                    .map(|r| Reading::new(r.close, now));
+                    .and_then(|r| {
+                        fx_store::store_reading(r.close, r.published_at, dry_run_now_unix, now)
+                    });
                 // The same helper the live path uses. Writing the dispatch
                 // out longhand here is what made "the two collections must
                 // agree" a claim in two comments and an invariant in neither.
