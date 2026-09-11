@@ -239,6 +239,12 @@ fn check_response(body: FxDailyResponse) -> Result<BTreeMap<String, RawBar>> {
 /// Turn the dated series into the batch's records: keep bars inside
 /// `[next_start, closed_boundary)`, oldest-first. An undecodable bar is dropped
 /// rather than failing the batch, matching the other candle adapters.
+///
+/// So is a bar that decodes but carries an unusable value — this venue publishes
+/// prices as strings and Rust's float parser accepts `"NaN"` and `"inf"`, so a
+/// sentinel survives the parse — which [`Candle::checked`] rejects. Both drops
+/// warn, so a venue that starts emitting sentinels shows up as a shrinking batch
+/// *with* a reason rather than as quiet attrition.
 fn assemble(
     series: BTreeMap<String, RawBar>,
     next_start: i64,
@@ -246,7 +252,18 @@ fn assemble(
 ) -> Vec<Candle> {
     let mut records: Vec<Candle> = series
         .iter()
-        .filter_map(|(date, bar)| decode(date, bar).ok())
+        .filter_map(|(date, bar)| {
+            decode(date, bar)
+                .and_then(Candle::checked)
+                .inspect_err(|err| {
+                    tracing::warn!(
+                        date = %date,
+                        error = %err,
+                        "dropping an Alpha Vantage candle"
+                    );
+                })
+                .ok()
+        })
         .filter(|c| c.bucket_start >= next_start && c.bucket_start < closed_boundary)
         .collect();
     records.sort_by_key(|c| c.bucket_start);
@@ -365,6 +382,36 @@ mod tests {
                 civil_to_epoch_secs(2026, 8, 13, 0, 0, 0),
             ]
         );
+    }
+
+    /// A sentinel costs exactly its own bar — same shape as the Twelve Data
+    /// case, and for the same reason: this venue also publishes prices as
+    /// strings, so a successful parse says nothing about the value.
+    ///
+    /// It matters more here than the daily cadence suggests. This source asks
+    /// for `outputsize=full` on every poll, so one bad historical bar is
+    /// re-fetched every poll forever rather than scrolling out of the window.
+    #[test]
+    fn assemble_drops_a_bar_whose_price_string_parses_to_a_sentinel() {
+        for sentinel in ["NaN", "inf", "-Infinity", "0", "-1"] {
+            let mut series = check_response(captured_response()).unwrap();
+            series
+                .get_mut("2026-08-12")
+                .expect("the fixture carries a 2026-08-12 bar")
+                .high = sentinel.to_string();
+            let got = assemble(
+                series,
+                civil_to_epoch_secs(2026, 8, 1, 0, 0, 0),
+                civil_to_epoch_secs(2026, 8, 13, 0, 0, 0),
+            );
+            let times: Vec<i64> = got.iter().map(|c| c.bucket_start).collect();
+            assert_eq!(
+                times,
+                vec![civil_to_epoch_secs(2026, 8, 11, 0, 0, 0)],
+                "a high of {sentinel:?} must cost exactly its own bar, leaving \
+                 the sound one in the batch"
+            );
+        }
     }
 
     #[test]

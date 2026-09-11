@@ -315,17 +315,36 @@ fn window_end(next_start: i64, granularity: i64, max_buckets: usize, closed_boun
 /// bucket at the window end) into the batch's records: keep only closed buckets
 /// at or after `next_start`, and order oldest-first (the store sink expects
 /// ascending records).
+///
+/// A bucket whose prices are not finite and positive, or whose high sits below
+/// its low, is dropped with a warning by [`Candle::checked`]. This path takes
+/// the venue's numbers from a JSON array straight into a record, so unlike the
+/// ticker path below it never passed them through
+/// [`parse_coinbase_ticker`]'s finiteness filter — the same venue, guarded on
+/// one endpoint and not the other, which is exactly the asymmetry that reads as
+/// coverage from a glance at the module.
 fn assemble(raw: Vec<CandleTuple>, next_start: i64, closed_boundary: i64) -> Vec<Candle> {
     let mut records: Vec<Candle> = raw
         .into_iter()
         .filter(|(t, ..)| *t >= next_start && *t < closed_boundary)
-        .map(|(t, low, high, open, close, volume)| Candle {
-            bucket_start: t,
-            low,
-            high,
-            open,
-            close,
-            volume,
+        .filter_map(|(t, low, high, open, close, volume)| {
+            Candle {
+                bucket_start: t,
+                low,
+                high,
+                open,
+                close,
+                volume,
+            }
+            .checked()
+            .inspect_err(|err| {
+                tracing::warn!(
+                    bucket_start = t,
+                    error = %err,
+                    "dropping a Coinbase candle"
+                );
+            })
+            .ok()
         })
         .collect();
     records.sort_by_key(|c| c.bucket_start);
@@ -411,6 +430,34 @@ mod tests {
         let got = assemble(raw, 120, 10_000);
         let times: Vec<i64> = got.iter().map(|c| c.bucket_start).collect();
         assert_eq!(times, vec![120, 180]);
+    }
+
+    /// The guard is *wired into* this path, not merely available to it — and
+    /// each unusable bucket is dropped on its own, leaving the sound buckets
+    /// around it in the batch.
+    ///
+    /// Dropping the whole batch instead would defeat the purpose: the cursor
+    /// advances only on a successful commit, so a batch that never commits
+    /// leaves the collector re-fetching the same window. One bad bucket should
+    /// cost one bucket.
+    #[test]
+    fn assemble_drops_each_unusable_bucket_and_keeps_the_sound_ones() {
+        let raw = vec![
+            (300, f64::NAN, 1.3, 1.25, 1.28, 5.0),     // NaN low
+            (240, 1.2, 1.3, 1.25, f64::INFINITY, 5.0), // infinite close
+            (180, 1.1, 0.0, 1.15, 1.18, 4.0),          // zero high
+            (120, 1.3, 1.1, 1.2, 1.15, 3.0),           // high below low
+            (60, 1.0, 1.1, 1.05, 1.08, 3.0),           // sound
+            (0, 1.0, 1.1, 1.05, 1.08, 0.0),            // sound, no volume
+        ];
+        let got = assemble(raw, 0, 10_000);
+        let times: Vec<i64> = got.iter().map(|c| c.bucket_start).collect();
+        assert_eq!(
+            times,
+            vec![0, 60],
+            "every malformed bucket must be dropped individually and both sound \
+             ones kept, zero volume included"
+        );
     }
 
     #[test]

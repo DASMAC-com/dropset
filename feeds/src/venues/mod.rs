@@ -71,6 +71,7 @@
 //! pages. Each module's `MIN_REQUEST_INTERVAL` carries the documented number it
 //! was derived from, and a unit test asserts the arithmetic still holds.
 
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 
 // Each venue rides its own transport's gate, not the module's — the `Quotes`
@@ -141,6 +142,97 @@ pub struct Candle {
     pub volume: f64,
 }
 
+impl Candle {
+    /// Accept this bar only if every price is finite and positive and the
+    /// bucket's high sits at or above its low; otherwise say why, so a caller
+    /// can **drop** the bar at intake rather than pass it to a store.
+    ///
+    /// **This exists so the rule lives once rather than once per adapter.**
+    /// Every candle adapter needs it and they were not converging on it: the
+    /// OANDA adapter checked the value, while two adapters checked only that
+    /// the bytes parsed as a float — and Rust's float parser accepts `"NaN"`
+    /// and `"inf"`, so a venue sentinel reached the column intact — and a third
+    /// mapped the venue's own numbers straight through, its finiteness filter
+    /// covering a different endpoint on the same venue. That is the shape a
+    /// per-adapter guard reliably produces, because nothing makes the omission
+    /// visible at the call site.
+    ///
+    /// **Returning the candle rather than `()`** is what keeps a call site to
+    /// one combinator: a decode already yielding `Result<Candle>` chains
+    /// straight through `and_then(Candle::checked)`, and an adapter that builds
+    /// the record inline calls it on the value it just built.
+    ///
+    /// # What it fronts, and why it is not the only guard
+    ///
+    /// `cex_prices` asserts the same three things as CHECK constraints
+    /// (`0012_candle_price_checks.sql`), and they remain the authority: a
+    /// constraint cannot be bypassed by adding a writer, and this method
+    /// can — it guards the adapters that call it and nothing else. The reason
+    /// to *also* check here is the cost of a rejection rather than a doubt
+    /// about coverage. The store writes a batch in one transaction and the feed
+    /// cursor advances only after a successful commit, so a bar the database
+    /// refuses aborts its whole batch and leaves the cursor unmoved; nothing on
+    /// this path wraps the store sink in the best-effort sink, so the error
+    /// reaches the runner and stops that venue's collector, which then re-fetches
+    /// the same bar. Dropping the bar here turns that stop into a warning and
+    /// one missing bucket.
+    ///
+    /// So this is the lenient layer and the constraint is the strict one, which
+    /// is the right way round: intake knows which bar it is and can skip it,
+    /// while the database knows only that a batch is bad.
+    ///
+    /// # Why finiteness is a separate clause from positivity
+    ///
+    /// `!is_finite()` rejects `NaN` and both infinities, and `<= 0.0` rejects
+    /// zero and negatives. Neither clause implies the other, and in Rust the
+    /// gap is on the opposite side from the SQL one worth knowing about: here
+    /// `NaN <= 0.0` is *false* (every `NaN` comparison is), so a positivity
+    /// test alone would **admit** `NaN`, whereas in Postgres `NaN > 0` holds
+    /// because `NaN` sorts above every float. Different mechanisms, same
+    /// conclusion — the conjunction is what means "finite and positive", in
+    /// either language. `docs/data-feeds.md` §9 carries the SQL half.
+    ///
+    /// `volume` is deliberately unchecked, matching the column: zero volume is
+    /// routine — two wired sources publish none at all and their rows carry
+    /// `0.0` — so there is no positivity invariant to assert. A non-finite
+    /// volume is not currently reachable, since the sources that carry a real
+    /// one hand over a parsed float and the rest hard-code `0.0`.
+    ///
+    /// # Deliberately not the full OHLC ordering
+    ///
+    /// That `open` and `close` each sit inside `[low, high]` is a coherent
+    /// stronger claim, and it is **not** asserted here — for the same reason
+    /// the schema declines it: it is a claim about how every present and future
+    /// adapter assembles a bar, so it is its own decision rather than a rider
+    /// on this one. Only `high >= low` is checked, which is the ordering the
+    /// stored table also asserts.
+    pub fn checked(self) -> Result<Self> {
+        for (field, value) in [
+            ("low", self.low),
+            ("high", self.high),
+            ("open", self.open),
+            ("close", self.close),
+        ] {
+            if !value.is_finite() || value <= 0.0 {
+                return Err(anyhow!(
+                    "{field} price {value} is not a finite positive number"
+                ));
+            }
+        }
+        // Reached only once both are finite, so this is an ordinary comparison
+        // rather than one a `NaN` could silently pass by making it false.
+        if self.high < self.low {
+            return Err(anyhow!(
+                "high {} is below low {}, so the bar was assembled or \
+                 transformed wrongly",
+                self.high,
+                self.low
+            ));
+        }
+        Ok(self)
+    }
+}
+
 /// One batched reading: the venue's own symbol key → USD price. The key type
 /// is the venue's, not ours — CoinGecko slugs are strings, CoinMarketCap ids
 /// are numeric — because translating them here would just move the mapping
@@ -162,4 +254,126 @@ pub(crate) fn requests_per_window(
     window: std::time::Duration,
 ) -> f64 {
     window.as_secs_f64() / interval.as_secs_f64()
+}
+
+/// A well-formed bar, for the guard's own tests and any adapter test that wants
+/// a valid record to perturb one field of.
+#[cfg(test)]
+fn well_formed_candle() -> Candle {
+    Candle {
+        bucket_start: 1_786_668_660,
+        low: 1.360_00,
+        high: 1.380_00,
+        open: 1.370_00,
+        close: 1.375_00,
+        volume: 12.0,
+    }
+}
+
+#[cfg(test)]
+mod candle_guard_tests {
+    use super::{well_formed_candle, Candle};
+
+    #[test]
+    fn accepts_a_well_formed_bar_unchanged() {
+        let bar = well_formed_candle();
+        assert_eq!(
+            bar.clone()
+                .checked()
+                .expect("a well-formed bar is storable"),
+            bar,
+            "the guard must return the bar it was given, not a normalized one"
+        );
+    }
+
+    /// Every price field is checked, not just the first — the guard is a loop,
+    /// and the regression worth catching is one that narrows to `low` while
+    /// still passing a test that only perturbs `low`.
+    ///
+    /// The value set is the one a bare float parse admits. `"NaN"` and `"inf"`
+    /// both parse successfully in Rust, so a venue sentinel arrives as an
+    /// ordinary `f64`; and a positivity test *alone* would let `NaN` through,
+    /// because `NaN <= 0.0` is false like every other `NaN` comparison. That is
+    /// the Rust-side mirror of the Postgres trap, where the same value passes
+    /// for the opposite reason (`NaN > 0` is true there).
+    /// Place `value` in the named price field of an otherwise sound bar.
+    fn with_price(field: &str, value: f64) -> Candle {
+        let mut candle = well_formed_candle();
+        match field {
+            "low" => candle.low = value,
+            "high" => candle.high = value,
+            "open" => candle.open = value,
+            "close" => candle.close = value,
+            other => panic!("{other} is not a price field"),
+        }
+        candle
+    }
+
+    #[test]
+    fn rejects_a_bad_value_in_any_of_the_four_price_fields() {
+        for field in ["low", "high", "open", "close"] {
+            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+                let err = with_price(field, value)
+                    .checked()
+                    .err()
+                    .unwrap_or_else(|| panic!("{field} = {value} was accepted"))
+                    .to_string();
+                assert!(
+                    err.contains(field),
+                    "a bad {field} was refused, but the message names another \
+                     field, and that name is the whole diagnostic a drop \
+                     carries: {err}"
+                );
+            }
+        }
+    }
+
+    /// An inverted bar is what a direction-flip bug produces: inverting a bar
+    /// has to swap high and low, since `x -> 1/x` reverses their order, so
+    /// forgetting the swap yields exactly this.
+    #[test]
+    fn rejects_a_bar_whose_high_is_below_its_low() {
+        let mut candle = well_formed_candle();
+        candle.high = candle.low - 0.01;
+        let err = candle
+            .checked()
+            .expect_err("an inverted bar is not storable");
+        assert!(
+            err.to_string().contains("below low"),
+            "the ordering failure must be named as such rather than as a bad \
+             value, since the two mean different bugs: {err}"
+        );
+    }
+
+    /// A flat bucket is legitimate — nothing traded away from one price — so the
+    /// ordering check is strict `<`, matching the stored constraint's `>=`.
+    /// Tightening either to reject equality would discard real quiet buckets,
+    /// which is most of an FX series overnight.
+    #[test]
+    fn accepts_a_flat_bucket_where_high_equals_low() {
+        let flat = 1.370_00;
+        let candle = Candle {
+            low: flat,
+            high: flat,
+            open: flat,
+            close: flat,
+            ..well_formed_candle()
+        };
+        assert!(
+            candle.checked().is_ok(),
+            "a bucket that never moved is real data, not a malformed bar"
+        );
+    }
+
+    /// Volume is deliberately unconstrained, matching the column: two wired
+    /// sources publish none at all and write `0.0`, so zero is routine rather
+    /// than missing.
+    #[test]
+    fn accepts_a_bar_with_zero_volume() {
+        let candle = Candle {
+            volume: 0.0,
+            ..well_formed_candle()
+        };
+        assert!(candle.checked().is_ok());
+    }
 }
