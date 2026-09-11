@@ -699,8 +699,12 @@ writer runs every insert in one transaction — and the feed position is
 saved only after a successful commit, so it does not advance and the row
 is not skipped. The store sink is not wrapped in the best-effort adapter
 on this path, so the error reaches the runner and stops that venue's
-collector. **And it does not age out.** Every candle source takes its
-window start from that same saved position, and Alpha Vantage does not
+collector — and wrapping it is **not** the fix, because that adapter
+converts *every* store failure into a success and would blind the
+primary data path to all of them, not just this one.
+
+**And it does not age out.** Every candle source takes its window start
+from that same saved position, and Alpha Vantage does not
 take a date range at all — it asks `outputsize=full` on every poll — so
 the offending bar is re-fetched indefinitely rather than falling out of
 a moving window. A rejection therefore stops that venue's collection
