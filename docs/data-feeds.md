@@ -573,6 +573,28 @@ The runner doubles as the local reset story — point it at a fresh
 database and the full history replays — and, because it is idempotent, as
 a compose init step that re-runs harmlessly on every restart.
 
+**A gap beneath an applied version is filled, not refused.** The runner
+applies whatever is pending in its own ordered history, so a database
+holding versions 1–10 plus 13 takes 11 and 12 when a contiguous history
+next runs against it, ends up contiguous, and passes the fence. That
+state is reachable whenever a migration is applied outside a coordinated
+batch while lower-numbered ones are still in flight — it happened once on
+the shared dev instance — and the recovery is simply to migrate. The
+claim is held by
+`migrate_fills_a_gap_beneath_an_already_applied_version` in
+`db-schema/tests/schema_fence.rs`, which stages 1–10 plus 13 by
+*applying* them, so 13's recorded checksum is genuine, then runs the full
+history over the top.
+
+Worth stating because the opposite is easy to assume, and assuming it
+converts a non-event into a hold on every deploy. What the runner does
+*not* tolerate is a checksum that no longer matches what was applied, or
+— unless `ignore_missing` is set — an applied migration absent from the
+binary's own history. Only the checksum case is unrecoverable, which is
+why a migration *number* is worth claiming before the file is written
+(`.claude/tools/migration_collisions.py`) even though a gap beneath one
+costs nothing.
+
 **Table ownership — one writer, unrestricted readers.** Every table has
 exactly one writer app. Reads are deliberately unrestricted; that is the
 point of sharing an instance.
