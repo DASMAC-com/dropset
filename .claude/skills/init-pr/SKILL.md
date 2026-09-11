@@ -535,6 +535,31 @@ not only to the sub-agents you brief:
   is modest in raw tokens; the stronger case is fewer round
   trips.
 
+  **Count the ACT, not the tool.** This rule is phrased around
+  `Read` with `offset`/`limit`, so a session slicing some other
+  way reads it as inapplicable — and its purpose is bounding
+  the accumulation, not the mechanism. A shell slice costs the
+  same. The tally counts every mechanism together:
+  `Read offset/limit`, `sed -n 'A,Bp'`, `head`,
+  `read_result.py --slice`, `show_at_ref.py`.
+
+  A `cat -n` of a file belongs on that list as a **whole-file
+  read**, subject to the four conditions below — it does not
+  look like one at the call site, which is how a 99-line file
+  got bought whole for a one-region edit.
+
+  **The tally is per file, per SESSION, not per burst** — a
+  file revisited in a later phase carries its earlier slices
+  forward. **And a formatter autofix invalidates offsets but
+  does NOT reset the budget**; counting "since the last format"
+  makes every autofix a laundering step.
+
+  The case that settles it in advance: **when you already
+  intend to rewrite a file, decide the whole-read license
+  before the first slice.** A rewrite is a planned multi-region
+  read by definition, so reaching that conclusion after paying
+  for slices means paying for both.
+
 - **If you already ran the map, slice from it.** A map
   followed by a whole-file Read means the map was wasted —
   you paid for the section list and then bought the file
@@ -693,6 +718,33 @@ not only to the sub-agents you brief:
   drove real decisions. See
   `docs/conventions/context-economy.md` → "The levers".
 
+  **Capture at `deviceScaleFactor: 1`.** The rule above bounds
+  the capture's *extent* and says nothing about its
+  **resolution**, which reads as complete — clipping is the
+  salient waste, so it gets followed while the scale factor goes
+  unexamined. A 2x capture is four times the bytes for a
+  judgement 1x already answers. Reserve 2x for a question
+  genuinely about rendering fidelity — hinting, sub-pixel
+  spacing, a hairline border — and say so when you take one.
+
+  **The one case where the image IS the cheaper evidence: a
+  pseudo-state style.** Verifying `:hover` / `:focus` /
+  `:active`, do **not** read it back with `getComputedStyle`,
+  page-side or over CDP. A forced pseudo-state does not surface
+  in any computed-style read, and `page.hover()` does not
+  produce `:hover` in headless at all — both return the
+  **resting** value with no error, which looks exactly like a
+  broken CSS rule. So the cheap assertion is not just weaker
+  here, it actively misleads. Force the state with CDP
+  `CSS.forcePseudoState` and **compare rendered captures**, or
+  read `CSS.getMatchedStylesForNode`. Assert-don't-screenshot is
+  right for layout and wrong for state styling.
+
+  **Otherwise, assert on the DOM rather than on an image.**
+  Reading a rendered link's `href` and counting annotation
+  markers settled three verifications exactly, for a few hundred
+  tokens.
+
 - **Before `replace_all`, check whether the replacement
   CONTAINS the search string.** If it does, the call is not
   idempotent: sites already carrying the new name get rewritten
@@ -824,6 +876,34 @@ not only to the sub-agents you brief:
   *after* `--files-only` had already identified it. When matches
   cluster in one file, take `--files-only` then slice-read the
   region.
+
+  **Say the widest branch of your pattern out loud before you
+  issue it.** If it is an ordinary English word — `age`, `time`,
+  `state`, `value`, `elapsed`, `drain` — it matches prose and
+  identifiers throughout and the result is the file. Anchor it
+  (`\.age`, `fn drain`, `age:`), or grep the distinctive branch
+  alone and widen only if that comes back empty. The
+  generalizable half: **an alternation's cost is set by its
+  worst branch, not by its intent** — a pattern is only as
+  narrow as the commonest word in it.
+
+  **A token under about five characters needs a word-boundary
+  anchor.** Ask what common words contain it: `pip` returns
+  `pipeline` and `piped`; `sig` returns `signature`, `signer`;
+  `env` returns `environment`, `envelope`. Anchor with `\b…\b`
+  (`\bpips?\b` for a plural). Measured at ≈2.1k for a ~10-line
+  answer the anchored form gave for a few hundred. This bounds
+  **what matches at all** — a different axis from the two above.
+
+  **Sweep for call sites BEFORE compiling, not by compiling.**
+  When a change alters a signature, a public type, or a field
+  shape, name the consuming files in one call —
+  `search_source.py '<symbol>' --files-only` — and fix them in
+  one pass; the compile then *verifies* rather than *discovers*.
+  "Let the compiler find it" is a good habit for **checking**;
+  the anti-pattern is using it to **enumerate**, and the tell is
+  consecutive compiles returning the same error class at
+  different sites, each one a full build plus a result.
 
   **That advisory line is a DIRECTIVE — do not consume a
   result it flags.** `search_source.py` prints it when the
