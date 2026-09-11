@@ -661,6 +661,163 @@ def render_bodies(levers: list[dict]) -> str:
 _DUMP_SECTION_RE = re.compile(r"^## (\S+) \| (.*)$", re.MULTILINE)
 _BARE_URL_RE = re.compile(r"^https://\S+\s*$")
 
+#: Labels a lever body uses for its *statement*, and for its *concrete edit*.
+#: Both spellings vary because the producer never constrained them: a filer is
+#: told to keep a body "compact — the lever, the sessions and figures, and the
+#: concrete edit" and no headings are named, so every variant below is compliant.
+STATEMENT_LABELS = ("the lever", "lever")
+EDIT_LABELS = (
+    "the edit this implies",
+    "the concrete edit",
+    "proposed edit",
+    "the edit",
+    "where to edit",
+    "the fix",
+)
+
+
+def _label_alternation(labels: tuple[str, ...]) -> str:
+    return "|".join(re.escape(label) for label in labels)
+
+
+def find_labelled_block(body: str, labels: tuple[str, ...]) -> str | None:
+    """The block a lever body introduces with one of ``labels``, or None.
+
+    Matches a **heading** (``## The lever``) or a **bold inline span**
+    (``**Lever:**``, ``**The lever.**``, ``**The lever — fix it at the
+    producer**``), because the parked pool contains both and always will: only 6
+    of one real 18-lever pool carried sub-headings at all, and the other 12 stated
+    the lever as a bold span with no heading anywhere. A `--sections` read
+    prescribed against the heading form failed outright on that pool — exit 2,
+    ``no heading matches`` — and the fold fell back to per-region slices that
+    became its dominant cost.
+
+    Matching both here rather than widening the *skill's* regex is the deliberate
+    choice: a regex covering bold spans would work today and rot the same way,
+    whereas an extraction that runs in this process costs the caller nothing
+    whichever shape it finds.
+    """
+    alternation = _label_alternation(labels)
+
+    # Heading form. Ends at the next heading of any depth.
+    heading = re.search(
+        rf"^(#{{1,6}})\s*(?:{alternation})\s*$(?P<body>.*?)(?=^#{{1,6}}\s|\Z)",
+        body,
+        re.MULTILINE | re.IGNORECASE | re.DOTALL,
+    )
+    if heading:
+        text = heading.group("body").strip()
+        if text:
+            return text
+
+    # Bold-span form. The label may be followed by more bold text on the same
+    # line (`**The lever — fix it at the producer, not with a wider regex.**`),
+    # so the line itself is kept: it usually carries the statement.
+    span = re.search(
+        rf"^\*\*(?:{alternation})\b(?P<rest>.*?)(?=^\s*$|^\*\*|^#{{1,6}}\s|\Z)",
+        body,
+        re.MULTILINE | re.IGNORECASE | re.DOTALL,
+    )
+    if span:
+        text = span.group(0).strip()
+        if text:
+            return text
+    return None
+
+
+#: A code-span token that looks like a repo path a lever names as its target.
+#: Anchored on the trees agent material actually lives in, because that is what a
+#: stale-check probes; a looser "contains a slash" test drags in currency pairs,
+#: git refs and Action slugs.
+_TARGET_RE = re.compile(
+    r"`([^`\n]*(?:\.claude/[A-Za-z0-9._/-]+|docs/[A-Za-z0-9._/-]+"
+    r"|[A-Za-z0-9_]+\.py|[A-Za-z0-9_-]+\.md)[.,;:]*)`"
+)
+
+
+def lever_targets(body: str) -> list[str]:
+    """Repo paths and tool names a lever's prose names, de-duplicated in order.
+
+    The checklist a stale-check needs. It exists because the check has to be run
+    per lever and re-reading every body to find the names is the cost that stops
+    it being run at all.
+
+    **A rename is the expected case, so this is a starting point, not an answer.**
+    One measured lever asked for a committed `query_store.py` and the capability
+    had shipped as `localnet_psql.py` — grepping the proposed name finds nothing
+    and the lever reads unlanded. So the question a verifier asks is "does the
+    described capability exist", not "does this path exist"; these names are
+    where to start looking.
+    """
+    seen: list[str] = []
+    for raw in _TARGET_RE.findall(body):
+        token = raw.strip().strip("`").rstrip(".,;:")
+        # Keep the trailing path segment only when a span wrapped prose around it
+        # (`the committed .claude/tools/x.py helper`).
+        token = token.split()[-1] if " " in token else token
+        if token and token not in seen:
+            seen.append(token)
+    return seen
+
+
+def extract_lever(body: str) -> tuple[str | None, str | None]:
+    """``(statement, edit)`` from one lever body, either shape."""
+    return (
+        find_labelled_block(body, STATEMENT_LABELS),
+        find_labelled_block(body, EDIT_LABELS),
+    )
+
+
+def render_levers(levers: list[dict]) -> tuple[str, dict]:
+    """The pool reduced to what a FOLD consumes, plus a coverage report.
+
+    A fold reads two things from each lever — its statement and its concrete
+    edit — and cites the evidence prose by reference rather than inlining it. So
+    this writes only those, under a uniform
+    ``## <identifier> | <title>`` / ``### Statement`` / ``### Edit`` shape, which
+    makes one ``--sections`` call work on the whole pool whatever the producers
+    did.
+
+    The report names levers whose statement or edit could not be found, because a
+    silent omission here would drop a lever from the fold — the one failure worse
+    than a wide read. Fall back to slicing the ``--bodies-out`` dump for those.
+    """
+    parts: list[str] = []
+    missing_statement: list[str] = []
+    missing_edit: list[str] = []
+    for lever in sorted(levers, key=lambda m: str(m.get("identifier"))):
+        identifier = str(lever.get("identifier"))
+        body = (lever.get("description") or "").rstrip()
+        statement, edit = extract_lever(body)
+        if statement is None:
+            missing_statement.append(identifier)
+        if edit is None:
+            missing_edit.append(identifier)
+        keys = field_values(body, "Fingerprint")
+
+        parts.append(f"## {identifier} | {lever.get('title')}")
+        parts.append("")
+        parts.append(f"{lever.get('url')}")
+        parts.append("")
+        # The dedup key travels with the statement, exactly as it does in the
+        # bodies dump — a fold keeps each finding's own Fingerprint line.
+        parts.append(f"**Fingerprint**: {keys[0] if keys else '(none)'}")
+        parts.append("")
+        parts.append("### Statement")
+        parts.append("")
+        parts.append(demote_headings(statement) if statement else "(not found)")
+        parts.append("")
+        parts.append("### Edit")
+        parts.append("")
+        parts.append(demote_headings(edit) if edit else "(not found)")
+        parts.append("")
+    report = {
+        "levers": len(levers),
+        "missing_statement": missing_statement,
+        "missing_edit": missing_edit,
+    }
+    return "\n".join(parts).rstrip() + "\n", report
+
 
 def strip_leading_url(raw: str) -> str:
     """Drop the issue URL ``render_bodies`` writes under each dump heading.
@@ -1070,6 +1227,23 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "'## <identifier>' section each); prints sizes only. Slice it with "
         "read_result.py rather than fetching per issue",
     )
+    lst.add_argument(
+        "--targets",
+        action="store_true",
+        help="print the repo paths and tool names each lever's prose names — the "
+        "checklist for the pre-fold stale check. A rename is the expected case, so "
+        "verify the CAPABILITY exists, not the path",
+    )
+    lst.add_argument(
+        "--levers-out",
+        default=None,
+        metavar="FILE",
+        help="like --bodies-out, but write ONLY each lever's statement and "
+        "concrete edit, under a uniform Statement/Edit shape — the two things a "
+        "fold consumes. Works whether the lever used headings or bold spans, so "
+        "one --sections read covers the whole pool; names any lever it could not "
+        "extract",
+    )
     _add_dry_run(lst, top_level=False)
 
     comp = sub.add_parser(
@@ -1160,7 +1334,12 @@ def run(argv: list[str]) -> int:
     if args.cmd == "list":
         # Bodies are fetched only when asked for, and a fingerprints-only read
         # needs them (the key lives in the body) — so one query serves both.
-        wants_bodies = bool(args.bodies_out) or args.fingerprints
+        wants_bodies = (
+            bool(args.bodies_out)
+            or bool(args.levers_out)
+            or args.targets
+            or args.fingerprints
+        )
         levers = (
             parked_with_bodies(api_key, project_id)
             if wants_bodies
@@ -1178,7 +1357,7 @@ def run(argv: list[str]) -> int:
         #
         # `--fingerprints` composes with it, so one call serves the whole read
         # of the pool: the keys ride each `## <identifier>` section in the file.
-        if not args.bodies_out:
+        if not args.bodies_out and not args.levers_out:
             for m in sorted(levers, key=lambda m: str(m.get("identifier"))):
                 state = (m.get("state") or {}).get("name")
                 line = (
@@ -1187,6 +1366,9 @@ def run(argv: list[str]) -> int:
                 if args.fingerprints:
                     keys = field_values(m.get("description") or "", "Fingerprint")
                     line += f" | {', '.join(keys) if keys else '(no fingerprint)'}"
+                if args.targets:
+                    names = lever_targets(m.get("description") or "")
+                    line += f" | targets: {', '.join(names) if names else '(none)'}"
                 print(line)
         if args.bodies_out:
             rendered = render_bodies(levers)
@@ -1206,6 +1388,34 @@ def run(argv: list[str]) -> int:
                 f"{args.bodies_out} — slice it with read_result.py --headings",
                 file=sys.stderr,
             )
+        if args.levers_out:
+            rendered, report = render_levers(levers)
+            try:
+                fd = os.open(
+                    args.levers_out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(rendered)
+            except OSError as exc:
+                raise TrimLeversError(f"cannot write {args.levers_out}: {exc}") from exc
+            print(
+                f"-- wrote {report['levers']} lever(s), {len(rendered)} chars to "
+                f"{args.levers_out} — slice it with "
+                f"read_result.py --sections '^(Statement|Edit)$'",
+                file=sys.stderr,
+            )
+            # Named out loud, because a silently dropped statement or edit would
+            # drop a whole lever from the fold — worse than any wide read.
+            for label, ids in (
+                ("statement", report["missing_statement"]),
+                ("edit", report["missing_edit"]),
+            ):
+                if ids:
+                    print(
+                        f"-- WARNING: no {label} found for {', '.join(ids)} — "
+                        f"slice those from a --bodies-out dump instead",
+                        file=sys.stderr,
+                    )
         print(f"-- {len(levers)} parked lever(s)", file=sys.stderr)
         return 0
 

@@ -151,11 +151,41 @@ nothing bounds, and `housekeeping` folds every pass. The deeper headings
 are not waste in general — they are consumed later and selectively, by
 the `--sections` call below.
 
-**For the fold itself, take the sections — not the bodies.** A fold
-consumes two things from each lever, its statement and its concrete
-edit, and cites the evidence prose by reference rather than inlining it.
-Parked bodies are written to a house structure, so ask for those
-headings across every lever in one call:
+**For the fold itself, take `--levers-out` — it extracts the two
+sections in the tool's own process:**
+
+```sh
+python3 .claude/tools/trim_levers.py list \
+  --levers-out <scratchpad>/statements.md
+```
+
+A fold consumes two things from each lever, its statement and its
+concrete edit, and cites the evidence prose by reference rather than
+inlining it. This writes **only those**, under a uniform
+`## <identifier>` / `### Statement` / `### Edit` shape, so one
+`--sections '^(Statement|Edit)$'` read covers the whole pool.
+
+**Why a mode rather than a cleverer regex.** Parked bodies are *not*
+written to a house structure — the producer never enforced one, and
+`session-metrics` tells a filer to keep a body compact without naming any
+headings, so a flat body is fully compliant. Measured on a real 18-lever
+pool: only **6** carried sub-headings at all; the other **12** stated the
+lever as a bold inline span (`**Lever:**`, `**The lever.**`) with no
+heading anywhere. A heading-anchored `--sections` read against that pool
+**failed outright** — exit 2, `no heading matches` — and the fold fell
+back to per-region `--slice` calls that became the pass's dominant cost
+(≈4.7k across four of its eight largest results, in a session whose
+entire Bash spend was 12.8k, against ≈40 tokens for the one-call fetch).
+
+A regex covering bold spans as well as headings would work today and rot
+the same way, which is why the matching moved into the tool: it keys off
+headings **or** bold spans and costs the caller nothing either way. It
+**names any lever it could not extract** — slice those few from the
+`--bodies-out` dump, because a silently dropped statement drops a whole
+lever from the fold, which is worse than any wide read.
+
+The heading-anchored form still works on a pool that happens to be
+uniform, and remains the way to pull any *other* section:
 
 ```sh
 python3 .claude/tools/read_result.py --sections \
@@ -223,6 +253,41 @@ regardless. That read cost is what sized one fold down to five levers.
 A parked pool that has grown past what one coherent PR should carry is
 still a reason to fold a subset now and leave the rest parked — the
 cheaper read changes what a fold costs, not what a fold should contain.
+
+**2a. Verify each lever against HEAD before folding it.** A parked lever
+is a snapshot of the session that filed it, and a later pass may have
+landed the thing it asks for. Get the checklist in one call:
+
+```sh
+python3 .claude/tools/trim_levers.py list --targets
+```
+
+That prints the repo paths and tool names each lever's prose names. Probe
+those — an `ls`, a `--help`, one scoped search — and route an
+already-landed lever to **step 6's rejection path** with *already landed*
+as the recorded reason. Dedup-against-resolved then makes the rejection
+permanent, so no later pass re-proposes it.
+
+**The check is capability-shaped, not path-shaped, and that distinction is
+the whole difficulty.** A rename is the expected case: one measured lever
+asked for a committed `query_store.py`, and the capability had shipped as
+`.claude/tools/localnet_psql.py` with the whole proposed feature set under
+a different name. Grepping the proposed name finds nothing and the lever
+reads unlanded. So ask "does the described capability exist", never "does
+this path exist".
+
+Measured: **2 of 18 levers — 11% of the pool — had already landed** and
+were rejected rather than folded. Had the pass not checked, both would
+have landed inside the fold as parts asking for work already done.
+
+**Why this is its own step.** Step 6 already says to reject on evidence,
+but every example it gives is a *judgment* rejection — not worth the
+tokens, a standing decision. Already-landed is a different disposition and
+naming it there was not enough, because a pass following the steps
+literally never looks. And be honest about the cost: this is **not** a
+context saving (the verification itself runs ~10 cheap probes). The payoff
+is fold *correctness* — a stale part costs an implementer a whole
+diagnosis beat, and a fold task is pulled once and read closely.
 
 **3. Fold into ONE task — always.** Operator ruling, 2026-08-25: a
 trim-lever fold produces a **single** task, regardless of how many levers
@@ -415,6 +480,14 @@ archived issues, so the rejection sticks whether or not the milestone
 is still attached. (`trim_levers.py list` now also filters to open
 levers, so a still-stamped rejection no longer pollutes the pool — but
 that is the backstop, not the reason. Both halves should agree.)
+
+**Two dispositions reach this step, and they are not the same.** A
+*judgment* rejection says the lever is not worth acting on. An
+**already-landed** rejection says the work exists at HEAD — that is what
+step 2a routes here, with *already landed* as the reason and the shipped
+path named, since a rename is the usual reason nobody noticed. Both close
+as `Canceled` with a reason, and both become permanent the same way; only
+the recorded argument differs.
 
 Reject on evidence, not on taste. Recorded rejections worth knowing
 about, each measured: narrowing a planning board read (2–3k against 87.6k
