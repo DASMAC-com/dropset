@@ -25,6 +25,19 @@
 //! coinbase's in `market-data/src/config.rs` — so the property is equality
 //! for all of them.
 //!
+//! **A second property: the variable CHAIN, not just the roster it resolves
+//! to.** A compose value is a chain of `${…:-…}` references, and which venues
+//! chain through the shared `FX_PRODUCT_IDS` is a design decision written out
+//! at each service — two of the keyed FX venues do, and the rest deliberately
+//! do not, so a roster widening that suits one vendor cannot silently reach
+//! another. The equality above cannot see any of that: it compares the
+//! innermost literal, so re-coupling a venue to the shared chain while keeping
+//! the same pairs as its own default resolves identically and stays green.
+//! Each [`Wiring`] therefore declares the chain it expects and
+//! `every_variable_chain_matches_its_declaration` pins the shape, so
+//! re-coupling a venue — or de-coupling one — fails until the declaration says
+//! so deliberately.
+//!
 //! **This file used to have a second, much weaker mode**, and what it cost is
 //! worth recording. The three keyed FX venues shared one
 //! `fx::DEFAULT_PRODUCTS`, narrowed to the single pair every one of them
@@ -58,6 +71,18 @@ struct Wiring {
     /// `include_str!`. The constant's own value is extracted from it later by
     /// [`rust_default`] — this is the haystack, not the needle.
     rust_source_text: &'static str,
+    /// The `${…}` variables this service's compose value is expected to
+    /// reference, outermost first — its own per-service override, then any
+    /// shared roster it chains through.
+    ///
+    /// **This is the declaration side of the chain-shape property**, and it is
+    /// written out per service rather than derived because the shape *is* the
+    /// decision: `["OANDA_PRODUCT_IDS"]` says OANDA's roster is its own, and
+    /// `["ALPHAVANTAGE_PRODUCT_IDS", "FX_PRODUCT_IDS"]` says Alpha Vantage
+    /// follows the shared one. Changing either is a deliberate act that has to
+    /// edit this row, which is exactly the friction the compose comments ask
+    /// for and could not previously get.
+    variable_chain: &'static [&'static str],
 }
 
 /// Every compose service that takes a roster, and the constant behind it.
@@ -72,41 +97,49 @@ fn wirings() -> Vec<Wiring> {
             service: "alphavantage",
             rust_source: "market-data/src/bin/alphavantage.rs",
             rust_source_text: include_str!("../src/bin/alphavantage.rs"),
+            variable_chain: &["ALPHAVANTAGE_PRODUCT_IDS", "FX_PRODUCT_IDS"],
         },
         Wiring {
             service: "coinbase",
             rust_source: "market-data/src/config.rs",
             rust_source_text: include_str!("../src/config.rs"),
+            variable_chain: &["PRODUCT_IDS"],
         },
         Wiring {
             service: "coinbase-ticker",
             rust_source: "market-data/src/bin/coinbase_ticker.rs",
             rust_source_text: include_str!("../src/bin/coinbase_ticker.rs"),
+            variable_chain: &["PRODUCT_IDS"],
         },
         Wiring {
             service: "erapi",
             rust_source: "market-data/src/bin/erapi.rs",
             rust_source_text: include_str!("../src/bin/erapi.rs"),
+            variable_chain: &["ERAPI_PRODUCT_IDS"],
         },
         Wiring {
             service: "frankfurter",
             rust_source: "market-data/src/bin/frankfurter.rs",
             rust_source_text: include_str!("../src/bin/frankfurter.rs"),
+            variable_chain: &["FRANKFURTER_PRODUCT_IDS"],
         },
         Wiring {
             service: "kraken",
             rust_source: "market-data/src/bin/kraken.rs",
             rust_source_text: include_str!("../src/bin/kraken.rs"),
+            variable_chain: &["KRAKEN_PRODUCT_IDS"],
         },
         Wiring {
             service: "oanda",
             rust_source: "market-data/src/bin/oanda.rs",
             rust_source_text: include_str!("../src/bin/oanda.rs"),
+            variable_chain: &["OANDA_PRODUCT_IDS"],
         },
         Wiring {
             service: "twelvedata",
             rust_source: "market-data/src/bin/twelvedata.rs",
             rust_source_text: include_str!("../src/bin/twelvedata.rs"),
+            variable_chain: &["TWELVEDATA_PRODUCT_IDS", "FX_PRODUCT_IDS"],
         },
     ]
 }
@@ -178,14 +211,22 @@ fn rust_default(source: &str) -> Option<String> {
 }
 
 /// Every compose service that defines a `PRODUCT_IDS` default, mapped to that
-/// default's roster spec.
+/// key's whole value: the `${…:-…}` chain as written, with any surrounding
+/// quotes stripped and a folded block joined.
 ///
 /// A hand-rolled scan rather than a YAML parse: this crate has no YAML
 /// dependency, and the two shapes in the file are narrow enough to read
 /// directly — an inline `'${VAR:-…}'` and a folded `>-` block whose
 /// continuation lines are joined with a space, exactly as the folded scalar
 /// resolves.
-fn compose_defaults() -> BTreeMap<String, String> {
+///
+/// **It stops at the raw value on purpose**, because two different properties
+/// are read off it: the roster it resolves to ([`compose_defaults`]) and the
+/// variables it references ([`variable_chain`]). Unwrapping the default here —
+/// which is what this function used to do — discards the second, and that is
+/// precisely how the chain shape stayed unpinned while the resolved rosters
+/// were being compared exactly.
+fn compose_values() -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let mut service: Option<String> = None;
     let mut lines = COMPOSE.lines().peekable();
@@ -233,7 +274,47 @@ fn compose_defaults() -> BTreeMap<String, String> {
                 value.push_str(lines.next().unwrap().trim());
             }
         }
-        out.insert(service, unwrap_default(&value));
+        out.insert(
+            service,
+            value
+                .trim()
+                .trim_matches('\'')
+                .trim_matches('"')
+                .to_string(),
+        );
+    }
+    out
+}
+
+/// Every compose service's `PRODUCT_IDS`, mapped to the roster spec it resolves
+/// to when no override is set anywhere in its chain.
+fn compose_defaults() -> BTreeMap<String, String> {
+    compose_values()
+        .into_iter()
+        .map(|(service, value)| (service, unwrap_default(&value)))
+        .collect()
+}
+
+/// The `${…}` variables a compose value references, in the order they appear —
+/// which for the nested `${A:-${B:-…}}` form is outermost first.
+///
+/// **A flat scan for every `${NAME` rather than a nesting-aware parse**, and
+/// that is the right shape for what this pins: any reference to the shared
+/// roster couples a venue to it, whether it sits in the chain of defaults or
+/// anywhere else in the value. Reading it as a strict chain would let a
+/// re-coupling written some other way pass.
+fn variable_chain(value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = value;
+    while let Some(at) = rest.find("${") {
+        rest = &rest[at + 2..];
+        // A shell-style name: the reference ends at the first byte that cannot
+        // be part of one — `:` of a `:-` default, or the closing `}`.
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        out.push(rest[..end].to_string());
+        rest = &rest[end..];
     }
     out
 }
@@ -282,6 +363,43 @@ fn every_rust_default_agrees_with_its_compose_default() {
             wiring.rust_source,
             rust.difference(&composed).collect::<Vec<_>>(),
             composed.difference(&rust).collect::<Vec<_>>(),
+        );
+    }
+}
+
+/// The other property: the chain shape each compose comment asserts in prose.
+///
+/// The equality above compares the roster a value *resolves to*, so it is blind
+/// to everything above the innermost literal — re-coupling a venue to
+/// `FX_PRODUCT_IDS` while keeping its own pairs as the shared default resolves
+/// identically and leaves the whole suite green. Which venues follow the shared
+/// roster is the stated rationale of those comments, the point being that a
+/// widening which suits one vendor must not silently reach another; until this
+/// test that rationale was asserted in prose and checked by nothing.
+#[test]
+fn every_variable_chain_matches_its_declaration() {
+    let values = compose_values();
+    for wiring in wirings() {
+        let value = values.get(wiring.service).unwrap_or_else(|| {
+            panic!(
+                "docker-compose.yml defines no PRODUCT_IDS for service `{}`",
+                wiring.service
+            )
+        });
+        assert!(
+            !wiring.variable_chain.is_empty(),
+            "service `{}` declares an empty variable chain, which no rostered \
+             service has — every one of them is overridable",
+            wiring.service,
+        );
+        assert_eq!(
+            variable_chain(value),
+            wiring.variable_chain,
+            "service `{}`: its compose value references different variables \
+             than `wirings()` declares — value {value:?}. If this is a \
+             deliberate change to which venues follow the shared roster, say so \
+             by editing that declaration",
+            wiring.service,
         );
     }
 }
