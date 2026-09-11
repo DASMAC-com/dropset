@@ -71,9 +71,10 @@ struct Wiring {
     /// `include_str!`. The constant's own value is extracted from it later by
     /// [`rust_default`] — this is the haystack, not the needle.
     rust_source_text: &'static str,
-    /// The `${…}` variables this service's compose value is expected to
-    /// reference, outermost first — its own per-service override, then any
-    /// shared roster it chains through.
+    /// The variables this service's compose value is expected to reference,
+    /// outermost first — its own override variable, then any shared roster it
+    /// chains through. Note "its own" is not always a per-service name: the two
+    /// coinbase services both key off the bare `PRODUCT_IDS`.
     ///
     /// **This is the declaration side of the chain-shape property**, and it is
     /// written out per service rather than derived because the shape *is* the
@@ -210,9 +211,9 @@ fn rust_default(source: &str) -> Option<String> {
     Some(out)
 }
 
-/// Every compose service that defines a `PRODUCT_IDS` default, mapped to that
-/// key's whole value: the `${…:-…}` chain as written, with any surrounding
-/// quotes stripped and a folded block joined.
+/// Every compose service that sets a `PRODUCT_IDS` key, mapped to that key's
+/// whole value: the `${…:-…}` chain as written, with any surrounding quotes
+/// stripped and a folded block joined.
 ///
 /// A hand-rolled scan rather than a YAML parse: this crate has no YAML
 /// dependency, and the two shapes in the file are narrow enough to read
@@ -222,10 +223,8 @@ fn rust_default(source: &str) -> Option<String> {
 ///
 /// **It stops at the raw value on purpose**, because two different properties
 /// are read off it: the roster it resolves to ([`compose_defaults`]) and the
-/// variables it references ([`variable_chain`]). Unwrapping the default here —
-/// which is what this function used to do — discards the second, and that is
-/// precisely how the chain shape stayed unpinned while the resolved rosters
-/// were being compared exactly.
+/// variables it references ([`variable_chain`]). Unwrapping the default here
+/// discards the second.
 fn compose_values() -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let mut service: Option<String> = None;
@@ -295,25 +294,41 @@ fn compose_defaults() -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The `${…}` variables a compose value references, in the order they appear —
-/// which for the nested `${A:-${B:-…}}` form is outermost first.
+/// The variables a compose value references, in the order they appear — which
+/// for the nested `${A:-${B:-…}}` form is outermost first.
 ///
-/// **A flat scan for every `${NAME` rather than a nesting-aware parse**, and
+/// **A flat scan for every reference rather than a nesting-aware parse**, and
 /// that is the right shape for what this pins: any reference to the shared
 /// roster couples a venue to it, whether it sits in the chain of defaults or
 /// anywhere else in the value. Reading it as a strict chain would let a
 /// re-coupling written some other way pass.
+///
+/// **Both `${NAME}` and the brace-less `$NAME` count**, because compose
+/// interpolates both and a coupling is a coupling either way. Matching only
+/// the braced form left one shape that escaped every test in this file:
+/// `$FX_PRODUCT_IDS${OANDA_PRODUCT_IDS:-…}` reports a chain of just
+/// `OANDA_PRODUCT_IDS`, *and* resolves byte-identically to the Rust default
+/// (`rfind(":-")` finds the inner one and `trim_end_matches` eats the single
+/// trailing brace) — so a venue could be re-coupled to the shared roster with
+/// the whole suite green. Skipping a zero-length name is what keeps `${}` and
+/// compose's escaped `$$` from reporting a nameless reference; `$$NAME` still
+/// reads as a reference to `NAME`, which fails loudly rather than silently and
+/// so errs the safe way.
 fn variable_chain(value: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = value;
-    while let Some(at) = rest.find("${") {
-        rest = &rest[at + 2..];
+    while let Some(at) = rest.find('$') {
+        rest = &rest[at + 1..];
+        rest = rest.strip_prefix('{').unwrap_or(rest);
         // A shell-style name: the reference ends at the first byte that cannot
-        // be part of one — `:` of a `:-` default, or the closing `}`.
+        // be part of one — `:` of a `:-` default, the closing `}`, or the `$`
+        // of the next reference.
         let end = rest
             .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
             .unwrap_or(rest.len());
-        out.push(rest[..end].to_string());
+        if end > 0 {
+            out.push(rest[..end].to_string());
+        }
         rest = &rest[end..];
     }
     out
@@ -369,13 +384,9 @@ fn every_rust_default_agrees_with_its_compose_default() {
 
 /// The other property: the chain shape each compose comment asserts in prose.
 ///
-/// The equality above compares the roster a value *resolves to*, so it is blind
-/// to everything above the innermost literal — re-coupling a venue to
-/// `FX_PRODUCT_IDS` while keeping its own pairs as the shared default resolves
-/// identically and leaves the whole suite green. Which venues follow the shared
-/// roster is the stated rationale of those comments, the point being that a
-/// widening which suits one vendor must not silently reach another; until this
-/// test that rationale was asserted in prose and checked by nothing.
+/// The module docs explain why the equality above cannot see it. Until this
+/// test, that rationale was asserted in prose — in compose, in the `Makefile`,
+/// and in `oanda.rs` — and checked by nothing.
 #[test]
 fn every_variable_chain_matches_its_declaration() {
     let values = compose_values();
@@ -389,7 +400,8 @@ fn every_variable_chain_matches_its_declaration() {
         assert!(
             !wiring.variable_chain.is_empty(),
             "service `{}` declares an empty variable chain, which no rostered \
-             service has — every one of them is overridable",
+             service has — every one of them is overridable. Declare the \
+             variables its compose value references",
             wiring.service,
         );
         assert_eq!(
