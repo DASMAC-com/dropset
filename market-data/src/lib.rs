@@ -52,6 +52,7 @@
 //! legible from the store rather than only from its logs.
 
 pub mod config;
+pub mod fair_price;
 pub mod fx;
 pub mod instruments;
 pub mod pyth_roster;

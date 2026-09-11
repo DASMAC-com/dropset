@@ -73,6 +73,10 @@ async-trait = "0.1"
 # The single schema owner. This crate issues no DDL; it depends on the owner
 # only to assert at startup that the tables it writes already exist.
 dropset-db-schema = { path = "../db-schema" }
+# The off-chain fair-value model. Depended on for its output *types* only —
+# `fair_price` serializes a finished `FairValue` — so this pulls in no
+# transport: the crate is `std`-only with no dependencies of its own.
+dropset-fair-value = { path = "../fair-value" }
 # The shared ingestion framework: the Coinbase source composes its `HttpClient`
 # and its `PgCursorStore`, and the collector binary the `run` runner +
 # `StoreSink`. Only the poll-into-store path is needed, so just `http` + `store`
