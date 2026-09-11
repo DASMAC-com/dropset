@@ -157,22 +157,28 @@ impl Candle {
     ///
     /// # What it fronts, and why it is not the only guard
     ///
-    /// `cex_prices` asserts the same three things as CHECK constraints
-    /// (`0012_candle_price_checks.sql`), and they remain the authority: a
-    /// constraint cannot be bypassed by adding a writer, and this method can —
-    /// it guards the adapters that call it and nothing else. The reason to
-    /// *also* check here is the **cost of a rejection**, not any doubt about
-    /// coverage: a bar the database refuses takes its whole batch down with it
-    /// and stops that venue's collector until the code or the data changes.
-    /// `docs/data-feeds.md` §8 carries that chain, and owns it — the mechanism
-    /// belongs to the store sink and the runner rather than to this method.
+    /// `cex_prices` is **gaining** CHECK constraints that assert these same
+    /// three things, and once they land they are the authority: a constraint
+    /// cannot be bypassed by adding a writer, and this method can — it guards
+    /// the adapters that call it and nothing else. No migration filename is
+    /// named here on purpose. That migration is not merged yet and its number
+    /// can still move, so a citation would be a forward reference to something
+    /// this crate cannot see.
+    ///
+    /// The reason to *also* check here is the **cost of a rejection**, not any
+    /// doubt about coverage. The store writes a batch in one transaction and
+    /// the cursor advances only after a successful commit, so a refused bar
+    /// takes its whole batch down with it and stops that venue's collector
+    /// until the code or the data changes.
     ///
     /// So this is the lenient layer and the constraint is the strict one, which
     /// is the right way round: intake knows which bar it is and can skip it,
-    /// while the database knows only that a batch is bad. Note what the lenient
-    /// layer costs — a dropped bucket is **not** re-fetched, because the cursor
-    /// advances past the window regardless, so a bar dropped over a transient
-    /// venue glitch is gone rather than deferred.
+    /// while the database knows only that a batch is bad. What the lenient
+    /// layer costs is that a dropped bucket is *usually* **not** re-fetched,
+    /// since the cursor advances past its window regardless. The exception is a
+    /// source that re-serves its whole history every poll — see
+    /// [`alphavantage`] — where a bar dropped over a transient glitch does come
+    /// back on the next one.
     ///
     /// # Why finiteness is a separate clause from positivity
     ///
@@ -183,7 +189,7 @@ impl Candle {
     /// test alone would **admit** `NaN`, whereas in Postgres `NaN > 0` holds
     /// because `NaN` sorts above every float. Different mechanisms, same
     /// conclusion — the conjunction is what means "finite and positive", in
-    /// either language. `docs/data-feeds.md` §8 carries the SQL half.
+    /// either language.
     ///
     /// `volume` is deliberately unchecked, matching the column: zero volume is
     /// routine — two wired sources publish none at all and their rows carry
@@ -249,22 +255,21 @@ pub(crate) fn requests_per_window(
     window.as_secs_f64() / interval.as_secs_f64()
 }
 
-/// A well-formed bar, for the guard's own tests to perturb one field of.
-#[cfg(test)]
-fn well_formed_candle() -> Candle {
-    Candle {
-        bucket_start: 1_786_668_660,
-        low: 1.360_00,
-        high: 1.380_00,
-        open: 1.370_00,
-        close: 1.375_00,
-        volume: 12.0,
-    }
-}
-
 #[cfg(test)]
 mod candle_guard_tests {
-    use super::{well_formed_candle, Candle};
+    use super::Candle;
+
+    /// A well-formed bar, for these tests to perturb one field of.
+    fn well_formed_candle() -> Candle {
+        Candle {
+            bucket_start: 1_786_668_660,
+            low: 1.360_00,
+            high: 1.380_00,
+            open: 1.370_00,
+            close: 1.375_00,
+            volume: 12.0,
+        }
+    }
 
     #[test]
     fn accepts_a_well_formed_bar_unchanged() {

@@ -379,6 +379,7 @@ fn assemble(raw: Vec<RawCandle>, next_start: i64, end: i64, invert: bool) -> Vec
             decode(&c)
                 .inspect_err(|err| {
                     tracing::warn!(
+                        venue = "oanda",
                         time = %c.time,
                         error = %err,
                         "dropping a candle that could not be decoded"
@@ -391,6 +392,7 @@ fn assemble(raw: Vec<RawCandle>, next_start: i64, end: i64, invert: bool) -> Vec
                 invert_candle(&c)
                     .inspect_err(|err| {
                         tracing::warn!(
+                            venue = "oanda",
                             bucket_start = c.bucket_start,
                             error = %err,
                             "dropping a candle that could not be inverted"
@@ -401,14 +403,18 @@ fn assemble(raw: Vec<RawCandle>, next_start: i64, end: i64, invert: bool) -> Vec
                 Some(c)
             }
         })
+        .filter(|c| c.bucket_start >= next_start && c.bucket_start < end)
         .filter_map(|c| {
-            // The ordering invariant, checked **after** any inversion — which is
-            // the only place it can be. `decode`'s floor judges one field at a
-            // time, so it cannot see a relation between two of them, and
-            // inversion is where the relation is at risk: `x -> 1/x` reverses
-            // high and low, so an inversion that failed to swap them yields
-            // exactly the bar `cex_prices` refuses on its ordering constraint.
+            // The ordering invariant, judged **after** any inversion — the only
+            // place it can be. `decode`'s floor takes one field at a time, so it
+            // cannot see a relation between two of them, and inversion is where
+            // that relation is at risk: `x -> 1/x` reverses high and low, so a
+            // failure to swap them yields a bar whose high sits below its low,
+            // which is wrong on its own terms.
             //
+            // Below the window filter, so a bar on the window overhang is simply
+            // discarded rather than warned about. That matches the other candle
+            // adapters, which all validate in-window bars only.
             let bucket_start = c.bucket_start;
             c.validated()
                 .inspect_err(|err| {
@@ -421,7 +427,6 @@ fn assemble(raw: Vec<RawCandle>, next_start: i64, end: i64, invert: bool) -> Vec
                 })
                 .ok()
         })
-        .filter(|c| c.bucket_start >= next_start && c.bucket_start < end)
         .collect();
     records.sort_by_key(|c| c.bucket_start);
     records
@@ -867,10 +872,10 @@ mod tests {
         // except CAD-USD. Guarding only the inverted path would have made
         // validation depend on quote direction.
         //
-        // Stated without appeal to what the column does or does not enforce:
-        // the schema gained its own price CHECKs later, so an argument resting
-        // on their absence would have expired. The floor earns its place by
-        // being the layer that can drop one bar instead of failing the batch.
+        // Deliberately stated without appeal to what the column enforces. The
+        // floor earns its place by being the layer that can drop one bar
+        // instead of failing a batch, which is true whether or not the schema
+        // also constrains the value.
         for bad in ["0", "-1.5", "inf", "NaN"] {
             let body: CandlesResponse = serde_json::from_value(serde_json::json!({
                 "instrument": "AUD_USD",

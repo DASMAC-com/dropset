@@ -317,7 +317,8 @@ fn window_end(next_start: i64, granularity: i64, max_buckets: usize, closed_boun
 /// ascending records).
 ///
 /// A bucket whose prices are not finite and positive, or whose high sits below
-/// its low, is dropped with a warning by [`Candle::validated`]. This path takes
+/// its low, is refused by [`Candle::validated`] and dropped with a warning here.
+/// This path takes
 /// the venue's numbers from a JSON array straight into a record, so unlike the
 /// ticker path below it never passed them through
 /// [`parse_coinbase_ticker`]'s finiteness filter, which covers only that

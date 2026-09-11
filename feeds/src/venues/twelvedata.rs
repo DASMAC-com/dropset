@@ -307,9 +307,16 @@ fn assemble(raw: Vec<RawBar>, next_start: i64, end: i64) -> Vec<Candle> {
                 .inspect_err(|err| {
                     tracing::warn!(
                         venue = "twelvedata",
-                        // `?`, not `%`: this is the venue's own string, and this
-                        // branch is reached precisely when it failed to parse,
-                        // so it is unvalidated by construction.
+                        // `?`, not `%`: this is the venue's own string, echoed
+                        // back on a path that only runs when the venue sent
+                        // something this adapter would not store — so it is
+                        // unvalidated by construction and gets escaped.
+                        //
+                        // One message covers both failures this closure can see,
+                        // a bar that would not decode and a bar whose values were
+                        // refused, because the `error` field already
+                        // distinguishes them and the window here is bounded
+                        // either way.
                         datetime = ?bar.datetime,
                         error = %err,
                         "dropping a candle that is not storable"

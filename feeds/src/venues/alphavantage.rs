@@ -277,9 +277,12 @@ fn assemble(
         // about every bad historical bar on every poll — for buckets this filter
         // is about to discard, and which were never going to be stored.
         //
-        // The decode warning above is deliberately left history-wide: a bar
-        // whose fields do not parse cannot report a `bucket_start` to be
-        // filtered on, and a malformed bar is worth seeing.
+        // The decode warning above is left history-wide as an accepted cost,
+        // not a necessity: the date could be parsed separately to filter it,
+        // at the price of parsing it twice. A bar whose fields do not decode
+        // is both rarer than a bad value and worth seeing, so the trade is
+        // deliberate — but it does mean one permanently malformed historical
+        // bar warns on every poll.
         .filter(|c| c.bucket_start >= next_start && c.bucket_start < closed_boundary)
         .filter_map(|c| {
             let bucket_start = c.bucket_start;
