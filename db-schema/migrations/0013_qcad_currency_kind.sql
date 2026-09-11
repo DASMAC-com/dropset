@@ -9,9 +9,16 @@
 -- `currency_kinds`, so an unseeded leg yields `asset_class = 'unclassified'`
 -- rather than dropping the product — deliberate, and 0009 says so. But
 -- `instrument_source_liveness` chooses its staleness bound *by class*, and the
--- unclassified bucket takes the loosest one. So while QCAD-USD sat unseeded,
--- the source polled at the tightest cadence on the roster was held to the
--- longest silence the schema allows.
+-- unclassified bucket takes the loosest one. So while QCAD-USD sat unseeded it
+-- was held to the longest silence the schema allows, regardless of how often
+-- its source is actually polled.
+--
+-- Deliberately no cadence figure here. The runner records a checksum of this
+-- file's raw bytes once applied, so a roster-dependent number written into it
+-- could never be corrected -- and no cadence or poll interval is in the schema
+-- anyway, which makes any such figure a claim about configuration that the
+-- database cannot corroborate. `docs/dashboards.md` is the mutable home for
+-- it.
 --
 -- That inverts the one thing the dashboard exists to prevent: QCAD-USD is the
 -- CAD-stablecoin tripwire, whose only job is to notice a peg drifting. A

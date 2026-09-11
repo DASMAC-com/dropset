@@ -9,8 +9,8 @@
 -- operator on 2026-09-10, replacing a "survives one or two venues dark"
 -- reading that could not be implemented because it contradicted itself. So
 -- trusted_live is the only column that decides anything, and it is the only
--- one colored. Everything beside it is context: margin is what stands behind
--- the tape, not a second requirement.
+-- one colored. Everything beside it is context: margin_sources is what stands
+-- behind the tape, not a second requirement.
 --
 -- The trusted tape is oanda, named here as a literal because primacy is a
 -- DESIGNATION rather than a measurement -- it is the anchor treated as truth,
@@ -38,10 +38,10 @@
 -- zero and stays there.
 --
 -- One honest edge, visible rather than hidden: a daily source counts toward
--- margin for the freshness window after it publishes. That is why margin is
--- context and not a criterion. It can never reach trusted_live, so it cannot
--- clear the halt -- which is exactly what the ruling requires of a daily
--- reference.
+-- margin_sources for the freshness window after it publishes. That is why
+-- margin_sources is context and not a criterion. It can never reach
+-- trusted_live, so it cannot clear the halt -- which is exactly what the
+-- ruling requires of a daily reference.
 --
 -- THE MVP ANCHORS ARE A LITERAL, which is deliberate and not an oversight.
 -- There is no legitimate state in which an MVP anchor is absent, so this
@@ -52,7 +52,8 @@
 -- zeros. They order first and are not otherwise displayed: the row order
 -- already says it, so a column restating it would be sort machinery on show.
 WITH anchor AS (
-  SELECT * FROM (VALUES
+  SELECT a.product_id
+  FROM (VALUES
     ('EUR-USD'),
     ('AUD-USD'),
     ('CAD-USD')
@@ -60,9 +61,9 @@ WITH anchor AS (
 ),
 
 scope AS (
-  SELECT product_id FROM anchor
+  SELECT a.product_id FROM anchor AS a
   UNION
-  SELECT product_id FROM instrument_source_liveness
+  SELECT l.product_id FROM instrument_source_liveness AS l
 ),
 
 graded AS (
@@ -76,6 +77,14 @@ graded AS (
     -- while fresh is "is it producing right now".
     extract(epoch FROM now()) - l.last_data_at
       <= ${quote_freshness_mins:sqlstring}::bigint * 60 AS fresh,
+    -- COUPLED to the exact source spelling the collectors register. The feeds
+    -- framework names some sources per product (a venue can register as
+    -- `venue:PRODUCT`), so if oanda ever adopted that shape this equality
+    -- would stop matching and every pair would read trusted_live = 0. That
+    -- fails CLOSED -- a permanent false halt, loud rather than silent, and
+    -- diagnosable because the venue still appears in fresh_sources -- which is
+    -- why it is left as a plain equality rather than a prefix match that could
+    -- also match a different venue whose name merely starts the same way.
     l.source = 'oanda' AS trusted
   FROM scope AS s
   LEFT JOIN instrument_source_liveness AS l ON l.product_id = s.product_id
@@ -86,10 +95,13 @@ SELECT
   count(*) FILTER (WHERE g.is_live AND g.trusted AND g.fresh) AS trusted_live,
   count(*) FILTER (
     WHERE g.is_live AND NOT g.trusted AND g.fresh
-  ) AS margin,
-  -- Where a real outage lands, and it can only go up. A daily source lives
-  -- here too between publications, so this is not by itself a fault reading
-  -- -- read it against fresh_sources to see which kind it is.
+  ) AS margin_sources,
+  -- Where an outage lands FIRST, which is not where it stays: past the class
+  -- bound the source moves on into dark, so this counter rises and then falls
+  -- back to zero. It is a TRANSITION bucket, not a cumulative one, and saying
+  -- otherwise would be the same kind of overstatement as the cadence classifier
+  -- above. A daily source also sits here between publications, so read it
+  -- against fresh_sources to tell an outage from a cadence.
   count(*) FILTER (WHERE g.is_live AND NOT g.fresh) AS live_but_stale,
   count(*) FILTER (WHERE NOT g.is_live) AS dark,
   string_agg(g.source, ', ' ORDER BY g.source) FILTER (

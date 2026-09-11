@@ -92,9 +92,14 @@ gets the loosest one.** The venue column above is a summary; what
 actually decides is the pair's class, and a pair with an unseeded leg
 classes as `unclassified` and takes the fallback. That bit this table's
 own QCAD row: `QCAD` was missing from the `currency_kinds` seed, so the
-tripwire polled every 15 s was held to a 72 h silence rather than the
-48 h stated here — it could have been dark for three days and still read
-live. Seeding the leg lands `QCAD-USD` in `peg-pair`, which is the right
+tripwire was held to a 72 h silence rather than the 48 h stated here — it
+could have been dark for three days and still read live. Against the
+15 s cadence **this table records** for that row, that is four orders of
+magnitude of slack; the cadence figure is the table's own claim rather
+than a measurement, because no cadence or poll interval is recorded
+anywhere in the schema — a fact worth knowing before citing one.
+
+Seeding the leg lands `QCAD-USD` in `peg-pair`, which is the right
 class for the right reason rather than merely a tighter number: that
 class exists for pairs trading at ~1.0 where only the deviation is
 interesting, which is exactly what §3.1 watches. Read this as the
@@ -127,9 +132,20 @@ fresh.
 
 ## 3. Redundancy — the criterion the maker actually needs
 
-The maker quotes a pair while it has **one live trusted intraday tape**,
-and halts at zero. The dashboard shows this *directly*, not by
-implication:
+The maker quotes at a **100 bps top-of-book spread**, and it quotes a
+pair while that pair has **one live trusted intraday tape**, halting at
+zero. Those are two separate commitments and only the second one moved:
+the 100 bps figure is ratified independently (§8 item 11) and
+`docs/market-making.md` is where it is structural — 50 bps each side,
+with a worked inventory table. **Do not read the 2026-09-10 criterion
+ruling as touching the spread**, which is the mistake this paragraph
+exists to prevent: an earlier draft of this section deleted the spread
+commitment along with the discredited redundancy clause, on the
+reasoning that the ruling had replaced the sentence containing both. It
+had not — it replaced one clause of it, and §8 item 11 was left pointing
+at a figure §3 no longer stated.
+
+The dashboard shows the criterion *directly*, not by implication:
 
 > **per pair: is a trusted intraday tape live, and how much margin is
 > behind it.**
@@ -360,7 +376,11 @@ did not touch them. (Item 12 was missing from this list before — the
 omission predates the feeds PR, and it is exactly the rendering class the
 sentence describes.)
 
-**The walkthrough PR added items 13 to 17 and retired item 1.** It closed
+**The feed-verification PR added items 13 to 17 and retired item 1.**
+Named for what it did rather than for the issue it sits under: the
+attended walkthrough that issue is titled for was deliberately deferred
+to a follow-up, so do not read these items as walkthrough results. It
+closed
 13 by building the panel and 2's QCAD half by seeding the currency kind;
 14 and 15 record what building 13 taught, one of them a defect in this
 document's own arithmetic. Items 16 and 17 are held deliberately — they
@@ -589,10 +609,11 @@ Both directions of drift are real, so both checks are worth running.
      reads as an unclear distinction between the two.
 
 1. **The rendered-chart budget is already over, before the reserved
-   panels land.** §5's "about ten, a hard constraint" is 12 today: nine
-   panels plus the OHLC panel repeating over the three MVP anchors, and
-   the new redundancy panel makes 13. The pricing-path work reserves
-   three more readings, all of which read an estimator output table that
+   panels land.** §5's "about ten, a hard constraint" was 12 before this
+   PR: ten panels, of which nine render one chart each and the OHLC panel
+   repeats over the three MVP anchors (9 + 3). The redundancy panel added
+   here makes eleven panels and 13 rendered charts. The pricing-path work
+   reserves three more readings, all of which read an estimator table that
    does not exist on `main` yet. Note the two rules are in genuine
    tension rather than merely unmet: §1 requires every per-pair panel to
    show all three anchors, so the repeat that breaches the cap is the
