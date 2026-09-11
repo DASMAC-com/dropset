@@ -661,6 +661,69 @@ tick tier exists because the finest bucket any candle endpoint offers is
 60s, so no polling cadence makes a candle series show movement *between*
 closes.
 
+**Candle prices carry their own sanity CHECKs, and the schema is the
+right place for them rather than a collector.** `cex_prices` constrains
+every price **finite and positive**, and a bucket's high at or above its
+low (`0012_candle_price_checks.sql`). A venue adapter validates what it
+parses, but the strength of that guard is **per-adapter rather than
+uniform** — some check the value, others only that the bytes parse as a
+float. Nothing downstream reliably narrows it either. The insert is
+idempotent rather than validating, and the guards that *do* exist
+downstream are per-query and partial: several analytics queries carry a
+defensive `close > 0`, because a log-return divides by it, but that says
+nothing about `low`, `high`, `open`, or the ordering. So absent a
+constraint every consumer has to remember its own, and a malformed
+bucket reaches the ones that forgot as an impossible spread or a
+nonsense return. A constraint is the one place the check cannot be
+bypassed by adding a writer.
+
+The finiteness half is not redundant beside positivity, and the reason
+is a Postgres-specific trap: **`NaN` sorts as greater than every other
+float**, so `NaN > 0` holds and a positivity test alone admits it — and
+`NaN = NaN` is true here too, so comparing a value with itself does not
+detect one either. The constraint therefore carries an explicit
+`< 'Infinity'` bound, which is false for both `NaN` and `Infinity`.
+
+Read the two as a **pair**, because the boundary between them is not
+where their names put it: a *negative* infinity satisfies the finiteness
+bound (`-Infinity` really is less than `Infinity`) and is refused by the
+positivity check instead. Nothing escapes — the pair is jointly
+exhaustive — but a division artefact can surface under either name, so
+only the conjunction means "finite and positive". The general rule for
+any later numeric CHECK in this schema: positivity does not imply
+finiteness in Postgres, and `x = x` is not a NaN test here.
+
+**Know what a rejection costs, because it is not a dropped row.** A
+candle the constraints refuse aborts the whole batch it arrived in — the
+writer runs every insert in one transaction — and the feed position is
+saved only after a successful commit, so it does not advance and the row
+is not skipped. The store sink is not wrapped in the best-effort adapter
+on this path, so the error reaches the runner and stops that venue's
+collector — and wrapping it is **not** the fix, because that adapter
+converts *every* store failure into a success and would blind the
+primary data path to all of them, not just this one.
+
+**And it does not age out.** Every candle source takes its window start
+from that same saved position, and Alpha Vantage does not
+take a date range at all — it asks `outputsize=full` on every poll — so
+the offending bar is re-fetched indefinitely rather than falling out of
+a moving window. A rejection therefore stops that venue's collection
+until the code or the data changes. That is the intended direction
+(refusing bad data beats storing it), but it is why an intake-side guard
+is the right place to *drop* a bad bar, with these constraints as the
+backstop that catches what intake misses.
+
+Three details worth keeping straight. **Volume is deliberately
+unconstrained** — zero volume is legitimate and routine, since some
+sources publish none at all (§9), so the column has no positivity
+invariant to assert. The **full OHLC ordering**, that `open` and `close`
+each sit inside `[low, high]`, is a coherent stronger claim that is
+deliberately *not* asserted: it is a wider statement about how every
+adapter assembles a bar, so it is its own decision rather than a rider
+on this one. And **`spot_ticks` carries no such CHECKs**, though the
+same reasoning would apply to it — that is scope, not a judgement that
+ticks need no guard.
+
 **Reference data is a third kind of table, and `pyth_fx_feeds` is the
 first of it.** It is not a feed's output; it is configuration a collector
 *reads*. Its writer is the migration that seeds it — there is no runtime
@@ -741,6 +804,29 @@ filter on one of them returns nothing, and nothing
 looks exactly like healthy. And adding a migration advances the schema
 version the fence checks, so the shared database has to be migrated
 *before* any binary built from that change will start.
+
+**A currency symbol may not contain a hyphen, and that constraint is
+load-bearing.** `product_id` is a canonical hyphenated `BASE-QUOTE`, and
+the `instruments` view derives both legs by splitting on that hyphen,
+then joins `currency_kinds` on the results to classify the pair. Two
+CHECKs in `0009_instruments.sql` are what make the split unambiguous,
+from opposite directions: a currency symbol is confined to an alphabet
+of `[A-Z0-9]`, which excludes the hyphen, and a `product_id` must be
+exactly two such legs separated by exactly one. So a hyphen inside a
+symbol is refused at intake, rather than silently splitting at the wrong
+hyphen — which would yield a truncated base, a quote taken from the
+symbol's own tail, the real quote leg dropped entirely, and a pair that
+reads `unclassified` because a leg fails to join `currency_kinds`.
+
+That is why per-symbol segmentation is *derived* rather than stored, and
+why widening the symbol alphabet would not be a relabelling. Every
+consumer grouping by leg rides the split: the `currency` picker in
+`market-data/grafana/dashboards/fx-analytics.json` is built from `base`
+UNION `quote`, and its pair picker filters on
+`${currency:sqlstring} IN (i.base, i.quote)` — the `sqlstring` formatter
+being the injection-safe form every Grafana variable here uses.
+Admitting a hyphen into a symbol would silently re-key all of it, so it
+is a schema change with dashboard consequences.
 
 ______________________________________________________________________
 
