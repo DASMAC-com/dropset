@@ -427,9 +427,11 @@ fn sort_markets_by_symbol(markets: &mut [MarketView], mint_symbols: &[(Pubkey, &
     };
     markets.sort_by(|a, b| {
         let (sa, sb) = (symbol_of(&a.base_mint), symbol_of(&b.base_mint));
-        // `None` sorts after `Some` under Option's own ordering, which is the
-        // "unknown last" rule — spelled out because relying on it silently is
-        // how a later `unwrap_or("")` would invert it.
+        // `Option`'s own ordering puts `None` FIRST, so this explicit
+        // `is_none()` stage is what makes an unknown market sort last — do
+        // not remove it as redundant. (An earlier version of this comment
+        // claimed the opposite, which would have read as license to delete
+        // the stage and silently invert unknown-last to unknown-first.)
         sa.is_none()
             .cmp(&sb.is_none())
             .then_with(|| sa.cmp(&sb))

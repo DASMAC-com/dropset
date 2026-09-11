@@ -223,3 +223,45 @@ fn stream<R: Read + Send + 'static>(pipe: Option<R>, symbol: &str, log: Logger) 
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{LOCALNET_STORE_URL, STORE_URL_ENV};
+
+    /// The compose file is the third copy of both strings, and the one that
+    /// actually has to agree with them.
+    ///
+    /// Neither constant can be imported: the variable's canonical definition
+    /// lives in the maker crate, which this one deliberately does not depend
+    /// on, and the URL is compose's. So nothing the compiler checks connects
+    /// the three — rename the canonical const and every TUI-spawned maker
+    /// fails at startup with no build error, which is precisely the bug this
+    /// module was changed to fix.
+    ///
+    /// Pinning against the committed artifact costs one `include_str!` and
+    /// no dependency. It is a weaker guarantee than a shared symbol and a
+    /// strictly better one than nothing.
+    #[test]
+    fn the_store_url_and_its_variable_match_the_compose_file() {
+        let compose = include_str!("../../infra/localnet/docker-compose.yml");
+        assert!(
+            compose.contains(STORE_URL_ENV),
+            "{STORE_URL_ENV} is not named in the compose file — the canonical \
+             constant in the maker crate has probably been renamed"
+        );
+        // The host form differs from compose's in-network form only by host
+        // and port, so pin the parts that must agree: the credentials and the
+        // database name.
+        for part in ["dropset:dropset", "/dropset"] {
+            assert!(
+                LOCALNET_STORE_URL.contains(part),
+                "the localnet store URL no longer carries {part:?}"
+            );
+            assert!(
+                compose.contains(part),
+                "the compose file no longer carries {part:?} — the TUI would \
+                 hand its makers a URL the stack does not accept"
+            );
+        }
+    }
+}

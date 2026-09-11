@@ -29,8 +29,8 @@ use dropset_feeds::venues::{
     FrankfurterSource, KrakenSource, PythFeed, PythHermesSource,
 };
 use dropset_feeds::{
-    connect_lazy, forward_channel, parked_source, run_until, run_until_with_metrics, HttpClient,
-    RunConfig, Sink, Source, PARKED_SOURCES,
+    connect_lazy, forward_channel, parked_source, redact_to_origin, run_until,
+    run_until_with_metrics, HttpClient, RunConfig, Sink, Source, MAX_ERROR_CHARS, PARKED_SOURCES,
 };
 use dropset_maker_bot::config::{
     BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
@@ -678,7 +678,18 @@ fn spawn_price_feeds(
     // that handle has to be entered explicitly.
     let pool = {
         let _guard = rt.enter();
-        connect_lazy(&url)?
+        // Redacted to origin, matching the telemetry path's treatment of the
+        // identical error. The two calls take the same input and only one of
+        // them used to redact — and this is the call where a malformed URL is
+        // guaranteed to produce an error, so it is the one whose cause chain
+        // would carry the operator's password into stderr.
+        connect_lazy(&url).map_err(|e| {
+            let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
+            anyhow!(
+                "{} is not a usable connection string ({cause})",
+                telemetry::DATABASE_URL_ENV
+            )
+        })?
     };
     let fx_store = spawn_feed(
         rt,
@@ -790,14 +801,39 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let fx_store_rows: Vec<_> = if drop("fx-store") {
         Vec::new()
     } else {
+        // Two arms, not one `.ok()` chain. Collapsing them made the dry run
+        // report "the variable is unset" when the variable was in fact set
+        // and unparseable — telling the operator the easier of the two
+        // failures while the harder one was the real state, in the one mode
+        // whose entire job is to diagnose wiring.
+        //
         // The enter guard is why this is not a plain `and_then`: a lazy pool
         // spawns its reaper on construction, so it has to be built inside the
         // runtime's context (see `spawn_price_feeds`).
         let pool = {
             let _guard = rt.enter();
-            std::env::var(telemetry::DATABASE_URL_ENV)
-                .ok()
-                .and_then(|url| connect_lazy(&url).ok())
+            match std::env::var(telemetry::DATABASE_URL_ENV) {
+                Ok(url) => match connect_lazy(&url) {
+                    Ok(pool) => Some(pool),
+                    Err(e) => {
+                        let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
+                        eprintln!(
+                            "[dry-run] {} is SET but not a usable connection string \
+                             ({cause}) — the intraday FX tier is dark",
+                            telemetry::DATABASE_URL_ENV
+                        );
+                        None
+                    }
+                },
+                Err(_) => {
+                    eprintln!(
+                        "[dry-run] {} is unset — the intraday FX tier is dark, and \
+                         the live bot would refuse to start",
+                        telemetry::DATABASE_URL_ENV
+                    );
+                    None
+                }
+            }
         };
         match pool {
             Some(pool) => {
@@ -812,14 +848,8 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
                         Vec::new()
                     })
             }
-            None => {
-                eprintln!(
-                    "[dry-run] {} is unset — the intraday FX tier is dark, and \
-                     the live bot would refuse to start",
-                    telemetry::DATABASE_URL_ENV
-                );
-                Vec::new()
-            }
+            // Whichever arm produced the `None` has already said why.
+            None => Vec::new(),
         }
     };
     let fx = if drop("fx") {
@@ -921,16 +951,10 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
                     .iter()
                     .find(|r| r.source == source && r.product_id == product)
                     .map(|r| Reading::new(r.close, now));
-                fx_q = match fx_store::fx_candidate_kind(source) {
-                    Some(fx_store::FxCandidateKind::TrustedTape) => {
-                        fx_q.push_trusted(source, reading)
-                    }
-                    Some(fx_store::FxCandidateKind::Tape) => fx_q.push(source, reading),
-                    Some(fx_store::FxCandidateKind::Reference) => {
-                        fx_q.push_reference(source, reading)
-                    }
-                    None => fx_q,
-                };
+                // The same helper the live path uses. Writing the dispatch
+                // out longhand here is what made "the two collections must
+                // agree" a claim in two comments and an invariant in neither.
+                fx_q = fx_store::push_store_candidate(fx_q, source, reading);
             }
         }
         let fx_q = fx_q
@@ -1006,13 +1030,10 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         //
         // Rendered on the FX column because that is the leg the guard is
         // about, and a whole column would be blank on every healthy row.
-        if m.requires_live_tape
-            && !fair
-                .fx_leg
-                .contributors
-                .iter()
-                .any(|c| fx_store::is_tape_source(c.source))
-        {
+        // Same predicate the tick loop uses, via the same helper — a dry run
+        // that computed this independently could disagree with the live
+        // decision, which is the one thing it exists not to do.
+        if tasks::tape_shortfall_for_dry_run(m.requires_live_tape, &fair.fx_leg) {
             fx_col = format!("HALT: no tape ({fx_col})");
         }
         println!(
@@ -1148,11 +1169,19 @@ mod tests {
     /// and AUD the other way, so the direction is a per-market fact.
     #[test]
     fn pyth_feeds_carry_each_markets_own_direction() {
-        let markets = args(&["EURC", "ZARP"]).selected();
+        // AUDD and CADC are here because the doc above now names AUD as one
+        // of the three non-inverted crosses, and the two new markets are
+        // where that claim is newly true — asserting only EUR and ZAR would
+        // leave the diff's own direction claim unexercised.
+        let markets = args(&["EURC", "ZARP", "AUDD", "CADC"]).selected();
         let roster = FeedRoster::for_markets(&markets);
         let eur = roster.pyth.iter().find(|f| f.key == "EUR").unwrap();
         let zar = roster.pyth.iter().find(|f| f.key == "ZAR").unwrap();
+        let aud = roster.pyth.iter().find(|f| f.key == "AUD").unwrap();
+        let cad = roster.pyth.iter().find(|f| f.key == "CAD").unwrap();
         assert!(!eur.invert, "EUR/USD is published direct");
         assert!(zar.invert, "ZAR is published as USD/ZAR");
+        assert!(!aud.invert, "AUD/USD is published direct");
+        assert!(cad.invert, "CAD is published as USD/CAD");
     }
 }

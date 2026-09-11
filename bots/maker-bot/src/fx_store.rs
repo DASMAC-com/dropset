@@ -57,10 +57,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use dropset_fair_value::{Candidates, Reading};
 use dropset_feeds::{Batch, Source};
 use sqlx::{PgPool, Row};
 
-/// `cex_prices.source` for each intraday FX venue the collectors write.
+// `cex_prices.source` for each FX venue the collectors write. These match the
+// collectors' own `SOURCE` consts in `market-data/src/bin` literally — a join
+// by string, so the two sides have to move together.
 pub const SOURCE_OANDA: &str = "oanda";
 pub const SOURCE_TWELVEDATA: &str = "twelvedata";
 pub const SOURCE_ALPHAVANTAGE: &str = "alphavantage";
@@ -128,10 +131,43 @@ pub fn is_tape_source(source: &str) -> bool {
     ) || source == PYTH_SOURCE
 }
 
-/// The Pyth tag, duplicated from `tasks` rather than imported to keep this
-/// module free of a cycle back into the tick loop. The two are pinned equal by
-/// a test there.
+/// The Pyth tag, duplicated from `tasks` rather than imported.
+///
+/// The reason is **layering, not a cycle** — an earlier version of this
+/// comment said cycle, which is simply wrong: Rust has no circular-import
+/// restriction between modules of one crate, and `tasks` already imports from
+/// here, so the reverse import would compile. What the duplication buys is
+/// that this module stays a leaf: it knows about venue tags, and nothing about
+/// the tick loop that consumes them. The two are pinned equal by a test in
+/// `tasks`, so the value cannot drift.
 const PYTH_SOURCE: &str = "pyth-hermes";
+
+/// Offer one store venue's reading to a candidate set, at its ruled
+/// designation.
+///
+/// **One owner for the kind-to-push dispatch.** The live tick loop and the
+/// dry run both build the FX leg, and their own comments say the two must
+/// agree "or a dry run stops predicting the live mid" — an agreement that was
+/// asserted in prose and enforced nowhere, because each site wrote the
+/// four-arm match out longhand. A fourth designation, or a change to which
+/// push method a kind maps to, had to be edited in both places and diverged
+/// silently if it was not. Now there is one place.
+///
+/// An unrecognized source is offered **nothing** rather than defaulting to a
+/// tape, so a newly-rostered collector cannot start pricing the book the
+/// moment it is switched on.
+pub fn push_store_candidate(
+    candidates: Candidates,
+    source: &'static str,
+    reading: Option<Reading>,
+) -> Candidates {
+    match fx_candidate_kind(source) {
+        Some(FxCandidateKind::TrustedTape) => candidates.push_trusted(source, reading),
+        Some(FxCandidateKind::Tape) => candidates.push(source, reading),
+        Some(FxCandidateKind::Reference) => candidates.push_reference(source, reading),
+        None => candidates,
+    }
+}
 
 /// The canonical store pair for a market's tracked currency — `AUD` →
 /// `AUD-USD`.
@@ -159,6 +195,29 @@ pub fn fx_product_id(currency: &str) -> Option<String> {
 /// dropping out of a composition, the second is the composition no longer
 /// resting on the data the operator chose to price off.
 pub const MAX_STORE_SILENCE: Duration = Duration::from_secs(5 * 60);
+
+/// How long an empty cache may be excused as "not polled yet" before the
+/// per-market tape guard arms anyway.
+///
+/// The tick loop starts immediately while the store poller runs on its own
+/// cadence, so the first ticks of any run see a legitimately empty cache and
+/// a market that halted on that would alarm and pull its book on every
+/// startup. That is what this grace is for.
+///
+/// **It is a time bound rather than a "has the store answered yet" flag, and
+/// that distinction is the whole point.** Keyed on the flag alone, the two
+/// fail-closed guards leave a hole in exactly one corner: a store that is
+/// down *at boot* never answers, so the tape guard stays suppressed, while
+/// [`MAX_STORE_SILENCE`] has not yet elapsed so the store guard has not fired
+/// either. An MVP pair would quote off day-old fixes for five minutes —
+/// roughly sixty ticks — which is precisely the outcome the fail-closed rule
+/// exists to prevent. A bound closes that to one poll cycle.
+///
+/// Two poll intervals at the default 30s `fx_store_poll`, so a single missed
+/// or slow poll does not arm it, and a test pins it well inside
+/// [`MAX_STORE_SILENCE`] — a grace longer than the silence bound would
+/// reinstate the hole it exists to close.
+pub const STARTUP_TAPE_GRACE: Duration = Duration::from_secs(60);
 
 /// One venue's newest closed bucket for one pair.
 #[derive(Clone, Debug, PartialEq)]
@@ -203,14 +262,43 @@ pub struct FxStoreSnapshot {
 /// snapshot whose poller has died has a stamp that stops moving, so flooring
 /// on when this process last read the row is what ages the leg out anyway.
 ///
-/// Taking the `max` of the two is also the forward-skew guard: a stamp can
-/// only ever make a reading older, never younger, so a bogus future
-/// `published_at` cannot pin the age at zero and manufacture a permanently
-/// fresh candidate. That is why this is a `max` and not a choice between them.
+/// Taking the `max` of the two keeps a stamp from ever making a reading look
+/// *younger* than the read that fetched it.
+///
+/// **It is not by itself a forward-skew guard, and an earlier version of this
+/// comment claimed it was.** The `max` stops a future `published_at` pinning
+/// the age at zero, but it pins it at `receipt_age` — and the receipt age
+/// resets on every successful poll, so at a 30s cadence a future-stamped row
+/// reports ~30s of age forever. It would never cross the tape staleness
+/// bound, so it would stay a contributor and keep `tape_shortfall` satisfied:
+/// one skewed row defeating the staleness drop and the fail-closed tape guard
+/// together. [`future_stamped`] is the actual guard; this function only ages
+/// rows that pass it.
 pub fn store_reading_age(published_at: i64, now_unix: i64, receipt_age: Duration) -> Duration {
     let publication_secs = now_unix.saturating_sub(published_at).max(0);
     let publication_age = Duration::from_secs(publication_secs as u64);
     publication_age.max(receipt_age)
+}
+
+/// How far ahead of this host's clock a row's publication stamp may sit
+/// before the row is refused outright.
+///
+/// Generous, because the honest causes are small: NTP skew between a
+/// collector host and this one is sub-second, and the widest legitimate
+/// overshoot is one bucket width (a collector writing a bucket whose close is
+/// a minute out). Anything beyond that is a wrong clock or a wrong
+/// `granularity_secs`, and neither should price a book.
+pub const MAX_PUBLICATION_SKEW: Duration = Duration::from_secs(120);
+
+/// Whether a row's publication stamp is implausibly far in the future.
+///
+/// Refusing such a row is the only thing that actually works. Ageing it
+/// cannot: see [`store_reading_age`] — the receipt floor resets every poll,
+/// so a skewed row stays permanently "fresh" however the age is computed
+/// from it. A refused row simply is not offered, which is the fail-closed
+/// direction: the leg loses a candidate rather than gaining a fabricated one.
+pub fn future_stamped(published_at: i64, now_unix: i64) -> bool {
+    published_at.saturating_sub(now_unix) > MAX_PUBLICATION_SKEW.as_secs() as i64
 }
 
 /// Whether the store has been silent long enough to count as gone.
@@ -317,20 +405,53 @@ mod tests {
         assert_eq!(store_reading_age(1_000, 1_010, secs(900)), secs(900));
     }
 
-    /// A bogus future stamp must not pin the age at zero. Taking the `max`
-    /// means a stamp can only ever make a reading older.
+    /// A future stamp floors at the receipt age and no lower.
+    ///
+    /// Written with a **1-second** receipt age on purpose. The earlier
+    /// version used 300s, which made the assertion pass for a reason that had
+    /// nothing to do with skew — a large floor hides the defect, because the
+    /// whole problem is that the floor is *small* in production (it resets on
+    /// every 30s poll). At a realistic receipt age this test states the true
+    /// behavior rather than a flattering one: ageing alone does NOT make a
+    /// future-stamped row safe, which is why [`future_stamped`] exists.
     #[test]
-    fn a_future_stamp_cannot_manufacture_freshness() {
-        // `published_at` is 500s in the future; the read was 300s ago.
-        let age = store_reading_age(2_000, 1_500, secs(300));
-        assert_eq!(age, secs(300), "the receipt floor must survive skew");
+    fn ageing_alone_does_not_defuse_a_future_stamp() {
+        let age = store_reading_age(2_000, 1_500, secs(1));
+        assert_eq!(
+            age,
+            secs(1),
+            "a row 500s in the future still reads as 1s old — ageing cannot fix this"
+        );
+    }
+
+    /// So the rejection is what has to catch it.
+    #[test]
+    fn a_future_stamped_row_is_refused() {
+        assert!(future_stamped(2_000, 1_500), "500s ahead is implausible");
+        assert!(!future_stamped(1_500, 1_500), "exactly now is fine");
+        assert!(!future_stamped(1_000, 1_500), "the past is fine");
+        // One bucket width of overshoot is legitimate and must not be refused.
+        assert!(!future_stamped(1_560, 1_500), "a minute ahead is tolerated");
+        // Saturating, so an absurd stamp classifies rather than panicking.
+        assert!(future_stamped(i64::MAX, 0));
+        assert!(!future_stamped(i64::MIN, 0));
     }
 
     /// Saturating rather than panicking on an absurd stamp.
+    ///
+    /// Both arms assert an exact value. The `i64::MIN` arm previously
+    /// asserted only `>= secs(7)`, which holds for almost any implementation
+    /// — including a wrapping subtraction — so it read as a value assertion
+    /// while pinning nothing but the absence of a panic.
     #[test]
     fn an_absurd_stamp_saturates() {
         assert_eq!(store_reading_age(i64::MAX, 0, secs(7)), secs(7));
-        assert!(store_reading_age(i64::MIN, 0, secs(7)) >= secs(7));
+        // i64::MIN saturates the subtraction to i64::MAX seconds, which is
+        // the honest answer for a stamp that far in the past: unusably old.
+        assert_eq!(
+            store_reading_age(i64::MIN, 0, secs(7)),
+            Duration::from_secs(i64::MAX as u64)
+        );
     }
 
     /// The liveness bound is on *successful* reads and is strictly greater
@@ -381,6 +502,43 @@ mod tests {
         }
     }
 
+    /// Tapes must be offered before references, and this const IS an offer
+    /// chain — so its element order is load-bearing.
+    ///
+    /// `consensus.rs` states the rule as an obligation on the caller and
+    /// enforces nothing. The natural edit that breaks it is a tidy: sorting
+    /// these three alphabetically puts `alphavantage` (a daily reference)
+    /// ahead of both tapes. Nothing else in the suite would notice, because
+    /// the other tests check membership and designation, both order-blind.
+    #[test]
+    fn no_reference_is_offered_before_a_tape() {
+        let mut seen_reference = false;
+        for source in FX_STORE_SOURCES {
+            match fx_candidate_kind(source) {
+                Some(FxCandidateKind::Reference) => seen_reference = true,
+                Some(FxCandidateKind::Tape | FxCandidateKind::TrustedTape) => assert!(
+                    !seen_reference,
+                    "{source} is a tape offered after a reference — an over-full leg \
+                     would drop it and keep the daily fix"
+                ),
+                None => panic!("{source} has no designation"),
+            }
+        }
+    }
+
+    /// The startup grace must expire well inside the store-silence bound.
+    ///
+    /// If it did not, it would reinstate the hole it exists to close: a store
+    /// down at boot would leave an MVP market ungoverned by either guard for
+    /// the whole window.
+    #[test]
+    fn the_startup_grace_expires_inside_the_silence_bound() {
+        assert!(
+            STARTUP_TAPE_GRACE < MAX_STORE_SILENCE,
+            "a grace longer than the silence bound leaves a cold-start hole"
+        );
+    }
+
     #[test]
     fn a_currency_maps_onto_its_canonical_pair() {
         assert_eq!(fx_product_id("AUD").as_deref(), Some("AUD-USD"));
@@ -411,10 +569,41 @@ mod tests {
             .expect("the query binds at least one parameter");
         assert_eq!(highest, 2, "placeholder count drifted from the binds");
 
+        // Compare against the statement's PROJECTED OUTPUT NAMES, not against
+        // the raw text. A substring sweep is vacuous here twice over, and a
+        // mutation run proved both: the 26-line `--` header discusses "the
+        // bucket close" and "the closing price", so `contains("close")` held
+        // whatever the statement did; and stripping the comments is still not
+        // enough, because `close AS px` also contains "close" while
+        // projecting `px`. Either way `try_get("close")` fails at runtime on
+        // the price path while this test stays green — the exact failure it
+        // exists to prevent.
+        let select_list = sql
+            .split("SELECT DISTINCT ON (source, product_id)")
+            .nth(1)
+            .and_then(|rest| rest.split("FROM").next())
+            .expect("the statement has a SELECT list");
+        let projected: Vec<String> = select_list
+            .split(',')
+            .filter_map(|item| {
+                let item = item.trim();
+                if item.is_empty() {
+                    return None;
+                }
+                // The output name is the alias when there is one, else the
+                // last token of the expression.
+                let name = match item.rsplit_once(" AS ") {
+                    Some((_, alias)) => alias,
+                    None => item.split_whitespace().next_back()?,
+                };
+                Some(name.trim().to_string())
+            })
+            .collect();
+
         for column in ["source", "product_id", "published_at", "close"] {
             assert!(
-                sql.contains(column),
-                "the decoder reads `{column}` but the statement does not project it"
+                projected.iter().any(|p| p == column),
+                "the decoder reads `{column}` but the statement projects {projected:?}"
             );
         }
     }

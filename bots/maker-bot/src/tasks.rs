@@ -34,7 +34,7 @@ use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
 use crate::telemetry::{self, MarketId, Outcome, Record, SampleBuilder};
 use anyhow::Result;
-use dropset_fair_value::{Candidates, ClockCtx, LegStaleness, Legs, Reading};
+use dropset_fair_value::{Candidates, ClockCtx, LegReport, LegStaleness, Legs, Reading};
 use dropset_feeds::venues::{ErApiSnapshot, FrankfurterSnapshot, FxQuote};
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
@@ -227,9 +227,16 @@ struct StoreStatus {
     /// Silent past its liveness bound — measured from startup until the first
     /// successful read, so a store that never answers still halts.
     silent: bool,
-    /// The store has answered at least once this run, so an empty candidate
-    /// set now means the venues are dark rather than unpolled.
-    answered: bool,
+    /// The per-market tape guard may fire: either the store has answered, or
+    /// the startup grace has elapsed and "not yet polled" has stopped being a
+    /// credible reading of an empty cache.
+    ///
+    /// **Both disjuncts are required, and the time one is what closes a real
+    /// hole.** Armed on the answer alone, a store that is down *at boot*
+    /// never arms the tape guard, while the silence bound has not yet fired
+    /// either — so an MVP pair quotes off day-old fixes for the whole window.
+    /// See [`crate::fx_store::STARTUP_TAPE_GRACE`].
+    tape_guard_armed: bool,
 }
 
 /// The shared feed cache. Each tier's source polls on its own cadence and
@@ -311,7 +318,8 @@ impl FeedHub {
     fn store_status(&self, now: Instant) -> StoreStatus {
         StoreStatus {
             silent: self.store_silent(now),
-            answered: self.fx_store_last_ok.is_some(),
+            tape_guard_armed: self.fx_store_last_ok.is_some()
+                || now.duration_since(self.started_at) > fx_store::STARTUP_TAPE_GRACE,
         }
     }
 
@@ -441,24 +449,19 @@ impl FeedHub {
                 let reading = self
                     .fx_store
                     .get(&(source.to_string(), product.clone()))
+                    // A stamp implausibly far ahead of this host's clock is
+                    // refused outright rather than aged. Ageing cannot make
+                    // it safe: the receipt floor resets on every poll, so a
+                    // future-stamped row would read as seconds old forever,
+                    // never cross the tape bound, and keep the fail-closed
+                    // tape guard satisfied on a price nobody published.
+                    .filter(|(_, published, _)| {
+                        !fx_store::future_stamped(*published, tick.now_unix)
+                    })
                     .map(|(value, published, read_at)| {
                         fx_store_reading(*value, *published, *read_at, now, tick.now_unix)
                     });
-                fx = match fx_store::fx_candidate_kind(source) {
-                    Some(fx_store::FxCandidateKind::TrustedTape) => {
-                        fx.push_trusted(source, reading)
-                    }
-                    Some(fx_store::FxCandidateKind::Tape) => fx.push(source, reading),
-                    Some(fx_store::FxCandidateKind::Reference) => {
-                        fx.push_reference(source, reading)
-                    }
-                    // Unreachable while `FX_STORE_SOURCES` and the designation
-                    // table agree, which a test in `fx_store` pins. Dropping a
-                    // source that carries no designation is the safe
-                    // direction: it keeps a newly-rostered collector from
-                    // pricing the book the moment it is switched on.
-                    None => fx,
-                };
+                fx = fx_store::push_store_candidate(fx, source, reading);
             }
         }
         let fx = fx
@@ -644,6 +647,39 @@ pub const SOURCE_COINBASE: &str = "coinbase";
 pub const SOURCE_KRAKEN: &str = "kraken";
 pub const SOURCE_COINGECKO: &str = "coingecko";
 pub const SOURCE_CMC: &str = "coinmarketcap";
+
+/// Whether this market must halt for want of a live FX tape.
+///
+/// A free function over its three inputs rather than an expression inside the
+/// tick, because the composition is the thing worth testing and it was not
+/// testable inline: the kill-switch tests take a `FeedGuards` already built,
+/// and the hub tests stop at `StoreStatus`, so nothing covered the join.
+/// Deleting either conjunct left the whole suite green while reintroducing a
+/// measured regression.
+///
+/// Reads the leg's **contributors** — the sources actually credited in the
+/// resolved value — not the candidates offered. A tape that was offered and
+/// then dropped for staleness has priced nothing, so counting it would
+/// silence the guard in exactly the case it exists for.
+fn tape_shortfall(requires_live_tape: bool, store: StoreStatus, fx_leg: &LegReport) -> bool {
+    store.tape_guard_armed && tape_shortfall_for_dry_run(requires_live_tape, fx_leg)
+}
+
+/// The same question without the store-liveness conjunct, for the dry run.
+///
+/// A dry run polls once and composes from that single snapshot, so it has no
+/// startup grace to be inside of — the store either answered or it did not,
+/// and the caller already reported which. Sharing the contributor test rather
+/// than restating it is what keeps the dry run's rendered verdict and the
+/// tick loop's actual decision from drifting apart, which is the failure the
+/// dry run exists to make impossible.
+pub fn tape_shortfall_for_dry_run(requires_live_tape: bool, fx_leg: &LegReport) -> bool {
+    requires_live_tape
+        && !fx_leg
+            .contributors
+            .iter()
+            .any(|c| fx_store::is_tape_source(c.source))
+}
 
 /// Turn a cached market-data store row into a [`Reading`].
 ///
@@ -1404,22 +1440,7 @@ fn quote_market_inner(
         }
     };
 
-    // Read off the leg's **contributors** rather than off what was offered: a
-    // tape that was offered and then dropped for being stale has not priced
-    // anything, so counting it would defeat the guard exactly when it matters.
-    //
-    // Gated on the store having answered at least once, so the empty cache of
-    // the first few ticks is not mistaken for dark venues. Without that gate
-    // every MVP market halts, alerts and zeroes its book on startup and then
-    // recovers — measured on the first live run. Nothing is lost by waiting:
-    // if the store never answers, `store.silent` halts on its own bound.
-    let tape_shortfall = ctx.cfg.requires_live_tape
-        && store.answered
-        && !fair
-            .fx_leg
-            .contributors
-            .iter()
-            .any(|c| fx_store::is_tape_source(c.source));
+    let tape_shortfall = tape_shortfall(ctx.cfg.requires_live_tape, store, &fair.fx_leg);
     if tape_shortfall {
         eprintln!(
             "[{}] halting: no live FX tape — every contributor to the anchor \
@@ -2205,6 +2226,18 @@ mod tests {
         leg(legs).resolve(tick.leg_stale, tick.leg_dispersion)
     }
 
+    /// A `LegReport` whose contributors are exactly `sources`, for testing
+    /// the tape predicate. Only the contributor tags matter to it.
+    fn leg_with(sources: &[&'static str]) -> LegReport {
+        let mut candidates = Candidates::none();
+        for source in sources {
+            candidates = candidates.push(source, Some(Reading::new(1.0, Duration::from_secs(1))));
+        }
+        candidates
+            .resolve(LegStaleness::uniform(Duration::from_secs(300)), 0.02)
+            .into()
+    }
+
     /// Seed the store cache with one fresh row per intraday venue, as the
     /// collectors would have written them: a minute bucket that closed 30s ago.
     fn with_store_rows(hub: &mut FeedHub, currency: &str, now: Instant, now_unix: i64) {
@@ -2276,6 +2309,36 @@ mod tests {
         }
     }
 
+    /// Tapes are offered before references on the assembled leg.
+    ///
+    /// `consensus.rs` states this as a caller obligation and enforces
+    /// nothing, and the existing tests are all order-blind (membership,
+    /// count, designation). An over-full leg drops its last offers, so
+    /// getting this backwards would evict a live minute bar and keep a daily
+    /// fix — costing the fast signal AND falling through to the reference
+    /// path, per that constant's own doc.
+    #[test]
+    fn the_fx_leg_offers_every_tape_before_any_reference() {
+        let (now, now_unix) = (Instant::now(), 1_786_579_250);
+        let mut hub = full_hub(now, now_unix);
+        with_store_rows(&mut hub, "EUR", now, now_unix);
+        let legs = hub.legs(&eurc(), &tick_at(now, now_unix));
+
+        let offered: Vec<&str> = legs.fx.iter().map(|c| c.source).collect();
+        let last_tape = offered
+            .iter()
+            .rposition(|s| fx_store::is_tape_source(s))
+            .expect("the leg carries at least one tape");
+        let first_reference = offered
+            .iter()
+            .position(|s| !fx_store::is_tape_source(s))
+            .expect("the leg carries at least one reference");
+        assert!(
+            last_tape < first_reference,
+            "tape/reference offer order is interleaved: {offered:?}"
+        );
+    }
+
     /// A market whose pair some collector does not cover still composes — the
     /// absent venue's candidate is simply missing rather than fatal.
     ///
@@ -2329,8 +2392,8 @@ mod tests {
         );
     }
 
-    /// A fresh hub has not asked the store yet, so the tape guard must stay
-    /// quiet — `answered` is what tells "no tape" from "not yet polled".
+    /// A fresh hub has not asked the store yet, so the tape guard stays
+    /// disarmed — that is what tells "no tape" from "not yet polled".
     ///
     /// The bug this pins was measured on the first live run: every MVP market
     /// logged a NoLiveTape alert, zeroed its book on-chain, and recovered a
@@ -2339,22 +2402,112 @@ mod tests {
     fn a_fresh_hub_has_not_asked_the_store_yet() {
         let mut hub = FeedHub::new();
         let status = hub.store_status(hub.started_at);
-        assert!(!status.answered, "nothing has been read yet");
+        assert!(!status.tape_guard_armed, "nothing has been read yet");
         assert!(!status.silent, "and the startup grace has not elapsed");
 
         hub.fx_store_last_ok = Some(hub.started_at);
-        assert!(hub.store_status(hub.started_at).answered);
+        assert!(hub.store_status(hub.started_at).tape_guard_armed);
     }
 
-    /// A store that never answers still halts — the grace is bounded, so the
-    /// quiet-on-startup rule above cannot become quiet forever.
+    /// THE COLD-START HOLE. A store that is down at boot never answers, so an
+    /// `answered`-only gate left the tape guard disarmed while the silence
+    /// bound had not yet fired — an MVP pair quoting off day-old fixes for
+    /// five minutes, through the gap between two guards that each thought the
+    /// other had it.
+    ///
+    /// The grace is a time bound for exactly this: it arms on its own.
+    #[test]
+    fn the_tape_guard_arms_on_time_even_if_the_store_never_answers() {
+        let hub = FeedHub::new();
+        let within = hub.started_at + fx_store::STARTUP_TAPE_GRACE;
+        assert!(
+            !hub.store_status(within).tape_guard_armed,
+            "inside the grace an empty cache is still 'not yet polled'"
+        );
+
+        let after = hub.started_at + fx_store::STARTUP_TAPE_GRACE + Duration::from_secs(1);
+        let status = hub.store_status(after);
+        assert!(
+            status.tape_guard_armed,
+            "past the grace an empty cache means dark venues, and the guard must fire"
+        );
+        assert!(
+            !status.silent,
+            "and this is strictly inside the silence bound — which is the whole \
+             point: without the time bound nothing at all guards this window"
+        );
+    }
+
+    /// The tape-shortfall composition itself, which nothing covered before.
+    ///
+    /// The kill-switch tests take a `FeedGuards` already built and the hub
+    /// tests stop at `StoreStatus`, so the expression joining them was the
+    /// gap: deleting either conjunct left the whole suite green while
+    /// reintroducing a measured regression. All four corners, plus the
+    /// contributors-not-offers distinction.
+    #[test]
+    fn tape_shortfall_needs_all_three_conditions() {
+        let armed = StoreStatus {
+            silent: false,
+            tape_guard_armed: true,
+        };
+        let disarmed = StoreStatus {
+            silent: false,
+            tape_guard_armed: false,
+        };
+        let only_fixes = leg_with(&[SOURCE_FRANKFURTER, SOURCE_ERAPI]);
+        let with_tape = leg_with(&[fx_store::SOURCE_OANDA, SOURCE_FRANKFURTER]);
+
+        assert!(
+            tape_shortfall(true, armed, &only_fixes),
+            "an MVP pair, armed, with only daily fixes crediting the leg: halt"
+        );
+        assert!(
+            !tape_shortfall(false, armed, &only_fixes),
+            "a thin-roster pair has no tape by design and must keep quoting"
+        );
+        assert!(
+            !tape_shortfall(true, disarmed, &only_fixes),
+            "inside the startup grace an empty leg is not yet evidence"
+        );
+        assert!(
+            !tape_shortfall(true, armed, &with_tape),
+            "a credited tape is exactly what the guard is looking for"
+        );
+    }
+
+    /// A snapshot with no rows still counts as the store having answered.
+    ///
+    /// Both halves of that contract were prose-only. Moving the flag inside
+    /// the row loop turns "the collectors are behind" into a fleet-wide halt
+    /// five minutes later, and every test stayed green.
+    #[test]
+    fn an_empty_snapshot_counts_as_an_answer() {
+        let (tx, mut rx) = broadcast::channel(4);
+        let mut cache = HashMap::new();
+        let now = Instant::now();
+
+        assert!(
+            !drain_fx_store_into(&mut rx, &mut cache, now),
+            "nothing sent yet, so the store has not answered"
+        );
+
+        tx.send(FxStoreSnapshot { rows: Vec::new() }).unwrap();
+        assert!(
+            drain_fx_store_into(&mut rx, &mut cache, now),
+            "an empty read is a successful read — the collectors being behind \
+             is not the store being gone"
+        );
+        assert!(cache.is_empty(), "and it contributes no rows");
+    }
+
+    /// A store that never answers still halts on the silence bound too.
     #[test]
     fn an_unanswered_store_still_halts_on_its_own_bound() {
         let hub = FeedHub::new();
         let past = hub.started_at + fx_store::MAX_STORE_SILENCE + Duration::from_secs(1);
         let status = hub.store_status(past);
         assert!(status.silent, "the store bound is what covers this case");
-        assert!(!status.answered);
     }
 
     /// The halt clock runs from startup before the first successful read, so a

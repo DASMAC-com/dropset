@@ -19,11 +19,21 @@
 -- Only closed buckets are ever written, so no `bucket_start < now()` guard is
 -- needed here — see the collectors' `closed_boundary`.
 --
--- `DISTINCT ON` over the primary key's leading columns, so this walks the
--- implicit index backwards per series and stops at the first row: no scan, no
--- secondary index, one row per series. Granularity is deliberately not
--- constrained — a venue whose bucket width is reconfigured should still yield
--- its newest print rather than nothing at all.
+-- `DISTINCT ON` over the primary key's leading columns, so this walks per
+-- series and stops at the first row: one row per series. Granularity is
+-- deliberately not constrained — a venue whose bucket width is reconfigured
+-- should still yield its newest print rather than nothing at all.
+--
+-- **Order by the projected close, not by `bucket_start`.** Those differ
+-- exactly when one source holds two granularities, which the schema permits
+-- and the previous sentence invites: a daily bucket opened today outranks a
+-- minute bucket opened an hour ago on `bucket_start`, while its close is
+-- twenty-three hours in the future. Picking it would hand the maker a
+-- future-stamped row as its freshest print — and a future stamp is the one
+-- input the consumer's age arithmetic cannot make safe, since the receipt
+-- floor resets on every poll. Ordering by the value actually projected keeps
+-- the winner the row whose close is genuinely newest, whatever bucket widths
+-- coexist.
 SELECT DISTINCT ON (source, product_id)
     source,
     product_id,
@@ -32,4 +42,4 @@ SELECT DISTINCT ON (source, product_id)
 FROM cex_prices
 WHERE source = ANY($1)
   AND product_id = ANY($2)
-ORDER BY source, product_id, bucket_start DESC
+ORDER BY source, product_id, bucket_start + granularity_secs DESC

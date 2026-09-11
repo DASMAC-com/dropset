@@ -140,7 +140,10 @@ pub enum Action {
 /// that reasons about values. A caller that has to name both fields also
 /// cannot silently transpose them, which two adjacent `bool` parameters
 /// invite.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+// No `Default` derive: it would be a second spelling of `healthy()` with
+// nothing pinning the two equal, and a guard set that silently defaults to
+// all-false is the wrong thing to make easy on a fail-closed path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FeedGuards {
     /// The market-data store has been silent past its liveness bound, so the
     /// intraday anchor is gone for **every** market.
@@ -550,10 +553,17 @@ mod tests {
         );
     }
 
-    /// The store switch is not a threshold, so `degraded` must not scale it —
-    /// a degraded composition and a missing one are different facts.
+    /// A degraded composition does not suppress the store switch.
+    ///
+    /// **Honest about what this can and cannot pin.** `scale` multiplies
+    /// thresholds and `store_silent` is a bool, so no mutation exists that
+    /// breaks "not scaled" while leaving the sibling test green — there is
+    /// no arithmetic here for `degraded` to reach. It is a redundancy
+    /// control over the halt firing on a degraded input, not a proof of
+    /// independence, and it is kept as one rather than deleted because
+    /// `degraded` is the state these markets actually run in.
     #[test]
-    fn the_store_switch_is_not_scaled_by_degraded() {
+    fn a_degraded_composition_does_not_suppress_the_store_switch() {
         assert_eq!(
             evaluate(
                 &degraded_fair(),
