@@ -170,11 +170,14 @@ it fetches `USD_CAD` and flips each candle before the sink, high and
 low included, since inverting reverses their order. So CAD/USD carries
 the trusted tape itself rather than resting on Twelve Data, with a
 second intraday source as margin — the same shape as the other two MVP
-anchors. Measured 2026-09-10: OANDA's CAD/USD runs about a minute
-behind and agrees with Twelve Data to within 4e-5 (0.72814 against
-0.72817), which is also what shows the inversion is the right way up
-rather than off by a reciprocal — something coverage alone cannot tell
-you.
+anchors. Measured 2026-09-10: OANDA's CAD/USD runs about a minute behind
+and agrees with Twelve Data to within a few parts in 10^5. **Read that
+as the claim, not the levels** — the rate moves, so a quoted pair of
+closes would be a spot reading masquerading as a constant, and the
+durable fact is the agreement magnitude and the lag. Agreement at that
+scale is also what shows the intake inversion is the right way up rather
+than off by a reciprocal, which coverage alone cannot tell you: a
+reciprocal error still produces a full, fresh, plausible series.
 
 The panel is not retired by that, and this episode is the argument for
 it: what fell to one was a **count**, and it fell without a single feed
