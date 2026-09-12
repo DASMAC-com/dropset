@@ -1235,7 +1235,8 @@ and are absent from both the maker config and the seed. Because the two
 agree, wiring them is one coherent change rather than a reconciliation.
 
 So: wire those five, and treat **MYR and NGN as the roster's most
-exposed currencies**. They are the only two with no Pyth column at all,
+exposed currencies**. They are the only two with no Pyth column in the
+roster at all,
 so they depend on OANDA and Twelve Data alone — and note carefully that
 this is an upper bound, not a measurement: per-currency OANDA and Twelve
 Data coverage is verified only for AUD, CAD and EUR ("MVP-pair
@@ -1343,9 +1344,13 @@ resolves `pyth/api-key` unconditionally at startup, and the §12 enclave
 carries no such entry — the collector exits before its first poll.
 Measured here by running it. So what follows is the redundancy *available
 now*, and every fallback statement below excludes Pyth for that reason
-rather than by oversight. Obtaining that one credential would restore a
-third intraday source, which is the cheapest available improvement to
-every figure in this subsection.
+rather than by oversight. Restoring it would raise every figure in this
+subsection, but that is a **commercial** question rather than a
+configuration one: the permanent free tier carries no API permissions, the
+advertised free key is a time-boxed trial, and FX access sits behind the
+paid tier. Hence parked dark rather than pending a config change, with the
+adapter kept so a future credential — or a self-hosted Hermes, once its
+credential is made optional (§8) — is a small change and not a rebuild.
 
 *The FX leg — intraday.* Both vendors quote all three pairs, over a
 14-day window at 60s granularity:
@@ -1355,9 +1360,12 @@ every figure in this subsection.
 | OANDA       | 3 / 3 | ~14,200   | 91 / 182 / 77                  | exact    |
 | Twelve Data | 3 / 3 | 20,162    | **0 / 0 / 0**                  | **none** |
 
-Both gap columns exclude the one fenced weekend inside the window, which
-is a closed market rather than a defect — count it and every row gains
-exactly one.
+Both gap columns exclude the one weekend fence interior to the compared
+span, which is a closed market rather than a defect — count it and every
+row gains exactly one. Note the 14 days is the backfill *request*: the
+window spans two fences, but OANDA's series begins at the Sunday reopen
+after the first, so its bars cover about twelve days and only the second
+fence falls between two of its bars.
 
 That contrast is the substantive finding, and it is sharper than the
 zero-volume signal: OANDA is an **observed tape** — its bar count differs
@@ -1418,9 +1426,10 @@ Read this as agreement-at-retrieval rather than accuracy: each source
 carries its own observation instant and the readings were taken ~3h after
 the close, so staleness and error are not separated, and one observation
 is not a distribution. It is still the quantity that matters for using
-them as a fallback, and it ranks them — **Alpha Vantage tightest; er-api
-loosest on two of the three pairs**, though on AUD-USD er-api is the
-tightest of the three at 0.7 pips, which is precisely why one observation
+them as a fallback, and it ranks them — **Alpha Vantage tightest on two of
+the three pairs; er-api loosest on those same two**. On AUD-USD the order
+inverts outright: er-api is the tightest of the three at 0.7 pips and
+Alpha Vantage the loosest at 2.6, which is precisely why one observation
 ranks a source and does not characterize it. That aside, the er-api
 reading corrects an assumption worth naming: it earns its slot on breadth
 (all 14 currencies, NGN included), but at 24.8 pips off on CAD-USD it is
@@ -2519,18 +2528,20 @@ ______________________________________________________________________
   direction-fixed, which remains true and is why the inversion exists).
   And the **blocker described here was never a capability gap and is now
   simply gone**: the §12 enclave supplies the vault name and one `op://`
-  reference per credential, so exporting `DROPSET_OP_VAULT` alone lets
-  the resolver fetch each key through `op read` — no key is exported and
-  no environment has to be rebuilt. Sourcing the enclave is the one thing
-  *not* to do: the resolver refuses a reference arriving where a
-  credential belongs, which is a guard rather than a limitation.
+  reference per credential, so exporting the two `DROPSET_OP_*`
+  coordinates lets the resolver fetch each key through `op read` — no key
+  is exported and no environment has to be rebuilt. Sourcing the enclave
+  is the one thing *not* to do: the resolver refuses a reference arriving
+  where a credential belongs, which is a guard rather than a limitation.
 
   **Still open: the other 11 currencies.** BRL, CHF, GBP, IDR, JPY, MXN,
   MYR, NGN, SGD, TRY and ZAR are unverified on both vendors, so the
   upper-bound caveat in §9 stands for them unchanged. It is tracked as
   its own post-validation issue rather than deferred inside this one, and
   under the lean-MVP posture it is deliberately not on the critical path.
-  Pyth's column of that matrix is measured and complete above; MYR and
+  Pyth's column of that matrix is measured and complete above as
+  *published* coverage rather than as collected data — the feed itself
+  currently collects nothing (§9); MYR and
   NGN remain the named at-risk currencies, and NGN the narrower exposure
   of the two — per the 2026-08-24 correction in §9, which measured
   Frankfurter as quoting MYR but not NGN.
