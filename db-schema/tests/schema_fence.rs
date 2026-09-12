@@ -389,15 +389,62 @@ fn manifests() -> Vec<(i64, Vec<Declared>)> {
         })
         .collect();
     let orphans: Vec<&String> = files.values().map(|(name, _)| name).collect();
+    // This assertion used to hedge, telling the reader a stale compile-time
+    // embed might be to blame and to rebuild before believing it. That cause
+    // is fixed at the source: `build.rs` emits a `rerun-if-changed` on the
+    // migrations directory, so a rebase that lands someone else's migration
+    // re-expands `sqlx::migrate!` instead of leaving `MIGRATOR` describing the
+    // previous tree. `build_script_watches_the_migrations_directory` below is
+    // what keeps that true, so this message can now name real causes only.
     assert!(
         orphans.is_empty(),
-        "fence manifests with no matching migration: {orphans:?} — a renamed \
-         or removed migration left its `.fence` behind; delete it or restore \
-         the migration. (This used to also fire spuriously on a stale \
-         compile-time embed after a rebase; `build.rs` now watches the \
-         migrations directory, so believe this one.)"
+        "fence manifests with no matching migration: {orphans:?} — no \
+         migration declares one of these versions. Either a renamed or \
+         removed migration left its `.fence` behind (delete it, or restore \
+         the migration), or a fence's version prefix does not match its \
+         migration's (correct the prefix)."
     );
     declared
+}
+
+/// The build script that keeps the embedded history fresh is still in place.
+///
+/// `sqlx::migrate!` reads `./migrations` at macro-expansion time, and the files
+/// it reads that way never reach cargo's dependency graph — so without a
+/// `rerun-if-changed` on that directory, a rebase that lands someone else's
+/// migration leaves the embedded history describing the previous tree, and
+/// `every_migration_declares_a_fence_manifest` below fails **falsely**.
+///
+/// This is a guard rather than a comment because the fix lives in a file
+/// nothing else in the crate references: deleting `build.rs` passes every
+/// other check in the repo — the suite, `cargo check --workspace`, `make lint`
+/// — while silently making the orphaned-manifest message above wrong, since
+/// that message now names real causes only.
+///
+/// Two deliberate properties. `include_str!` fails to **compile** if
+/// `build.rs` is gone, so the realistic regression — deletion — is caught
+/// before the assertion below is even reached. And rustc records
+/// `include_str!` targets in dep-info, so this guard cannot itself go stale
+/// against the file it reads; it is tracked by the very mechanism whose
+/// absence it exists to cover.
+///
+/// The limit, stated plainly: this proves the directive is **written**, never
+/// that cargo acted on it. That is the only assertion available, because a
+/// test under `cargo test` was already compiled by the time it runs and so
+/// cannot observe its own staleness. The path is deliberately not re-asserted
+/// — it would be a third copy of `migrations` policing the other two, and the
+/// directive is emitted through a format capture, so the literal never appears
+/// contiguously in the source anyway.
+#[test]
+fn build_script_watches_the_migrations_directory() {
+    const BUILD_RS: &str = include_str!("../build.rs");
+    assert!(
+        BUILD_RS.contains("cargo:rerun-if-changed="),
+        "db-schema/build.rs must emit a `cargo:rerun-if-changed` directive for \
+         the migrations directory, or `sqlx::migrate!`'s embedded history goes \
+         stale against the tree and the orphaned-manifest assertion fires \
+         falsely after an unrelated rebase"
+    );
 }
 
 /// Every migration declares a manifest, and it parses.
