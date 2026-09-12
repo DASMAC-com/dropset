@@ -298,8 +298,8 @@ levers is still one task; a pool of fifteen is three, not one.
 
 **A size bound now applies, and it is the point of the step.** Session
 cost is roughly **quadratic in session length**, so an unbounded fold
-task buys that quadratic — measured at a 19-hour, \$409 run for the
-ENG-1194 batch — in exchange for avoiding a **rebase** between two short
+task buys that quadratic — the counterexample being a 19-hour, \$409 run
+for the ENG-1194 batch — in exchange for avoiding a **rebase** between two short
 sessions, which costs cents. See
 `docs/conventions/context-economy.md` → "Session length is itself a cost
 lever".

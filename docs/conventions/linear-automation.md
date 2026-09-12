@@ -323,9 +323,17 @@ decided.
 ### Fold coupled findings into one issue
 
 A rotation should yield the **fewest coherent PRs**, not one issue per
-finding. When a run turns up multiple findings, fold together every set
-that would sensibly land as **one PR** and file each set as a single
-issue — *before* the dedup check and the `save_issue`.
+finding — subject to the session bound below. When a run turns up
+multiple findings, fold together every set that would sensibly land as
+**one PR** and file each set as a single issue — *before* the dedup check
+and the `save_issue`.
+
+**"Fewest" is bounded by what a SHORT session can carry** (roughly 4–5
+findings, and the line band in
+`docs/conventions/context-economy.md` → "Session length is itself a cost
+lever"). A coherent set larger than that splits into **sequential** PRs
+rather than one oversized issue; coherence governs what may be
+*separated*, never how large one unit may grow.
 
 The bar is **same-PR coherence**, not same-file: fold findings that
 share a subsystem, crate, or language-domain and that a reviewer would
@@ -343,8 +351,8 @@ apps, languages, or deploy units stay apart. A TUI Rust rendering fix, a
 frontend TS hook fix, and an on-chain program refactor are **three** PRs,
 not one — even though all three are "cleanup from the same rotation".
 Fold *within* a coherent PR boundary; never across one. "Aggressive"
-means minimize PR count up to that floor, not build an incoherent
-mega-PR past it.
+means minimize PR count up to that floor **and up to the session bound
+above** — never build a mega-PR past either, incoherent or not.
 
 **The `Claude:` meta class is size-bound too — operator rule,
 2026-09-11, retiring the 2026-08-24 no-size-bound exemption.** Claude
@@ -685,11 +693,24 @@ one-giant-batch form there was exactly one survivor, so "file it Backlog,
 Urgent" and "promote it" were the same step and the prose did not have to
 distinguish them. With several batches per bootstrap it does:
 
-- A batch the bootstrap **promotes** goes to **Backlog, Urgent**.
+- A batch the bootstrap **promotes** goes to **Backlog, Urgent** — by
+  the ordinary **two-halves** act, clearing the `Claude meta` milestone
+  **and** moving Todo → Backlog. Doing only the state half leaves it
+  parked *and* pullable at once (see "Parked findings sit in Todo, never
+  Backlog") and corrupts the parked count.
 - Every **other** batch stays **parked** — `Todo` plus `Claude meta`,
-  exactly like the strays it was folded from — and is promoted at a later
-  bootstrap by the ordinary two-halves act (clear the milestone **and**
-  move Todo → Backlog).
+  exactly like the strays it was folded from — and is promoted at a
+  later bootstrap by that same two-halves act.
+
+**An already-assembled parked batch is a promotion candidate, not a fold
+input.** The fold pool is **strays**, plus any open unpulled batch
+sitting in *Backlog*; a batch that is **parked** is not re-folded, only
+re-considered for promotion. The reason is mechanical: `merge-tasks`
+only merges and there is no split operation, so re-folding a parked
+batch could only *grow* it — past the 4–5-part bound, and back toward
+the one-giant-batch form this rule exists to retire. Under the retired
+form that growth *was* the rule, which is exactly why the distinction
+did not need stating before.
 
 Getting this wrong is not cosmetic: filing every survivor to
 Backlog/Urgent would restore the "seven strays unblocked in Next" failure
@@ -739,6 +760,16 @@ is intended rather than a regression. Every unblocked meta issue is
 still Urgent, so promoting many at once would crowd product work off the
 top of the queue — which is exactly why promotion stays bounded by the
 disjoint-set test above.
+
+**Why that test is not vacuous, given batches are themed by surface.**
+Theming by surface sounds as though it makes batches disjoint by
+construction, which would leave the test admitting everything. In
+practice it bites hard, because **`CLAUDE.md` and the convention docs are
+shared by most meta themes** — this repo's index must stay in sync with
+whatever a batch changes, so two batches that both touch it are **not**
+disjoint, and that is the common case rather than the exception. That is
+why the count normally lands at one or two without a count ever being the
+rule.
 
 **Assembly consumes the pool as of bootstrap.** A stray filed after an
 assembly waits for the next one rather than joining a batch already

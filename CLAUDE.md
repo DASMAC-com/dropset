@@ -385,24 +385,23 @@ transport-agnostic — a big `git diff`, whole-file `Read`, or verbose
 log behaves like a fat MCP result).
 
 **Session length is therefore itself a cost lever, and the largest
-one** — a payload's price is its size times the turns that follow it, so
-cost is roughly **quadratic in session length** (measured: one session's
-prefix grew ~30K → ~900K over 1,351 requests, cache reads $371 of $455;
-the same work as 3–5 short sessions models at \$155–198). So **stage work
-so a session stays short** — on the order of 4–5 levers or findings per
-PR — and prefer an occasional **rebase** to a serial chain. This binds
-at *breakdown* time, the only place it can. **Smaller is not
-monotonically cheaper**: a ~\$40 per-PR overhead floor makes a 34-line PR
-cost ~115 cents/line against 13–15 at 472–688 lines, so target
-**300–800 changed lines**, floor ~150 unless trivially mechanical, and
-split at 1,000. Lines are a **proxy** — the billed driver is turns
-replaying the prefix, so the findings rule and the line band are one
-limit, and the cost report settles any disagreement. The metric is
-**dollars**,
-not tokens or turns, and the enforcement loop is that **every session
-states its own cost at close**. Two standing rulings ride with it:
-**Sonnet-tier task workers are rejected**, and the Bedrock auto-mode
-classifier's ~7% overhead is **accepted burn**.
+one** — cost is roughly **quadratic in session length**, since a
+payload's price is its size times the turns that follow it. So **stage
+work so a session stays short** (~4–5 levers or findings per PR, target
+**300–800 changed lines**, floor ~150 unless trivially mechanical, split
+at 1,000) and prefer an occasional **rebase** to a serial chain. This
+binds at *breakdown* time, the only place it can. **Smaller is not
+monotonically cheaper** — a per-PR overhead floor means a tiny PR costs
+far more per line — but the upper bound is **absolute**, not per-line.
+Lines are a **proxy** for turns; where the findings rule and the line
+band disagree, coherence and the findings count win at the floor and the
+line band wins at the ceiling. The metric is **dollars**, not tokens or
+turns, and **every session states its own cost at close**. Two standing
+rulings: **Sonnet-tier task workers are rejected**, and the Bedrock
+auto-mode classifier's ~7% overhead is **accepted burn**. The
+measurements, the per-row cost table and the tie-break detail:
+`docs/conventions/context-economy.md` → "Session length is itself a cost
+lever".
 
 Per call, request the narrowest thing that
 answers the question, read large files by slice (Grep then `Read` with

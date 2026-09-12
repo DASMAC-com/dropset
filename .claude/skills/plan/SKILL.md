@@ -253,6 +253,22 @@ folded from; only the ones you then **promote** go to
 **Backlog, Urgent**. Routine bookkeeping; it does **not** need
 a per-fold proposal.
 
+**Promoting a batch is BOTH halves, as for any parked issue:
+clear the `Claude meta` milestone *and* move Todo → Backlog.**
+Doing only the state half leaves a batch sitting in Backlog
+while still carrying a parking milestone — *parked and pullable
+at once*, per "Parked findings sit in Todo, never Backlog" in
+`CLAUDE.md` — and it silently corrupts the parked count you are
+about to say out loud.
+
+**An already-assembled parked batch is a PROMOTION CANDIDATE,
+not a fold input.** A later bootstrap re-considers it for
+promotion; it does **not** fold it again. This matters because
+`/merge-tasks` only merges — there is no split — so re-folding a
+parked batch could only ever *grow* it, past the 4–5-part bound
+and back toward the one-giant-batch form this rule exists to
+retire. So: fold **strays**, promote **batches**.
+
 **Assembling and promoting are two different acts** — under
 the retired one-giant-batch form there was exactly one
 survivor, so filing it Backlog/Urgent and promoting it were
@@ -267,8 +283,8 @@ five or fewer parts is still **one** batch, while a pool of
 fifteen is three, not one. Session cost is roughly
 **quadratic in session length**,
 so a batch sized to a short session is the cheapest unit this
-board can hand out — the measurement, and the $155–198 versus
-$455 modeling behind it, is in
+board can hand out — the measurement, and the \$155–198 versus
+\$455 modeling behind it, is in
 `docs/conventions/context-economy.md` → "Session length is
 itself a cost lever". The ENG-1194 batch is the counterexample
 to cite: the whole parked pool in one issue, worked in a
@@ -344,9 +360,12 @@ place.
 (operator rule, 2026-09-11, retiring the earlier
 precondition). Several small meta batches may be open and
 worked at once. They do contend on the same skill files, and
-that contention is settled by a **rebase**, which inside a
-short session costs cents — where the serialization it replaces
-costs the quadratic. So a bootstrap assembles from whatever is
+that contention is settled by a **rebase**, estimated at order
+tens of cents inside a short session — where the serialization
+it replaces costs the quadratic. (An estimate, not a
+measurement; see
+`docs/conventions/context-economy.md` → "Session length is
+itself a cost lever".) So a bootstrap assembles from whatever is
 parked, whether or not something is already In Progress or In
 Review.
 

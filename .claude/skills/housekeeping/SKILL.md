@@ -727,7 +727,7 @@ task parks into the same milestone like any other stray.
 Two writers on one pool is the thing being removed. This
 skill runs ad-hoc and possibly several times a day, so
 leaving it proposing folds too would race the bootstrap's
-assembly and could split one batch across two rhythms. **One
+assembly and could double-fold the same strays. **One
 writer, one rhythm.**
 
 Say "meta-work merges are the planning bootstrap's job" in

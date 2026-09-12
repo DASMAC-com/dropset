@@ -26,7 +26,8 @@ and that a caller should pass rather than fix up afterwards:
 
 - It is filed **parked** — `Todo` plus `Claude meta`, like the
   strays it was folded from — and only a batch the planning
-  session **promotes** is moved to **Backlog, Urgent**.
+  session **promotes** is moved to **Backlog, Urgent**, which
+  means **clearing the milestone as well as** changing state.
   Assembling and promoting are different acts now that a
   bootstrap produces several batches; filing every survivor
   straight to Backlog/Urgent would flood the operator's Next

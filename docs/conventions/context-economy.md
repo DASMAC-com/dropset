@@ -145,6 +145,19 @@ an unrelated one, and never a reason to pad. Naming a tiebreak that is
 not yet built would leave a session with nothing to consult, so until
 the cost report lands, this paragraph is the tiebreak.
 
+**That resolves the FLOOR case only — at the ceiling the priority
+inverts, and saying so is the whole point of splitting them.** A
+coherent **3-part fold at 1,100 changed lines splits**: the findings
+count does *not* license it. The count is only a proxy for session
+length, and 1,100 lines is more direct evidence about that same session
+than "three parts" is, so the more direct measure wins. Coherence
+governs **what may be separated** — it never licenses a single unbounded
+unit, which is the distinction the coherence floor has always drawn.
+
+Stated as one rule: **at the floor, coherence and the findings count
+win; at the ceiling, the line band wins.** Both halves point the same
+way — toward the shorter session.
+
 **Coherence still binds; it just no longer implies one issue.** The
 fewest-coherent-PRs rule still keeps a set that must land together from
 being scattered — but a coherent set larger than a short session
