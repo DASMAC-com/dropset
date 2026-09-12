@@ -1149,21 +1149,34 @@ stale feed, and degraded-or-halted. The rules evaluate and reach Firing
 in Grafana's UI; they deliver nowhere, because a real destination needs
 a secret and secrets are not committed.
 
-The estimator's own two panels sit at the **top of the market-data
-dashboard** rather than here, and that placement is deliberate: the
-headline view is the fused fair price drawn over the raw source scatter,
-and the scatter is ingestion data. **Fair price over its sources** draws
-the composed fair, the FX leg's fused estimate, and the FX leg's fast
-median against every selected source's ticks — read the gaps between
-them, which is why all three are plotted. **Fusion weight by source**
-explains it, and a series pinned at zero there is the interesting case,
-not an empty one: that source answered and was trimmed.
+The estimator's reading is **one card on the maker-operations
+dashboard**, `Fair price over its sources`. It sat at the top of the
+market-data dashboard until the panel adjudication moved it, and the
+reason it moved is worth keeping: the headline view is the fused fair
+price over the raw source scatter, so an ingestion dashboard looked like
+the right home — but it reads **maker** tables, and on a
+collectors-only stack all three of them hold zero rows. Two of the
+ingestion dashboard's eleven panels were therefore blank by
+construction, at the very top, which is how an operator ends up
+comparing two empty panels and reporting that the distinction between
+them is unclear.
 
-Its two pickers, Market and Product/Source, are **independent and not
+The card draws the composed fair, the FX leg's fused estimate and the FX
+leg's fast median against every selected source's ticks — read the gaps
+between them, which is why all three are plotted — with each source's
+share of the fused estimate on a second axis. A weight series pinned at
+zero is the interesting case, not an empty one: that source answered and
+was **trimmed**. A source that stopped answering leaves a gap instead,
+so the two are distinguishable on sight.
+
+Its pickers, Market and Product/Source, are **independent and not
 auto-correlated**. A market is keyed by token symbol (`EURC`) and a feed
 product by pair id (`EUR-USD`); the schema holds no mapping between the
-two vocabularies, so pairing them is the operator's to do. A fused line
-over an empty scatter is a picker mismatch, not a data gap.
+two vocabularies, so pairing them is the operator's to do. Distinguish
+the two empty states before blaming a picker, though: an **empty Market
+picker** means no maker has ever written, which nothing you select will
+fix, and only a *selected* market drawing a fused line over an empty
+scatter is a genuine mismatch.
 
 One ambiguity is inherent rather than an oversight: because telemetry is
 fire-and-forget, a dead heartbeat means *either* the maker stopped *or*

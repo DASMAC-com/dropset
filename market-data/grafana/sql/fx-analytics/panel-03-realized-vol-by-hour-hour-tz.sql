@@ -2,47 +2,87 @@
 -- Source: fx-analytics.json
 -- Regenerate: make dashboard-sql
 
+-- Realized vol by hour of day, with its own sample size beside it -- absorbing
+-- the Weekend vs weekday table, whose remaining job was exactly that sample
+-- size for this panel.
+--
+-- THE ADJACENT-BUCKET GUARD IS LOAD-BEARING, not defensive style. A return is
+-- computed only when the previous bar is exactly one bucket earlier, so a gap
+-- in collection never produces a return spanning it. Without the guard an
+-- overnight or weekend gap yields one enormous "return" attributed to whatever
+-- hour the gap happened to end in, which fabricates a convincing and entirely
+-- false time-of-day effect -- and the hours a collector is most likely to have
+-- gaps in are exactly the hours a reader is most interested in.
+--
+-- SAMPLE SIZE RIDES ALONGSIDE for the same reason: a standard deviation over
+-- four returns and one over four hundred render as identical bars, so an hour
+-- that is merely thinly collected reads as a real vol regime. return_pairs is
+-- the honest denominator -- the number of returns that survived the guard --
+-- and bars is the raw count it came from.
+--
+-- THE WEEKDAY/WEEKEND SPLIT IS GONE, and be precise about what that costs,
+-- because the tempting phrasing ("the weekend series existed to be ignored") is
+-- only true while it IS a separate series. Removing the split does not drop
+-- those bars, it POOLS them: no session, weekday or volume predicate survives
+-- here, so post-close and weekend bars now enter the same per-hour populations
+-- as weekday bars, and nothing in the output distinguishes the mixture. That is
+-- load-bearing rather than theoretical -- a selectable venue was measured
+-- writing 163 contiguous post-close bars, all at volume 0 and none flat, which
+-- pass the adjacent-bucket guard and contribute indicative returns. The
+-- contamination concentrates in the hours around the Friday close and the
+-- Sunday open, which are the hours the guard note above says a reader most
+-- cares about. The split was ratified away because it decided nothing under a
+-- weekday-only posture while halving every hour's sample; the honest reading of
+-- the trade is that the panel is now a whole-week measurement.
+--
+-- DO NOT REACH FOR `volume` AS THE DISCRIMINATOR, which is the obvious guess
+-- and is wrong. Measured across 14 days: every one of that vendor's 20,162 bars
+-- carries zero volume, in session and out alike, so the column identifies the
+-- VENDOR as indicative and never a BAR as out-of-session. What does discriminate
+-- is grid-versus-tape -- an indicative vendor emits a bar every minute with no
+-- intraday gaps and identical counts across pairs, while a real tape's counts
+-- differ per pair because a minute with no tick produces no bar at all. The fix
+-- lands as an imposed session fence, filed separately.
 WITH bars AS (
-  SELECT bucket_start, close
-  FROM cex_prices
-  WHERE $__unixEpochFilter(bucket_start)
-    AND source = ${venue_source:sqlstring}
-    AND product_id = ${venue_product:sqlstring}
-    AND granularity_secs::text = ${granularity:sqlstring}
+  SELECT
+    c.bucket_start,
+    c.close
+  FROM cex_prices AS c
+  WHERE $__unixEpochFilter(c.bucket_start)
+    AND c.source = ${venue_source:sqlstring}
+    AND c.product_id = ${venue_product:sqlstring}
+    AND c.granularity_secs::text = ${granularity:sqlstring}
 ),
+
 returns AS (
   SELECT
-    to_timestamp(bucket_start) AS bucket_ts,
+    to_timestamp(b.bucket_start) AS bucket_ts,
     CASE
-      WHEN lag(bucket_start) OVER w = bucket_start - NULLIF(${granularity:sqlstring}, '')::bigint
-           AND lag(close) OVER w > 0
-           AND close > 0
-      THEN ln(close / lag(close) OVER w)
+      WHEN
+        lag(b.bucket_start) OVER w
+        = b.bucket_start - nullif(${granularity:sqlstring}, '')::bigint
+        AND lag(b.close) OVER w > 0
+        AND b.close > 0
+        THEN ln(b.close / lag(b.close) OVER w)
     END AS r
-  FROM bars
-  WINDOW w AS (ORDER BY bucket_start)
+  FROM bars AS b
+  WINDOW w AS (ORDER BY b.bucket_start)
 ),
-classified AS (
+
+hourly AS (
   SELECT
-    EXTRACT(HOUR FROM bucket_ts AT TIME ZONE ${hour_tz:sqlstring})::int AS hour_of_day,
-    CASE
-      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 6
-        THEN 'weekend'
-      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 0
-           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') < 17
-        THEN 'weekend'
-      WHEN EXTRACT(DOW FROM bucket_ts AT TIME ZONE 'America/New_York') = 5
-           AND EXTRACT(HOUR FROM bucket_ts AT TIME ZONE 'America/New_York') >= 17
-        THEN 'weekend'
-      ELSE 'weekday'
-    END AS regime,
-    r
-  FROM returns
+    extract(HOUR FROM r.bucket_ts AT TIME ZONE ${hour_tz:sqlstring})::int
+      AS hour_of_day,
+    r.r
+  FROM returns AS r
 )
+
 SELECT
-  lpad(hour_of_day::text, 2, '0') AS hour,
-  stddev_samp(r) FILTER (WHERE regime = 'weekday') * 10000 AS weekday,
-  stddev_samp(r) FILTER (WHERE regime = 'weekend') * 10000 AS weekend
-FROM classified
-GROUP BY hour_of_day
-ORDER BY hour_of_day
+  lpad(h.hour_of_day::text, 2, '0') AS hour,
+  stddev_samp(h.r) * 10000 AS vol_bps,
+  max(abs(h.r)) * 10000 AS max_abs_move_bps,
+  count(h.r) AS return_pairs,
+  count(*) AS bars
+FROM hourly AS h
+GROUP BY h.hour_of_day
+ORDER BY h.hour_of_day

@@ -165,7 +165,7 @@
           "refId": "B"
         }
       ],
-      "title": "Quotes vs fair value \u2014 $market",
+      "title": "Quotes vs fair value \u2014 ${market}",
       "type": "timeseries"
     },
     {
@@ -243,6 +243,210 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
+      "description": "The estimator's own defensibility: the number the system believes, drawn over the prints it was built from, with each source's share of that number on the right axis.\n\nThis is not the panel above. \"Quotes vs fair value\" asks whether our QUOTES track our fair; this asks whether the FAIR is defensible against its inputs. Read them in that order during an incident.\n\nPRICE ARMS (left axis). Three series per selected market \u2014 the composed fair price, the FX leg's fused estimate, and the FX leg's fast consensus median \u2014 against every selected source's raw ticks. Read the GAPS, which is why all three are drawn. Fused-vs-fast is the estimator's whole contribution: they sit on top of each other while the sources agree, and separate exactly when one source is being ignored or a dislocation is being adopted. Fused-vs-scatter shows the estimator declining to chase a stray print.\n\nWEIGHT ARMS (right axis, dashed step, 0 to 1). Each source's share of its leg's fused estimate, per tick \u2014 and note the scope is WIDER than the price arms: those are pinned to the FX leg, these are not filtered by leg at all, so a series can appear here for a leg that has no estimate line beside it. The leg name in each series label is what tells them apart \u2014 which names what the price arms only imply. A series pinned at ZERO is the interesting case, not an empty one: zero means the source answered and was TRIMMED, sitting outside the dispersion band of the fast consensus, so the estimator declined to believe it. That is a sick feed, a mis-mapped product, or a genuine disagreement between an official reference rate and the tape, and it is exactly what must not be averaged away silently. A source that stopped answering has no row at all and leaves a GAP instead. Shares over one leg-tick sum to exactly 1 on a seeding or re-seeding tick \u2014 trimming does not change that, because a trimmed source contributes no precision and so takes nothing out of the total. Only an ordinary update leaves them summing to less than 1, and that shortfall is the prior estimate's own share, deliberately not drawn because no feed is accountable for it.\n\nTWO WAYS THIS PANEL IS EMPTY, and they are different facts. If the Market picker itself is empty, NO MAKER HAS EVER WRITTEN to this database \u2014 the picker is driven from maker telemetry, so it has nothing to offer, and the Heartbeat panel above reads dead for the same reason. That is a bring-up state, not an error, and nothing you select will fix it. Only if a market IS selected and the fair line still draws over an empty scatter is this a picker pairing: a market's symbol (EURC) and its FX product id (EUR-USD) are different vocabularies with no join in the schema, so the Source and Product pickers cannot be correlated for you.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "price",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 5,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*fair \\(fused\\).*"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*fx consensus \\(fast\\).*"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    8,
+                    4
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*tick$"
+            },
+            "properties": [
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* weight$"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "fusion weight"
+              },
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
+              },
+              {
+                "id": "decimals",
+                "value": 3
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 10
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    4,
+                    4
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 11
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- The estimator's output over its raw inputs. Each arm is a bare\n-- column inside the epoch-filter macro: Grafana captures a macro\n-- argument with a regex that stops at the first closing paren, so a\n-- to_timestamp(...) call inside one truncates the argument and the\n-- query fails to interpolate. The conversion happens in the SELECT\n-- list, never in the macro.\n--\n-- Raw prints: the scatter the fused line is judged against.\nSELECT\n  to_timestamp(observed_at) AS \"time\",\n  source || ' ' || product_id || ' tick' AS metric,\n  price AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source = ANY (ARRAY[${source:sqlstring}]::text[])\n  AND product_id = ANY (ARRAY[${product_id:sqlstring}]::text[])\nUNION ALL\n-- The fair price: the composed mid the maker quotes off, which is now\n-- built from the fused leg estimates rather than the bare medians.\n-- NULL exactly when the composition paused, and left as a gap rather\n-- than zero-filled -- a paused market and a market worth nothing are\n-- different facts.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fair (fused)' AS metric,\n  fair AS value\nFROM maker_telemetry\nWHERE $__unixEpochFilter(ts)\n  AND market = ANY (ARRAY[${market:sqlstring}]::text[])\n  AND fair IS NOT NULL\nUNION ALL\n-- The FX leg's two numbers, which is where the estimator is actually\n-- visible: `fused_value` is what the composition priced off and\n-- `value` is the fast median that guards dislocations.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fx estimate (fused)' AS metric,\n  fused_value AS value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market = ANY (ARRAY[${market:sqlstring}]::text[])\n  AND leg = 'fx'\n  AND fused_value IS NOT NULL\nUNION ALL\n-- Note this arm alone does not filter its NULLs, unlike the two above. A NULL\n-- renders as the same gap either way, so the effect is only that a market whose\n-- fast median is NULL for a whole window keeps a legend entry where one with a\n-- NULL fair loses its series. Pre-existing, and left as-is.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' fx consensus (fast)' AS metric,\n  value\nFROM maker_legs\nWHERE $__unixEpochFilter(ts)\n  AND market = ANY (ARRAY[${market:sqlstring}]::text[])\n  AND leg = 'fx'\nORDER BY 1",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- Per-source fusion weights. Deliberately NOT filtered to weight > 0:\n-- a zero-weight row is a source that answered and was trimmed, which\n-- is the single most useful thing this table records. Filtering it out\n-- would leave a fused estimate with no record of what it refused.\n--\n-- THE LEG SCOPE IS DELIBERATELY WIDER THAN THE PRICE ARMS, which is inherited\n-- from the pre-merge panel rather than chosen here, and is stated because the\n-- merge makes it newly visible. The estimator arms on the other target are\n-- pinned to `leg = 'fx'`; these weights are not filtered by leg at all, so the\n-- right-hand axis can carry a series for a leg that has no estimate line beside\n-- it. The leg token in the metric name is what keeps that legible. Scoping it\n-- to one leg would change what has shipped since the weights panel existed, so\n-- it is left alone and flagged instead.\n--\n-- The mechanism filter IS required, though, and for the opposite reason.\n-- The table is keyed by mechanism so the resolver's consensus attribution\n-- can land additively; those weights are exact linear-combination shares\n-- rather than shares of posterior information. Omitting this predicate\n-- would plot two vocabularies on one axis and double every series the\n-- day they arrive.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  market || ' ' || leg || ' ' || source || ' weight' AS metric,\n  weight AS value\nFROM maker_leg_contributions\nWHERE $__unixEpochFilter(ts)\n  AND mechanism = 'fusion'\n  AND market = ANY (ARRAY[${market:sqlstring}]::text[])\nORDER BY 1",
+          "refId": "B"
+        }
+      ],
+      "title": "Fair price over its sources",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
       "description": "What each tick decided, including the outcomes that end the tick early. `Quote` is normal; `Reshape` and `FreezeSide` are the graduated de-risking steps; `Halt` is a kill switch; `Pause` means no usable reference; `Frozen` means the vault is frozen on-chain; `TickError` means the tick failed before deciding anything (see the errors table below); `Unknown` should never appear and means a code path reached no outcome. Note that `TickError` and a decision are not exclusive \u2014 a tick that decided `Halt` and then failed to send it shows `Halt` here, with the failure in the errors table, so count failures by `tick_error IS NOT NULL` rather than by this band. Every one of these is written by the bot on its way out of the tick, so a gap here is an absent bot rather than an idle one \u2014 or a sample dropped under telemetry backpressure, which is visible only in the bot's log, since delivery here is at-most-once.",
       "fieldConfig": {
         "defaults": {
@@ -308,7 +512,7 @@
         "h": 5,
         "w": 12,
         "x": 0,
-        "y": 11
+        "y": 23
       },
       "id": 3,
       "options": {
@@ -339,7 +543,7 @@
           "refId": "A"
         }
       ],
-      "title": "Tick outcome \u2014 $market",
+      "title": "Tick outcome \u2014 ${market}",
       "type": "state-timeline"
     },
     {
@@ -410,7 +614,7 @@
         "h": 5,
         "w": 12,
         "x": 12,
-        "y": 11
+        "y": 23
       },
       "id": 4,
       "options": {
@@ -441,7 +645,7 @@
           "refId": "A"
         }
       ],
-      "title": "Composition regime / health \u2014 $market",
+      "title": "Composition regime / health \u2014 ${market}",
       "type": "state-timeline"
     },
     {
@@ -498,7 +702,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 28
       },
       "id": 5,
       "options": {
@@ -530,7 +734,7 @@
           "refId": "A"
         }
       ],
-      "title": "Inventory \u2014 $market",
+      "title": "Inventory \u2014 ${market}",
       "type": "timeseries"
     },
     {
@@ -587,7 +791,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 16
+        "y": 28
       },
       "id": 6,
       "options": {
@@ -619,7 +823,7 @@
           "refId": "A"
         }
       ],
-      "title": "Reference skew \u2014 $market",
+      "title": "Reference skew \u2014 ${market}",
       "type": "timeseries"
     },
     {
@@ -676,7 +880,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 25
+        "y": 37
       },
       "id": 7,
       "options": {
@@ -708,7 +912,7 @@
           "refId": "A"
         }
       ],
-      "title": "Feed staleness \u2014 $market",
+      "title": "Feed staleness \u2014 ${market}",
       "type": "timeseries"
     },
     {
@@ -765,7 +969,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 25
+        "y": 37
       },
       "id": 8,
       "options": {
@@ -797,7 +1001,7 @@
           "refId": "A"
         }
       ],
-      "title": "Feed confidence \u2014 $market",
+      "title": "Feed confidence \u2014 ${market}",
       "type": "timeseries"
     },
     {
@@ -902,7 +1106,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 46
       },
       "id": 9,
       "options": {
@@ -1041,7 +1245,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 55
       },
       "id": 11,
       "options": {
@@ -1098,7 +1302,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 64
       },
       "id": 10,
       "options": {
@@ -1188,7 +1392,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 60
+        "y": 72
       },
       "id": 12,
       "options": {
@@ -1244,6 +1448,94 @@
         "query": "SELECT DISTINCT market FROM maker_telemetry WHERE ts > extract(epoch FROM now()) - 86400 ORDER BY 1",
         "refresh": 1,
         "regex": "^[A-Za-z0-9_.-]+$",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT asset_class FROM instruments ORDER BY 1",
+        "description": "Asset class, from the instruments dimension - the class a pair's two legs imply rather than a label anyone maintains, so re-seeding a currency's kind reclassifies every pair using it with nothing to backfill. Queried rather than hardcoded for the same reason the Product picker is: a fixed list is wrong the moment the roster changes, and wrong silently. Expect an 'unclassified' bucket to be selectable - the dimension left-joins deliberately so a pair whose leg is not yet seeded stays visible rather than vanishing from every class filter, which would hide its data while the panel still rendered.",
+        "includeAll": true,
+        "label": "Class",
+        "multi": true,
+        "name": "class",
+        "options": [],
+        "query": "SELECT DISTINCT asset_class FROM instruments ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": [
+            "EUR-USD",
+            "AUD-USD",
+            "CAD-USD"
+          ],
+          "value": [
+            "EUR-USD",
+            "AUD-USD",
+            "CAD-USD"
+          ]
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT product_id FROM instruments WHERE asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) ORDER BY 1",
+        "description": "Every product any collector is configured to poll, from the instruments dimension, narrowed to the selected Class. Registry-driven rather than a scan of the measurement tables, which matters three ways: it covers both price tiers by construction \u2014 most of the roster is tick-only \u2014 a newly added pair appears before its first row lands, and it costs one small-table read instead of a DISTINCT over two unbounded tables on every dashboard load.\n\nON THIS DASHBOARD IT SCOPES ONE PANEL ONLY: the raw-print scatter behind Fair price over its sources. It is not correlated with the Market picker and cannot be \u2014 a market is keyed by token symbol (EURC) and a feed product by pair id (EUR-USD), and the schema holds no mapping between the two vocabularies. So pair them by hand: select the products whose prints you expect the selected market's fair to have been built from. Every other panel here reads maker telemetry and ignores this picker entirely.",
+        "includeAll": true,
+        "label": "Product",
+        "multi": true,
+        "name": "product_id",
+        "options": [],
+        "query": "SELECT product_id FROM instruments WHERE asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT source FROM instrument_registry ORDER BY 1",
+        "description": "Sources from both tiers, so the tick-only venues (kraken, pyth, erapi, frankfurter) are selectable rather than absent. Note that 'coinbase' appears once but writes both tiers - the table a row lives in is what distinguishes a print from a bucket, not the source label.",
+        "includeAll": true,
+        "label": "Source",
+        "multi": true,
+        "name": "source",
+        "options": [],
+        "query": "SELECT DISTINCT source FROM instrument_registry ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"

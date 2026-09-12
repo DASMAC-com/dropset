@@ -12,29 +12,65 @@
 -- panning or zooming re-bases every series and the comparison stays about the
 -- period actually on screen.
 --
--- Scoped to the selected venue, matching how the rest of this dashboard
--- reads: one venue at a time. Two vendors carrying the same pair would
--- otherwise draw two nearly-identical lines and double the legend for no
--- information.
-WITH bars AS (
+-- QUIET PAIRS ARE NAMED, NOT DROPPED, which is the whole redesign. The pair
+-- list used to run through a liveness view that drops the source, so a pair
+-- this venue carries but has not printed lately simply left the picker -- and
+-- this panel discharges the per-symbol acceptance condition, which means it
+-- showed FEWER pairs as an outage widened. The list is now every registered
+-- pair for the currency on this venue, and a pair with no bar in the window
+-- gets a labelled legend entry with no line instead of vanishing. An earlier
+-- version argued against emitting those rows on the grounds that a NULL series
+-- reads as broken; that was correct while absence meant "this venue does not
+-- carry it", and is wrong now that absence means "registered and quiet", which
+-- is a reading worth having.
+WITH selected AS (
+  SELECT s.product_id
+  FROM unnest(ARRAY[${pairs:sqlstring}]::text[]) AS s (product_id)
+),
+
+bars AS (
   SELECT
-    product_id,
-    bucket_start,
-    close
-  FROM cex_prices
-  WHERE $__unixEpochFilter(bucket_start)
-    AND source = ${venue_source:sqlstring}
-    AND product_id = ANY (ARRAY[${pairs:sqlstring}]::text[])
-    AND granularity_secs::text = ${granularity:sqlstring}
+    c.product_id,
+    c.bucket_start,
+    c.close
+  FROM cex_prices AS c
+  WHERE $__unixEpochFilter(c.bucket_start)
+    AND c.source = ${venue_source:sqlstring}
+    AND c.product_id = ANY (ARRAY[${pairs:sqlstring}]::text[])
+    AND c.granularity_secs::text = ${granularity:sqlstring}
 ),
 
 base AS (
   -- The earliest bar each pair has in the window, which is its index base.
-  SELECT DISTINCT ON (product_id)
-    product_id,
-    close
-  FROM bars
-  ORDER BY product_id, bucket_start
+  SELECT DISTINCT ON (b.product_id)
+    b.product_id,
+    b.close
+  FROM bars AS b
+  ORDER BY b.product_id, b.bucket_start
+),
+
+quiet AS (
+  -- The registry check is what makes the legend's "registered" claim TRUE. The
+  -- selected set is the raw picker expansion, and registry membership is
+  -- enforced only upstream in the pairs variable -- so a stale multi-selection
+  -- carried across a venue switch, or a value adopted from a URL, would
+  -- otherwise get a row asserting this venue carries a pair it does not. Before
+  -- the labelled arm existed such a value produced silently nothing; turning
+  -- that into a positive claim is what makes the check necessary rather than
+  -- decorative.
+  SELECT s.product_id
+  FROM selected AS s
+  WHERE
+    EXISTS (
+      SELECT 1
+      FROM instrument_registry AS r
+      WHERE
+        r.source = ${venue_source:sqlstring}
+        AND r.product_id = s.product_id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM bars AS b WHERE b.product_id = s.product_id
+    )
 )
 
 SELECT
@@ -43,9 +79,12 @@ SELECT
   -- nullif guards a zero base. Without it one bad series divides by zero and
   -- fails the whole panel rather than just itself.
   100.0 * b.close / nullif(f.close, 0) AS value
-FROM bars b
--- INNER, not LEFT: a pair with no bar in the window has no base to index
--- against, and emitting NULLs would add a legend entry that reads as a broken
--- series rather than one this venue does not carry.
-INNER JOIN base f ON f.product_id = b.product_id
+FROM bars AS b
+INNER JOIN base AS f ON f.product_id = b.product_id
+UNION ALL
+SELECT
+  to_timestamp($__unixEpochFrom()) AS "time",
+  q.product_id || ' (registered, no bars in window)' AS metric,
+  NULL AS value
+FROM quiet AS q
 ORDER BY 1, 2

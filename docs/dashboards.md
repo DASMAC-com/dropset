@@ -312,6 +312,13 @@ ten panels answer the question. A dashboard nobody can take in at once
 does not get read, and an unread dashboard is worse than none, because
 it is trusted without being looked at.
 
+The panel adjudication brought it back inside that constraint: the
+market-data dashboard now carries **eight** panels grouped under three
+collapsible rows, and ten rendered charts once the OHLC repeat over the
+three anchors is resolved. One reading in the list below — the fair price
+over its sources — has **moved to the maker dashboard**, and its bullet
+says so; it reads maker tables, so it was blank by construction here.
+
 Panel *count* is not the whole of it, and it is the half that misleads.
 A repeating panel is one panel in the JSON and N charts on the screen,
 so the constraint is on **rendered charts**: a panel that repeats over
@@ -328,14 +335,18 @@ One sentence each; if a panel needs more, the panel is doing two jobs.
 - **Price by source** — the same pair from every venue that carries it;
   divergence between venues is the signal.
 - **Fair price over its sources** — what the maker will actually quote
-  from, and which inputs composed it.
+  from, which inputs composed it, and each input's share. Lives on the
+  maker dashboard, not the ingestion one: it reads maker tables, and a
+  panel whose writer does not exist renders blank by construction.
 - **Feed health / staleness** — age against the class bound, per
   source and product.
 - **Candle rows per minute by source** — cadence actually observed,
   against the cadence claimed in §2. Candles only; the tick tier is a
   separate panel, and the name has to say so.
 - **OHLC candles** — price action for one product at one granularity.
-- **Feed cursor age** — how far behind its own watermark a feed is.
+- **Collector cursor age** — how far behind its own watermark a
+  cursor-based collector is, in wall-clock time. Only the paged
+  collectors appear: an HTTP live source never commits a cursor.
 
 ## 6. Two tiers, deliberately
 
@@ -581,12 +592,16 @@ Both directions of drift are real, so both checks are worth running.
    **denomination**, not as a word, and the note explaining why quotes
    the conversion it rejects.
 
-1. **A panel can render an ambiguous blank.** `Fusion weight by source`
-   reads `maker_leg_contributions`, which is empty whenever no maker is
-   running — the ordinary state on a collectors-only stack. It renders
-   "No data", indistinguishable from a broken query. This is §4's rule
-   with nothing implementing it, and it is the generalization of the
-   item above.
+1. **A panel can render an ambiguous blank.** The fusion-weight reading
+   comes from `maker_leg_contributions`, which is empty whenever no
+   maker is running — the ordinary state on a collectors-only stack. It
+   rendered "No data", indistinguishable from a broken query. This is
+   §4's rule with nothing implementing it, and it is the generalization
+   of the item above. *Partly closed — the reading merged into the
+   estimator card on the maker dashboard, which now distinguishes "no
+   maker has ever written", where the market picker itself is empty,
+   from a picker pairing where a market is selected and the scatter is
+   not. The general rule still has nothing enforcing it.*
 
 1. **§3's redundancy panel did not exist**, and no item on this list
    said so. *Closed — `Live venues per pair` is now built.* §3 claimed
@@ -646,23 +661,43 @@ Both directions of drift are real, so both checks are worth running.
    reads as a fine requirement until someone implements it.
 
 1. **Two panels the operator could not parse.** Recorded as observed,
-   not diagnosed, and deliberately not redesigned here — they are inputs
-   to the commissioned per-panel adjudication, which will rule on
-   keep/cut/merge/rename against the question each panel answers.
+   not diagnosed. *Closed — the adjudication ran, was ratified, and is
+   implemented; both complaints had measured causes rather than being
+   matters of taste.*
 
-   - `Feed cursor age (wall clock)` renders as 12–15 small unlabeled
-     boxes with no way to tell which feed each one is.
+   - `Feed cursor age (wall clock)` rendered as 12–15 small unlabeled
+     boxes with no way to tell which feed each one is. Cause: a `stat`
+     panel with a `rowsToFields` transform in a half-row, chosen when
+     the table held two rows and never revisited as the roster grew. It
+     is a table now, named `Collector cursor age (wall clock)`.
    - `Fair price over its sources` versus `Fusion weight by source`
-     reads as an unclear distinction between the two.
+     read as an unclear distinction. Cause: `maker_legs`,
+     `maker_leg_contributions` and `maker_telemetry` all held **zero
+     rows**, so the market picker was empty and both panels were blank
+     by construction — the operator was comparing two empty panels. They
+     are now one card on the maker dashboard, where the writer exists.
 
-1. **The rendered-chart budget is already over, before the reserved
-   panels land.** §5's "about ten, a hard constraint" was 12 before this
-   PR: ten panels, of which nine render one chart each and the OHLC panel
-   repeats over the three MVP anchors (9 + 3). The redundancy panel added
-   here makes eleven panels and 13 rendered charts. The pricing-path work
-   reserves three more readings, all of which read an estimator table that
-   does not exist on `main` yet. Note the two rules are in genuine
+   The generalizable half: neither was a presentation problem in the
+   first instance. A panel that has never had data cannot be judged on
+   how it reads, and a form chosen for a two-row table stops being the
+   right form silently, because nothing re-evaluates it when the roster
+   grows.
+
+1. **The rendered-chart budget was over.** §5's "about ten, a hard
+   constraint" reached 13 rendered charts across eleven panels: nine
+   rendering one chart each, the OHLC panel repeating over the three MVP
+   anchors, plus the redundancy panel. Note the two rules were in genuine
    tension rather than merely unmet: §1 requires every per-pair panel to
-   show all three anchors, so the repeat that breaches the cap is the
-   same rule that §1 mandates. Resolving that is the adjudication's job,
-   which is why the layout iteration is held rather than done here.
+   show all three anchors, so the repeat that breached the cap was the
+   same rule §1 mandates.
+
+   *Closed — the adjudication resolved it by subtraction rather than by
+   relaxing either rule.* The two estimator panels moved to the maker
+   dashboard (they read maker tables, so they were blank by construction
+   on an ingestion dashboard), Last candle age was absorbed into Candle
+   coverage, and the market-data dashboard now carries **eight** panels
+   and **ten** rendered charts — inside the constraint, with the OHLC
+   repeat over all three anchors intact. The three collapsible rows are
+   what make ten legible at once; the reserved pricing-path readings
+   still read an estimator table nothing writes yet, so the budget has to
+   be re-checked when they land.
