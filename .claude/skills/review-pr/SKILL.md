@@ -5156,21 +5156,27 @@ already being asked to start the review.
    is recoverable only by manual surgery or a data-destroying
    wipe.
 
-   Three residual cases are reported rather than hidden, and each
-   fails **closed** — the self-match survives, so the run blocks:
+   Three cases are reported rather than hidden, and all three
+   block — but for **two different reasons**, so read which:
 
    - a **detached HEAD**, where the branch cannot be resolved, so
-     no exclusion is attempted;
+     no exclusion is attempted; and
    - an exclusion that **matched nothing**, which is what happens
-     if this branch's PR is open under a different head ref;
-   - a **fork** PR, which is never treated as this branch's own
-     however its branch is named, since a head ref is
-     unqualified.
+     if this branch's PR is open under a different head ref.
 
-   In the first two the line says a collision naming one PR whose
+   Those two fail **closed**: the self-match survives into the
+   comparison, so the line says a collision naming one PR whose
    file matches this branch's is *probably* that self-match — a
-   hint, not an identity, because a genuine second-branch
-   collision presents the same way. Confirm before dismissing it.
+   hint, not an identity, since a genuine second-branch collision
+   presents the same way. Confirm before dismissing it.
+
+   - a **fork** PR sharing this branch's name, which is never
+     treated as ours, because a head ref arrives unqualified.
+
+   That one is different: the self-match *is* correctly excluded,
+   and what blocks is a third party's **real** collision. The
+   line names the fork PR so it is not dismissed as a self-match
+   — do not wave it through.
 
    `--self-branch` overrides the resolution and the summary
    records when it was used, since that flag can turn a collision

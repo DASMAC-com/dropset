@@ -98,6 +98,7 @@ class Summary(unittest.TestCase):
         self_prs=(),
         next_free=14,
         self_branch_explicit=False,
+        self_fork_prs=(),
     ):
         return {
             "mine": mine,
@@ -106,6 +107,7 @@ class Summary(unittest.TestCase):
             "self_branch": self_branch,
             "self_branch_explicit": self_branch_explicit,
             "self_prs": list(self_prs),
+            "self_fork_prs": list(self_fork_prs),
             "collisions": found,
             "next_free_number": next_free,
             "clear": not found,
@@ -134,6 +136,31 @@ class Summary(unittest.TestCase):
         )
         self.assertIn("excluding this branch's own PR #427", line)
         self.assertIn("safe to enqueue", line)
+
+    def test_a_name_matched_fork_is_reported_so_its_collision_is_not_dismissed(self):
+        # The fork is deliberately KEPT, so a collision it carries is a third
+        # party's. Without a note the reader cannot tell it from a self-match,
+        # which is the misread this whole issue removes.
+        found = [{"number": 3, "pr": 999, "ours": "a", "theirs": "m/0003_b.sql"}]
+        line = mc.summarize(
+            self._result(
+                ["m/0003_a.sql"], [3], found, self_prs=[427], self_fork_prs=[999]
+            )
+        )
+        self.assertIn("#999", line)
+        self.assertIn("fork", line)
+        self.assertIn("NOT excluded", line)
+
+    def test_the_nothing_claimed_line_still_reports_the_self_treatment(self):
+        # `next_free_number` is shaped by the exclusion even though no comparison
+        # ran, and this is the line `init-pr` reads — so an override must show up
+        # here or the bypass is invisible where the number is taken from.
+        line = mc.summarize(
+            self._result([], [], [], self_prs=[427], self_branch_explicit=True)
+        )
+        self.assertIn("0014", line)
+        self.assertIn("#427", line)
+        self.assertIn("--self-branch", line)
 
     def test_a_detached_head_says_the_self_exclusion_was_not_applied(self):
         # Silence here would put the old fail-closed behavior back with no way
@@ -209,6 +236,20 @@ class LoadOthers(unittest.TestCase):
         self.assertIn("must be a list", message)
         self.assertIn("351", message)
 
+    def test_a_truthy_string_is_cross_repository_is_refused(self):
+        # Read by truthiness, so `"false"` is true and would keep the PR from
+        # ever being self-excluded -- silently restoring the fail-closed defect.
+        path = self._write(
+            '[{"pr": 1, "files": [], "isCrossRepository": "false"}]',
+        )
+        with self.assertRaises(mc.MigrationCollisionsError) as caught:
+            mc.load_others(path)
+        self.assertIn("isCrossRepository", str(caught.exception))
+
+    def test_a_boolean_is_cross_repository_is_accepted(self):
+        path = self._write('[{"pr": 1, "files": [], "isCrossRepository": true}]')
+        self.assertEqual(mc.load_others(path)[0]["isCrossRepository"], True)
+
     def test_an_absent_or_empty_files_key_is_still_allowed(self):
         # The deliberate case the type check must NOT break: a PR touching no
         # migration at all.
@@ -262,6 +303,8 @@ class OthersFromGh(unittest.TestCase):
                     ],
                     "headRefName": "eng-351",
                     "isCrossRepository": None,
+                    "truncated": None,
+                    "file_count": 2,
                 }
             ],
         )
@@ -289,17 +332,20 @@ class OthersFromGh(unittest.TestCase):
             "files": [],
             "headRefName": None,
             "isCrossRepository": None,
+            "truncated": None,
+            "file_count": 0,
         }
         with self._gh(json.dumps([{"number": 9, "files": []}])):
             self.assertEqual(mc.others_from_gh(), [empty])
         with self._gh(json.dumps([{"number": 9}])):
             self.assertEqual(mc.others_from_gh(), [empty])
 
-    def test_a_truncated_files_list_is_refused_rather_than_reported_clear(self):
+    def test_a_truncated_files_list_is_recorded_not_raised_on_the_spot(self):
         """`gh` pages a PR's `files` at 100, and a short array is silent.
 
-        The migration it drops could be the colliding one, so a truncated entry
-        means this tool cannot answer — not that nothing collided.
+        Recorded rather than raised here, because this runs BEFORE the
+        self-exclusion: raising would refuse on the caller's own large PR, the
+        one entry the comparison is about to discard.
         """
         payload = json.dumps(
             [
@@ -311,10 +357,38 @@ class OthersFromGh(unittest.TestCase):
             ]
         )
         with self._gh(payload):
-            with self.assertRaises(mc.MigrationCollisionsError) as caught:
-                mc.others_from_gh()
-        self.assertIn("truncated", str(caught.exception))
-        self.assertIn("120", str(caught.exception))
+            got = mc.others_from_gh()
+        self.assertEqual(got[0]["truncated"], 120)
+        self.assertEqual(got[0]["file_count"], 100)
+
+    def test_a_truncated_pr_still_in_the_comparison_is_refused(self):
+        others = [{"pr": 351, "files": [], "truncated": 120, "file_count": 100}]
+        with self.assertRaises(mc.MigrationCollisionsError) as caught:
+            mc.refuse_if_truncated(others)
+        message = str(caught.exception)
+        self.assertIn("truncated", message)
+        self.assertIn("120", message)
+        # The remedy must be actionable for a PR the caller does not own.
+        self.assertIn("--others", message)
+
+    def test_a_truncated_SELF_pr_does_not_block_its_own_enqueue(self):
+        """The ordering the cross-check caught.
+
+        The caller's own >100-file PR is discarded by `exclude_self`, so it must
+        never reach the refusal — otherwise a large PR cannot enqueue at all and
+        `--self-branch` could not rescue it, the raise having come first.
+        """
+        mine = {
+            "pr": 427,
+            "headRefName": "eng-1336",
+            "files": [],
+            "truncated": 120,
+            "file_count": 100,
+        }
+        kept, dropped, _forks = mc.exclude_self([mine], "eng-1336")
+        self.assertEqual(dropped, [427])
+        # Must not raise.
+        mc.refuse_if_truncated(kept)
 
     def test_a_complete_files_list_is_not_mistaken_for_a_truncated_one(self):
         payload = json.dumps(
@@ -411,7 +485,7 @@ class ExcludeSelf(unittest.TestCase):
             self._pr(427, "eng-1336", "db-schema/migrations/0014_mine.sql"),
             self._pr(351, "eng-351", "db-schema/migrations/0009_theirs.sql"),
         ]
-        kept, dropped = mc.exclude_self(others, "eng-1336")
+        kept, dropped, _forks = mc.exclude_self(others, "eng-1336")
         self.assertEqual([e["pr"] for e in kept], [351])
         self.assertEqual(dropped, [427])
 
@@ -420,7 +494,7 @@ class ExcludeSelf(unittest.TestCase):
         mine = ["db-schema/migrations/0014_mine.sql"]
         others = [self._pr(427, "eng-1336", "db-schema/migrations/0014_mine.sql")]
         self.assertEqual(len(mc.collisions(mine, others)), 1)
-        kept, _ = mc.exclude_self(others, "eng-1336")
+        kept, _, _forks = mc.exclude_self(others, "eng-1336")
         self.assertEqual(mc.collisions(mine, kept), [])
 
     def test_a_real_collision_survives_the_exclusion(self):
@@ -435,14 +509,14 @@ class ExcludeSelf(unittest.TestCase):
             self._pr(427, "eng-1336", "db-schema/migrations/0014_mine.sql"),
             self._pr(430, "eng-999", "db-schema/migrations/0014_theirs.sql"),
         ]
-        kept, dropped = mc.exclude_self(others, "eng-1336")
+        kept, dropped, _forks = mc.exclude_self(others, "eng-1336")
         found = mc.collisions(mine, kept)
         self.assertEqual(dropped, [427])
         self.assertEqual([c["pr"] for c in found], [430])
 
     def test_an_unresolved_branch_excludes_nothing(self):
         others = [self._pr(427, "eng-1336", "db-schema/migrations/0014_mine.sql")]
-        kept, dropped = mc.exclude_self(others, None)
+        kept, dropped, _forks = mc.exclude_self(others, None)
         self.assertEqual(kept, others)
         self.assertEqual(dropped, [])
 
@@ -450,7 +524,7 @@ class ExcludeSelf(unittest.TestCase):
         # A hand-assembled --others payload may omit it; that entry is simply
         # not self-excluded rather than crashing the compare.
         others = [{"pr": 42, "files": ["db-schema/migrations/0014_x.sql"]}]
-        kept, dropped = mc.exclude_self(others, "eng-1336")
+        kept, dropped, _forks = mc.exclude_self(others, "eng-1336")
         self.assertEqual(kept, others)
         self.assertEqual(dropped, [])
 
@@ -466,7 +540,7 @@ class ExcludeSelf(unittest.TestCase):
             self._pr(999, "eng-1336", "db-schema/migrations/0014_theirs.sql"),
             isCrossRepository=True,
         )
-        kept, dropped = mc.exclude_self([ours, theirs], "eng-1336")
+        kept, dropped, _forks = mc.exclude_self([ours, theirs], "eng-1336")
         self.assertEqual(dropped, [427])
         self.assertEqual([e["pr"] for e in kept], [999])
         # And the collision it carries still fires.
@@ -605,6 +679,40 @@ class AddedMigrations(unittest.TestCase):
                 code = mc.main()
         self.assertEqual(code, 2)
         self.assertIn("cannot read", err.getvalue())
+
+    def test_main_maps_a_truncated_listing_to_exit_two_not_one(self):
+        """Exit 2 is now a documented gate contract, so pin it through `main()`.
+
+        The distinction is the whole point: 1 means "a collision", 2 means "could
+        not answer". A caller that collapses them either reports a tool failure
+        as a collision, or enqueues straight through an unanswered question.
+        """
+        others = os.path.join(self.root, "others.json")
+        with open(others, "w", encoding="utf-8") as fh:
+            json.dump(
+                [
+                    {
+                        "pr": 351,
+                        "files": [],
+                        "truncated": 120,
+                        "file_count": 100,
+                    }
+                ],
+                fh,
+            )
+        argv = [
+            "migration_collisions.py",
+            "--others",
+            others,
+            "--base",
+            "main",
+        ]
+        err = io.StringIO()
+        with mock.patch.object(mc.sys, "argv", argv):
+            with redirect_stderr(err):
+                code = mc.main()
+        self.assertEqual(code, 2)
+        self.assertIn("truncated", err.getvalue())
 
     def test_the_cli_exits_zero_when_clear(self):
         self._commit("0002_new.sql", "create table b();")
