@@ -37,6 +37,59 @@ unqualified claim is resting on nothing. (`review-pr` step 5 is the
 concrete case: its inline-lens fallback was removed, and the cost
 argument was *not* the reason — see that step for why.)
 
+## Session length is itself a cost lever
+
+The levers below all bound what a single call returns. This one bounds
+how many turns replay it, and it is the largest of them: because every
+turn re-sends the whole cached prefix, **session cost is roughly
+quadratic in session length**. A payload's price is its size times the
+number of turns that follow it, so the same work split across several
+short sessions is materially cheaper than one long one — not because
+any call got narrower, but because fewer turns replay each result.
+
+Measured on one long implementation session (ENG-765): its prefix grew
+from ~30K to about 900K tokens over 1,351 billed requests, and cache
+reads were **$371 of its $455** — the dominant line by a wide margin.
+Modeling the same request count as 3–5 shorter sessions prices at
+**$155–198**, a 2.5–3x saving on that line. The counterexample from the
+meta rhythm is the ENG-1194 batch — one issue carrying the whole parked
+pool, worked in a **19-hour, $409** run.
+
+So **stage work so that a session stays short** — on the order of
+**4–5 levers or findings per PR**. This binds at *breakdown* time,
+which is the only place it can: a session cannot retroactively shorten
+itself, so the decision belongs to whoever splits the work. The fold
+rules in `docs/conventions/linear-automation.md` and the `plan`,
+`merge-tasks` and `trim-context` skills are where it is implemented.
+
+**Coherence still binds; it just no longer implies one issue.** The
+fewest-coherent-PRs rule still keeps a set that must land together from
+being scattered — but a coherent set larger than a short session
+**splits into sequential PRs** rather than growing the session.
+Coherence is a floor on what may be *separated*, never a license to let
+one unit grow without bound.
+
+**Prefer a rebase to a serial chain.** Splitting means several PRs touch
+adjacent files, and the answer to that is a rebase — not a blocking
+edge, and not a one-in-flight gate. A rebase inside a short session
+costs cents, while the serialization it replaces costs the quadratic.
+This is operator-ratified for `Claude:` meta work specifically
+(2026-09-11), where the strays all contend on the same skill files:
+that contention was the original argument for one batch at a time, and
+it is now explicitly outweighed. It changes nothing about blocking
+edges themselves — no automated writer places one, as ever.
+
+### The ratified cost posture
+
+Two rulings resting on the same measurement, recorded here so they are
+not re-litigated per session:
+
+- **Sonnet-tier task workers are rejected** (operator, 2026-09-11).
+  The ~60% token saving does not pay for the redo risk on a PR. Compact
+  PRs and the levers below are the ratified levers instead.
+- **The Bedrock auto-mode classifier's ~7% overhead is accepted burn.**
+  It buys the substrate routing and is not a target for trimming.
+
 ## The levers
 
 - **Ask for the narrowest thing that answers the question.** Use the

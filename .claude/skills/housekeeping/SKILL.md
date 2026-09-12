@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (one aggregated propose-only task), then capture session metrics and run the purge dry-run. It proposes NO meta-work merges: a `Claude:` filing parks under the `Claude meta` milestone and the planning bootstrap folds that milestone once a day, so that step is retired (one writer, one rhythm). It runs NO audit of its own and reads no Planning document: auditing is planning-filed board work — a planning session files an audit issue naming its target, and the session that pulls it runs one scoped audit-scope pass (the broad random rotation survives only as an explicit ad-hoc /audit). It does NOT analyze the board and files no collision links at all (that machinery is retired): Backlog-wide merge groups and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (small themed propose-only tasks of roughly 4–5 levers each, sized to a short session), then capture session metrics and run the purge dry-run. It proposes NO meta-work merges: a `Claude:` filing parks under the `Claude meta` milestone and the planning bootstrap folds that milestone once a day, so that step is retired (one writer, one rhythm). It runs NO audit of its own and reads no Planning document: auditing is planning-filed board work — a planning session files an audit issue naming its target, and the session that pulls it runs one scoped audit-scope pass (the broad random rotation survives only as an explicit ad-hoc /audit). It does NOT analyze the board and files no collision links at all (that machinery is retired): Backlog-wide merge groups and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -21,10 +21,10 @@ committed skills and upgrades the Claude Code CLI
    already merged.
 1. **Fold the parked trim levers** — delegate to
    `trim-context`, which sweeps the `Trim levers`
-   milestone and files a **single aggregated
-   propose-only** skill-improvement task (one section per
-   lever), then closes the parked originals, never
-   editing a skill itself.
+   milestone and files **small themed propose-only**
+   skill-improvement tasks (roughly 4–5 levers each, one
+   section per lever), then closes the parked originals,
+   never editing a skill itself.
 1. **Check convention references** — flag any skill that
    points at a `CLAUDE.md` section or `docs/conventions/`
    doc that no longer exists, filing the drift
@@ -617,9 +617,10 @@ a normal PR. (To fix it directly instead, run
 skill (via the Skill tool) — the consumer half of the
 `session-metrics` producer. It sweeps the `Trim levers`
 project milestone (**not** a document — that inbox is
-retired), folds the parked levers into a **single aggregated
-propose-only** skill-improvement task — always ONE, whatever
-the lever count or surface spread, parked under the
+retired), folds the parked levers into **small themed
+propose-only** skill-improvement tasks — roughly 4–5 levers
+each, sized to a short session, so a small pool is still one
+task while a large one splits by surface, each parked under the
 `Claude meta` milestone rather than filed to Backlog, with one
 section per lever each keeping its own
 `**Fingerprint**:` line — and
@@ -717,8 +718,8 @@ That reasoning is now moot rather than merely reassigned.
 A `Claude:` filing lands **parked** under the `Claude meta`
 milestone (per `CLAUDE.md` → "Claude: meta-work prefix"), and
 the planning bootstrap sweeps that milestone once a day and
-folds **everything** in it into one batch issue. So the
-strays this step existed to catch are collected by
+folds **everything** in it into small themed batch issues. So
+the strays this step existed to catch are collected by
 construction, on a defined rhythm, by the session that is
 actually deciding sequencing — and `trim-context`'s output
 task parks into the same milestone like any other stray.

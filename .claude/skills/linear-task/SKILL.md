@@ -88,9 +88,9 @@ what to file.
      operator's Next view and clutters it until a
      planning bootstrap sweeps it; the milestone keeps it
      out of the queue by construction. The planning
-     bootstrap folds that milestone into one batch issue
-     once a day. A non-meta filing is unaffected and
-     still goes to Backlog.
+     bootstrap folds that milestone into small themed
+     batch issues once a day. A non-meta filing is
+     unaffected and still goes to Backlog.
 
    - **Description** — Markdown. Capture *why* this
      is deferred and enough context to act on it

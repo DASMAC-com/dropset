@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog, except a meta-flavored finding, which is promoted by swapping its milestone to `Claude meta` and stays parked), the parked `Claude meta` milestone — plus any open unpulled batch — swept and folded into one batch issue by default at bootstrap — assembled only when no meta issue is In Progress or In Review, which is what lets the batch carry no blocking edge at all — and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `plan`), never in a worktree.
+description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog, except a meta-flavored finding, which is promoted by swapping its milestone to `Claude meta` and stays parked), the parked `Claude meta` milestone — plus any open unpulled batch — swept and folded by default at bootstrap into small themed batches of roughly 4–5 parts each rather than one giant batch, none of them carrying a blocking edge and none of them gated on another meta issue being in flight (several short sessions beat one long one by enough that file contention is worth paying as an occasional rebase) — and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `plan`), never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -241,14 +241,34 @@ against code that no longer exists — and is a strong
 candidate. A row untouched because its subsystem is untouched
 is not urgent merely for being old.
 
-**Sweep the `Claude meta` milestone and assemble one batch —
-by default, unprompted.** Every `Claude:` filing lands
-**parked** (state `Todo` plus the `Claude meta` milestone), so
-that milestone is the bulk of the pool. Fold **every** issue in
-it into the lowest-numbered survivor via `/merge-tasks`, and
-put the survivor in **Backlog, Urgent** — it is the one meta
-issue meant to be pulled. Routine bookkeeping; it does **not**
-need a per-fold proposal.
+**Sweep the `Claude meta` milestone and assemble SMALL THEMED
+batches — by default, unprompted.** Every `Claude:` filing
+lands **parked** (state `Todo` plus the `Claude meta`
+milestone), so that milestone is the bulk of the pool. Group
+its issues by theme — the skill or convention surface each one
+changes — and fold every group into its own lowest-numbered
+survivor via `/merge-tasks`, putting each survivor in
+**Backlog, Urgent**. Routine bookkeeping; it does **not** need
+a per-fold proposal.
+
+**Each batch carries roughly 4–5 parts, never the whole pool**
+(operator rule, 2026-09-11, superseding the one-giant-batch
+form). Session cost is roughly **quadratic in session length**,
+so a batch sized to a short session is the cheapest unit this
+board can hand out — the measurement, and the $155–198 versus
+$455 modeling behind it, is in
+`docs/conventions/context-economy.md` → "Session length is
+itself a cost lever". The ENG-1194 batch is the counterexample
+to cite: the whole parked pool in one issue, worked in a
+19-hour, \$409 run.
+
+Promote the batches the operator actually wants pulled —
+normally one or two per bootstrap — and leave the rest parked
+under the milestone for the next rhythm. That is what keeps
+Next from filling with Urgent meta work (every unblocked meta
+issue is Urgent, per the rule below) while still never gating
+on an edge. Which ones go is a scheduling judgement this
+session already makes; say the parked remainder out loud.
 
 **The pool also includes any open, UNPULLED batch — that
 clause is load-bearing.** Sweep the milestone **plus** every
@@ -257,17 +277,21 @@ or In Review. Lowest number still survives, so a batch
 assembled yesterday and never pulled is swallowed by today's
 assembly.
 
-Without that clause the "exactly one meta issue unblocked in
-Next" property below silently breaks, and it is worth knowing
-why rather than rediscovering it. The pool used to be a title
-scan of Backlog, which swallowed a prior unpulled batch as a
-side effect. Narrowing the pool to the milestone lost that,
-and the assembly precondition does not cover the gap either —
-an unpulled batch sits in **Backlog**, which is neither In
-Progress nor In Review. So two bootstraps with no pull in
-between would produce **two** unblocked meta issues, exactly
-what the retired edge existed to prevent. Restoring the batch
-to the pool fixes it without adding a state to check.
+Without that clause an unpulled batch is **duplicated** rather
+than absorbed, and the history is worth knowing rather than
+rediscovering. The pool used to be a title scan of Backlog,
+which swallowed a prior unpulled batch as a side effect.
+Narrowing the pool to the milestone lost that, and no state
+check covers the gap — an unpulled batch sits in **Backlog**,
+which is neither In Progress nor In Review. So two bootstraps
+with no pull in between would leave two overlapping batches
+assembled from the same strays. Restoring the batch to the pool
+fixes it without adding a state to check.
+
+(This clause used to be justified by the "exactly one meta
+issue unblocked in Next" property. That property is retired —
+see below — but the clause survives on the duplication argument,
+which never depended on it.)
 
 It is a default because the alternative demonstrably does not
 hold: one bootstrap found **five** open meta tasks — three of
@@ -278,14 +302,27 @@ sitting unblocked in the operator's Next view, which is what
 moved meta filings onto the parking milestone in the first
 place.
 
-**Assemble only when no meta issue is In Progress or In
-Review.** Both states mean a session is still working it, so
-while a batch is in flight the strays simply **accumulate
-parked** and nothing is assembled this bootstrap. This
-precondition is what lets the batch carry **no blocking edge
-at all**: the edge used to encode *wait for the one in
-flight*, and the precondition now makes that true by
-construction. Say the parked count out loud either way.
+**Do NOT gate assembly on a meta issue being in flight**
+(operator rule, 2026-09-11, retiring the earlier
+precondition). Several small meta batches may be open and
+worked at once. They do contend on the same skill files, and
+that contention is settled by a **rebase**, which inside a
+short session costs cents — where the serialization it replaces
+costs the quadratic. So a bootstrap assembles from whatever is
+parked, whether or not something is already In Progress or In
+Review.
+
+This does **not** reintroduce an edge. A batch still carries no
+blocking relation at all: the old precondition existed to make
+the retired *wait for the one in flight* edge true by
+construction, and with the serialization itself abandoned there
+is nothing left for either of them to encode. Say the parked
+count out loud either way.
+
+What the retirement does cost is the "exactly one meta issue
+unblocked in Next" property, now deliberately gone rather than
+accidentally broken. The bound on Next comes from **how many
+batches you promote** (above), not from a state check.
 
 **Append to the batch through the zero-echo writer, never
 `save_issue`.** The batch is an **accumulator** by design, and
@@ -320,11 +357,12 @@ whose session had already read its own scope.
 - **Never fold an issue that is In Progress.** That mutates a
   spec while a session is implementing it. This is why one
   batch of mined levers landed as a *new* issue rather than on
-  the prior batch — that one was live in a worktree. Under the
-  precondition above this should not arise, since an In
-  Progress meta issue suppresses assembly outright; it stays
-  written down because the two rules fail differently and this
-  one is the one that corrupts a live spec.
+  the prior batch — that one was live in a worktree. With the
+  assembly precondition retired, this rule is now
+  **load-bearing on its own**: a bootstrap assembles while
+  other meta issues are in flight, so it is the only thing
+  standing between an assembly and a live spec. Fold from the
+  parked pool, and skip anything a session already holds.
 - **Never fold across the meta / product boundary.** The
   coherence floor binds here as everywhere.
 
@@ -438,28 +476,32 @@ whole reason the vocabulary is worth writing down:
   enters Next, set it Urgent, so agent-infra improvements are
   the next pull rather than queuing behind product work.
 
-- **One meta batch, and it carries no edge** (operator rule,
-  2026-09-02, superseding the 08-20 one-edge form and the
-  08-18 chain before it). At bootstrap, sweep the
-  `Claude meta` milestone and fold the parked strays into a
-  single batch issue. See "Sweep the `Claude meta` milestone"
-  in step 1 — that is where the fold happens; this entry
-  records what it means for the *board*: exactly **one** meta
-  issue is unblocked in Next (Urgent, per the rule above), so
-  meta improvements land one batch at a time instead of
-  several sessions rewriting the same skills at once.
+- **Small meta batches, none of them carrying an edge**
+  (operator rule, 2026-09-11, superseding the 09-02
+  one-batch form, the 08-20 one-edge form and the 08-18 chain
+  before it). At bootstrap, sweep the `Claude meta` milestone
+  and fold the parked strays into **themed batches of roughly
+  4–5 parts**. See "Sweep the `Claude meta` milestone" in
+  step 1 — that is where the fold happens; this entry records
+  what it means for the *board*: meta improvements land as
+  **short, pullable units**, and more than one of them may be
+  unblocked and in flight at a time.
 
-  **That property now comes from the assembly precondition
-  rather than from a relation.** A batch is assembled only
-  when no meta issue is In Progress or In Review, so there is
-  nothing for it to queue behind — and everything filed in the
-  meantime sits parked under the milestone, out of the pull
-  queue by construction. Both states still count, because an
-  In Review meta issue is a merged session that still owes
-  follow-up, and taking only In Progress would lose the anchor
-  precisely then (see
-  `docs/conventions/linear-automation.md` → "The Linear state
-  tracks the SESSION, not the PR").
+  **Nothing serializes them — not an edge, and no longer a
+  precondition either.** Assembly used to be gated on no meta
+  issue being In Progress or In Review, which is what made the
+  retired *wait for the one in flight* edge true by
+  construction. Both are gone now: several short sessions beat
+  one long one by enough — cost is roughly quadratic in session
+  length, per
+  `docs/conventions/context-economy.md` → "Session length is
+  itself a cost lever" — that the file contention they create
+  is worth paying as an occasional **rebase**.
+
+  What still bounds Next is how many batches this session
+  chooses to **promote**, the remainder staying parked under
+  the milestone. That is a scheduling judgement, not a state
+  check.
 
   So there is **no standing exception left** to the
   proposal-per-edge rule. Each shape removed relations rather
@@ -536,20 +578,25 @@ skill binds it too:
   not `content`, and the anchor must match the **stored**
   text, not the rendered body.
 
-- **Fewest coherent PRs** — fold coupled findings, but never
-  across separate apps, languages, or deploy units.
+- **Fewest coherent PRs, each sized to a SHORT session** —
+  fold coupled findings, but never across separate apps,
+  languages, or deploy units, and never past what a short
+  session can carry. Coherence is a floor on what may be
+  separated, not a license to grow one issue without bound: a
+  coherent set larger than a short session splits into
+  **sequential** PRs of roughly 4–5 findings each.
 
-  **The `Claude:` meta class has no size bound.**
-  Operator-ratified: meta work aggregates into **one** batch
-  issue regardless of body size, because at most one meta task
-  ever runs in flight (they contend on the same skill files),
-  so a second buys no parallelism and costs a merge conflict.
-  One batch, one in flight, no size bound. `merge-tasks`
-  suppresses its oversized-survivor warning for this class.
-  The split recommendation stands for **product** issues,
-  where the work genuinely can run in parallel. This exempts
-  size only — the coherence floor still binds, and meta never
-  folds together with product code.
+  **The `Claude:` meta class is bound too** — operator rule,
+  2026-09-11, retiring the no-size-bound exemption. Meta work
+  folds into small themed batches, several of which may be in
+  flight at once; the file contention that used to argue for
+  one-at-a-time is now paid as an occasional **rebase**,
+  because session cost is roughly quadratic in session length
+  (`docs/conventions/context-economy.md` → "Session length is
+  itself a cost lever"). `merge-tasks` therefore applies its
+  oversized-survivor warning to this class as well. The
+  coherence floor is untouched: meta never folds together with
+  product code.
 
 - **State a scope posture when staging an issue.** For each
   issue this session stages into the queue, commit to one:

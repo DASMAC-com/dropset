@@ -102,7 +102,11 @@ A rotation folds coupled findings into the **fewest coherent PRs** —
 fold every set that would land as one PR (same subsystem / crate /
 language-domain) into a single issue, keeping each finding's own
 `**Fingerprint**:` line, but never across
-separate apps / languages / deploy units (the coherence floor).
+separate apps / languages / deploy units (the coherence floor). That is
+a floor on what may be *separated*, not a license to grow one issue
+without bound: **a coherent set larger than a short session splits into
+sequential PRs** (roughly 4–5 findings each), because session cost is
+roughly quadratic in session length — see "Context economy" below.
 
 **`**Touches**:` is retired** — no filing emits the declared-scope glob
 list any more. It was the input to the collision machinery (see
@@ -160,11 +164,14 @@ is the thing meant to be pulled.
 **The planning bootstrap is the single assimilation point** — once a
 day it sweeps the milestone **plus any open, unpulled batch** (every
 open `Claude:`-prefixed Backlog issue not In Progress or In Review) and
-folds them into **one** batch issue, and it assembles a new batch **only
-when no meta issue is In Progress or In Review**. The unpulled-batch
-half of that pool is what keeps exactly one meta issue unblocked in
-Next: an unpulled batch sits in Backlog, so the precondition alone does
-not cover it. Assembly consumes the pool *as of
+folds them into **small themed batches of roughly 4–5 parts each**, of
+which it promotes the one or two meant to be pulled and leaves the rest
+parked. **It no longer gates on a meta issue being in flight** (operator
+rule, 2026-09-11, retiring both the one-giant-batch form and the
+precondition): several short meta sessions beat one long one by enough
+that the file contention they create is worth paying as an occasional
+**rebase**, and how many batches get promoted — not a state check — is
+what bounds the Next view. Assembly consumes the pool *as of
 bootstrap*; a stray filed afterwards waits for the next one rather than
 joining a batch mid-flight. `housekeeping`'s propose-merges-among-meta
 step is **retired** — one writer, one rhythm.
@@ -264,10 +271,13 @@ under the `Trim levers` milestone, keyed by a
 MCP `patch` path, because that path echoes the whole stored body
 on every write and the cost compounds on an accumulator.
 `trim-context` is the periodic **fold**: sweep the milestone,
-fold into **one** `Claude:` task — always one, whatever the lever
-count or surface spread — and close the originals. (The
+fold into **small themed `Claude:` tasks of roughly 4–5 levers
+each** — sized to a short session, so a small pool is still one
+task while a large one splits by surface — and close the
+originals. (The always-one-task form and its no-size-bound
+exemption are **retired**, operator rule 2026-09-11; the
 coherence floor above still governs audit findings and product
-filings; the meta-work fold is the named exemption.) A rejected
+filings.) A rejected
 lever is **closed with its reason**, and
 dedup-against-resolved makes that permanent. The old inbox
 document is retired — it outgrew the tool-result cap between
@@ -287,15 +297,18 @@ an explicit yes; the default in any autonomous run is **no edge**, with
 the suspicion recorded as prose. Human-placed edges are authoritative
 and never rewritten. **There is no longer any exception** — not even
 for meta-work bookkeeping. A planning session still folds the open
-`Claude:`-prefixed meta-work into a single **batch issue** at
-bootstrap, but that batch now carries **no edge at all**: it is
-assembled only when no meta issue is In Progress or In Review, so the
-condition the edge used to encode is satisfied by construction instead.
-(This retires the standing one-edge-behind-the-batch carve-out, which
-had itself superseded an earlier serial chain needing an edge per
-issue. Parking a stray under the `Claude meta` milestone is what keeps
-it out of the pull queue in the meantime — a filer-safe substitute for
-an edge no filer was ever allowed to place.) File overlap is **not** a
+`Claude:`-prefixed meta-work into **batch issues** at bootstrap, and
+none of them carries **any edge at all** — nor is assembly gated on
+another meta issue being in flight, since the batches are deliberately
+**not serialized**: contention on the shared skill files is paid as an
+occasional **rebase**, which in a short session costs far less than the
+quadratic a long one buys. (This retires the standing
+one-edge-behind-the-batch carve-out, which had itself superseded an
+earlier serial chain needing an edge per issue, and the assembly
+precondition that briefly stood in for it. Parking a stray under the
+`Claude meta` milestone is what keeps it out of the pull queue in the
+meantime — a filer-safe substitute for an edge no filer was ever
+allowed to place.) File overlap is **not** a
 dependency, and the automated machinery that used to `related`-link it
 is **retired** — nothing records collision links any more, at filing
 time or on a sweep; reconciling overlap is planning-session work, judged
@@ -364,7 +377,20 @@ detail: `docs/conventions/skill-tooling.md`.
 Every tool result is fetched once but **replayed as input on every
 later turn**, so a fat early payload is paid many times over (and it's
 transport-agnostic — a big `git diff`, whole-file `Read`, or verbose
-log behaves like a fat MCP result). Request the narrowest thing that
+log behaves like a fat MCP result).
+
+**Session length is therefore itself a cost lever, and the largest
+one** — a payload's price is its size times the turns that follow it, so
+cost is roughly **quadratic in session length** (measured: one session's
+prefix grew ~30K → ~900K over 1,351 requests, cache reads $371 of $455;
+the same work as 3–5 short sessions models at \$155–198). So **stage work
+so a session stays short** — on the order of 4–5 levers or findings per
+PR — and prefer an occasional **rebase** to a serial chain. This binds
+at *breakdown* time, the only place it can. Two standing rulings ride
+with it: **Sonnet-tier task workers are rejected**, and the Bedrock
+auto-mode classifier's ~7% overhead is **accepted burn**.
+
+Per call, request the narrowest thing that
 answers the question, read large files by slice (Grep then `Read` with
 `offset`/`limit`), route verbose logs away from context — through
 `run_quiet.py`, for **any** repeated verbose-on-success runner, `pnpm`

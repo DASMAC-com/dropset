@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Fold parked trim levers into one propose-only skill-improvement task — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into a single aggregated `Claude:` task — always ONE task, whatever the lever count or surface spread, with one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line — filed PARKED itself (Todo plus the `Claude meta` milestone, so the planning bootstrap's batch assembly consumes it rather than it sitting unblocked in Next), then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
+description: Fold parked trim levers into propose-only skill-improvement tasks — the consumer half of the `session-metrics` producer. Sweeps the `Trim levers` project milestone (never a document), folds the parked levers into small themed `Claude:` tasks of roughly 4–5 levers each — sized to a short session, since cost is roughly quadratic in session length, so a small pool is still one task while a large one splits by surface — with one `# Part N` section per lever, each keeping its own `**Fingerprint**:` line — filed PARKED themselves (Todo plus the `Claude meta` milestone, so the planning bootstrap's batch assembly consumes it rather than it sitting unblocked in Next), then closes the parked originals so the milestone lifecycle is the state machine and nothing needs draining. A lever judged not worth acting on is closed with its reason instead, which suppresses refiling permanently. Never edits a skill or convention doc — filing a task is the proposal. Runs standalone or as `housekeeping`'s Session Metrics step.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -14,9 +14,10 @@ The **consumer** half of the context-economy feedback loop.
 trim lever as its own small **parked issue**, stamped with the
 `Trim levers` project milestone and keyed by a `**Fingerprint**:`.
 `trim-context` is the periodic **fold**: it sweeps that milestone, folds
-the parked levers into a single aggregated propose-only **parked** task
-(state `Todo` plus the `Claude meta` milestone, so the next planning
-bootstrap's batch assembly consumes it), and closes the originals.
+the parked levers into small themed propose-only **parked** tasks of
+roughly 4–5 levers each (state `Todo` plus the `Claude meta` milestone,
+so the next planning bootstrap's batch assembly consumes them), and
+closes the originals.
 
 It runs identically whether invoked standalone or by `housekeeping` —
 there is **no** propose-only vs. apply split, because filing a task *is*
@@ -289,24 +290,40 @@ context saving (the verification itself runs ~10 cheap probes). The payoff
 is fold *correctness* — a stale part costs an implementer a whole
 diagnosis beat, and a fold task is pulled once and read closely.
 
-**3. Fold into ONE task — always.** Operator ruling, 2026-08-25: a
-trim-lever fold produces a **single** task, regardless of how many levers
-it carries or how many surfaces they touch. This step used to say "the
-fewest coherent PRs, one task per coherent group"; it no longer does, and
-**no size bound applies** either.
+**3. Fold into SMALL THEMED tasks — roughly 4–5 levers each.** Operator
+rule, 2026-09-11, superseding the 2026-08-25 fold-into-one ruling: a
+trim-lever fold produces tasks **sized to a short session**, grouped by
+the skill or convention surface they change. A pool of five or fewer
+levers is still one task; a pool of fifteen is three, not one.
 
-The coherence floor is not being abandoned — it stays exactly where it
-belongs, on **audit findings and product filings**, which different
-sessions pull and which genuinely must not cross an app or language
-boundary. The meta-work fold is the named exemption, on the
-one-task-in-flight reasoning: these levers all edit `.claude/**`,
+**A size bound now applies, and it is the point of the step.** Session
+cost is roughly **quadratic in session length**, so an unbounded fold
+task buys that quadratic — measured at a 19-hour, \$409 run for the
+ENG-1194 batch — in exchange for avoiding a **rebase** between two short
+sessions, which costs cents. See
+`docs/conventions/context-economy.md` → "Session length is itself a cost
+lever".
+
+The old reasoning is worth recording because it inverted rather than
+merely expired. It ran: these levers all edit `.claude/**`,
 `docs/conventions/**` or `CLAUDE.md`, so they land as one PR by
-construction, and splitting them into groups only produces several issues
-that serialize behind one another for no gain.
+construction, and splitting them only produces issues that serialize
+behind one another for no gain. The premise is right and the conclusion
+no longer follows — **nothing serializes them any more.** The `plan`
+skill's assembly places no blocking edge and no longer gates on another
+meta issue being in flight, so several small fold tasks can be worked
+concurrently, paying an occasional rebase on the shared skill files.
+
+The coherence floor still stands where it always did — on **audit
+findings and product filings**, which must not cross an app or language
+boundary. What it never licensed was letting a single unit grow without
+bound; a coherent set larger than a short session splits into
+*sequential* PRs.
 
 The **per-lever fingerprint requirement is unchanged** — see step 4. That
-is what keeps later dedup matching each lever individually, and it is the
-reason one task loses nothing.
+is what keeps later dedup matching each lever individually, and it is now
+also what lets a pool be split across tasks without losing a lever's
+identity.
 
 **4. File the aggregated task, propose-only.** The fold's output is one
 **parked** `Claude:` task. A trim lever always edits a
@@ -386,14 +403,19 @@ python3 .claude/tools/linear_issue.py create \
 Team, project and assignee resolve from the `LINEAR_*` environment.
 
 **This is the worst instance of the MCP echo in the whole pipeline, not
-an average one.** The fold task's body is *by construction* the largest
-the pipeline produces — one `# Part N` per lever, with the operator
-ruling putting every lever in one task and **no size bound** — and
-`housekeeping` files exactly one every pass, so the cost scales with the
-parked pool on a fixed cadence. Measured: creating a 12-lever fold task
-cost **~6.0k in one `save_issue`**, the session's largest single result
-of any kind, ~19% of that pass's tool results, and larger than every
-read the fold performed to compose it.
+an average one.** A fold task's body is *by construction* among the
+largest the pipeline produces — one `# Part N` per lever — and
+`housekeeping` files them every pass, so the cost scales with the parked
+pool on a fixed cadence. Measured: creating a 12-lever fold task cost
+**~6.0k in one `save_issue`**, the session's largest single result of any
+kind, ~19% of that pass's tool results, and larger than every read the
+fold performed to compose it.
+
+**The 4–5-lever size bound (step 3) does not retire this argument**,
+though it changes the shape: each individual body is smaller, but the
+same pool now files as *several* tasks rather than one, so the total
+echoed across a pass is comparable. Every call still echoes its own whole
+body, so the zero-echo writer stays the path.
 
 The existing zero-echo writers missed it because both are
 **producer-side** — they write *levers*. This is the consumer side, and
