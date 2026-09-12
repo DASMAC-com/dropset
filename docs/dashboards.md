@@ -312,6 +312,13 @@ ten panels answer the question. A dashboard nobody can take in at once
 does not get read, and an unread dashboard is worse than none, because
 it is trusted without being looked at.
 
+The panel adjudication brought it back inside that constraint: the
+market-data dashboard now carries **eight** panels grouped under three
+collapsible rows, and ten rendered charts once the OHLC repeat over the
+three anchors is resolved. One reading in the list below — the fair price
+over its sources — has **moved to the maker dashboard**, and its bullet
+says so; it reads maker tables, so it was blank by construction here.
+
 Panel *count* is not the whole of it, and it is the half that misleads.
 A repeating panel is one panel in the JSON and N charts on the screen,
 so the constraint is on **rendered charts**: a panel that repeats over
@@ -676,14 +683,21 @@ Both directions of drift are real, so both checks are worth running.
    right form silently, because nothing re-evaluates it when the roster
    grows.
 
-1. **The rendered-chart budget is already over, before the reserved
-   panels land.** §5's "about ten, a hard constraint" was 12 before this
-   PR: ten panels, of which nine render one chart each and the OHLC panel
-   repeats over the three MVP anchors (9 + 3). The redundancy panel added
-   here makes eleven panels and 13 rendered charts. The pricing-path work
-   reserves three more readings, all of which read an estimator table that
-   does not exist on `main` yet. Note the two rules are in genuine
+1. **The rendered-chart budget was over.** §5's "about ten, a hard
+   constraint" reached 13 rendered charts across eleven panels: nine
+   rendering one chart each, the OHLC panel repeating over the three MVP
+   anchors, plus the redundancy panel. Note the two rules were in genuine
    tension rather than merely unmet: §1 requires every per-pair panel to
-   show all three anchors, so the repeat that breaches the cap is the
-   same rule that §1 mandates. Resolving that is the adjudication's job,
-   which is why the layout iteration is held rather than done here.
+   show all three anchors, so the repeat that breached the cap was the
+   same rule §1 mandates.
+
+   *Closed — the adjudication resolved it by subtraction rather than by
+   relaxing either rule.* The two estimator panels moved to the maker
+   dashboard (they read maker tables, so they were blank by construction
+   on an ingestion dashboard), Last candle age was absorbed into Candle
+   coverage, and the market-data dashboard now carries **eight** panels
+   and **ten** rendered charts — inside the constraint, with the OHLC
+   repeat over all three anchors intact. The three collapsible rows are
+   what make ten legible at once; the reserved pricing-path readings
+   still read an estimator table nothing writes yet, so the budget has to
+   be re-checked when they land.

@@ -41,7 +41,7 @@ dashboard carries, per source, product and bucket width, with its
 all-time bar count and its freshness. Those answer *is there data and
 does it make sense* before anything derived is shown, and the table is a
 table rather than a tile per feed precisely because the roster grows.
-Then realized volatility by hour, and last the cross-pair traversal.
+Then realized volatility by hour, and last the cross-pair index.
 
 Most of it reads **one product at a time**, but the **cross-pair index**
 does not: pick a currency and it overlays every pair carrying it on
@@ -272,18 +272,25 @@ They look redundant and are not, which matters most on first contact.
   stopped entirely stays visible instead of dropping out of a grouped
   query, and all-time bars with zero in-window buckets is the one
   reading no windowed panel can give you.
+- **Tick coverage** is the same recency reading one tier over, for the
+  venues printing into the tick table. It stays windowed, so a source
+  that published nothing inside the window has no row here at all.
 - **Source coverage** accounts for every declared source **by name**,
-  eight rows always, whatever any of them has done. Read *Printing now*
-  and not *Covered*: the latter is a 48-to-72-hour class bound that
-  answers "should this be producing at all" and tolerates an FX
-  weekend, and it was measured reading true at 24.6 hours old.
+  eight rows always, whatever any of them has done — so it is the one to
+  read for an *absence*. It carries no age of its own: read *Printing
+  now* and not *Covered*, because the latter is a 48-to-72-hour class
+  bound that answers "should this be producing at all" and tolerates an
+  FX weekend, and it was measured reading true at 24.6 hours old.
 
-**Age is counted in cadences, not seconds**, on every one of them. A
-daily series is 86 400 seconds old the moment before its next bar lands,
-so any absolute bound tuned for 60s bars marks a healthy daily reference
-permanently red. Dividing by the series' own expected interval makes one
-bound correct for both: the 300-second store-silence bound is five
-commits for a 60s poller, and preserved exactly there.
+**Age is counted in cadences, not seconds**, on the three readings that
+carry an age — cursor age in expected commits, candle coverage in
+buckets, tick coverage in expected intervals. A daily series is 86 400
+seconds old the moment before its next bar lands, so any absolute bound
+tuned for 60s bars marks a healthy daily reference permanently red.
+Dividing by the series' own expected interval makes one bound correct
+for both: the 300-second store-silence bound is five commits for a 60s
+poller, which is where the bounds are pinned (to within the
+one-decimal rounding, which trips red at 297.5s).
 
 **Wall-clock and data recency deliberately disagree in two states**, and
 both are confusing to walk into:

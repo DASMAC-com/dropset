@@ -5,7 +5,7 @@
 -- Every source the collectors REGISTERED, whether or not it is producing, and
 -- the DESIGNATED role that says how to read its counts.
 --
--- The two coverage tables above group over a measurement table, so a source
+-- The two coverage tables below group over a measurement table, so a source
 -- that wrote nothing has no rows to group and vanishes entirely; absence there
 -- cannot be told apart from never having been configured. Driving from the
 -- registry inverts that, and a dark collector becomes a row reading 0 rather

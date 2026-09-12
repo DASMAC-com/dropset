@@ -7,6 +7,15 @@
 -- is the single most useful thing this table records. Filtering it out
 -- would leave a fused estimate with no record of what it refused.
 --
+-- THE LEG SCOPE IS DELIBERATELY WIDER THAN THE PRICE ARMS, which is inherited
+-- from the pre-merge panel rather than chosen here, and is stated because the
+-- merge makes it newly visible. The estimator arms on the other target are
+-- pinned to `leg = 'fx'`; these weights are not filtered by leg at all, so the
+-- right-hand axis can carry a series for a leg that has no estimate line beside
+-- it. The leg token in the metric name is what keeps that legible. Scoping it
+-- to one leg would change what has shipped since the weights panel existed, so
+-- it is left alone and flagged instead.
+--
 -- The mechanism filter IS required, though, and for the opposite reason.
 -- The table is keyed by mechanism so the resolver's consensus attribution
 -- can land additively; those weights are exact linear-combination shares

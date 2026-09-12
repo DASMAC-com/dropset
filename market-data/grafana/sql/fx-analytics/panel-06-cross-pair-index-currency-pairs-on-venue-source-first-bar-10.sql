@@ -50,11 +50,27 @@ base AS (
 ),
 
 quiet AS (
+  -- The registry check is what makes the legend's "registered" claim TRUE. The
+  -- selected set is the raw picker expansion, and registry membership is
+  -- enforced only upstream in the pairs variable -- so a stale multi-selection
+  -- carried across a venue switch, or a value adopted from a URL, would
+  -- otherwise get a row asserting this venue carries a pair it does not. Before
+  -- the labelled arm existed such a value produced silently nothing; turning
+  -- that into a positive claim is what makes the check necessary rather than
+  -- decorative.
   SELECT s.product_id
   FROM selected AS s
-  WHERE NOT EXISTS (
-    SELECT 1 FROM bars AS b WHERE b.product_id = s.product_id
-  )
+  WHERE
+    EXISTS (
+      SELECT 1
+      FROM instrument_registry AS r
+      WHERE
+        r.source = ${venue_source:sqlstring}
+        AND r.product_id = s.product_id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM bars AS b WHERE b.product_id = s.product_id
+    )
 )
 
 SELECT

@@ -20,10 +20,22 @@
 -- the honest denominator -- the number of returns that survived the guard --
 -- and bars is the raw count it came from.
 --
--- THE WEEKDAY/WEEKEND SPLIT IS GONE. It decided nothing once the weekday-only
--- posture was ratified: the weekend series exists to be ignored, and splitting
--- every hour into two thin populations halved the sample size of the reading
--- that is actually used.
+-- THE WEEKDAY/WEEKEND SPLIT IS GONE, and be precise about what that costs,
+-- because the tempting phrasing ("the weekend series existed to be ignored") is
+-- only true while it IS a separate series. Removing the split does not drop
+-- those bars, it POOLS them: no session, weekday or volume predicate survives
+-- here, so post-close and weekend bars now enter the same per-hour populations
+-- as weekday bars, and nothing in the output distinguishes the mixture. That is
+-- load-bearing rather than theoretical -- a selectable venue was measured
+-- writing 163 contiguous post-close bars, all at volume 0 and none flat, which
+-- pass the adjacent-bucket guard and contribute indicative returns. The
+-- contamination concentrates in the hours around the Friday close and the
+-- Sunday open, which are the hours the guard note above says a reader most
+-- cares about. The split was ratified away because it decided nothing under a
+-- weekday-only posture while halving every hour's sample; the honest reading of
+-- the trade is that the panel is now a whole-week measurement. `volume` is the
+-- available discriminator if that ever needs fixing -- filed separately, and
+-- deliberately not done here.
 WITH bars AS (
   SELECT
     c.bucket_start,

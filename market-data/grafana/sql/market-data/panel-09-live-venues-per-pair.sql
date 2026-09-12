@@ -38,11 +38,24 @@
 -- a recency test answers that directly, fail-closed.
 --
 -- THE LONG TAIL IS CUT to the anchors plus any pair with a live tape, with the
--- remainder counted in a final row. Thirty pairs reading zeros with an empty
--- source list are thirty rows the reader must learn to ignore, which is the
+-- remainder counted in a final row. Those rows all read tape_live = 0, which on
+-- a non-anchor pair is thirty-odd rows the reader must learn to ignore -- the
 -- same defect that removed the constant dark column: a value that never varies
--- costs width and teaches the eye to skip the table. Source coverage above
--- already delivers by-name visibility for every thin-roster currency.
+-- costs width and teaches the eye to skip the table. Be precise about what the
+-- cut removes, because the obvious phrasing overstates it: a withheld pair may
+-- well have live sources (every crypto and peg leg does, since `trusted` can
+-- only ever be oanda), so the footer says "no live trusted tape" and not "no
+-- live source". Source coverage below delivers by-name visibility for every
+-- thin-roster currency, which is where a reader goes for those.
+--
+-- WHY `is_live` IS NOT CONJOINED WITH `fresh` in the three filters below. It
+-- would be dead: the view's bound is 48 to 72 hours and `fresh` is minutes, so
+-- `fresh` strictly implies `is_live` (confirmed against the store -- zero rows
+-- are fresh without being live). Carrying it anyway would only invite the
+-- reader to think this panel treats `is_live` as a quoting signal, which is
+-- exactly the reading the spec rules out. It IS load-bearing in
+-- stale_was_live, where the pair `is_live AND NOT fresh` is the transition
+-- bucket itself.
 --
 -- THE MVP ANCHORS ARE A LITERAL, which is deliberate. There is no legitimate
 -- state in which an MVP anchor is absent, so this panel has to be unable to
@@ -90,17 +103,23 @@ per_pair AS (
     g.product_id,
     EXISTS (SELECT 1 FROM anchor AS a WHERE a.product_id = g.product_id)
       AS is_anchor,
-    count(*) FILTER (WHERE g.is_live AND g.trusted AND g.fresh) AS tape_live,
+    count(*) FILTER (WHERE g.trusted AND g.fresh) AS tape_live,
     max(g.last_data_at) FILTER (WHERE g.trusted) AS tape_last_at,
+    -- One honest edge, visible rather than hidden: a daily reference counts
+    -- here for the freshness window after it publishes, so this column can
+    -- briefly read 1 on an FX pair whose only intraday tape is dead. That is
+    -- why it is context and never a criterion -- it can never reach tape_live,
+    -- so it can never clear the halt, which is what the ruling requires of a
+    -- daily reference. Read it against printing_now, which names the source.
     count(*) FILTER (
-      WHERE g.is_live AND NOT g.trusted AND g.fresh
+      WHERE NOT g.trusted AND g.fresh
     ) AS corroborating,
     -- Where an outage lands FIRST, which is not where it stays: past the class
     -- bound the source drops out of is_live entirely, so this counter rises
     -- and then falls back. It is a TRANSITION bucket, not a cumulative one.
     count(*) FILTER (WHERE g.is_live AND NOT g.fresh) AS stale_was_live,
     string_agg(g.source, ', ' ORDER BY g.source) FILTER (
-      WHERE g.is_live AND g.fresh
+      WHERE g.fresh
     ) AS printing_now
   FROM graded AS g
   GROUP BY g.product_id
@@ -128,7 +147,7 @@ FROM shown AS s
 UNION ALL
 SELECT
   1 AS sort_group,
-  w.n || ' further pairs withheld: no trusted tape and no live source'
+  w.n || ' further pairs withheld: no live trusted tape'
     AS product_id,
   NULL AS tape_live,
   NULL AS tape_age_secs,

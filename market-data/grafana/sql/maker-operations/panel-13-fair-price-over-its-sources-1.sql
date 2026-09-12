@@ -46,6 +46,10 @@ WHERE $__unixEpochFilter(ts)
   AND leg = 'fx'
   AND fused_value IS NOT NULL
 UNION ALL
+-- Note this arm alone does not filter its NULLs, unlike the two above. A NULL
+-- renders as the same gap either way, so the effect is only that a market whose
+-- fast median is NULL for a whole window keeps a legend entry where one with a
+-- NULL fair loses its series. Pre-existing, and left as-is.
 SELECT
   to_timestamp(ts) AS "time",
   market || ' fx consensus (fast)' AS metric,
