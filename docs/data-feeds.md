@@ -30,6 +30,8 @@
 
 <!-- cspell:word SDMX -->
 
+<!-- cspell:word fxpractice -->
+
 # Dropset Data Feeds — Ingestion Framework and Market-Data Collection
 
 Two things over one substrate. The **`feeds`** crate is a shared
@@ -1233,12 +1235,14 @@ and are absent from both the maker config and the seed. Because the two
 agree, wiring them is one coherent change rather than a reconciliation.
 
 So: wire those five, and treat **MYR and NGN as the roster's most
-exposed currencies**. They are the only two with no Pyth column at all,
+exposed currencies**. They are the only two with no Pyth column in the
+roster at all,
 so they depend on OANDA and Twelve Data alone — and note carefully that
 this is an upper bound, not a measurement: per-currency OANDA and Twelve
-Data coverage is verified only for AUD and EUR (§13), so MYR and NGN are
-*at best* two-source and could be one or zero. That is precisely why
-they are where a further source would buy the most.
+Data coverage is verified only for AUD, CAD and EUR ("MVP-pair
+redundancy, measured" below), so MYR and NGN are *at best* two-source and
+could be one or zero. That is precisely why they are where a further
+source would buy the most.
 
 **Corrected 2026-08-24 — the exposure is real but narrower, and it is
 NGN.** Measured directly against the already-wired Frankfurter source:
@@ -1283,9 +1287,11 @@ the maker may not quote a cross whose history nothing records.
 **The roster for AUD/USD quoting, stated outright**, since it is the
 pair this survey was opened on: **Pyth plus OANDA plus Twelve Data**,
 with Frankfurter as the daily reference and Alpha Vantage as daily
-corroboration. All three intraday sources are free, AUD is live on Pyth
-at a 1.39 bps half-width, and the only outstanding work is wiring the
-Pyth feed the maker config and the seed both lack.
+corroboration. Two of the three intraday sources are free and collecting;
+the third, Pyth, has been keyed since 2026-08-26 (above) and currently
+collects nothing for want of that credential. AUD is live on Pyth at a
+1.39 bps half-width, and the outstanding work is the credential plus
+wiring the Pyth feed the maker config and the seed both lack.
 
 **One caveat on independence, since the count invites more confidence
 than it earns.** Three vendors is not three uncorrelated looks at the
@@ -1295,6 +1301,197 @@ failure modes are correlated to a degree nothing here measures. Vendor
 diversity bounds *outage* and *decode* risk, which is most of what has
 actually gone wrong; it does not bound one bad interbank print
 propagating to all three alike.
+
+### MVP-pair redundancy, measured
+
+*Measured 2026-09-11/12 for the three MVP pairs only — EUR/USD, AUD/USD
+and CAD/USD — across every wired venue that could carry them. The other
+eleven roster currencies remain unmeasured on both intraday vendors and
+are tracked separately (§13).*
+
+Reproducing it needs no new tooling and no exported key: point a
+disposable Postgres at port 55432, apply this tree's migrations with
+`dropset-migrate`, then run each collector natively against it with
+`DATABASE_URL`, `PRODUCT_IDS` and `BACKFILL_DAYS=14`, exporting only
+`DROPSET_OP_VAULT` and `DROPSET_OP_ACCOUNT` so the §12 enclave resolves
+each credential through `op read`. Do **not** source the enclave file
+itself — it holds `op://` references, and the resolver refuses a
+reference arriving where a credential belongs.
+
+Two properties of the run travel with the numbers. The OANDA figures come
+from the **practice** host (`api-fxpractice.oanda.com`, this collector's
+compiled default — no `FX_BASE_URL` override was set), so they
+characterize practice pricing rather than a funded account's. And the
+Alpha Vantage row was collected **one pair per run**: its free tier
+silently served only one of three when all three started together,
+logging no warning, so a reader who sets `PRODUCT_IDS` to all three will
+get one pair and two apparently-empty rows.
+
+**The two legs are counted separately, because they are different
+questions.** A quotable fair price is FX × basis (`docs/market-making.md`),
+so a pair needs an FX leg *and* a basis leg. The wired venues do not all
+supply the same one: OANDA, Twelve Data, Alpha Vantage, er-api and
+Frankfurter price the FX leg (`EUR-USD`), while Coinbase and Kraken price
+the basis leg (`EURC-USDC`). Counting all seven against one pair
+overstates redundancy by conflating them.
+
+**Pyth is a wired third FX-leg source, and it is absent from this
+measurement because it cannot collect at all today.** All three MVP pairs
+sit in `pyth_fx_feeds` enabled, so the intraday count below would be
+three rather than two if the feed were running. It is not: Hermes went
+behind a bearer token on 2026-08-26 (above), `market-data/src/bin/pyth.rs`
+resolves `pyth/api-key` unconditionally at startup, and the §12 enclave
+carries no such entry — the collector exits before its first poll.
+Measured here by running it. So what follows is the redundancy *available
+now*, and every fallback statement below excludes Pyth for that reason
+rather than by oversight. Restoring it would raise every figure in this
+subsection, but that is a **commercial** question rather than a
+configuration one: the permanent free tier carries no API permissions, the
+advertised free key is a time-boxed trial, and FX access sits behind the
+paid tier. Hence parked dark rather than pending a config change, with the
+adapter kept so a future credential — or a self-hosted Hermes, once its
+credential is made optional (§8) — is a small change and not a rebuild.
+
+*The FX leg — intraday.* Both vendors quote all three pairs, over a
+14-day window at 60s granularity:
+
+| Source      | Pairs | Bars/pair | Intraday gaps, EUR / AUD / CAD | Fence    |
+| ----------- | ----- | --------- | ------------------------------ | -------- |
+| OANDA       | 3 / 3 | ~14,200   | 91 / 182 / 77                  | exact    |
+| Twelve Data | 3 / 3 | 20,162    | **0 / 0 / 0**                  | **none** |
+
+Both gap columns exclude the one weekend fence interior to the compared
+span, which is a closed market rather than a defect — count it and every
+row gains exactly one. Note the 14 days is the backfill *request*: the
+window spans two fences, but OANDA's series begins at the Sunday reopen
+after the first, so its bars cover about twelve days and only the second
+fence falls between two of its bars.
+
+That contrast is the substantive finding, and it is sharper than the
+zero-volume signal: OANDA is an **observed tape** — its bar count differs
+per pair (14,255 / 14,126 / 14,250) because a minute with no tick
+produces no bar, costing 137 / 266 / 142 missing minutes over ten session
+days — while Twelve Data is a **complete synthetic grid**, identical
+20,162 bars for every pair and not one intraday gap. Its first bar sits
+at the backfill start and its last at the poll second regardless of
+whether the market was open.
+
+So OANDA fences the FX week exactly: over this window its earliest bar is
+Sunday 21:04 UTC and its latest Friday 20:59 UTC, which is Sun 17:04 /
+Fri 16:59 ET to the minute, and it printed **nothing** across the
+weekend. Twelve Data printed **5,762 out-of-session bars per pair, 28.6%
+of its series**, and essentially all of those *moved* rather than
+repeating a stale close — by high > low, 99.9% on EUR-USD, 99.0% on
+AUD-USD and 98.2% on CAD-USD. This confirms the grid-source characterization
+above and settles what it prints after the close: not a re-print and not
+a later venue close, but a continuously moving indicative quote.
+
+**Volume does not discriminate the fenced state, and it is worth saying
+why the obvious reading fails.** Every Twelve Data bar carries zero
+volume — 20,162 of 20,162, in session and out alike — so an
+out-of-session bar is indistinguishable from an in-session one by that
+column. Zero volume identifies the *vendor* as indicative, never the
+*bar* as out-of-session. Bar-grid completeness is the discriminator;
+volume is a constant.
+
+*The FX leg — agreement.* On the ~14,200 minutes both vendors printed,
+in-session, the two are close enough to be interchangeable for quoting:
+
+| Pair    | Mean | p50  | p95  | p99  | Max  | > 20 pips |
+| ------- | ---- | ---- | ---- | ---- | ---- | --------- |
+| EUR-USD | 0.68 | 0.50 | 1.90 | 3.20 | 36.7 | 2         |
+| AUD-USD | 0.60 | 0.40 | 1.70 | 2.80 | 30.9 | 1         |
+| CAD-USD | 0.41 | 0.30 | 1.15 | 1.82 | 29.8 | 1         |
+
+All four disagreements above 20 pips land at **12:30 UTC on a Friday** —
+the 08:30 ET release slot — and in each one OANDA's own high-to-low
+travel *within that minute* (25–38 pips) is as large as the gap between
+the vendors. The vendors are not disagreeing; they sampled a violently
+moving minute at different instants. This independently corroborates §13's
+qualitative note that the 08:00 ET hour is the stored series' most
+volatile, and it relocates the risk: the release window is a
+widen-or-halt question about the market, not a redundancy question about
+the feeds.
+
+*The FX leg — daily, as a fallback.* Compared against OANDA's final
+in-session print, one observation each at retrieval time:
+
+| Source        | EUR-USD | AUD-USD | CAD-USD |
+| ------------- | ------- | ------- | ------- |
+| Alpha Vantage | 1.3     | 2.6     | 1.6     |
+| Frankfurter   | 7.2     | 2.0     | 7.4     |
+| er-api        | 18.6    | 0.7     | 24.8    |
+
+Read this as agreement-at-retrieval rather than accuracy: each source
+carries its own observation instant and the readings were taken ~3h after
+the close, so staleness and error are not separated, and one observation
+is not a distribution. It is still the quantity that matters for using
+them as a fallback, and it ranks them — **Alpha Vantage tightest on two of
+the three pairs; er-api loosest on those same two**. On AUD-USD the order
+inverts outright: er-api is the tightest of the three at 0.7 pips and
+Alpha Vantage the loosest at 2.6, which is precisely why one observation
+ranks a source and does not characterize it. That aside, the er-api
+reading corrects an assumption worth naming: it earns its slot on breadth
+(all 14 currencies, NGN included), but at 24.8 pips off on CAD-USD it is
+*by itself* the width of an MVP spread, so on this evidence it is a gross
+sanity check rather than a quoting input.
+
+Neither er-api's nor Frankfurter's refresh **cadence** was measured here:
+both write a single latest-observation row to `spot_ticks` and each was
+sampled once, so "daily" in this subsection is the tier's existing label
+from §9 above, not an interval this pass established.
+
+*The basis leg.* This is where the MVP is actually thin. Crypto venues
+trade continuously, so no session fence applies, and a gap is read here as
+a no-trade minute — the measurement cannot separate one from venue
+downtime or a fetch bound, and on the sparse book below that distinction
+is untested:
+
+| Token | Coinbase                      | Kraken (presence only)  | Sources |
+| ----- | ----------------------------- | ----------------------- | ------- |
+| EURC  | `EURC-USDC`, 89.6% of minutes | `EURC-USDC`, `EURC-USD` | 2       |
+| AUDD  | `AUDD-USDC`, **1.3%**         | absent                  | 1       |
+| CADC  | 404 — no such product         | absent                  | **0**   |
+
+Coinbase's `EURC-USDC` is healthy: 18,063 bars, longest gap eight minutes.
+`AUDD-USDC` is nearly dormant — 251 bars in 14 days, 230 gaps, a longest
+gap of **9.9 hours** and a p95 of 4.5 hours between trades. And CADC has
+no basis venue at all; Kraken's `QCAD-USD` is a **different** Canadian
+stablecoin, not a substitute for the token being quoted.
+
+**Kraken's column is presence, not cadence**, and the EURC count of two
+rests on that weaker evidence. Its wired collector polls the *ticker* and
+writes one latest-observation row per pair to `spot_ticks`, so it yields
+no bar series to measure gaps against; what is established is that Kraken
+quotes `EURC-USDC` and `EURC-USD` at all. Reading EURC as two-source
+therefore assumes Kraken's cadence is adequate rather than showing it.
+
+**The redundancy verdict, then, inverts where the risk was assumed to
+be.** The FX leg was the question this measurement was filed to answer,
+and it is the healthy leg:
+
+- **FX leg — survives one outage, not two.** Either intraday vendor
+  substitutes for the other at under 2 pips of drift 95% of the time.
+  Losing both leaves only the daily tier, since Pyth cannot collect today
+  (above). That tier is not uniformly unusable — Alpha Vantage sat 1.3 to
+  2.6 pips off the close, inside an MVP spread — but it is not a quoting
+  substitute either: its readings are point observations of unmeasured
+  cadence, taken here against a **closed** market, which is the most
+  flattering case a stale reading can get. The measured failure is
+  er-api's 24.8 pips on CAD-USD; the rest is an argument from cadence
+  rather than something this pass established.
+- **Basis leg — EURC survives one outage; AUDD survives none** and is
+  already marginal at a 4.5-hour p95 between trades; **CADC has nothing
+  to lose**, because it has nothing.
+
+So the two-source floor holds on the FX leg for all three MVP pairs and
+fails on the basis leg for two of them. What that implies for quoting —
+that a 20–30 pip EURC quote is well supported, an AUDD quote rests on a
+single sparse book, and a CADC quote has no basis input at all — is an
+inference from feed availability and agreement. **The maker was not
+exercised in this measurement**, so nothing here reports its behavior
+under an induced outage; that would need the bot run against a degraded
+roster.
 
 **Candidates probed and rejected**, recorded so the search is not
 repeated:
@@ -2317,17 +2514,43 @@ ______________________________________________________________________
   already wired, and the shortfall is five currency feeds left unwired
   rather than a missing vendor. What that resolution leaves open is one
   measurement, not a decision — **per-currency intraday coverage for
-  OANDA and Twelve Data across the roster** is verified only for AUD and
-  EUR. It needs one request per currency per vendor, and it is
-  **deferred rather than blocked**: the resolver in
-  `feeds/src/secrets.rs` reaches both keys today, given
-  `DROPSET_OP_VAULT` naming a vault and an authenticated `op`. What it
-  wants is an environment carrying that variable, which is a
-  session-launch concern and not a missing capability — the hosted
-  Secrets Manager backend is still pending, and nothing here waits on
-  it. Pyth's column of that matrix is measured and complete above; the
-  other two columns are the gap. Until they are filled, MYR and NGN are
-  the named at-risk currencies on the one column that could be measured.
+  OANDA and Twelve Data across the roster**.
+
+  **Partly measured 2026-09-11/12.** The three MVP pairs are done and
+  their result is in §9 "MVP-pair redundancy, measured": both vendors
+  quote EUR/USD, AUD/USD and CAD/USD intraday, they agree to under 2
+  pips at p95, and the two-source floor holds on the FX leg for all
+  three — two rather than three because Pyth, the wired third intraday
+  source, currently collects nothing for want of its credential (§9).
+
+  That pass also settled two things this note used to leave open.
+  OANDA serves CAD-USD (as `USD_CAD` inverted — its v20 list is
+  direction-fixed, which remains true and is why the inversion exists).
+  And the **blocker described here was never a capability gap and is now
+  simply gone**: the §12 enclave supplies the vault name and one `op://`
+  reference per credential, so exporting the two `DROPSET_OP_*`
+  coordinates lets the resolver fetch each key through `op read` — no key
+  is exported and no environment has to be rebuilt. Sourcing the enclave
+  is the one thing *not* to do: the resolver refuses a reference arriving
+  where a credential belongs, which is a guard rather than a limitation.
+
+  **Still open: the other 11 currencies.** BRL, CHF, GBP, IDR, JPY, MXN,
+  MYR, NGN, SGD, TRY and ZAR are unverified on both vendors, so the
+  upper-bound caveat in §9 stands for them unchanged. It is tracked as
+  its own post-validation issue rather than deferred inside this one, and
+  under the lean-MVP posture it is deliberately not on the critical path.
+  Pyth's column of that matrix is measured and complete above as
+  *published* coverage rather than as collected data — the feed itself
+  currently collects nothing (§9); MYR and
+  NGN remain the named at-risk currencies, and NGN the narrower exposure
+  of the two — per the 2026-08-24 correction in §9, which measured
+  Frankfurter as quoting MYR but not NGN.
+
+  **What the MVP pass found instead, which was not the question asked.**
+  Redundancy is thin on the *basis* leg, not the FX leg: AUDD has one
+  sparse book (a 4.5-hour p95 between trades) and CADC has no basis venue
+  at all. That is the live risk to a quotable MVP price, and it is a
+  roster-widening question rather than an FX-vendor one.
 
 - **Econ-calendar source.** *Resolved — the dataset is deferred, so
   there is no feed to choose (`docs/market-calendar.md`).* The question
