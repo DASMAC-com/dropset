@@ -50,8 +50,8 @@
 //! `every_shared_override_group_agrees` is what closes that.
 //!
 //! It reads the grouping off `variable_chain`'s outermost entry rather than off
-//! a declared group name, which is the one place this file derives a property
-//! instead of declaring it — because here the coupling is mechanical rather than
+//! a declared group name, which is the one place a *grouping* is derived rather
+//! than declared — because here the coupling is mechanical rather than
 //! a decision: two services keying off one variable *are* co-overridden,
 //! whatever anyone intended. Deriving it covers a future pair that shares its
 //! **outermost** variable without someone remembering to declare it, the same
@@ -63,8 +63,8 @@
 //! their *second* entry, each writes its own copy of that variable's default
 //! literal, and those two copies are **not** compared by anything here.
 //! Measured: widening `alphavantage`'s compose literal together with its own
-//! Rust constant, leaving `twelvedata` narrow, leaves all five tests in this
-//! file green. That residue is deliberately left alone rather than folded in,
+//! Rust constant, leaving `twelvedata` narrow, leaves every test in this file
+//! green. That residue is deliberately left alone rather than folded in,
 //! because it needs a *different* assertion — both those values are folded
 //! (`>-`) scalars, so byte-identity would fail on a re-fold that changed no
 //! roster, and set-equality plus `entry_count` is the right test there. Adding
@@ -456,7 +456,7 @@ fn every_variable_chain_matches_its_declaration() {
 /// or case difference between them is drift worth failing on, even though
 /// `parse_roster` normalizes it away at runtime. Only
 /// `every_rust_default_agrees_with_its_compose_default` compares normalized
-/// sets, and it does so because it spans two languages;
+/// sets for *equality*, and it does so because it spans two languages;
 /// `every_variable_chain_matches_its_declaration` already compares raw strings
 /// exactly, so exactness is the file's norm rather than this test's exception.
 ///
@@ -498,10 +498,13 @@ fn every_shared_override_group_agrees() {
     assert!(
         !shared.is_empty(),
         "no override variable is shared by more than one service, but the two \
-         coinbase legs both key off the bare `PRODUCT_IDS`. Either they were \
-         de-coupled onto their own variables, or one of them left `wirings()` \
-         — both deliberate. Re-point this test at whatever pair is now shared; \
-         delete it only if the grouping can never have a member again",
+         coinbase legs both key off the bare `PRODUCT_IDS`. Three ways to get \
+         here: they were de-coupled onto their own variables, one of them left \
+         `wirings()`, or the shared variable moved out of the outermost slot — \
+         and that last one leaves the coupling LIVE but outside this grouping, \
+         so see the bound in the module docs before believing this test is \
+         obsolete. Re-point it at whatever pair is now shared; delete it only \
+         if the grouping can never have a member again",
     );
     for (override_var, services) in shared {
         let mut rosters = services.iter().map(|service| {
