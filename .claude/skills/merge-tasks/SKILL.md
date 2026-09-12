@@ -22,12 +22,20 @@ milestone and folds the parked strays into **small themed
 batches** through this skill — so the `Claude:`-prefix decision
 and the size bound below are on the hot path rather than being
 edge cases. Two things that assembly expects of each survivor,
-and that a caller should pass rather than fix up afterwards: it
-goes to **Backlog, Urgent** (a promoted batch is meant to be
-pulled, unlike its parked inputs), and it carries **no blocking
-edge** — nothing serializes the batches at all now, neither a
-relation nor the retired assembly precondition. See the `plan`
-skill, step 1.
+and that a caller should pass rather than fix up afterwards:
+
+- It is filed **parked** — `Todo` plus `Claude meta`, like the
+  strays it was folded from — and only a batch the planning
+  session **promotes** is moved to **Backlog, Urgent**.
+  Assembling and promoting are different acts now that a
+  bootstrap produces several batches; filing every survivor
+  straight to Backlog/Urgent would flood the operator's Next
+  view with Urgent meta work.
+- It carries **no blocking edge** — nothing serializes the
+  batches at all now, neither a relation nor the retired
+  assembly precondition.
+
+See the `plan` skill, step 1.
 
 ## Input
 

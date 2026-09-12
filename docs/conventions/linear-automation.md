@@ -656,9 +656,10 @@ product code on the board.
 ### A meta filing is parked, and assimilated once a day
 
 Every `Claude:` filing lands **state `Todo` plus the `Claude meta`
-milestone, in the creating call** — parked, never Backlog. The batch
-issue an assembly produces is the sole exception, since it is the thing
-meant to be pulled.
+milestone, in the creating call** — parked, never Backlog. A **promoted**
+batch issue is the sole exception, since it is the thing meant to be
+pulled; an assembled batch that is not promoted stays parked like any
+other meta issue.
 
 **The motivating failure is structural, not cosmetic.** An automated
 filer may never place a blocking edge (see "Blocking relations"), so
@@ -671,12 +672,30 @@ touching none of the human-curated edge machinery.
 
 **The planning bootstrap is the single assimilation point.** Once a day
 it sweeps the milestone and folds the parked strays into **small themed
-batches** via `merge-tasks` — lowest number surviving in each, Backlog,
-Urgent, every finding's `**Fingerprint**:` line preserved, and each
-batch carrying **roughly 4–5 parts** rather than the whole pool (see
-"The `Claude:` meta class is size-bound too" above). One writer, one
-rhythm: `housekeeping`'s propose-merges-among-meta step is **retired**,
-so nothing else proposes meta merges.
+batches** via `merge-tasks` — lowest number surviving in each, every
+finding's `**Fingerprint**:` line preserved, and each batch carrying
+**roughly 4–5 parts** rather than the whole pool (see "The `Claude:`
+meta class is size-bound too" above). One writer, one rhythm:
+`housekeeping`'s propose-merges-among-meta step is **retired**, so
+nothing else proposes meta merges.
+
+**Assembling a batch and promoting it are now two different acts, and
+only the promoted one goes to Backlog.** Under the retired
+one-giant-batch form there was exactly one survivor, so "file it Backlog,
+Urgent" and "promote it" were the same step and the prose did not have to
+distinguish them. With several batches per bootstrap it does:
+
+- A batch the bootstrap **promotes** goes to **Backlog, Urgent**.
+- Every **other** batch stays **parked** — `Todo` plus `Claude meta`,
+  exactly like the strays it was folded from — and is promoted at a later
+  bootstrap by the ordinary two-halves act (clear the milestone **and**
+  move Todo → Backlog).
+
+Getting this wrong is not cosmetic: filing every survivor to
+Backlog/Urgent would restore the "seven strays unblocked in Next" failure
+the parking milestone exists to prevent, and would make the disjoint-set
+bound below unreachable — there would never be a remainder to leave
+parked.
 
 **The pool is the milestone PLUS any open, unpulled batch** — every
 open `Claude:`-prefixed Backlog issue that is not In Progress or In

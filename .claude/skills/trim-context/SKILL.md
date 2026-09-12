@@ -325,19 +325,20 @@ is what keeps later dedup matching each lever individually, and it is now
 also what lets a pool be split across tasks without losing a lever's
 identity.
 
-**4. File the aggregated task, propose-only.** The fold's output is one
-**parked** `Claude:` task. A trim lever always edits a
-skill or convention doc, so the task is meta-work — prepend the
+**4. File the aggregated task(s), propose-only.** The fold's output is
+**one parked `Claude:` task per theme** — one task for a small pool,
+several for a large one, per step 3. A trim lever always edits a
+skill or convention doc, so each task is meta-work — prepend the
 **`Claude:`** prefix to its title, per `CLAUDE.md` → "Claude: meta-work
 prefix".
 
-**It parks rather than going to Backlog:** state **`Todo` plus the
+**They park rather than going to Backlog:** state **`Todo` plus the
 `Claude meta` milestone**, in the creating call. The next planning
-bootstrap sweeps that milestone and consumes this task as a part of its
-batch, so it reaches a session that way rather than by sitting unblocked
-in the operator's Next view. The `Trim levers` milestone, this skill's
-own writer, and the per-lever fold below are all unchanged — only where
-the *output* lands moved.
+bootstrap sweeps that milestone and consumes each task as a part of one
+of its batches, so they reach a session that way rather than by sitting
+unblocked in the operator's Next view. The `Trim levers` milestone, this
+skill's own writer, and the per-lever fold below are all unchanged — only
+where the *output* lands moved, and how many outputs there are.
 
 **Compose the body with the tool, not by hand:**
 
@@ -352,10 +353,13 @@ zero-echo trade as the fetch half. `--exclude ENG-1,ENG-2` drops levers
 already folded; `--start N` continues the numbering when a batch is
 composed in halves (the summary prints the next part number).
 
-**Why this is a tool.** Under the whole-pool ruling a fold carries the
-entire parked pool — one pass folded **41 levers, 101,798 chars** — so
-re-authoring by hand stopped being sensible and that pass wrote a
-throwaway script instead. Two of the rules it encodes are easy to get
+**Why this is a tool.** Under the **now-retired** whole-pool ruling a
+fold carried the entire parked pool — one pass folded **41 levers,
+101,798 chars** — so re-authoring by hand stopped being sensible and
+that pass wrote a throwaway script instead. The size bound in step 3
+shrinks each individual task but not the case for the tool: the same
+pool is still folded, now across several tasks. Two of the rules it
+encodes are easy to get
 wrong by hand and silently damaging when missed, which is exactly the
 kind of thing that belongs in committed code rather than in prose:
 

@@ -158,8 +158,11 @@ filed between folds used to land unblocked in Backlog and clutter the
 operator's "Next" view until a planning bootstrap swept it (one
 bootstrap found seven). A milestone hides it by construction and
 touches none of the human-curated edge machinery. The one thing that
-does **not** get parked is the assembled **batch issue** itself, which
-is the thing meant to be pulled.
+does **not** get parked is a **promoted** batch issue, which is the
+thing meant to be pulled — an assembled batch the bootstrap does not
+promote stays parked like any other meta issue (`Todo` plus
+`Claude meta`), and promoting it later is the same two-halves act as any
+other promotion: clear the milestone **and** move Todo → Backlog.
 
 **The planning bootstrap is the single assimilation point** — once a
 day it sweeps the milestone **plus any open, unpulled batch** (every

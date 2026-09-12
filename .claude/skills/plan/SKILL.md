@@ -247,13 +247,25 @@ lands **parked** (state `Todo` plus the `Claude meta`
 milestone), so that milestone is the bulk of the pool. Group
 its issues by theme — the skill or convention surface each one
 changes — and fold every group into its own lowest-numbered
-survivor via `/merge-tasks`, putting each survivor in
+survivor via `/merge-tasks`. Each survivor is filed **parked**
+(`Todo` plus `Claude meta`), exactly like the strays it was
+folded from; only the ones you then **promote** go to
 **Backlog, Urgent**. Routine bookkeeping; it does **not** need
 a per-fold proposal.
 
-**Each batch carries roughly 4–5 parts, never the whole pool**
-(operator rule, 2026-09-11, superseding the one-giant-batch
-form). Session cost is roughly **quadratic in session length**,
+**Assembling and promoting are two different acts** — under
+the retired one-giant-batch form there was exactly one
+survivor, so filing it Backlog/Urgent and promoting it were
+the same step. With several batches they are not, and filing
+them all Backlog/Urgent would flood Next with Urgent meta work
+and leave no remainder to park, making the disjoint-set bound
+below unreachable.
+
+**Each batch carries roughly 4–5 parts** (operator rule,
+2026-09-11, superseding the one-giant-batch form) — a pool of
+five or fewer parts is still **one** batch, while a pool of
+fifteen is three, not one. Session cost is roughly
+**quadratic in session length**,
 so a batch sized to a short session is the cheapest unit this
 board can hand out — the measurement, and the $155–198 versus
 $455 modeling behind it, is in
@@ -261,6 +273,18 @@ $455 modeling behind it, is in
 itself a cost lever". The ENG-1194 batch is the counterexample
 to cite: the whole parked pool in one issue, worked in a
 19-hour, \$409 run.
+
+**Cross-check each batch against the line band.** The same
+convention gives a target of **300–800 changed lines** per PR,
+a floor around **150**, and a split trigger at **1,000**. The
+parts count is the primary bound and the band is a cross-check
+on it: a batch whose parts plainly come to far under the floor
+is a signal you could fold another part **of the same theme**
+in — never a reason to add an unrelated one, since the
+coherence floor still binds, and never a reason to pad. Detail,
+including which rule yields when the two disagree:
+`docs/conventions/context-economy.md` → "Which one yields in
+the interim".
 
 **Promote only a FILE-DISJOINT set — that is the bound, not a
 count.** Several meta batches may now be worked in parallel,
