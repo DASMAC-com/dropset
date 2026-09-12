@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog, except a meta-flavored finding, which is promoted by swapping its milestone to `Claude meta` and stays parked), the parked `Claude meta` milestone — plus any open unpulled batch — swept and folded by default at bootstrap into small themed batches of roughly 4–5 parts each rather than one giant batch, none of them carrying a blocking edge and none of them gated on another meta issue being in flight (several short sessions beat one long one by enough that file contention is worth paying as an occasional rebase) — and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `plan`), never in a worktree.
+description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog, except a meta-flavored finding, which is promoted by swapping its milestone to `Claude meta` and stays parked), the parked `Claude meta` milestone — plus any open unpulled batch — swept and folded by default at bootstrap into small themed batches of roughly 4–5 parts each rather than one giant batch, none of them carrying a blocking edge and none of them gated on another meta issue being in flight (several short sessions beat one long one by enough that file contention is worth paying as an occasional rebase), promoted only as a file-disjoint set judged on the same collision clusters product work is judged on — and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `plan`), never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -262,13 +262,27 @@ itself a cost lever". The ENG-1194 batch is the counterexample
 to cite: the whole parked pool in one issue, worked in a
 19-hour, \$409 run.
 
-Promote the batches the operator actually wants pulled —
-normally one or two per bootstrap — and leave the rest parked
-under the milestone for the next rhythm. That is what keeps
-Next from filling with Urgent meta work (every unblocked meta
-issue is Urgent, per the rule below) while still never gating
-on an edge. Which ones go is a scheduling judgement this
-session already makes; say the parked remainder out loud.
+**Promote only a FILE-DISJOINT set — that is the bound, not a
+count.** Several meta batches may now be worked in parallel,
+so a promoted set is only useful if its members can be worked
+**simultaneously**, which means they must not collide on
+files. Use the same procedure the parked audit findings
+already get (see "Select a parallelizable batch, using the
+collision clusters" below): promote a set whose members appear
+in **no common cluster**, and where two batches would rewrite
+the same skill, promote one and leave the other parked for the
+next rhythm. **Meta loses its special case here rather than
+gaining a new one** — it is judged on collision clusters
+exactly as product work is.
+
+That normally works out to one or two batches per bootstrap,
+but read the count as a **consequence** of the disjoint-set
+requirement plus queue hygiene, never as the rule. A bare count is the wrong
+bound: it would license promoting two batches that rewrite the
+same skill, which is the one failure the retired
+one-at-a-time invariant actually prevented. Leave the
+remainder parked under the milestone, and say the parked count
+out loud.
 
 **The pool also includes any open, UNPULLED batch — that
 clause is load-bearing.** Sweep the milestone **plus** every
@@ -321,8 +335,9 @@ count out loud either way.
 
 What the retirement does cost is the "exactly one meta issue
 unblocked in Next" property, now deliberately gone rather than
-accidentally broken. The bound on Next comes from **how many
-batches you promote** (above), not from a state check.
+accidentally broken. The bound on Next comes from **promoting
+only a file-disjoint set** (above) — not from a state check,
+and not from a count.
 
 **Append to the batch through the zero-echo writer, never
 `save_issue`.** The batch is an **accumulator** by design, and
@@ -498,10 +513,11 @@ whole reason the vocabulary is worth writing down:
   itself a cost lever" — that the file contention they create
   is worth paying as an occasional **rebase**.
 
-  What still bounds Next is how many batches this session
-  chooses to **promote**, the remainder staying parked under
-  the milestone. That is a scheduling judgement, not a state
-  check.
+  What still bounds Next is that this session promotes only a
+  **file-disjoint** set — the same collision-cluster procedure
+  the parked audit findings get — with the remainder staying
+  parked under the milestone. The disjoint-set requirement is
+  the bound; the resulting count is only its consequence.
 
   So there is **no standing exception left** to the
   proposal-per-edge rule. Each shape removed relations rather

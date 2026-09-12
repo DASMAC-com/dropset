@@ -164,14 +164,16 @@ is the thing meant to be pulled.
 **The planning bootstrap is the single assimilation point** — once a
 day it sweeps the milestone **plus any open, unpulled batch** (every
 open `Claude:`-prefixed Backlog issue not In Progress or In Review) and
-folds them into **small themed batches of roughly 4–5 parts each**, of
-which it promotes the one or two meant to be pulled and leaves the rest
-parked. **It no longer gates on a meta issue being in flight** (operator
-rule, 2026-09-11, retiring both the one-giant-batch form and the
+folds them into **small themed batches of roughly 4–5 parts each**, and
+promotes a **file-disjoint** subset of them, leaving the rest parked.
+**It no longer gates on a meta issue being in flight** (operator rule,
+2026-09-11, retiring both the one-giant-batch form and the
 precondition): several short meta sessions beat one long one by enough
 that the file contention they create is worth paying as an occasional
-**rebase**, and how many batches get promoted — not a state check — is
-what bounds the Next view. Assembly consumes the pool *as of
+**rebase**. What bounds the Next view is that disjoint-set test — judged
+on collision clusters exactly as product work is, so meta loses its
+special case rather than gaining a new one — never a state check and
+never a bare count. Assembly consumes the pool *as of
 bootstrap*; a stray filed afterwards waits for the next one rather than
 joining a batch mid-flight. `housekeeping`'s propose-merges-among-meta
 step is **retired** — one writer, one rhythm.

@@ -705,17 +705,21 @@ This does not reintroduce an edge — it removes the last thing standing
 in for one. The precondition existed to make the retired "wait for the
 one in flight" edge true by construction, and with serialization itself
 abandoned there is nothing left for either of them to encode. What
-bounds the operator's Next view instead is **how many batches the
-planning session promotes** — normally one or two, the remainder left
-parked under the milestone — a scheduling judgement rather than a state
-check.
+bounds the operator's Next view instead is that the planning session
+promotes only a **file-disjoint** set — judged on the same collision
+clusters product work is judged on, so meta **loses** its special case
+rather than gaining a new one — with the remainder left parked under the
+milestone. That normally works out to one or two batches, but being
+disjoint is the bound and the count is only its consequence: a bare
+count would license promoting two batches that rewrite the same skill,
+which is the one failure the retired invariant actually prevented.
 
 State one consequence plainly, since it used to be an invariant:
 **"exactly one meta issue unblocked in Next" no longer holds**, and that
 is intended rather than a regression. Every unblocked meta issue is
 still Urgent, so promoting many at once would crowd product work off the
-top of the queue — which is exactly why promotion stays bounded by
-judgement at assembly time.
+top of the queue — which is exactly why promotion stays bounded by the
+disjoint-set test above.
 
 **Assembly consumes the pool as of bootstrap.** A stray filed after an
 assembly waits for the next one rather than joining a batch already
