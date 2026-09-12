@@ -17,16 +17,17 @@
 //!
 //! One `rerun-if-changed` on the directory is the whole fix. Cargo takes the
 //! **newest mtime** under a watched directory, so a migration **appearing**
-//! counts as a change — which is the case that matters here, and the one a
-//! per-file list could not cover, since the files it would need to name are
-//! exactly the ones that do not exist yet.
+//! counts as a change — as does one being removed, which bumps the directory's
+//! own mtime. Appearance is the case that matters here, and the one a per-file
+//! list could not cover, since the files it would need to name are exactly the
+//! ones that do not exist yet.
 
 /// The embedded history's source of truth, watched as a whole.
 ///
 /// Names the same directory as the literal `sqlx::migrate!` is given in
 /// `src/lib.rs` (`"./migrations"`); the two have to resolve to one directory
-/// for the invalidation to cover the embed. Both are relative to
-/// `CARGO_MANIFEST_DIR`, which is what makes the two spellings equivalent.
+/// for the invalidation to cover the embed. Both are relative to the package
+/// root, which is what makes the two spellings equivalent.
 const MIGRATIONS_DIR: &str = "migrations";
 
 fn main() {
