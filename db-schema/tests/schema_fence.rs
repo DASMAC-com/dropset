@@ -1381,10 +1381,37 @@ fn staging_dir(tag: &str) -> std::path::PathBuf {
 /// hide the ordering behavior behind an unrelated error.
 async fn migrator_over(dir: &std::path::Path, versions: &[i64]) -> sqlx::migrate::Migrator {
     fs::create_dir_all(dir).unwrap_or_else(|e| panic!("create {}: {e}", dir.display()));
+    for (version, path) in migration_sql_files() {
+        if !versions.contains(&version) {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("migration filename is UTF-8");
+        fs::copy(&path, dir.join(name)).unwrap_or_else(|e| panic!("stage `{name}`: {e}"));
+    }
+    sqlx::migrate::Migrator::new(dir)
+        .await
+        .expect("resolve the staged migrations")
+}
+
+/// Every `<version>_<name>.sql` in the migrations directory, keyed by version.
+///
+/// Read from the **directory**, deliberately not from `MIGRATOR`. The embed is
+/// produced by `sqlx::migrate!`, a proc macro that reads `./migrations` at
+/// expansion time and contributes nothing to cargo's dependency graph — so a
+/// build that saw no `.rs` change can reuse a cached `MIGRATOR` describing a
+/// previous tree. Deriving the history here from the same place the staging copy
+/// comes from keeps the two halves of this test consistent with each other under
+/// that condition, rather than failing on a stale version list.
+///
+/// Only the `.sql` files: the `.fence` manifests beside them are this repo's own
+/// convention, not something sqlx's resolver knows about.
+fn migration_sql_files() -> BTreeMap<i64, std::path::PathBuf> {
+    let mut found = BTreeMap::new();
     for entry in fs::read_dir(MIGRATIONS_DIR).expect("read migrations dir") {
         let path = entry.expect("read dir entry").path();
-        // Only the `.sql` files: the `.fence` manifests beside them are this
-        // repo's own convention, not something sqlx's resolver knows about.
         if path.extension().and_then(|e| e.to_str()) != Some("sql") {
             continue;
         }
@@ -1397,14 +1424,12 @@ async fn migrator_over(dir: &std::path::Path, versions: &[i64]) -> sqlx::migrate
             .split_once('_')
             .and_then(|(v, _)| v.parse().ok())
             .unwrap_or_else(|| panic!("`{name}` needs an integer version prefix"));
-        if !versions.contains(&version) {
-            continue;
-        }
-        fs::copy(&path, dir.join(&name)).unwrap_or_else(|e| panic!("stage `{name}`: {e}"));
+        assert!(
+            found.insert(version, path).is_none(),
+            "two migrations claim version {version} (`{name}`)"
+        );
     }
-    sqlx::migrate::Migrator::new(dir)
-        .await
-        .expect("resolve the staged migrations")
+    found
 }
 
 /// Every successfully-applied version, in order.
@@ -1439,14 +1464,38 @@ async fn migrate_fills_a_gap_beneath_an_already_applied_version() {
     // it. This is the step nobody could run against shared dev until it was
     // known whether the runner tolerates it.
     let full_dir = staging_dir("full");
-    let every_version: Vec<i64> = MIGRATOR.iter().map(|m| m.version).collect();
+    let every_version: Vec<i64> = migration_sql_files().into_keys().collect();
+
+    // The out-of-order condition, asserted rather than assumed. Without this the
+    // test passes **vacuously** whenever the staged set happens to be
+    // contiguous: phase 1's check above is satisfied either way, phase 2 then has
+    // nothing pending, and a green run would license the very apply this is meant
+    // to gate. That is the same trap as verifying on a container that applies the
+    // full set in numeric order — it never reaches the state under test.
+    let highest_applied = *OUT_OF_ORDER_APPLIED
+        .iter()
+        .max()
+        .expect("the staged set is non-empty");
+    let gap: Vec<i64> = every_version
+        .iter()
+        .copied()
+        .filter(|v| *v < highest_applied && !OUT_OF_ORDER_APPLIED.contains(v))
+        .collect();
+    assert!(
+        !gap.is_empty(),
+        "nothing is pending beneath the applied {highest_applied}, so this run \
+         would not exercise an out-of-order apply at all"
+    );
+
     let full = migrator_over(&full_dir, &every_version).await;
     let outcome = full.run(&pool).await;
 
     fs::remove_dir_all(&partial_dir).ok();
     fs::remove_dir_all(&full_dir).ok();
 
-    outcome.expect("apply the two migrations beneath an already-applied 13");
+    outcome.unwrap_or_else(|e| {
+        panic!("applying {gap:?} beneath an already-applied {highest_applied}: {e}")
+    });
     assert_eq!(
         applied_versions(&pool).await,
         every_version,
