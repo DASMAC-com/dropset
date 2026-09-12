@@ -79,6 +79,19 @@ that contention was the original argument for one batch at a time, and
 it is now explicitly outweighed. It changes nothing about blocking
 edges themselves — no automated writer places one, as ever.
 
+**Measure this in DOLLARS.** Cost is the headline number here — not
+token counts, not turn counts. A token figure has to be converted before
+it means anything, and the conversion is exactly where the argument gets
+lost; every figure above is quoted as spend for that reason. (Reporting
+prefix growth and turn counts *alongside* the dollar figure is staged
+separately as ENG-1364 — cite it, don't build it here.)
+
+**The enforcement loop is that every session states its own cost at
+close.** A ceiling nobody measures is a preference. A session that
+reports its own spend makes the ceiling checkable, and makes a long
+session visible while it is still running rather than in a mining pass
+weeks later.
+
 ### The ratified cost posture
 
 Two rulings resting on the same measurement, recorded here so they are

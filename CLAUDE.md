@@ -386,9 +386,11 @@ prefix grew ~30K → ~900K over 1,351 requests, cache reads $371 of $455;
 the same work as 3–5 short sessions models at \$155–198). So **stage work
 so a session stays short** — on the order of 4–5 levers or findings per
 PR — and prefer an occasional **rebase** to a serial chain. This binds
-at *breakdown* time, the only place it can. Two standing rulings ride
-with it: **Sonnet-tier task workers are rejected**, and the Bedrock
-auto-mode classifier's ~7% overhead is **accepted burn**.
+at *breakdown* time, the only place it can. The metric is **dollars**,
+not tokens or turns, and the enforcement loop is that **every session
+states its own cost at close**. Two standing rulings ride with it:
+**Sonnet-tier task workers are rejected**, and the Bedrock auto-mode
+classifier's ~7% overhead is **accepted burn**.
 
 Per call, request the narrowest thing that
 answers the question, read large files by slice (Grep then `Read` with
