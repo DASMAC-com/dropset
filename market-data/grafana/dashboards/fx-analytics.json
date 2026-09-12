@@ -20,7 +20,7 @@
       }
     ]
   },
-  "description": "Raw collected series first, then the regime analytics derived from them. Read it top-down: is there data for this venue and product, what does the store hold across every venue, what does the data say about volatility by hour, and how does this currency's whole pair set compare. The candlestick and the vol panel read one product at a time; the cross-pair traversal deliberately reads the whole currency at once.",
+  "description": "Raw collected series first, then the regime analytics derived from them. Read it top-down: is there data for this venue and product, what does the store hold across every venue, what does the data say about volatility by hour, and how does this currency's whole pair set compare. The candlestick and the vol panel read one product at a time; the cross-pair index deliberately reads the whole currency at once.",
   "editable": true,
   "graphTooltip": 1,
   "links": [
@@ -601,7 +601,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
-        "description": "The venue whose collected series is being shown. Single-select: the candlestick and the vol panel each read one venue and product at a time, and the cross-pair traversal reads one venue across many pairs, so two vendors carrying the same pair never draw duplicate lines.",
+        "description": "The venue whose collected series is being shown. Single-select: the candlestick and the vol panel each read one venue and product at a time, and the cross-pair index reads one venue across many pairs, so two vendors carrying the same pair never draw duplicate lines.",
         "includeAll": false,
         "label": "Venue source",
         "multi": false,
@@ -759,12 +759,12 @@
           "text": "15",
           "value": "15"
         },
-        "description": "The coverage table's window, in minutes. Independent of the dashboard time range on purpose: 'what is arriving now' should not change when you pan back to look at history.",
+        "description": "The coverage table's window, in minutes. Independent of the dashboard time range on purpose: 'what is arriving now' should not change when you pan back to look at history. URL sync is off, like the freshness bound's: a window silently adopted from a shared or stale link fails in the OPEN direction, because a wide window keeps counting buckets for a source that stopped hours ago and so reads as if it were still arriving.",
         "label": "Coverage window (min)",
         "name": "coverage_mins",
         "options": [],
         "query": "5,15,60,360,1440",
-        "skipUrlSync": false,
+        "skipUrlSync": true,
         "type": "custom"
       }
     ]

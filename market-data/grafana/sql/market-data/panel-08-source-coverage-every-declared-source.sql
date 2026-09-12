@@ -11,8 +11,9 @@
 -- registry inverts that, and a dark collector becomes a row reading 0 rather
 -- than a row that is not there.
 --
--- THE ROSTER IS A DECLARED LITERAL, so this table has a FIXED height: eight
--- rows, always, one per source the platform is meant to have. A registry-only
+-- THE ROSTER IS A DECLARED LITERAL, so this table has a FLOOR of eight rows,
+-- one per source the platform is meant to have -- and a ninth appears if the
+-- registry ever holds a source nobody declared, which is the loud case below. A registry-only
 -- read cannot promise that, because a source leaves the registry when its
 -- collector stops registering -- exactly the invisible-rather-than-dark defect
 -- one level up that this panel exists to catch. The full join is what makes it
@@ -80,6 +81,19 @@ SELECT
   (extract(epoch FROM now()) - r.latest)::bigint AS age_secs
 FROM rolled AS r
 FULL JOIN declared AS d ON r.source = d.source
+-- ORDERED BY ROLE RANK, not alphabetically. Alphabetical put the three daily
+-- references at the TOP -- and they read 0 under printing_now between
+-- publications, so the first three rows of the table were permanently red while
+-- the designated tape sat near the bottom. That is precisely the
+-- teach-the-eye-to-skip-the-table defect cited twice above. An undeclared source
+-- ranks first because it is the one thing here nobody has accounted for.
 ORDER BY
-  coalesce(d.role, 'UNCLASSIFIED') ASC,
+  CASE coalesce(d.role, 'UNCLASSIFIED')
+    WHEN 'UNCLASSIFIED' THEN 0
+    WHEN 'tape (FX)' THEN 1
+    WHEN 'intraday margin (FX)' THEN 2
+    WHEN 'tape (crypto/peg)' THEN 3
+    WHEN 'daily reference' THEN 4
+    ELSE 5
+  END ASC,
   coalesce(r.source, d.source) ASC

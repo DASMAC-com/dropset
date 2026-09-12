@@ -28,8 +28,8 @@
 -- daily collector is 86400 seconds old whenever it is perfectly healthy, so the
 -- same absolute bound painted four alphavantage rows permanently red. Orange
 -- at 3 and red at 5 carries the 300s bound over to a 60s source -- within the
--- rounding, which is one decimal, so red actually trips at 297.5s rather than
--- at 300s exactly -- while reading correctly for a daily one.
+-- rounding, which is one decimal, so red actually trips at 297s rather than at
+-- 300s exactly -- while reading correctly for a daily one.
 WITH expected AS (
   SELECT
     r.source,

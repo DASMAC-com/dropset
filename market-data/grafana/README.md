@@ -251,8 +251,9 @@ beside it is context for diagnosing why.
   at the Friday close by design. Measured: OANDA's last candle lands at
   Friday 16:59 ET, the FX week-close boundary, so from Friday evening to
   Sunday every FX pair reads no-go and that is *correct* rather than an
-  incident. The weekend annotation on the time-series panels is the
-  context for it.
+  incident. Note this dashboard carries **no** weekend annotation — the
+  one on the FX analytics time-series panels is on the other tree — so
+  the tape-age column is the whole of the context here.
 - **The long tail is withheld**, counted in a final row. Pairs with no
   trusted tape and no live source were thirty-odd rows of zeros whose
   only effect was to teach the eye to skip the table.
@@ -275,10 +276,12 @@ They look redundant and are not, which matters most on first contact.
 - **Tick coverage** is the same recency reading one tier over, for the
   venues printing into the tick table. It stays windowed, so a source
   that published nothing inside the window has no row here at all.
-- **Source coverage** accounts for every declared source **by name**,
-  eight rows always, whatever any of them has done — so it is the one to
-  read for an *absence*. It carries no age of its own: read *Printing
-  now* and not *Covered*, because the latter is a 48-to-72-hour class
+- **Source coverage** accounts for every declared source **by name** —
+  at least eight rows, whatever any of them has done, plus a ninth if the
+  registry ever holds a source nobody declared — so it is the one to read
+  for an *absence*. It carries a raw age but no cadence-relative one, so
+  read *Printing now* and not *Covered*, because the latter is a
+  48-to-72-hour class
   bound that answers "should this be producing at all" and tolerates an
   FX weekend, and it was measured reading true at 24.6 hours old.
 
@@ -290,7 +293,7 @@ tuned for 60s bars marks a healthy daily reference permanently red.
 Dividing by the series' own expected interval makes one bound correct
 for both: the 300-second store-silence bound is five commits for a 60s
 poller, which is where the bounds are pinned (to within the
-one-decimal rounding, which trips red at 297.5s).
+one-decimal rounding, which trips red at 297s).
 
 **Wall-clock and data recency deliberately disagree in two states**, and
 both are confusing to walk into:

@@ -17,7 +17,9 @@
 -- cleaner as an outage lengthened and an outage removed ink instead of adding
 -- it. Two zero rows per expected source cost nothing, guarantee the series
 -- exists, and let the time-group fill draw it flat across the range: a dead
--- collector is now a line pinned at zero.
+-- collector is now a line pinned at zero. The panel draws unstacked LINES for
+-- that last clause to be true -- a stacked bar of height zero renders nothing,
+-- which would have left the seeded series visible only in the legend.
 --
 -- EXPECTED MEANS "HAS EVER WRITTEN THIS SHAPE", deliberately not "is in the
 -- registry". All-time history cannot be suppressed by an outage of any
