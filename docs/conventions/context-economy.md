@@ -62,6 +62,44 @@ itself, so the decision belongs to whoever splits the work. The fold
 rules in `docs/conventions/linear-automation.md` and the `plan`,
 `merge-tasks` and `trim-context` skills are where it is implemented.
 
+**The line band: target 300–800 changed lines per PR.** Measured across
+the fleet on 2026-09-11 — per-session cost at verified Bedrock rates,
+joined to merged-PR line counts — cost per changed line is a **U-curve,
+not a downward slope**:
+
+| changed lines | cost per line   | session total |
+| ------------- | --------------- | ------------- |
+| 34            | 115 cents       | \$39          |
+| 139–326       | ~30 cents       | —             |
+| 472–688       | **13–15 cents** | $68–$140      |
+| 2,408         | —               | \$367         |
+| 6,656         | —               | \$450         |
+
+So **smaller is not monotonically cheaper**, which is the half of this
+section most easily over-applied. There is a per-PR overhead floor of
+roughly **\$40** — bootstrap, the review fan-out, CI, the closing
+handoffs — and a 34-line PR pays it in full, which is why it works out
+at about a dollar a line. The efficiency bottom sits at **472–688
+lines**. Note also that the two largest rows were driven by session
+**length** (three days, and 19 hours) rather than by line bulk, which is
+the whole argument of this section restated from the data.
+
+The operative numbers:
+
+- **Target 300–800** changed lines per PR.
+- **Floor around 150**, unless the change is trivially mechanical.
+  Below that the fixed overhead dominates and the work should have been
+  batched with something adjacent.
+- **1,000 changed lines is the split trigger.**
+
+**Lines are a PROXY, and it matters which way the proxy fails.** The
+billed driver is **turns replaying the cached prefix**, not line count —
+a 300-line change argued over for six hours costs more than an 800-line
+mechanical one. So the 4-to-5-findings rule and the line band are two
+views of a single limit rather than two independent rules, and when they
+disagree the **cost report** (ENG-1364) is the ground truth that
+supersedes both.
+
 **Coherence still binds; it just no longer implies one issue.** The
 fewest-coherent-PRs rule still keeps a set that must land together from
 being scattered — but a coherent set larger than a short session
