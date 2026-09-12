@@ -587,11 +587,17 @@ claim is held by
 history over the top.
 
 Worth stating because the opposite is easy to assume, and assuming it
-converts a non-event into a hold on every deploy. What the runner does
-*not* tolerate is a checksum that no longer matches what was applied, or
-— unless `ignore_missing` is set — an applied migration absent from the
-binary's own history. Only the checksum case is unrecoverable, which is
-why a migration *number* is worth claiming before the file is written
+converts a non-event into a hold on every deploy.
+
+Two further limits, from **sqlx's documented behavior rather than from
+anything measured here** — the test above covers neither, so do not read
+its citation as extending to them. The runner does *not* tolerate a
+checksum that no longer matches what was applied, nor — unless
+`ignore_missing` is set — an applied migration absent from the binary's
+own history. Of those two the checksum case is the one with no clean
+remedy: the bytes can always be restored to what was applied, but a
+*correction* to a shipped migration can never be, which is why a
+migration *number* is worth claiming before the file is written
 (`.claude/tools/migration_collisions.py`) even though a gap beneath one
 costs nothing.
 

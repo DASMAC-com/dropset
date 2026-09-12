@@ -97,12 +97,14 @@ class Summary(unittest.TestCase):
         self_branch="feature",
         self_prs=(),
         next_free=14,
+        self_branch_explicit=False,
     ):
         return {
             "mine": mine,
             "mine_numbers": numbers,
             "prs_checked": prs,
             "self_branch": self_branch,
+            "self_branch_explicit": self_branch_explicit,
             "self_prs": list(self_prs),
             "collisions": found,
             "next_free_number": next_free,
@@ -259,22 +261,75 @@ class OthersFromGh(unittest.TestCase):
                         "README.md",
                     ],
                     "headRefName": "eng-351",
+                    "isCrossRepository": None,
                 }
             ],
         )
 
-    def test_the_head_ref_is_requested_from_gh(self):
+    def test_the_json_field_list_requests_what_the_compare_reads(self):
         # Self-exclusion is matched on the branch, so the field has to be in the
         # --json list. Without it every entry's headRefName is None, nothing is
         # ever excluded, and the fail-closed bug is silently back.
-        self.assertIn("headRefName", " ".join(mc.GH_OPEN_PRS))
+        #
+        # Asserted against the element **following** `--json`, not against the
+        # joined argv: a substring match over the whole command line also passes
+        # when the token has drifted into a separate element, which `gh` would
+        # either reject or silently not return the field for.
+        argv = list(mc.GH_OPEN_PRS)
+        requested = argv[argv.index("--json") + 1].split(",")
+        self.assertIn("headRefName", requested)
+        self.assertIn("isCrossRepository", requested)
+        self.assertIn("changedFiles", requested)
+        self.assertIn("files", requested)
+        self.assertIn("number", requested)
 
     def test_a_pr_touching_no_files_yields_an_empty_list_not_a_crash(self):
-        empty = {"pr": 9, "files": [], "headRefName": None}
+        empty = {
+            "pr": 9,
+            "files": [],
+            "headRefName": None,
+            "isCrossRepository": None,
+        }
         with self._gh(json.dumps([{"number": 9, "files": []}])):
             self.assertEqual(mc.others_from_gh(), [empty])
         with self._gh(json.dumps([{"number": 9}])):
             self.assertEqual(mc.others_from_gh(), [empty])
+
+    def test_a_truncated_files_list_is_refused_rather_than_reported_clear(self):
+        """`gh` pages a PR's `files` at 100, and a short array is silent.
+
+        The migration it drops could be the colliding one, so a truncated entry
+        means this tool cannot answer — not that nothing collided.
+        """
+        payload = json.dumps(
+            [
+                {
+                    "number": 351,
+                    "changedFiles": 120,
+                    "files": [{"path": f"src/f{i}.rs"} for i in range(100)],
+                }
+            ]
+        )
+        with self._gh(payload):
+            with self.assertRaises(mc.MigrationCollisionsError) as caught:
+                mc.others_from_gh()
+        self.assertIn("truncated", str(caught.exception))
+        self.assertIn("120", str(caught.exception))
+
+    def test_a_complete_files_list_is_not_mistaken_for_a_truncated_one(self):
+        payload = json.dumps(
+            [
+                {
+                    "number": 351,
+                    "changedFiles": 2,
+                    "headRefName": "eng-351",
+                    "files": [{"path": "a.sql"}, {"path": "b.rs"}],
+                }
+            ]
+        )
+        with self._gh(payload):
+            got = mc.others_from_gh()
+        self.assertEqual(got[0]["files"], ["a.sql", "b.rs"])
 
     def test_the_normalized_output_feeds_collisions(self):
         """The point of normalizing: the fetched shape must work with the same
@@ -399,6 +454,25 @@ class ExcludeSelf(unittest.TestCase):
         self.assertEqual(kept, others)
         self.assertEqual(dropped, [])
 
+    def test_a_fork_pr_sharing_the_branch_name_is_NOT_excluded(self):
+        """The one way this exclusion could itself fail open.
+
+        `gh` reports a head ref unqualified, so a fork's `eng-1336` compares
+        equal to ours. Dropping it would remove a genuinely-colliding PR rather
+        than the self-match. This repo is public, so the input is reachable.
+        """
+        ours = self._pr(427, "eng-1336", "db-schema/migrations/0014_mine.sql")
+        theirs = dict(
+            self._pr(999, "eng-1336", "db-schema/migrations/0014_theirs.sql"),
+            isCrossRepository=True,
+        )
+        kept, dropped = mc.exclude_self([ours, theirs], "eng-1336")
+        self.assertEqual(dropped, [427])
+        self.assertEqual([e["pr"] for e in kept], [999])
+        # And the collision it carries still fires.
+        found = mc.collisions(["db-schema/migrations/0014_mine.sql"], kept)
+        self.assertEqual([c["pr"] for c in found], [999])
+
 
 class NextFreeNumber(unittest.TestCase):
     def test_it_is_one_past_the_highest_taken(self):
@@ -410,9 +484,12 @@ class NextFreeNumber(unittest.TestCase):
         A gap may be held by something neither comparison set can see — a
         sibling merged since the merge-base is in neither — so only one past the
         maximum is unclaimed everywhere this tool looked.
+
+        The input here is deliberately different from the case above: a
+        first-gap implementation answers 2 for this set and 4 for that one, so
+        reusing one input would leave the two tests unable to fail apart.
         """
-        self.assertEqual(mc.next_free_number({1, 2, 3, 13}), 14)
-        self.assertNotEqual(mc.next_free_number({1, 2, 3, 13}), 4)
+        self.assertEqual(mc.next_free_number({1, 5}), 6)
 
     def test_an_empty_tree_starts_at_one(self):
         self.assertEqual(mc.next_free_number(set()), 1)
@@ -648,6 +725,96 @@ class AddedMigrations(unittest.TestCase):
         self.assertEqual(parsed["next_free_number"], 5)
         self.assertIn("NOT a clear verdict", err)
         self.assertIn("0005", err)
+
+    def test_a_detached_head_resolves_to_none_from_git(self):
+        """The git → `None` link, which nothing else exercises.
+
+        The two sibling tests *inject* `None`. If `current_branch()` regressed to
+        returning the literal "HEAD", the self-match would come back — and it
+        would come back **silently**, because the detached-HEAD note keys on
+        `None` too, so the output would read like an ordinary run.
+        """
+        self.assertEqual(mc.current_branch(), "feature")
+        self._git("checkout", "-q", "--detach")
+        self.assertIsNone(mc.current_branch())
+
+    def test_a_detached_head_run_reports_the_exclusion_was_not_applied(self):
+        self._commit("0002_new.sql", "create table b();")
+        self._git("checkout", "-q", "--detach")
+        payload = [
+            {
+                "pr": 427,
+                "headRefName": "feature",
+                "files": [f"{mc.DEFAULT_DIR}/0002_new.sql"],
+            }
+        ]
+        # `--base main` still resolves; only the branch name is gone.
+        code, parsed, err = self._run(payload)
+        self.assertIsNone(parsed["self_branch"])
+        self.assertEqual(parsed["self_prs"], [])
+        self.assertIn("detached HEAD", err)
+        # Fail-closed: the self-match survives, so this still blocks.
+        self.assertEqual(code, 1)
+
+    def test_a_populated_self_branch_that_matches_nothing_says_so(self):
+        """The silent case that would re-create the original misread.
+
+        With the branch resolved but no listing entry matching it, the
+        self-match survives into `collisions` and would otherwise print as an
+        ordinary COLLISION with no hint.
+        """
+        self._commit("0002_new.sql", "create table b();")
+        payload = [
+            {
+                "pr": 427,
+                "headRefName": "some-other-head-ref",
+                "files": [f"{mc.DEFAULT_DIR}/0002_new.sql"],
+            }
+        ]
+        code, parsed, err = self._run(payload)
+        self.assertEqual(code, 1)
+        self.assertEqual(parsed["self_prs"], [])
+        self.assertIn("no PR was excluded", err)
+
+    def test_an_explicit_self_branch_override_is_visible_in_the_summary(self):
+        # A bypass must never be silent: the flag can turn a collision into a
+        # clear verdict, so the summary records that it was used.
+        self._commit("0002_new.sql", "create table b();")
+        payload = [
+            {
+                "pr": 427,
+                "headRefName": "feature",
+                "files": [f"{mc.DEFAULT_DIR}/0002_new.sql"],
+            }
+        ]
+        _, parsed, err = self._run(payload, "--self-branch", "feature")
+        self.assertTrue(parsed["self_branch_explicit"])
+        self.assertIn("--self-branch", err)
+
+    def test_an_empty_self_branch_does_not_fall_back_to_git(self):
+        # `or` would have read "" as unset and silently used the ambient branch,
+        # making an offline --others compare worktree-dependent.
+        self._commit("0002_new.sql", "create table b();")
+        payload = [
+            {
+                "pr": 427,
+                "headRefName": "feature",
+                "files": [f"{mc.DEFAULT_DIR}/0002_new.sql"],
+            }
+        ]
+        code, parsed, _ = self._run(payload, "--self-branch", "")
+        self.assertEqual(parsed["self_branch"], "")
+        self.assertEqual(parsed["self_prs"], [])
+        # Nothing excluded, so the self-match stands and this blocks.
+        self.assertEqual(code, 1)
+
+    def test_nothing_claimed_still_reports_clear_true_for_compatibility(self):
+        # `clear` is deliberately retained with its original meaning. Pinning the
+        # pair stops a well-meant "fix" to `clear` from changing it silently.
+        code, parsed, _ = self._run([])
+        self.assertEqual(code, 0)
+        self.assertEqual(parsed["status"], "nothing_claimed")
+        self.assertTrue(parsed["clear"])
 
     def test_an_uncommitted_migration_still_counts_as_taken(self):
         # `tree_numbers` reads the directory rather than git, so a number this

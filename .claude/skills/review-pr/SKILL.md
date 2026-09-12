@@ -5131,28 +5131,50 @@ already being asked to start the review.
    collision, so a caller checking only the status cannot
    enqueue through one.
 
-   **Gate on the exit status, and trust it.** It is 1 for a
-   `status: "collision"` and 0 for everything else, including
-   `nothing_claimed`. That is worth stating because it was not
-   true until ENG-1336: a pushed branch's own PR is in the
-   open-PR listing, so the tool matched the branch's migration
-   **against itself** and exited non-zero on every run,
-   blocking every enqueue on a migration-carrying branch. It
-   fired at least five times across three sessions in one day,
-   each one interpreted by hand.
+   **Gate on the exit status — all three of them.** `1` is a
+   `status: "collision"`. `0` is any other status, including
+   `nothing_claimed`. `2` means the tool **could not answer** —
+   bad input, a `gh` failure, a truncated listing, a pathspec
+   matching nothing — and is a **hold, not a pass**. Neither
+   naive reading is safe: gating on *non-zero* reports an
+   operational failure as a collision, and gating on *== 1*
+   enqueues straight through an unanswered question.
 
-   Read the summary line rather than working around it — it
-   names the PR it excluded, so the reported open-PR count is
-   the number actually compared. Do **not** adapt to a blocking
-   guard by ignoring its exit status: that deletes the
-   protection, and the failure it guards against is recoverable
-   only by manual surgery or a data-destroying wipe.
+   That the clean-tree case exits `0` is worth stating because a
+   non-zero exit could not be trusted until ENG-1336: a pushed
+   branch's own PR is in the open-PR listing, so the tool matched
+   the branch's migration **against itself** and exited non-zero
+   on every run, blocking every enqueue on a
+   migration-carrying branch. It fired at least five times
+   across three sessions in one day, each interpreted by hand.
 
-   One residual case is reported rather than hidden: on a
-   **detached HEAD** the branch cannot be resolved, so no
-   self-exclusion happens and the line says so. A collision
-   naming exactly one PR whose file matches this branch's is
-   that self-match.
+   Read the summary line rather than working around it — it says
+   in every case how this branch's own PR was treated, so the
+   reported open-PR count is the number actually compared. Do
+   **not** adapt to a blocking guard by ignoring its exit status:
+   that deletes the protection, and the failure it guards against
+   is recoverable only by manual surgery or a data-destroying
+   wipe.
+
+   Three residual cases are reported rather than hidden, and each
+   fails **closed** — the self-match survives, so the run blocks:
+
+   - a **detached HEAD**, where the branch cannot be resolved, so
+     no exclusion is attempted;
+   - an exclusion that **matched nothing**, which is what happens
+     if this branch's PR is open under a different head ref;
+   - a **fork** PR, which is never treated as this branch's own
+     however its branch is named, since a head ref is
+     unqualified.
+
+   In the first two the line says a collision naming one PR whose
+   file matches this branch's is *probably* that self-match — a
+   hint, not an identity, because a genuine second-branch
+   collision presents the same way. Confirm before dismissing it.
+
+   `--self-branch` overrides the resolution and the summary
+   records when it was used, since that flag can turn a collision
+   into a clear verdict.
 
    **This step used to prescribe two commands with no way to
    connect them**, and every sanctioned route across the gap is

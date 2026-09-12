@@ -1620,17 +1620,26 @@ per-directory *content* — `frontend/node_modules`,
    **Read `next_free_number` — that is what this call is
    for.** At branch time the file does not exist yet, so the
    tool reports `status: "nothing_claimed"` rather than a
-   verdict, and hands back the lowest number nothing else
-   claims (one past the highest in the tree *or* in any open
-   PR). Take it, and re-run once the file is written so the
-   compare actually runs.
+   verdict, and hands back **one past the highest number** in
+   the tree or in any open PR. Take it, and re-run once the
+   file is written so the compare actually runs.
 
-   This is a fix, not a nicety: the tool used to answer
-   `clear: true` here, which is a **vacuous all-clear in the
-   one place the answer is load-bearing** — nothing had been
-   compared, because there was nothing to compare, and a real
-   collision surfaced only on the re-run afterwards. A
-   `nothing_claimed` status cannot be misread as a pass.
+   One past the highest, deliberately **not** the lowest
+   unclaimed: a hole may be held by something neither
+   comparison set can see — a sibling merged since the
+   merge-base is in neither — so only the maximum is
+   unclaimed everywhere the tool looked. (Filling a hole
+   would in fact apply cleanly; see `docs/data-feeds.md`
+   §8. This is about keeping the claim verifiable.)
+
+   This is a fix, not a nicety: in this state the tool
+   reports `clear: true`, which read alone is a **vacuous
+   all-clear in the one place the answer is load-bearing** —
+   nothing has been compared, because there is nothing to
+   compare, and a real collision would surface only on the
+   re-run afterwards. `clear` still reads `true` here, for
+   backwards compatibility; it is `status` that distinguishes
+   a checked verdict from an empty one, so read that.
 
    **This used to be two commands with no way to connect
    them.** The step named a `gh pr list` and a

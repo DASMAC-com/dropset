@@ -45,8 +45,17 @@ the compare deterministic and testable with no network call at all::
     [{"pr": 351, "files": ["db-schema/migrations/0004_pyth.sql"]}, …]
 
 Prints JSON and exits **non-zero on a collision**, so a caller that checks only
-the status still cannot enqueue through one. ``status`` names three outcomes, and
-the exit code is 1 for the first of them only:
+the status still cannot enqueue through one.
+
+**Three exit codes, and a caller must distinguish all three.** ``1`` is a
+collision, ``0`` is any other ``status``, and ``2`` means the tool **could not
+answer** — bad input, a `gh` failure, a truncated listing, a pathspec matching
+nothing. So neither naive reading of the status is safe: gating on *non-zero*
+reports an operational failure as a collision, and gating on *== 1* treats an
+unanswered question as a clean bill of health and enqueues through it. Treat 2 as
+a hold.
+
+``status`` names three outcomes, and the exit code is 1 for the first only:
 
 ``collision``
     A number is claimed twice. Do not enqueue.
@@ -278,9 +287,13 @@ GH_OPEN_PRS = (
     "--state",
     "open",
     "--json",
-    # `headRefName` is what identifies the caller's own PR, which must not be
-    # compared against itself — see `exclude_self`.
-    "number,files,headRefName",
+    # `headRefName` identifies the caller's own PR, which must not be compared
+    # against itself — see `exclude_self`. `isCrossRepository` is what keeps that
+    # identification from over-reaching: the ref name is unqualified, so a fork's
+    # PR from a same-named branch would otherwise read as ours.
+    # `changedFiles` is the true file count, which `files` is checked against —
+    # see the truncation refusal in `others_from_gh`.
+    "number,files,headRefName,isCrossRepository,changedFiles",
     "--limit",
     str(GH_PR_LIMIT),
 )
@@ -343,16 +356,33 @@ def others_from_gh() -> list[dict]:
     for entry in data:
         if not isinstance(entry, dict):
             continue
+        raw_files = entry.get("files") or []
+        # gh resolves a PR's `files` over GraphQL, which pages at 100. Past that
+        # the array is silently short — and the migration it drops could be the
+        # colliding one, so a truncated entry means this tool cannot answer at
+        # all rather than that nothing collided. `changedFiles` is the true
+        # count, so the two disagreeing is an exact truncation test.
+        #
+        # Not reachable in this repo today (the largest PR to date changed 62
+        # files) and deliberately guarded anyway: the failure is silent, in the
+        # fail-open direction, on a guard whose bypass is unrecoverable.
+        changed = entry.get("changedFiles")
+        if isinstance(changed, int) and len(raw_files) < changed:
+            raise MigrationCollisionsError(
+                f"PR #{entry.get('number')} reports {changed} changed files but "
+                f"`gh` returned only {len(raw_files)} — the list is truncated, "
+                f"so a dropped migration could be the colliding one. This check "
+                f"cannot answer for that PR; inspect it by hand before enqueueing."
+            )
         files = [
-            f.get("path")
-            for f in (entry.get("files") or [])
-            if isinstance(f, dict) and f.get("path")
+            f.get("path") for f in raw_files if isinstance(f, dict) and f.get("path")
         ]
         out.append(
             {
                 "pr": entry.get("number"),
                 "files": files,
                 "headRefName": entry.get("headRefName"),
+                "isCrossRepository": entry.get("isCrossRepository"),
             }
         )
     return out
@@ -398,7 +428,15 @@ def exclude_self(others: list[dict], self_branch: str | None):
         return list(others), []
     kept, dropped = [], []
     for entry in others:
-        if entry.get("headRefName") == self_branch:
+        # A fork's PR reports its head ref **unqualified**, so `eng-1336` on a
+        # fork compares equal to `eng-1336` here. Excluding it would drop a
+        # genuinely-colliding PR rather than the self-match — the one new
+        # fail-open this exclusion could introduce — so a cross-repository entry
+        # is never us, whatever its branch is called. This repo is public, so
+        # that is a reachable input rather than a hypothetical one.
+        if entry.get("isCrossRepository"):
+            kept.append(entry)
+        elif entry.get("headRefName") == self_branch:
             dropped.append(entry.get("pr"))
         else:
             kept.append(entry)
@@ -474,17 +512,31 @@ def collisions(mine: list[str], others: list[dict]) -> list[dict]:
 
 
 def _self_note(result: dict) -> str:
-    """How the caller's own PR was treated, so the reader can trust the count."""
+    """How the caller's own PR was treated, so the reader can trust the count.
+
+    Every outcome says something. An exclusion that silently matched nothing is
+    what re-creates the original misread — the self-match survives into
+    ``collisions`` and prints as an ordinary COLLISION with no hint that it might
+    be this branch's own PR.
+    """
     if result["self_branch"] is None:
         return (
             " | NOTE: detached HEAD, so this branch's own PR could not be "
             "identified and was not excluded — a collision naming only one PR "
             "whose files match this branch's is probably that self-match"
         )
+    override = " (from --self-branch)" if result["self_branch_explicit"] else ""
     if result["self_prs"]:
         excluded = ", ".join(f"#{n}" for n in result["self_prs"])
-        return f" | excluding this branch's own PR {excluded}"
-    return ""
+        return f" | excluding this branch's own PR {excluded}{override}"
+    if result["collisions"]:
+        return (
+            f" | NOTE: no PR was excluded — nothing in the listing has head "
+            f"branch {result['self_branch']!r}{override}, so if this branch's own "
+            f"PR is open under a different head ref, one of these collisions is "
+            f"probably that self-match"
+        )
+    return f" | no PR excluded (nothing matched this branch){override}"
 
 
 def summarize(result: dict) -> str:
@@ -557,7 +609,11 @@ def run(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
 
     all_others = others_from_gh() if args.others_from_gh else load_others(args.others)
-    self_branch = args.self_branch or current_branch()
+    # `is not None`, not `or`: an empty `--self-branch ""` must not read as unset
+    # and silently fall back to git, which would make an offline `--others`
+    # compare depend on whatever branch the invoking worktree happens to be on.
+    self_branch_explicit = args.self_branch is not None
+    self_branch = args.self_branch if self_branch_explicit else current_branch()
     others, self_prs = exclude_self(all_others, self_branch)
 
     mine = added_migrations(args.base, args.directory)
@@ -567,8 +623,13 @@ def run(argv: list[str]) -> int:
     found = collisions(mine, others)
 
     # Every number this tool can see as taken: already in the tree, claimed by
-    # an open PR, or added by this branch. `others` here is post-exclusion, but
-    # this branch's own numbers arrive via `mine_numbers` anyway.
+    # an open PR, or added by this branch. `others` here is post-exclusion, so the
+    # caller's own PR contributes only through `tree_numbers` (the file is on
+    # disk) or `mine_numbers` (it is added against the merge-base). Both lapse if
+    # the branch pushed a migration and then deleted it locally, so this can hand
+    # back a number that branch's own open PR still claims — a self-claim, so the
+    # practical harm is nil, but it is not the unconditional guarantee it looks
+    # like.
     taken = set(tree_numbers(args.directory)) | set(mine_numbers)
     for entry in others:
         for path in entry.get("files") or []:
@@ -581,6 +642,7 @@ def run(argv: list[str]) -> int:
         "mine_numbers": mine_numbers,
         "prs_checked": len(others),
         "self_branch": self_branch,
+        "self_branch_explicit": self_branch_explicit,
         "self_prs": self_prs,
         "collisions": found,
         "next_free_number": next_free_number(taken),
