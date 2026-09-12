@@ -109,9 +109,28 @@ fn writable_widths() -> BTreeSet<i64> {
         "expected one width in alphavantage's GRANULARITY_SECS, got {parsed:?}"
     );
     widths.extend(parsed);
-    // Coinbase has no allowlist, so the dashboard's list stands in for the
-    // venue's supported set — the same six it has always offered.
-    widths.extend(dashboard_widths());
+    // Coinbase's endpoint accepts a fixed set and the adapter passes the
+    // configured width straight through, so the venue's supported set is
+    // declared as a constant there. It used to be read from the market-data
+    // dashboard's granularity picker, which offered exactly the same six; that
+    // picker is query-driven now, so it reports what the store HAPPENS to hold
+    // rather than what the venue accepts, and a width the venue supports but
+    // nothing has written yet would have silently left this set.
+    let coinbase = include_str!("../../feeds/src/venues/coinbase.rs")
+        .lines()
+        .find(|l| l.contains("pub const SUPPORTED_GRANULARITY_SECS"))
+        .expect("coinbase's SUPPORTED_GRANULARITY_SECS constant")
+        .split_once('=')
+        .expect("an assignment in the SUPPORTED_GRANULARITY_SECS constant")
+        .1
+        .replace('_', "");
+    let parsed = numbers_in(&coinbase);
+    assert!(
+        parsed.len() > 1,
+        "expected coinbase's supported widths as a literal list, got {parsed:?} \
+         — the constant's shape changed and this test is no longer reading it"
+    );
+    widths.extend(parsed);
     widths
 }
 
@@ -143,36 +162,6 @@ fn match_arm_widths(source: &str, signature: &str) -> BTreeSet<i64> {
          shape changed and this test is no longer reading it"
     );
     arms
-}
-
-/// The dashboard's `granularity` custom variable.
-///
-/// Anchored on the variable's `"name"` and then the first `"query"` after it.
-/// Shape alone is not enough: this dashboard has a second numeric custom
-/// variable (`coverage_mins`), so a digits-and-commas match finds two lists and
-/// cannot tell which it is pinning.
-fn dashboard_widths() -> BTreeSet<i64> {
-    let json = include_str!("../grafana/dashboards/market-data.json");
-    let lines: Vec<&str> = json.lines().collect();
-    let name_at = lines
-        .iter()
-        .position(|l| l.contains("\"name\": \"granularity\""))
-        .expect("the `granularity` variable in market-data.json");
-    let query = lines[name_at..]
-        .iter()
-        .find_map(|l| {
-            let (_, rest) = l.split_once("\"query\": \"")?;
-            let (value, _) = rest.split_once('"')?;
-            Some(value)
-        })
-        .expect("a `query` after the `granularity` variable's name");
-    assert!(
-        query.chars().all(|c| c.is_ascii_digit() || c == ','),
-        "the `granularity` variable's query is no longer a literal list of \
-         seconds (found {query:?}) — if it became query-driven, this test \
-         cannot read the venue-supported set from it any more"
-    );
-    numbers_in(query).into_iter().collect()
 }
 
 /// Every run of ASCII digits in `text`, as integers.

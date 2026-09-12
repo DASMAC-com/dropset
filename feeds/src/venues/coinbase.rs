@@ -80,6 +80,24 @@ use serde::{Deserialize, Serialize};
 /// clamps its configured window to it rather than restating the number.
 pub const MAX_CANDLES_PER_REQUEST: usize = 300;
 
+/// The bucket widths Coinbase's candles endpoint accepts. Any other value is
+/// rejected rather than rounded.
+///
+/// Declared here for the same reason as the cap above — it is the venue's
+/// constraint, so it lives with the venue. Note the adapter does **not** branch
+/// on it: the configured width is passed straight through as a query parameter,
+/// so this documents the constraint rather than enforcing it.
+///
+/// It has one consumer, and naming it is the point: the liveness view's
+/// granularity vocabulary has to cover every width a collector can write, which
+/// `market-data/tests/granularity_agreement.rs` asserts. That test reads the
+/// supported set out of each venue adapter, and for this venue there was
+/// nothing to read — it stood in the market-data dashboard's granularity picker
+/// instead, which happened to offer exactly these six. That picker is now
+/// query-driven, so it reports what the store HAPPENS to hold rather than what
+/// the venue accepts, and could no longer serve as the stand-in.
+pub const SUPPORTED_GRANULARITY_SECS: &[i64] = &[60, 300, 900, 3_600, 21_600, 86_400];
+
 /// The Coinbase Exchange candle tuple, decoded positionally:
 /// `[time, low, high, open, close, volume]`.
 type CandleTuple = (i64, f64, f64, f64, f64, f64);
