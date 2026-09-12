@@ -47,6 +47,54 @@ the compare deterministic and testable with no network call at all::
 Prints JSON and exits **non-zero on a collision**, so a caller that checks only
 the status still cannot enqueue through one.
 
+**Three exit codes, and a caller must distinguish all three.** ``1`` is a
+collision, ``0`` is any other ``status``, and ``2`` means the tool **could not
+answer** — bad input, a `gh` failure, a truncated listing, a pathspec matching
+nothing. So neither naive reading of the status is safe: gating on *non-zero*
+reports an operational failure as a collision, and gating on *== 1* treats an
+unanswered question as a clean bill of health and enqueues through it. Treat 2 as
+a hold.
+
+``status`` names three outcomes, and the exit code is 1 for the first only:
+
+``collision``
+    A number is claimed twice. Do not enqueue.
+``clear``
+    This branch adds a migration and nothing else open claims its number.
+``nothing_claimed``
+    This branch adds no migration, so **nothing was compared**. Exits 0, because
+    the enqueue gate runs on every branch and most add no migration — but it is
+    deliberately not spelled ``clear``, because a verdict that compared nothing
+    is not a clean bill of health. ``next_free_number`` is what makes this
+    outcome useful at branch time.
+
+**Two ways this used to be wrong, both observed live** (ENG-1336):
+
+*It failed closed on the caller's own PR.* Once a branch is pushed its own PR is
+in the open-PR listing, so the tool compared the branch's migration against
+itself and reported a collision **every time** — exiting non-zero, which is
+exactly how a skill gates an enqueue, so it refused provably clean enqueues. At
+least five firings across three sessions in one day, each interpreted by hand.
+Fixed by dropping the caller's own PR from the comparison, matched on
+``headRefName`` against the current branch.
+
+Excluding self cannot hide a real collision: ``mine`` comes from the local tree,
+which is authoritative for what is about to be enqueued, and any *other* PR
+claiming the same number is still in the set. Where the branch cannot be
+resolved (a detached HEAD), the tool reports ``self_branch: null`` and says in
+the summary that the exclusion was not applied, rather than going quietly back
+to the old behavior.
+
+*It failed open before the file existed.* With no migration on the branch the
+only verdict was ``clear: true`` at exit 0 — which is the state ``init-pr``
+invokes it in **on purpose**, to claim a number *before* writing the file. So the
+all-clear was vacuous exactly where it was load-bearing, and a real collision
+surfaced only on a re-run afterwards. Fixed by the ``nothing_claimed`` status
+plus ``next_free_number``, so a number-claiming call gets an actionable answer
+instead of a reassuring one. Note ``clear`` still reads ``true`` in that state,
+deliberately (see the field's own comment); it is ``status`` that separates a
+checked verdict from an empty one.
+
 **The bound: this compares against *open* PRs only.** A sibling that already
 **merged** is not in the ``--others`` set, and its migration is not in this
 branch's tree either until the branch rebases — so a collision with a merged
@@ -213,15 +261,37 @@ def load_others(path: str) -> list[dict]:
                 f"would be iterated character by character and silently "
                 f"collide with nothing"
             )
+        # Optional, and only used to recognize the caller's own PR. A caller
+        # assembling the inventory by hand may not have it; without it that PR
+        # simply is not self-excluded, which is the pre-fix behavior for that
+        # entry alone rather than a failure.
+        head = entry.get("headRefName")
+        if head is not None and not isinstance(head, str):
+            raise MigrationCollisionsError(
+                f"{path}: `headRefName` must be a string, got "
+                f"{type(head).__name__} for PR {entry['pr']}"
+            )
+        # Validated for the same reason as `files` above: this one is read by
+        # **truthiness**, so the string `"false"` is true and would keep a PR
+        # from ever being self-excluded — silently restoring the fail-closed
+        # defect. A non-bool here is a hand-authoring slip, not a shape to guess.
+        fork = entry.get("isCrossRepository")
+        if fork is not None and not isinstance(fork, bool):
+            raise MigrationCollisionsError(
+                f"{path}: `isCrossRepository` must be true or false, got "
+                f"{type(fork).__name__} for PR {entry['pr']} — a truthy string "
+                f"would suppress this branch's own self-exclusion"
+            )
     return data
 
 
 # `gh pr list` defaults to 30 and truncates SILENTLY past its limit, which in a
 # collision checker is a fail-open: the one PR that would have collided is the
 # one dropped, and the tool reports "clear". The limit is therefore set well
-# above any plausible open-PR count, and `others_from_gh` warns when the result
+# above any plausible open-PR count, and `others_from_gh` REFUSES when the result
 # comes back exactly at it — at that point truncation cannot be ruled out and
-# "clear" is no longer a claim this tool can make quietly.
+# "clear" is no longer a claim this tool can make at all. (This comment said
+# "warns" while the code raised; the two accounts sat one screen apart.)
 GH_PR_LIMIT = 200
 
 GH_OPEN_PRS = (
@@ -231,7 +301,13 @@ GH_OPEN_PRS = (
     "--state",
     "open",
     "--json",
-    "number,files",
+    # `headRefName` identifies the caller's own PR, which must not be compared
+    # against itself — see `exclude_self`. `isCrossRepository` is what keeps that
+    # identification from over-reaching: the ref name is unqualified, so a fork's
+    # PR from a same-named branch would otherwise read as ours.
+    # `changedFiles` is the true file count, which `files` is checked against —
+    # see the truncation refusal in `others_from_gh`.
+    "number,files,headRefName,isCrossRepository,changedFiles",
     "--limit",
     str(GH_PR_LIMIT),
 )
@@ -294,13 +370,157 @@ def others_from_gh() -> list[dict]:
     for entry in data:
         if not isinstance(entry, dict):
             continue
+        raw_files = entry.get("files") or []
+        # gh resolves a PR's `files` over GraphQL, which pages at 100. Past that
+        # the array is silently short — and the migration it drops could be the
+        # colliding one, so a truncated entry means this tool cannot answer for
+        # that PR rather than that nothing collided. `changedFiles` is the true
+        # count, so the two disagreeing is an exact truncation test.
+        #
+        # Recorded here and adjudicated in `run()` rather than raised on the
+        # spot, because this runs BEFORE `exclude_self`: raising here refuses on
+        # the caller's own >100-file PR, which is the one entry the comparison is
+        # about to discard, and `--self-branch` could not rescue it because the
+        # raise would precede the exclusion.
+        #
+        # Not reachable in this repo today (the largest PR to date changed 62
+        # files) and deliberately guarded anyway: the failure is silent, in the
+        # fail-open direction, on a guard whose bypass is unrecoverable.
+        changed = entry.get("changedFiles")
+        truncated = (
+            changed if isinstance(changed, int) and len(raw_files) < changed else None
+        )
         files = [
-            f.get("path")
-            for f in (entry.get("files") or [])
-            if isinstance(f, dict) and f.get("path")
+            f.get("path") for f in raw_files if isinstance(f, dict) and f.get("path")
         ]
-        out.append({"pr": entry.get("number"), "files": files})
+        out.append(
+            {
+                "pr": entry.get("number"),
+                "files": files,
+                "headRefName": entry.get("headRefName"),
+                "isCrossRepository": entry.get("isCrossRepository"),
+                "truncated": truncated,
+                "file_count": len(raw_files),
+            }
+        )
     return out
+
+
+def refuse_if_truncated(others: list[dict]) -> None:
+    """Refuse when any PR still in the comparison had a short ``files`` list.
+
+    Called on the **post-exclusion** set, so the caller's own PR being large
+    cannot block its own enqueue — see the note in ``others_from_gh``.
+    """
+    for entry in others:
+        if entry.get("truncated") is None:
+            continue
+        raise MigrationCollisionsError(
+            f"PR #{entry.get('pr')} reports {entry['truncated']} changed files "
+            f"but `gh` returned only {entry.get('file_count')} — the list is "
+            f"truncated, so a migration it dropped could be the colliding one. "
+            f"This check cannot answer while that PR is in the comparison. "
+            f"Resolve it by fetching that PR's files directly "
+            f"(`gh pr view {entry.get('pr')} --json files`) and passing the "
+            f"inventory via `--others <file>.json`."
+        )
+
+
+def current_branch() -> str | None:
+    """This worktree's branch name, or ``None`` on a detached HEAD.
+
+    ``git rev-parse --abbrev-ref HEAD`` answers the literal string ``HEAD`` when
+    detached, which is not a branch any PR can be open against — so it is mapped
+    to ``None`` rather than passed on to match nothing while *looking* like a
+    successful resolution.
+    """
+    name = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root(),
+    ).stdout.strip()
+    return None if name in ("", "HEAD") else name
+
+
+def exclude_self(others: list[dict], self_branch: str | None):
+    """Drop the caller's own PR from the comparison set.
+
+    Returns ``(others_without_self, excluded_pr_numbers, name_matched_fork_prs)``.
+    The third element is PRs kept **despite** matching the branch name, because
+    they come from a fork — reported so a collision from one is not read as an
+    unexplained self-match.
+
+    **This is the fail-closed half of ENG-1336.** A pushed branch's own PR is in
+    the open-PR listing, so comparing against it matched the branch's migration
+    with itself and reported a collision on every run — non-zero, which is how a
+    skill gates an enqueue.
+
+    Matching on the branch rather than on the file list is deliberate: two PRs
+    adding the *same* migration number is precisely the case this tool exists to
+    catch, so "their files look like mine" is the one signal that must never mean
+    "this is me".
+
+    With ``self_branch`` as ``None`` nothing is excluded — the caller reports that
+    in the summary, so an unapplied exclusion is visible rather than silent.
+    """
+    if self_branch is None:
+        return list(others), [], []
+    kept, dropped, forks = [], [], []
+    for entry in others:
+        # A fork's PR reports its head ref **unqualified**, so `eng-1336` on a
+        # fork compares equal to `eng-1336` here. Excluding it would drop a
+        # genuinely-colliding PR rather than the self-match — the one new
+        # fail-open this exclusion could introduce — so a cross-repository entry
+        # is never us, whatever its branch is called. This repo is public, so
+        # that is a reachable input rather than a hypothetical one.
+        if entry.get("isCrossRepository"):
+            if entry.get("headRefName") == self_branch:
+                forks.append(entry.get("pr"))
+            kept.append(entry)
+        elif entry.get("headRefName") == self_branch:
+            dropped.append(entry.get("pr"))
+        else:
+            kept.append(entry)
+    return kept, dropped, forks
+
+
+def tree_numbers(directory: str = DEFAULT_DIR) -> list[int]:
+    """Every migration version already present in the working tree.
+
+    Read from the directory rather than from git, so a migration this branch has
+    written but not yet committed still counts as taken.
+    """
+    root = repo_root()
+    path = Path(root, directory)
+    if not path.is_dir():
+        raise MigrationCollisionsError(
+            f"no migrations directory at {directory!r} (relative to {root})"
+        )
+    return sorted(
+        {
+            n
+            for n in (migration_number(child.name) for child in path.iterdir())
+            if n is not None
+        }
+    )
+
+
+def next_free_number(taken) -> int:
+    """The lowest number that collides with nothing: one past the highest taken.
+
+    **One past the maximum, not the first gap.** A gap is a number that some tree
+    or some PR may still be holding out of this tool's sight — a sibling that
+    merged since the merge-base is in neither comparison set (see the bound
+    above) — whereas one past the maximum is unclaimed in every set that was
+    consulted. Filling a gap is also what produces the out-of-order applied
+    state; that state is *tolerated* by the runner
+    (`db-schema/tests/schema_fence.rs`), so this is about keeping the claim
+    verifiable, not about avoiding a wedge.
+    """
+    numbers = set(taken)
+    return max(numbers) + 1 if numbers else 1
 
 
 def collisions(mine: list[str], others: list[dict]) -> list[dict]:
@@ -334,24 +554,72 @@ def collisions(mine: list[str], others: list[dict]) -> list[dict]:
     return sorted(found, key=lambda c: (c["number"], c["pr"], c["theirs"]))
 
 
+def _self_note(result: dict) -> str:
+    """How the caller's own PR was treated, so the reader can trust the count.
+
+    Every outcome says something. An exclusion that silently matched nothing is
+    what re-creates the original misread — the self-match survives into
+    ``collisions`` and prints as an ordinary COLLISION with no hint that it might
+    be this branch's own PR.
+    """
+    if result["self_branch"] is None:
+        return (
+            " | NOTE: detached HEAD, so this branch's own PR could not be "
+            "identified and was not excluded — a collision naming only one PR "
+            "whose files match this branch's is probably that self-match"
+        )
+    override = " (from --self-branch)" if result["self_branch_explicit"] else ""
+    # A fork PR sharing the branch name is deliberately KEPT, so a collision it
+    # carries is a third party's, not an unexplained self-match. Say so, or the
+    # reader has no way to tell the two apart.
+    forks = ""
+    if result["self_fork_prs"]:
+        named = ", ".join(f"#{n}" for n in result["self_fork_prs"])
+        forks = (
+            f" | NOTE: PR {named} shares this branch's name but comes from a "
+            f"fork, so it was NOT excluded — any collision it carries is real"
+        )
+    if result["self_prs"]:
+        excluded = ", ".join(f"#{n}" for n in result["self_prs"])
+        return f" | excluding this branch's own PR {excluded}{override}{forks}"
+    if result["collisions"]:
+        return (
+            f" | NOTE: no PR was excluded — nothing in the listing has head "
+            f"branch {result['self_branch']!r}{override}, so if this branch's own "
+            f"PR is open under a different head ref, one of these collisions is "
+            f"probably that self-match{forks}"
+        )
+    return f" | no PR excluded (nothing matched this branch){override}{forks}"
+
+
 def summarize(result: dict) -> str:
     """One human line — the verdict, and the tiebreak when it is needed."""
-    if not result["mine"]:
-        return "migration-collisions | this branch adds no migration — nothing to check"
+    if result["status"] == "nothing_claimed":
+        # `_self_note` belongs here too, even though no comparison ran: the
+        # exclusion still shapes `next_free_number`, and this is the one line
+        # `init-pr` reads — so without it a `--self-branch` override would be
+        # invisible in exactly the place the number is taken from.
+        return (
+            "migration-collisions | this branch adds no migration, so nothing "
+            f"was compared — NOT a clear verdict | next free number: "
+            f"{result['next_free_number']:04d}{_self_note(result)} | if this "
+            f"task adds one, take that number and re-run once the file exists"
+        )
     added = ", ".join(str(n) for n in result["mine_numbers"])
-    if not result["collisions"]:
+    if result["status"] == "clear":
         return (
             f"migration-collisions | adds {added} | no collision across "
-            f"{result['prs_checked']} open PR(s) — safe to enqueue"
+            f"{result['prs_checked']} open PR(s){_self_note(result)} — safe to "
+            f"enqueue"
         )
     pairs = "; ".join(
         f"{c['number']} also in PR #{c['pr']} ({c['theirs']})"
         for c in result["collisions"]
     )
     return (
-        f"migration-collisions | adds {added} | COLLISION: {pairs} | do not "
-        f"enqueue — the branch whose number is already applied to the shared "
-        f"dev DB keeps it, the other renumbers"
+        f"migration-collisions | adds {added} | COLLISION: {pairs}"
+        f"{_self_note(result)} | do not enqueue — the branch whose number is "
+        f"already applied to the shared dev DB keeps it, the other renumbers"
     )
 
 
@@ -388,24 +656,69 @@ def run(argv: list[str]) -> int:
         dest="directory",
         help=f"the migrations directory (default: {DEFAULT_DIR})",
     )
+    parser.add_argument(
+        "--self-branch",
+        default=None,
+        help="the branch whose own PR must be excluded from the comparison "
+        "(default: this worktree's current branch). Only needed on a detached "
+        "HEAD, or to reproduce the compare offline.",
+    )
     args = parser.parse_args(argv[1:])
 
-    others = others_from_gh() if args.others_from_gh else load_others(args.others)
+    all_others = others_from_gh() if args.others_from_gh else load_others(args.others)
+    # `is not None`, not `or`: an empty `--self-branch ""` must not read as unset
+    # and silently fall back to git, which would make an offline `--others`
+    # compare depend on whatever branch the invoking worktree happens to be on.
+    self_branch_explicit = args.self_branch is not None
+    self_branch = args.self_branch if self_branch_explicit else current_branch()
+    others, self_prs, self_fork_prs = exclude_self(all_others, self_branch)
+    refuse_if_truncated(others)
+
     mine = added_migrations(args.base, args.directory)
+    mine_numbers = sorted(
+        {n for n in (migration_number(p) for p in mine) if n is not None}
+    )
     found = collisions(mine, others)
+
+    # Every number this tool can see as taken: already in the tree, claimed by
+    # an open PR, or added by this branch. `others` here is post-exclusion, so the
+    # caller's own PR contributes only through `tree_numbers` (the file is on
+    # disk) or `mine_numbers` (it is added against the merge-base). Both lapse if
+    # the branch pushed a migration and then deleted it locally, so this can hand
+    # back a number that branch's own open PR still claims — a self-claim, so the
+    # practical harm is nil, but it is not the unconditional guarantee it looks
+    # like.
+    taken = set(tree_numbers(args.directory)) | set(mine_numbers)
+    for entry in others:
+        for path in entry.get("files") or []:
+            number = migration_number(path)
+            if number is not None:
+                taken.add(number)
+
     result = {
         "mine": mine,
-        "mine_numbers": sorted(
-            {n for n in (migration_number(p) for p in mine) if n is not None}
-        ),
+        "mine_numbers": mine_numbers,
         "prs_checked": len(others),
+        "self_branch": self_branch,
+        "self_branch_explicit": self_branch_explicit,
+        "self_prs": self_prs,
+        "self_fork_prs": self_fork_prs,
         "collisions": found,
+        "next_free_number": next_free_number(taken),
+        # `clear` is kept for a caller that already reads it, and keeps its
+        # original meaning: no collision was found. `status` is what
+        # distinguishes "checked and clean" from "checked nothing".
         "clear": not found,
+        "status": "collision" if found else ("clear" if mine else "nothing_claimed"),
     }
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
     print(summarize(result), file=sys.stderr)
-    return 0 if result["clear"] else 1
+    # Non-zero for a collision and nothing else. `nothing_claimed` exits 0
+    # because the enqueue gate runs on every branch and most add no migration —
+    # blocking there would make the guard's adaptation "ignore the exit status",
+    # which deletes the protection outright.
+    return 1 if result["status"] == "collision" else 0
 
 
 def main() -> int:

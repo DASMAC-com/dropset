@@ -1414,6 +1414,159 @@ async fn migrate_is_idempotent() {
         .expect("fence passes after re-run");
 }
 
+/// The state the shared dev database actually reached: versions 1 through 10
+/// plus 13 applied, with 11 and 12 absent, because 0013 was applied outside the
+/// coordinated batch while the two beneath it were still in flight. The next
+/// `migrate` from a contiguous `main` therefore asks the runner to apply two
+/// migrations *below* one it has already recorded.
+const OUT_OF_ORDER_APPLIED: &[i64] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13];
+
+/// A private directory to stage a partial migration history in.
+fn staging_dir(tag: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after the epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!("dropset-migration-order-{tag}-{nanos}"))
+}
+
+/// Stage the named migrations in `dir` and resolve a **runtime** `Migrator` over
+/// it, so a test can present the runner with a *subset* of this build's history.
+///
+/// `sqlx::migrate!` is a compile-time macro that always embeds the whole
+/// directory, so the runtime resolver is the only way to stage a partial one.
+/// Copying the real files rather than synthesizing them is what makes the
+/// recorded checksums real, so a later phase over the full set re-verifies them
+/// exactly as production would. Hand-stamping a row (as `stamp_version` does)
+/// would not work here: the empty checksum fails the comparison, which would
+/// hide the ordering behavior behind an unrelated error.
+async fn migrator_over(dir: &std::path::Path, versions: &[i64]) -> sqlx::migrate::Migrator {
+    fs::create_dir_all(dir).unwrap_or_else(|e| panic!("create {}: {e}", dir.display()));
+    for (version, path) in migration_sql_files() {
+        if !versions.contains(&version) {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("migration filename is UTF-8");
+        fs::copy(&path, dir.join(name)).unwrap_or_else(|e| panic!("stage `{name}`: {e}"));
+    }
+    sqlx::migrate::Migrator::new(dir)
+        .await
+        .expect("resolve the staged migrations")
+}
+
+/// Every `<version>_<name>.sql` in the migrations directory, keyed by version.
+///
+/// Read from the **directory**, deliberately not from `MIGRATOR`. The embed is
+/// produced by `sqlx::migrate!`, a proc macro that reads `./migrations` at
+/// expansion time and contributes nothing to cargo's dependency graph — so a
+/// build that saw no `.rs` change can reuse a cached `MIGRATOR` describing a
+/// previous tree. Deriving the history here from the same place the staging copy
+/// comes from keeps the two halves of this test consistent with each other under
+/// that condition, rather than failing on a stale version list.
+///
+/// Only the `.sql` files: the `.fence` manifests beside them are this repo's own
+/// convention, not something sqlx's resolver knows about.
+fn migration_sql_files() -> BTreeMap<i64, std::path::PathBuf> {
+    let mut found = BTreeMap::new();
+    for entry in fs::read_dir(MIGRATIONS_DIR).expect("read migrations dir") {
+        let path = entry.expect("read dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("sql") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("migration filename is UTF-8")
+            .to_string();
+        let version: i64 = name
+            .split_once('_')
+            .and_then(|(v, _)| v.parse().ok())
+            .unwrap_or_else(|| panic!("`{name}` needs an integer version prefix"));
+        assert!(
+            found.insert(version, path).is_none(),
+            "two migrations claim version {version} (`{name}`)"
+        );
+    }
+    found
+}
+
+/// Every successfully-applied version, in order.
+async fn applied_versions(pool: &PgPool) -> Vec<i64> {
+    sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success ORDER BY version")
+        .fetch_all(pool)
+        .await
+        .expect("read applied versions")
+}
+
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn migrate_fills_a_gap_beneath_an_already_applied_version() {
+    let (_pg, pool) = start_pg().await;
+
+    // Phase 1: reach the out-of-order state the same way it was reached for
+    // real — by *applying* a history that skips 11 and 12, so 13's recorded
+    // checksum is the genuine one.
+    let partial_dir = staging_dir("partial");
+    let partial = migrator_over(&partial_dir, OUT_OF_ORDER_APPLIED).await;
+    partial
+        .run(&pool)
+        .await
+        .expect("stage the out-of-order state");
+    assert_eq!(
+        applied_versions(&pool).await,
+        OUT_OF_ORDER_APPLIED,
+        "phase 1 did not reproduce shared dev's applied set"
+    );
+
+    // Phase 2: the contiguous history, exactly as a checkout of `main` carries
+    // it. This is the step nobody could run against shared dev until it was
+    // known whether the runner tolerates it.
+    let full_dir = staging_dir("full");
+    let every_version: Vec<i64> = migration_sql_files().into_keys().collect();
+
+    // The out-of-order condition, asserted rather than assumed. Without this the
+    // test passes **vacuously** whenever the staged set happens to be
+    // contiguous: phase 1's check above is satisfied either way, phase 2 then has
+    // nothing pending, and a green run would license the very apply this is meant
+    // to gate. That is the same trap as verifying on a container that applies the
+    // full set in numeric order — it never reaches the state under test.
+    let highest_applied = *OUT_OF_ORDER_APPLIED
+        .iter()
+        .max()
+        .expect("the staged set is non-empty");
+    let gap: Vec<i64> = every_version
+        .iter()
+        .copied()
+        .filter(|v| *v < highest_applied && !OUT_OF_ORDER_APPLIED.contains(v))
+        .collect();
+    assert!(
+        !gap.is_empty(),
+        "nothing is pending beneath the applied {highest_applied}, so this run \
+         would not exercise an out-of-order apply at all"
+    );
+
+    let full = migrator_over(&full_dir, &every_version).await;
+    let outcome = full.run(&pool).await;
+
+    fs::remove_dir_all(&partial_dir).ok();
+    fs::remove_dir_all(&full_dir).ok();
+
+    outcome.unwrap_or_else(|e| {
+        panic!("applying {gap:?} beneath an already-applied {highest_applied}: {e}")
+    });
+    assert_eq!(
+        applied_versions(&pool).await,
+        every_version,
+        "the gap was not filled"
+    );
+    require_schema(&pool)
+        .await
+        .expect("fence passes once the gap is filled");
+}
+
 /// Insert one `cex_prices` bar, returning the database's verdict.
 ///
 /// Prices are bound as `f64` rather than spelled into the SQL so that `NaN` and
