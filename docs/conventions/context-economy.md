@@ -37,6 +37,178 @@ unqualified claim is resting on nothing. (`review-pr` step 5 is the
 concrete case: its inline-lens fallback was removed, and the cost
 argument was *not* the reason — see that step for why.)
 
+## Session length is itself a cost lever
+
+The levers below all bound what a single call returns. This one bounds
+how many turns replay it, and it is the largest of them: because every
+turn re-sends the whole cached prefix, **session cost is roughly
+quadratic in session length**. A payload's price is its size times the
+number of turns that follow it, so the same work split across several
+short sessions is materially cheaper than one long one — not because
+any call got narrower, but because fewer turns replay each result.
+
+Measured on one long implementation session (ENG-765): its prefix grew
+from ~30K to about 900K tokens over 1,351 billed requests, and cache
+reads were **\$371 of its \$455 total** — the dominant line by a wide
+margin. Modeling the same request count as 3–5 shorter sessions prices
+the whole session at **\$155–198**, a **2.3–2.9x** saving against that
+\$455 total.
+
+Quote that multiple **total-against-total**. Against the \$371 cache-read
+line alone the saving is 1.9–2.4x, and mixing the two denominators is
+how this figure was first written down as "2.5–3x on the dominant line",
+which is true of neither.
+
+The counterexample from the meta rhythm is the ENG-1194 batch — one
+issue carrying the whole parked pool, worked in a **19-hour, \$409** run.
+
+So **stage work so that a session stays short** — on the order of
+**4–5 levers or findings per PR**. This binds at *breakdown* time,
+which is the only place it can: a session cannot retroactively shorten
+itself, so the decision belongs to whoever splits the work. The fold
+rules in `docs/conventions/linear-automation.md` and the `plan`,
+`merge-tasks` and `trim-context` skills are where it is implemented.
+
+**The line band: target 300–800 changed lines per PR.** Measured across
+the fleet on 2026-09-11 — per-session cost at verified Bedrock rates,
+joined to merged-PR line counts. Read the table as **two separate
+bounds**, not as one curve:
+
+| changed lines | cost per line | session total |
+| ------------- | ------------- | ------------- |
+| 34            | 115 cents     | \$39          |
+| 139–326       | ~30 cents     | —             |
+| 472           | 15.0 cents    | \$71          |
+| 505           | 13.5 cents    | \$68          |
+| 571           | 24.5 cents    | \$140         |
+| 688           | 14.2 cents    | \$98          |
+| 2,408         | 15.2 cents †  | \$367         |
+| 6,656         | 6.8 cents †   | \$450         |
+
+† derived from the total, not measured per-line.
+
+**The LOWER bound is per-line, and it is what "smaller is not
+monotonically cheaper" means.** There is a per-PR overhead floor of
+roughly **\$40** — bootstrap, the review fan-out, CI, the closing
+handoffs, none of which scale with diff size — and a 34-line PR pays it
+in full, which is why that row lands near a dollar a line. Two honesty
+notes: read the \$40 as an order-of-magnitude figure off the smallest
+row rather than an independently measured constant, and read the
+four-way split as an attribution rather than four measured components.
+
+**The UPPER bound is not per-line — it is absolute.** Per-line cost
+keeps *falling* all the way out (6.8 cents on the largest row), so there
+is **no** per-line penalty for a big PR and this section does not claim
+one. What makes the two largest rows bad is session **length** — three
+days and nineteen hours — which costs absolute dollars and concentrates
+a great deal of unmerged work behind a single point of failure. Those
+are different quantities from cost per line, which is precisely why the
+lower bound is expressed in cents and the upper in lines-as-a-proxy.
+
+An earlier draft of this section called the shape a **U-curve**. The
+data does not support a right-hand arm and that claim was withdrawn;
+only the left arm is measured.
+
+**The 571-line outlier is the best single argument here.** At 24.5 cents
+a line it cost nearly double its band-mates (13.5–15.0) from inside the
+same line band, because it was a verification-heavy walkthrough session
+against a small diff. Same lines, double the rate, decided by **session
+shape** rather than diff size — the lines-are-a-proxy point below,
+measured rather than asserted.
+
+The operative numbers:
+
+- **Target 300–800** changed lines per PR.
+- **Floor around 150**, unless the change is trivially mechanical.
+  Below that the fixed overhead dominates.
+- **1,000 changed lines is the split trigger** — a **chosen** threshold
+  rather than a measured inflection: the data jumps 688 → 2,408, so
+  1,000 is interpolation inside its largest gap.
+
+**Lines are a PROXY, and it matters which way the proxy fails.** The
+billed driver is **turns replaying the cached prefix**, not line count —
+a 300-line change argued over for six hours costs more than an 800-line
+mechanical one. So the 4-to-5-findings rule and the line band are two
+views of a single limit rather than two independent rules, and when they
+disagree the **cost report** (ENG-1364) is the ground truth that
+supersedes both.
+
+**Which one yields in the interim — because ENG-1364 does not exist
+yet.** The two genuinely conflict on the commonest unit in this machine:
+a coherent 4–5-part meta fold often lands **under** the 150-line floor,
+and the floor's obvious remedy — batch it with something adjacent — is
+exactly what the **coherence floor** forbids. So the resolution is not
+symmetric. **Coherence and the findings count win; the line floor is a
+diagnostic, not a gate.** A sub-150-line PR is a signal that you could
+have folded more parts *of the same theme* in — never a license to add
+an unrelated one, and never a reason to pad. Naming a tiebreak that is
+not yet built would leave a session with nothing to consult, so until
+the cost report lands, this paragraph is the tiebreak.
+
+**That resolves the FLOOR case only — at the ceiling the priority
+inverts, and saying so is the whole point of splitting them.** A
+coherent **3-part fold at 1,100 changed lines splits**: the findings
+count does *not* license it. The count is only a proxy for session
+length, and 1,100 lines is more direct evidence about that same session
+than "three parts" is, so the more direct measure wins. Coherence
+governs **what may be separated** — it never licenses a single unbounded
+unit, which is the distinction the coherence floor has always drawn.
+
+Stated as one rule: **at the floor, coherence and the findings count
+win; at the ceiling, the line band wins.** Both halves point the same
+way — toward the shorter session.
+
+**Coherence still binds; it just no longer implies one issue.** The
+fewest-coherent-PRs rule still keeps a set that must land together from
+being scattered — but a coherent set larger than a short session
+**splits into sequential PRs** rather than growing the session.
+Coherence is a floor on what may be *separated*, never a license to let
+one unit grow without bound.
+
+**Prefer a rebase to a serial chain.** Splitting means several PRs touch
+adjacent files, and the answer to that is a rebase — not a blocking
+edge, and not a one-in-flight gate. A rebase inside a short session is
+**estimated** at order tens of cents — a clean one is a few turns at the
+measured per-turn prefix cost — while the serialization it replaces costs
+the quadratic.
+
+Flag that as an estimate deliberately, because it is the one
+load-bearing figure in this section that is **not** measured, and it is
+echoed as settled fact in four other files. A rebase that turns into a
+conflict needing the file re-read costs materially more than a clean one,
+so the estimate is a floor. The ENG-1364 cost report is what will
+measure the first real ones.
+
+The trade-off is operator-ratified for `Claude:` meta work specifically
+(2026-09-11), where the strays all contend on the same skill files:
+that contention was the original argument for one batch at a time, and
+it is now explicitly outweighed. It changes nothing about blocking
+edges themselves — no automated writer places one, as ever.
+
+**Measure this in DOLLARS.** Cost is the headline number here — not
+token counts, not turn counts. A token figure has to be converted before
+it means anything, and the conversion is exactly where the argument gets
+lost; every figure above is quoted as spend for that reason. (Reporting
+prefix growth and turn counts *alongside* the dollar figure is staged
+separately as ENG-1364 — cite it, don't build it here.)
+
+**The enforcement loop is that every session states its own cost at
+close.** A ceiling nobody measures is a preference. A session that
+reports its own spend makes the ceiling checkable, and makes a long
+session visible while it is still running rather than in a mining pass
+weeks later.
+
+### The ratified cost posture
+
+Two rulings resting on the same measurement, recorded here so they are
+not re-litigated per session:
+
+- **Sonnet-tier task workers are rejected** (operator, 2026-09-11).
+  The ~60% token saving does not pay for the redo risk on a PR. Compact
+  PRs and the levers below are the ratified levers instead.
+- **The Bedrock auto-mode classifier's ~7% overhead is accepted burn.**
+  It buys the substrate routing and is not a target for trimming.
+
 ## The levers
 
 - **Ask for the narrowest thing that answers the question.** Use the

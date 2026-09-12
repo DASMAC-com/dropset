@@ -102,7 +102,11 @@ A rotation folds coupled findings into the **fewest coherent PRs** —
 fold every set that would land as one PR (same subsystem / crate /
 language-domain) into a single issue, keeping each finding's own
 `**Fingerprint**:` line, but never across
-separate apps / languages / deploy units (the coherence floor).
+separate apps / languages / deploy units (the coherence floor). That is
+a floor on what may be *separated*, not a license to grow one issue
+without bound: **a coherent set larger than a short session splits into
+sequential PRs** (roughly 4–5 findings each), because session cost is
+roughly quadratic in session length — see "Context economy" below.
 
 **`**Touches**:` is retired** — no filing emits the declared-scope glob
 list any more. It was the input to the collision machinery (see
@@ -154,17 +158,25 @@ filed between folds used to land unblocked in Backlog and clutter the
 operator's "Next" view until a planning bootstrap swept it (one
 bootstrap found seven). A milestone hides it by construction and
 touches none of the human-curated edge machinery. The one thing that
-does **not** get parked is the assembled **batch issue** itself, which
-is the thing meant to be pulled.
+does **not** get parked is a **promoted** batch issue, which is the
+thing meant to be pulled — an assembled batch the bootstrap does not
+promote stays parked like any other meta issue (`Todo` plus
+`Claude meta`), and promoting it later is the same two-halves act as any
+other promotion: clear the milestone **and** move Todo → Backlog.
 
 **The planning bootstrap is the single assimilation point** — once a
 day it sweeps the milestone **plus any open, unpulled batch** (every
 open `Claude:`-prefixed Backlog issue not In Progress or In Review) and
-folds them into **one** batch issue, and it assembles a new batch **only
-when no meta issue is In Progress or In Review**. The unpulled-batch
-half of that pool is what keeps exactly one meta issue unblocked in
-Next: an unpulled batch sits in Backlog, so the precondition alone does
-not cover it. Assembly consumes the pool *as of
+folds them into **small themed batches of roughly 4–5 parts each**, and
+promotes a **file-disjoint** subset of them, leaving the rest parked.
+**It no longer gates on a meta issue being in flight** (operator rule,
+2026-09-11, retiring both the one-giant-batch form and the
+precondition): several short meta sessions beat one long one by enough
+that the file contention they create is worth paying as an occasional
+**rebase**. What bounds the Next view is that disjoint-set test — judged
+on collision clusters exactly as product work is, so meta loses its
+special case rather than gaining a new one — never a state check and
+never a bare count. Assembly consumes the pool *as of
 bootstrap*; a stray filed afterwards waits for the next one rather than
 joining a batch mid-flight. `housekeeping`'s propose-merges-among-meta
 step is **retired** — one writer, one rhythm.
@@ -264,10 +276,13 @@ under the `Trim levers` milestone, keyed by a
 MCP `patch` path, because that path echoes the whole stored body
 on every write and the cost compounds on an accumulator.
 `trim-context` is the periodic **fold**: sweep the milestone,
-fold into **one** `Claude:` task — always one, whatever the lever
-count or surface spread — and close the originals. (The
+fold into **small themed `Claude:` tasks of roughly 4–5 levers
+each** — sized to a short session, so a small pool is still one
+task while a large one splits by surface — and close the
+originals. (The always-one-task form and its no-size-bound
+exemption are **retired**, operator rule 2026-09-11; the
 coherence floor above still governs audit findings and product
-filings; the meta-work fold is the named exemption.) A rejected
+filings.) A rejected
 lever is **closed with its reason**, and
 dedup-against-resolved makes that permanent. The old inbox
 document is retired — it outgrew the tool-result cap between
@@ -287,15 +302,18 @@ an explicit yes; the default in any autonomous run is **no edge**, with
 the suspicion recorded as prose. Human-placed edges are authoritative
 and never rewritten. **There is no longer any exception** — not even
 for meta-work bookkeeping. A planning session still folds the open
-`Claude:`-prefixed meta-work into a single **batch issue** at
-bootstrap, but that batch now carries **no edge at all**: it is
-assembled only when no meta issue is In Progress or In Review, so the
-condition the edge used to encode is satisfied by construction instead.
-(This retires the standing one-edge-behind-the-batch carve-out, which
-had itself superseded an earlier serial chain needing an edge per
-issue. Parking a stray under the `Claude meta` milestone is what keeps
-it out of the pull queue in the meantime — a filer-safe substitute for
-an edge no filer was ever allowed to place.) File overlap is **not** a
+`Claude:`-prefixed meta-work into **batch issues** at bootstrap, and
+none of them carries **any edge at all** — nor is assembly gated on
+another meta issue being in flight, since the batches are deliberately
+**not serialized**: contention on the shared skill files is paid as an
+occasional **rebase**, which in a short session costs far less than the
+quadratic a long one buys. (This retires the standing
+one-edge-behind-the-batch carve-out, which had itself superseded an
+earlier serial chain needing an edge per issue, and the assembly
+precondition that briefly stood in for it. Parking a stray under the
+`Claude meta` milestone is what keeps it out of the pull queue in the
+meantime — a filer-safe substitute for an edge no filer was ever
+allowed to place.) File overlap is **not** a
 dependency, and the automated machinery that used to `related`-link it
 is **retired** — nothing records collision links any more, at filing
 time or on a sweep; reconciling overlap is planning-session work, judged
@@ -364,7 +382,28 @@ detail: `docs/conventions/skill-tooling.md`.
 Every tool result is fetched once but **replayed as input on every
 later turn**, so a fat early payload is paid many times over (and it's
 transport-agnostic — a big `git diff`, whole-file `Read`, or verbose
-log behaves like a fat MCP result). Request the narrowest thing that
+log behaves like a fat MCP result).
+
+**Session length is therefore itself a cost lever, and the largest
+one** — cost is roughly **quadratic in session length**, since a
+payload's price is its size times the turns that follow it. So **stage
+work so a session stays short** (~4–5 levers or findings per PR, target
+**300–800 changed lines**, floor ~150 unless trivially mechanical, split
+at 1,000) and prefer an occasional **rebase** to a serial chain. This
+binds at *breakdown* time, the only place it can. **Smaller is not
+monotonically cheaper** — a per-PR overhead floor means a tiny PR costs
+far more per line — but the upper bound is **absolute**, not per-line.
+Lines are a **proxy** for turns; where the findings rule and the line
+band disagree, coherence and the findings count win at the floor and the
+line band wins at the ceiling. The metric is **dollars**, not tokens or
+turns, and **every session states its own cost at close**. Two standing
+rulings: **Sonnet-tier task workers are rejected**, and the Bedrock
+auto-mode classifier's ~7% overhead is **accepted burn**. The
+measurements, the per-row cost table and the tie-break detail:
+`docs/conventions/context-economy.md` → "Session length is itself a cost
+lever".
+
+Per call, request the narrowest thing that
 answers the question, read large files by slice (Grep then `Read` with
 `offset`/`limit`), route verbose logs away from context — through
 `run_quiet.py`, for **any** repeated verbose-on-success runner, `pnpm`

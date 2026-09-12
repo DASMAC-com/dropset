@@ -18,16 +18,25 @@ MCP reads and writes around it.
 
 **The main caller is the planning bootstrap's meta-batch
 assembly.** Once a day it sweeps the `Claude meta` parking
-milestone and folds every parked stray into one batch issue
-through this skill — so the `Claude:`-prefix decision and the
-no-size-bound exemption below are on the hot path rather than
-being edge cases. Two things that assembly expects of the
-survivor, and that a caller should pass rather than fix up
-afterwards: it goes to **Backlog, Urgent** (it is the one meta
-issue meant to be pulled, unlike its parked inputs), and it
-carries **no blocking edge** — the assembly precondition, not a
-relation, is what keeps one batch in flight at a time. See the
-`plan` skill, step 1.
+milestone and folds the parked strays into **small themed
+batches** through this skill — so the `Claude:`-prefix decision
+and the size bound below are on the hot path rather than being
+edge cases. Two things that assembly expects of each survivor,
+and that a caller should pass rather than fix up afterwards:
+
+- It is filed **parked** — `Todo` plus `Claude meta`, like the
+  strays it was folded from — and only a batch the planning
+  session **promotes** is moved to **Backlog, Urgent**, which
+  means **clearing the milestone as well as** changing state.
+  Assembling and promoting are different acts now that a
+  bootstrap produces several batches; filing every survivor
+  straight to Backlog/Urgent would flood the operator's Next
+  view with Urgent meta work.
+- It carries **no blocking edge** — nothing serializes the
+  batches at all now, neither a relation nor the retired
+  assembly precondition.
+
+See the `plan` skill, step 1.
 
 ## Input
 
@@ -89,24 +98,35 @@ to override, the user names one explicitly (e.g. "merge
   assembled. Recommend the split for that reason, and don't
   claim a cost argument that no longer holds.
 
-  **Exemption — the `Claude:` meta class has no size bound.**
-  Operator-ratified, 2026-08-24: Claude meta work aggregates
-  into **one** batch issue regardless of body size, so this
-  warning does **not** fire on a `Claude:`-prefixed survivor.
-  The readability argument above is real but is outweighed
-  here by a scheduling fact — at most one meta task ever runs
-  in flight, because they all contend on the same skill files.
-  A second meta issue therefore buys no parallelism and costs
-  a merge conflict, and churn speed through the
-  self-improvement loop matters more than per-issue
-  readability.
+  **The `Claude:` meta class is bound too — the old exemption
+  is RETIRED.** Operator rule, 2026-09-11, superseding the
+  2026-08-24 no-size-bound exemption: meta work folds into
+  **small themed batches of roughly 4–5 parts**, so this
+  warning fires on a `Claude:`-prefixed survivor exactly as it
+  does on any other.
 
-  The exemption is about **size only**: the coherence floor
-  still binds absolutely, and meta work never folds together
-  with product code. And it is **only** for this class — the
-  split recommendation stands for product issues, where the
-  work genuinely can run in parallel and readability is what
-  decides whether it does.
+  The exemption's own reasoning is what fell. It rested on a
+  scheduling claim — that at most one meta task ever runs in
+  flight, since they all contend on the same skill files, so a
+  second issue buys no parallelism and costs a merge conflict.
+  The contention is real; what changed is its price relative to
+  the alternative. Session cost is roughly **quadratic in
+  session length**
+  (`docs/conventions/context-economy.md` → "Session length is
+  itself a cost lever"), so serializing meta work into one
+  unbounded batch buys that quadratic in exchange for avoiding
+  a **rebase** — which inside a short session costs cents. The
+  measured counterexample is the ENG-1194 batch: the whole
+  parked pool in one issue, worked in a 19-hour, \$409 run.
+  Churn speed through the self-improvement loop still matters
+  most, and small batches are now how it is bought.
+
+  The readability argument above therefore applies to meta work
+  as well, rather than being outweighed by it. The **coherence
+  floor** is untouched and still binds absolutely: meta work
+  never folds together with product code, and a set that must
+  land as one PR is never scattered — it splits into
+  *sequential* PRs instead of growing past a short session.
 
 ## Steps
 
@@ -256,12 +276,13 @@ TUI-selector pattern the other skill handoffs use):
   of growing; that makes "cancel" the honest default for this
   one case, so say which way you'd go.
 
-  **Skip this warning entirely when the survivor's title
-  carries the `Claude:` prefix.** That class is exempt by
-  operator ratification — one batch, one in flight, no size
-  bound — so firing it there would recommend against the
-  ratified default on every meta fold. See the exemption under
-  "What it does — and does not" above.
+  **This warning applies to a `Claude:`-prefixed survivor as
+  well.** The old skip-for-meta exemption is retired (operator
+  rule, 2026-09-11): meta work is now size-bound like everything
+  else, at roughly 4–5 parts per batch, so an oversized meta
+  survivor is exactly the case worth flagging. See "What it does
+  — and does not" above for why the one-in-flight reasoning that
+  justified the exemption no longer holds.
 
 Offer "yes, merge" (**first**, the recommended default) and
 "cancel". Proceed only on an explicit yes.
