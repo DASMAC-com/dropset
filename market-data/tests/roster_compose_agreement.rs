@@ -38,6 +38,38 @@
 //! re-coupling a venue — or de-coupling one — fails until the declaration says
 //! so deliberately.
 //!
+//! **A third property: services that share one override variable share one
+//! roster.** The two coinbase legs both key off the bare `PRODUCT_IDS` rather
+//! than a per-service name, so an operator override necessarily reaches both —
+//! which makes the unset state the *only* one in which their rosters can differ
+//! at all, and a difference there is never intended. Each nonetheless writes its
+//! own default out in compose, and the equality above pins each copy to its own
+//! Rust constant rather than to the other copy: widening one leg and its
+//! constant together leaves both variable chains identical and every assertion
+//! above green, silently de-rostering the other leg.
+//! `every_shared_override_group_agrees` is what closes that.
+//!
+//! It reads the grouping off `variable_chain`'s outermost entry rather than off
+//! a declared group name, which is the one place a *grouping* is derived rather
+//! than declared — because here the coupling is mechanical rather than
+//! a decision: two services keying off one variable *are* co-overridden,
+//! whatever anyone intended. Deriving it covers a future pair that shares its
+//! **outermost** variable without someone remembering to declare it, the same
+//! argument `every_rostered_service_is_pinned` makes for a new collector.
+//!
+//! **The bound on that, stated because the obvious reading overstates it.**
+//! Sharing an outermost variable is not the only way two services can be
+//! co-overridden: `alphavantage` and `twelvedata` share `FX_PRODUCT_IDS` as
+//! their *second* entry, each writes its own copy of that variable's default
+//! literal, and those two copies are **not** compared by anything here.
+//! Measured: widening `alphavantage`'s compose literal together with its own
+//! Rust constant, leaving `twelvedata` narrow, leaves every test in this file
+//! green. That residue is deliberately left alone rather than folded in,
+//! because it needs a *different* assertion — both those values are folded
+//! (`>-`) scalars, so byte-identity would fail on a re-fold that changed no
+//! roster, and set-equality plus `entry_count` is the right test there. Adding
+//! it is a separate change with its own design question.
+//!
 //! **This file used to have a second, much weaker mode**, and what it cost is
 //! worth recording. The three keyed FX venues shared one
 //! `fx::DEFAULT_PRODUCTS`, narrowed to the single pair every one of them
@@ -383,7 +415,7 @@ fn every_rust_default_agrees_with_its_compose_default() {
     }
 }
 
-/// The other property: the chain shape each compose comment asserts in prose.
+/// The second property: the chain shape each compose comment asserts in prose.
 ///
 /// The module docs explain why the equality above cannot see it. Until this
 /// test, that rationale was asserted in prose — in compose, in the `Makefile`,
@@ -414,6 +446,90 @@ fn every_variable_chain_matches_its_declaration() {
              by editing that declaration",
             wiring.service,
         );
+    }
+}
+
+/// The third property: services sharing one override variable share one roster.
+///
+/// **Byte-identity rather than set-equality**, because these are two copies of
+/// one literal rather than two independently-authored rosters — so an ordering
+/// or case difference between them is drift worth failing on, even though
+/// `parse_roster` normalizes it away at runtime. Only
+/// `every_rust_default_agrees_with_its_compose_default` compares normalized
+/// sets for *equality*, and it does so because it spans two languages;
+/// `every_variable_chain_matches_its_declaration` already compares raw strings
+/// exactly, so exactness is the file's norm rather than this test's exception.
+///
+/// **What makes byte-identity SAFE here is that both values are single-line
+/// quoted scalars**, and that is a property of the coinbase pair rather than of
+/// shared rosters generally — see the bound in the module docs. A folded (`>-`)
+/// value's unwrapped default carries whitespace from wherever the YAML fold
+/// happens to break, so byte-identity would fail on a pure re-fold that changed
+/// no roster at all.
+///
+/// **The Rust side needs no assertion of its own.** Byte-identical compose
+/// defaults plus `every_rust_default_agrees_with_its_compose_default` give
+/// set-equality between the group's Rust constants transitively. What that
+/// leaves uncovered is an ordering or case divergence between the two Rust
+/// constants — accepted, because set semantics are all that survive
+/// `parse_roster` there anyway.
+#[test]
+fn every_shared_override_group_agrees() {
+    let compose = compose_defaults();
+    let mut groups: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for wiring in wirings() {
+        // The outermost entry is the service's own override variable. A later
+        // entry is a shared roster this service chains through — also
+        // operator-settable, and so a real coupling, but one this grouping does
+        // not cover; the module docs state that bound and why.
+        let Some(&override_var) = wiring.variable_chain.first() else {
+            continue;
+        };
+        groups.entry(override_var).or_default().push(wiring.service);
+    }
+    let shared: BTreeMap<&str, Vec<&str>> = groups
+        .into_iter()
+        .filter(|(_, services)| services.len() > 1)
+        .collect();
+    // Not a vacuous-pass guard for a broken extractor — `variable_chain` is
+    // declared, not extracted. It fires when today's only shared group stops
+    // being one, which is a deliberate act either way and should have to say so
+    // here, exactly as re-coupling a venue has to edit `wirings()`.
+    assert!(
+        !shared.is_empty(),
+        "no override variable is shared by more than one service, but the two \
+         coinbase legs both key off the bare `PRODUCT_IDS`. Three ways to get \
+         here: they were de-coupled onto their own variables, one of them left \
+         `wirings()`, or the shared variable moved out of the outermost slot — \
+         and that last one leaves the coupling LIVE but outside this grouping, \
+         so see the bound in the module docs before believing this test is \
+         obsolete. Re-point it at whatever pair is now shared; delete it only \
+         if the grouping can never have a member again",
+    );
+    for (override_var, services) in shared {
+        let mut rosters = services.iter().map(|service| {
+            let roster = compose.get(*service).unwrap_or_else(|| {
+                panic!(
+                    "docker-compose.yml defines no PRODUCT_IDS default for \
+                     service `{service}` — add one, or drop that row from \
+                     `wirings()`"
+                )
+            });
+            (*service, roster)
+        });
+        let (first_service, first_roster) = rosters
+            .next()
+            .expect("a shared group has two or more members");
+        for (service, roster) in rosters {
+            assert_eq!(
+                first_roster, roster,
+                "services `{first_service}` and `{service}` both key off \
+                 `{override_var}`, so any operator override reaches both — the \
+                 unset state is the only one where their rosters can differ at \
+                 all, and here they do. Widen both together, or give them \
+                 separate override variables if the two are meant to diverge",
+            );
+        }
     }
 }
 

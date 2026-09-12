@@ -107,6 +107,11 @@ services:
     environment:
       BACKFILL_DAYS: '${BACKFILL_DAYS:-60}'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      # The bare `PRODUCT_IDS`, not a per-service name, so one override drives
+      # this leg and `coinbase-ticker` together — which means the two defaults
+      # below have to be widened together too. Pinned byte-identical by
+      # `every_shared_override_group_agrees` in
+      # `market-data/tests/roster_compose_agreement.rs`.
       PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC,AUDD-USDC}'
       RUST_LOG: 'info'
     restart: 'unless-stopped'
@@ -129,6 +134,9 @@ services:
     environment:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
+      # Must stay byte-identical to `coinbase`'s default above — see the comment
+      # there for why the shared override variable makes that a requirement
+      # rather than a convention.
       PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC,AUDD-USDC}'
       RUST_LOG: 'info'
     restart: 'unless-stopped'
