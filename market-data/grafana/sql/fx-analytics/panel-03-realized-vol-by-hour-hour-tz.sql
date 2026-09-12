@@ -33,9 +33,16 @@
 -- Sunday open, which are the hours the guard note above says a reader most
 -- cares about. The split was ratified away because it decided nothing under a
 -- weekday-only posture while halving every hour's sample; the honest reading of
--- the trade is that the panel is now a whole-week measurement. `volume` is the
--- available discriminator if that ever needs fixing -- filed separately, and
--- deliberately not done here.
+-- the trade is that the panel is now a whole-week measurement.
+--
+-- DO NOT REACH FOR `volume` AS THE DISCRIMINATOR, which is the obvious guess
+-- and is wrong. Measured across 14 days: every one of that vendor's 20,162 bars
+-- carries zero volume, in session and out alike, so the column identifies the
+-- VENDOR as indicative and never a BAR as out-of-session. What does discriminate
+-- is grid-versus-tape -- an indicative vendor emits a bar every minute with no
+-- intraday gaps and identical counts across pairs, while a real tape's counts
+-- differ per pair because a minute with no tick produces no bar at all. The fix
+-- lands as an imposed session fence, filed separately.
 WITH bars AS (
   SELECT
     c.bucket_start,
