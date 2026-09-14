@@ -273,6 +273,85 @@ class OpenTabsPositional(DriverStub, unittest.TestCase):
         self.assertEqual(iterm_api.open_tabs(["x"]), ["/dev/a"])
 
 
+class PartialBatchRecovery(DriverStub, unittest.TestCase):
+    """A batch that fails at tab k still reports the first k tabs.
+
+    The driver publishes its tty list before the per-tab loop specifically so
+    this is possible, and `_call` used to discard it on the not-ok branch — so
+    the protection the driver's own comment describes never reached a caller.
+    Every caller was told the whole batch failed, and a retry re-ran the
+    commands that had already been typed.
+    """
+
+    def test_a_failure_part_way_through_carries_the_tabs_already_opened(self):
+        # The driver got through two of four tabs, then broke.
+        self._stub(
+            stdout=json.dumps(
+                {
+                    "ok": False,
+                    "error": "iTerm2 API call failed: boom",
+                    "ttys": ["/dev/a", "/dev/b"],
+                }
+            )
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["w", "x", "y", "z"])
+        self.assertEqual(caught.exception.ttys, ["/dev/a", "/dev/b"])
+        self.assertIn("boom", str(caught.exception))
+
+    def test_the_partial_is_not_padded_to_the_command_count(self):
+        """The length IS the contract, so padding it would destroy the answer.
+
+        `commands[len(exc.ttys):]` is what still needs running. Padding to
+        `len(commands)` would make "opened, tty unreadable" and "never opened"
+        indistinguishable, and those need opposite handling — the first must not
+        be retried, the second must.
+        """
+        self._stub(
+            stdout=json.dumps({"ok": False, "error": "boom", "ttys": ["/dev/a"]})
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["x", "y", "z"])
+        self.assertEqual(len(caught.exception.ttys), 1)
+
+    def test_a_null_entry_still_counts_as_dispatched(self):
+        # "Opened and typed into, but its tty could not be read" — a retry of
+        # this command would double-run it, so it occupies a position.
+        self._stub(
+            stdout=json.dumps({"ok": False, "error": "boom", "ttys": ["/dev/a", None]})
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["x", "y", "z"])
+        self.assertEqual(caught.exception.ttys, ["/dev/a", None])
+
+    def test_a_failure_that_opened_nothing_carries_an_empty_partial(self):
+        self._stub(stdout=json.dumps({"ok": False, "error": "no window"}))
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["x", "y"])
+        self.assertEqual(caught.exception.ttys, [])
+
+    def test_a_killed_driver_carries_no_partial(self):
+        """The honest bound: this recovers a driver that ANSWERED.
+
+        A timeout leaves no response to read a partial out of, so tabs may exist
+        that no caller can know about. `PER_TAB_TIMEOUT_SECONDS` is what makes
+        that unlikely; nothing here can repair it.
+        """
+        self._stub(
+            stdout="",
+            raises=iterm_api.subprocess.TimeoutExpired(cmd="driver", timeout=1),
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["x", "y"])
+        self.assertEqual(caught.exception.ttys, [])
+
+    def test_a_non_batch_op_failure_carries_an_empty_partial(self):
+        self._stub(stdout=json.dumps({"ok": False, "error": "no window"}))
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.session_names()
+        self.assertEqual(caught.exception.ttys, [])
+
+
 class FirstSession(unittest.TestCase):
     """`_first_session` — the fix for a real failure on the first live run.
 

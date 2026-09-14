@@ -344,9 +344,9 @@ class Dispatch(unittest.TestCase):
 
 
 class BlockedDispatch(unittest.TestCase):
-    def _fail_with(self, message):
+    def _fail_with(self, message, ttys=None):
         def boom(_commands):
-            raise iterm_api.ItermUnavailable(message)
+            raise iterm_api.ItermUnavailable(message, ttys=ttys)
 
         original = iterm_api.open_tabs
         iterm_api.open_tabs = boom
@@ -387,6 +387,42 @@ class BlockedDispatch(unittest.TestCase):
         self.assertIn("run these by hand", text)
         for command in ("plan", "task 1234", "fleet go"):
             self.assertIn(command, text)
+
+    def test_a_failure_part_way_through_does_not_offer_sent_verbs_for_rerun(self):
+        """The double-type this exists to prevent.
+
+        A driver failure after k tabs were opened and typed left those k running,
+        and naming the whole batch told the operator to type a second copy of
+        each into a new tab. Only the tail that was never sent may appear under
+        "run these by hand".
+        """
+        self._fail_with("driver broke", ttys=["/dev/a"])
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc = session_dispatch.run(["plan", "+", "task", "1234", "+", "fleet", "go"])
+        text = err.getvalue()
+        self.assertEqual(rc, 1)
+
+        # The already-typed verb is reported as such, and NOT as a hand-run.
+        self.assertIn("already opened", text)
+        self.assertIn("/dev/a", text)
+        hand_run = text.split("run these by hand")[1]
+        self.assertNotIn("plan", hand_run)
+        for command in ("task 1234", "fleet go"):
+            self.assertIn(command, hand_run)
+
+    def test_a_failure_that_opened_nothing_still_offers_the_whole_batch(self):
+        # The exemption must not swallow the common case: an iTerm that was never
+        # reachable dispatched nothing, so every verb is still a hand-run.
+        self._fail_with("iTerm2 is not running")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc = session_dispatch.run(["plan", "+", "task", "1234"])
+        text = err.getvalue()
+        self.assertEqual(rc, 1)
+        self.assertNotIn("already opened", text)
+        for command in ("plan", "task 1234"):
+            self.assertIn(command, text.split("run these by hand")[1])
 
 
 if __name__ == "__main__":

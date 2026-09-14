@@ -70,7 +70,27 @@ PER_TAB_TIMEOUT_SECONDS = 10
 
 
 class ItermUnavailable(Exception):
-    """iTerm automation cannot run here. Carries a one-line operator-facing why."""
+    """iTerm automation cannot run here. Carries a one-line operator-facing why.
+
+    ``ttys`` carries the PARTIAL positional result of a batch op that failed
+    partway through — the tabs the driver had already opened and typed into
+    before it broke. It is the empty list for every failure that opened nothing,
+    which is the safe default: a caller that reads it as "how many commands were
+    dispatched" then treats an unknown failure as having dispatched none.
+
+    Why it lives on the exception rather than in a return value: the batch DID
+    fail, and a caller that gets an ordinary return has no reason to check
+    whether it is complete. Raising keeps the failure impossible to miss while
+    still handing over what survived. See :func:`open_tabs` for the contract.
+    """
+
+    def __init__(self, message: str, ttys: list[str | None] | None = None):
+        super().__init__(message)
+        #: Length is the number of commands whose fate the driver recorded, so
+        #: `commands[len(ttys):]` is exactly what still needs running. An entry
+        #: may be None while still counting: that means the tab was opened and
+        #: typed into but its tty could not be read, which must NOT be retried.
+        self.ttys: list[str | None] = list(ttys or [])
 
 
 def bundled_interpreter(root: Path | None = None) -> Path | None:
@@ -162,7 +182,17 @@ def _call(request: dict, *, timeout: int | None = None) -> dict:
         raise ItermUnavailable(f"unparseable iTerm2 driver response: {exc}") from exc
 
     if not response.get("ok"):
-        raise ItermUnavailable(response.get("error") or "the iTerm2 API call failed")
+        # The partial travels with the error. The driver publishes `ttys` before
+        # its per-tab loop precisely so a mid-batch failure still reports the
+        # tabs already opened, and this used to discard it — every caller was
+        # told the whole batch failed, so a retry re-ran the commands that had
+        # already been typed. An op that opened nothing carries no `ttys` key and
+        # the exception's list is then empty, which is the same as "none
+        # dispatched".
+        raise ItermUnavailable(
+            response.get("error") or "the iTerm2 API call failed",
+            ttys=response.get("ttys"),
+        )
     return response
 
 
@@ -182,6 +212,25 @@ def open_tabs(commands: list[str]) -> list[str | None]:
     per-command process would pay interpreter startup N times and interleave
     badly with the tabs it is creating. The returned list is positional, so a
     ``None`` marks the tab whose tty could not be read — never a silent gap.
+
+    ON FAILURE, ``ItermUnavailable.ttys`` CARRIES THE PARTIAL, and its LENGTH is
+    the contract: ``commands[len(exc.ttys):]`` is what still needs running, and
+    everything before that index was already typed into a live tab. A caller
+    that re-runs the whole batch instead double-runs the first k commands — for
+    `fleet_resume` that is a double-resume of k sessions, and for
+    `session_dispatch` a second copy of k verbs typed into new tabs.
+
+    The partial is deliberately NOT padded to ``len(commands)`` the way the
+    success path is. Padding would make "opened, tty unreadable" and "never
+    opened" indistinguishable, and those two need opposite handling: the first
+    must not be retried, the second must. On the success path every command was
+    dispatched, so there the pad is a pure length repair.
+
+    Bound on what this recovers: a driver that ANSWERED. If it was killed at the
+    timeout, or returned nothing at all, there is no response to read a partial
+    out of and the list is empty — so tabs may exist that no caller can know
+    about. That is what :data:`PER_TAB_TIMEOUT_SECONDS` exists to make unlikely,
+    not something this can repair.
     """
     if not commands:
         return []
@@ -288,7 +337,9 @@ async def _driver_body(connection, request, result):  # pragma: no cover
         # failure partway through a batch still reports the tabs already opened.
         # Otherwise the caller is told the whole batch failed and prints every
         # verb as "run these by hand" — which double-resumes the first k
-        # sessions, since those tabs are open and running.
+        # sessions, since those tabs are open and running. `_call` carries this
+        # list out on the raised `ItermUnavailable`; nothing else would ever see
+        # it, since the error path returns no value.
         ttys = []
         result["ttys"] = ttys
         for command in request["commands"]:
@@ -300,7 +351,14 @@ async def _driver_body(connection, request, result):  # pragma: no cover
                 ttys.append(None)
                 continue
             await session.async_send_text(command + "\n")
-            ttys.append(await session.async_get_variable("tty"))
+            # Appended BEFORE the tty is read, then filled in. The text is
+            # already typed at this point, so the entry has to exist even if the
+            # read raises: `len(ttys)` is what tells the caller how many commands
+            # were dispatched, and truncating here would put an already-typed
+            # command back into the retry set. The placeholder is the same
+            # "opened, tty unreadable" value the branch above uses.
+            ttys.append(None)
+            ttys[-1] = await session.async_get_variable("tty")
         result["ok"] = True
         return
 

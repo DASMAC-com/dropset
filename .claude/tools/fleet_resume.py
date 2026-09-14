@@ -366,12 +366,31 @@ def run(argv: list[str]) -> int:
             pairs = open_tabs(tags)
         except iterm_api.ItermUnavailable as exc:
             # Best effort is the bar, and the operator loses the convenience
-            # rather than the information: name every verb that went untyped so
+            # rather than the information: name every verb that went UNTYPED so
             # the fleet can be brought back by hand.
-            raise FleetResumeError(
-                f"{exc}\n  run these by hand:\n"
-                + "\n".join(f"    {resume_command(tag)}" for tag in tags)
-            ) from exc
+            #
+            # "Untyped", not "every verb". This used to list the whole batch, and
+            # a mid-batch driver failure therefore told the operator to re-resume
+            # sessions that were already open and running — a double-resume of
+            # the first k issues, which is the expensive direction: two agents on
+            # one branch. `iterm_api.open_tabs` carries the partial out on the
+            # exception and its length is the dispatch count.
+            dispatched = exc.ttys[: len(tags)]
+            remaining = tags[len(dispatched) :]
+            lines = [str(exc)]
+            if dispatched:
+                lines.append(
+                    f"  {len(dispatched)} session(s) were already resumed — do "
+                    "NOT re-run these (they carry no attend mark, since marking "
+                    "happens after the batch):"
+                )
+                lines += [
+                    f"    {resume_command(tag)}" for tag in tags[: len(dispatched)]
+                ]
+            if remaining:
+                lines.append("  run these by hand:")
+                lines += [f"    {resume_command(tag)}" for tag in remaining]
+            raise FleetResumeError("\n".join(lines)) from exc
         unmarked = [tag for tag, tty in pairs if not mark_attention(tty)]
         result["opened"] = len(pairs)
         result["unmarked"] = unmarked

@@ -238,16 +238,32 @@ def run(argv: list[str]) -> int:
         ttys = iterm_api.open_tabs(commands)
     except iterm_api.ItermUnavailable as exc:
         # Loud, and useful. This is what makes "best effort" an acceptable bar:
-        # the operator loses the convenience, never the launch. Every verb is
-        # named, not just the first — a batch that could not be typed leaves the
-        # whole batch to hand-run.
+        # the operator loses the convenience, never the launch.
         print(f"session-dispatch: {exc}", file=sys.stderr)
-        listing = "\n".join(f"  {command}" for command in commands)
-        print(
-            f"session-dispatch: run {'these' if len(commands) > 1 else 'this'} "
-            f"by hand instead:\n\n{listing}\n",
-            file=sys.stderr,
-        )
+
+        # Only the verbs NOT YET SENT go in the hand-run list. This used to name
+        # the whole batch, which is wrong in the one case that matters: a driver
+        # failure after k tabs were opened and typed left those k running, and an
+        # operator following the instructions typed a second copy of each into a
+        # new tab. `open_tabs` carries the partial out on the exception, and its
+        # length is the dispatch count.
+        dispatched = exc.ttys[: len(commands)]
+        remaining = commands[len(dispatched) :]
+        if dispatched:
+            print(
+                f"session-dispatch: {len(dispatched)} tab(s) were already opened "
+                "and typed into — do NOT re-run these:",
+                file=sys.stderr,
+            )
+            for command, tty in zip(commands, dispatched):
+                print(f"  {command} -> {tty or 'tty unknown'}", file=sys.stderr)
+        if remaining:
+            listing = "\n".join(f"  {command}" for command in remaining)
+            print(
+                f"session-dispatch: run {'these' if len(remaining) > 1 else 'this'} "
+                f"by hand instead:\n\n{listing}\n",
+                file=sys.stderr,
+            )
         return 1
 
     # The confirmation the operator reads. One line per verb pairs it with the
