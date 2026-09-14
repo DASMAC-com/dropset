@@ -40,6 +40,24 @@ which drifted behind it twice:
   concluding, not after — the ordering is spelled out in `review-pr`'s
   merge-queue outcome step.
 
+  **But rule out "already merged" first, and read that as an
+  invariant rather than a lag direction.** The all-null probe has a
+  *third* reading beyond those two, because this GraphQL probe and the
+  `gh pr view --json state,mergedAt` read disagree in **both**
+  directions — measured on three PRs within an hour, one with GraphQL
+  ahead of the state read, one behind it, and one with both stale
+  together. So neither source is reliably the fresher one, and a rule
+  naming either as the tiebreak is wrong half the time. What holds:
+  **a terminal `MERGED` from either source is authoritative** — merge
+  is terminal and neither source reports it spuriously, so only
+  lateness is possible, never a false positive. Conclude "still
+  queued" or "dequeued" only when **both** agree the PR is not merged;
+  when neither says merged and the queue entry looks impossible for
+  the run state, wait and re-probe. `review-pr`'s outcome step carries
+  the per-PR evidence, and the invariant governs every branch there,
+  including the `AWAITING_CHECKS` one that otherwise polls a merged PR
+  indefinitely.
+
 - **The CI-wait and PR-state reads** — `gh pr checks <number>` for the
   CI-wait poll, and `gh pr view <number> --json <fields>` for the
   one-shot `mergeable` / PR-lookup reads. These reads are **polled
