@@ -1629,6 +1629,79 @@ class FixtureReachabilityGateTests(unittest.TestCase):
         self.assertEqual(verdict["rust_fixture_hits"], [])
 
 
+class ProseHeavyGateTests(unittest.TestCase):
+    """`prose_heavy` as `gate()` actually emits it, not as computed in a test body.
+
+    The unit tests below cover the classifier in isolation, which would leave the
+    *wiring* untested — delete the call from `gate()` and every one of them still
+    passes. That is the same failure `ArtifactGateSourceOnlyTests` documents, so
+    this class asserts on the verdict.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.out = self.root / "review-diff.txt"
+
+        git(self.repo, "init", "-q", "-b", "main")
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "T")
+        git(self.repo, "config", "commit.gpgsign", "false")
+        (self.repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+        git(self.repo, "add", "seed.txt")
+        git(self.repo, "commit", "-q", "-m", "Seed")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+        self._cwd = Path.cwd()
+        os.chdir(self.repo)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+
+    def _gate(self, rel, text):
+        target = self.repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        git(self.repo, "add", rel)
+        git(self.repo, "commit", "-q", "-m", "Change")
+        return rd.gate("main", self.out, fetch=False)
+
+    def test_a_doc_comment_heavy_rust_file_trips_the_flag(self):
+        # 30 doc-comment lines to 10 of code: over the ratio and over the floor,
+        # and touching no docs PATH — the ENG-1279 shape the flag exists for.
+        body = "".join(f"/// doc line {i}\n" for i in range(30))
+        body += "".join(f"fn f{i}() {{}}\n" for i in range(10))
+        verdict = self._gate("feeds/src/venues/oanda.rs", body)
+        self.assertTrue(verdict["prose_heavy"])
+        self.assertEqual(verdict["added_shape"]["added"], 40)
+        self.assertEqual(verdict["added_shape"]["comment"], 30)
+
+    def test_a_code_heavy_rust_file_does_not(self):
+        body = "".join(f"/// doc line {i}\n" for i in range(5))
+        body += "".join(f"fn f{i}() {{}}\n" for i in range(40))
+        verdict = self._gate("feeds/src/venues/kraken.rs", body)
+        self.assertFalse(verdict["prose_heavy"])
+
+    def test_the_floor_holds_even_at_a_high_ratio(self):
+        # All prose, but only three lines of it: the ratio alone would fire.
+        verdict = self._gate("a/x.rs", "/// one\n/// two\n/// three\n")
+        self.assertEqual(verdict["added_shape"]["ratio"], 1.0)
+        self.assertFalse(verdict["prose_heavy"])
+
+    def test_an_empty_diff_reports_a_zero_shape_rather_than_failing(self):
+        # `gate()` skips the classifier when the diff is empty; the field must
+        # still be present and well-formed for a caller that reads it.
+        verdict = self._gate("pnpm-lock.yaml", "lockfile: 1\n")
+        self.assertTrue(verdict["diff_empty"])
+        self.assertEqual(
+            verdict["added_shape"], {"added": 0, "comment": 0, "ratio": 0.0}
+        )
+        self.assertFalse(verdict["prose_heavy"])
+
+
 class AddedLineShapeTests(unittest.TestCase):
     """The added-line prose classification behind `prose_heavy`."""
 
