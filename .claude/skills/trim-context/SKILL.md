@@ -340,18 +340,45 @@ unblocked in the operator's Next view. The `Trim levers` milestone, this
 skill's own writer, and the per-lever fold below are all unchanged — only
 where the *output* lands moved, and how many outputs there are.
 
-**Compose the body with the tool, not by hand:**
+**Compose the bodies with the tool, not by hand — one call for the whole
+fold, however many tasks it splits into:**
 
 ```sh
 python3 .claude/tools/trim_levers.py compose \
-  --bodies-file <scratchpad>/levers.md --out <scratchpad>/folded.md
+  --bodies-file <scratchpad>/levers.md \
+  --groups-file <scratchpad>/groups.json --out-dir <scratchpad>/tasks
 ```
 
-It reads the `--bodies-out` dump from step 2 and emits the aggregated
-body, printing only a summary — the body stays on disk, which is the same
-zero-echo trade as the fetch half. `--exclude ENG-1,ENG-2` drops levers
-already folded; `--start N` continues the numbering when a batch is
-composed in halves (the summary prints the next part number).
+`groups.json` carries the themes you chose in step 3 — a JSON array of
+`{"title": …, "levers": […]}` objects, one per task. That grouping is
+the one part of the fold the tool cannot decide for you; everything
+after it is mechanical. It emits one conforming body per group in a
+single pass and prints only a summary naming each file, so the bodies
+stay on disk — the same zero-echo trade as the fetch half.
+
+**Each task numbers its parts from 1.** A task is a whole issue, so its
+parts are Part 1..N *of that issue*, not a slice of one continuous
+sequence.
+
+**It refuses the two ways an N-task fold loses a lever**, which is the
+reason this is one call rather than one per task: a lever assigned to
+**no** group, and a lever assigned to **two**. The first is the
+dangerous one — an unassigned lever is folded nowhere, yet step 5 still
+closes its parked original, so the lever is lost with nothing pointing
+at the loss. It also errors on a grouped identifier absent from the dump
+(unlike `--exclude`, a group assignment is authoritative for the dump it
+is run against), and still fails loudly on any part with no
+`**Fingerprint**:` line.
+
+A group over five parts is an **advisory**, not a refusal: the size rule
+is explicitly "roughly 4–5", and a hard limit would push you into
+splitting a coherent theme to satisfy a tool.
+
+**The single-task mode is unchanged** for a one-off — `--out <file>`
+composes one body, with `--exclude ENG-1,ENG-2` to drop levers already
+folded and `--start N` to continue the numbering when a single task is
+composed in halves. The two modes cannot be mixed; flags from both are
+refused rather than silently resolved.
 
 **Why this is a tool.** Under the **now-retired** whole-pool ruling a
 fold carried the entire parked pool — one pass folded **41 levers,
@@ -373,10 +400,16 @@ kind of thing that belongs in committed code rather than in prose:
   that looks right. A hand fold that summarizes instead of carrying the
   body drops them, and the loss is invisible until a later pass refiles
   a lever that was already folded.
+- **Complete, disjoint assignment across the tasks.** Once a fold emits
+  several tasks, "every lever landed in exactly one of them" stops being
+  checkable by eye — and the failure is silent in both directions, since
+  step 5 closes the parked originals whether or not a part was written
+  for them. The tool holds the whole pool and the whole grouping in one
+  call, so it is the only place the check can be made at all.
 
-Read the composed file before filing — the tool guarantees structure and
-fingerprints, not that the umbrella title you write actually describes
-the pool.
+Read each composed file before filing — the tool guarantees structure,
+fingerprints, and that every lever landed in exactly one task, not that
+the title you gave a group actually describes the levers in it.
 
 Its body is **one `# Part N — <title>` section per lever**, and
 carries:
@@ -395,14 +428,22 @@ Set `state`, `priority` and any relations in the **creating** call — a
 follow-up write buys a second full body echo for nothing (same convention
 doc → "Relations and state belong in the CREATING call").
 
-**File it through the zero-echo writer, not `save_issue`:**
+**File them through the zero-echo writer, not `save_issue`** — one call
+per composed file, taking the title from the group you gave it and the
+path from the compose summary:
 
 ```sh
 python3 .claude/tools/linear_issue.py create \
-  --title 'Claude: <umbrella summary of this fold>' \
-  --body-file <scratchpad>/folded.md \
+  --title 'Claude: <this task's theme>' \
+  --body-file <scratchpad>/tasks/01-<slug>.md \
   --state Todo --milestone 'Claude meta' --priority 3
 ```
+
+Composition is one call for the whole fold; **filing is one call per
+task**, since each is its own issue. Nothing folds them together
+afterwards, so a task you compose and do not file is simply not filed —
+and its levers get closed in step 5 regardless. File every composed
+file before moving on.
 
 Team, project and assignee resolve from the `LINEAR_*` environment.
 

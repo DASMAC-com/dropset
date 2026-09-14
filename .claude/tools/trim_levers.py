@@ -65,6 +65,7 @@ used to need. Blocking edges are human-curated in a planning session. Stdlib onl
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -918,6 +919,34 @@ def split_dump(dump: str) -> list[tuple[str, str, str]]:
     return sections
 
 
+def _dump_sections(dump: str) -> list[tuple[str, str, str]]:
+    """The dump's lever sections, validated — shared by both compose modes."""
+    sections = split_dump(dump)
+    if not sections:
+        raise TrimLeversError(
+            "no '## <identifier> | <title>' sections found — expected the "
+            "output of `trim_levers.py list --bodies-out`"
+        )
+
+    # A repeated identifier means two dumps were concatenated, or one was
+    # appended to twice. Folding it would emit the same lever as two numbered
+    # parts and then close the single underlying issue once, so the duplicate
+    # part survives in the fold with nothing behind it — and `--exclude`, or a
+    # group naming that identifier, would silently drop BOTH. Cheap to detect,
+    # confusing to unpick afterwards.
+    seen: dict[str, int] = {}
+    for identifier, _, _ in sections:
+        seen[identifier.upper()] = seen.get(identifier.upper(), 0) + 1
+    repeated = sorted(name for name, count in seen.items() if count > 1)
+    if repeated:
+        raise TrimLeversError(
+            f"these identifiers appear more than once in the dump: "
+            f"{', '.join(repeated)} — two dumps concatenated, or one appended "
+            "to twice. Re-run `list --bodies-out` to a fresh file."
+        )
+    return sections
+
+
 def compose_fold(
     dump: str, *, start: int = 1, exclude: tuple[str, ...] = ()
 ) -> tuple[str, dict]:
@@ -938,29 +967,7 @@ def compose_fold(
     defeat the point of the tool.
     """
     dropped = {item.strip().upper() for item in exclude if item.strip()}
-    sections = split_dump(dump)
-    if not sections:
-        raise TrimLeversError(
-            "no '## <identifier> | <title>' sections found — expected the "
-            "output of `trim_levers.py list --bodies-out`"
-        )
-
-    # A repeated identifier means two dumps were concatenated, or one was
-    # appended to twice. Folding it would emit the same lever as two numbered
-    # parts and then close the single underlying issue once, so the duplicate
-    # part survives in the fold with nothing behind it — and `--exclude` on that
-    # identifier would silently drop BOTH. Cheap to detect, confusing to unpick
-    # afterwards.
-    seen: dict[str, int] = {}
-    for identifier, _, _ in sections:
-        seen[identifier.upper()] = seen.get(identifier.upper(), 0) + 1
-    repeated = sorted(name for name, count in seen.items() if count > 1)
-    if repeated:
-        raise TrimLeversError(
-            f"these identifiers appear more than once in the dump: "
-            f"{', '.join(repeated)} — two dumps concatenated, or one appended "
-            "to twice. Re-run `list --bodies-out` to a fresh file."
-        )
+    sections = _dump_sections(dump)
 
     parts: list[str] = []
     folded: list[str] = []
@@ -997,6 +1004,153 @@ def compose_fold(
         "skipped": skipped,
         "unknown_exclusions": sorted(unknown),
         "next_part": number,
+    }
+
+
+# The fold's size bound (`trim-context` step 3): a task is sized to a short
+# session, roughly 4–5 levers. Advisory rather than enforced, because the rule
+# is explicitly approximate — a hard limit here would turn "roughly" into a
+# refusal and push callers into splitting a coherent theme to satisfy a tool.
+_MAX_GROUP_PARTS = 5
+
+
+def _slug(text: str) -> str:
+    """A filename-safe slug for a task title."""
+    cleaned = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return (cleaned[:48].strip("-")) or "task"
+
+
+def parse_groups_spec(raw: str) -> list[tuple[str, tuple[str, ...]]]:
+    """The ``--groups-file`` spec: one ``{title, levers}`` entry per task.
+
+    A file rather than repeated flags, matching how ``board_batch.py --updates``
+    and ``linear_patch.py --ops`` already take assembled work — it keeps the
+    call a single bare command whatever the pool size, and keeps the grouping
+    out of the transcript.
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise TrimLeversError(f"groups file is not valid JSON: {exc}") from exc
+    if not isinstance(data, list) or not data:
+        raise TrimLeversError(
+            "groups file must be a non-empty JSON array of "
+            '{"title": ..., "levers": [...]} objects, one per task'
+        )
+
+    groups: list[tuple[str, tuple[str, ...]]] = []
+    for index, entry in enumerate(data, start=1):
+        if not isinstance(entry, dict):
+            raise TrimLeversError(f"group {index} is not a JSON object")
+        title = entry.get("title")
+        levers = entry.get("levers")
+        if not isinstance(title, str) or not title.strip():
+            raise TrimLeversError(f'group {index} has no non-empty "title"')
+        if not isinstance(levers, list) or not levers:
+            raise TrimLeversError(
+                f'group {index} ("{title}") has no non-empty "levers" array'
+            )
+        names: list[str] = []
+        for item in levers:
+            if not isinstance(item, str) or not item.strip():
+                raise TrimLeversError(
+                    f'group {index} ("{title}") has a lever entry that is not '
+                    "a non-empty string"
+                )
+            names.append(item.strip().upper())
+        groups.append((title.strip(), tuple(names)))
+    return groups
+
+
+def compose_groups(
+    dump: str, groups: list[tuple[str, tuple[str, ...]]]
+) -> tuple[list[dict], dict]:
+    """One composed body per group, from a single ``--bodies-out`` dump.
+
+    The fold now files **several** small themed tasks rather than one (operator
+    rule, 2026-09-11), and ``compose_fold`` emits exactly one body per call — so
+    N tasks meant N invocations, each having to re-declare every already-folded
+    lever in ``--exclude`` and carry the previous call's ``next_part``. That is
+    bookkeeping the caller cannot verify and the tool can: a lever dropped from
+    every group is invisible, which is the same silent-loss class the
+    fingerprint check exists to catch.
+
+    **Parts number from 1 within each task**, not continuously across them.
+    ``--start`` exists for a different shape — under the retired whole-pool
+    ruling a single task was sometimes composed in halves, and its numbering had
+    to continue. A task is now a whole issue, so its parts are Part 1..N *of
+    that issue*.
+    """
+    sections = _dump_sections(dump)
+    by_id = {
+        identifier.upper(): (identifier, title, raw)
+        for identifier, title, raw in sections
+    }
+
+    # Assignment is checked in full before anything is composed, so one run
+    # names every problem rather than failing on the first group.
+    assigned: dict[str, int] = {}
+    for index, (_, levers) in enumerate(groups, start=1):
+        for name in levers:
+            if name in assigned:
+                raise TrimLeversError(
+                    f"{name} is assigned to more than one group (groups "
+                    f"{assigned[name]} and {index}) — a lever folds into "
+                    "exactly one task, or it lands as a part twice while the "
+                    "issue behind it closes once"
+                )
+            assigned[name] = index
+
+    unknown = sorted(name for name in assigned if name not in by_id)
+    if unknown:
+        raise TrimLeversError(
+            f"these grouped levers are not in the dump: {', '.join(unknown)} — "
+            "a typo, or a stale grouping against an older dump. Unlike "
+            "`--exclude`, a group assignment is authoritative for this dump, so "
+            "this is an error rather than a warning."
+        )
+
+    unassigned = [
+        identifier
+        for identifier, _, _ in sections
+        if identifier.upper() not in assigned
+    ]
+    if unassigned:
+        raise TrimLeversError(
+            "these levers are in the dump but in no group, so folding would "
+            f"silently drop them: {', '.join(unassigned)} — assign every lever "
+            "to a task, or re-run `list --bodies-out` without the ones you "
+            "meant to leave parked"
+        )
+
+    tasks: list[dict] = []
+    missing: list[str] = []
+    oversized: list[tuple[str, int]] = []
+
+    for title, levers in groups:
+        parts: list[str] = []
+        folded: list[str] = []
+        for number, name in enumerate(levers, start=1):
+            identifier, part_title, raw = by_id[name]
+            body = strip_leading_url(raw).strip("\n")
+            if not field_values(body, "Fingerprint"):
+                missing.append(identifier)
+            parts.append(f"# Part {number} — {part_title}\n\n{demote_headings(body)}\n")
+            folded.append(identifier)
+        if len(folded) > _MAX_GROUP_PARTS:
+            oversized.append((title, len(folded)))
+        tasks.append({"title": title, "body": "\n".join(parts), "folded": folded})
+
+    if missing:
+        raise TrimLeversError(
+            "these levers carry no **Fingerprint**: line, so folding them would "
+            f"silently break per-lever dedup: {', '.join(missing)}"
+        )
+
+    return tasks, {
+        "tasks": len(tasks),
+        "folded": sorted(assigned),
+        "oversized": oversized,
     }
 
 
@@ -1290,25 +1444,68 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     comp.add_argument(
         "--out",
-        required=True,
         metavar="FILE",
-        help="where to write the composed body; prints a summary only, since "
-        "the body is the payload this pipeline keeps out of a transcript",
+        help="single-task mode: where to write the one composed body; prints a "
+        "summary only, since the body is the payload this pipeline keeps out "
+        "of a transcript",
+    )
+    comp.add_argument(
+        "--groups-file",
+        metavar="FILE",
+        help='multi-task mode: a JSON array of {"title", "levers"} objects, '
+        "one per task — emits one conforming body per group in a single run, "
+        "each numbering its parts from 1. Requires --out-dir",
+    )
+    comp.add_argument(
+        "--out-dir",
+        metavar="DIR",
+        help="multi-task mode: the directory to write the per-task bodies "
+        "into (created if absent); the summary names each file",
     )
     comp.add_argument(
         "--start",
         type=int,
         default=1,
-        help="the first `# Part N` number (default 1) — pass the previous "
-        "fold's next_part when a batch is composed in halves",
+        help="single-task mode only: the first `# Part N` number (default 1) — "
+        "pass the previous fold's next_part when one task is composed in "
+        "halves. Parts always number from 1 per task in --groups-file mode",
     )
     comp.add_argument(
         "--exclude",
         default="",
-        help="comma-separated identifiers to drop (levers already folded)",
+        help="single-task mode only: comma-separated identifiers to drop "
+        "(levers already folded). In --groups-file mode, omitting a lever "
+        "from every group is an error, not a silent drop",
     )
 
-    return parser.parse_args(argv[1:])
+    args = parser.parse_args(argv[1:])
+
+    # Two modes, and mixing them silently would be worse than refusing: the
+    # single-task flags describe one body with a caller-managed part number,
+    # the grouped flags describe N bodies each numbered from 1.
+    if args.cmd == "compose":
+        if bool(args.out) == bool(args.groups_file):
+            parser.error(
+                "compose needs exactly one of --out (one task) or "
+                "--groups-file (N tasks)"
+            )
+        if args.groups_file and not args.out_dir:
+            parser.error("--groups-file requires --out-dir")
+        if args.out and args.out_dir:
+            parser.error("--out-dir belongs to --groups-file mode, not --out")
+        if args.groups_file and args.start != 1:
+            parser.error(
+                "--start belongs to --out mode; in --groups-file mode each "
+                "task numbers its parts from 1"
+            )
+        if args.groups_file and args.exclude:
+            parser.error(
+                "--exclude belongs to --out mode; in --groups-file mode a "
+                "lever is dropped by leaving it out of the dump, and omitting "
+                "it from every group is an error"
+            )
+
+    return args
 
 
 def run(argv: list[str]) -> int:
@@ -1318,6 +1515,40 @@ def run(argv: list[str]) -> int:
     # touching no API. Handled before the credential lookup so it runs in a
     # shell with no Linear secrets resolved, which is also what makes it
     # testable without mocking the transport.
+    if args.cmd == "compose" and args.groups_file:
+        dump = _read_file(args.bodies_file, "bodies file")
+        groups = parse_groups_spec(_read_file(args.groups_file, "groups file"))
+        tasks, summary = compose_groups(dump, groups)
+        try:
+            os.makedirs(args.out_dir, exist_ok=True)
+        except OSError as exc:
+            raise TrimLeversError(f"cannot create {args.out_dir}: {exc}") from exc
+        for index, task in enumerate(tasks, start=1):
+            path = os.path.join(args.out_dir, f"{index:02d}-{_slug(task['title'])}.md")
+            try:
+                handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(handle, "w", encoding="utf-8") as fh:
+                    fh.write(task["body"])
+            except OSError as exc:
+                raise TrimLeversError(f"cannot write {path}: {exc}") from exc
+            task["path"] = path
+        print(
+            f"trim-levers: composed {summary['tasks']} task(s) from "
+            f"{len(summary['folded'])} lever(s) into {args.out_dir}"
+        )
+        for task in tasks:
+            print(
+                f"trim-levers: {task['path']} | {len(task['folded'])} part(s) "
+                f"| {', '.join(task['folded'])} | {task['title']}"
+            )
+        for title, count in summary["oversized"]:
+            print(
+                f"trim-levers: ADVISORY {count} parts exceeds the {_MAX_GROUP_PARTS}"
+                f"-lever short-session bound: {title} — split it, or carry it "
+                "deliberately"
+            )
+        return 0
+
     if args.cmd == "compose":
         dump = _read_file(args.bodies_file, "bodies file")
         body, summary = compose_fold(

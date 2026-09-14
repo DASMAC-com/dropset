@@ -542,12 +542,40 @@ is how a filer keeps its own output out of the pull queue.
 
 **Where promotion leads differs by milestone.** `Audit findings` and
 `Trim levers` promote into pullable Backlog work. `Claude meta` does
-not: a parked meta stray is consumed by the next **batch assembly**
+not: a parked meta **stray** is consumed by the next **batch assembly**
 rather than pulled on its own, so "promotion" there means being folded
 into a batch. And a meta-flavored *audit* finding is promoted by
 **swapping** its milestone from `Audit findings` to `Claude meta` — it
 stays parked, changing which rhythm will pick it up, rather than
 becoming available work.
+
+**An assembled batch is the carve-out, and it is the one `Claude meta`
+issue that is pulled on its own.** The rule above governs the
+milestone's *inputs*; a batch is its *output*, and the two move in
+opposite directions. So a batch is a promotion **candidate, never a
+fold input** — the only thing re-folding one could do is grow it past
+the roughly 4–5 parts the assembly sized it to, which is the bound the
+retirement of the one-giant-batch form exists to hold. Its promotion is
+therefore the **ordinary two halves**: clear the milestone and move
+Todo → Backlog.
+
+This is worth stating because retiring the one-giant-batch form broke
+an identity the old shape had made invisible: when assembly produced
+exactly one batch and promoted it in the same act, *assembling* and
+*promoting* were the same event, so no rule had to say which milestone
+state a batch rests in. Now that a bootstrap assembles several and
+promotes only a file-disjoint subset, the two come apart, and the
+remainder it does not promote needs a defined home. It has one: an
+assembled
+batch the bootstrap does **not** promote **stays parked** like any other
+meta issue — `Todo` plus `Claude meta` — and is promoted later by the
+same two halves, not by being folded again.
+
+The failure this rules out is a batch that is **parked and pullable at
+once** — promoted to Backlog while still carrying the milestone, which
+reads as available in the Next view and as parked to the next
+bootstrap's sweep. That state is what makes the two halves a single
+act rather than two independent writes.
 
 **Every bootstrap says each parked count out loud.** Parked must be
 invisible to the queue without being invisible to the operator, and a

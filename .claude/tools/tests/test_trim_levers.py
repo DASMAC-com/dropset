@@ -1420,6 +1420,203 @@ class ComposeFoldTests(unittest.TestCase):
             self.assertEqual(os.stat(dst).st_mode & 0o777, 0o600)
 
 
+class ComposeGroupsTests(unittest.TestCase):
+    """The fold files SEVERAL small themed tasks now (operator rule,
+    2026-09-11), and `compose_fold` emits exactly one body per call — so N tasks
+    meant N invocations, each re-declaring every already-folded lever in
+    `--exclude` and carrying the previous call's `next_part`. That is
+    bookkeeping the caller cannot verify and the tool can."""
+
+    DUMP = (
+        "## ENG-1 | First lever\n"
+        "\n"
+        "https://linear.app/dasmac/issue/ENG-1\n"
+        "\n"
+        "# Lever\n"
+        "\n"
+        "Do the thing.\n"
+        "\n"
+        "**Fingerprint**: a:first\n"
+        "\n"
+        "## ENG-2 | Second lever\n"
+        "\n"
+        "https://linear.app/dasmac/issue/ENG-2\n"
+        "\n"
+        "# Lever\n"
+        "\n"
+        "Do the other thing.\n"
+        "\n"
+        "**Fingerprint**: a:second\n"
+        "\n"
+        "## ENG-3 | Third lever\n"
+        "\n"
+        "https://linear.app/dasmac/issue/ENG-3\n"
+        "\n"
+        "# Lever\n"
+        "\n"
+        "Do a third thing.\n"
+        "\n"
+        "**Fingerprint**: b:third\n"
+    )
+
+    GROUPS = [
+        {"title": "Claude: context economy", "levers": ["ENG-1", "ENG-2"]},
+        {"title": "Claude: filing conventions", "levers": ["ENG-3"]},
+    ]
+
+    def test_one_pass_emits_one_conforming_body_per_group(self):
+        tasks, summary = tl.compose_groups(
+            self.DUMP, tl.parse_groups_spec(json.dumps(self.GROUPS))
+        )
+        self.assertEqual(summary["tasks"], 2)
+        self.assertEqual([t["title"] for t in tasks], [g["title"] for g in self.GROUPS])
+        self.assertEqual(tasks[0]["folded"], ["ENG-1", "ENG-2"])
+        self.assertEqual(tasks[1]["folded"], ["ENG-3"])
+
+    def test_each_task_numbers_its_parts_from_one(self):
+        """Not continuously across tasks. `--start` exists for a different
+        shape — under the retired whole-pool ruling one task was sometimes
+        composed in halves and its numbering had to continue. A task is now a
+        whole issue, so its parts are Part 1..N of that issue."""
+        tasks, _ = tl.compose_groups(
+            self.DUMP, tl.parse_groups_spec(json.dumps(self.GROUPS))
+        )
+        self.assertIn("# Part 1 — First lever", tasks[0]["body"])
+        self.assertIn("# Part 2 — Second lever", tasks[0]["body"])
+        # The second task restarts, rather than continuing at Part 3.
+        self.assertIn("# Part 1 — Third lever", tasks[1]["body"])
+        self.assertNotIn("# Part 3", tasks[1]["body"])
+
+    def test_a_lever_in_no_group_is_refused(self):
+        """The silent-loss case this mode exists to close: under the N-call
+        workaround a lever omitted from every `--exclude` list was simply never
+        folded, and nothing said so. Its parked issue would then be closed by
+        the sweep with no part behind it."""
+        groups = [{"title": "Only some", "levers": ["ENG-1"]}]
+        with self.assertRaises(tl.TrimLeversError) as ctx:
+            tl.compose_groups(self.DUMP, tl.parse_groups_spec(json.dumps(groups)))
+        self.assertIn("in no group", str(ctx.exception))
+        self.assertIn("ENG-2", str(ctx.exception))
+        self.assertIn("ENG-3", str(ctx.exception))
+
+    def test_a_lever_in_two_groups_is_refused(self):
+        """It would land as a part twice while the issue behind it closes
+        once."""
+        groups = [
+            {"title": "One", "levers": ["ENG-1", "ENG-2"]},
+            {"title": "Two", "levers": ["ENG-2", "ENG-3"]},
+        ]
+        with self.assertRaises(tl.TrimLeversError) as ctx:
+            tl.compose_groups(self.DUMP, tl.parse_groups_spec(json.dumps(groups)))
+        self.assertIn("more than one group", str(ctx.exception))
+        self.assertIn("ENG-2", str(ctx.exception))
+
+    def test_a_grouped_lever_absent_from_the_dump_is_an_error(self):
+        """Unlike `--exclude`, which reports an unknown name as a warning
+        because one exclusion list may legitimately span two dumps, a group
+        assignment is authoritative for this dump."""
+        groups = [
+            {"title": "One", "levers": ["ENG-1", "ENG-2", "ENG-3", "ENG-99"]},
+        ]
+        with self.assertRaises(tl.TrimLeversError) as ctx:
+            tl.compose_groups(self.DUMP, tl.parse_groups_spec(json.dumps(groups)))
+        self.assertIn("not in the dump", str(ctx.exception))
+        self.assertIn("ENG-99", str(ctx.exception))
+
+    def test_a_missing_fingerprint_still_fails_loudly(self):
+        """The guard `compose_fold` carries must not be lost by taking the new
+        path — per-lever dedup rests on every part keeping its own key."""
+        dump = self.DUMP + "## ENG-4 | No key\n\n# Lever\n\nNothing.\n"
+        groups = [
+            {"title": "All", "levers": ["ENG-1", "ENG-2", "ENG-3", "ENG-4"]},
+        ]
+        with self.assertRaises(tl.TrimLeversError) as ctx:
+            tl.compose_groups(dump, tl.parse_groups_spec(json.dumps(groups)))
+        self.assertIn("**Fingerprint**", str(ctx.exception))
+        self.assertIn("ENG-4", str(ctx.exception))
+
+    def test_headings_are_demoted_on_the_grouped_path_too(self):
+        tasks, _ = tl.compose_groups(
+            self.DUMP, tl.parse_groups_spec(json.dumps(self.GROUPS))
+        )
+        self.assertIn("## Lever", tasks[0]["body"])
+        self.assertNotIn("\n# Lever", tasks[0]["body"])
+
+    def test_an_oversized_group_is_advisory_not_refused(self):
+        """The size rule is explicitly approximate ("roughly 4–5"), so a hard
+        limit would turn it into a refusal and push a caller into splitting a
+        coherent theme to satisfy a tool."""
+        dump = "".join(
+            f"## ENG-{n} | Lever {n}\n\n# Lever\n\nText.\n\n**Fingerprint**: a:l{n}\n\n"
+            for n in range(1, 8)
+        )
+        groups = [{"title": "Too big", "levers": [f"ENG-{n}" for n in range(1, 8)]}]
+        tasks, summary = tl.compose_groups(
+            dump, tl.parse_groups_spec(json.dumps(groups))
+        )
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(summary["oversized"], [("Too big", 7)])
+
+    def test_the_cli_writes_one_owner_only_file_per_task_and_echoes_no_body(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "bodies.md")
+            spec = os.path.join(d, "groups.json")
+            out_dir = os.path.join(d, "tasks")
+            Path(src).write_text(self.DUMP, encoding="utf-8")
+            Path(spec).write_text(json.dumps(self.GROUPS), encoding="utf-8")
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with redirect_stdout(out), redirect_stderr(err):
+                    code = tl.run(
+                        [
+                            "trim_levers.py",
+                            "compose",
+                            "--bodies-file",
+                            src,
+                            "--groups-file",
+                            spec,
+                            "--out-dir",
+                            out_dir,
+                        ]
+                    )
+            self.assertEqual(code, 0)
+            written = sorted(os.listdir(out_dir))
+            self.assertEqual(
+                written,
+                ["01-claude-context-economy.md", "02-claude-filing-conventions.md"],
+            )
+            for name in written:
+                path = os.path.join(out_dir, name)
+                self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            first = Path(os.path.join(out_dir, written[0])).read_text(encoding="utf-8")
+            self.assertIn("# Part 1 — First lever", first)
+            # Zero echo: no lever body reaches the transcript, only the summary.
+            printed = out.getvalue() + err.getvalue()
+            self.assertNotIn("Do the thing", printed)
+            self.assertIn("composed 2 task(s) from 3 lever(s)", printed)
+
+    def test_the_two_modes_cannot_be_mixed(self):
+        """Mixing them silently would be worse than refusing: `--out` describes
+        one body with a caller-managed part number, `--groups-file` describes N
+        bodies each numbered from 1."""
+        for extra in (
+            [],  # neither --out nor --groups-file
+            ["--out", "a.md", "--groups-file", "g.json", "--out-dir", "d"],
+            ["--groups-file", "g.json"],  # no --out-dir
+            ["--out", "a.md", "--out-dir", "d"],
+            ["--groups-file", "g.json", "--out-dir", "d", "--start", "4"],
+            ["--groups-file", "g.json", "--out-dir", "d", "--exclude", "ENG-1"],
+        ):
+            with self.subTest(extra=extra):
+                with redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as ctx:
+                        tl.run(
+                            ["trim_levers.py", "compose", "--bodies-file", "b.md"]
+                            + extra
+                        )
+                self.assertEqual(ctx.exception.code, 2)
+
+
 #: A lever body using HEADINGS. Six of one real 18-lever pool looked like this.
 HEADING_BODY = """**Fingerprint**: alpha:one
 
