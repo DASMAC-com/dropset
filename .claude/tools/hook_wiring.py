@@ -110,6 +110,7 @@ HOOK_EVENTS = (
 # table, but until it is, "no expectation" must mean "don't cry wolf" rather
 # than a spurious MISMATCHED.
 EXPECTED_TOOLS = {
+    "no_ai_attribution.py": frozenset({"Bash"}),
     "no_compound_bash.py": frozenset({"Bash"}),
     "no_git_grep.py": frozenset({"Bash"}),
     "no_destructive_bash.py": frozenset({"Bash"}),

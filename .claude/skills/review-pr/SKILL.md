@@ -4579,6 +4579,41 @@ already being asked to start the review.
    which deliberately print the tag + PR number as
    terminal chrome.
 
+1. **Scan the final PR body for AI attribution.** The
+   rule is absolute (`CLAUDE.md` → "Commits and PRs"): no
+   `Co-Authored-By:` trailer naming Claude or Anthropic,
+   no "Generated with Claude Code" footer, in the title,
+   the description, or any comment this skill posts.
+
+   Ask the guard rather than eyeballing it, so there is
+   one owner of the patterns. Write the stored body to a
+   scratchpad file and scan it:
+
+   ```sh
+   python3 .claude/hooks/no_ai_attribution.py --scan <scratchpad>/body.md
+   ```
+
+   Exit 0 is clean; **exit 1 means attribution is
+   present** — strip it, re-run `/pr-title-description`,
+   and re-scan. (Exit 2 is a usage error such as a missing
+   path, so a typo cannot read as a clean bill of health.)
+
+   **Why this is a step rather than a habit.** The
+   `PreToolUse` guard that enforces the rule inspects
+   **Bash** commands, and both the title/description write
+   and this skill's comments go through the **GitHub
+   MCP** — so nothing mechanical sees them. Meanwhile a
+   harness-level instruction telling every session to
+   append exactly these two things was confirmed live
+   fleet-wide on 2026-09-11. Treat it as an active
+   conflict to resolve in the convention's favour.
+
+   Note this is the *opposite* posture from the standing
+   lens, which correctly tells reviewers **not** to report
+   the absence of AI attribution as a finding. Absence is
+   the settled convention and needs no comment; this step
+   checks the convention **held**.
+
 1. **Verify the PR title passes `Semantic PR`.**
    The `semantic-pr` workflow rejects the PR unless
    the title has a Conventional-Commits type, a
