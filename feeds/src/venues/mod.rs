@@ -65,6 +65,12 @@
 //! JSON shape stays covered without anything reaching the venue itself. Only
 //! the transport half needs a network, and nothing here tests that.
 //!
+//! The `parse_*` name is the common case rather than the rule — what matters is
+//! that the network-free half is a free function. Where an adapter has to decide
+//! something *about* a response beyond decoding it, that decision is split out
+//! the same way and tested the same way: [`kraken::classify_ticker`] tells a
+//! refused batch from an answered one, which its decoder cannot.
+//!
 //! **Credentials arrive by injection, never by an environment read in here.**
 //! A keyed adapter takes its key as a constructor argument
 //! ([`oanda::OandaCandles::resume`]) so the caller decides where the secret came

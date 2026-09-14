@@ -1,5 +1,6 @@
 // cspell:word altname
 // cspell:word CADCUSD
+// cspell:word delisted
 // cspell:word EURCEUR
 // cspell:word ZARPUSD
 //! The Kraken public-ticker adapter (docs/data-feeds.md §9) — the batched
@@ -34,15 +35,23 @@
 //! `{"error":["EQuery:Unknown asset pair"]}` and **no `result` key at all** —
 //! not a partial result. One unlisted symbol therefore zeroes every pair in the
 //! batch, and because the status is 200 and an empty decode is indistinguishable
-//! from a quiet venue, the loss is completely silent.
+//! from a quiet venue, this adapter reported nothing at all.
+//!
+//! **How silent that was, precisely**, since the adapter is not the only thing
+//! watching: the market-data collector's `SilenceWatch` does eventually report
+//! the pairs, but only after `SILENCE_THRESHOLD` consecutive silent polls, and
+//! it reports them as *unpriced* rather than naming the batch refusal that
+//! caused them. The maker's feed path has no such watch at all. So the adapter
+//! itself said nothing, and what did speak was late and pointed elsewhere.
 //!
 //! So a refused batch is not passed through as "nothing quoted". It is
 //! **isolated**: each pair is re-requested on its own, the ones the venue
 //! actually refuses are named in a warning and remembered by the source itself
 //! (its private `unlisted` set) so later polls stop carrying them, and every
 //! pair that does price survives. The pass costs one request per pair, and
-//! only on the poll that discovers the problem — once the offenders are
-//! remembered, the batch is clean again.
+//! runs on the poll that discovers the problem — after which the batch is clean
+//! **for the life of this source**, the memory being per-instance rather than
+//! durable.
 
 use super::Quotes;
 use crate::{Batch, HttpClient, Source};
@@ -74,9 +83,13 @@ use std::time::Duration;
 /// paging or a retry loop.
 const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(1_200);
 
-/// Kraken's error text for a pair it does not list. Matched as a substring
-/// because the venue prefixes an error class (`EQuery:Unknown asset pair`) and
-/// the class has changed before while the text has not.
+/// Kraken's error text for a pair it does not list.
+///
+/// Matched as a **substring** because the venue prefixes an error class
+/// (`EQuery:Unknown asset pair`), and that prefix is not part of any documented
+/// contract — so only the text itself is relied on. This says nothing about
+/// whether the prefix has ever changed, which is not something this repo has
+/// measured.
 const UNKNOWN_PAIR_ERROR: &str = "Unknown asset pair";
 
 /// A poll [`Source`] over Kraken's batched public ticker, keyed by the
@@ -90,9 +103,18 @@ pub struct KrakenSource {
     /// Behind a `Mutex` rather than taken as `&mut self`, so `poll` keeps the
     /// `&self` signature the batched-poll contract in [`venues`](super) gives
     /// every adapter — the same reason [`HttpClient`] holds its rate-limit gate
-    /// this way. The set only ever grows, and is keyed by the roster spelling
-    /// rather than by whatever name Kraken answers under, because it is the
-    /// roster entry that has to stop being sent.
+    /// this way. It is keyed by the roster spelling rather than by whatever name
+    /// Kraken answers under, because it is the roster entry that has to stop
+    /// being sent.
+    ///
+    /// **The set only ever grows, and there is no re-admission path**, so a
+    /// refusal that was only ever *temporary* — a maintenance window, a pair
+    /// delisted and restored, or (unmeasured) a pair listed with a `status`
+    /// other than `online` — evicts that pair for the remaining life of the
+    /// process. **Recovery is a restart.** That is a deliberate trade for
+    /// keeping the isolation pass off the steady-state path rather than a
+    /// claim that eviction is always correct; re-probing on an interval is the
+    /// obvious refinement if a transient refusal is ever observed in practice.
     unlisted: Mutex<BTreeSet<String>>,
 }
 
@@ -121,7 +143,26 @@ impl KrakenSource {
         let refs: Vec<&str> = pairs.iter().map(String::as_str).collect();
         let body = self.fetch(&refs).await?;
         match classify_ticker(&body, &refs) {
-            TickerBatch::Answered(quotes) => Ok(quotes),
+            TickerBatch::Answered(quotes) => {
+                // A refusal this adapter does NOT model — nothing priced, and
+                // the venue named an error that is not the unlisted-pair one.
+                // Isolating would not help (it would multiply a failing call by
+                // the roster size), but staying quiet here would reproduce the
+                // exact whole-venue silence this module exists to end, one error
+                // class over. So say it, once, on the poll it happens.
+                if quotes.is_empty() {
+                    if let Some(errors) = venue_errors(&body) {
+                        tracing::warn!(
+                            venue = FEED_NAME,
+                            pairs = refs.join(","),
+                            errors,
+                            "kraken priced nothing and reported an error this \
+                             adapter does not model; the whole batch is empty"
+                        );
+                    }
+                }
+                Ok(quotes)
+            }
             TickerBatch::UnknownPair => self.isolate(&refs).await,
         }
     }
@@ -134,6 +175,22 @@ impl KrakenSource {
             .filter(|pair| !unlisted.contains(*pair))
             .cloned()
             .collect()
+    }
+
+    /// Whether every roster entry is now remembered as unlisted, so this source
+    /// can never price anything again until it is restarted.
+    ///
+    /// Tested by **containment, not by comparing lengths**: `known` is a set and
+    /// the roster is a `Vec`, so two roster entries sharing one Kraken spelling
+    /// would leave `known.len()` short of `self.pairs.len()` and silence the
+    /// alarm in precisely the state it exists to catch. (`resolve_venue` rejects
+    /// that collision for the market-data collector, but nothing in this type's
+    /// signature promises it, and the maker builds its roster by another path.)
+    ///
+    /// Split out from `isolate` so this predicate is reachable from a unit test
+    /// — inline, its only caller was the transport half, which nothing tests.
+    fn roster_exhausted(&self, known: &BTreeSet<String>) -> bool {
+        self.pairs.iter().all(|pair| known.contains(pair))
     }
 
     /// One batched ticker request over `pairs`.
@@ -149,8 +206,18 @@ impl KrakenSource {
     ///
     /// Returns quotes rather than an error: the point of the pass is that a
     /// healthy pair should survive a sick one. The offenders are logged at
-    /// `WARN` and remembered, so this runs **once** per bad roster entry rather
-    /// than on every poll.
+    /// `WARN` and remembered, which keeps the pass off the steady-state path.
+    ///
+    /// **It does not run only once.** It runs once per offender *that the venue
+    /// actually refuses when asked alone* — so it repeats on the next poll in
+    /// two cases the code handles deliberately: a single-pair request that fails
+    /// at the transport (nothing is remembered, because a transport error is not
+    /// evidence a pair is unlisted), and a batch refusal that no single pair
+    /// reproduces. In those cases the steady-state cost is one request per
+    /// roster entry per poll instead of one. At the 1.2 s floor that is ~6 s for
+    /// the 5-pair default roster, inside the 15 s poll interval — but it scales
+    /// linearly, so a roster past roughly a dozen pairs would outrun its own
+    /// tick and wants a per-poll cap.
     async fn isolate(&self, pairs: &[&str]) -> Result<Quotes<String>> {
         tracing::warn!(
             venue = FEED_NAME,
@@ -189,7 +256,8 @@ impl KrakenSource {
             // every poll — but if it swallowed the entire roster, every later
             // poll returns empty with nothing left to warn about. Say so once,
             // here, rather than leaving the venue quietly dark.
-            if known.len() >= self.pairs.len() {
+            //
+            if self.roster_exhausted(&known) {
                 tracing::error!(
                     venue = FEED_NAME,
                     roster = self.pairs.join(","),
@@ -290,16 +358,24 @@ pub fn classify_ticker(body: &Value, pairs: &[&str]) -> TickerBatch {
     TickerBatch::Answered(quotes)
 }
 
+/// The response's `error` strings joined, or `None` when it reported none.
+///
+/// `None` and `Some` are the distinction that matters to both callers: a venue
+/// that reported no error at all is a different thing from one that reported an
+/// error this adapter does not recognize.
+fn venue_errors(body: &Value) -> Option<String> {
+    let errors: Vec<&str> = body
+        .get("error")?
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    (!errors.is_empty()).then(|| errors.join("; "))
+}
+
 /// Whether the response's `error` array names an unlisted pair.
 fn names_unknown_pair(body: &Value) -> bool {
-    body.get("error")
-        .and_then(Value::as_array)
-        .is_some_and(|errors| {
-            errors
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|error| error.contains(UNKNOWN_PAIR_ERROR))
-        })
+    venue_errors(body).is_some_and(|errors| errors.contains(UNKNOWN_PAIR_ERROR))
 }
 
 /// Fold an isolation pass's per-pair responses into the quotes that survived
@@ -309,7 +385,10 @@ fn names_unknown_pair(body: &Value) -> bool {
 /// unit testable against captured responses with no network, per the decode
 /// convention in [`venues`](super) — the transport half of that pass is a plain
 /// loop of single-pair requests.
-pub fn fold_isolated(responses: &[(&str, Value)]) -> (Quotes<String>, Vec<String>) {
+///
+/// Private: it exists to make `isolate` testable and its tests live in this
+/// module, so nothing outside needs to destructure its untagged return.
+fn fold_isolated(responses: &[(&str, Value)]) -> (Quotes<String>, Vec<String>) {
     let mut quotes = Quotes::new();
     let mut unlisted = Vec::new();
     for (pair, body) in responses {
@@ -474,14 +553,91 @@ mod tests {
     }
 
     #[test]
-    fn a_pair_is_only_dropped_once_it_is_asked_for_alone() {
+    fn pricing_nothing_is_not_enough_to_condemn_a_pair() {
         // An isolation response that prices nothing but names no unlisted pair
         // must not condemn the pair — otherwise a transient venue hiccup would
-        // permanently evict a healthy roster entry.
+        // permanently evict a healthy roster entry, and eviction has no
+        // re-admission path.
         let responses = vec![("USDCUSD", json!({ "error": [], "result": {} }))];
         let (quotes, unlisted) = fold_isolated(&responses);
         assert!(quotes.is_empty());
         assert!(unlisted.is_empty());
+    }
+
+    /// A source over a base URL nothing listens on. `HttpClient::new` builds a
+    /// client
+    /// and stores the base URL without performing any I/O, so this reaches no
+    /// network — which is what makes the pair-filtering half of the memory
+    /// testable with no mock server and no new dependency.
+    fn source(pairs: &[&str]) -> KrakenSource {
+        let pairs = pairs.iter().map(|pair| (*pair).to_string()).collect();
+        KrakenSource::new("http://127.0.0.1:1", pairs).expect("constructing performs no I/O")
+    }
+
+    /// Insert `pairs` into the source's remembered-unlisted set.
+    fn remember(source: &KrakenSource, pairs: &[&str]) {
+        let mut unlisted = source
+            .unlisted
+            .lock()
+            .expect("this test holds the lock alone");
+        unlisted.extend(pairs.iter().map(|pair| (*pair).to_string()));
+    }
+
+    #[test]
+    fn a_remembered_pair_leaves_the_batch_and_the_others_stay() {
+        // The module's central cost claim: once an offender is remembered, later
+        // polls carry a clean batch rather than re-isolating.
+        let source = source(&["USDCUSD", "CADCUSD", "EURCEUR"]);
+        remember(&source, &["CADCUSD"]);
+        assert_eq!(
+            source.batch_pairs(),
+            vec!["USDCUSD".to_string(), "EURCEUR".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_fully_remembered_roster_batches_nothing() {
+        let source = source(&["USDCUSD", "CADCUSD"]);
+        remember(&source, &["USDCUSD", "CADCUSD"]);
+        assert!(source.batch_pairs().is_empty());
+    }
+
+    #[test]
+    fn a_duplicated_roster_entry_still_counts_as_exhausted() {
+        // Two roster entries sharing one Kraken spelling. The set holds two
+        // names against three entries, so a LENGTH comparison reads 2 < 3 and
+        // calls this exhausted roster healthy — skipping the alarm in exactly
+        // the state it exists to catch. The first assertion pins that the
+        // lengths really do disagree, so this test fails if the predicate is
+        // ever rewritten as a length check.
+        let source = source(&["USDCUSD", "USDCUSD", "CADCUSD"]);
+        let known: BTreeSet<String> = ["USDCUSD", "CADCUSD"]
+            .iter()
+            .map(|pair| (*pair).to_string())
+            .collect();
+        assert!(known.len() < source.pairs.len());
+        assert!(source.roster_exhausted(&known));
+    }
+
+    #[test]
+    fn a_roster_with_one_live_pair_is_not_exhausted() {
+        let source = source(&["USDCUSD", "CADCUSD"]);
+        let known: BTreeSet<String> = ["CADCUSD".to_string()].into_iter().collect();
+        assert!(!source.roster_exhausted(&known));
+    }
+
+    #[test]
+    fn an_unrecognized_error_class_still_reports_an_empty_batch() {
+        // Not a log assertion (nothing here captures tracing) — this pins the
+        // input that drives the warning: an empty answer with a populated error
+        // array is distinguishable from a venue that reported no error at all.
+        let unrecognized = json!({ "error": ["EGeneral:Invalid arguments"] });
+        assert_eq!(
+            venue_errors(&unrecognized).as_deref(),
+            Some("EGeneral:Invalid arguments")
+        );
+        assert_eq!(venue_errors(&json!({ "error": [] })), None);
+        assert_eq!(venue_errors(&json!({ "result": {} })), None);
     }
 
     #[test]
