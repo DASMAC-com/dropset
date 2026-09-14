@@ -381,6 +381,8 @@ the worktree home is shared with *it* rather than with `plan`.
 That overlap is real and worth de-duplicating **later**, when
 the template extraction lands. It is deliberately not a reason
 to delay this skill: implement the architect first, then let
-the generator fold the shared blocks in. The launcher pair is
-likewise one parameterized helper in the committed shell init,
-differing only in session name and initial prompt.
+the generator fold the shared blocks in. The launchers are
+likewise one parameterized helper in the committed shell init
+(`_ds_session`), differing in session name, initial prompt and
+**worktree tag** — that third parameter is what the spec home
+added, and it is empty for the base-repo verbs.
