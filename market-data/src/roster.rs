@@ -396,9 +396,14 @@ pub fn roster_from_env(default: &str) -> Result<Vec<RosterEntry>> {
 /// Kraken names most pairs as the two assets concatenated, which this
 /// reproduces — but **not all of them**: legacy assets keep the `X`/`Z`
 /// prefixes (`USDT/USD` is `USDTZUSD`), and nothing derives that. Such a pair
-/// pins its spelling in the roster entry instead. Getting it wrong is quiet
-/// rather than loud, because the adapter omits a pair it got no answer for, so
-/// the collector's silence watch is what surfaces the mistake.
+/// pins its spelling in the roster entry instead.
+///
+/// Getting it wrong is **loud**, and used to be silent. Kraken refuses a batch
+/// holding any pair it does not list — answering HTTP 200 with an error and no
+/// results at all, rather than omitting just the offender — so a misspelled
+/// entry took down every other pair in the same request with no warning. The
+/// adapter now isolates the batch and names the offending pair at `WARN`; see
+/// [`dropset_feeds::venues::kraken`] for the measured shape.
 pub fn kraken_pair(product_id: &str) -> Result<String> {
     let (base, quote) = product_id
         .split_once('-')
