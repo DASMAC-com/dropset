@@ -67,17 +67,30 @@ class Grammar(unittest.TestCase):
         with self.assertRaises(ValueError):
             session_dispatch.validate(["task", "main"])
 
-    def test_explore_bare_and_named(self):
-        self.assertEqual(session_dispatch.validate(["explore"]), ["explore"])
+    def test_explore_named(self):
         self.assertEqual(
             session_dispatch.validate(["explore", "feeds"]), ["explore", "feeds"]
         )
 
-    def test_explore_resume(self):
+    def test_explore_issue_keyed(self):
+        """A bare number is the audit-dispatch form: it keys the worktree to the
+        Linear issue, so `explore 1196` must validate exactly as a name does."""
         self.assertEqual(
-            session_dispatch.validate(["explore", "resume", "feeds"]),
-            ["explore", "resume", "feeds"],
+            session_dispatch.validate(["explore", "1196"]), ["explore", "1196"]
         )
+
+    def test_explore_requires_a_name(self):
+        """Bare `explore` used to be legal and now is not — a name is required
+        because it names a worktree, and the shell rejects the bare form."""
+        with self.assertRaises(ValueError):
+            session_dispatch.validate(["explore"])
+
+    def test_explore_resume_is_retired(self):
+        """`explore <n|name>` resumes an existing session itself, so the twin
+        would type a command the shell now refuses."""
+        with self.assertRaises(ValueError) as caught:
+            session_dispatch.validate(["explore", "resume", "feeds"])
+        self.assertIn("retired", str(caught.exception))
 
     def test_architect_needs_a_topic(self):
         self.assertEqual(
@@ -125,7 +138,7 @@ class Grammar(unittest.TestCase):
             ["explore", "a`id`"],
             ["architect", "x && echo pwned"],
             ["task", "local", "1|sh"],
-            ["explore", "resume", "../../etc/passwd"],
+            ["explore", "../../etc/passwd"],
         ):
             with self.subTest(argv=hostile):
                 with self.assertRaises(ValueError):
