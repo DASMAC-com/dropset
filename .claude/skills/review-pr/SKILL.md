@@ -2839,6 +2839,56 @@ already being asked to start the review.
    above: a trivial `CLAUDE.md` edit still runs the freshness
    lenses; a large pure-source refactor still skips them.)
 
+   **A fifth trigger, and it is a SHAPE rather than a path:
+   `prose_heavy`.** Read it from the step 5 verdict. A diff can
+   be documentation-heavy without touching a documentation
+   *path*, and the four triggers above cannot see that — they
+   conflate "what files changed" with "what kind of content
+   changed". When `prose_heavy` is true, run the
+   **doc-freshness lens with the diff's own added comments as
+   its subject**, at zero changed markdown lines.
+
+   This is a **comment-accuracy** pass, not a seventh lens and
+   not the usual are-the-docs-stale sweep: the question is
+   whether each claim the diff's new prose makes is true of the
+   code in the same diff. Hand it the source slice's comment
+   hunks and the items they document, and keep the two-named-
+   sections cap below.
+
+   Measured (the ENG-1279 review, 2026-09-10): that diff tripped
+   none of the path triggers, so both freshness lenses were
+   skipped — yet roughly **60%** of its added lines were new
+   Rust doc-comment prose, and **both** genuine defects the
+   review found were comment-accuracy defects newly introduced
+   by that prose (a false claim about where all eight roster
+   constants live, and a self-contradicting venue comment). The
+   correctness, completeness and style lenses each looked
+   straight past them; only the adversarial cross-check caught
+   them, and it flagged this gate as the cause.
+
+   `prose_heavy` is the tool's measured answer — added lines
+   classified by each file's own comment markers, gated on a
+   ratio of 0.5 **and** an absolute floor of 20 comment lines.
+   Read the flag; do not re-derive it from an impression of the
+   diff. The floor is what keeps a three-line diff that happens
+   to add two comments from buying a ~100k lens.
+
+   **This is the same principle as the spelling pre-flight in
+   step 4** — "the trigger is the SHAPE of what the diff adds,
+   not the file extension" — applied one stage later. Both fail
+   the same way for the same reason: a Rust change that is in
+   substance prose does not *look* like a prose change. Note the
+   crate rollup above states the blind spot outright ("a `.rs`
+   change that happens to be all doc comments still reads as
+   source") and is right to accept it, because over-counting
+   crates is safe; skipping the lens that reads the prose is
+   not.
+
+   **This is a QUALITY gate, not a token lever.** It spends a
+   lens rather than saving one, so `session-metrics` will never
+   surface it and no trim pass will ever propose it. Don't
+   "optimize" it back out on cost grounds.
+
    **Scope every broad-scan lens to the diff — don't turn it
    loose on the whole convention set.** The freshness /
    conventions / completeness lenses have repeatedly
@@ -4305,8 +4355,51 @@ already being asked to start the review.
    fail-open by design; `rust_reachable` is the measured answer
    to "does this diff touch anything a `cargo` build consumes"
    (a `.rs` file, a `Cargo.toml`, the lockfile, a toolchain file,
-   a `build.rs`, an `.s` source). Read the flag; do not re-derive
+   a `build.rs`, an `.s` source, a migration, a conformance
+   vector, **or a fixture some Rust test compiles in with
+   `include_str!`**). Read the flag; do not re-derive
    it. Record the skip and its reason either way.
+
+   **When `rust_fixture_hits` is non-empty, run the full local
+   Rust suite — and note that this is the one case where the
+   path lists would have told you not to.** The tool derives
+   those hits by scanning every tracked `.rs` file for
+   `include_str!` / `include_bytes!` targets, so it sees a
+   coupling no glob list can: a path CI's `code` filter excludes
+   can still be **compiled into** a Rust test, which makes every
+   PR-side Tests job a path-filtered no-op while the merge queue
+   runs the full suite against the merged result. The field
+   names the offending paths, so say which ones in the summary.
+
+   Measured (2026-09-11), the failure this converts into a local
+   one: the ENG-1308 dashboard PR was confined to
+   `market-data/grafana/**` and docs, all four PR-side Tests jobs
+   passed in seconds as path-filtered no-ops, and the **merge
+   group dequeued it** on one
+   real failure — a `market-data/tests/` agreement test read the
+   dashboard as a venue's supported-widths source. ENG-1339
+   landed the same class of coupling while that review was
+   running. The queue stays the enforcing gate either way; this
+   flag only moves the discovery earlier.
+
+   The scan over this tree finds **48** fixtures, **31** of them
+   unmatched by `RUST_REACHABLE`, and they split into two classes
+   rather than one. `infra/localnet/docker-compose.yml` is
+   CI-**excluded** and read by two tests — the dequeue class
+   above. The other thirty are CI-*visible* but were still
+   unmatched (every `*/queries/*.sql` a store module compiles in,
+   `sdk/idl/dropset.json`, and the `Makefile`), so for them
+   `runs_rust_suites` was true while `rust_reachable` was false
+   and **this step's own skip rule was skipping a local suite CI
+   was about to run against the very file the diff changed**.
+
+   **One consequence for the measured example just below: the
+   `Makefile` no longer reads as unreachable**, because
+   `feeds/tests/parked_compose_agreement.rs` compiles it in. The
+   45-file misfire is still a genuine misfire — `.dockerignore`
+   really is not Rust-reachable and that is what drove it — but a
+   `Makefile`-only diff now correctly reports reachable, and the
+   old verdict was wrong rather than merely conservative.
 
    Measured: a 45-file diff with **zero** Rust files, zero
    `programs/**` paths and `runs_artifact_gates: false` still
@@ -5608,13 +5701,45 @@ already being asked to start the review.
 
    This reduces to a `Bash(gh api graphql:*)` allow-rule —
    only `<number>` varies; the brace-heavy query rides in the
-   file, not the command line. Branch on the single result:
+   file, not the command line.
+
+   **One invariant governs every branch below: a terminal
+   `MERGED` from EITHER source is authoritative.** This probe
+   and the `gh pr view` state read disagree in **both**
+   directions — neither is reliably the fresher one — so no
+   branch here may be taken on this probe alone once the other
+   source says merged. Merge is terminal and neither source
+   reports it spuriously; only *lateness* is possible, never a
+   false positive. Conclude "still queued" or "dequeued" **only
+   when both sources agree the PR is not merged**, and when
+   neither says merged but the queue entry looks impossible for
+   the run state you can see, **wait and re-probe** rather than
+   diagnosing from a stale entry.
+
+   This binds the `AWAITING_CHECKS` branch as much as the
+   all-null one, which is the half that is easy to miss: on
+   **PR #420** this probe still read
+   `mergeQueueEntry.state: AWAITING_CHECKS` after all four
+   queue-branch runs were green, while `gh pr view` already
+   said `MERGED` with a timestamp. Taken alone, that lands on
+   "still queued; keep polling" — and polls a PR that had
+   already merged. The evidence for all three measured
+   variants is with the all-null branch below.
+
+   Branch on the single result:
 
    - `merged: true` (or `state: "MERGED"` / `"CLOSED"`) → it
-     landed; report the merge (the Linear/GitHub integration
-     will have moved the issue to **Done** on this signal —
-     report that it did, don't hand-move it). Key on `merged`
-     / `state`.
+     landed; report the merge. **The Linear issue stays In
+     Review, and nothing here writes a state.** Linear's
+     GitHub integration makes **no** transition on merge (a
+     team setting), and `Done` means operator-ratified — never
+     merely merged (`CLAUDE.md` → "The Linear state tracks the
+     session, not the PR"). This bullet used to say the
+     integration would have moved the issue to Done and to
+     report that it did; that described the old
+     auto-transition, which the team setting retired along
+     with the post-merge write-back that used to undo it. Key
+     on `merged` / `state`.
      Then **mark this PR's own GitHub notification done** so
      it doesn't linger (the immediate companion to
      `housekeeping`'s merged-PR notification sweep): find the
@@ -5704,7 +5829,11 @@ already being asked to start the review.
 
    - `state: "OPEN"` with `mergeQueueEntry` non-null (or, on
      a classic-auto-merge repo, `autoMergeRequest` non-null)
-     → still queued; keep polling.
+     → still queued; keep polling — **unless the state read
+     already says `MERGED`**, per the invariant above. This is
+     the PR #420 shape, and it is the branch on which "keep
+     polling" is most obviously wrong: a stale non-null entry
+     reads exactly like a live one.
 
    - `state: "OPEN"` with both `mergeQueueEntry` **and**
      `autoMergeRequest` null → **not conclusive on its own.**
@@ -5713,30 +5842,62 @@ already being asked to start the review.
      registered and the PR that was registered and kicked out
      read *identically* on this probe.
 
-     **First rule out that it already MERGED, because this
-     probe cannot be trusted to notice.** GraphQL lags the
-     merge. A measured run got an open, unmerged, all-null
-     answer from GraphQL while a `gh pr view` state read *at
-     the same moment* returned `MERGED`.
+     **First rule out that it already MERGED — and read the
+     rule as an INVARIANT, not a direction.** This step used
+     to say "GraphQL lags the merge" and prescribe the
+     `gh pr view` state read as the tiebreak. That is the
+     wrong *shape* of rule: it names one source as the stale
+     one, and which source is stale is **not fixed**.
 
-     Every all-null test below — the `gh run list`
-     evidence, the earlier-non-null rule, the two-consecutive
-     rule — reads that as a removal, so following them
-     literally concludes "kicked out of the queue" on a PR
-     that merged, and sends the next session diagnosing a CI
-     failure that does not exist.
+     The invariant that does hold: **a terminal `MERGED` from
+     EITHER source is authoritative.** Merge is terminal and
+     neither source reports it spuriously — only *lateness* is
+     possible, never a false positive. So conclude "still
+     queued" or "dequeued" **only when BOTH sources agree the
+     PR is not merged.**
 
-     One read settles it, and it is already inside the `gh`
-     carve-out for polled PR-state reads
+     Every all-null test below — the `gh run list` evidence,
+     the earlier-non-null rule, the two-consecutive rule —
+     reads a null entry as a removal, so following them on a
+     PR that merged concludes "kicked out of the queue" and
+     sends the next session diagnosing a CI failure that does
+     not exist.
+
+     One read gets the second source, and it is already inside
+     the `gh` carve-out for polled PR-state reads
      (`docs/conventions/github-mcp.md`):
 
      ```sh
      gh pr view <number> --json state,mergedAt
      ```
 
-     `state: "MERGED"` (or a non-null `mergedAt`) → it
-     merged; take the merged path and stop. Only once this
-     says otherwise do the removal tests below mean anything.
+     Measured on three PRs within about an hour
+     (2026-09-11) — and note the first two point **opposite
+     ways**, which is the whole reason the rule is an
+     invariant:
+
+     - **PR #424** — GraphQL reported `state: MERGED`,
+       `merged: true` and a null queue entry, while
+       `gh pr view` *at the same moment* still said `OPEN`
+       with a null `mergedAt`. GraphQL was **ahead**, and the
+       prescribed tiebreak was the stale source. Following the
+       old rule literally concludes "not merged yet" on a
+       landed PR.
+     - **PR #420** — GraphQL still read
+       `mergeQueueEntry.state: AWAITING_CHECKS` after all four
+       queue-branch runs were green, while `gh pr view`
+       already said `MERGED` with a timestamp. GraphQL was
+       **behind**, exactly as the old text assumed.
+     - **PR #425** — **both** reads stale together, for
+       several minutes. When neither says merged and the queue
+       entry looks impossible for the run state you can see,
+       **wait and re-probe**; never diagnose from a stale
+       entry.
+
+     `state: "MERGED"` **or** a non-null `mergedAt` **or**
+     GraphQL's own `MERGED` → it merged; take the merged path
+     and stop. Only once **both** sources say not-merged do
+     the removal tests below mean anything.
 
      **Resolve the remaining ambiguity with one `gh run list`
      — before concluding anything.** The queue branch is the evidence:
