@@ -363,13 +363,48 @@ pub struct FxStoreSource {
 impl FxStoreSource {
     /// `products` are canonical pair ids (`AUD-USD`), `sources` the venue
     /// labels written to `cex_prices.source`.
-    pub fn new(name: impl Into<String>, pool: PgPool, products: Vec<String>) -> Self {
+    ///
+    /// **Both lists are the caller's**, and the source list in particular used
+    /// to be [`FX_STORE_SOURCES`] hardcoded here. It moved out because the
+    /// reader's mechanism is not FX-specific — it reads the newest closed
+    /// bucket per source and product out of `cex_prices`, and the venue labels
+    /// are just rows — while a *roster* is a policy the consumer owns. With the
+    /// FX list baked in, the fair-value estimator could reach only one of the
+    /// three legs it composes from: the crypto reference and the USDC/USD peg
+    /// live in the same table, under sources this constructor refused to ask
+    /// for. Nothing about the query needed to change; only whose opinion the
+    /// roster was.
+    ///
+    /// A caller wanting the FX anchor roster passes [`FX_STORE_SOURCES`], which
+    /// stays here beside the designation table that gives those three labels
+    /// meaning ([`fx_candidate_kind`]).
+    pub fn new(
+        name: impl Into<String>,
+        pool: PgPool,
+        sources: Vec<String>,
+        products: Vec<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             pool,
-            sources: FX_STORE_SOURCES.iter().map(|s| s.to_string()).collect(),
+            sources,
             products,
         }
+    }
+
+    /// The FX anchor roster's spelling of [`Self::new`] — the three keyed FX
+    /// venues, whose readings [`push_store_candidate`] knows how to designate.
+    ///
+    /// Sugar over passing [`FX_STORE_SOURCES`] by hand, kept because every
+    /// current caller wants exactly this and an FX caller assembling the list
+    /// itself could drift from the designation table.
+    pub fn fx(name: impl Into<String>, pool: PgPool, products: Vec<String>) -> Self {
+        Self::new(
+            name,
+            pool,
+            FX_STORE_SOURCES.iter().map(|s| s.to_string()).collect(),
+            products,
+        )
     }
 
     /// Read the newest closed bucket for every configured series.
@@ -601,24 +636,10 @@ mod tests {
         );
     }
 
-    /// And the grace must outlast the poll it is waiting for.
-    ///
-    /// This is the other end of the same ordering chain, and it was the
-    /// unpinned one: `fx_store_poll` is a **config knob**, not a constant, so
-    /// raising it above the grace would arm the tape guard before the first
-    /// poll could possibly land — reinstating the measured "alarm and pull
-    /// the book on every startup" regression the grace exists to prevent.
-    /// Two intervals, so a single slow or missed poll does not arm it either.
-    #[test]
-    fn the_startup_grace_outlasts_two_store_polls() {
-        let poll = crate::config::BotConfig::default().feeds.fx_store_poll;
-        assert!(
-            STARTUP_TAPE_GRACE >= 2 * poll,
-            "the grace ({STARTUP_TAPE_GRACE:?}) must cover two store polls ({poll:?}), \
-             or a boot arms the tape guard before the store has had a chance to answer"
-        );
-    }
-
+    // The other end of that ordering chain — the grace against two store
+    // polls — is pinned in `dropset-maker-bot`'s config tests instead. The
+    // poll is a config knob owned by the consumer, and this crate cannot see
+    // it: the dependency runs the other way.
     #[test]
     fn a_currency_maps_onto_its_canonical_pair() {
         assert_eq!(fx_product_id("AUD").as_deref(), Some("AUD-USD"));

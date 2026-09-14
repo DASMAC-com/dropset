@@ -258,20 +258,34 @@ db-schema <-> market-data: db-schema/migrations defines cex_prices and
   half-width to NULL rather than letting the CHECK abort a batch and
   crash-loop the collector; that coercion and the constraint have to move
   together.
-market-data <-> maker-bot price read: cex_prices acquires a consumer
-  OUTSIDE market-data. bots/maker-bot/queries/fx_store_latest.sql selects
-  (source, product_id, bucket_start + granularity_secs, close) for the
-  intraday FX venues, and bots/maker-bot/src/fx_store.rs decodes those
-  four columns BY NAME at runtime, so a renamed column or alias breaks the
-  maker at run time rather than at compile time — the maker deliberately
-  takes no dependency on db-schema and asserts no schema version. Three
-  things must move together: the column names the query projects, the
-  names fx_store decodes, and the venue labels, since FX_STORE_SOURCES
+market-data cex_prices read path: the store read that is on the PRICE
+  path rather than the collection path. market-data/queries/fx_store_latest.sql
+  selects (source, product_id, bucket_start + granularity_secs, close) for
+  whichever venues the caller asks for, and market-data/src/fx_store.rs
+  decodes those four columns BY NAME at runtime, so a renamed column or
+  alias breaks a consumer at run time rather than at compile time — the
+  reader deliberately asserts no schema version, so nothing here fails
+  fast on a schema it was not built for.
+  Three things must move together: the column names the query projects,
+  the names fx_store decodes, and the venue labels, since FX_STORE_SOURCES
   matches cex_prices.source literally against the collectors' own SOURCE
-  constants in market-data/src/bin. The seam is also load-bearing in a way
-  the write seams are not — this read is on the price path and its absence
-  halts every market (HaltReason::PriceStoreUnavailable), so a change that
-  silently empties it stops quoting rather than degrading it.
+  constants in market-data/src/bin. That last pairing is now WITHIN one
+  crate — the reader moved to sit beside the writers it reads behind — so
+  the seam is tighter than it was, but it is still a literal string match
+  with no compile-time link between the two lists.
+  The consumer boundary is the part that moved and the part to re-check
+  when auditing: the reader is no longer maker-owned, so
+  bots/maker-bot depends on dropset-market-data for it and re-exports the
+  module under its old path. Two consumers with DIFFERENT failure
+  postures now share it, which is the contract-drift risk here: for the
+  maker this read is load-bearing in a way the write seams are not — its
+  absence halts every market (HaltReason::PriceStoreUnavailable), so a
+  change that silently empties it stops quoting rather than degrading it.
+  The reader's ROSTER is the caller's, not the reader's: FxStoreSource::new
+  takes the source list and FxStoreSource::fx is the FX-anchor spelling of
+  it. A source set that omits a venue returns no error, only fewer rows,
+  so a mis-scoped roster reads as collectors being behind — the failure
+  market-data/tests/fx_store_sources.rs exists to pin.
 db-schema <-> market-data config: a THIRD kind of contract, unlike the
   two row-shape seams above — db-schema/migrations both defines AND seeds
   pyth_fx_feeds, which market-data/src/pyth_roster.rs reads at startup as
@@ -326,6 +340,24 @@ db-schema <-> market-data fair price: the FOURTH write path into the
   second what a maker priced off; they diverge under a halt or a
   declined pause, and the two processes tick on their own clocks, so a
   query correlating them must join on a window rather than on equality.
+  0014 adds the two staleness BOUNDS the composition was judged at
+  (leg_stale_tape_secs, leg_stale_reference_secs, ordered by CHECK), and
+  publish takes them as an argument rather than reading a config, so the
+  recorded bound cannot disagree with the one the engine used — take them
+  from FairValueEngine::leg_bounds, never a second config read. They are
+  bounds, not observed ages, and reading them as ages is the misuse to
+  watch for. Note the bind chain is now fifteen positional binds against
+  four adjacent BOOLEANs, two nullable DOUBLE PRECISIONs and four
+  BIGINTs, where a transposition is accepted silently by Postgres into
+  rows that are never revised; market-data/tests/fair_price_roundtrip.rs
+  pins it one-hot across four rows, which is the only shape that can
+  catch every pairwise boolean swap.
+  publish's error is CLASSIFIED, not opaque: PublishError splits a row a
+  database refused (permanent — a CHECK violation, a schema mismatch)
+  from one that never reached a database (transient), with everything
+  unclassified falling to permanent. A caller must branch on retryable()
+  before retrying; retrying a permanent failure is a silent stall that
+  looks like a busy estimator publishing nothing.
 db-schema <-> grafana dashboards: db-schema/migrations owns the
   dropset_ro reader role and the SELECT grants behind it, which the
   provisioned datasource

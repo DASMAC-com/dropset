@@ -1,0 +1,74 @@
+//! Shared harness for this crate's container-backed integration tests.
+//!
+//! Every test here needs the same thing: a Postgres nobody else is using, with
+//! the schema applied. Three test binaries wanted it, which is one more than is
+//! worth copying — and the copies had already started to drift in their panic
+//! messages.
+//!
+//! **Never point these at the shared dev stack.** `start_pg` migrates, and the
+//! tables involved hold immutable history: an applied migration is hashed by
+//! the runner, so a schema advanced out from under the running stack is manual
+//! surgery to undo. A throwaway container is the whole point.
+
+// Cargo compiles this module separately into *every* integration-test binary
+// that declares it, so a helper used by one of them is genuinely unused in the
+// others and `-D dead-code` fails the build. The alternative — splitting the
+// helpers so each binary declares only what it uses — trades one attribute for
+// a file per consumer, which is the duplication this module removes.
+#![allow(dead_code)]
+
+use dropset_db_schema::{connect, migrate};
+use sqlx::PgPool;
+use testcontainers_modules::postgres::Postgres;
+use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync};
+
+/// A throwaway Postgres with every migration applied.
+///
+/// Keep the returned container bound for the life of the test — dropping it
+/// stops the container, so binding it to `_` rather than `_pg` tears the
+/// database down before the first query and fails in a way that looks like a
+/// connection bug.
+pub async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
+    let container = Postgres::default()
+        .start()
+        .await
+        .expect("start postgres container");
+    let port = container
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("resolve mapped port");
+    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    let pool = connect(&url).await.expect("connect pool");
+    migrate(&pool).await.expect("apply migrations");
+    (container, pool)
+}
+
+/// Insert one closed bucket into `cex_prices`.
+///
+/// `published_at` in the reader's terms is `bucket_start + granularity_secs`,
+/// so this takes the close instant a test wants to assert on and works
+/// backwards — a test writing `bucket_start` directly has to redo that
+/// arithmetic at every call site and gets the off-by-one-bucket wrong.
+pub async fn insert_bucket(
+    pool: &PgPool,
+    source: &str,
+    product_id: &str,
+    published_at: i64,
+    close: f64,
+) {
+    const GRANULARITY: i64 = 60;
+    sqlx::query(
+        "INSERT INTO cex_prices
+             (source, product_id, granularity_secs, bucket_start,
+              low, high, open, close, volume)
+         VALUES ($1, $2, $3, $4, $5, $5, $5, $5, 0)",
+    )
+    .bind(source)
+    .bind(product_id)
+    .bind(GRANULARITY as i32)
+    .bind(published_at - GRANULARITY)
+    .bind(close)
+    .execute(pool)
+    .await
+    .unwrap_or_else(|e| panic!("insert {source}/{product_id} at {published_at}: {e}"));
+}

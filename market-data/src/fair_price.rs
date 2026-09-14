@@ -7,10 +7,16 @@
 //! the single schema owner.
 //!
 //! **What lives here is the serialization of one composition, and nothing
-//! else.** Assembling the candidate sets the engine composes *from* is
-//! deliberately not in this crate — that is the store-read path, and it belongs
-//! to whichever consumer owns the roster. This module takes a finished
-//! [`FairValue`] and writes it down.
+//! else.** This module takes a finished [`FairValue`] and writes it down; it
+//! neither reads the store nor composes anything.
+//!
+//! Assembling the candidate sets the engine composes *from* is
+//! [`crate::fx_store`], and driving the two is the `market-data-estimator`
+//! binary — both in this crate but not in this module. The boundary that
+//! matters is the one
+//! this module keeps, between serializing a composition and producing it; an
+//! earlier version of this note drew it at the crate edge instead, which stopped
+//! being true when the reader joined the writers it reads behind.
 //!
 //! The engine's enums reach the database as TEXT rather than as an integer
 //! discriminant, matching every enum-ish column in 0003 and 0007. The reason is
@@ -20,7 +26,122 @@
 //! renaming a Rust variant must not silently re-label a column that dashboards
 //! and analytics already filter on.
 
-use dropset_fair_value::{Anchor, Degrade, FairValue, Health, Regime};
+use dropset_fair_value::{Anchor, Degrade, FairValue, Health, LegStaleness, Regime};
+
+/// Why a publish failed, split by whether **retrying the same row could ever
+/// succeed**.
+///
+/// The split exists because the estimator's fail-closed halt has to name a
+/// cause, and the two classes call for opposite handling. A dropped connection
+/// is worth retrying on the next tick; a row the database refuses on its own
+/// terms is not, and retrying one forever is a stall wearing a transient's
+/// clothes — the estimator would look busy, publish nothing, and report a
+/// retry count rising instead of a defect.
+///
+/// The classification is about **where the row got to**, not about severity.
+/// Both classes are failures a caller must act on; neither is benign.
+#[derive(Debug)]
+pub enum PublishError {
+    /// A database judged the row and refused it: a CHECK or constraint
+    /// violation, a type or column mismatch, a missing table. The same row
+    /// will be refused again by the same schema, so a retry is a spin.
+    ///
+    /// This is a **defect**, in the composition or in the deploy — a product id
+    /// that fails 0011's canonical-shape CHECK, an inverted staleness pair
+    /// against 0014's ordering CHECK, or a binary running against a schema it
+    /// was not built for.
+    Permanent(anyhow::Error),
+    /// The row never reached a database that could judge it, or reached one that
+    /// was shutting down or overloaded: a socket error, a TLS failure, a pool
+    /// timeout, an admin shutdown, a serialization failure.
+    ///
+    /// Says nothing about whether the row is acceptable — only that the question
+    /// was not answered. Retrying is sound.
+    Transient(anyhow::Error),
+}
+
+impl PublishError {
+    /// The wire-stable word for the class, for a halt reason or a log field.
+    /// Stable like the column vocabularies above: an operator alert and a
+    /// dashboard filter key off it.
+    pub fn class(&self) -> &'static str {
+        match self {
+            Self::Permanent(_) => "permanent",
+            Self::Transient(_) => "transient",
+        }
+    }
+
+    /// Whether retrying this exact row could succeed. The whole point of the
+    /// type: a caller branches on this rather than on the message text.
+    pub fn retryable(&self) -> bool {
+        matches!(self, Self::Transient(_))
+    }
+}
+
+impl std::fmt::Display for PublishError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Permanent(e) => write!(f, "permanent publish failure: {e}"),
+            Self::Transient(e) => write!(f, "transient publish failure: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for PublishError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Permanent(e) | Self::Transient(e) => Some(e.as_ref()),
+        }
+    }
+}
+
+/// Sort one `sqlx` failure into the two classes.
+///
+/// **Unclassified failures land in `Permanent`**, which is the fail-closed
+/// direction and is deliberate: the cost of misfiling a genuine transient is
+/// one halt an operator can see and clear, while the cost of misfiling a
+/// permanent one is the silent infinite retry this whole split exists to
+/// prevent. So the transient set is an **allowlist** of failures known not to
+/// be about the row, and everything else — including a variant `sqlx` adds
+/// later — is permanent until someone establishes otherwise.
+fn classify(err: sqlx::Error) -> PublishError {
+    // SQLSTATE classes that describe the server or the link rather than the
+    // row. `08` connection exception, `40` transaction rollback (serialization
+    // failure, deadlock — the retry is the documented remedy), `53`
+    // insufficient resources, `57` operator intervention (`57P01` admin
+    // shutdown is what a restarting Postgres answers), `58` external system
+    // error. Everything else a database reports is about the statement or the
+    // row: `22` data exception, `23` integrity constraint violation — 0011's
+    // and 0014's CHECKs — `42` syntax or access rule violation, `3D`/`3F`
+    // invalid catalog or schema name.
+    const TRANSIENT_SQLSTATE_CLASSES: [&str; 5] = ["08", "40", "53", "57", "58"];
+
+    if let sqlx::Error::Database(ref db) = err {
+        // A driver that reports no SQLSTATE cannot be placed by class, so it
+        // takes the fail-closed default with everything else unclassified.
+        let transient = db
+            .code()
+            .is_some_and(|code| TRANSIENT_SQLSTATE_CLASSES.contains(&&code[..2]));
+        return if transient {
+            PublishError::Transient(err.into())
+        } else {
+            PublishError::Permanent(err.into())
+        };
+    }
+
+    match err {
+        // The row did not reach a database, or the link died mid-answer.
+        sqlx::Error::Io(_)
+        | sqlx::Error::Tls(_)
+        | sqlx::Error::Protocol(_)
+        | sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::WorkerCrashed => PublishError::Transient(err.into()),
+        // Everything else: a misconfiguration, a decode fault, a schema
+        // mismatch, or a variant that did not exist when this was written.
+        _ => PublishError::Permanent(err.into()),
+    }
+}
 
 /// The stable wire name for the anchor leg.
 pub fn anchor_name(anchor: Anchor) -> &'static str {
@@ -105,12 +226,31 @@ pub fn health_name(health: Health) -> &'static str {
 /// no-op**: the primary key already held this pair at this stamp, which means
 /// something else published for it. A caller must log or count it — see the
 /// query's note on why the row is left alone rather than overwritten.
+///
+/// `stale` is the staleness bound pair the composition was **actually resolved
+/// at**, and it is a parameter rather than something read from a config here on
+/// purpose: 0014 records it per row, and a bound this function looked up itself
+/// could disagree with the one the engine used. Take it from
+/// [`FairValueEngine::leg_bounds`], whose own documentation makes the same
+/// point — every engine owns its config, so a second copy read anywhere else is
+/// a diagnostic that may disagree with the thing it is diagnosing. Passing it
+/// makes per-leg staleness an explicit requirement of this path rather than an
+/// implicit property of `compose`.
+///
+/// [`FairValueEngine::leg_bounds`]: dropset_fair_value::FairValueEngine::leg_bounds
+///
+/// # Errors
+///
+/// Returns [`PublishError`], which splits a row the database refused from a row
+/// that never reached one. **Branch on [`PublishError::retryable`] before
+/// retrying** — a permanent failure retried on every tick is a silent stall.
 pub async fn publish(
     executor: impl sqlx::PgExecutor<'_>,
     ts: i64,
     product_id: &str,
     fv: &FairValue,
-) -> anyhow::Result<bool> {
+    stale: LegStaleness,
+) -> Result<bool, PublishError> {
     let res = sqlx::query(include_str!("../queries/fair_price_insert.sql"))
         .bind(ts)
         .bind(product_id)
@@ -129,8 +269,13 @@ pub async fn publish(
         .bind(fv.uncertain)
         .bind(fv.basis_breach)
         .bind(fv.usdc_breach)
+        // The bounds this composition was judged at (0014). Seconds, matching
+        // the columns and `basis_age_secs` above.
+        .bind(stale.tape.as_secs() as i64)
+        .bind(stale.reference.as_secs() as i64)
         .execute(executor)
-        .await?;
+        .await
+        .map_err(classify)?;
     Ok(res.rows_affected() > 0)
 }
 

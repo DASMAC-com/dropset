@@ -54,6 +54,7 @@
 pub mod config;
 pub mod fair_price;
 pub mod fx;
+pub mod fx_store;
 pub mod instruments;
 pub mod pyth_roster;
 pub mod roster;

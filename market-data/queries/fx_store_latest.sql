@@ -1,13 +1,17 @@
--- The newest closed bucket for each (venue, pair) the maker prices off — the
--- intraday FX anchor, read from the shared market-data store rather than
--- polled from the venues directly.
+-- The newest closed bucket for each (venue, pair) asked for — read from the
+-- shared market-data store rather than polled from the venues directly.
 --
--- Why the maker reads this rather than holding its own OANDA / Twelve Data
+-- The venue and pair lists are both the caller's, so this is not FX-specific
+-- despite the file name: the maker reads its intraday FX anchor through it, and
+-- the fair-value estimator reads the crypto reference and the USDC/USD peg the
+-- same way. Nothing here constrains which sources may be asked for.
+--
+-- Why a consumer reads this rather than holding its own OANDA / Twelve Data
 -- clients: those venues are metered and keyed, the collectors already poll
 -- them on a budget sized to the free tier, and a second consumer on the same
 -- key is a self-inflicted rate-limit on the anchor. Reading the collectors'
--- rows also means the maker and the Grafana dashboards price off the exact
--- same numbers, so a green dashboard is evidence about the maker's own inputs.
+-- rows also means the consumers and the Grafana dashboards price off the exact
+-- same numbers, so a green dashboard is evidence about a consumer's own inputs.
 --
 -- `bucket_start + granularity_secs` is the bucket **close**, and that is the
 -- honest publication instant of `close`: the row's key is the bucket open, but

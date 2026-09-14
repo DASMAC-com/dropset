@@ -21,27 +21,11 @@
 //! cargo test -p dropset-market-data -- --ignored
 //! ```
 
-use dropset_db_schema::{connect, migrate};
+mod common;
+
+use common::start_pg;
 use dropset_market_data::instruments::register;
 use sqlx::PgPool;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync};
-
-/// A throwaway Postgres with the schema applied.
-async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
-    let container = Postgres::default()
-        .start()
-        .await
-        .expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("resolve mapped port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = connect(&url).await.expect("connect pool");
-    migrate(&pool).await.expect("apply migrations");
-    (container, pool)
-}
 
 /// The (first, last) registration timestamps for one (source, product).
 async fn stamps(pool: &PgPool, source: &str, product: &str) -> (i64, i64) {

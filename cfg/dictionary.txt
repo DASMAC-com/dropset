@@ -249,6 +249,7 @@ sortedness
 soulbound
 sparticuz
 sqlfluff
+sqlstate
 sqlstring
 sqlx
 sslmode

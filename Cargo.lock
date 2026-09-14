@@ -1812,6 +1812,7 @@ dependencies = [
  "bytemuck",
  "dropset-fair-value",
  "dropset-feeds",
+ "dropset-market-data",
  "dropset-sdk",
  "dropset-util",
  "serde",

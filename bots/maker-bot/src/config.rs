@@ -752,6 +752,27 @@ impl Default for BotConfig {
 mod tests {
     use super::*;
 
+    /// The startup tape grace must outlast the poll it is waiting for.
+    ///
+    /// This lives here rather than beside the constant because the two ends of
+    /// the ordering chain sit in different crates: `STARTUP_TAPE_GRACE` is
+    /// `dropset-market-data`'s, and `fx_store_poll` is a **config knob** of
+    /// this crate's, not a constant — so raising it above the grace would arm
+    /// the tape guard before the first poll could possibly land, reinstating
+    /// the measured "alarm and pull the book on every startup" regression the
+    /// grace exists to prevent. Two intervals, so a single slow or missed poll
+    /// does not arm it either. Only this crate can see both sides.
+    #[test]
+    fn the_startup_grace_outlasts_two_store_polls() {
+        let poll = BotConfig::default().feeds.fx_store_poll;
+        let grace = crate::fx_store::STARTUP_TAPE_GRACE;
+        assert!(
+            grace >= 2 * poll,
+            "the grace ({grace:?}) must cover two store polls ({poll:?}), \
+             or a boot arms the tape guard before the store has had a chance to answer"
+        );
+    }
+
     /// The default ladder commits exactly the full leg per side (§2 invariant
     /// `Σ size_bps = 10000`) and stays within the 8-level cap.
     #[test]

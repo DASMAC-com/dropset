@@ -17,7 +17,11 @@
 -- as `false`. A caller must log or count it.
 INSERT INTO fair_price (
     ts, product_id, fair, anchor, regime, degrade, health,
-    basis, basis_age_secs, basis_outlier, uncertain, basis_breach, usdc_breach
+    basis, basis_age_secs, basis_outlier, uncertain, basis_breach, usdc_breach,
+    leg_stale_tape_secs, leg_stale_reference_secs
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+    $14, $15
+)
 ON CONFLICT (product_id, ts) DO NOTHING;

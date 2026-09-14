@@ -2,7 +2,6 @@
 // cspell:word matview
 // cspell:word matviews
 // cspell:word schemaname
-// cspell:word SQLSTATE
 // cspell:word tablename
 // cspell:word unlogged
 // cspell:word unprovisioned
