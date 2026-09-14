@@ -69,8 +69,59 @@ worktree whose slug differs still resolves. It then reads
 the main transcript and every sibling sub-agent transcript
 and prints, as compact Markdown (or `--json`):
 
+- **What the session cost** — the headline, stated first: one
+  line saying this session cost about N dollars, then the
+  breakdown (cache-read, cache-write, output, input) at the
+  verified Bedrock rates, computed from the session's own
+  transcript usage records. Sub-agent cost is priced too and
+  split out, because a fan-out session's bill is mostly theirs.
+
+  **Only a Bedrock session gets a dollar figure.** A **seat**
+  session (`plan`, `architect`, `explore`, `housekeeping`)
+  bills against the Claude subscription, whose internal
+  pricing is not transparent, so it reports its token profile
+  and says so instead — printing a worker-rate equivalent
+  would invent a number that appears on no bill.
+
+  **The substrate comes from the launch marker, not from the
+  model id.** Measured 2026-09-14: a Bedrock worker's
+  transcript records `message.model` as the plain
+  `claude-opus-5`, byte-identical to what a seat Opus session
+  records — the id is normalized and carries no region prefix,
+  so it cannot discriminate; nor can the model *name*, since
+  seat verbs also run on Opus. The tool reads the marker
+  `.claude/shell/init.zsh` writes, and **an absent marker
+  reads as seat**, which is the safe direction: a missing
+  figure is a visible gap, a wrong one silently corrupts the
+  daily reconciliation. Pruning a worktree can take its marker
+  with it, so `--substrate bedrock` is the override for mining
+  an older worker session.
+
+  **Dollars come from the transcript because AWS cannot answer
+  this.** Cost Explorer has no session dimension and lags up
+  to a day; true AWS-side attribution would need per-verb
+  application inference profiles. So AWS is the
+  **reconciliation** path — one Cost Explorer query per
+  planning bootstrap, compared against the sum of the fleet's
+  transcript-priced estimates — never the source.
+
 - **Totals** — input / output / cache-write / cache-read
   tokens and turn count, summed across every assistant turn.
+
+- **Prefix growth** — the prefix carried by the first and last
+  billed request, plus its peak. This is what makes the
+  quadratic legible: every turn replays the whole
+  conversation, so the bill is roughly the average prefix
+  times the turn count — which is why a fat early payload is
+  paid many times over, and why session length is itself the
+  largest cost lever (`CLAUDE.md` → "Context economy"). The
+  peak is reported separately because compaction can drop the
+  prefix, so the final turn is not the high-water mark.
+
+  Because the cost is quadratic in turns, read this pair as a
+  prompt to ask **which turns could have been eliminated
+  entirely** — not merely which payloads could have been
+  smaller.
 
 - **Cache-hit rate** — cache-read ÷ all input.
 
@@ -233,6 +284,15 @@ narrowest method, field-select, read by slice, scope the
 sub-agent, harden into a tool), and where you can, name the
 **concrete** skill step or convention-doc rule to edit.
 Keep it tight; this is a recommendation, not a patch.
+
+**Rank levers by estimated dollars saved, not tokens.** Dollars
+are what the credit spend is billed against, and the two orders
+differ: a cache-read-heavy sink priced at $0.55/Mtok can rank
+below a much smaller output-heavy one at $27.50/Mtok. Where a
+lever's saving can only be stated in tokens, price it at the
+rates the tool reports and say which tier it lands in. For a
+**seat** session there is no dollar figure to rank by, so rank
+by token volume and say that is what you did.
 
 **5. File each lever as its own parked issue.** One lever, one
 issue, keyed by a `**Fingerprint**:` — never one entry
