@@ -373,12 +373,31 @@ _ds_daily_session() {
 #
 #   $1 session id   $2 display name   $3 initial prompt
 #   $4 model to pin, or "" for the saved default
+#   $5 worktree tag, or "" to run in the base checkout
+#
+# THE WORKTREE FLAG RIDES THE CREATE BRANCH ONLY. `-w` *creates* a worktree, so
+# passing it on the resume branch would ask for a second one every time a
+# long-lived thread is reopened. The asymmetry is the point, not an oversight.
+#
+# The slug below needs no worktree case, which is worth stating because the
+# obvious reading is that it does: `claude -w <tag>` runs from the BASE repo, so
+# Claude Code files the transcript under the base repo's project slug even
+# though every `cwd` stamp inside it points into the worktree, and no project
+# directory for the worktree ever exists. `_ds_task_resume` documents the same
+# fact from the other side — it is why resuming such a session by id from the
+# base repo is the only form that reaches it. So `$PWD` here is already right
+# for both kinds of launch, and deriving a worktree slug would break the probe.
 _ds_session() {
-  local sid="$1" name="$2" prompt="$3" model="$4"
+  local sid="$1" name="$2" prompt="$3" model="$4" worktree="$5"
 
   local slug transcript
-  local -a model_flag
+  local -a model_flag worktree_flag prompt_arg
   [[ -n "$model" ]] && model_flag=(--model "$model")
+  [[ -n "$worktree" ]] && worktree_flag=(-w "$worktree")
+  # An ARRAY rather than a bare "$prompt", so a verb with no bootstrap skill to
+  # run passes no positional at all. Spelled directly, an empty prompt reaches
+  # the CLI as an empty argument, which is a different thing from omitting it.
+  [[ -n "$prompt" ]] && prompt_arg=("$prompt")
 
   _ds_base || return 1
   _ds_secrets
@@ -394,7 +413,7 @@ _ds_session() {
     claude --resume "$sid" --permission-mode auto "${model_flag[@]}"
   else
     claude --session-id "$sid" -n "$name" --permission-mode auto \
-      "${model_flag[@]}" "$prompt"
+      "${model_flag[@]}" "${worktree_flag[@]}" "${prompt_arg[@]}"
   fi
 }
 
@@ -872,69 +891,113 @@ _ds_task_resume() {
   esac
 }
 
-# Start a base-repo session, optionally named. The general-purpose
-# not-tied-to-a-worktree entry point.
+# Start OR resume an EXPLORE session — research, audits, and any other task
+# whose deliverable is a spec or a findings document rather than a code change.
 #
-#   explore                base-repo session, unnamed
-#   explore <name>         base-repo session, named
-#   explore resume <name>  resume a named one
+#   explore <n>       an explore task with a Linear issue: worktree `eng-<n>`
+#   explore <name>    one without: worktree `exp-<name>`
+#
+# **It runs in its OWN WORKTREE, and it is IDEMPOTENT** — both reverse what this
+# verb shipped with, and both are the same operator ruling that moved
+# `architect` (2026-09-11). See that verb's comment for why an untracked spec in
+# the base checkout is protected by nothing; an audit is the case that made it
+# urgent, since a live audit cleared by `housekeeping` or the purge loses work
+# nobody knew was in flight.
+#
+# A NUMBER KEYS THE WORKTREE TO THE ISSUE, deliberately, and this is the
+# substantive naming call. `explore 1196` lands in `eng-1196` — not `exp-1196` —
+# so an explore session inherits every mechanism already keyed on `eng-###`:
+# `cdds 1196` reaches it, `housekeeping` prunes it on the issue's status type,
+# `fleet` resumes it, the substrate marker records it. A worktree named anything
+# else would be invisible to exactly the cleanup machinery this ruling exists to
+# make protective. The session's DISPLAY name stays `exp-<n>` so the fleet
+# listing still reads by role: `eng-*` implementers, `plan-*`, `ceo-*`
+# architecture, `exp-*` research.
+#
+# THE `resume` TWIN IS GONE, and dropping it removes a wart rather than a
+# feature. `explore <name>` now creates the session if absent and resumes it if
+# present, so `explore resume <name>` would be a pure synonym — and the old
+# resume branch could not resume deterministically anyway: `-r/--resume` matches
+# on session ID, a name is not one, so a bare name PRE-FILTERED THE INTERACTIVE
+# PICKER. Keying on `_ds_topic_sid` computes an id the way `architect` does,
+# which is what makes the fix possible. A name is now REQUIRED for the same
+# reason `architect` requires a topic: it names a worktree.
 #
 # This folds two older verbs into one: the unnamed form and the named form were
-# separate launchers with identical bodies bar one flag.
+# separate launchers with identical bodies bar one flag. The idempotency above
+# folds in the third.
 #
 # **SEAT-ONLY, and Fable-pinned.** Both halves are ratified and they are the
-# same decision. Base-repo work is thinking-heavy, so it runs the top tier like
+# same decision. Explore work is thinking-heavy, so it runs the top tier like
 # `plan` and `architect` do — and a Fable-class model on Bedrock falls under
 # the account's standing AWS human-review retention opt-in, which the seat is
 # free of. There is deliberately no `explore local`: seat is the only
-# substrate, so the word would be a no-op.
+# substrate, so the word would be a no-op. The worktree home changed where this
+# verb runs; it did not change the substrate, which is a capability call.
 #
-# It runs `_ds_base` first, so `explore <name>` is `cdds` plus a named session.
-# That is intended: a base-repo session is for board or repo-wide work, which
-# belongs in the base checkout, not in whatever worktree the shell happened to
-# be sitting in. An earlier committed revision omitted the `_ds_base` and so
-# inherited the caller's directory — a parity gap, not a decision, and a quiet
-# one: the session still starts, just somewhere unintended.
-#
-# `--permission-mode auto` for the same reason as `task` (see that comment for
-# why auto rather than acceptEdits): the shared settings file sets no default
-# and a project file cannot set one. It is deliberate here rather than
-# inherited — a base-repo session is a working session, not a read-only one.
+# The model pin, the permission mode and the start-or-resume probe all now come
+# from `_ds_session`, which gets each right by construction. The old hand-rolled
+# resume branch had to remember the pin itself — `--model` and
+# `--permission-mode` are per-session flags, so honoring them only on the create
+# path silently drops to the saved default on every reopen, and an explore
+# session is reopened often. That slip is exactly what `_ds_daily_session`
+# documents above ("still works, so nobody notices"), and this verb reproduced
+# it until review caught it. Sharing the core retires the whole class.
 explore() {
-  if [[ "$1" == 'resume' ]]; then
-    shift
-    if [[ -z "$1" ]]; then
-      print -u2 'Usage: explore resume <name>'
-      return 1
-    fi
-    _ds_base || return 1
-    _ds_seat_guard 'explore'
-    _ds_secrets
-    # CAVEAT: a bare name PRE-FILTERS THE INTERACTIVE PICKER rather than
-    # resuming deterministically — `-r/--resume` matches on session ID, and a
-    # name is not one. Expect to pick from a list. `plan`, `housekeeping` and
-    # `architect` avoid this entirely by computing their own id; a free-form
-    # name has nothing to compute from.
-    #
-    # THE MODEL PIN RIDES THE RESUME PATH TOO. `--model` and
-    # `--permission-mode` are per-session flags, so passing them only on the
-    # create path honors the pin on a session's FIRST launch and silently drops
-    # to the saved default on every reopen after it — and an `explore` session
-    # is reopened often. That is exactly the slip `_ds_daily_session` documents
-    # above ("still works, so nobody notices"), and this verb reproduced it
-    # until review caught it. `_ds_session` gets this right by construction;
-    # this branch has to do it by hand.
-    claude --resume "$1" --permission-mode auto --model claude-fable-5
-    return
+  local raw="$1" tag name
+
+  if [[ "$raw" == 'resume' ]]; then
+    print -u2 'explore: `resume` is retired —' \
+      '`explore <n|name>` now resumes an existing session itself'
+    return 1
+  fi
+  if [[ -z "$raw" || -n "$2" ]]; then
+    print -u2 'Usage: explore <n> | explore <name>   (a name is required: it names a worktree)'
+    return 1
+  fi
+  # The name reaches a session name, a worktree and a branch, so hold it to the
+  # shape a branch would take — the same validation `architect` applies to its
+  # topic, and binding for the same reason.
+  if [[ ! "$raw" =~ '^[a-z0-9][a-z0-9-]*$' ]]; then
+    print -u2 'explore: name must be lowercase letters, digits and dashes'
+    return 1
   fi
 
-  local -a name_flag
-  [[ -n "$1" ]] && name_flag=(-n "$1")
+  # A bare number is an issue-keyed explore task, so it goes through the ONE
+  # tag owner `task` uses rather than force-prefixing here — see `_ds_tag_of`
+  # for what a second spelling of this cost last time.
+  #
+  # THE ISSUE-KEYED FORM CARRIES A BOOTSTRAP PROMPT, and it has to. A session
+  # launched with no initial prompt SITS IDLE until a human types something,
+  # which is silent — it looks started. Measured on the 1196 audit: dispatched
+  # into its own tab, the verb typed correctly, and still idle five minutes
+  # later beside five sessions that were working, because typing the verb is not
+  # the same as giving the session its task. `task <n>` never had this exposure
+  # (it passes `/init-pr`), so the gap was explore-shaped from the start.
+  #
+  # There is no `explore` skill to name here, so the prompt is written out. It
+  # deliberately states the research-only posture rather than assuming the issue
+  # body does: an audit that opens a PR is the failure this launch shape exists
+  # to prevent.
+  local prompt=''
+  if [[ "$raw" == <-> ]]; then
+    tag="$(_ds_tag_of "$raw")"
+    prompt="Bootstrap this explore task from Linear issue ENG-$raw. Read that"
+    prompt+=" issue as the spec, mark it In Progress, and verify its claims and"
+    prompt+=" any file:line citations against HEAD before acting on them. This"
+    prompt+=" is a RESEARCH-ONLY session: findings and any spec file belong on"
+    prompt+=" the issue body or on this worktree's PR branch, and the issue"
+    prompt+=" stays In Progress until its loop is ratified."
+  else
+    # Free-form: the operator names the subject in their first message, so
+    # inventing one here would only be a guess to correct.
+    tag="exp-$raw"
+  fi
+  name="exp-$raw"
 
-  _ds_base || return 1
   _ds_seat_guard 'explore'
-  _ds_secrets
-  claude "${name_flag[@]}" --permission-mode auto --model claude-fable-5
+  _ds_session "$(_ds_topic_sid explore "$raw")" "$name" "$prompt" \
+    claude-fable-5 "$tag"
 }
 
 # Start OR resume today's PLANNING session. Takes no argument: the name is
@@ -998,21 +1061,41 @@ housekeeping() {
 #
 # Model-pinned like `plan` for the same reason: this session argues strategy,
 # and fidelity beats tokens. It writes nothing to the board — see the skill.
+#
+# **It runs in its OWN WORKTREE, named `ceo-<topic>`**, which reverses the
+# base-repo home this verb shipped with (operator ruling, 2026-09-11, after one
+# day live). The deliverable is a spec file the operator edits in place, and an
+# untracked file in the base checkout is protected by nothing: the first such
+# spec sat in the base repo awaiting feedback with its issue already marked Done,
+# and no part of the cleanup machinery recognized any of it as live work.
+# A worktree plus an open PR makes the protection structural instead —
+# `housekeeping` refuses to prune a worktree holding uncommitted or unpushed
+# work and applies open-PR protection — so the spec survives cleanup by
+# construction rather than by someone remembering it exists.
+#
+# The worktree name is deliberately NOT an `eng-###`: an architect topic has no
+# issue of its own, and the `ceo-` prefix keeps the fleet listing readable by
+# role. The spec PR's TITLE still carries an `ENG-###` scope, because the
+# semantic-PR check requires one — the skill covers where that number comes
+# from. Worktree name and PR scope are independent, so neither constrains the
+# other.
 architect() {
   local topic="$1"
   if [[ -z "$topic" || -n "$2" ]]; then
     print -u2 'Usage: architect <topic>   (e.g. architect volatility-telemetry)'
     return 1
   fi
-  # A topic reaches a session name and a filename, so keep it to the shape a
-  # branch would take rather than sanitizing something surprising later.
+  # A topic reaches a session name, a WORKTREE name, a branch and a filename, so
+  # keep it to the shape a branch would take rather than sanitizing something
+  # surprising later. The worktree home is what makes the branch shape binding
+  # rather than merely tidy.
   if [[ ! "$topic" =~ '^[a-z0-9][a-z0-9-]*$' ]]; then
     print -u2 'architect: topic must be lowercase letters, digits and dashes'
     return 1
   fi
   _ds_seat_guard 'architect'
   _ds_session "$(_ds_topic_sid architect "$topic")" \
-    "ceo-$topic" /architect claude-fable-5
+    "ceo-$topic" /architect claude-fable-5 "ceo-$topic"
 }
 
 # Resume the whole FLEET: one iTerm tab per in-flight Linear issue, each with

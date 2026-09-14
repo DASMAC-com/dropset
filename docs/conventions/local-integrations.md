@@ -969,18 +969,103 @@ clean cut with **no aliases** — the family is small and every launcher
 is the operator's own muscle memory, so a half-migration leaving both
 names alive was the outcome to avoid.
 
-| Verb                    | Job                                    | Substrate   | Model          |
-| ----------------------- | -------------------------------------- | ----------- | -------------- |
-| `task <n>`              | worktree session on Linear task n      | Bedrock     | Opus 5, 1M, 1h |
-| `task local <n>`        | same, when the work needs web research | seat        | saved default  |
-| `task resume [n]`       | resume by number (bare = the picker)   | as recorded | as launched    |
-| `explore [name]`        | base-repo session, optionally named    | seat only   | Fable pin      |
-| `explore resume <name>` | resume a named base-repo session       | seat only   | Fable pin      |
-| `plan`                  | daily planning session                 | seat        | Fable pin      |
-| `housekeeping`          | upkeep; also the 5-hour-window opener  | seat        | saved default  |
-| `architect <topic>`     | long-horizon design thread             | seat        | Fable pin      |
-| `fleet [go]`            | batch resume                           | per-window  | as launched    |
-| `cdds [n]`              | not a session verb — navigation        | —           | —              |
+| Verb                | Job                                      | Substrate   | Model          |
+| ------------------- | ---------------------------------------- | ----------- | -------------- |
+| `task <n>`          | worktree session on Linear task n        | Bedrock     | Opus 5, 1M, 1h |
+| `task local <n>`    | same, when the work needs web research   | seat        | saved default  |
+| `task resume [n]`   | resume by number (bare = the picker)     | as recorded | as launched    |
+| `explore <n\|name>` | worktree research / audit task           | seat only   | Fable pin      |
+| `plan`              | daily planning session                   | seat        | Fable pin      |
+| `housekeeping`      | upkeep; also the 5-hour-window opener    | seat        | saved default  |
+| `architect <topic>` | long-horizon design thread, own worktree | seat        | Fable pin      |
+| `fleet [go]`        | batch resume                             | per-window  | as launched    |
+| `cdds [n]`          | not a session verb — navigation          | —           | —              |
+
+**`explore resume` is gone**, and `explore` now requires a name.
+Both follow from the worktree home below: `explore <n|name>` is
+idempotent, so the `resume` twin would be a pure synonym, and a
+worktree cannot be named without a name. `plan` and
+`housekeeping` remain **base-repo** seat verbs — they touch the
+board, not a branch.
+
+#### Spec-producing sessions get a worktree
+
+**A session whose deliverable is a spec or a findings document
+runs in its own worktree, and that document lives on a PR
+branch.** This covers `architect <topic>` and every
+`explore <n|name>` task — including audits, which are explore
+tasks. It is the canonical statement of the mechanism; the
+`architect`, `audit`, `audit-scope` and `plan` skills state
+their own duties and point here rather than redescribing it.
+
+**What names the worktree:**
+
+| Launch                 | Worktree           | Session name       |
+| ---------------------- | ------------------ | ------------------ |
+| `explore 1196`         | `eng-1196`         | `exp-1196`         |
+| `explore skills-audit` | `exp-skills-audit` | `exp-skills-audit` |
+| `architect volatility` | `ceo-volatility`   | `ceo-volatility`   |
+
+**A number keys the worktree to the Linear issue, and that is
+the substantive call** — `explore 1196` lands in `eng-1196`,
+not `exp-1196`, so the session inherits every mechanism already
+keyed on `eng-###`: `cdds 1196` reaches it, `housekeeping`
+prunes it on the issue's **status type**, `fleet` resumes it,
+and the substrate marker records it. A worktree named anything
+else would be invisible to exactly the cleanup machinery this
+whole arrangement exists to make protective. The session's
+*display* name stays role-prefixed so the fleet listing reads by
+role: `eng-*` implementers, `plan-*` planning, `ceo-*`
+architecture, `exp-*` research.
+
+The branch arrives named `worktree-<tag>` (there is no CLI flag
+to drop the prefix), so rename it to the bare tag before the
+first commit, as `init-pr` does. The spec itself goes at
+`docs/specs/<ENG-number>-<topic>.md`, which is **tracked** —
+`docs/specs/` is not ignored.
+
+**Why a worktree, when the session writes no product code.**
+This reverses the base-repo home both verbs shipped with
+(operator ruling, 2026-09-11, after one day live), and the old
+rule sounded right. What it missed is that the deliverable is a
+**file**, and an untracked file in the base checkout is
+protected by nothing: the first spec written this way sat in the
+base repo awaiting operator feedback, **its issue already marked
+Done while the read-back loop was still open**, and no part of
+the cleanup machinery recognized any of it as live work. A
+worktree plus an open PR makes the protection structural —
+`housekeeping` refuses to prune a worktree holding uncommitted
+or unpushed work and applies open-PR protection.
+
+For an audit the same failure is worse, since a live audit
+cleared by `housekeeping` or the purge loses findings nobody
+knew were in flight.
+
+**Two lifecycle rules follow, and they are what make the
+protection lapse safely:**
+
+- **The governing issue stays In Progress while the loop is
+  open**, reaching Done only at ratification plus fold. Marking
+  it Done at the handoff message is the measured mistake — the
+  handoff starts the operator's turn, it does not end the work.
+- **The spec PR closes at the fold; it does not merge.** The
+  planning session folds the ratified spec into the implementing
+  issue's body at dispatch, closes the PR and removes the
+  worktree **in one act**. The spec is scaffolding, not
+  committed history, so the fold *is* the cleanup and nothing
+  accumulates.
+
+**The read-back protocol** — write the file, name its path in
+plain text, let the operator edit it in place, read it back
+**once**, ratify — plus the `NEEDS-CONFIRM` / `NEEDS-FEEDBACK`
+markers and the top-of-file index of open items, is specified in
+the `architect` skill and applies to explore-style spec tasks
+unchanged.
+
+**What did not change:** `plan` and `housekeeping` are still
+base-repo seat verbs, and the **substrate** rule below is
+untouched — the worktree home moved where these sessions run,
+not which provider they run against.
 
 #### Substrate: which provider a session runs against
 
@@ -1165,25 +1250,52 @@ drives the real zsh functions.
   the picker, which is the one form that still reaches a session whose
   worktree has already been pruned.
 
-- **`explore [name]`** — start a base-repo session, optionally named.
-  The general-purpose not-tied-to-a-worktree entry point, and the fold
-  of two older verbs whose bodies were identical bar one flag: bare
-  `explore` is the unnamed form, `explore <name>` the named one.
+- **`explore <n|name>`** — start **or resume** an explore session:
+  research, audits, and anything else whose deliverable is a spec or a
+  findings document rather than a code change. **It runs in its own
+  worktree** and a name is **required** — see "Spec-producing sessions
+  get a worktree" above for the naming rule and the lifecycle.
+
+  **Idempotent**, like `plan` and `architect`: it creates the session if
+  absent and resumes it if present. Keying on a computed id is what
+  makes that possible, which also retires the old `explore resume`
+  twin — see below.
+
+  **The issue-keyed form carries a bootstrap prompt**, and it has to. A
+  session launched with no initial prompt **sits idle until a human
+  types something**, which is silent — it looks started. Measured on the
+  1196 audit: dispatched into its own tab, the verb typed correctly, and
+  still idle five minutes later beside five sessions that were working,
+  because typing the verb is not the same as giving the session its
+  task. `task <n>` never had this exposure (it passes `/init-pr`), so
+  the gap was explore-shaped from the start. There is no `explore`
+  skill, so the prompt is written out in the helper; it names the issue
+  and states the research-only posture.
+
+  The free-form form passes **no** prompt — the operator names the
+  subject in their first message, so inventing one would be a guess to
+  correct.
 
   **Seat-only, and Fable-pinned** — both halves of one ratified
-  decision. Base-repo work is thinking-heavy, so it runs the top tier
+  decision. Explore work is thinking-heavy, so it runs the top tier
   like `plan` and `architect`; and a Fable-class model on Bedrock falls
   under the account's standing AWS human-review retention opt-in, which
   the seat is free of. There is deliberately **no `explore local`**:
-  seat is the only substrate, so the word would be a no-op.
+  seat is the only substrate, so the word would be a no-op. The
+  worktree home changed where this verb runs, not which provider it
+  runs against.
 
-- **`explore resume <name>`** — resume a named base-repo session.
-  **A bare name pre-filters the interactive picker rather than resuming
-  deterministically** — `-r/--resume` matches on session *ID*, and a
-  name is not one, so expect to pick from a list. That is the same
+- **`explore resume <name>` is RETIRED** — the verb now prints a
+  one-line pointer to the plain form rather than launching. Two reasons,
+  and the second is the substantive one. It became a pure synonym once
+  `explore <name>` gained idempotency; and it could never resume
+  deterministically anyway, because **a bare name pre-filters the
+  interactive picker** — `-r/--resume` matches on session *ID*, and a
+  name is not one, so it meant "pick from a list". That is the same
   underlying fact that made the old planning verb wrong, and it is why
-  `plan` / `housekeeping` / `architect` compute an id of their own
-  instead. A free-form name has nothing to compute from.
+  `plan` / `housekeeping` / `architect` compute an id of their own.
+  `explore` now computes one too, from its name, so the wart is gone
+  rather than documented.
 
 - **`plan`** — start **or resume** a **planning** session. Takes no
   argument: it derives the session name `plan-<day-of-month>` from
@@ -1256,8 +1368,10 @@ drives the real zsh functions.
     program.
 
   This **supersedes** hand-naming a base-repo session `planning-<day>`
-  and resuming it by that name. `explore` / `explore resume` remain, for
-  base-repo sessions that aren't planning sessions.
+  and resuming it by that name. `plan` and `housekeeping` are now the
+  only **base-repo** session verbs — `explore` moved to its own
+  worktree, so it is no longer the general-purpose base-repo entry
+  point it once was.
 
   `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not
   `plan-05`.
@@ -1273,9 +1387,11 @@ drives the real zsh functions.
 
 - **`architect <topic>`** — start **or resume** an **architect** session on
   one topic: the CEO hat, and the complement to `plan` rather than a
-  variant of it. Same base-repo launch, same model pin, same
-  idempotency; the different half is the briefing (`/architect`) and
-  what it may write — **nothing to the board**.
+  variant of it. Same model pin, same idempotency; the different halves
+  are the briefing (`/architect`), what it may write — **nothing to the
+  board** — and **where it runs**, which is now its own worktree
+  `ceo-<topic>` rather than the base repo (see "Spec-producing sessions
+  get a worktree").
 
   It keys on the **topic, not the date**, which is the one substantive
   difference from `plan` / `housekeeping`: a design thread outlives a day, so
@@ -1286,13 +1402,26 @@ drives the real zsh functions.
 
   The display name is `ceo-<topic>`, which makes the fleet listing read
   by role: `eng-*` implementers, `plan-*` planning, `ceo-*`
-  architecture. The topic is validated to lowercase letters, digits and
-  dashes, since it reaches both a session name and a filename.
+  architecture, `exp-*` research. The topic is validated to lowercase
+  letters, digits and dashes, since it reaches a session name, a
+  **worktree**, a branch and a filename — the worktree home is what
+  makes that shape binding rather than merely tidy.
 
-  All three standing verbs share one core, `_ds_session`, which takes
+  All four standing verbs share one core, `_ds_session`, which takes
   an already-computed id — `plan` and `housekeeping` hand it a daily id,
-  `architect` a topic id. That split is deliberate: the operator's stated
-  abstraction is that these launchers differ **only in the briefing**.
+  `architect` and `explore` a topic id. That split is deliberate: the
+  operator's stated abstraction is that these launchers differ **only in
+  the briefing**.
+
+  `_ds_session` takes the worktree tag as an optional last argument, and
+  **the `-w` flag rides the create branch only.** `-w` *creates* a
+  worktree, so passing it on resume would ask for a second one every
+  time a long-lived thread is reopened. The transcript-path probe needs
+  no worktree case, which is worth stating because the obvious reading
+  is that it does: `claude -w <tag>` runs from the **base** repo, so
+  Claude Code files the transcript under the base repo's project slug
+  even though every `cwd` stamp inside it points into the worktree.
+  That is the same fact `task resume` depends on from the other side.
 
 - **`fleet [go]`** — resume the whole **fleet**: one iTerm tab per
   in-flight Linear issue, each with `task resume <n>` typed **and Enter

@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Run an architect session — the long-horizon design conversation, in the same seat quality as a planning session but doing a different job. Bootstraps minimally (the Planning document and the track umbrellas, nothing else), holds the conversation at decision altitude with deep code reads allowed and big surveys delegated, and writes NOTHING to the board: it hands its conclusions to the planning session through the Planning document's notes section and a direct message, naming the tracks its decisions likely affect without touching them. Runs in the base repo on the mandated model, launched with `architect <topic>`, never in a worktree.
+description: Run an architect session — the long-horizon design conversation, in the same seat quality as a planning session but doing a different job. Bootstraps minimally (the Planning document and the track umbrellas, nothing else), holds the conversation at decision altitude with deep code reads allowed and big surveys delegated, and writes NOTHING to the board: it hands its conclusions to the planning session through the Planning document's notes section and a direct message, naming the tracks its decisions likely affect without touching them. Its deliverable is an on-disk spec FILE the operator edits in place — not a conversation — living on a PR branch in the session's own worktree, read back once per round with greppable NEEDS- markers on the open items. Runs in that worktree on the mandated model, launched with `architect <topic>`.
 user-invocable: true
 model: fable
 ---
@@ -25,12 +25,54 @@ unchanged.
 
 ## Where it runs
 
-**The base repo, on the mandated model, launched with
-`architect <topic>`** — never a worktree. The verb takes a
-topic and is **idempotent**: it creates the session if the
-named one is absent and resumes it if present. One verb, no
-resume twin — the same lesson that folded the base-repo
-start/resume pair into `explore`.
+**Its own worktree, on the mandated model, launched with
+`architect <topic>`.** The verb takes a topic and is
+**idempotent**: it creates the session if the named one is
+absent and resumes it if present. One verb, no resume twin —
+the same lesson that folded `explore`'s start/resume pair, and
+`explore` now shares both the worktree home and the
+idempotency.
+
+The worktree is named **`ceo-<topic>`** and the verb creates it
+for you; the branch arrives named `worktree-ceo-<topic>`, since
+there is no CLI flag to drop the prefix. Rename it to
+`ceo-<topic>` before the first commit, exactly as `init-pr`
+does for an implementation branch:
+
+```sh
+git branch -m worktree-ceo-<topic> ceo-<topic>
+```
+
+**This reverses the base-repo home this skill shipped with**
+(operator ruling, 2026-09-11, after one day live), and the
+reversal is worth understanding rather than just obeying,
+because the old rule sounded right: a session that writes no
+code has no obvious need for a branch.
+
+What that missed is that the deliverable is a **file**, and an
+untracked file in the base checkout is protected by nothing.
+The first spec produced this way sat in the base repo awaiting
+further operator feedback, its issue already marked Done while
+the read-back loop was still open, and **no part of the cleanup
+machinery recognized any of it as live work** — the operator
+caught the invalid state on their way out, hours before a
+`housekeeping` pass. A worktree plus an open PR makes the
+protection **structural**: `housekeeping` refuses to prune a
+worktree holding uncommitted or unpushed work and applies
+open-PR protection, so the spec survives cleanup by
+construction rather than by someone remembering it exists.
+
+Two consequences that are easy to get wrong:
+
+- **The worktree name is deliberately not an `eng-###`.** An
+  architect topic has no issue of its own, and the `ceo-`
+  prefix is what keeps the fleet listing readable by role.
+- **The spec PR's title still needs an `ENG-###` scope**,
+  because the semantic-PR check requires one and a
+  guaranteed-failure run is durable noise in the checks
+  rollup. Worktree name and PR scope are independent, so
+  there is no conflict — see "The spec file is the
+  deliverable" for where that number comes from.
 
 It is a **seat** verb, like `plan`: this session argues
 strategy, so it runs the top tier, and a seat launch is what
@@ -135,20 +177,130 @@ skipped at bootstrap.
 - **Deep code reads are allowed** — that is the job. Reading a
   matching engine closely to reason about whether it can carry
   a new product is not a context lapse.
+
 - **Delegate big surveys to sub-agents**, briefed per
   `docs/conventions/sub-agent-brief.md`, with a named path
   allowlist and a turn budget. Keep the conversation at
   decision altitude; a survey narration in the main context is
   what drops it.
-- **No source edits.** Specs land through the handoff, not
-  through commits. A design that needs code to exist before it
+
+- **No source edits — but the spec file is not a source
+  edit.** This bullet used to read "specs land through the
+  handoff, not through commits", and the second half is now
+  exactly wrong: the spec **is** a commit, on this session's own
+  PR branch, and that is the whole point of the worktree. What
+  survives is the part that was always the real rule — **no
+  product code**. A design that needs code to exist before it
   can be judged is a spike, and a spike is an implementation
   session.
 
+  So the branch carries the spec file and nothing else. If you
+  find yourself editing a crate to test an idea, stop and say
+  the design needs a spike.
+
+## The spec file is the deliverable
+
+**The output of this session is a markdown file the operator
+edits in place — not a conversation.** That is the process
+ruling this skill is built around (operator, 2026-09-11), and
+every rule below follows from it.
+
+It lives on this session's branch at:
+
+```txt
+docs/specs/<ENG-number>-<topic>.md
+```
+
+The number prefix is dropped only if no issue governs the
+thread yet. The path is **tracked and committed** — `docs/specs/`
+is not ignored, and the first spec written this way was
+untracked by omission rather than by rule.
+
+### The loop: write, edit, read back ONCE
+
+1. **Write the file.** Say its path in the conversation, in
+   plain text, the moment it exists.
+1. **The operator edits it directly**, in a real editor,
+   between turns.
+1. **Read it back exactly once** and incorporate their edits.
+1. **They edit again**, and you ratify.
+
+**One read-back per round is the budget.** Re-reading the file
+to check whether it changed is the failure mode: a spec is
+consulted many times across a session, and each full read buys
+it again. Grep it, or read the section you are amending.
+
+**`AskUserQuestion` is reserved for calls that must be answered
+before the spec can be drafted at all** — a fork where both
+branches produce entirely different documents. Everything else
+goes in the file as a marked open item, because **the operator
+edits faster than they answer serialized questions**. That is
+the whole reason this process exists, and turning the file back
+into a questionnaire discards the gain.
+
+The other half of the gain is that **turns are the cost here**.
+A seat session's context grows with every exchange, so a design
+resolved in four file rounds is dramatically cheaper than the
+same design resolved in forty questions — even though the file
+rounds move more text.
+
+### Mark open items so they are greppable
+
+Every open item carries an explicit marker, and **settled text
+carries no marker at all**:
+
+| Marker           | Means                              |
+| ---------------- | ---------------------------------- |
+| `NEEDS-CONFIRM`  | a decision to ratify or overrule   |
+| `NEEDS-FEEDBACK` | input wanted, no decision proposed |
+
+Put an **index of the open items at the top of the file**,
+pointing at the marked sections, so the operator sees the whole
+ask before reading anything. Searching for `NEEDS-` then walks
+every one of them in order.
+
+**The no-marker-on-settled-text rule is the substantive half.**
+The failure this fixes was measured on the first read-back,
+which tagged edited regions rather than open ones: the markers
+read as edit targets, and the operator could not tell where
+their input was actually wanted. A marker that means "I changed
+this" competes with one that means "I need you here", and only
+the second is worth a marker.
+
+### The governing issue, and its state
+
+The spec PR's title needs an `ENG-###` scope, and this session
+**writes nothing to the board** — so it cannot file its own
+issue. If no number governs the thread yet, **ask for one**;
+this is precisely the pre-draft blocker `AskUserQuestion` is
+reserved for, since the file cannot be named without it.
+
+**That issue stays In Progress for as long as the read-back
+loop is open**, and reaches Done only at ratification plus
+fold. Marking it Done at the handoff message is the measured
+mistake that produced the invalid state described under "Where
+it runs" — the handoff is the start of the operator's turn, not
+the end of the work.
+
+### Lifecycle: the fold is the cleanup
+
+**The spec PR closes; it does not merge.** The spec is
+scaffolding, not committed history — the ratified content lives
+in the Linear issue body once the planning session folds it in
+at dispatch, and that fold is also the cleanup: **close the PR
+and remove the worktree in the same act.** Nothing accumulates,
+and nothing depends on remembering that a loose file exists.
+
+`plan` owns the fold, so this session's job is only to leave the
+spec ratified and the PR open. Do not close it yourself on the
+way out.
+
 ## Required artifacts
 
-A bookkeeper would not produce these, and they are what make
-the session's output actionable rather than a transcript:
+These are the **spec file's** required contents, not a summary
+to narrate in the conversation. A bookkeeper would not produce
+them, and they are what make the session's output actionable
+rather than a transcript:
 
 - **The gap between current and intended state** — stated
   plainly, in the system's own terms.
@@ -197,18 +349,34 @@ Both, not either — they fail differently.
    This channel is **fast but not durable** — the message is
    lost if that session ends without acting. Hence both.
 
-The note carries: the decisions, the rejected alternatives
-with reasons, the failure paths, and the affected track or
-issue numbers. The planning session executes every board
-consequence.
+**Both channels now carry a POINTER, not the content.** The
+spec file is the artifact, so the note names **its path, its
+PR, and the governing issue**, plus the affected track or issue
+numbers and a few lines on what was decided. It does not restate
+the decisions, the rejected alternatives or the failure paths —
+those are in the file, and duplicating them into the Planning
+document is how the document grows without bound between
+close-out rewrites.
+
+State explicitly whether the spec is **ratified** or **still in
+its read-back loop**, because that is what tells the planning
+session whether it may fold yet. The planning session executes
+every board consequence, and owns the fold-and-cleanup.
 
 ## A note on the shared substrate
 
-`plan` and this skill share most of their machinery — base-repo
-launch, the model guard, the document conventions, the
-write-mangle rules, no source edits, context economy — and
-differ only in the **briefing**: the duty list, and what each
-is allowed to write.
+`plan` and this skill share most of their machinery — the model
+guard, the document conventions, the write-mangle rules,
+context economy — and differ in the **briefing**: the duty
+list, and what each is allowed to write.
+
+**Two items dropped off that shared list** when the spec home
+moved, and they are worth naming so the overlap is not
+overstated: the **launch directory** (`plan` is a base-repo seat
+verb; this one runs in its own worktree) and **no source
+edits** (this session commits a spec file, `plan` commits
+nothing at all). `explore` moved the same way this skill did, so
+the worktree home is shared with *it* rather than with `plan`.
 
 That overlap is real and worth de-duplicating **later**, when
 the template extraction lands. It is deliberately not a reason

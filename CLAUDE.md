@@ -68,7 +68,7 @@ Long-horizon **design** conversations run in their own session, not
 in a planning session: `plan` keeps the board coherent, `architect`
 asks whether the thing on the board is the right thing to build. Same
 seat quality, different job — so different sessions, not a mode
-toggle. Launched with **`architect <topic>`** (base repo, model-pinned,
+toggle. Launched with **`architect <topic>`** (model-pinned,
 idempotent, one resumable session per design thread, named
 `ceo-<topic>`). It bootstraps minimally — the Planning document and
 the track umbrellas, nothing else — and writes **nothing to the
@@ -76,6 +76,25 @@ board**: the board monopoly stays with the planning session, and the
 architect hands its conclusions over through the Planning document's
 `Notes for the next planning session` heading **and** a direct
 message. Detail: the `architect` skill.
+
+**Its deliverable is an on-disk spec FILE the operator edits in
+place, not a conversation**, and that file lives on a PR branch in
+the session's **own worktree** — which reverses the base-repo home
+this verb shipped with. The loop is write → operator edits → read
+back **once** → ratify, with `AskUserQuestion` reserved for calls
+that must be answered before the spec can be drafted at all, because
+the operator edits faster than they answer serialized questions.
+Open items carry greppable **`NEEDS-CONFIRM`** / **`NEEDS-FEEDBACK`**
+markers and an index at the top of the file; **settled text carries
+no marker**, since a marker meaning "I changed this" competes with
+one meaning "I need you here". The governing issue stays **In
+Progress** while the loop is open, and the **spec PR closes at the
+fold rather than merging** — `plan` folds the ratified spec into the
+implementing issue's body at dispatch, closes the PR and removes the
+worktree in one act, so the fold *is* the cleanup. **`explore`
+shares all of this**, audits included. The mechanism, and the
+worktree naming rule, live in `docs/conventions/local-integrations.md`
+→ "Spec-producing sessions get a worktree".
 
 ### Three more verbs
 

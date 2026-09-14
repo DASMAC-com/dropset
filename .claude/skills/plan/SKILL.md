@@ -835,7 +835,7 @@ then a roll-call of every open session, which is the
 confirmation to relay — the ttys come from the call that made
 the tabs, so only the roll-call independently shows they exist.
 
-Four things about the boundary:
+Five things about the boundary:
 
 - **The ask-then-yes IS the authorization**, the same class
   as `fleet go`. There is no second gate inside the tool, and
@@ -853,6 +853,41 @@ Four things about the boundary:
 - **A batch is all-or-nothing on validation.** One bad verb
   dispatches none of them, so fix the typo and re-run the whole
   call; there is no half-dispatched batch to reconcile.
+- **Dispatching work that has a ratified spec means FOLDING
+  the spec first — and the fold is also the cleanup.** See
+  below; this is the one boundary item that writes something.
+
+### Folding a ratified spec at dispatch
+
+An `architect` or `explore` session's deliverable is a **spec
+file on a PR branch in its own worktree** (see
+`docs/conventions/local-integrations.md` → "Spec-producing
+sessions get a worktree"). When you dispatch the work that spec
+describes, fold it in **first**, because a worktree session
+**cannot see another worktree's branch** — dispatching without
+folding hands the implementer a pointer it cannot follow.
+
+The fold is three acts that belong together:
+
+1. **Copy the ratified spec into the implementing issue's
+   body**, so the content lives where the implementer already
+   reads.
+1. **Close the spec PR** — it does not merge. The spec is
+   scaffolding, not committed history, and the issue body is
+   now its home.
+1. **Remove the spec worktree.**
+
+**Do all three, or none.** The fold is the *only* point at which
+the spec's protections are meant to lapse, so a fold that copies
+the body and leaves the PR open re-creates the accumulating
+loose-spec problem the worktree home was introduced to kill —
+and one that closes the PR without copying the body loses the
+spec outright.
+
+**Only fold a spec the architect session reported as
+ratified.** Its close-out note says which; a spec still in its
+read-back loop is live work, and its issue is still In Progress
+precisely so this step leaves it alone.
 
 **6. Write back — incrementally, then rewritten at the
 gate.**
