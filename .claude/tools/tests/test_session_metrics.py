@@ -750,16 +750,16 @@ class SubstrateDetection(unittest.TestCase):
         (self.markers / tag).write_text(value, encoding="utf-8")
 
     def test_derives_the_tag_and_base_from_a_worktree_path(self):
-        self.assertEqual(sm.worktree_tag(self.worktree), "eng-1364")
+        self.assertEqual(sm.tag_from_cwd(self.worktree), "eng-1364")
         self.assertEqual(sm.base_repo_from_cwd(self.worktree), self.base)
 
     def test_a_nested_path_inside_the_worktree_still_resolves(self):
         deeper = f"{self.worktree}/frontend/src"
-        self.assertEqual(sm.worktree_tag(deeper), "eng-1364")
+        self.assertEqual(sm.tag_from_cwd(deeper), "eng-1364")
         self.assertEqual(sm.base_repo_from_cwd(deeper), self.base)
 
     def test_a_base_repo_session_has_no_tag(self):
-        self.assertIsNone(sm.worktree_tag(str(self.base)))
+        self.assertIsNone(sm.tag_from_cwd(str(self.base)))
         self.assertIsNone(sm.base_repo_from_cwd(str(self.base)))
 
     def test_a_recorded_bedrock_marker_is_read(self):

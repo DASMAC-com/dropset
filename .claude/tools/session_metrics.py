@@ -1118,7 +1118,7 @@ def claude_home() -> Path:
     return Path(home) / ".claude"
 
 
-def worktree_tag(cwd: str | None) -> str | None:
+def tag_from_cwd(cwd: str | None) -> str | None:
     """The worktree tag a session ran in, or ``None`` for a base-repo session.
 
     Derived purely from the path — `claude --worktree` lays a worktree out at
@@ -1126,6 +1126,13 @@ def worktree_tag(cwd: str | None) -> str | None:
     marker. A base-repo session (which is what every seat verb starts) has no
     such segment and so no tag, which is the correct answer rather than a
     failure: it has no marker either.
+
+    **Deliberately not named ``worktree_tag``**, which
+    `prune_conversations.py` already uses for a different input domain: that
+    one takes a **slug** (a path with ``/`` and ``.`` collapsed to ``-``) plus a
+    prefix, this one takes a real path. Two same-named helpers over different
+    domains in sibling tools is the kind of collision a reader resolves
+    wrongly, so the names are kept distinct instead.
     """
     if not cwd:
         return None
@@ -1160,7 +1167,7 @@ def read_substrate_marker(cwd: str | None) -> str | None:
     the two it is, even though both land on the same headline.
     """
     base = base_repo_from_cwd(cwd)
-    tag = worktree_tag(cwd)
+    tag = tag_from_cwd(cwd)
     if base is None or not tag:
         return None
     marker = base / SUBSTRATE_DIR / tag
@@ -1195,7 +1202,7 @@ def resolve_substrate(cwd: str | None) -> tuple[str, str]:
     if recorded == SUBSTRATE_SEAT:
         return SUBSTRATE_SEAT, "recorded by the launch verb"
     if recorded is None:
-        if worktree_tag(cwd) is None:
+        if tag_from_cwd(cwd) is None:
             return SUBSTRATE_SEAT, "base-repo session, so a seat verb"
         return SUBSTRATE_SEAT, "no substrate marker found, which reads as seat"
     # A marker holding something unrecognized: treat it as unknown rather than
