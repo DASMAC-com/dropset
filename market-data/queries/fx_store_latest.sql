@@ -10,7 +10,7 @@
 -- This statement reads `cex_prices` only, and the USDC/USD peg series is written
 -- to `spot_ticks` by `market-data-kraken` and to `cex_prices` by nobody — so the
 -- peg leg is NOT reachable through this reader, however unconstrained the source
--- list is. `queries/spot_ticks_latest.sql` is the counterpart that reaches it.
+-- list is. `queries/tick_store_latest.sql` is the counterpart that reaches it.
 -- (An earlier version of this comment claimed the peg was readable here. It was
 -- not; the corrected claim lives here rather than only in the other file, so a
 -- reader of this one is not misled.)

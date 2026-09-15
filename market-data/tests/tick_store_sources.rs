@@ -3,10 +3,12 @@
 //! **This is the only gate that can see the statement.** Every query in this
 //! crate is runtime-typed — `include_str!`'d and bound positionally, so the crate
 //! needs no `DATABASE_URL` at compile time — which means neither clippy nor a
-//! compile-time macro can check one. `spot_ticks_latest.sql` is new, and the
-//! failure a typo in it produces is not an error: the reader returns no rows, and
-//! a consumer reads that as "the collectors are behind". The unit tests pin the
-//! statement's *shape* against its decoder; only a database can say it runs.
+//! compile-time macro can check one. `tick_store_latest.sql` is new, and the
+//! failure a typo in it produces **need not** be an error: a misspelled column,
+//! table or keyword fails loudly at query time, but a transposed placeholder or
+//! a dropped predicate returns no rows — and a consumer reads that as "the
+//! collectors are behind". The unit tests pin the statement's *shape* against
+//! its decoder; only a database can say it runs.
 //!
 //! The failure mode worth the container, in one line: a **silently empty leg**,
 //! indistinguishable from a slow one.
@@ -37,7 +39,7 @@ mod common;
 use std::time::Duration;
 
 use common::{insert_tick, start_pg};
-use dropset_market_data::tick_store::{SpotTickSource, SOURCE_KRAKEN, USDC_USD_PRODUCT};
+use dropset_market_data::tick_store::{TickStoreReader, SOURCE_KRAKEN, USDC_USD_PRODUCT};
 
 /// The statement runs, and `DISTINCT ON` takes the newest print per series.
 ///
@@ -72,7 +74,7 @@ async fn the_statement_runs_and_takes_the_newest_print() {
     // bearing rather than incidentally satisfied by an empty table.
     insert_tick(&pool, SOURCE_KRAKEN, "EURC-USD", 1_700_000_060, 1.14).await;
 
-    let rows = SpotTickSource::peg(pool.clone())
+    let rows = TickStoreReader::peg(pool.clone())
         .latest()
         .await
         .expect("the spot_ticks statement runs");
@@ -114,7 +116,7 @@ async fn an_explicit_roster_reaches_another_series() {
     )
     .await;
 
-    let rows = SpotTickSource::new(
+    let rows = TickStoreReader::new(
         pool.clone(),
         vec!["coinbase".to_string(), SOURCE_KRAKEN.to_string()],
         vec!["EURC-USDC".to_string(), USDC_USD_PRODUCT.to_string()],
@@ -158,7 +160,7 @@ async fn the_two_rosters_form_a_cross_product() {
     insert_tick(&pool, SOURCE_KRAKEN, "EURC-USDC", 1_700_000_060, 1.1410).await;
     insert_tick(&pool, "coinbase", "EURC-USDC", 1_700_000_060, 1.1412).await;
 
-    let rows = SpotTickSource::new(
+    let rows = TickStoreReader::new(
         pool.clone(),
         vec![SOURCE_KRAKEN.to_string(), "coinbase".to_string()],
         vec![USDC_USD_PRODUCT.to_string(), "EURC-USDC".to_string()],
@@ -204,7 +206,7 @@ async fn a_source_outside_the_roster_is_not_returned() {
     .await;
     insert_tick(&pool, "coinbase", USDC_USD_PRODUCT, 1_700_000_120, 1.5).await;
 
-    let rows = SpotTickSource::peg(pool.clone())
+    let rows = TickStoreReader::peg(pool.clone())
         .latest()
         .await
         .expect("read the peg series");
@@ -226,7 +228,7 @@ async fn a_source_outside_the_roster_is_not_returned() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn an_empty_result_is_not_an_error() {
     let (_pg, pool) = start_pg().await;
-    let rows = SpotTickSource::peg(pool.clone())
+    let rows = TickStoreReader::peg(pool.clone())
         .latest()
         .await
         .expect("an empty table is a successful read");
@@ -253,7 +255,7 @@ async fn an_empty_roster_reads_clean_and_returns_nothing() {
     )
     .await;
 
-    let rows = SpotTickSource::new(pool.clone(), vec![], vec![])
+    let rows = TickStoreReader::new(pool.clone(), vec![], vec![])
         .latest()
         .await
         .expect("an empty bound array is valid SQL, not an error");
@@ -282,10 +284,13 @@ async fn a_decoded_row_ages_from_its_stored_stamp() {
     )
     .await;
 
-    let rows = SpotTickSource::peg(pool.clone())
+    let rows = TickStoreReader::peg(pool.clone())
         .latest()
         .await
         .expect("read the peg series");
+    // Asserted before indexing, so a regression that empties the read fails as
+    // the named property rather than as an index panic.
+    assert_eq!(rows.len(), 1, "the inserted row must come back");
     let reading = rows[0]
         .reading(1_700_000_060, Duration::from_secs(1))
         .expect("an honest row is offered");

@@ -36,10 +36,24 @@
 -- wins this ordering, and the consumer then refuses it as forward-skewed —
 -- leaving no way to reach the honest row beneath it, so that series reads as
 -- absent until wall-clock time catches up. `observed_at` has no upper-bound
--- CHECK and is part of the PK, so the row cannot be corrected in place. Bounding
--- it here (`AND observed_at <= $3`) would fix it, and is deliberately not done
--- in this change: the candle reader has the identical exposure, and the two
--- should not diverge on the convention they exist to share.
+-- CHECK, and because it is part of the PK a collector re-poll cannot overwrite
+-- the bad row: a corrected stamp inserts a second row and the bad one survives
+-- until someone deletes it by hand.
+--
+-- How exposed this actually is, today: `observed_at` is a venue-supplied instant
+-- only where the venue publishes one, and the sole `spot_ticks` venue that does
+-- is Pyth — parked dark. Every live writer stamps its own poll second, so
+-- reaching this state on the peg leg needs the COLLECTOR's clock to be skewed
+-- rather than anything venue- or attacker-supplied. The candle reader, which
+-- reads three venues' own timestamps, is the more exposed of the two.
+--
+-- Bounding it here would fix it: `AND observed_at <= $3`, bound to
+-- `now + MAX_PUBLICATION_SKEW` rather than to `now` — binding it to `now` would
+-- filter out the 0-120s overshoot `fx_store::store_reading` deliberately
+-- accepts, silently tightening the shared tolerance, which is the opposite of
+-- the point. Deliberately not done in this change: the candle reader has the
+-- identical exposure, and the two should not diverge on the convention they
+-- exist to share.
 SELECT DISTINCT ON (source, product_id)
     source,
     product_id,

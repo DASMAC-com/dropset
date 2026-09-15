@@ -28,7 +28,7 @@
 //! publication instant is **derived** (`bucket_start + granularity_secs`), a
 //! tick's is **recorded** (`observed_at`). Migration 0004 declined to synthesize
 //! a bucket from a tick when it created this table, and that reasoning is now
-//! immutable. `queries/spot_ticks_latest.sql` carries the full argument,
+//! immutable. `queries/tick_store_latest.sql` carries the full argument,
 //! including why a `UNION` would have to mislabel one side.
 //!
 //! What **is** shared is the age convention, not the SQL: both readers hand their
@@ -41,17 +41,22 @@
 //! trade — one convention beats a tidy name — but a third reader would be the
 //! point to lift the ageing pair into a module of its own.
 //!
-//! # What this reader does NOT judge
+//! # What this reader judges, and what it does not
 //!
-//! It refuses a **forward-stamped** row and ages everything else. It does not
-//! judge the *value*: a non-finite, zero or negative `price` decodes and is
-//! offered. That is not an omission, and the component that refuses it is
-//! nameable — [`dropset_fair_value::Reading::valid`], reached through `Reading::fresh`,
-//! which `Candidates::resolve` applies to every candidate before it can reach a
-//! comparison. See [`SpotTickRow::reading`], which states the boundary precisely.
+//! **Be precise about who refuses what, because a consumer chooses.**
+//! [`TickStoreReader::latest`] returns **every** row it read, forward-stamped ones
+//! included. The skew refusal lives in [`TickStoreRow::reading`], and the row's
+//! fields are public — so a consumer that reads `price` directly opts out of the
+//! whole convention. The first consumer is told to call `latest()` directly (see
+//! that method), which makes this worth stating rather than implying: route
+//! through `reading()` or you have no freshness policy at all.
+//!
+//! Neither method judges the **value**. A non-finite, zero or negative `price`
+//! decodes and is offered; [`TickStoreRow::reading`] states which component
+//! refuses it and what that costs.
 //!
 //! The **confidence half-width is deliberately unread** — the projection carries
-//! `price` only. `queries/spot_ticks_latest.sql` gives the reasoning; a unit test
+//! `price` only. `queries/tick_store_latest.sql` gives the reasoning; a unit test
 //! below asserts the decision so it cannot lapse silently.
 
 use std::time::Duration;
@@ -78,8 +83,9 @@ pub const SOURCE_KRAKEN: &str = "kraken";
 /// The canonical peg series every market's common-mode guard reads.
 ///
 /// **Portfolio-wide, not per-market.** A USDC/USD deviation is one event for the
-/// whole book (`docs/market-making.md` §1 fm1), so this is one series rather than
-/// one per pair, and a consumer offers the same resolved reading to every market.
+/// whole book (`docs/market-making.md` §1, "Regimes and failure modes"), so this
+/// is one series rather than one per pair, and a consumer offers the same
+/// resolved reading to every market.
 pub const USDC_USD_PRODUCT: &str = "USDC-USD";
 
 /// One venue's newest spot print for one pair.
@@ -87,8 +93,14 @@ pub const USDC_USD_PRODUCT: &str = "USDC-USD";
 /// Distinct from [`crate::fx_store::FxStoreRow`] on purpose — see the module
 /// docs. `observed_at` is recorded rather than derived, and `price` is one
 /// observation rather than a bucket's closing aggregate.
+///
+/// **`PartialEq` is non-reflexive on a row carrying a non-finite `price`**, which
+/// this module documents as reachable. Derived anyway, mirroring the candle
+/// sibling: it is what lets a test compare a decoded row against an expected one,
+/// and no caller compares whole rows on the price path. Compare fields rather
+/// than rows if a `NaN` could be in play.
 #[derive(Clone, Debug, PartialEq)]
-pub struct SpotTickRow {
+pub struct TickStoreRow {
     /// `spot_ticks.source` — the venue, e.g. `kraken`.
     pub source: String,
     /// The canonical pair, e.g. `USDC-USD`.
@@ -100,7 +112,7 @@ pub struct SpotTickRow {
     pub price: f64,
 }
 
-impl SpotTickRow {
+impl TickStoreRow {
     /// The [`Reading`] this row should be offered to the engine as, or `None`
     /// when the row's **stamp** makes it unusable.
     ///
@@ -110,50 +122,58 @@ impl SpotTickRow {
     /// same terms as a forward-stamped bucket.
     ///
     /// **`None` means the stamp was refused — it does not mean the value was
-    /// judged.** A non-finite, zero or negative `price` returns `Some`, and that
-    /// is deliberate rather than an oversight: the pricing crate already refuses
-    /// such a value at the point it would matter.
-    /// [`dropset_fair_value::Reading::valid`] is `is_finite() && > 0.0`, and
-    /// `Reading::fresh` — which `Candidates::resolve` applies to every candidate
-    /// — is `young() && valid()`. So an unusable value never reaches a
-    /// comparison, and `Candidates::any_invalid` reports it distinctly so the
-    /// operator sees a live-but-garbage feed rather than an absent one.
+    /// judged.** A non-finite, zero or negative `price` returns `Some`, and the
+    /// component that refuses it is [`dropset_fair_value::Reading::valid`]
+    /// (`is_finite() && > 0.0`), reached through `Reading::fresh`, which
+    /// `Candidates::resolve` applies to every candidate. So along that path an
+    /// unusable value cannot reach a comparison.
     ///
-    /// Keeping the check there rather than here is what lets that distinction
-    /// exist: a row this reader dropped would be indistinguishable from a venue
-    /// that published nothing. `a_non_finite_price_is_passed_on_for_the_engine_to_refuse`
-    /// pins both halves of this contract.
+    /// **Two bounds on that reassurance, both worth knowing before relying on
+    /// it.** It holds only for a consumer that actually routes through
+    /// `Candidates::resolve` — nothing here obliges one to. And the engine's
+    /// `Candidates::any_invalid`, which distinguishes a live-but-garbage feed
+    /// from an absent one, has **no peg-leg call site** today: it is called for
+    /// the FX anchor only. So a garbage USDC/USD print is currently filtered and
+    /// reads as an **absent** peg leg, not as a faulted one. Giving the peg leg
+    /// that distinction is a fair-value-crate change, not a reader change.
+    ///
+    /// `a_price_the_engine_refuses_is_still_passed_on` pins both halves of the
+    /// contract this method does own.
     pub fn reading(&self, now_unix: i64, receipt_age: Duration) -> Option<Reading> {
         store_reading(self.price, self.observed_at, now_unix, receipt_age)
     }
 }
 
-/// Polls the market-data store for the newest spot print per venue and pair.
+/// Reads the market-data store for the newest spot print per venue and pair.
 ///
-/// A **publisher** should call [`Self::latest`] directly rather than driving this
-/// through the feeds runner: that runner sleeps its backoff and continues on any
-/// source error, forever — right for a collector, where a missed poll is a gap in
-/// a series, and wrong for something that has to decide whether a failure is
-/// worth retrying at all.
+/// **Named a reader rather than a source deliberately**: it does not implement
+/// [`dropset_feeds::Source`], unlike its candle sibling, so calling it a `Source`
+/// would assert a trait relationship it does not have.
 ///
-/// It deliberately does **not** implement [`dropset_feeds::Source`], unlike its
-/// candle sibling. The sibling's impl has a live consumer that genuinely rides
-/// the framework's spawn / backoff / health machinery; this reader's first
-/// consumer takes the direct path above, so a trait impl here would be carried
-/// by symmetry alone — untested, and shaped by a guess about a consumer that
-/// does not exist. The PR that first needs a framework-driven tick can add it
-/// with a test that drains it.
+/// A **publisher** should call [`Self::latest`] directly rather than driving a
+/// reader through the feeds runner: that runner sleeps its backoff and continues
+/// on any source error, forever — right for a collector, where a missed poll is a
+/// gap in a series, and wrong for something that has to decide whether a failure
+/// is worth retrying at all.
 ///
-/// **Deriving `Debug` on this type would leak connection details.** `sqlx`'s
-/// `PgConnectOptions` has a derived `Debug` carrying host, user and database, so
-/// the absence of a derive here is deliberate rather than an omission.
-pub struct SpotTickSource {
+/// The sibling's trait impl has a live consumer that genuinely rides the
+/// framework's spawn / backoff / health machinery; this reader's first consumer
+/// takes the direct path above, so an impl here would be carried by symmetry
+/// alone — untested, and shaped by a guess about a consumer that does not exist.
+/// The PR that first needs a framework-driven tick can add it with a test that
+/// drains it.
+///
+/// No `Debug` derive, and **not** because it would leak a credential: `PgPool`'s
+/// own `Debug` prints pool sizing (`size`, `num_idle`, `is_closed`, and its
+/// `PoolOptions`) and never reaches the connect options, so a derive would expose
+/// nothing but the two rosters. It is simply unused — nothing formats this type.
+pub struct TickStoreReader {
     pool: PgPool,
     sources: Vec<String>,
     products: Vec<String>,
 }
 
-impl SpotTickSource {
+impl TickStoreReader {
     /// `sources` are the venue labels written to `spot_ticks.source`;
     /// `products` are canonical pair ids (`USDC-USD`).
     ///
@@ -228,11 +248,12 @@ impl SpotTickSource {
     /// version**. It reads four columns of one table and tolerates the rest of
     /// the store moving underneath it.
     ///
-    /// An empty result is a successful read, not an error — a consumer's
-    /// store-silence guard keys off the difference between "the collectors are
-    /// behind" and "the store is gone".
-    pub async fn latest(&self) -> Result<Vec<SpotTickRow>> {
-        let rows = sqlx::query(include_str!("../queries/spot_ticks_latest.sql"))
+    /// **Returns every row it read**, including a forward-stamped one — see the
+    /// module docs on who refuses what. An empty result is a successful read,
+    /// not an error: a consumer's store-silence guard keys off the difference
+    /// between "the collectors are behind" and "the store is gone".
+    pub async fn latest(&self) -> Result<Vec<TickStoreRow>> {
+        let rows = sqlx::query(include_str!("../queries/tick_store_latest.sql"))
             .bind(&self.sources)
             .bind(&self.products)
             .fetch_all(&self.pool)
@@ -240,7 +261,7 @@ impl SpotTickSource {
 
         rows.iter()
             .map(|r| {
-                Ok(SpotTickRow {
+                Ok(TickStoreRow {
                     source: r.try_get("source")?,
                     product_id: r.try_get("product_id")?,
                     observed_at: r.try_get("observed_at")?,
@@ -257,20 +278,21 @@ mod tests {
 
     /// The statement with its `--` header stripped.
     ///
-    /// Every assertion about the SQL has to run against this rather than the raw
-    /// file: the header is long-form prose that names the projected columns and
-    /// discusses a placeholder the statement does not bind, so a raw-text scan
-    /// measures the commentary.
+    /// **Every assertion about the SQL runs against this, not the raw file.** The
+    /// header is long-form prose that names the projected columns and discusses a
+    /// placeholder the statement does not bind, so a raw-text scan measures the
+    /// commentary — which is not hypothetical: the placeholder-set assertion
+    /// below caught exactly that.
     fn statement_body() -> String {
-        include_str!("../queries/spot_ticks_latest.sql")
+        include_str!("../queries/tick_store_latest.sql")
             .lines()
             .filter(|l| !l.trim_start().starts_with("--"))
             .collect::<Vec<_>>()
             .join("\n")
     }
 
-    fn row(product_id: &str, observed_at: i64, price: f64) -> SpotTickRow {
-        SpotTickRow {
+    fn row(product_id: &str, observed_at: i64, price: f64) -> TickStoreRow {
+        TickStoreRow {
             source: SOURCE_KRAKEN.to_string(),
             product_id: product_id.to_string(),
             observed_at,
@@ -313,7 +335,7 @@ mod tests {
         assert!(ok.reading(1_500, Duration::from_secs(1)).is_some());
     }
 
-    /// A non-finite price is passed on, and the pricing crate is what refuses it.
+    /// A price the engine refuses is still passed on by this reader.
     ///
     /// **Both halves are asserted, because either one alone would be
     /// misleading.** That this reader returns `Some` is only defensible if
@@ -323,11 +345,12 @@ mod tests {
     /// this fails here rather than surfacing as a guard that silently never
     /// fires.
     ///
-    /// `NaN` is the case that matters: it defeats *comparison* rather than
+    /// `NaN` is the case that matters most: it defeats *comparison* rather than
     /// arithmetic, so a deviation guard written as `value > tol` would not fire
-    /// on it. Zero and negative are included because `valid()` covers them too.
+    /// on it. Zero and negative are included — and are finite, hence the test's
+    /// name — because `valid()` covers them on the same terms.
     #[test]
-    fn a_non_finite_price_is_passed_on_for_the_engine_to_refuse() {
+    fn a_price_the_engine_refuses_is_still_passed_on() {
         let bound = Duration::from_secs(300);
         for price in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
             let offered = row(USDC_USD_PRODUCT, 1_000, price)
@@ -369,7 +392,7 @@ mod tests {
         // reason this is an async test.
         let pool = PgPool::connect_lazy("postgres://unused:unused@127.0.0.1/unused")
             .expect("a lazy pool needs no server");
-        let peg = SpotTickSource::peg(pool);
+        let peg = TickStoreReader::peg(pool);
         assert_eq!(peg.sources(), [SOURCE_KRAKEN]);
         assert_eq!(peg.products(), [USDC_USD_PRODUCT]);
     }
@@ -379,18 +402,14 @@ mod tests {
     ///
     /// Compared against the statement's **projected output names** rather than
     /// against its raw text, for the reason the candle reader's twin test
-    /// records: this file's header discusses `confidence` and `price` in prose,
-    /// so a substring sweep would hold whatever the statement did.
+    /// records: the header discusses `confidence` in prose, so a substring sweep
+    /// would hold whatever the statement did.
     #[test]
     fn the_query_matches_its_binds_and_its_decoder() {
-        // Scan the STATEMENT, not the file. The header is prose and discusses
-        // both column names and a hypothetical `$3` bound, so scanning the whole
-        // file makes every assertion below hostage to the commentary — which is
-        // not hypothetical: the placeholder assertion caught exactly that.
         let sql = statement_body();
 
-        // Every placeholder `$1..=$n` must appear, so a duplicated or skipped
-        // index fails here. Asserting only the maximum would pass
+        // Every placeholder `$1..=$n` must appear exactly once, so a duplicated
+        // or skipped index fails here. Asserting only the maximum would pass
         // `ANY($2) AND ANY($2)`, which returns no rows in production.
         let mut seen: Vec<usize> = sql
             .match_indices('$')
@@ -434,8 +453,8 @@ mod tests {
         }
 
         // The half-width is unread by decision, so assert the decision rather
-        // than trusting the prose above to keep it. Checked against the whole
-        // SELECT list rather than the resolved output names, because an alias
+        // than trusting prose to keep it. Checked against the whole SELECT list
+        // rather than the resolved output names, because an alias
         // (`confidence AS half_width`) would hide the column from `projected`
         // while still wiring it.
         assert!(

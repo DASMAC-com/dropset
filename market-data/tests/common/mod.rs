@@ -77,8 +77,13 @@ pub async fn insert_bucket(
 /// Insert one spot print into `spot_ticks`.
 ///
 /// The tick-table counterpart to [`insert_bucket`], and deliberately simpler:
-/// `observed_at` needs no arithmetic, because a tick's stamp *is* its publication
-/// instant where a bucket's is derived from its start plus its width.
+/// `observed_at` needs no arithmetic because it is the stamp **as recorded** —
+/// the venue's own publish time where the venue publishes one, else the
+/// collector's poll second — where a bucket's publication instant is derived from
+/// its start plus its width. Note that means a tick stamp is not always a
+/// publication instant: the only `spot_ticks` venue that publishes one is Pyth,
+/// so for the peg series it is a poll second, which is exactly the case the
+/// reader's publication-versus-receipt `max()` exists to handle.
 ///
 /// The confidence half-width is left NULL. The only venue that publishes one is
 /// parked, and the tick reader deliberately does not project the column — so a
