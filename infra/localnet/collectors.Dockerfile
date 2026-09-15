@@ -62,6 +62,12 @@ COPY --from=builder /app/target/release/market-data-coinbase-ticker \
     /app/target/release/market-data-kraken \
     /app/target/release/market-data-pyth \
     /usr/local/bin/
+# The fair-value estimator, which is neither: it READS both tables and
+# publishes `fair_price`. Its own COPY rather than a line in either group
+# above, so the two comments stay true — grouping it with the tick collectors
+# would make this image claim it writes `spot_ticks`.
+COPY --from=builder /app/target/release/market-data-estimator \
+    /usr/local/bin/
 # The keyless reference feed is the default; every other service overrides it
 # with its own `command:`.
 CMD ["market-data-coinbase"]

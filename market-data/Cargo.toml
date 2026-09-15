@@ -1,8 +1,9 @@
 # cspell:word rustls
 # The market-data collection app (docs/data-feeds.md §7), and the first
 # consumer of the shared `feeds` framework — so it proves the source →
-# store-sink path end to end. Nine binaries, one per venue-and-tier, and the
-# tier is what decides the table each writes:
+# store-sink path end to end. Ten binaries: nine collectors, one per
+# venue-and-tier, plus the fair-value estimator. For a collector the tier is
+# what decides the table it writes:
 #
 # * Candles into `cex_prices` — `market-data-coinbase` (the crypto reference
 #   feed, §9) and the free-tier FX roster `market-data-oanda` /
@@ -16,8 +17,14 @@
 #   instant, Frankfurter from midnight UTC of the ECB reference date, which
 #   is a derived convention rather than a published instant.
 #
-# One binary serves a **venue**, not a pair: each takes a product roster, so
-# covering another pair is configuration rather than another service.
+# One collector binary serves a **venue**, not a pair: each takes a product
+# roster, so covering another pair is configuration rather than another service.
+#
+# `market-data-estimator` is the exception to every sentence above. It polls no
+# venue and writes neither table: it reads both of them, composes `fair = fx ×
+# basis` per market, and publishes into `fair_price`. It is also the one binary
+# that does not run on the feeds runner — a publisher must classify its own
+# errors rather than retrying any failure forever.
 #
 # Schema provisioning belongs to `dropset-migrate`, the single schema owner
 # (§8), so this crate ships no migrate runner. HTTP-only: it enables `feeds`'
@@ -44,6 +51,10 @@ path = "src/bin/coinbase_ticker.rs"
 [[bin]]
 name = "market-data-erapi"
 path = "src/bin/erapi.rs"
+
+[[bin]]
+name = "market-data-estimator"
+path = "src/bin/estimator.rs"
 
 [[bin]]
 name = "market-data-frankfurter"

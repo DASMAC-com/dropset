@@ -899,20 +899,20 @@ fn erapi_provider_stalled(last_update: i64, now_unix: i64) -> bool {
 }
 
 /// Whether the Unix timestamp `secs` falls in the FX-closed weekend window.
-/// Interbank FX and CME 6E are shut Fri ~17:00 → Sun ~17:00 ET (§1 fm2);
-/// approximated here in UTC as Fri 21:00 → Sun 22:00 (≈ 17:00 ET, ignoring
-/// DST). The exact session thresholds are TBD(analytics). Inside this window a
-/// missing FX anchor is the normal crypto-only regime, not a fault.
+///
+/// The arithmetic moved to [`ClockCtx::from_unix`] when the fair-value estimator
+/// became a second consumer of the same window. It belongs beside `ClockCtx`
+/// rather than here because the engine's regime selection reads it: inside the
+/// window a missing FX anchor is the normal crypto-only state, outside it the
+/// same absence is a degrade — so two copies would disagree about whether a
+/// market is healthy, which is worse than usual given the approximation
+/// deliberately ignores DST.
+///
+/// Kept as a named local rather than inlined at the two call sites so this
+/// module's session-boundary tests keep asserting the rule the bot actually
+/// composes with.
 fn weekend_from_unix(secs: u64) -> bool {
-    let days = secs / 86_400; // whole days since 1970-01-01 (a Thursday)
-    let hour = (secs % 86_400) / 3_600; // hour of the UTC day
-    let dow = (days + 4) % 7; // 0 = Sun … 6 = Sat (epoch day was Thursday = 4)
-    match dow {
-        5 => hour >= 21, // Friday, after the interbank close
-        6 => true,       // all of Saturday
-        0 => hour < 22,  // Sunday, until the CME reopen
-        _ => false,
-    }
+    ClockCtx::from_unix(secs).weekend
 }
 
 /// The wall clock as an epoch second. A clock before the Unix epoch

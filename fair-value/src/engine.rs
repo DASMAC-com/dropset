@@ -87,6 +87,40 @@ impl ClockCtx {
     pub fn weekend() -> Self {
         Self { weekend: true }
     }
+
+    /// The context for the tick at Unix second `secs`, deciding the session
+    /// window from the clock.
+    ///
+    /// Interbank FX and CME 6E are shut Fri ~17:00 → Sun ~17:00 ET (§1 fm2);
+    /// approximated here in UTC as Fri 21:00 → Sun 22:00 (≈ 17:00 ET, ignoring
+    /// DST). The exact session thresholds are TBD(analytics).
+    ///
+    /// **This lives beside [`ClockCtx`] rather than in a consumer because the
+    /// window is an input to the engine's own regime selection.** Inside it a
+    /// missing FX anchor is [`Regime::CryptoOnly`]; outside it the same absence
+    /// is [`Degrade::FxStale`] — so two consumers disagreeing about where the
+    /// boundary is would disagree about whether a market is healthy, and the
+    /// disagreement would surface as a degrade on one surface and not the other
+    /// with nothing failing. One home for the rule is what makes that
+    /// impossible, and it matters more than usual here because DST is
+    /// deliberately ignored: an approximation held in two places drifts twice.
+    ///
+    /// A single authority now, and a *provisional* one — the market-calendar
+    /// work replaces this arithmetic with a session table for which Postgres is
+    /// the one DST authority. Callers should reach the window through this
+    /// function so that replacement is one edit rather than a search.
+    pub fn from_unix(secs: u64) -> Self {
+        let days = secs / 86_400; // whole days since 1970-01-01 (a Thursday)
+        let hour = (secs % 86_400) / 3_600; // hour of the UTC day
+        let dow = (days + 4) % 7; // 0 = Sun … 6 = Sat (epoch day was Thursday = 4)
+        let weekend = match dow {
+            5 => hour >= 21, // Friday, after the interbank close
+            6 => true,       // all of Saturday
+            0 => hour < 22,  // Sunday, until the CME reopen
+            _ => false,
+        };
+        Self { weekend }
+    }
 }
 
 impl Legs {
