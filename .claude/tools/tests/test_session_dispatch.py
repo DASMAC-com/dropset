@@ -79,6 +79,23 @@ class Grammar(unittest.TestCase):
             session_dispatch.validate(["explore", "1196"]), ["explore", "1196"]
         )
 
+    def test_explore_rejects_zero_like_the_shell_does(self):
+        """`_NAME` admits `0`, but the shell refuses it — so dispatching would
+        open a tab, type the verb and leave an idle session that looks started.
+        Every spelling the shell normalizes to zero must be rejected here."""
+        for zero in ("0", "00", "eng-0", "eng-000"):
+            with self.subTest(arg=zero):
+                with self.assertRaises(ValueError):
+                    session_dispatch.validate(["explore", zero])
+
+    def test_explore_accepts_the_eng_prefixed_form(self):
+        """The shell normalizes `eng-1196` and `1196` to one worktree, so the
+        dispatcher must accept both spellings."""
+        self.assertEqual(
+            session_dispatch.validate(["explore", "eng-1196"]),
+            ["explore", "eng-1196"],
+        )
+
     def test_explore_requires_a_name(self):
         """Bare `explore` used to be legal and now is not — a name is required
         because it names a worktree, and the shell rejects the bare form."""

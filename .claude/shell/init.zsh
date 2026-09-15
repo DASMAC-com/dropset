@@ -923,14 +923,19 @@ _ds_task_resume() {
 # substantive naming call. `explore 1196` lands in `eng-1196` — not `exp-1196` —
 # so an explore session inherits every mechanism already keyed on `eng-###`:
 # `cdds 1196` reaches it, `housekeeping` prunes it on the issue's status type,
-# and the substrate marker records it (written below, so that is a fact rather
-# than an aspiration). A worktree named anything else is invisible to all three.
+# and an absent substrate marker correctly reads as seat. A worktree named
+# anything else is invisible to the first two.
 # Note the rationale is those named benefits — addressability — and NOT
 # "protecting the worktree": its contents are expendable by construction, and
 # framing the eng-keying as protection would make the worktree sound precious,
 # which the convention doc explicitly warns against. The session's DISPLAY name
 # stays `exp-<n>` so the fleet listing still reads by role: `eng-*`
 # implementers, `plan-*`, `ceo-*` architecture, `exp-*` research.
+#
+# THE COST OF SHARING THE TAG: `eng-<n>` now names a worktree that two session
+# kinds can claim, with different substrates and different model pins, while the
+# substrate marker keys on the tag alone. That is why nothing is written to it
+# below, and it is the root the model-pin gap shares — see ENG-1402.
 #
 # ONE CAVEAT, stated because an earlier draft of this comment claimed the
 # benefit without it: `fleet` and `task resume <n>` do REACH such a session, but
@@ -1054,12 +1059,19 @@ explore() {
   name="exp-$raw"
 
   _ds_seat_guard 'explore'
-  # Recorded so the marker the comment above advertises actually exists. Explore
-  # is seat-only, and an absent marker already defaults to seat, so this changes
-  # no behavior — it makes `task resume <n>` take the seat branch explicitly
-  # rather than by fallback, and stops the comment being a claim about something
-  # nothing wrote.
-  _ds_substrate_write "$tag" seat
+  # NO SUBSTRATE MARKER IS WRITTEN HERE, DELIBERATELY, and the reason is the
+  # whole hazard of keying this worktree to `eng-<n>`: the marker is keyed on the
+  # WORKTREE TAG ALONE, and `_ds_task_start` writes that same key. So
+  # `task 1196` (bedrock) followed by `explore 1196` would flip the marker to
+  # `seat`, and the next `task resume 1196` — or `fleet`, which types exactly
+  # that for every in-flight issue — would silently resume the IMPLEMENTATION
+  # session on the seat and eat the subscription window. That is the failure this
+  # file calls silent in both directions, caused by the fix for it.
+  #
+  # Not writing costs nothing: an absent marker already reads as seat, which is
+  # correct for a seat-only verb. An intermediate revision did write it, to make
+  # a comment's "the substrate marker records it" claim true; the honest fix was
+  # to correct the claim instead.
   _ds_session "$(_ds_topic_sid explore "$raw")" "$name" "$prompt" \
     claude-fable-5 "$tag"
 }

@@ -996,9 +996,12 @@ TEMPORARY WORKING STATE and the session is READ-ONLY toward the
 repo: no commits, no PR.** Durable state is captured in
 **Linear**; a spec file is **optional**, and anything repo-bound
 lands later via a **follow-up worker task**. This is the
-canonical statement of the mechanism; the `architect`, `audit`,
-`audit-scope` and `plan` skills state their own duties and point
-here rather than redescribing it.
+canonical statement of the mechanism; the `architect` and `plan`
+skills state their own duties and point here rather than
+redescribing it. (The `audit` and `audit-scope` skills carry no
+pointer yet — an audit reaches this shape through the verb, whose
+bootstrap prompt states the posture, so nothing is broken by the
+omission.)
 
 Operator ruling, **2026-09-14**, superseding the 09-11 shape
 recorded on ENG-1367.
@@ -1013,15 +1016,49 @@ recorded on ENG-1367.
 
 **A number keys the worktree to the Linear issue, and that is
 the substantive call** — `explore 1196` lands in `eng-1196`,
-not `exp-1196`, so the session inherits every mechanism already
-keyed on `eng-###`: `cdds 1196` reaches it, `housekeeping`
-prunes it on the issue's **status type**, `fleet` resumes it,
-and the substrate marker records it. A worktree named anything
-else would be invisible to exactly the cleanup machinery this
-whole arrangement exists to make protective. The session's
-*display* name stays role-prefixed so the fleet listing reads by
-role: `eng-*` implementers, `plan-*` planning, `ceo-*`
-architecture, `exp-*` research.
+not `exp-1196`, so the session inherits the **addressing**
+mechanisms already keyed on `eng-###`: `cdds 1196` reaches it,
+and `fleet` reaches it. A worktree named anything else would be
+invisible to both. The session's *display* name stays
+role-prefixed so the fleet listing reads by role: `eng-*`
+implementers, `plan-*` planning, `ceo-*` architecture, `exp-*`
+research.
+
+**It does NOT inherit automatic pruning, and that is worth
+stating because it is the obvious thing to assume.**
+`housekeeping` derives its prune candidates from branches with a
+**merged PR**, and only *then* intersects that set with the
+issue's status type. These sessions open no PR, so an
+`exp-<name>`, `ceo-<topic>` or issue-keyed `eng-<n>` explore
+worktree is **never a candidate** and is never reclaimed
+automatically. Each is a full checkout, and accumulated checkouts
+have a measured cost here (a bare recursive grep under
+`.claude/` once timed out at 120s walking every checkout's
+`target/`). So these worktrees want **removing by hand** when a
+thread is finished — nothing is lost by doing so, since their
+contents are expendable by construction.
+
+**Two costs of sharing that tag with `task <n>`, both worth
+knowing before relying on the inheritance:**
+
+- **`fleet` reaches such a session but resumes it wrong.** It
+  types `task resume <n>`, which restores the **substrate but not
+  the model**, so a seat-pinned explore or architect session
+  comes back on the saved default rather than the Fable pin.
+  **`explore <n>` is the resume verb that keeps the pin.**
+  ENG-1402 tracks closing the gap.
+- **No substrate marker is written for an explore session**, and
+  that is deliberate rather than an omission. The marker keys on
+  the **worktree tag alone**, which `task <n>` also writes — so
+  writing one here would let `explore 1196` flip a `bedrock`
+  marker to `seat` and make the next `task resume 1196` resume
+  the *implementation* session on the seat, silently. An absent
+  marker already reads as seat, which is correct for a seat-only
+  verb.
+
+Both are the same root: `eng-<n>` stopped being a single-owner
+namespace. It now names a worktree two session kinds can claim,
+with different substrates and different pins.
 
 There is **no branch to rename and no PR to open** — the worktree does
 arrive on a `worktree-<tag>` branch, as any git worktree must; these
@@ -1057,18 +1094,19 @@ protect them.
 **The protection is a PAIR, and the second half is the one that
 actually carries it:**
 
-1. **Prune-on-status-type** protects the working state for as
-   long as the issue is honest. `housekeeping` prunes a worktree
-   on its issue's **status type**, so an In Progress or In
-   Review issue is never a prune candidate. The state machine is
-   **In Progress** while the session runs, **In Review** when
-   the deliverable is handed off, **Done only on the operator's
-   ratification** — never self-marked, which is what keeps the
-   issue honest and narrows the window.
+1. **The state machine keeps the board honest.** **In Progress**
+   while the session runs, **In Review** when the deliverable is
+   handed off, **Done only on the operator's ratification** —
+   never self-marked. (For an *implementation* worktree this also
+   gates pruning; for these sessions it does not, per the note
+   above — they have no PR, so they are never prune candidates in
+   the first place.)
 1. **Durable state reaches Linear BEFORE the handoff**, so the
    worktree's contents are expendable *by construction* at any
-   moment the state could lie. A wrongly-pruned worktree then
-   loses nothing that matters.
+   moment the state could lie. This is the half that actually
+   carries the protection: a worktree removed at any time — by
+   hand, by accident, by a future sweep — loses nothing that
+   matters.
 
 **Do not read this as "the worktree must not be pruned while the
 session is live."** That is the weaker framing and it makes the

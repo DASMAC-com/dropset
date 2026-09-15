@@ -111,6 +111,14 @@ def validate(argv: list[str]) -> list[str]:
             )
         if len(args) != 1 or not _NAME.match(args[0]):
             raise ValueError("`explore` takes one lowercase name or issue number")
+        # `_NAME` admits `0` and `eng-0`; the shell refuses both, since 0 is not a
+        # Linear issue number. Mirror that here rather than letting the dispatch
+        # succeed: it would open a tab, type the verb, and leave a session that
+        # LOOKS started and is idle — the exact silent failure the issue-keyed
+        # bootstrap prompt exists to remove. It would also break the documented
+        # all-or-nothing property, since one bad verb must dispatch none.
+        if re.fullmatch(r"(?:eng-)?0+", args[0], re.ASCII):
+            raise ValueError("`explore` needs a real issue number; 0 is not one")
         return ["explore", args[0]]
 
     if verb == "architect":
