@@ -16,6 +16,8 @@
 -- window re-offers records the writer already holds and every one dedups
 -- away. Those batches wrote zero rows and are behaving exactly as designed,
 -- which is why they are counted apart from empty_intake rather than with it.
+-- The exemption is per BATCH: a window that is ENTIRELY all_duplicate stored
+-- nothing new throughout, so it has stored = 0 and sorts to the top, correctly.
 --
 -- The aggregate is repeated in the ORDER BY rather than reusing the output
 -- name: Postgres exposes an output column name to ORDER BY only as a bare
@@ -34,6 +36,7 @@ SELECT
   count(*) FILTER (WHERE outcome = 'stored') AS stored,
   count(*) FILTER (WHERE outcome = 'all_duplicate') AS all_duplicate,
   count(*) FILTER (WHERE outcome = 'empty_intake') AS empty_intake,
+  sum(requested) AS rows_requested,
   sum(written) AS rows_written,
   max(observed_at) FILTER (WHERE outcome = 'stored') AS last_stored
 FROM feed_batch_ingestion

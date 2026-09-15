@@ -83,9 +83,14 @@ async fn stamp_version(pool: &PgPool, version: i64, description: &str) {
 ///
 /// Deliberately **not** `#[ignore]`d, and that is the whole point — it needs no
 /// container, so unlike every other test in this file it runs in the default
-/// suite, which is the only place CI executes this crate's tests at all. The
-/// `include_str!` also makes the compose file Rust-reachable, so a diff touching
-/// it is no longer invisible to the test-suite path filter.
+/// suite, which is the only place CI executes this crate's tests at all.
+///
+/// The `include_str!` is load-bearing beyond just reading the file: it makes the
+/// compose file a compile-time input of a Rust target, which is what
+/// `review_diff.py`'s fixture scan looks for when deciding whether a diff can
+/// reach the Rust suites. It does **not** affect any GitHub Actions paths filter
+/// — a filter matches changed paths against globs and cannot see through a macro
+/// — so a workflow-level exclusion of this file would still hide it from CI.
 #[test]
 fn postgres_image_tag_matches_the_deployed_image() {
     const COMPOSE: &str = include_str!("../../infra/localnet/docker-compose.yml");

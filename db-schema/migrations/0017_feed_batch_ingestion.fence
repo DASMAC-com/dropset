@@ -1,5 +1,5 @@
 # Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
 #
-# The index is not a relation this fence declares: it is an implementation
-# detail of the table above it, and the probe covers tables and views.
+# The index the migration creates is not declared here: it is an implementation
+# detail of the table, and the probe covers only tables and views.
 table feed_batch_ingestion

@@ -50,8 +50,11 @@ pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 /// migration rather than as a server too old to have the feature. And being an
 /// implicit crate default, it moves silently under a dependency bump.
 ///
-/// `postgres_image_tag_matches_the_deployed_image` in this crate's tests holds
-/// this against the compose stack, so the two cannot drift unnoticed.
+/// `postgres_image_tag_matches_the_deployed_image` in this crate's tests asserts
+/// that this tag names an image the compose stack actually runs. Note the bound:
+/// it checks the image is PRESENT in that file, not that the database service is
+/// the one using it, so it catches a drifting tag rather than proving which
+/// service consumes it.
 pub const POSTGRES_IMAGE_TAG: &str = "16-alpine";
 
 /// A pool for schema work. Two connections is plenty: the runner is a

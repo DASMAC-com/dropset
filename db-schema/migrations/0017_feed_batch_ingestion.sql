@@ -37,8 +37,13 @@
 --
 --   * `empty_intake`  — nothing was offered. Either the venue returned an empty
 --                       response or intake rejected every record.
---   * `all_duplicate` — records were offered and every one deduped away. The
---                       ordinary shape of a resumed window; routine.
+--   * `all_duplicate` — records were offered and none of them landed. Named for
+--                       its overwhelmingly common cause, a resumed window whose
+--                       records the writer already held, which is routine. Read
+--                       it as "offered, nothing written" rather than as proof of
+--                       dedup: the same freedom that makes `(0, > 0)` legal
+--                       below — no promised one-row-per-record mapping — lets a
+--                       writer that filters internally land here too.
 --   * `stored`        — at least one row was written.
 --
 -- **A single `empty_intake` is NOT a fault, and reading it as one would make
@@ -78,13 +83,13 @@
 --
 -- **Keyed `(feed, observed_at)`, and the insert is idempotent.** A single feed's
 -- sink is sequential, and `now()` is transaction-START time, so a collision needs
--- one feed to BEGIN two batch transactions inside the same microsecond. A commit
--- and a client round trip separate them by far more than that in practice —
--- though "in practice" is the honest strength of the claim, not "impossible".
--- The writer therefore inserts `ON CONFLICT DO NOTHING`, because the failure mode
--- of being wrong about it must not be an aborted data batch: silently losing one
--- telemetry row is the correct price, per docs/data-feeds.md §8's
--- idempotent-write rule.
+-- one feed to BEGIN two batch transactions inside the same microsecond, which a
+-- commit and a client round trip make vanishingly unlikely rather than
+-- impossible. The writer therefore inserts `ON CONFLICT DO NOTHING`, because the
+-- cost of being wrong about that must not be an aborted data batch: silently
+-- losing one telemetry row is the right price. (docs/data-feeds.md §8 covers this
+-- shared database and the idempotent writes its tables are built on; the specific
+-- trade made here is this table's own.)
 --
 -- **Grafana reads this; nothing surfaces it in the TUI.** `0002_reader_role`
 -- already grants `SELECT` on future tables in `public` to `dropset_ro`, so this
