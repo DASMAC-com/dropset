@@ -92,8 +92,10 @@ import argparse
 import functools
 import importlib.util
 import json
+import math
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import firm_core
@@ -489,6 +491,166 @@ def cruft(allow: list[str], settings_path: Path | None = None) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# The refresh cadence — the ADD side's periodic trigger.
+#
+# `cruft` prunes and `add` grants, but nothing periodically mined observed usage
+# for rules worth ADDING, which is the gap this closes. The per-session firming
+# sweep was retired on measurement (the auto permission-mode classifier made
+# prompts rare enough that it stopped paying its instruction cost), and the
+# retirement was right — but the classifier is precisely why the churn is no
+# longer *visible*, so the refresh has to happen on a slow clock instead of a
+# per-session one.
+#
+# Deliberately UNLIKE `memory_scan_gate`, which this otherwise imitates: there
+# is no content signature. Keying on the settings file's contents would make the
+# refresh fire every time `cruft` removed a rule, and a removal is not evidence
+# that new shapes want granting. Elapsed time since the last MINING pass is the
+# only honest trigger.
+# ---------------------------------------------------------------------------
+
+#: A month, because that is the cadence the operator asked for and because a
+#: mining pass reads transcripts — the cost scales with how many have
+#: accumulated, so a shorter clock buys proportionally less per run.
+DEFAULT_REFRESH_INTERVAL_DAYS = 30.0
+
+REFRESH_MARKER_NAME = ".allowlist-refresh.json"
+
+
+def _interval_days(value: str) -> float:
+    """An `--interval-days` that is finite and not negative.
+
+    `type=float` alone accepts `nan`, and `nan >= x` is **always false** — so a
+    single stray argument would report the refresh as never due, silently and
+    permanently, with a zero exit. That is the one input that disables the gate
+    rather than merely mis-tuning it, so it is rejected at the boundary.
+    """
+    try:
+        days = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {value!r}")
+    if not math.isfinite(days):
+        raise argparse.ArgumentTypeError(
+            f"must be finite (a non-finite interval never comes due): {value!r}"
+        )
+    if days < 0:
+        raise argparse.ArgumentTypeError(f"must not be negative: {value!r}")
+    return days
+
+
+def refresh_marker_path(settings_path: Path) -> Path:
+    """Beside the settings file, never inside it.
+
+    The marker is cadence bookkeeping; a stray key inside `settings.local.json`
+    would at best confuse the allowlist reader and at worst be read as a rule.
+    """
+    return settings_path.parent / REFRESH_MARKER_NAME
+
+
+def _read_refresh_marker(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError, RecursionError):
+        # A corrupt marker reads as absent — the gate just refreshes again,
+        # which is the safe direction: the cost is one extra proposal pass.
+        #
+        # `ValueError`, not `json.JSONDecodeError`, which is a strict SUBSET of
+        # it. `read_text(encoding="utf-8")` raises `UnicodeDecodeError` — also a
+        # `ValueError` — on a marker holding one invalid byte, and deeply nested
+        # JSON raises `RecursionError`; neither is a `JSONDecodeError`, so both
+        # escaped the narrower clause. `main()` catches neither, so a byte of
+        # garbage in a bookkeeping file killed the whole command instead of
+        # being ignored — the opposite of what this handler is for.
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _parse_iso(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def refresh_decide(
+    marker: dict | None,
+    now: datetime,
+    min_interval_days: float = DEFAULT_REFRESH_INTERVAL_DAYS,
+) -> tuple[bool, str]:
+    """Pure decision: is a permission refresh due? Returns ``(due, reason)``.
+
+    ``now`` and ``min_interval_days`` are injected so the rule is testable
+    without a clock. A first run is always due — never having refreshed is the
+    strongest possible reason to.
+    """
+    if not isinstance(marker, dict):
+        return True, "no prior refresh recorded"
+    last = _parse_iso(marker.get("last_refresh"))
+    if last is None:
+        return True, "prior refresh has no usable timestamp"
+    elapsed_days = (now - last).total_seconds() / 86400.0
+    if elapsed_days < 0:
+        # A future-dated marker is as unusable as an unparseable one, so it must
+        # fail the SAME way — toward refreshing. Without this clause it failed
+        # the other way and silently: `-412 >= 30` is false, so the refresh was
+        # reported not-due until wall-clock caught up, and the reason string read
+        # `only -412.0d since last refresh`. A clock that was ahead at stamp
+        # time, or a year typo in a hand-edited marker, would disable the monthly
+        # step for a year. Every other bad-marker branch above fails toward
+        # refreshing; this one is the odd case out and was the bug.
+        return True, f"marker timestamp is {-elapsed_days:.1f}d in the future"
+    if elapsed_days >= min_interval_days:
+        return (
+            True,
+            f"{elapsed_days:.1f}d since last refresh (>= {min_interval_days:g}d)",
+        )
+    return False, f"only {elapsed_days:.1f}d since last refresh"
+
+
+def refresh_due(settings_path: Path, min_interval_days: float) -> dict:
+    marker = _read_refresh_marker(refresh_marker_path(settings_path))
+    due, reason = refresh_decide(marker, datetime.now(timezone.utc), min_interval_days)
+    return {
+        "due": due,
+        "reason": reason,
+        "last_refresh": marker.get("last_refresh")
+        if isinstance(marker, dict)
+        else None,
+    }
+
+
+def refresh_record(settings_path: Path, added: int = 0) -> dict:
+    """Stamp a completed refresh.
+
+    ``added`` is recorded rather than asserted on: a pass that proposed nothing
+    is still a pass, and the point of the stamp is the cadence, not the yield.
+    A run of zero-yield refreshes is itself the signal that the interval could
+    lengthen.
+    """
+    path = refresh_marker_path(settings_path)
+    payload = {
+        "last_refresh": datetime.now(timezone.utc).isoformat(),
+        "rules_added": added,
+    }
+    try:
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError as e:
+        # The read side deliberately swallows `OSError`; this side must not
+        # simply inherit that asymmetry by accident. A stamp that cannot be
+        # written is worth saying out loud rather than escaping as a traceback
+        # out of `run()`: the cadence never advances, so the caller would refresh
+        # on every pass — which is the per-session behavior this gate replaced.
+        raise AllowlistError(f"could not write the refresh marker {path}: {e}")
+    return {"recorded": payload["last_refresh"], "rules_added": added}
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="allowlist.py")
     parser.add_argument(
@@ -512,6 +674,23 @@ def run(argv: list[str]) -> int:
 
     sub.add_parser("cruft", help="return only the suspicious entries")
 
+    p_due = sub.add_parser("refresh-due", help="is a permission refresh due?")
+    p_due.add_argument(
+        "--interval-days",
+        type=_interval_days,
+        default=DEFAULT_REFRESH_INTERVAL_DAYS,
+        help=f"minimum days between refreshes (default: "
+        f"{DEFAULT_REFRESH_INTERVAL_DAYS:g})",
+    )
+
+    p_rec = sub.add_parser("refresh-record", help="stamp a completed refresh")
+    p_rec.add_argument(
+        "--added",
+        type=int,
+        default=0,
+        help="how many rules the refresh added (recorded, not asserted on)",
+    )
+
     args = parser.parse_args(argv[1:])
     # Resolve the default to the main checkout — Claude Code resolves the file
     # that way, so a worktree legitimately has no copy of its own. An
@@ -525,6 +704,10 @@ def run(argv: list[str]) -> int:
         result = add(args.rule, settings_path)
     elif args.cmd == "covers":
         result = covers(args.rule, load_allow(settings_path))
+    elif args.cmd == "refresh-due":
+        result = refresh_due(settings_path, args.interval_days)
+    elif args.cmd == "refresh-record":
+        result = refresh_record(settings_path, args.added)
     else:
         result = cruft(load_allow(settings_path), settings_path)
 

@@ -96,6 +96,18 @@ fails outright. The role is therefore **documented but not wired**, the
 same "inert until wired" shape as an unwired guard hook. Deploying a
 stack that creates IAM currently needs a genuine admin identity.
 
+**It is inert by DECISION, not by omission** — recorded because the
+paragraph above otherwise reads as a defect someone should fix. The
+operator's ruling: keep the role exactly as it is, keep the rare
+IAM-creating deploys on the admin login, do **not** wire the MCP server
+to assume the role, and do **not** delete it. Two reasons for the
+middle one: it is unverified whether the proxy sets those condition
+keys at all, and the wiring is user-local config work, which the
+current scope posture cuts. So "inert until wired" is a settled
+position rather than a to-do. Reopening it takes a new decision, and
+the thing to establish first is whether the proxy can set the condition
+keys — not whether the role's policy is correct, which it is.
+
 ## Agent Toolkit for AWS
 
 CloudFormation authoring, deployment, and troubleshooting are
@@ -117,7 +129,7 @@ through the credentialed server. The rules:
   Documentation server is the canonical pick.)
 
 - **Account actions → the AWS CLI, with the SigV4 `aws-mcp` server as
-  the richer path when it is up.** The credentialed remote server (the
+  fallback even when it is healthy.** The credentialed remote server (the
   managed [Agent Toolkit for AWS][toolkit] proxy) is scoped to actual
   account work — deploy, inspect, CLI execution, and skill retrieval
   (`aws___retrieve_skill`) — where the IAM auth and least-privilege
@@ -135,6 +147,27 @@ through the credentialed server. The rules:
   which covers the same actions; the Bedrock work has been CLI-first
   throughout. What has no CLI equivalent, and so is the real loss, is
   `aws___retrieve_skill`.
+
+  **CLI-first is the standing preference, not just the outage
+  workaround.** Reach for the CLI under the SSO profile for any AWS
+  action or read; the SigV4 proxy is fallback even when it is healthy,
+  its one unique capability remaining skill retrieval. The reason is
+  spend visibility: the proxy's cost has never been located in the
+  billing data, and a zero-threshold gross-by-service sweep shows no
+  service line for it at all, so the surface to prefer is the one whose
+  cost is visible and free.
+
+  **Where the SSO session comes from.** A session cannot log in for
+  itself — `aws login` is interactive — so the two seat verbs that read
+  cost data, `plan` and `housekeeping`, **gate their own launch** on
+  credentials that resolve: they probe, log in if the probe fails,
+  re-probe, and refuse to launch if that still fails. See
+  [local integrations](local-integrations.md) → "The AWS login gate".
+  The consequence for anything reading cost data from inside a session
+  is that credentials are a launch-time precondition, not something to
+  handle mid-conversation — bearing in mind that
+  `sts:GetCallerIdentity` is authorization-free, so the gate rules out
+  an expired session rather than proving `ce:*` is held.
 
 - **Discover before acting.** Search the AWS docs (via `aws-docs`) and
   retrieve the relevant skill *before* writing a template or running a

@@ -901,6 +901,12 @@ separate coordinates file existed to keep *scripts* out of the profile,
 so with the function bodies now committed there is nothing left for it
 to keep out.
 
+That same file carries the non-secret launch knobs too — `DS_BEDROCK_MODEL`
+(the substrate section) and `DS_AWS_PROFILE` (the AWS login gate) — each
+documented where its consumer is rather than listed twice here. They are
+untracked for different reasons: these `DS_OP_*` refs because they are
+credential coordinates, those because they name one machine's setup.
+
 The committed function reads whatever `DS_OP_*` variables are
 shell-visible, so plain assignments in the profile satisfy it directly.
 
@@ -1228,6 +1234,138 @@ path they were never told.
 base-repo seat verbs, and the **substrate** rule below is
 untouched — the worktree home moved where these sessions run,
 not which provider they run against.
+
+`plan` and `housekeeping` additionally **gate their launch on a usable
+AWS session** — see "The AWS login gate" below. No other verb does.
+
+#### The AWS login gate
+
+**`plan` and `housekeeping` refuse to launch without a usable AWS
+session.** Both read cost and account data — the planning bootstrap
+reports spend, and the upkeep pass runs the monthly permission refresh —
+and `aws login` is **interactive**, so a session that discovers an
+expired token mid-conversation cannot self-heal. Measured: a planning
+session's Cost Explorer read failed on an expired session and the spend
+report had to be deferred a day. Launch time is the one moment
+interactivity is free, because the operator is at the keyboard typing
+the verb anyway.
+
+The gate is `_ds_aws_login` in the committed
+`.claude/shell/init.zsh`, and its shape is three steps:
+
+1. **Probe** with `aws sts get-caller-identity`. A live session stops
+   here, so a valid launch never opens a browser.
+1. **Log in** with `aws login` only if the probe failed.
+1. **Re-probe**, and refuse the launch if *that* fails.
+
+**Step 3 is the load-bearing one.** `aws login` can exit 0 having left a
+profile that still cannot call STS, so the gate trusts the probe rather
+than the login's exit status: the invariant defended is "this session's
+credentials **resolve**", never "a login ran".
+
+**Two bounds on that invariant, because the stronger phrasing is wrong.**
+`sts:GetCallerIdentity` is authorization-free — it succeeds for any
+signature that verifies — so a green gate does **not** prove Cost
+Explorer is readable, and on this account cost access is separately
+gated (a root-only billing toggle, and `PowerUserAccess` does not cover
+everything). And the probe checks validity *now*, not remaining
+lifetime: a token with a minute left passes, while SSO tokens are
+hours-scoped and a planning session is long-lived and resumable. So the
+gate **narrows** the mid-conversation failure rather than closing it.
+Reading the SSO cache's `expiresAt` and re-logging below a threshold
+would close more of it; that is deliberately not built.
+
+`aws login` is the spelling this CLI prescribes for itself. Measured on
+`aws-cli/2.35.22`, an expired session fails naming that exact command:
+
+```text
+Your session has expired. Please reauthenticate using 'aws login'
+```
+
+The older `aws sso login` is deliberately **not** coded as a fallback:
+an unverified command in a committed launcher is worse than a clear
+failure.
+
+**The profile is untracked runtime config.** Set `DS_AWS_PROFILE` in the
+runtime config alongside the `DS_OP_*` coordinates to pin one; left
+unset, the CLI resolves its own default, which is the common case. It is
+not a committed constant because this account's profile names carry the
+account id.
+
+Three deliberate bounds on the gate:
+
+- **An absent `aws` CLI warns and launches anyway.** The gate exists to
+  catch an *expired token*, which is the measured failure. A machine
+  with no `aws` has nothing to log into, and blocking there would make
+  the committed verb unusable on a checkout without AWS. A *failed or
+  dismissed* login is a different condition and does stop the launch.
+
+- **An `aws` too OLD for a top-level `login` takes that same branch.**
+  It is the same "AWS is not set up here" shape, so it warns and
+  launches, naming the older `aws sso login` spelling. Without this it
+  was strictly worse than having no CLI at all: the login failed with
+  `Invalid choice: 'login'`, the re-probe failed, and the verb refused
+  to start — while a machine with no `aws` started fine.
+
+  **The gate detects this AFTER the failed re-probe, not before the
+  login**, with `AWS_PAGER= aws login help`. That ordering is a safety
+  property, not an accident: `help` renders through groff and a pager,
+  the one part of the CLI that can fail for reasons unrelated to whether
+  a subcommand exists. Deciding the *hot* path on it would mean a broken
+  pager on a **current** CLI silently warn-and-launching every expired
+  session — the exact failure the gate exists to catch. Placed after the
+  re-probe it can only widen an outcome that is already a refusal. The
+  price is one stray `Invalid choice` from the attempted login on a
+  genuinely old CLI, which the warning tells the operator to ignore.
+
+- **`architect` is not gated.** It argues design rather than reading
+  cost data, and a browser login is a poor thing to stand between the
+  operator and a design thought. Add it only if an architect session is
+  actually found wanting one.
+
+**One consequence worth knowing: `aws login` blocks on a browser.** That
+is exactly right for a verb the operator types — which `plan` and
+`housekeeping` are, being the seat verbs that open the day. It would be
+wrong for a verb typed into a tab by automation, so note that
+`session_dispatch.py` dispatches `task` verbs, which run on Bedrock and
+are deliberately **not** gated. Keep it that way: gating a dispatched
+verb would hang a tab nobody is watching, with the device code rendered
+there.
+
+It runs **after** `_ds_seat_guard`, which matters: the guard clears an
+`AWS_REGION` inherited from a previous `task` in the same tab, and the
+AWS CLI reads that variable, so probing first would probe under the
+Bedrock launcher's environment rather than the operator's own.
+
+##### "AWS changes take a while to get picked up" — the two mechanisms
+
+The observation is real, but it names **two** different things. It is
+worth asking which of the two has a number worth designing around;
+neither does:
+
+- **SSO session expiry** is a *local* credential cache. `aws login`
+  refreshes it and the result is usable immediately; there is no
+  propagation involved. This is the failure the gate above handles, and
+  it is the one that actually bit a planning session.
+- **IAM policy propagation** is genuine eventual consistency. AWS
+  documents IAM as a distributed, *eventually consistent* service whose
+  caching "can add time", with changes not visible "until the previously
+  cached data times out" — and publishes **no bound**. Its own guidance
+  is to "verify that the changes have been propagated before production
+  workflows depend on them" rather than to wait a fixed interval
+  ([IAM troubleshooting][iam-consistency]).
+
+So the honest conclusion is that there is **no latency figure to design
+around** — AWS declines to give one, and an invented one would be worse
+than none. Verify a permission change by retrying the actual call.
+
+**Not measured here:** the wall-clock for a policy change to take effect
+on this account specifically. The experiment, if it is ever worth
+running, is to attach a trivially-checkable grant and poll the
+corresponding call until it succeeds, recording the elapsed time — one
+data point, and an unbounded mechanism does not become bounded by
+sampling it once, which is precisely why this stayed unmeasured rather
+than being turned into a constant.
 
 #### Substrate: which provider a session runs against
 
@@ -1855,3 +1993,5 @@ through iTerm2's **Python** API, so that file has to be Python. It is
 linted by `ruff` like the rest of the repo's Python, and its ordering
 logic is unit-tested under `make tools-tests` (the `.claude/scripts/`
 discovery root).
+
+[iam-consistency]: https://docs.aws.amazon.com/IAM/latest/UserGuide/troubleshoot.html

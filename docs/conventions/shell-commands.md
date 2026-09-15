@@ -293,6 +293,30 @@ Concrete rules:
   retired with that skill; `add` is the whole interface, and
   `housekeeping` step 7a still prunes accumulated cruft.
 
+  **Where firming lives now**, since the retirement removed the *sweep*
+  and not the *need*, and a practice with no home quietly stops
+  happening:
+
+  - **Ad hoc, per rule** — `allowlist.py add`, called directly. This is
+    the dominant path by a wide margin and needs no ceremony: of 60
+    measured `add` calls, 53 were direct tool calls outside any pass.
+  - **On demand, in bulk** — the `fewer-permission-prompts` skill, when
+    a session has visibly been prompting and you want the backlog
+    mined in one go.
+  - **On a slow clock** — `housekeeping` step 7c, gated to roughly
+    monthly by `allowlist.py refresh-due`. This is the *only*
+    periodic adder, and it exists because the classifier that made the
+    per-session sweep unnecessary is also what makes the remaining
+    churn invisible: nobody sees the prompts any more, so nothing
+    prompts a human to firm them. Most passes pay one cheap call and
+    skip.
+  - **Pruning** — `housekeeping` step 7a, unchanged.
+
+  What is deliberately *not* on that list is a per-session sweep. It
+  was retired on measurement and the slow clock replaces it rather than
+  reinstating it — the bar any future addition here has to clear is
+  net-negative instruction cost, per the subtract-first posture.
+
 ## Patterns that always re-prompt — never author these
 
 The rules above each rule out a class of command. These are the
