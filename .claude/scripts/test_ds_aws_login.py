@@ -52,11 +52,15 @@ _SUITE_OWNED_ENV = (
 # fail and then have `login` repair it — which is the ordinary expired-session
 # path. Defining it as a shell FUNCTION is what keeps the real CLI out of reach:
 # `command -v aws` still finds it, so the presence check passes.
+# Note both stub variables are EXIT CODES, not booleans — `0` is success, so
+# `POST_LOGIN_STS_RC=0` is the repaired case. Spelling them as return codes
+# rather than as `LOGIN_REPAIRS`-style flags keeps the polarity readable at the
+# call site, where an inverted-looking `0` is otherwise easy to misread.
 _STUB = (
     'aws() { print -r -- "$*" >> "$CALLS"; '
     'case "$1" in '
     "sts) return $STS_RC ;; "
-    "login) STS_RC=$LOGIN_REPAIRS; return $LOGIN_RC ;; "
+    "login) STS_RC=$POST_LOGIN_STS_RC; return $LOGIN_RC ;; "
     "esac }; "
 )
 
@@ -69,7 +73,7 @@ class GateHarness(unittest.TestCase):
         self.calls = Path(self._tmp.name) / "calls"
         self.calls.touch()
 
-    def _gate(self, *, sts_rc=0, login_rc=0, login_repairs=0, env=None, stub=True):
+    def _gate(self, *, sts_rc=0, login_rc=0, post_login_sts_rc=0, env=None, stub=True):
         """Run `_ds_aws_login` against the stub and return (rc, recorded calls)."""
         body = _STUB if stub else ""
         script = 'source "%s" 2>/dev/null; %s_ds_aws_login testverb' % (INIT, body)
@@ -81,7 +85,7 @@ class GateHarness(unittest.TestCase):
                 "CALLS": str(self.calls),
                 "STS_RC": str(sts_rc),
                 "LOGIN_RC": str(login_rc),
-                "LOGIN_REPAIRS": str(login_repairs),
+                "POST_LOGIN_STS_RC": str(post_login_sts_rc),
             }
         )
         child_env.update(env or {})
@@ -116,17 +120,17 @@ class ExpiredSessionLogsInOnce(GateHarness):
     """The measured failure: an expired token at launch."""
 
     def test_expired_then_repaired_allows_the_launch(self):
-        result, _ = self._gate(sts_rc=1, login_rc=0, login_repairs=0)
+        result, _ = self._gate(sts_rc=1, login_rc=0, post_login_sts_rc=0)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_expired_then_repaired_logs_in_exactly_once(self):
-        _, recorded = self._gate(sts_rc=1, login_rc=0, login_repairs=0)
+        _, recorded = self._gate(sts_rc=1, login_rc=0, post_login_sts_rc=0)
         logins = [line for line in recorded if line.startswith("login")]
         self.assertEqual(len(logins), 1, recorded)
 
     def test_the_probe_runs_again_after_the_login(self):
         # Two `sts` calls, not one: the second is what actually clears the gate.
-        _, recorded = self._gate(sts_rc=1, login_rc=0, login_repairs=0)
+        _, recorded = self._gate(sts_rc=1, login_rc=0, post_login_sts_rc=0)
         probes = [line for line in recorded if line.startswith("sts")]
         self.assertEqual(len(probes), 2, recorded)
 
@@ -137,20 +141,20 @@ class PostLoginProbeDecides(GateHarness):
     and cannot fix that from the inside."""
 
     def test_login_exits_zero_but_sts_still_fails_refuses(self):
-        result, _ = self._gate(sts_rc=1, login_rc=0, login_repairs=1)
+        result, _ = self._gate(sts_rc=1, login_rc=0, post_login_sts_rc=1)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
     def test_the_refusal_says_why_and_names_the_config_knob(self):
         # A gate that stops a launch has to be self-explanatory, or the operator's
         # next move is to re-run the verb and get the same silence.
-        result, _ = self._gate(sts_rc=1, login_rc=0, login_repairs=1)
+        result, _ = self._gate(sts_rc=1, login_rc=0, post_login_sts_rc=1)
         self.assertIn("NOT launching", result.stderr)
         self.assertIn("DS_AWS_PROFILE", result.stderr)
 
 
 class FailedLoginRefuses(GateHarness):
     def test_a_dismissed_or_failed_login_refuses_the_launch(self):
-        result, _ = self._gate(sts_rc=1, login_rc=1, login_repairs=1)
+        result, _ = self._gate(sts_rc=1, login_rc=1, post_login_sts_rc=1)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
 
@@ -183,7 +187,7 @@ class ConfiguredProfileIsPassedThrough(GateHarness):
 
     def test_the_configured_profile_reaches_both_calls(self):
         _, recorded = self._gate(
-            sts_rc=1, login_rc=0, login_repairs=0, env={"DS_AWS_PROFILE": "ds-dev"}
+            sts_rc=1, login_rc=0, post_login_sts_rc=0, env={"DS_AWS_PROFILE": "ds-dev"}
         )
         self.assertTrue(recorded, "the stub recorded no calls at all")
         for line in recorded:
