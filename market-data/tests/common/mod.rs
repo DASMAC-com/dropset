@@ -73,3 +73,37 @@ pub async fn insert_bucket(
     .await
     .unwrap_or_else(|e| panic!("insert {source}/{product_id} at {published_at}: {e}"));
 }
+
+/// Insert one spot print into `spot_ticks`.
+///
+/// The tick-table counterpart to [`insert_bucket`], and deliberately simpler:
+/// `observed_at` needs no arithmetic because it is the stamp **as recorded** —
+/// the venue's own publish time where the venue publishes one, else the
+/// collector's poll second — where a bucket's publication instant is derived from
+/// its start plus its width. Note that means a tick stamp is not always a
+/// publication instant: the only `spot_ticks` venue that publishes one is Pyth,
+/// so for the peg series it is a poll second, which is exactly the case the
+/// reader's publication-versus-receipt `max()` exists to handle.
+///
+/// The confidence half-width is left NULL. The only venue that publishes one is
+/// parked, and the tick reader deliberately does not project the column — so a
+/// helper that took a confidence would offer tests a value nothing reads.
+pub async fn insert_tick(
+    pool: &PgPool,
+    source: &str,
+    product_id: &str,
+    observed_at: i64,
+    price: f64,
+) {
+    sqlx::query(
+        "INSERT INTO spot_ticks (source, product_id, observed_at, price)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(source)
+    .bind(product_id)
+    .bind(observed_at)
+    .bind(price)
+    .execute(pool)
+    .await
+    .unwrap_or_else(|e| panic!("insert tick {source}/{product_id} at {observed_at}: {e}"));
+}

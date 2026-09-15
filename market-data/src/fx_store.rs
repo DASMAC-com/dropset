@@ -717,10 +717,22 @@ mod tests {
     /// fails at `try_get`, in production, on the price path.
     #[test]
     fn the_query_matches_its_binds_and_its_decoder() {
-        let sql = include_str!("../queries/fx_store_latest.sql");
+        // Scan the STATEMENT, not the file. The header is prose that discusses
+        // the projected columns, so a raw-text scan measures the commentary — and
+        // a header sentence naming a `$N` would read as a bind. Kept identical to
+        // the tick reader's twin test rather than left divergent: the two exist to
+        // share one convention, so their guards should not disagree about what
+        // counts as the statement.
+        let sql = include_str!("../queries/fx_store_latest.sql")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
 
+        // Every placeholder `$1..=$n` exactly once. Asserting only the maximum
+        // would pass `ANY($2) AND ANY($2)`, which returns no rows in production.
         // `$10` must not read as `$1`, so take the digits, not one char.
-        let highest = sql
+        let mut seen: Vec<usize> = sql
             .match_indices('$')
             .filter_map(|(i, _)| {
                 let digits: String = sql[i + 1..]
@@ -729,19 +741,20 @@ mod tests {
                     .collect();
                 digits.parse::<usize>().ok()
             })
-            .max()
-            .expect("the query binds at least one parameter");
-        assert_eq!(highest, 2, "placeholder count drifted from the binds");
+            .collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen, vec![1, 2], "placeholder set drifted from the binds");
 
         // Compare against the statement's PROJECTED OUTPUT NAMES, not against
         // the raw text. A substring sweep is vacuous here twice over, and a
-        // mutation run proved both: the 26-line `--` header discusses "the
-        // bucket close" and "the closing price", so `contains("close")` held
-        // whatever the statement did; and stripping the comments is still not
-        // enough, because `close AS px` also contains "close" while
-        // projecting `px`. Either way `try_get("close")` fails at runtime on
-        // the price path while this test stays green — the exact failure it
-        // exists to prevent.
+        // mutation run proved both: the `--` header discusses "the bucket
+        // close" and "the closing price", so `contains("close")` held whatever
+        // the statement did — which is why the scan above strips it; and
+        // stripping the comments is still not enough, because `close AS px`
+        // also contains "close" while projecting `px`. Either way
+        // `try_get("close")` fails at runtime on the price path while this test
+        // stays green — the exact failure it exists to prevent.
         let select_list = sql
             .split("SELECT DISTINCT ON (source, product_id)")
             .nth(1)

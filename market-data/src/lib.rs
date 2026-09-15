@@ -9,14 +9,21 @@
 //! one. The framework owns the drive loop, cursor persistence, and fan-out, and
 //! `dropset-db-schema` owns every table either of them touches.
 //!
-//! **It is no longer write-only.** Two modules sit on the read side of the same
-//! tables: [`fx_store`] reads the newest closed bucket per source and product
-//! back out of `cex_prices` for a consumer pricing off it, and [`fair_price`]
-//! serializes a composed fair value into the estimator's own output table. Both
+//! **It is no longer write-only.** Three modules sit on the **price** side of the
+//! store rather than the collection side: [`fx_store`] reads the newest closed
+//! bucket per source and product back out of `cex_prices` for a consumer pricing
+//! off it, [`tick_store`] does the same for the newest print in `spot_ticks`, and
+//! [`fair_price`] serializes a composed fair value into the estimator's own
+//! output table — so two read the collectors' tables and the third writes a table
+//! of its own. They
 //! live here for the same reason — a reader of these tables belongs beside their
-//! writers, so a column rename breaks one crate rather than two — and both are
-//! on the **price** path rather than the collection path, which is why their
-//! failure postures differ from a collector's.
+//! writers, so a column rename breaks one crate rather than two — and all three
+//! sit off the collection path, which is why their failure postures differ from a
+//! collector's.
+//!
+//! The two readers are a pair rather than a duplicate: the tables hold different
+//! row shapes, and which collector writes where is not guessable from a venue's
+//! name. [`tick_store`] states the split and why one statement cannot serve both.
 //!
 //! The first feed was the shared Coinbase EURC/USDC reference price
 //! (`data-feeds.md` §9). Two row shapes come out of the collectors, and the
@@ -78,4 +85,5 @@ pub mod pyth_roster;
 pub mod roster;
 pub mod store;
 pub mod supervise;
+pub mod tick_store;
 pub mod ticks;
