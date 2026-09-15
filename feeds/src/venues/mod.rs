@@ -30,7 +30,18 @@
 //! batched quote venue above exposes exactly one inherent `poll` covering its
 //! full roster, and **omits** symbols the venue does not quote rather than
 //! failing the whole batch: a roster with one unlisted token still prices the
-//! rest. That `poll` stays **public** alongside the adapter's [`crate::Source`]
+//! rest.
+//!
+//! **That is a contract on the adapter, not a description of the venues.** Some
+//! venues refuse a batch they cannot fully price, and the adapter is what makes
+//! up the difference — Kraken answers HTTP 200 with an error and no results at
+//! all for a batch holding one unlisted pair, so [`kraken`] isolates the batch
+//! to recover the pairs that do price. When adding a batched venue, test the
+//! one-unlisted-pair case against the live endpoint rather than assuming
+//! per-symbol omission: the failure it produces otherwise is a silent total
+//! loss of the venue, which reads as a quiet market.
+//!
+//! That `poll` stays **public** alongside the adapter's [`crate::Source`]
 //! impl, whose `next` is just the same poll wrapped in a batch, so one adapter
 //! drives the runner *and* answers a caller that wants a single synchronous
 //! reading (a `--dry-run` reachability check) with no runner at all.
@@ -53,6 +64,12 @@
 //! no network: they are unit tested against captured responses, so a venue's
 //! JSON shape stays covered without anything reaching the venue itself. Only
 //! the transport half needs a network, and nothing here tests that.
+//!
+//! The `parse_*` name is the common case rather than the rule — what matters is
+//! that the network-free half is a free function. Where an adapter has to decide
+//! something *about* a response beyond decoding it, that decision is split out
+//! the same way and tested the same way: [`kraken::classify_ticker`] tells a
+//! refused batch from an answered one, which its decoder cannot.
 //!
 //! **Credentials arrive by injection, never by an environment read in here.**
 //! A keyed adapter takes its key as a constructor argument
