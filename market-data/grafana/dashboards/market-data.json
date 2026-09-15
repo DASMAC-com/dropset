@@ -1105,12 +1105,75 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Did a collector keep polling while storing nothing. Every store-sink batch now records how many records it offered and how many rows it actually wrote, so attrition that previously left only a debug log line is visible here.\n\nREAD A RUN, NOT A ROW. A polling collector legitimately offers an empty batch whenever the venue has not published the next bucket yet, so a non-zero empty_intake count is normal and is NOT a fault on its own. The reportable state is a feed whose stored count is zero across the whole window while its market is open, which is what the ordering surfaces first.\n\nALL_DUPLICATE IS NOT ATTRITION, and separating it is the point of the table. Delivery is at-least-once, so after a crash-restart a resumed window re-offers records the writer already holds and every one dedups away. Those batches wrote zero rows and are working exactly as designed \u2014 a detector keyed on \"wrote nothing\" would flag them, which is why they are counted apart from empty_intake rather than with it.\n\nA feed that is not running has no row here at all, the same absence Tick coverage carries: this records batches that happened, so a source parked by decision contributes nothing rather than a zero.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "id": 10,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Did a collector keep polling while storing nothing. Each store-sink batch\n-- records the records it offered and the rows it actually wrote, so attrition\n-- that used to leave only a debug log line is durable and readable here.\n--\n-- READ A RUN, NOT A ROW. A polling collector legitimately offers an empty\n-- batch whenever the venue has not published the next bucket yet, so a\n-- non-zero empty_intake count is ordinary. The reportable state is a feed\n-- whose stored count is zero for the whole window while its market is open,\n-- which is what the ordering below puts at the top.\n--\n-- ALL_DUPLICATE IS NOT ATTRITION. Delivery is at-least-once, so a resumed\n-- window re-offers records the writer already holds and every one dedups\n-- away. Those batches wrote zero rows and are behaving exactly as designed,\n-- which is why they are counted apart from empty_intake rather than with it.\n--\n-- The aggregate is repeated in the ORDER BY rather than reusing the output\n-- name: Postgres exposes an output column name to ORDER BY only as a bare\n-- name, not inside an expression, so the alias would resolve against the\n-- table and fail.\n--\n-- A feed that is not running has no row here at all, the same absence Tick\n-- coverage carries: this table records batches that happened, so a source\n-- parked by decision contributes nothing rather than a zero.\nSELECT\n  feed,\n  count(*) AS batches,\n  count(*) FILTER (WHERE outcome = 'stored') AS stored,\n  count(*) FILTER (WHERE outcome = 'all_duplicate') AS all_duplicate,\n  count(*) FILTER (WHERE outcome = 'empty_intake') AS empty_intake,\n  sum(written) AS rows_written,\n  max(observed_at) FILTER (WHERE outcome = 'stored') AS last_stored\nFROM feed_batch_ingestion\nWHERE $__timeFilter(observed_at)\nGROUP BY feed\nORDER BY (count(*) FILTER (WHERE outcome = 'stored') = 0) DESC, feed\n",
+          "refId": "A"
+        }
+      ],
+      "title": "Batch ingestion by feed (did a collector store nothing)",
+      "type": "table"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 44
+        "y": 52
       },
       "id": 102,
       "panels": [],
@@ -1226,7 +1289,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 45
+        "y": 53
       },
       "id": 4,
       "options": {
@@ -1299,7 +1362,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 54
+        "y": 62
       },
       "id": 3,
       "options": {
