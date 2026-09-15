@@ -299,7 +299,7 @@ async fn a_constraint_violation_is_permanent_not_transient() {
     );
     assert_eq!(err.class(), "permanent");
 
-    // And 0014's ordering CHECK, from the other direction: an inverted bound
+    // And 0014's bounds CHECK, from the other direction: an inverted bound
     // pair is a misconfiguration, not a transient.
     let inverted = LegStaleness {
         tape: Duration::from_secs(300),
@@ -312,4 +312,18 @@ async fn a_constraint_violation_is_permanent_not_transient() {
         !err.retryable(),
         "an inverted bound pair is permanent: {err}"
     );
+
+    // The other half of that CHECK, and the one an ordering-only constraint
+    // would have let through: a zero bound ages every source of its class out
+    // instantly, `FairValueConfig::validate` rejects it, and `0 >= 0` satisfies
+    // an ordering test. Both halves of the validator have to be restated or the
+    // database accepts a configuration the engine would have refused.
+    let zeroed = LegStaleness {
+        tape: Duration::ZERO,
+        reference: Duration::ZERO,
+    };
+    let err = publish(&pool, 1_700_000_402, "EUR-USD", &fv, zeroed)
+        .await
+        .expect_err("a zero staleness bound must be refused");
+    assert!(!err.retryable(), "a zero bound is permanent: {err}");
 }

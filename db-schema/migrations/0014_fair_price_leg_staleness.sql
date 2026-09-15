@@ -56,11 +56,16 @@ ALTER TABLE fair_price
     -- nobody is watching — which is why it is recorded separately and not
     -- assumed equal to the tape bound.
     ADD COLUMN leg_stale_reference_secs BIGINT NOT NULL,
-    -- Equal bounds are degenerate rather than wrong, so they are accepted; an
-    -- inverted pair is a misconfiguration the engine's own config validation
-    -- already rejects, restated here so a hand-written row cannot record one.
+    -- Both halves of what `FairValueConfig::validate` rejects, restated so a
+    -- hand-written row cannot record a configuration the engine would have
+    -- refused: a zero bound (which would age every source of that class out
+    -- instantly), and an inverted pair (which would let a daily fix age out
+    -- faster than a live tape — the exact inversion the class split exists to
+    -- remove). Equal bounds are degenerate rather than wrong, so `>=` accepts
+    -- them, matching the validator's own `reference < tape` test.
     ADD CONSTRAINT fair_price_leg_stale_bounds_ordered
-        CHECK (leg_stale_reference_secs >= leg_stale_tape_secs);
+        CHECK (leg_stale_tape_secs > 0
+           AND leg_stale_reference_secs >= leg_stale_tape_secs);
 
 COMMENT ON COLUMN fair_price.leg_stale_tape_secs IS
     'Configured age bound for a tape-class source on this tick, in seconds. '
