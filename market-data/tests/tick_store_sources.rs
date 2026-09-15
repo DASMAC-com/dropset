@@ -17,11 +17,20 @@
 //! cargo test -p dropset-market-data -- --ignored
 //! ```
 //!
-//! **Operator-run, not a merge gate** — CI's only `--run-ignored` invocation
-//! selects two other crates, so nothing here executes in the merge queue. The
-//! wiring is tracked separately.
+//! **Operator-run, not a merge gate — and be precise about what that costs.**
+//! CI's only `--run-ignored` invocation selects two other crates, so nothing here
+//! executes in the merge queue. That leaves the CI-visible set for this reader as
+//! the unit tests alone, which cover the ageing delegation, the placeholder set,
+//! the projected names and the table name — and **nothing that requires a
+//! server**. Concretely, these mutations merge green: `DESC` dropped from the
+//! ordering, either `WHERE` conjunct dropped, `$1`/`$2` transposed, or a decoder
+//! column renamed to one the statement does not project. Wiring this crate into
+//! the `--run-ignored` job is the fix and is not attempted here; until it lands,
+//! the guarantees below hold only when an operator runs them.
 
 mod common;
+
+use std::time::Duration;
 
 use common::{insert_tick, start_pg};
 use dropset_market_data::tick_store::{SpotTickSource, SOURCE_KRAKEN, USDC_USD_PRODUCT};
@@ -46,7 +55,7 @@ async fn the_statement_runs_and_takes_the_newest_print() {
     .await;
     // A newer print for the same series, which must win. Inserted second so a
     // reader that returned the first row rather than the newest still passes the
-    // count assertion below and fails only here.
+    // count assertion below and fails only on the stamp.
     insert_tick(
         &pool,
         SOURCE_KRAKEN,
@@ -59,7 +68,7 @@ async fn the_statement_runs_and_takes_the_newest_print() {
     // bearing rather than incidentally satisfied by an empty table.
     insert_tick(&pool, SOURCE_KRAKEN, "EURC-USD", 1_700_000_060, 1.14).await;
 
-    let rows = SpotTickSource::peg("test:peg", pool.clone())
+    let rows = SpotTickSource::peg(pool.clone())
         .latest()
         .await
         .expect("the spot_ticks statement runs");
@@ -102,7 +111,6 @@ async fn an_explicit_roster_reaches_another_series() {
     .await;
 
     let rows = SpotTickSource::new(
-        "test:mixed",
         pool.clone(),
         vec!["coinbase".to_string(), SOURCE_KRAKEN.to_string()],
         vec!["EURC-USDC".to_string(), USDC_USD_PRODUCT.to_string()],
@@ -117,6 +125,56 @@ async fn an_explicit_roster_reaches_another_series() {
         .find(|r| r.product_id == "EURC-USDC")
         .expect("the ticker series");
     assert_eq!(eurc.price, 1.1410);
+}
+
+/// The two lists are a **cross product**, not a zip of pairs.
+///
+/// Pinned because the constructor's parameter names invite the opposite reading,
+/// and because the mistake is silent rather than loud: a multi-leg caller that
+/// assumed pair-wise semantics would bind a leg to another venue's print and
+/// still see a plausible number. The fixture is the real case rather than a
+/// contrived one — `kraken` genuinely writes both `USDC-USD` and `EURC-USDC`.
+///
+/// If this reader ever adopts a pair-wise predicate, this test is the one that
+/// should fail and be rewritten, which is the point of asserting the current
+/// semantics explicitly rather than leaving them implied.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn the_two_rosters_form_a_cross_product() {
+    let (_pg, pool) = start_pg().await;
+
+    insert_tick(
+        &pool,
+        SOURCE_KRAKEN,
+        USDC_USD_PRODUCT,
+        1_700_000_060,
+        0.9999,
+    )
+    .await;
+    insert_tick(&pool, SOURCE_KRAKEN, "EURC-USDC", 1_700_000_060, 1.1410).await;
+    insert_tick(&pool, "coinbase", "EURC-USDC", 1_700_000_060, 1.1412).await;
+
+    let rows = SpotTickSource::new(
+        pool.clone(),
+        vec![SOURCE_KRAKEN.to_string(), "coinbase".to_string()],
+        vec![USDC_USD_PRODUCT.to_string(), "EURC-USDC".to_string()],
+    )
+    .latest()
+    .await
+    .expect("read the cross product");
+
+    // Three of the four (source, product) combinations exist; `coinbase`/
+    // `USDC-USD` was never written. A pair-wise reader would have returned two.
+    assert_eq!(
+        rows.len(),
+        3,
+        "every existing combination comes back, not just the zipped pairs"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.source == SOURCE_KRAKEN && r.product_id == "EURC-USDC"),
+        "the off-diagonal kraken/EURC-USDC row is returned — a caller must filter it"
+    );
 }
 
 /// A source outside the requested set is not returned, even for a requested
@@ -142,7 +200,7 @@ async fn a_source_outside_the_roster_is_not_returned() {
     .await;
     insert_tick(&pool, "coinbase", USDC_USD_PRODUCT, 1_700_000_120, 1.5).await;
 
-    let rows = SpotTickSource::peg("test:peg", pool.clone())
+    let rows = SpotTickSource::peg(pool.clone())
         .latest()
         .await
         .expect("read the peg series");
@@ -164,11 +222,41 @@ async fn a_source_outside_the_roster_is_not_returned() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn an_empty_result_is_not_an_error() {
     let (_pg, pool) = start_pg().await;
-    let rows = SpotTickSource::peg("test:peg", pool.clone())
+    let rows = SpotTickSource::peg(pool.clone())
         .latest()
         .await
         .expect("an empty table is a successful read");
     assert!(rows.is_empty());
+}
+
+/// An EMPTY roster binds cleanly and returns nothing, rather than erroring.
+///
+/// Worth pinning because the two outcomes call for different consumer handling
+/// and the constructor's docs now promise this one: an untyped-empty-array error
+/// would be a loud misconfiguration signal, while a silent empty result is
+/// indistinguishable from no data. It is the second, so a consumer assembling a
+/// per-market roster has to treat an empty leg list as its own bug.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn an_empty_roster_reads_clean_and_returns_nothing() {
+    let (_pg, pool) = start_pg().await;
+    insert_tick(
+        &pool,
+        SOURCE_KRAKEN,
+        USDC_USD_PRODUCT,
+        1_700_000_060,
+        0.9999,
+    )
+    .await;
+
+    let rows = SpotTickSource::new(pool.clone(), vec![], vec![])
+        .latest()
+        .await
+        .expect("an empty bound array is valid SQL, not an error");
+    assert!(
+        rows.is_empty(),
+        "an empty roster matches nothing even though a row exists"
+    );
 }
 
 /// A row's age comes from the shared convention, through a real round trip.
@@ -190,13 +278,13 @@ async fn a_decoded_row_ages_from_its_stored_stamp() {
     )
     .await;
 
-    let rows = SpotTickSource::peg("test:peg", pool.clone())
+    let rows = SpotTickSource::peg(pool.clone())
         .latest()
         .await
         .expect("read the peg series");
     let reading = rows[0]
-        .reading(1_700_000_060, std::time::Duration::from_secs(1))
+        .reading(1_700_000_060, Duration::from_secs(1))
         .expect("an honest row is offered");
-    assert_eq!(reading.age, std::time::Duration::from_secs(60));
+    assert_eq!(reading.age, Duration::from_secs(60));
     assert_eq!(reading.value, 0.9999);
 }

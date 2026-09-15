@@ -3,8 +3,17 @@
 --
 -- The venue and pair lists are both the caller's, so this is not FX-specific
 -- despite the file name: the maker reads its intraday FX anchor through it, and
--- the fair-value estimator reads the crypto reference and the USDC/USD peg the
--- same way. Nothing here constrains which sources may be asked for.
+-- the fair-value estimator reads the crypto reference the same way. Nothing here
+-- constrains which sources may be asked for.
+--
+-- **But it does constrain which TABLE**, and that bounds the sentence above.
+-- This statement reads `cex_prices` only, and the USDC/USD peg series is written
+-- to `spot_ticks` by `market-data-kraken` and to `cex_prices` by nobody — so the
+-- peg leg is NOT reachable through this reader, however unconstrained the source
+-- list is. `queries/spot_ticks_latest.sql` is the counterpart that reaches it.
+-- (An earlier version of this comment claimed the peg was readable here. It was
+-- not; the corrected claim lives here rather than only in the other file, so a
+-- reader of this one is not misled.)
 --
 -- Why a consumer reads this rather than holding its own OANDA / Twelve Data
 -- clients: those venues are metered and keyed, the collectors already poll

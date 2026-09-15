@@ -19,15 +19,27 @@
 -- fresh-but-uncertain regime it would feed is out of scope — so reading the
 -- column here would wire a pathway nothing consumes and invite a caller to
 -- treat a NULL as a zero half-width, which reads as perfect certainty. The
--- column is unread by decision, not by oversight.
+-- column is unread by decision, not by oversight, and a unit test in
+-- `tick_store.rs` asserts that decision so it cannot lapse silently.
 --
 -- `DISTINCT ON` over the primary key's leading columns, so this walks per series
--- and stops at the first row: one row per series.
+-- and stops at the first row: one row per series. The PK is
+-- `(source, product_id, observed_at)`, so `observed_at` is unique within a
+-- series and there is no tie for `DISTINCT ON` to break arbitrarily.
 --
--- Unlike the candle reader there is no bucket-width hazard to order around — a
--- tick's stamp *is* its publication instant, so `observed_at DESC` is both the
--- newest row and the newest print. The consumer still refuses a
--- future-stamped one and floors its age on the read.
+-- Unlike the candle reader there is no bucket-width hazard to order around — no
+-- column here can carry a second time base, so `observed_at DESC` is both the
+-- newest row and the newest print.
+--
+-- **Known limitation, shared with the candle reader: "newest" is the newest
+-- STAMP, not the newest plausible one.** A row stamped implausibly far ahead
+-- wins this ordering, and the consumer then refuses it as forward-skewed —
+-- leaving no way to reach the honest row beneath it, so that series reads as
+-- absent until wall-clock time catches up. `observed_at` has no upper-bound
+-- CHECK and is part of the PK, so the row cannot be corrected in place. Bounding
+-- it here (`AND observed_at <= $3`) would fix it, and is deliberately not done
+-- in this change: the candle reader has the identical exposure, and the two
+-- should not diverge on the convention they exist to share.
 SELECT DISTINCT ON (source, product_id)
     source,
     product_id,
