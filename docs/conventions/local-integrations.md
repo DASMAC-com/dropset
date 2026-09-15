@@ -1023,7 +1023,9 @@ whole arrangement exists to make protective. The session's
 role: `eng-*` implementers, `plan-*` planning, `ceo-*`
 architecture, `exp-*` research.
 
-There is **no branch to rename and no PR to open.** A spec file,
+There is **no branch to rename and no PR to open** — the worktree does
+arrive on a `worktree-<tag>` branch, as any git worktree must; these
+sessions simply never rename, commit to, or push it. A spec file,
 when one is warranted at all, sits **untracked** in the worktree
 at `docs/specs/<issue-number>-<topic>.md` — a bare number,
 matching the existing `docs/specs/1313-mainnet-laptop.md`; the
@@ -1451,9 +1453,11 @@ drives the real zsh functions.
   by role: `eng-*` implementers, `plan-*` planning, `ceo-*`
   architecture, `exp-*` research. The topic is validated to lowercase
   letters, digits and dashes, since it reaches a session name, a
-  **worktree** and a filename — the worktree home is what makes that
-  shape binding rather than merely tidy. (No branch: nothing is
-  committed from these sessions.)
+  **worktree**, a **branch** and a filename — the worktree home is what
+  makes that shape binding rather than merely tidy. The branch exists
+  because `claude -w` creates a git worktree and a git worktree always
+  carries one (it arrives as `worktree-<tag>`); what these sessions
+  never do is **rename, commit to, or push** it.
 
   All four standing verbs share one core, `_ds_session`, which takes
   an already-computed id — `plan` and `housekeeping` hand it a daily id,

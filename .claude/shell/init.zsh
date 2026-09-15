@@ -419,7 +419,8 @@ _ds_session() {
     # rather than letting it read as a normal reopen.
     if [[ -n "$worktree" && ! -d "$_DS_REPO/.claude/worktrees/$worktree" ]]; then
       print -u2 "dropset: worktree $worktree is gone — resuming in the base" \
-        "checkout; re-create it before editing any file this session references"
+        "checkout. Re-creating it restores TRACKED files only; an untracked" \
+        "spec file written there is not recoverable, so work from Linear."
     fi
     claude --resume "$sid" --permission-mode auto "${model_flag[@]}"
   else
@@ -923,10 +924,13 @@ _ds_task_resume() {
 # so an explore session inherits every mechanism already keyed on `eng-###`:
 # `cdds 1196` reaches it, `housekeeping` prunes it on the issue's status type,
 # and the substrate marker records it (written below, so that is a fact rather
-# than an aspiration). A worktree named anything else would be invisible to
-# exactly the cleanup machinery this ruling exists to make protective. The
-# session's DISPLAY name stays `exp-<n>` so the fleet listing still reads by
-# role: `eng-*` implementers, `plan-*`, `ceo-*` architecture, `exp-*` research.
+# than an aspiration). A worktree named anything else is invisible to all three.
+# Note the rationale is those named benefits — addressability — and NOT
+# "protecting the worktree": its contents are expendable by construction, and
+# framing the eng-keying as protection would make the worktree sound precious,
+# which the convention doc explicitly warns against. The session's DISPLAY name
+# stays `exp-<n>` so the fleet listing still reads by role: `eng-*`
+# implementers, `plan-*`, `ceo-*` architecture, `exp-*` research.
 #
 # ONE CAVEAT, stated because an earlier draft of this comment claimed the
 # benefit without it: `fleet` and `task resume <n>` do REACH such a session, but

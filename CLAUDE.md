@@ -71,8 +71,11 @@ seat quality, different job — so different sessions, not a mode
 toggle. Launched with **`architect <topic>`** (model-pinned,
 idempotent, one resumable session per design thread, named
 `ceo-<topic>`). It bootstraps minimally — the Planning document and
-the track umbrellas, nothing else — and writes **nothing to the
-board**: the board monopoly stays with the planning session, and the
+the track umbrellas, nothing else — and makes **no scheduling
+writes** to the board: it files its own Linear tasks and moves its
+own governing issue to In Review, but places no edges,
+re-prioritizes nothing, closes nothing and touches no other issue.
+The **scheduling** monopoly stays with the planning session, and the
 architect hands its conclusions over through the Planning document's
 `Notes for the next planning session` heading **and** a direct
 message. Detail: the `architect` skill.

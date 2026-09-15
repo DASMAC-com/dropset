@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Run an architect session — the long-horizon design conversation, in the same seat quality as a planning session but doing a different job. Bootstraps minimally (the Planning document and the track umbrellas, nothing else), holds the conversation at decision altitude with deep code reads allowed and big surveys delegated, and writes NOTHING to the board: it hands its conclusions to the planning session through the Planning document's notes section and a direct message, naming the tracks its decisions likely affect without touching them. Its durable output is Linear tasks; when a longer-term repo artifact is warranted it also iterates an on-disk spec FILE the operator edits in place — not a conversation — read back once per round with greppable NEEDS- markers on the open items. Runs in its own worktree on the mandated model, launched with `architect <topic>`, but is READ-ONLY toward the repo: the worktree is temporary working state, there are no commits and no PR, and any repo-bound artifact lands via a follow-up worker task.
+description: Run an architect session — the long-horizon design conversation, in the same seat quality as a planning session but doing a different job. Bootstraps minimally (the Planning document and the track umbrellas, nothing else), holds the conversation at decision altitude with deep code reads allowed and big surveys delegated, and makes no SCHEDULING writes to the board — it files its own Linear tasks and moves its own governing issue to In Review, but places no edges, re-prioritizes nothing, closes nothing and touches no other issue; it hands its conclusions to the planning session through the Planning document's notes section and a direct message, naming the tracks its decisions likely affect without touching them. Its durable output is Linear tasks; when a longer-term repo artifact is warranted it also iterates an on-disk spec FILE the operator edits in place — not a conversation — read back once per round with greppable NEEDS- markers on the open items. Runs in its own worktree on the mandated model, launched with `architect <topic>`, but is READ-ONLY toward the repo: the worktree is temporary working state, there are no commits and no PR, and any repo-bound artifact lands via a follow-up worker task.
 user-invocable: true
 model: fable
 ---
@@ -145,22 +145,46 @@ cheaper** than `plan`, and every token not spent on board
 state is context available for the actual thinking — which is
 the entire product of this session.
 
-## Zero board writes, ever
+## No SCHEDULING writes — but it files its own output
 
-**This session files nothing, edges nothing, re-prioritizes
-nothing, and closes nothing.**
+**The prohibition is on board *structure*, not on recording
+what this session produced.** Getting that boundary right
+matters, because the two halves used to be stated as one
+absolute rule and they are not the same thing.
 
-The board monopoly stays with the planning session. Two
-sessions writing the board recreates exactly the
+**What this session may write:**
+
+- **Its own Linear tasks** — the durable record of what it
+  decided. This is not a concession, it is the mechanism the
+  whole design rests on: durable state must reach Linear
+  *before* the handoff, so a session that could not file would
+  have no way to make its output durable.
+- **Its own governing issue's state**, In Progress → In Review
+  at handoff. Never Done — that is the operator's.
+
+**What it must not write, and this is the real monopoly:**
+
+- **no blocking edges**, ever;
+- **no re-prioritizing**, no closing, no milestone changes;
+- **nothing on another issue** — not its state, not its body.
+
+The scheduling monopoly stays with the planning session. Two
+sessions scheduling the board recreates exactly the
 conflicting-conclusions problem the monopoly exists to
 prevent — and it would be worse here, because this session's
 conclusions are the ones most likely to be sweeping.
 
-That includes the tempting cases: an issue this conversation
-obviously obsoletes, a priority that is obviously wrong, a
-blocking edge that obviously belongs. Obvious is not the
-test; **ownership** is. Name them in the handoff and let the
+That still forbids the tempting cases: an issue this
+conversation obviously obsoletes, a priority that is obviously
+wrong, a blocking edge that obviously belongs. Obvious is not
+the test; **ownership** is. Name them in the handoff and let the
 planning session execute.
+
+(An earlier version read "this session **files nothing**, edges
+nothing, re-prioritizes nothing, and closes nothing." The first
+clause is retired: it forbade the act that makes this session's
+output durable, which the 2026-09-14 ruling requires. The other
+three stand unchanged.)
 
 ## Flag, don't touch
 
@@ -300,18 +324,25 @@ read-back loop was still open, with nothing recognizing the
 work as live. Done is the operator's word, not yours.
 
 If a spec file is named after an issue and no number governs
-the thread yet, **ask for one** — this session writes nothing
-to the board, so it cannot file its own. That is a legitimate
-pre-draft `AskUserQuestion`. It is also avoidable: a design
-whose output is Linear tasks needs no filename at all.
+the thread yet, **ask which issue governs** rather than picking
+one. Not because this session cannot file — it files its own
+tasks — but because *which* issue a design thread hangs off is
+the operator's call, and a self-created umbrella is the kind of
+board structure the monopoly above reserves. That is a
+legitimate pre-draft `AskUserQuestion`, and it is avoidable
+anyway: a design whose output is Linear tasks needs no filename
+at all.
 
 ### Lifecycle: nothing to close, nothing to clean
 
 There is **no PR to close and no branch to delete**, so the
 cleanup is trivial by construction. When `plan` dispatches the
 work, it folds the ratified spec into the implementing issue's
-body and deletes the file; the worktree can go whenever, since
-its contents are expendable.
+body and deletes the file — **if there was a file at all**;
+where the design landed as Linear tasks, which is the common
+case, there is nothing to fold and that step is a no-op. Either
+way the worktree can go whenever, since its contents are
+expendable.
 
 This replaces a "the fold is the cleanup — close the PR and
 remove the worktree in one act" rule from the 09-11 shape. With
