@@ -33,6 +33,12 @@
 //! ```sh
 //! cargo test -p dropset-market-data -- --ignored
 //! ```
+//!
+//! **These are operator-run, not a merge gate.** CI's only `--run-ignored`
+//! invocation selects two other crates, so nothing here executes in the merge
+//! queue — the transposition proof below holds only as often as somebody runs
+//! it. Stated so a reader does not mistake a written test for a gated one; the
+//! wiring is tracked separately.
 
 mod common;
 

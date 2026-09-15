@@ -16,6 +16,10 @@
 //! ```sh
 //! cargo test -p dropset-market-data -- --ignored
 //! ```
+//!
+//! **Operator-run, not a merge gate** — CI's only `--run-ignored` invocation
+//! selects two other crates, so nothing here executes in the merge queue. The
+//! wiring is tracked separately.
 
 mod common;
 

@@ -9,6 +9,9 @@
 #
 # So the behavior is asserted directly, by
 # `fair_price_leg_stale_bounds_reject_what_they_name` in that same test file.
+# Note that test is `#[ignore]`d and CI's only `--run-ignored` invocation selects
+# other crates, so it is operator-run rather than a merge gate — the assertion
+# exists, but do not read this manifest as saying the queue checks it.
 # Note what the existence probe would NOT catch even for the columns: they are
 # NOT NULL, so a later migration making one nullable would keep the relation
 # intact and quietly re-admit the unrecorded-bound rows this migration exists to
