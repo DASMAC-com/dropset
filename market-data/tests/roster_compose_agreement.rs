@@ -57,18 +57,27 @@
 //! **outermost** variable without someone remembering to declare it, the same
 //! argument `every_rostered_service_is_pinned` makes for a new collector.
 //!
-//! **The bound on that, stated because the obvious reading overstates it.**
-//! Sharing an outermost variable is not the only way two services can be
-//! co-overridden: `alphavantage` and `twelvedata` share `FX_PRODUCT_IDS` as
-//! their *second* entry, each writes its own copy of that variable's default
-//! literal, and those two copies are **not** compared by anything here.
-//! Measured: widening `alphavantage`'s compose literal together with its own
-//! Rust constant, leaving `twelvedata` narrow, leaves every test in this file
-//! green. That residue is deliberately left alone rather than folded in,
-//! because it needs a *different* assertion — both those values are folded
-//! (`>-`) scalars, so byte-identity would fail on a re-fold that changed no
-//! roster, and set-equality plus `entry_count` is the right test there. Adding
-//! it is a separate change with its own design question.
+//! **A fourth property: a shared roster BELOW the outermost variable couples
+//! its services too.** Sharing an outermost variable is not the only way two
+//! services can be co-overridden: `alphavantage` and `twelvedata` chain through
+//! `FX_PRODUCT_IDS` as their *second* entry, and each writes its own copy of
+//! that variable's default literal out in compose — so the same silent
+//! de-rostering is available one level down, where the grouping above cannot
+//! see it. Measured before it was closed: widening `alphavantage`'s compose
+//! literal together with its own Rust constant, leaving `twelvedata` narrow,
+//! left every other test in this file green.
+//! `every_shared_chained_roster_agrees` is what closes it.
+//!
+//! **It compares SETS where the third property compares bytes**, and that is
+//! forced rather than stylistic: both these values are folded (`>-`) scalars,
+//! so an unwrapped default carries whatever whitespace the YAML fold's break
+//! leaves behind. Both breaks fall at the same token today, but those source
+//! lines are 70 and 68 columns, so either could legally move under the
+//! 80-column rule on a pure reformat that changed no roster at all — at which
+//! point byte-identity would fail spuriously. Measured both directions when the
+//! test was written: widening one venue's copy fails it and nothing else, while
+//! moving one venue's fold break a pair earlier, changing no roster, leaves the
+//! file green.
 //!
 //! **This file used to have a second, much weaker mode**, and what it cost is
 //! worth recording. The three keyed FX venues shared one
@@ -481,7 +490,8 @@ fn every_shared_override_group_agrees() {
         // The outermost entry is the service's own override variable. A later
         // entry is a shared roster this service chains through — also
         // operator-settable, and so a real coupling, but one this grouping does
-        // not cover; the module docs state that bound and why.
+        // not cover: `every_shared_chained_roster_agrees` is what covers those,
+        // and the module docs say why it needs a different assertion.
         let Some(&override_var) = wiring.variable_chain.first() else {
             continue;
         };
@@ -528,6 +538,108 @@ fn every_shared_override_group_agrees() {
                  unset state is the only one where their rosters can differ at \
                  all, and here they do. Widen both together, or give them \
                  separate override variables if the two are meant to diverge",
+            );
+        }
+    }
+}
+
+/// The fourth property: services chaining through one shared roster variable
+/// agree on that variable's default, even though it is not their outermost.
+///
+/// **Set-equality rather than the byte-identity above**, and the module docs
+/// carry the reasoning: both of today's members hold their copy in a folded
+/// (`>-`) scalar, whose unwrapped default carries whitespace decided by where
+/// the fold breaks, so byte-identity would fail on a pure reformat that changed
+/// no roster. Sets are what survive `parse_roster` anyway.
+///
+/// **No entry-count assertion here, deliberately.** The one thing set-equality
+/// cannot see is a pair named twice, and
+/// `the_extractors_actually_found_every_roster` already pins
+/// `entry_count == pairs().len()` for the compose side of every service in
+/// `wirings()` — both members included. Duplicating it here would assert the
+/// same property from a worse position.
+///
+/// **The bound, and why it is asserted rather than merely written down.**
+/// [`compose_defaults`] resolves each value to its *innermost* default, so this
+/// compares copies of the shared variable's own default only while that
+/// variable is the innermost link in every member's chain — true of both
+/// members today, since each chain is exactly two deep. A three-deep chain
+/// (`${A:-${B:-${C:-…}}}`) grouped on `B` would silently compare `C`'s literal
+/// instead, which is precisely the pass-for-the-wrong-reason this file exists to
+/// prevent, so the loop below fails loudly instead of assuming it.
+#[test]
+fn every_shared_chained_roster_agrees() {
+    let compose = compose_defaults();
+    let mut groups: BTreeMap<&str, Vec<(&str, &'static [&'static str])>> = BTreeMap::new();
+    for wiring in wirings() {
+        // Skip the outermost entry — that is the service's own override
+        // variable, and `every_shared_override_group_agrees` owns it. Every
+        // later entry is a shared roster this service chains through.
+        for &shared_var in wiring.variable_chain.iter().skip(1) {
+            groups
+                .entry(shared_var)
+                .or_default()
+                .push((wiring.service, wiring.variable_chain));
+        }
+    }
+    let shared: BTreeMap<&str, Vec<(&str, &'static [&'static str])>> = groups
+        .into_iter()
+        .filter(|(_, members)| members.len() > 1)
+        .collect();
+    // Same argument as the sibling test's guard: `variable_chain` is declared
+    // rather than extracted, so this is not a broken-extractor canary. It fires
+    // when today's only chained group stops being one, which is a deliberate act
+    // that should have to say so here.
+    assert!(
+        !shared.is_empty(),
+        "no shared roster variable is chained through by more than one service, \
+         but `alphavantage` and `twelvedata` both chain through \
+         `FX_PRODUCT_IDS`. Either they were de-coupled from it, one of them left \
+         `wirings()`, or the shared variable moved into the outermost slot — \
+         where `every_shared_override_group_agrees` covers it instead. \
+         Re-point this at whatever roster is now shared; delete it only if no \
+         service can chain through one again",
+    );
+    for (shared_var, members) in shared {
+        let mut rosters = members.iter().map(|(service, chain)| {
+            assert_eq!(
+                chain.last(),
+                Some(&shared_var),
+                "service `{service}` chains through `{shared_var}`, but that is \
+                 not the innermost link in its chain {chain:?} — so the compose \
+                 default read here is some other variable's literal and this \
+                 comparison would pass for the wrong reason. Compare the \
+                 `{shared_var}` default directly instead of resolving to the \
+                 innermost one",
+            );
+            let roster = compose.get(*service).unwrap_or_else(|| {
+                panic!(
+                    "docker-compose.yml defines no PRODUCT_IDS default for \
+                     service `{service}` — add one, or drop that row from \
+                     `wirings()`"
+                )
+            });
+            (*service, roster)
+        });
+        let (first_service, first_roster) = rosters
+            .next()
+            .expect("a shared group has two or more members");
+        for (service, roster) in rosters {
+            assert_eq!(
+                pairs(first_roster),
+                pairs(roster),
+                "services `{first_service}` and `{service}` both chain through \
+                 `{shared_var}`, so an operator setting it reaches both — yet \
+                 their own copies of its default disagree. Only in \
+                 `{first_service}`: {:?}; only in `{service}`: {:?}. Widen both \
+                 copies together, or stop chaining one of them through \
+                 `{shared_var}` if the two are meant to diverge",
+                pairs(first_roster)
+                    .difference(&pairs(roster))
+                    .collect::<Vec<_>>(),
+                pairs(roster)
+                    .difference(&pairs(first_roster))
+                    .collect::<Vec<_>>(),
             );
         }
     }
