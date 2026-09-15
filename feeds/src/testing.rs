@@ -15,6 +15,7 @@
 //! but every consumer does, and an ungated module would be dead code under a
 //! `--no-default-features` test build, which CI compiles with `-D warnings`.
 
+use std::sync::PoisonError;
 use tokio::sync::oneshot;
 
 /// Answer one request on loopback with `response`, returning the port to aim a
@@ -89,6 +90,86 @@ pub(crate) async fn serve_once_capturing(response: Vec<u8>) -> (u16, oneshot::Re
         socket.write_all(&response).await.unwrap();
     });
     (port, rx)
+}
+
+/// Answer a **sequence** of requests on one port, capturing every request head.
+///
+/// [`serve_once_capturing`] covers an adapter whose poll is one request. It
+/// cannot cover one whose poll *fans out* — Kraken's batch refusal falls through
+/// to an isolation pass of one request per pair, and the behavior worth testing
+/// is precisely the relationship between those requests and the batch that comes
+/// after them. A per-request port cannot express that: the source holds one base
+/// URL, and what needs asserting is that request N+1 changed because of what
+/// request N answered.
+///
+/// **The heads come back through a shared `Vec` rather than a channel**, unlike
+/// the single-shot helpers. A `oneshot` can only carry the batch after the last
+/// response is written, so a caller that awaited it before issuing its requests
+/// would deadlock — and with a sequence the caller cannot always know how many
+/// requests its own source will make. Reading a `Mutex` after the polls have
+/// returned has no such ordering hazard.
+///
+/// **Both connection strategies are served**, which is what makes this
+/// deterministic rather than merely usually-green: the outer loop accepts a new
+/// connection and the inner one keeps answering on it until the peer hangs up. A
+/// pooling client (reqwest reuses a keep-alive connection when the response
+/// carries a `Content-Length`, which [`json_response`] does) is served on one
+/// socket; a client that opens a fresh connection per request is served too.
+/// Handling only one of the two is the shape of a test that passes until an
+/// HTTP-client upgrade changes its pooling.
+///
+/// Requests past `responses.len()` are not answered — the task stops accepting,
+/// so an extra request fails at the transport rather than hanging forever on a
+/// server that has nothing left to say.
+pub(crate) async fn serve_sequence_capturing(
+    responses: Vec<Vec<u8>>,
+) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let heads = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = std::sync::Arc::clone(&heads);
+    tokio::spawn(async move {
+        let mut sent = 0usize;
+        while sent < responses.len() {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            while sent < responses.len() {
+                // Drained a byte at a time for the same reason as the
+                // single-shot helper: unread received data turns the socket
+                // close into an RST that can overtake the response.
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                let mut complete = true;
+                while !head.ends_with(b"\r\n\r\n") {
+                    match socket.read(&mut byte).await {
+                        Ok(0) | Err(_) => {
+                            complete = false;
+                            break;
+                        }
+                        Ok(_) => head.extend_from_slice(&byte),
+                    }
+                }
+                // An incomplete head means this connection is done rather than
+                // that the sequence is: fall back to `accept` for the next one,
+                // without consuming a response on a request that never arrived.
+                if !complete {
+                    break;
+                }
+                captured
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(String::from_utf8_lossy(&head).into_owned());
+                if socket.write_all(&responses[sent]).await.is_err() {
+                    break;
+                }
+                sent += 1;
+            }
+        }
+    });
+    (port, heads)
 }
 
 /// A minimal `200 OK` carrying `body` as JSON.
