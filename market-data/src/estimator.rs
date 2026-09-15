@@ -319,6 +319,27 @@ impl Snapshot {
     }
 }
 
+/// What one tick did, when it did not halt.
+///
+/// Returned rather than only logged so a test can assert on what a tick did:
+/// the difference between a tick that published from fresh rows and one that
+/// published from a cached snapshot is exactly the distinction the store-silence
+/// guard is counting, and a test that could not see it would be asserting the
+/// happy path only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ticked {
+    /// The store answered and every market published.
+    Published,
+    /// The store did not answer, so the tick composed from the previous
+    /// snapshot — whose legs age out on the receipt floor. Carries how long the
+    /// store has been silent, which is what [`Halt::StoreSilent`] bounds.
+    ComposedFromCache { silent_for: Duration },
+    /// A **retryable** publish failure. The tick is lost and the next one will
+    /// try again, up to [`MAX_PUBLISH_RETRY_WINDOW`]. Not an `Err`, because it is
+    /// not yet a halt — which is the whole of the retry policy this process owns.
+    PublishRetrying { failing_for: Duration },
+}
+
 /// The estimator process.
 pub struct Estimator {
     pool: PgPool,
@@ -328,6 +349,16 @@ pub struct Estimator {
     candles: FxStoreSource,
     ticks: SpotTickSource,
     tick_interval: Duration,
+    /// The last rows read, reused when a read fails.
+    snapshot: Snapshot,
+    /// When this estimator was constructed, so silence before the *first*
+    /// successful read is measured from somewhere. Without it a store that is
+    /// down at boot never answers, nothing ever elapses, and the silence guard
+    /// stays suppressed forever.
+    started: Instant,
+    last_read_ok: Option<Instant>,
+    publish_failing_since: Option<Instant>,
+    last_tick: Option<Instant>,
 }
 
 impl Estimator {
@@ -392,17 +423,16 @@ impl Estimator {
             markets,
             engines,
             tick_interval,
+            snapshot: Snapshot::default(),
+            started: Instant::now(),
+            last_read_ok: None,
+            publish_failing_since: None,
+            last_tick: None,
         })
     }
 
     /// Compose and publish until a [`Halt`] fires or a shutdown signal arrives.
     pub async fn run(mut self) -> Result<()> {
-        let mut snapshot = Snapshot::default();
-        let started = Instant::now();
-        let mut last_read_ok: Option<Instant> = None;
-        let mut publish_failing_since: Option<Instant> = None;
-        let mut last_tick: Option<Instant> = None;
-
         tracing::info!(
             markets = self.markets.len(),
             tick_secs = self.tick_interval.as_secs(),
@@ -410,90 +440,116 @@ impl Estimator {
         );
 
         loop {
-            let now = Instant::now();
-
-            // --- read ------------------------------------------------------
-            match self.read().await {
-                Ok(fresh) => {
-                    snapshot = fresh;
-                    last_read_ok = Some(now);
-                }
-                Err(err) => {
-                    // A failed read is not a publish failure and must not borrow
-                    // that vocabulary. The previous rows stay in play and age
-                    // out on the receipt floor; silence past the bound halts.
-                    let silent_for = last_read_ok
-                        .map(|at| now.saturating_duration_since(at))
-                        // Before the first successful read, silence is measured
-                        // from startup — otherwise a store that is down at boot
-                        // never answers, so nothing ever elapses and the guard
-                        // stays suppressed forever.
-                        .unwrap_or_else(|| now.saturating_duration_since(started));
-                    if store_unavailable(silent_for) {
-                        let halt = Halt::StoreSilent;
-                        tracing::error!(
-                            reason = %halt.reason(),
-                            silent_secs = silent_for.as_secs(),
-                            error = %err,
-                            "{halt}"
-                        );
-                        return Err(anyhow::Error::new(halt).context(format!("{err:#}")));
-                    }
-                    tracing::warn!(
-                        silent_secs = silent_for.as_secs(),
-                        error = %err,
-                        "store read failed; composing from the cached snapshot"
-                    );
+            // Every decision about *what* a tick does lives in `tick_once`; this
+            // loop only decides when the next one happens and how a halt leaves
+            // the process. Keeping the two apart is what makes the tick body
+            // drivable from a container-backed test — the loop cannot be, since
+            // it only returns on a halt or a signal.
+            match self.tick_once().await {
+                Ok(outcome) => log_outcome(outcome),
+                Err(halt) => {
+                    tracing::error!(reason = %halt.reason(), "{halt}");
+                    return Err(anyhow::Error::new(halt));
                 }
             }
 
-            // --- compose and publish --------------------------------------
-            let dt = last_tick
-                .map(|at| now.saturating_duration_since(at))
-                .unwrap_or(self.tick_interval);
-            last_tick = Some(now);
-
-            match self.publish_tick(&snapshot, now, dt).await {
-                Ok(()) => publish_failing_since = None,
-                Err(err) => {
-                    let class = err.class();
-                    // Permanent: the row is refused on the schema's own terms, so
-                    // every retry is a spin. Halt on the first one.
-                    if !err.retryable() {
-                        let halt = Halt::Publish { class };
-                        tracing::error!(reason = %halt.reason(), error = ?err, "{halt}");
-                        return Err(anyhow::Error::new(halt).context(format!("{err:?}")));
-                    }
-                    // Transient: retry, but not forever — see
-                    // MAX_PUBLISH_RETRY_WINDOW.
-                    let since = *publish_failing_since.get_or_insert(now);
-                    let failing_for = now.saturating_duration_since(since);
-                    if failing_for > MAX_PUBLISH_RETRY_WINDOW {
-                        let halt = Halt::Publish { class };
-                        tracing::error!(
-                            reason = %halt.reason(),
-                            failing_secs = failing_for.as_secs(),
-                            error = ?err,
-                            "{halt}"
-                        );
-                        return Err(anyhow::Error::new(halt).context(format!("{err:?}")));
-                    }
-                    tracing::warn!(
-                        class,
-                        failing_secs = failing_for.as_secs(),
-                        error = ?err,
-                        "publish failed; retrying on the next tick"
-                    );
-                }
-            }
-
-            // --- wait ------------------------------------------------------
             tokio::select! {
                 _ = tokio::time::sleep(self.tick_interval) => {}
                 _ = shutdown() => {
                     tracing::info!("shutdown signal received; estimator stopping");
                     return Ok(());
                 }
+            }
+        }
+    }
+
+    /// Read, compose and publish exactly one tick.
+    ///
+    /// The whole failure posture is here rather than in [`Self::run`]: which
+    /// failures are survivable, which are halts, and what a survivable one does
+    /// to the next tick. An `Err` is a [`Halt`] and nothing else — a failure the
+    /// process is *meant* to survive comes back as a [`Ticked`] variant, so the
+    /// distinction is in the type rather than in a log line.
+    ///
+    /// **Public so the integration test can drive it.** Every statement this
+    /// process issues is runtime-typed (`include_str!`'d SQL bound
+    /// positionally), so neither clippy nor a compile-time macro can see any of
+    /// them; a container-backed test calling this is the only gate that can.
+    pub async fn tick_once(&mut self) -> Result<Ticked, Halt> {
+        let now = Instant::now();
+        let mut from_cache = None;
+
+        // --- read ----------------------------------------------------------
+        match self.read().await {
+            Ok(fresh) => {
+                self.snapshot = fresh;
+                self.last_read_ok = Some(now);
+            }
+            Err(err) => {
+                // A failed read is not a publish failure and must not borrow that
+                // vocabulary — an unreadable store means the composition rests on
+                // nothing, which is a different halt with a different reason. The
+                // previous rows stay in play and age out on the receipt floor.
+                let silent_for = self
+                    .last_read_ok
+                    .map(|at| now.saturating_duration_since(at))
+                    .unwrap_or_else(|| now.saturating_duration_since(self.started));
+                if store_unavailable(silent_for) {
+                    tracing::error!(
+                        silent_secs = silent_for.as_secs(),
+                        error = %err,
+                        "the store has been unreadable past its silence bound"
+                    );
+                    return Err(Halt::StoreSilent);
+                }
+                tracing::warn!(
+                    silent_secs = silent_for.as_secs(),
+                    error = %err,
+                    "store read failed; composing from the cached snapshot"
+                );
+                from_cache = Some(silent_for);
+            }
+        }
+
+        // --- compose and publish -------------------------------------------
+        let dt = self
+            .last_tick
+            .map(|at| now.saturating_duration_since(at))
+            .unwrap_or(self.tick_interval);
+        self.last_tick = Some(now);
+
+        match self.publish_tick(now, dt).await {
+            Ok(()) => {
+                self.publish_failing_since = None;
+                Ok(match from_cache {
+                    Some(silent_for) => Ticked::ComposedFromCache { silent_for },
+                    None => Ticked::Published,
+                })
+            }
+            Err(err) => {
+                let class = err.class();
+                // Permanent: a database judged the row and refused it, so the same
+                // schema will refuse it again. Halt on the first one — retrying is
+                // the spin the class split exists to name.
+                if !err.retryable() {
+                    tracing::error!(class, error = ?err, "the database refused the row");
+                    return Err(Halt::Publish { class });
+                }
+                // Transient: retry, but not forever, or the halt never arrives and
+                // this is the same stall in slow motion.
+                let since = *self.publish_failing_since.get_or_insert(now);
+                let failing_for = now.saturating_duration_since(since);
+                if failing_for > MAX_PUBLISH_RETRY_WINDOW {
+                    tracing::error!(
+                        class,
+                        failing_secs = failing_for.as_secs(),
+                        error = ?err,
+                        "retryable publish failures have outlasted their window"
+                    );
+                    return Err(Halt::Publish { class });
+                }
+                tracing::warn!(class, error = ?err, "publish failed; retrying next tick");
+                Ok(Ticked::PublishRetrying { failing_for })
             }
         }
     }
@@ -528,12 +584,19 @@ impl Estimator {
     /// is its own auto-commit round trip, so an interrupted tick leaves some
     /// pairs written at `ts` and others absent — indistinguishable, to a reader,
     /// from pairs the estimator skipped.
-    async fn publish_tick(
-        &mut self,
-        snapshot: &Snapshot,
-        now: Instant,
-        dt: Duration,
-    ) -> Result<(), PublishError> {
+    async fn publish_tick(&mut self, now: Instant, dt: Duration) -> Result<(), PublishError> {
+        // Destructured rather than reached through `self`, so the snapshot's
+        // immutable borrow and the engine map's mutable one are disjoint field
+        // borrows: the engines mutate (each carries a basis EMA) while the rows
+        // they compose from are only read.
+        let Self {
+            pool,
+            markets,
+            engines,
+            snapshot,
+            ..
+        } = self;
+
         let ts = now_secs();
         let clock = ClockCtx::from_unix(ts as u64);
         let receipt_age = snapshot.receipt_age(now);
@@ -542,10 +605,9 @@ impl Estimator {
         // every market rather than rebuilt per market.
         let peg = peg_candidates(&snapshot.ticks, ts, receipt_age);
 
-        let mut tx = self.pool.begin().await?;
-        for market in &self.markets {
-            let engine = self
-                .engines
+        let mut tx = pool.begin().await?;
+        for market in markets.iter() {
+            let engine = engines
                 .get_mut(market.product_id)
                 // Unreachable: `new` builds one engine per roster entry and
                 // refuses a duplicate. Not an `expect`, because a panic inside
@@ -666,6 +728,26 @@ fn peg_candidates(rows: &[SpotTickRow], now_unix: i64, receipt_age: Duration) ->
         .find(|r| r.source == SOURCE_KRAKEN && r.product_id == USDC_USD_PRODUCT)
         .and_then(|r| r.reading(now_unix, receipt_age));
     Candidates::none().push(SOURCE_KRAKEN, reading)
+}
+
+/// One line per tick, for the outcomes that are not the ordinary case.
+///
+/// A published tick already logged one line per market, so saying so again would
+/// double the volume to add nothing. The other two variants say something the
+/// per-market lines cannot: that the rows are stale, or that the tick was lost.
+fn log_outcome(outcome: Ticked) {
+    match outcome {
+        Ticked::Published => {}
+        Ticked::ComposedFromCache { silent_for } => tracing::warn!(
+            silent_secs = silent_for.as_secs(),
+            "this tick composed from cached rows; their legs age on the receipt floor"
+        ),
+        Ticked::PublishRetrying { failing_for } => tracing::warn!(
+            failing_secs = failing_for.as_secs(),
+            window_secs = MAX_PUBLISH_RETRY_WINDOW.as_secs(),
+            "this tick published nothing; halting if it does not clear"
+        ),
+    }
 }
 
 /// One line per market per tick.

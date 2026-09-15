@@ -72,3 +72,29 @@ pub async fn insert_bucket(
     .await
     .unwrap_or_else(|e| panic!("insert {source}/{product_id} at {published_at}: {e}"));
 }
+
+/// Insert one spot print into `spot_ticks`.
+///
+/// `observed_at` is the instant the reading is attributed to, and unlike a
+/// bucket it needs no arithmetic — a tick's stamp *is* its publication instant.
+/// The confidence half-width is left NULL: the only venue that publishes one is
+/// parked, and the estimator's reader deliberately does not project the column.
+pub async fn insert_tick(
+    pool: &PgPool,
+    source: &str,
+    product_id: &str,
+    observed_at: i64,
+    price: f64,
+) {
+    sqlx::query(
+        "INSERT INTO spot_ticks (source, product_id, observed_at, price)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(source)
+    .bind(product_id)
+    .bind(observed_at)
+    .bind(price)
+    .execute(pool)
+    .await
+    .unwrap_or_else(|e| panic!("insert tick {source}/{product_id} at {observed_at}: {e}"));
+}
