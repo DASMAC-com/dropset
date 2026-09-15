@@ -55,16 +55,24 @@
 //! into the store, so a dashboard can ask what kind of thing a product is
 //! without hardcoding a product list into a panel. Both run once, at startup.
 //!
+//! [`parked_mirror`] is the third of that family and the one whose subject is
+//! not this process: it mirrors the platform-wide parked-source decision from
+//! code into reference data, so a panel can tell a source that is quiet **by
+//! decision** from one that is faulted. Every collector writes the whole set,
+//! because the decision belongs to no single collector.
+//!
 //! Every binary asserts the shared schema at startup rather than provisioning
 //! one (`data-feeds.md` §8), and then registers its roster in the instruments
-//! dimension — the two startup writes that make a collector's configuration
-//! legible from the store rather than only from its logs.
+//! dimension and refreshes the parked mirror — the startup writes that make a
+//! collector's configuration legible from the store rather than only from its
+//! logs.
 
 pub mod config;
 pub mod fair_price;
 pub mod fx;
 pub mod fx_store;
 pub mod instruments;
+pub mod parked_mirror;
 pub mod pyth_roster;
 pub mod roster;
 pub mod store;

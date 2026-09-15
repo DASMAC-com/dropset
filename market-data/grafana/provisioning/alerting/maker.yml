@@ -147,6 +147,27 @@ groups:
   # A source that has never once succeeded coalesces to a huge age and fires,
   # which is intended: "never answered" is a worse state than "stopped
   # answering", not an exempt one.
+  #
+  # THE ONE EXEMPTION IS A PARKED SOURCE, and it is keyed on PARKED-NESS rather
+  # than on a NULL `last_ok_at` -- which is the whole subtlety, because the two
+  # coincide on the row that motivated the exclusion and mean opposite things.
+  # A park is a decision that a source is not running, so nothing is left that
+  # could ever clear its row; a NULL `last_ok_at` is the never-answered state
+  # the paragraph above deliberately fires on. Exempting NULL would have been a
+  # one-word change here and would have blinded this rule to every genuinely
+  # never-answered feed, with nothing in a diff to show it.
+  #
+  # `parked_source_feeds` holds the `feed_health.feed` spellings each park
+  # silences, mirrored from `PARKED_SOURCES` in `feeds/src/parked.rs` by the
+  # collectors at startup. The join is a plain equality on one vocabulary
+  # because that table exists to carry the bare-token-to-framework-name bridge
+  # in code rather than here -- see `0016_parked_sources.sql`.
+  #
+  # The live instance: Pyth's row has sat `last_ok_at` NULL since the park
+  # removed its only writer, firing continuously with nothing left running that
+  # could ever clear it. The row itself
+  # is retired by an operator DELETE (`docs/data-feeds.md` §8); this exclusion
+  # is what keeps the next park from doing the same thing.
   - annotations:
       description: >-
         A feed source has not completed a successful poll in over 30 minutes
@@ -166,10 +187,13 @@ groups:
         rawQuery: true
         rawSql: |-
           SELECT
-          feed,
-          coalesce(extract(epoch FROM now()) - last_ok_at, 9999999)
+          h.feed,
+          coalesce(extract(epoch FROM now()) - h.last_ok_at, 9999999)
           ::double precision AS ok_age_secs
-          FROM feed_health
+          FROM feed_health AS h
+          WHERE NOT EXISTS (
+          SELECT 1 FROM parked_source_feeds AS p WHERE p.feed = h.feed
+          )
         refId: 'A'
       refId: 'A'
       relativeTimeRange:

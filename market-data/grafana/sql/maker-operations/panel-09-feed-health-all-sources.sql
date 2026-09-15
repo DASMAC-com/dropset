@@ -3,16 +3,31 @@
 -- Regenerate: make dashboard-sql
 
 SELECT
-  feed,
-  status,
-  coalesce(extract(epoch FROM now()) - last_ok_at, 9999999)::bigint AS ok_age_secs,
-  to_timestamp(last_ok_at) AS last_ok,
-  caught_up,
-  last_records,
-  ok_count,
-  error_count,
-  to_timestamp(last_error_at) AS last_error_at,
-  last_error,
-  to_timestamp(updated_at) AS last_seen
-FROM feed_health
-ORDER BY status ASC, feed
+  h.feed,
+  h.status,
+  coalesce(extract(epoch FROM now()) - h.last_ok_at, 9999999)::bigint AS ok_age_secs,
+  to_timestamp(h.last_ok_at) AS last_ok,
+  h.caught_up,
+  h.last_records,
+  h.ok_count,
+  h.error_count,
+  to_timestamp(h.last_error_at) AS last_error_at,
+  h.last_error,
+  to_timestamp(h.updated_at) AS last_seen
+FROM feed_health AS h
+-- PARKED SOURCES ARE EXCLUDED, not rendered grey, and the reason is that this
+-- table reads `feed_health` -- where a parked source has no honest row. Parking
+-- removes the tier's only writer, so what is left is either nothing at all (a
+-- fresh database) or a row frozen at whatever it last said, which is worse than
+-- absence because it renders as a fault with an age that only grows. Source
+-- coverage on the ingestion dashboard is where a parked source is visible BY
+-- NAME, with its date, which is the same division of labour the live-venues
+-- panel already makes.
+--
+-- Keyed on membership in the mirrored parked set, NEVER on a NULL
+-- `last_ok_at`: never-answered is a state this panel must keep showing. See
+-- `0016_parked_sources.sql`.
+WHERE NOT EXISTS (
+  SELECT 1 FROM parked_source_feeds AS p WHERE p.feed = h.feed
+)
+ORDER BY h.status ASC, h.feed

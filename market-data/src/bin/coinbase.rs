@@ -15,8 +15,9 @@ use dropset_feeds::{
     CursorStore, HttpClient, PgCursorStore, RunConfig, Sink, StoreSink,
 };
 use dropset_market_data::{
-    config::Config, instruments::register as register_instruments, roster::canonical_only,
-    store::CexWriter, supervise::run_all,
+    config::Config, instruments::register as register_instruments,
+    parked_mirror::mirror as mirror_parked_sources, roster::canonical_only, store::CexWriter,
+    supervise::run_all,
 };
 use std::time::Duration;
 
@@ -55,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
     // Publish the roster as the instruments dimension, so a dashboard can ask
     // what kind of thing each product is without a hardcoded product list.
     register_instruments(&pool, SOURCE, &products).await?;
+    mirror_parked_sources(&pool).await?;
     tracing::info!(
         products = %products.join(","),
         granularity = cfg.granularity_secs,

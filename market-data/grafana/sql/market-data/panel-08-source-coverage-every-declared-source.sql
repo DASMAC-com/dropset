@@ -11,8 +11,10 @@
 -- registry inverts that, and a dark collector becomes a row reading 0 rather
 -- than a row that is not there.
 --
--- THE ROSTER IS A DECLARED LITERAL, so this table has a FLOOR of eight rows,
--- one per source the platform is meant to have -- and a ninth appears if the
+-- THE ROSTER IS A DECLARED LITERAL, so this table has a FLOOR of eight rows:
+-- SEVEN sources the platform expects to be RUNNING, declared below, plus one
+-- per PARKED source, which the mirror joined below supplies rather than the
+-- literal restating. A further row appears if the
 -- registry ever holds a source nobody declared, which is the loud case below. A registry-only
 -- read cannot promise that, because a source leaves the registry when its
 -- collector stops registering -- exactly the invisible-rather-than-dark defect
@@ -49,9 +51,26 @@ WITH declared AS (
     ('kraken', 'tape (crypto/peg)'),
     ('alphavantage', 'daily reference'),
     ('erapi', 'daily reference'),
-    ('frankfurter', 'daily reference'),
-    ('pyth', 'parked by decision')
+    ('frankfurter', 'daily reference')
   ) AS d (source, role)
+),
+
+-- THE PARKED SET, JOINED RATHER THAN COPIED. This used to be an eighth row in
+-- the literal above reading 'parked by decision', which made this query hold
+-- its own copy of a list that is decided in `feeds/src/parked.rs` -- the exact
+-- copy-drift the declared roster exists to kill, one level in. The collectors
+-- mirror the constant into `parked_sources` at startup, so a park supplies its
+-- own row here and the two can no longer disagree.
+--
+-- `mirrored_at` is deliberately not shown. It dates the last COLLECTOR START,
+-- not the park, so a reader would take it for a freshness signal; what it is
+-- for is diagnosing a mirror that has fallen behind the constant, which is a
+-- question about this table rather than about a source.
+parked AS (
+  SELECT
+    p.venue AS source,
+    p.since
+  FROM parked_sources AS p
 ),
 
 rolled AS (
@@ -71,8 +90,13 @@ rolled AS (
 )
 
 SELECT
-  coalesce(r.source, d.source) AS source,
-  coalesce(d.role, 'UNCLASSIFIED') AS role,
+  coalesce(r.source, d.source, k.source) AS source,
+  coalesce(
+    d.role,
+    CASE WHEN k.source IS NOT NULL THEN 'parked by decision' END,
+    'UNCLASSIFIED'
+  ) AS role,
+  k.since AS parked_since,
   coalesce(r.products, 0) AS products,
   coalesce(r.ever_produced, 0) AS ever_produced,
   coalesce(r.printing_now, 0) AS printing_now,
@@ -81,6 +105,13 @@ SELECT
   (extract(epoch FROM now()) - r.latest)::bigint AS age_secs
 FROM rolled AS r
 FULL JOIN declared AS d ON r.source = d.source
+-- A THIRD FULL JOIN, for the same fail-closed reason as the second. A parked
+-- source is in neither the registry nor the declared roster -- that is what
+-- being parked means -- so an inner or left join would drop its row and this
+-- panel would go back to being unable to say the word. Joining on the coalesce
+-- of the two sides above is what lets a source that is BOTH declared and parked
+-- still match one row rather than two.
+FULL JOIN parked AS k ON coalesce(r.source, d.source) = k.source
 -- ORDERED BY ROLE RANK, not alphabetically. Alphabetical put the three daily
 -- references at the TOP -- and they read 0 under printing_now between
 -- publications, so the first three rows of the table were permanently red while
@@ -88,12 +119,20 @@ FULL JOIN declared AS d ON r.source = d.source
 -- teach-the-eye-to-skip-the-table defect cited twice above. An undeclared source
 -- ranks first because it is the one thing here nobody has accounted for.
 ORDER BY
-  CASE coalesce(d.role, 'UNCLASSIFIED')
+  CASE coalesce(
+    d.role,
+    CASE WHEN k.source IS NOT NULL THEN 'parked by decision' END,
+    'UNCLASSIFIED'
+  )
     WHEN 'UNCLASSIFIED' THEN 0
     WHEN 'tape (FX)' THEN 1
     WHEN 'intraday margin (FX)' THEN 2
     WHEN 'tape (crypto/peg)' THEN 3
     WHEN 'daily reference' THEN 4
+    -- Parked falls to this arm and so still sorts last, exactly where the
+    -- literal row used to put it. Naming it in a WHEN would change nothing
+    -- today and would quietly become wrong the moment a second state joins
+    -- the ELSE.
     ELSE 5
   END ASC,
-  coalesce(r.source, d.source) ASC
+  coalesce(r.source, d.source, k.source) ASC

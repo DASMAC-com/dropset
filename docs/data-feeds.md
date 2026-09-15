@@ -643,10 +643,31 @@ for rendering, that document for intent.
 | `maker_leg_contributions`                                          | maker bot           | Per-source fusion weights behind each leg's fused estimate                                     |
 | `feed_health`                                                      | maker bot *(today)* | Polled-source feed liveness, upserted in place                                                 |
 | `push_health`                                                      | maker bot *(today)* | Push-source transport state, upserted in place                                                 |
+| `parked_sources`, `parked_source_feeds`                            | market-data         | Parked-by-decision set, mirrored from code at every collector startup                          |
 | Maker parameter tables *(planned)*                                 | maker go-between    | Slow parameters published to the bot                                                           |
 
 Adding a table means naming its writer here. A table with two writers is
 a design error, not a configuration choice.
+
+**The parked-source mirror is the one entry whose writer is plural, and
+it is a real exception to that rule rather than a loophole in it.** Every
+market-data collector writes the whole of both tables at startup, so on a
+full bring-up nine processes write them. What the rule protects against
+is two writers holding *different* notions of a row and overwriting each
+other's — and that cannot arise here, because the content is a pure
+function of one compile-time constant (`PARKED_SOURCES` in
+`feeds/src/parked.rs`) through one code path
+(`market-data/src/parked_mirror.rs`). Two collectors racing write
+byte-identical rows differing only in `mirrored_at`.
+
+The alternative was considered and is worse in a way this document has
+already recorded: designating one writer means either electing a
+collector, which makes the mirror depend on whether that particular one
+is running, or adding a process of its own — the deploy-unit wiring that
+left er-api never running for weeks (`docs/dashboards.md` §8, item 3).
+So the honest statement of the rule is that a table wants one writer *of
+its content*, which this has; the plural is in how many processes replay
+it.
 
 `feed_health` is the table to watch on that rule. It is maker-owned
 today — the maker is the only process wiring a `HealthReporter` — but it
@@ -656,6 +677,27 @@ second writer. At that point it should become a carve-out on the
 `feed_cursors` pattern below (framework-owned shape, partitioned by feed
 name) rather than quietly acquiring two app writers. The upsert SQL
 moving out of `bots/maker-bot/queries/` is the signal that has happened.
+
+**Operator action outstanding: delete the frozen `pyth-hermes` row.**
+Parking Pyth removed that feed's only writer, so its `feed_health` row is
+left with `last_ok_at` NULL and no process able to advance it. The
+staleness alert now excludes parked feeds, so it no longer fires on it —
+but the row itself is stale data that no code path will ever clean up,
+and it renders on any surface that does not carry the exclusion. On a
+database that has one (shared dev does, as of 2026-09-14; a fresh one
+never will):
+
+```sql
+DELETE FROM feed_health WHERE feed = 'pyth-hermes';
+```
+
+**This is deliberately not a migration**, and the reasoning generalizes
+to every cleanup of accumulated state. A migration is replayed by every
+fresh database, so it would encode one database's history as schema
+history — and the runner checksums an applied migration's raw bytes, so
+it could never be corrected afterwards, only superseded. Un-parking Pyth
+needs no counterpart action: the tier would start writing its row again
+on its first successful poll.
 
 `push_health` sits under the same watch for the same reason — a
 framework recorder (`LivenessReporter`), keyed by source name, with the

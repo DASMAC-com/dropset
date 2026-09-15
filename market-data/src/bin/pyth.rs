@@ -31,6 +31,7 @@ use dropset_feeds::{
 use dropset_market_data::{
     fx::secret,
     instruments::register as register_instruments,
+    parked_mirror::mirror as mirror_parked_sources,
     pyth_roster,
     ticks::{SilenceWatch, Tick, TickConfig, TickDefaults, TickSource, TickWriter},
 };
@@ -80,6 +81,15 @@ async fn main() -> anyhow::Result<()> {
     // being polled, not where the instruction came from, and Pyth's crosses
     // belong in it like any other.
     register_instruments(&pool, SOURCE, &products).await?;
+    // Yes, including here — and the apparent contradiction is worth a sentence,
+    // since this is the one collector the parked set currently names. Reaching
+    // this line means somebody started the parked venue deliberately
+    // (`make pyth-up`), which a park permits; what it forbids is starting as a
+    // side effect of an ordinary bring-up. The mirror states the *decision*,
+    // which is unchanged by an attended run, so writing it here is right and
+    // skipping it would make the mirror disagree with the constant for as long
+    // as this process was the last collector to start.
+    mirror_parked_sources(&pool).await?;
 
     // Name every loaded row, so the effective roster of a running process is
     // legible without querying the database it came from. This is the log line

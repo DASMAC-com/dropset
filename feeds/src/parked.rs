@@ -28,10 +28,23 @@
 //! parked and still runs — which is worse than not describing it at all. Add
 //! the entry and the check together.
 //!
-//! **The consequence for a dashboard, which is not yet resolved.** Because the
-//! set lives in code, a panel separating parked from faulted cannot join
-//! against it — it either carries its own copy of the list, or a later change
-//! seeds this set into reference data the panel can read.
+//! **How a dashboard reaches this set, which used to be unresolved.** Because
+//! the set lives in code, a panel separating parked from faulted cannot join
+//! against it directly. The resolution is a **mirror**, not a move: the
+//! market-data collectors replace the whole of this set in the
+//! `parked_sources` / `parked_source_feeds` reference tables at startup
+//! (`0016_parked_sources.sql`, written by `market-data/src/parked_mirror.rs`),
+//! so a panel joins the tables while this constant stays the only place a park
+//! is *decided*. Nothing reads those tables to decide whether to spawn a tier,
+//! and nothing writes them by hand.
+//!
+//! Two consequences a reader should not have to derive. The mirror is only as
+//! fresh as the last collector start, so a park added since then is real in
+//! code and absent from SQL — `parked_sources.mirrored_at` is what says how
+//! stale the answer is, and it is why a panel must never treat the mirror as
+//! the authority on what is running. And because the write replaces the whole
+//! set, removing an entry here deletes its rows at the next bring-up; no
+//! migration is involved in parking or un-parking anything.
 //!
 //! Parking a source rewrites no query, but it does change what one table
 //! *contains*, and the difference matters on exactly the surfaces that render
@@ -40,9 +53,16 @@
 //! **framework** name, `pyth-hermes` rather than the bare token below — is left
 //! frozen with `last_ok_at` NULL, and the unfiltered `ok_age_secs > 1800` alert
 //! keeps firing on it with nothing running that could ever clear it. Before the
-//! park that row was self-healing: a credential arriving was enough. Retiring
-//! it needs either an exclusion on the alert or a one-off delete, neither of
-//! which lives here.
+//! park that row was self-healing: a credential arriving was enough.
+//!
+//! Retiring that firing needs **both** halves, and they are different kinds of
+//! thing. The alert and the maker feed-health panel now exclude any feed named
+//! by [`ParkedSource::health_feeds`], which is the durable half and the reason
+//! that field exists. The frozen row itself is **data**, so it goes by a
+//! one-off `DELETE` an operator runs against the shared database — recorded in
+//! `docs/data-feeds.md` §8, never as a migration, because a migration would
+//! bake one database's accumulated state into the history every fresh database
+//! then replays.
 //!
 //! **The venue token is the bare one**, matching
 //! `instrument_source_liveness.source` (`pyth`, `oanda`, `kraken`) — *not* a
@@ -84,6 +104,31 @@ pub struct ParkedSource {
     pub since: &'static str,
     /// Why it is parked, and what would un-park it.
     pub reason: &'static str,
+    /// The `feed_health.feed` spellings this park silences — the **framework**
+    /// names, not the bare [`venue`](Self::venue) token above.
+    ///
+    /// This field exists to keep a vocabulary bridge out of SQL. A park is
+    /// decided against the bare token, while the health table and the staleness
+    /// alert are keyed by framework name, so an exclusion written in SQL would
+    /// have to relate the two vocabularies — the silent-join failure the schema
+    /// catalog forbids, and unlike most such joins this one *looks* right,
+    /// because for this adapter the two spellings differ by a suffix. Declaring
+    /// the mapping here puts it where both spellings are known and leaves every
+    /// query doing single-vocabulary equality.
+    ///
+    /// **An empty list is meaningful, not a default.** It says this park
+    /// silences no health row — correct for a venue whose collector never wrote
+    /// one. It is not the place to record uncertainty: an entry whose feed does
+    /// write health rows, left empty here, goes on firing the staleness alert
+    /// with nothing able to clear it, which is the exact defect the exclusion
+    /// closes.
+    ///
+    /// The exclusion keys on **membership in this list**, never on a NULL
+    /// `last_ok_at`. Never-answered is deliberately a firing state — a worse
+    /// one than stopped-answering — so exempting NULL would blind the alert to
+    /// every genuinely never-answered feed, and nothing in a diff would show
+    /// it.
+    pub health_feeds: &'static [&'static str],
 }
 
 /// Every source parked by decision.
@@ -105,6 +150,10 @@ pub const PARKED_SOURCES: &[ParkedSource] = &[ParkedSource {
     reason: "Hermes went keyed in the Pyth Core upgrade and there is no usable \
              free tier, so no machine running this stack holds a credential; \
              kept for forensic use. Un-parked by a key or a self-hosted Hermes.",
+    // `PythHermesSource::name()` and the maker bot's fusion tag are both this
+    // string, which is what the maker wrote into `feed_health` while the tier
+    // still ran — and what its frozen row is still keyed by.
+    health_feeds: &["pyth-hermes"],
 }];
 
 /// The park record for `venue`, or `None` if it is expected to be running.
@@ -180,6 +229,41 @@ mod tests {
                 "{} since must be digits and dashes only",
                 p.venue
             );
+            // The health-feed names are the OTHER vocabulary, and an empty
+            // string would mirror a row matching nothing while reading as
+            // coverage. The list itself may legitimately be empty — see the
+            // field docs — so emptiness of the LIST is deliberately not
+            // asserted here.
+            for feed in p.health_feeds {
+                assert!(
+                    !feed.is_empty(),
+                    "{} has an empty health feed name",
+                    p.venue
+                );
+            }
         }
+    }
+
+    /// The bridge is only useful if it crosses vocabularies, so pin that it
+    /// does. A `health_feeds` entry equal to the bare token is the shape a
+    /// reader produces by filling the field in from the line above it, and it
+    /// would silence nothing while looking complete — `feed_health` for this
+    /// park is keyed `pyth-hermes`, so an exclusion on `pyth` matches no row.
+    ///
+    /// Stated as an assertion about *this* park rather than a blanket rule,
+    /// because a venue whose framework name genuinely is its bare token is
+    /// possible and would not be a defect.
+    #[test]
+    fn the_health_feed_name_is_the_framework_one() {
+        let p = parked_source("pyth").expect("pyth is parked by decision");
+        assert_eq!(
+            p.health_feeds,
+            &["pyth-hermes"],
+            "the exclusion must key on what the maker wrote into feed_health"
+        );
+        assert!(
+            !p.health_feeds.contains(&p.venue),
+            "the bare token is not a feed_health key"
+        );
     }
 }
