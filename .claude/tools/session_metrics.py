@@ -91,9 +91,11 @@ CONTEXT_MIN_AVG_BYTES = 400
 RUN_QUIET_MARKER = "run_quiet.py"
 
 # Bedrock per-million-token rates, in US dollars, for the model the worker
-# sessions run on. **Verified 2026-09-11** against the real bill: pricing the
-# transcript's own usage records at these rates reproduced the billed amount to
-# within the rate factor. Named with that date so the daily Cost Explorer
+# sessions run on. **Verified 2026-09-11** against the real bill: pricing one
+# session's own transcript usage records at these rates was hand-checked against
+# the billed amount and agreed. That is a single end-to-end agreement, not a
+# measured error bound — do not read it as one. Named with that date so the
+# daily Cost Explorer
 # reconciliation in the planning session knows exactly what to re-check — a rate
 # change, a new billed model, or an unexplained line shows up as drift between
 # the billed day and the sum of the fleet's transcript-priced estimates.
@@ -153,14 +155,18 @@ class Totals:
         # This request's prefix: everything the model had to process as input,
         # whether it came fresh, from a cache write, or from a cache read.
         prefix = fresh + written + read
-        # Pinned on the first NON-EMPTY prefix rather than on the first counted
-        # record: an interrupted or errored message can carry an all-zero usage
-        # block, and pinning zero there would report the whole of the first real
-        # prefix as growth.
-        if not self.prefix_first:
-            self.prefix_first = prefix
-        self.prefix_last = prefix
-        self.prefix_max = max(self.prefix_max, prefix)
+        # An all-zero usage block (an interrupted or errored message) moves
+        # NEITHER bound. The two ends fail differently and both badly: pinned as
+        # `prefix_first` it reports the whole of the first real prefix as growth,
+        # and pinned as `prefix_last` it renders a large negative shrink — which,
+        # because the growth line has a `−` branch, reads as a plausible
+        # compaction rather than as an error. The turn still counts, and its
+        # tokens are still summed above; only the prefix bounds skip it.
+        if prefix:
+            if not self.prefix_first:
+                self.prefix_first = prefix
+            self.prefix_last = prefix
+            self.prefix_max = max(self.prefix_max, prefix)
         self.turns += 1
 
     def total_input(self) -> int:
@@ -176,7 +182,10 @@ class Totals:
 class Cost:
     """A dollar breakdown of one token profile, at the verified Bedrock rates.
 
-    **Only ever rendered for a Bedrock session.** A seat session bills against
+    **Only ever rendered in the Markdown headline for a Bedrock session** — the
+    figures are always present in ``--json``, for tooling that wants them, and a
+    test pins them there on the seat branch too. It is the rendered report, not
+    the data, that withholds a seat session's cost. A seat session bills against
     the Claude subscription, whose internal pricing is not transparent, so
     pricing its tokens at worker rates would invent a number that appears
     nowhere on any bill. :func:`resolve_substrate` decides which branch applies
@@ -1221,8 +1230,8 @@ def resolve_substrate(cwd: str | None) -> tuple[str, str]:
     **The transcript cannot answer this, which is why the marker is consulted
     at all.** Measured on a Bedrock worker session (2026-09-14): its transcript
     records ``message.model`` as the plain ``claude-opus-5``, byte-identical to
-    what a seat Opus session records — the id is normalized and carries no
-    region prefix or inference-profile form. Nor is the model *name* a usable
+    what a seat Opus session records, and no region-prefixed or
+    inference-profile form appears in any local transcript. Nor is the model *name* a usable
     proxy, since seat verbs (`housekeeping`, `explore`) also run on Opus. The
     only durable signal is the marker a launch writes, which is exactly what the
     resume verbs already steer by.

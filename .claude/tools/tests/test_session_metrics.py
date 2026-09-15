@@ -8,10 +8,14 @@ for the hardening-candidate detector.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 import session_metrics as sm
 
@@ -683,6 +687,18 @@ class PrefixGrowth(unittest.TestCase):
         self.assertEqual(totals.prefix_last, 60)
         self.assertEqual(totals.prefix_growth(), 0)
 
+    def test_an_all_zero_record_moves_neither_prefix_bound(self):
+        # An interrupted or errored message can carry an all-zero usage block,
+        # and it is wrong at BOTH ends: as `prefix_first` it reports the whole
+        # first real prefix as growth, as `prefix_last` it renders a large
+        # negative shrink that reads as a plausible compaction.
+        totals = self._agg([(0, 0, 0), (10, 0, 990), (0, 0, 0)])
+        self.assertEqual(totals.prefix_first, 1000)
+        self.assertEqual(totals.prefix_last, 1000)
+        self.assertEqual(totals.prefix_growth(), 0)
+        # The turn itself still counts, and its (zero) tokens still summed.
+        self.assertEqual(totals.turns, 3)
+
     def test_an_empty_session_reports_zeroes(self):
         totals = self._agg([])
         self.assertEqual(totals.turns, 0)
@@ -858,9 +874,10 @@ class SubstrateDetection(unittest.TestCase):
         self.assertEqual(report["substrate_reason"], "given explicitly")
 
     def test_the_override_reaches_the_report_through_aggregate(self):
-        # Covers the two hops no other test exercises: argparse's value into
-        # `aggregate`, and `aggregate`'s into `finish`. Asserted as a PAIR, so
-        # it fails if the override is ignored *or* if the marker is.
+        # Covers `aggregate`'s value into `finish`. Asserted as a PAIR, so it
+        # fails if the override is ignored *or* if the marker is. The remaining
+        # hop — argparse into `aggregate` — is covered by the CLI test below,
+        # deliberately separately: calling `aggregate` directly cannot pin it.
         self._write("eng-1364", "bedrock")
         transcript = pathlib.Path(self._tmp.name) / "session.jsonl"
         transcript.write_text(self._record() + "\n", encoding="utf-8")
@@ -870,6 +887,30 @@ class SubstrateDetection(unittest.TestCase):
 
         from_marker = sm.aggregate(transcript, "session")
         self.assertEqual(from_marker["substrate"], sm.SUBSTRATE_BEDROCK)
+
+    def test_the_cli_flag_reaches_the_report(self):
+        # The one hop no direct-call test can reach: argparse's value into
+        # `aggregate`. Drop `args.substrate` from that call and every other test
+        # in this class still passes, while the documented pruned-worktree
+        # recovery silently stops working. Asserted as a pair, as above.
+        self._write("eng-1364", "bedrock")
+        home = pathlib.Path(self._tmp.name) / "claude"
+        project = home / "projects" / "slug"
+        project.mkdir(parents=True)
+        (project / "mined.jsonl").write_text(self._record() + "\n", encoding="utf-8")
+
+        def run(argv: list[str]) -> dict:
+            buf = io.StringIO()
+            with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(home)}):
+                with contextlib.redirect_stdout(buf):
+                    self.assertEqual(sm.main(argv), 0)
+            return json.loads(buf.getvalue())
+
+        base = ["--session-id", "mined", "--json"]
+        self.assertEqual(run(base)["substrate"], sm.SUBSTRATE_BEDROCK)
+        self.assertEqual(
+            run([*base, "--substrate", "seat"])["substrate"], sm.SUBSTRATE_SEAT
+        )
 
     def test_the_cwd_comes_from_the_transcript(self):
         self._write("eng-1364", "bedrock")
