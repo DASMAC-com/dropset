@@ -135,6 +135,25 @@ pub fn hosted_tx_url(signature: &str, rpc_url: &str) -> String {
     )
 }
 
+/// The hosted-explorer URL for `address` on **mainnet-beta**.
+///
+/// Carries no `customUrl` — and that omission is the point, not an economy.
+/// The mainnet endpoint routinely embeds an API key in its URL (that is how
+/// most paid providers authenticate), and the `customUrl` form would paste it
+/// into a query string that lands in the browser's history, its address bar,
+/// and any referrer the explorer sends onward. The public explorer already
+/// defaults to mainnet-beta, so the parameter buys nothing and leaks a
+/// credential.
+pub fn mainnet_account_url(address: &Pubkey) -> String {
+    format!("https://explorer.solana.com/address/{address}")
+}
+
+/// The hosted-explorer transaction URL on mainnet-beta — same
+/// no-`customUrl` rule as [`mainnet_account_url`], for the same reason.
+pub fn mainnet_tx_url(signature: &str) -> String {
+    format!("https://explorer.solana.com/tx/{signature}")
+}
+
 /// Whether a `docker` CLI is on PATH. A `false` steers "Open explorer" to the
 /// hosted fallback; a daemon that's installed-but-not-running surfaces later
 /// as an `up` failure with docker's own message.
@@ -274,5 +293,25 @@ mod tests {
         assert!(local.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
         let hosted = hosted_tx_url(sig, "http://127.0.0.1:8899");
         assert!(hosted.starts_with("https://explorer.solana.com/tx/5xY5s1Vd7z9Kq2Rp8"));
+    }
+
+    #[test]
+    fn mainnet_urls_never_carry_the_endpoint() {
+        // The security property, not a formatting preference: a paid mainnet
+        // endpoint usually embeds an API key, so neither the URL nor any
+        // percent-encoded form of it may appear in a link handed to a browser.
+        let addr = Pubkey::new_from_array([3u8; 32]);
+        let keyed = "https://mainnet.example.com/?api-key=SUPERSECRET";
+        let url = mainnet_account_url(&addr);
+        assert_eq!(url, format!("https://explorer.solana.com/address/{addr}"));
+        assert!(!url.contains("customUrl"));
+        assert!(!url.contains("cluster="));
+        assert!(!url.contains("SUPERSECRET"));
+        assert!(!url.contains(&percent_encode(keyed)));
+
+        let tx = mainnet_tx_url("5xY5s1Vd7z9Kq2Rp8");
+        assert_eq!(tx, "https://explorer.solana.com/tx/5xY5s1Vd7z9Kq2Rp8");
+        assert!(!tx.contains("customUrl"));
+        assert!(!tx.contains("cluster="));
     }
 }

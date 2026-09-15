@@ -4,9 +4,16 @@
 //! action does, but with no UI: discover whatever live accounts exist, drain
 //! and close them in the spec's dependency order, and refund all rent to the
 //! wallet. The program is left deployed (teardown resets only on-chain state).
-//! Built to run in automation or against a real cluster, so unlike the TUI
-//! (which is pinned to localnet) it takes an explicit `--rpc-url` and guards
-//! any non-localnet target behind an interactive confirmation.
+//! Built to run in automation or against a real cluster, so it takes an
+//! explicit `--rpc-url` and guards any non-localnet target behind an
+//! interactive confirmation.
+//!
+//! A loopback `--rpc-url` skips that prompt, so it is additionally held to a
+//! genesis check ([`cluster::ensure_not_mainnet`]): host classification cannot
+//! see through an SSH tunnel or a local proxy, and this binary CLOSES every
+//! market, vault and the registry. That is the one place where the cheap URL
+//! check is not merely incomplete but actively wrong, and where being wrong is
+//! unrecoverable.
 //!
 //! ```text
 //! dropset-teardown [--wallet <path>] [--rpc-url <url>] [--yes]
@@ -19,14 +26,11 @@
 //! - `--yes` / `-y` — skip the non-localnet confirmation prompt (for
 //!   unattended runs).
 
-// cspell:word rsplit
-// cspell:word userinfo
-
 use anyhow::{anyhow, bail, Result};
+use dropset_tui::cluster;
 use dropset_tui::job::Logger;
 use dropset_tui::{chain, teardown, validator, wallet};
 use solana_signer::Signer;
-use std::io::Write;
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
@@ -48,7 +52,14 @@ fn main() -> Result<()> {
 
     // A real cluster is irreversible, so make the operator confirm unless they
     // opted out with --yes (or the target is the throwaway localnet).
-    if !is_localnet(&rpc_url) && !args.yes {
+    if cluster::is_localnet(&rpc_url) {
+        // The prompt was just skipped on the strength of the URL alone, and a
+        // URL cannot see through an SSH tunnel or a local proxy — so ask the
+        // chain what it is before closing every market, vault and the registry.
+        // This is the one path where the cheap check is not merely incomplete
+        // but actively wrong, and the cost of being wrong is unrecoverable.
+        cluster::ensure_not_mainnet(&client)?;
+    } else if !args.yes {
         confirm(&rpc_url, &keypair.pubkey().to_string())?;
     }
 
@@ -58,38 +69,10 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Whether `rpc_url` targets the loopback validator — the only target that
-/// skips the confirmation prompt. Matches on the URL's **host component**
-/// exactly, not a substring: a remote host that merely contains the loopback
-/// token (`http://127.0.0.1.evil.com`, `https://127.0.0.1@evil.com`) resolves
-/// off-box and must still prompt.
-fn is_localnet(rpc_url: &str) -> bool {
-    matches!(
-        host_of(rpc_url).as_deref(),
-        Some("127.0.0.1" | "localhost" | "::1" | "0.0.0.0")
-    )
-}
-
-/// Best-effort, dependency-free host extraction from a
-/// `scheme://[user@]host[:port][/…]` URL, lowercased — enough to classify a
-/// teardown target as loopback. `None` when no host is present.
-fn host_of(rpc_url: &str) -> Option<String> {
-    let after_scheme = rpc_url.split_once("://").map_or(rpc_url, |(_, rest)| rest);
-    // The authority ends at the first '/', '?', or '#'.
-    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
-    // Drop any `user[:pass]@` userinfo prefix.
-    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    // A bracketed IPv6 literal (`[::1]:8899`) keeps its inner colons; an
-    // unbracketed host drops its `:port` suffix.
-    let host = match host_port.strip_prefix('[') {
-        Some(rest) => rest.split_once(']').map_or(rest, |(h, _)| h),
-        None => host_port.split_once(':').map_or(host_port, |(h, _)| h),
-    };
-    (!host.is_empty()).then(|| host.to_ascii_lowercase())
-}
-
 /// Block on an interactive `yes` before tearing down a non-localnet cluster.
-/// Prints to stderr so a piped stdout (the teardown log) stays clean.
+/// Prints to stderr so a piped stdout (the teardown log) stays clean; the
+/// typed-`yes` read itself is [`cluster::confirm`], shared with the TUI's
+/// mainnet entry gate.
 fn confirm(rpc_url: &str, wallet: &str) -> Result<()> {
     eprintln!("⚠  Non-localnet teardown — this is irreversible.");
     eprintln!("   RPC:    {rpc_url}");
@@ -99,14 +82,7 @@ fn confirm(rpc_url: &str, wallet: &str) -> Result<()> {
          registry, reclaiming all rent to the wallet. The program is left\n   \
          deployed."
     );
-    eprint!("   Type 'yes' to continue: ");
-    std::io::stderr().flush().ok();
-    let mut line = String::new();
-    std::io::stdin().read_line(&mut line)?;
-    if line.trim() != "yes" {
-        bail!("aborted");
-    }
-    Ok(())
+    cluster::confirm()
 }
 
 fn print_help() {
@@ -165,27 +141,6 @@ impl Args {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn localnet_matches_loopback_host_exactly() {
-        assert!(is_localnet("http://127.0.0.1:8899"));
-        assert!(is_localnet("http://localhost:8899"));
-        assert!(is_localnet("http://[::1]:8899"));
-        assert!(is_localnet("http://0.0.0.0:8899"));
-        assert!(is_localnet("https://LOCALHOST")); // case-insensitive host
-    }
-
-    #[test]
-    fn localnet_rejects_loopback_token_outside_the_host() {
-        // The dangerous direction: a remote host that merely contains the
-        // loopback token must still be treated as non-local (and prompt).
-        assert!(!is_localnet("http://127.0.0.1.evil.com/"));
-        assert!(!is_localnet("http://localhost.attacker.net/"));
-        assert!(!is_localnet("https://127.0.0.1@evil.com/"));
-        assert!(!is_localnet("http://evil.com/127.0.0.1"));
-        assert!(!is_localnet("https://evil.com/?note=localhost"));
-        assert!(!is_localnet("https://api.mainnet-beta.solana.com"));
-    }
 
     fn parse(args: &[&str]) -> Result<Args> {
         Args::parse(args.iter().map(|s| s.to_string()))

@@ -16,6 +16,7 @@ use crate::accounts::{self, ChainState, Liveness};
 use crate::action::{self, Action, JobContext};
 use crate::bot::{self, BotManager};
 use crate::chain;
+use crate::cluster::Cluster;
 use crate::explorer;
 use crate::fills;
 use crate::job::{JobEvent, Logger};
@@ -51,8 +52,6 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-/// Number of entries in the action menu.
-const MENU_LEN: usize = action::MENU.len();
 /// Re-poll on-chain state at least this often, even with no job activity.
 const REFRESH_INTERVAL: Duration = Duration::from_millis(700);
 /// How many log lines to retain.
@@ -107,7 +106,13 @@ enum Flow {
 /// The whole TUI.
 pub struct App {
     pub(crate) ctx: JobContext,
-    pub(crate) validator: Validator,
+    /// The spawned `solana-test-validator` — `None` in mainnet mode, where
+    /// this process connects to a chain it does not own. Optional rather than
+    /// a second `App` type because everything else about the panel is
+    /// identical, and the compiler then forces every use through a `match`
+    /// (spawn, wipe, drop) instead of leaving a validator call reachable on a
+    /// path that has none.
+    pub(crate) validator: Option<Validator>,
     pub(crate) client: RpcClient,
     pub(crate) chain: ChainState,
     pub(crate) menu: ListState,
@@ -190,12 +195,23 @@ pub struct App {
 }
 
 impl App {
-    /// Spawn the validator and build the app. `ctx.rpc_url` is overwritten
-    /// with the spawned validator's URL.
+    /// Build the app, spawning a validator only when this session owns one.
+    ///
+    /// On localnet a `solana-test-validator` is spawned and `ctx.rpc_url` is
+    /// overwritten with its URL — the panel drives a ledger it created. On
+    /// mainnet nothing is spawned and `ctx.rpc_url` is left exactly as the
+    /// caller resolved it, because that endpoint has already been verified
+    /// against the expected genesis hash and must not be second-guessed here.
     pub fn new(mut ctx: JobContext) -> Result<Self> {
-        let validator = Validator::spawn()?;
-        ctx.rpc_url = validator.rpc_url().to_string();
-        let client = chain::rpc(validator.rpc_url());
+        let validator = match ctx.cluster {
+            Cluster::Localnet => {
+                let v = Validator::spawn()?;
+                ctx.rpc_url = v.rpc_url().to_string();
+                Some(v)
+            }
+            Cluster::Mainnet => None,
+        };
+        let client = chain::rpc(&ctx.rpc_url);
         let (tx, rx) = mpsc::channel();
         let mut menu = ListState::default();
         menu.select(Some(0));
@@ -247,9 +263,23 @@ impl App {
     /// operator drives the numbered steps by hand.
     pub fn run(&mut self, auto_bootstrap: bool) -> Result<()> {
         self.auto_bootstrap = auto_bootstrap;
-        self.log(LogKind::Info, "Starting solana-test-validator…".to_string());
-        self.start_explorer();
-        self.start_airdrops();
+        // Mainnet skips all three localnet services. The airdrop in
+        // particular is not merely useless there — it would hammer the
+        // endpoint with faucet requests that can only fail, and
+        // `chain::airdrop` retries each one past a rate-limit window.
+        if self.ctx.cluster.is_mainnet() {
+            self.log(
+                LogKind::Info,
+                format!(
+                    "Connected to {} — read-only, no validator spawned.",
+                    self.ctx.cluster.label()
+                ),
+            );
+        } else {
+            self.log(LogKind::Info, "Starting solana-test-validator…".to_string());
+            self.start_explorer();
+            self.start_airdrops();
+        }
         // Watch the program's fills so the recent-fills pane fills in as swaps
         // land — survives a wipe by reconnecting to the respawned validator.
         fills::spawn(self.ctx.rpc_url.clone(), self.tx.clone());
@@ -288,8 +318,13 @@ impl App {
     /// operator re-runs it by hand. Waits out the `job_running` slot and the
     /// pre-validator phase by simply retrying on the next tick.
     fn maybe_auto_bootstrap(&mut self) {
+        // The cluster gate is checked here as well as at launch: "disabled by
+        // construction" has to mean the loop cannot fire it, not merely that
+        // the entry point refuses to arm it. Two cheap checks are worth more
+        // than one, for a path that would deploy a program with real funds.
         if self.auto_bootstrap
             && !self.job_running
+            && Action::BootstrapAll.available_on(self.ctx.cluster)
             && Action::BootstrapAll.enabled(self.chain.phase())
         {
             self.auto_bootstrap = false;
@@ -413,7 +448,12 @@ impl App {
     /// in some browsers; see [`explorer`]). Best-effort: a launch failure is
     /// logged, not fatal.
     fn open_in_explorer(&mut self, address: Pubkey) {
-        let url = if self.explorer_ready() {
+        // Mainnet takes the plain hosted route: the local container indexes the
+        // localnet, and the `customUrl` forms would put the endpoint — commonly
+        // an API key — into a browser URL. See `explorer::mainnet_account_url`.
+        let url = if self.ctx.cluster.is_mainnet() {
+            explorer::mainnet_account_url(&address)
+        } else if self.explorer_ready() {
             explorer::account_url(&address, &self.ctx.rpc_url)
         } else {
             explorer::hosted_account_url(&address, &self.ctx.rpc_url)
@@ -428,7 +468,10 @@ impl App {
     /// ready, else the hosted explorer (same browser caveat as
     /// [`App::open_in_explorer`]). Best-effort: a launch failure is logged.
     fn open_tx_in_explorer(&mut self, signature: &str) {
-        let url = if self.explorer_ready() {
+        // Same endpoint-leak rule as `App::open_in_explorer`.
+        let url = if self.ctx.cluster.is_mainnet() {
+            explorer::mainnet_tx_url(signature)
+        } else if self.explorer_ready() {
             explorer::tx_url(signature, &self.ctx.rpc_url)
         } else {
             explorer::hosted_tx_url(signature, &self.ctx.rpc_url)
@@ -497,7 +540,7 @@ impl App {
             KeyCode::Enter => self.run_selected(),
             KeyCode::Char(d @ '1'..='8') => {
                 let idx = (d as usize) - ('1' as usize);
-                if idx < MENU_LEN {
+                if idx < self.menu_entries().len() {
                     self.menu.select(Some(idx));
                     self.run_selected();
                 }
@@ -738,16 +781,30 @@ impl App {
         }
     }
 
+    /// The active cluster's menu — what the panel draws and what the number
+    /// keys index. Mainnet's is shorter, so every bound must come from here
+    /// rather than from the localnet menu's length.
+    pub(crate) fn menu_entries(&self) -> &'static [Action] {
+        action::menu_for(self.ctx.cluster)
+    }
+
     /// Move the menu selection by `delta`, clamped to the menu bounds.
     fn menu_step(&mut self, delta: isize) {
+        let len = self.menu_entries().len() as isize;
         let cur = self.menu.selected().unwrap_or(0) as isize;
-        let next = (cur + delta).clamp(0, MENU_LEN as isize - 1) as usize;
+        let next = (cur + delta).clamp(0, (len - 1).max(0)) as usize;
         self.menu.select(Some(next));
     }
 
     /// Run the highlighted menu action.
     fn run_selected(&mut self) {
-        let action = action::MENU[self.menu.selected().unwrap_or(0)];
+        let entries = self.menu_entries();
+        // The selection is clamped on every move, but the menu it indexes is
+        // chosen per cluster — so read defensively rather than indexing and
+        // trusting that the two agree.
+        let Some(&action) = entries.get(self.menu.selected().unwrap_or(0)) else {
+            return;
+        };
         self.run_action(action);
     }
 
@@ -769,6 +826,22 @@ impl App {
     /// owned validator), everything else is dispatched to a background job.
     /// Shared by the numbered action menu and the eCLOB demo keybinds.
     fn run_action(&mut self, action: Action) {
+        // The cluster gate comes first, and reports a different thing: a phase
+        // gate is a "not yet" that resolves as the chain moves, this is a "not
+        // here" that never will. Checked at this one choke point so the menu
+        // and all keybinds are covered by the same test.
+        if !action.available_on(self.ctx.cluster) {
+            self.log(
+                LogKind::Err,
+                format!(
+                    "{} — {} ({})",
+                    action.label(),
+                    action.unavailable_reason(self.ctx.cluster),
+                    self.ctx.cluster.label()
+                ),
+            );
+            return;
+        }
         let phase = self.chain.phase();
         if !action.enabled(phase) {
             self.log(
@@ -802,13 +875,29 @@ impl App {
     /// Kill the validator, wipe its temp ledger, and respawn — then point a
     /// fresh client at it and force a re-poll.
     fn wipe(&mut self) {
+        // Unreachable through `run_action`'s cluster gate; handled rather than
+        // unwrapped because the alternative is a panic in a terminal that has
+        // taken over the screen, and the honest report costs one line.
+        if self.validator.is_none() {
+            self.log(
+                LogKind::Err,
+                "No validator to wipe — this session does not own one.".to_string(),
+            );
+            return;
+        }
         self.log(LogKind::Info, "Wiping localnet…".to_string());
         // The bots quote against the ledger being wiped — stop them so none
         // keeps sending doomed txns at the fresh, empty validator.
         self.bots.stop_all();
-        match self.validator.wipe_and_respawn() {
-            Ok(()) => {
-                self.client = chain::rpc(self.validator.rpc_url());
+        // Confine the validator borrow to this block, resolving the fresh URL
+        // inside it, so the arms below are free to touch `self` again.
+        let respawned = match self.validator.as_mut() {
+            Some(v) => v.wipe_and_respawn().map(|()| v.rpc_url().to_string()),
+            None => return,
+        };
+        match respawned {
+            Ok(rpc_url) => {
+                self.client = chain::rpc(&rpc_url);
                 // The fresh ledger has no history, so the measured CU costs
                 // and the recent fills from the wiped one are stale — clear
                 // both panes with it.

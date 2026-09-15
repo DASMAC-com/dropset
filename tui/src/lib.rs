@@ -13,6 +13,7 @@ pub mod app;
 pub mod book;
 pub mod bot;
 pub mod chain;
+pub mod cluster;
 pub mod deploy;
 pub mod explorer;
 pub mod fills;

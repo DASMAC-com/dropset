@@ -282,6 +282,50 @@ TUI_ARGS ?= --bootstrap
 tui: tui-prebuild
 	cargo run -p dropset-tui -- $(TUI_ARGS)
 
+# Assert a required environment variable is set, naming it and why:
+# `$(call require-env,VAR,reason)`. Keep the reason free of commas — make
+# splits `call` arguments on them.
+#
+# Factored out rather than inlined because the mainnet entry points must fail
+# the same way: this panel and the maker bot's mainnet mode both refuse to
+# start on an unset endpoint, and one shared recipe is what keeps the two
+# messages from drifting apart.
+define require-env
+@if [ -z "$${$(1)}" ]; then \
+	echo "$(1) is not set — $(2)"; \
+	exit 1; \
+fi
+endef
+
+# Exported so `make tui-mainnet DROPSET_MAINNET_RPC_URL=<url>` reaches the
+# binary's environment too, not just make's own variable table. A plain
+# exported shell variable already works without this.
+export DROPSET_MAINNET_RPC_URL
+
+# Mainnet cockpit — the same panel as `make tui`, pointed at a chain it does
+# not own. Deliberately shares nothing with the localnet targets above:
+#
+#   * No `tui-prebuild` prerequisite. That runs `anchor build` and builds the
+#     bots, all of which serve deploying to and quoting on a throwaway ledger.
+#     Nothing is deployed from here — the program is published out of band.
+#   * No validator is spawned and no explorer image is warmed (the local
+#     explorer indexes the localnet; mainnet links go to the hosted one).
+#   * No `--bootstrap`. Auto-bootstrap is refused by the binary in mainnet
+#     mode, so passing it would be an error rather than a no-op.
+#
+# The endpoint has no default on purpose: a wrong-but-present URL fails
+# silently, while an absent one fails here with a message. The binary then
+# verifies the endpoint's genesis hash really is mainnet-beta's and requires a
+# typed confirmation before drawing a frame.
+#
+# `make demo` and `make tui` are untouched.
+TUI_MAINNET_ARGS ?=
+MAINNET_RPC_HINT := mainnet mode has no default endpoint; set it explicitly
+.PHONY: tui-mainnet
+tui-mainnet:
+	$(call require-env,DROPSET_MAINNET_RPC_URL,$(MAINNET_RPC_HINT))
+	cargo run -p dropset-tui -- --cluster mainnet $(TUI_MAINNET_ARGS)
+
 # Headless rent reclamation — the same teardown the TUI's "Teardown & reclaim"
 # action runs, with no UI. Defaults to localnet; pass WALLET to override the
 # admin keypair and ARGS for the rest (e.g. a real cluster, which prompts for
