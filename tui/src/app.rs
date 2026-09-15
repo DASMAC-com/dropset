@@ -448,16 +448,13 @@ impl App {
     /// in some browsers; see [`explorer`]). Best-effort: a launch failure is
     /// logged, not fatal.
     fn open_in_explorer(&mut self, address: Pubkey) {
-        // Mainnet takes the plain hosted route: the local container indexes the
-        // localnet, and the `customUrl` forms would put the endpoint — commonly
-        // an API key — into a browser URL. See `explorer::mainnet_account_url`.
-        let url = if self.ctx.cluster.is_mainnet() {
-            explorer::mainnet_account_url(&address)
-        } else if self.explorer_ready() {
-            explorer::account_url(&address, &self.ctx.rpc_url)
-        } else {
-            explorer::hosted_account_url(&address, &self.ctx.rpc_url)
-        };
+        // Ask the one owner of the rule rather than choosing here — this used to
+        // be a local branch, and `action::dispatch` had a second copy that did
+        // not learn about mainnet.
+        // `explorer_ready` takes `&mut self`, so resolve it before borrowing
+        // `ctx` for the call.
+        let ready = self.explorer_ready();
+        let url = explorer::account_url_for(self.ctx.cluster, &address, &self.ctx.rpc_url, ready);
         self.log(LogKind::Info, format!("Opening {address} in the explorer…"));
         if let Err(e) = open::that(&url) {
             self.log(LogKind::Err, format!("open explorer: {e:#}"));
@@ -468,14 +465,9 @@ impl App {
     /// ready, else the hosted explorer (same browser caveat as
     /// [`App::open_in_explorer`]). Best-effort: a launch failure is logged.
     fn open_tx_in_explorer(&mut self, signature: &str) {
-        // Same endpoint-leak rule as `App::open_in_explorer`.
-        let url = if self.ctx.cluster.is_mainnet() {
-            explorer::mainnet_tx_url(signature)
-        } else if self.explorer_ready() {
-            explorer::tx_url(signature, &self.ctx.rpc_url)
-        } else {
-            explorer::hosted_tx_url(signature, &self.ctx.rpc_url)
-        };
+        // Same one owner as `App::open_in_explorer`.
+        let ready = self.explorer_ready();
+        let url = explorer::tx_url_for(self.ctx.cluster, signature, &self.ctx.rpc_url, ready);
         self.log(
             LogKind::Info,
             format!("Opening tx {signature} in the explorer…"),
@@ -566,6 +558,35 @@ impl App {
     /// The ticker of the currently selected market, from its base mint via the
     /// known-mint map — `None` before any market exists, or for a market minted
     /// outside the bootstrap (no known symbol, so no bot to drive).
+    /// Refuse a localnet-only shortcut on mainnet, logging why. Returns whether
+    /// the caller should stop.
+    ///
+    /// The bot toggles are **not** `Action`s, so they never reach
+    /// [`Action::available_on`] and `run_action` is not on their path — they
+    /// spawn maker/taker subprocesses pointed straight at `ctx.rpc_url`, which
+    /// on mainnet means real quotes and real takes signed by committed localnet
+    /// role keys.
+    ///
+    /// Today they are inert there only by accident: all four resolve a symbol by
+    /// matching a discovered market's base mint against `mint_symbols`, which is
+    /// built from the localnet `keys/` mints and so matches nothing on mainnet.
+    /// Mainnet mint addressing removes that accident, which is why the refusal
+    /// is explicit here rather than left incidental.
+    fn refuse_on_mainnet(&mut self, what: &str) -> bool {
+        if !self.ctx.cluster.is_mainnet() {
+            return false;
+        }
+        self.log(
+            LogKind::Err,
+            format!(
+                "{what} — localnet only: the bots quote and take with committed \
+                 role keys ({})",
+                self.ctx.cluster.label()
+            ),
+        );
+        true
+    }
+
     fn selected_symbol(&self) -> Option<&'static str> {
         let market = self.chain.selected_market(self.selected_market)?;
         self.mint_symbols
@@ -577,6 +598,9 @@ impl App {
     /// Toggle the selected market's maker bot — start it if stopped (flash
     /// liquidity), stop it if running.
     fn toggle_selected_bot(&mut self) {
+        if self.refuse_on_mainnet("Maker bot") {
+            return;
+        }
         let Some(symbol) = self.selected_symbol() else {
             self.log(
                 LogKind::Err,
@@ -603,6 +627,9 @@ impl App {
     /// on here. Needs the selected market's address (the taker is scoped by
     /// PDA), so it is a no-op before a market exists.
     fn toggle_selected_taker(&mut self) {
+        if self.refuse_on_mainnet("Taker bot") {
+            return;
+        }
         let Some(symbol) = self.selected_symbol() else {
             self.log(
                 LogKind::Err,
@@ -640,6 +667,9 @@ impl App {
     /// board" control): if any maker is running, stop them all; otherwise start
     /// one per discovered market that isn't already running.
     fn toggle_all_bots(&mut self) {
+        if self.refuse_on_mainnet("Maker bots") {
+            return;
+        }
         if self.bots.running_count() > 0 {
             let n = self.bots.running_count();
             self.bots.stop_all();
@@ -676,6 +706,9 @@ impl App {
     /// discovered market (each scoped to its book by PDA). Opt-in like the
     /// per-market taker — nothing runs a taker until the operator presses `T`.
     fn toggle_all_takers(&mut self) {
+        if self.refuse_on_mainnet("Taker bots") {
+            return;
+        }
         if self.takers.running_count() > 0 {
             let n = self.takers.running_count();
             self.takers.stop_all();
@@ -829,7 +862,12 @@ impl App {
         // The cluster gate comes first, and reports a different thing: a phase
         // gate is a "not yet" that resolves as the chain moves, this is a "not
         // here" that never will. Checked at this one choke point so the menu
-        // and all keybinds are covered by the same test.
+        // and every shortcut that maps to an `Action` are covered by one test.
+        //
+        // The bound matters: the maker/taker bot toggles are not `Action`s, so
+        // they do not pass through here at all and are gated by
+        // `App::refuse_on_mainnet` instead. An earlier version of this comment
+        // claimed "all keybinds", which was false.
         if !action.available_on(self.ctx.cluster) {
             self.log(
                 LogKind::Err,
@@ -889,14 +927,21 @@ impl App {
         // The bots quote against the ledger being wiped — stop them so none
         // keeps sending doomed txns at the fresh, empty validator.
         self.bots.stop_all();
-        // Confine the validator borrow to this block, resolving the fresh URL
-        // inside it, so the arms below are free to touch `self` again.
-        let respawned = match self.validator.as_mut() {
-            Some(v) => v.wipe_and_respawn().map(|()| v.rpc_url().to_string()),
-            None => return,
-        };
+        // Confine the validator borrow to this expression, resolving the fresh
+        // URL inside it, so the arms below are free to touch `self` again.
+        //
+        // `map` rather than a `match` with a `None => return` arm: presence was
+        // established above, so that arm was unreachable, and it sat *after*
+        // `stop_all()` — so were it ever reachable it would leave the bots
+        // stopped with no wipe and no log line. Falling through cannot.
+        let respawned = self
+            .validator
+            .as_mut()
+            .map(|v| v.wipe_and_respawn().map(|()| v.rpc_url().to_string()));
         match respawned {
-            Ok(rpc_url) => {
+            None => {}
+            Some(Err(e)) => self.log(LogKind::Err, format!("wipe failed: {e:#}")),
+            Some(Ok(rpc_url)) => {
                 self.client = chain::rpc(&rpc_url);
                 // The fresh ledger has no history, so the measured CU costs
                 // and the recent fills from the wiped one are stale — clear
@@ -911,7 +956,6 @@ impl App {
                     "Localnet wiped — validator restarting.".to_string(),
                 );
             }
-            Err(e) => self.log(LogKind::Err, format!("wipe failed: {e:#}")),
         }
     }
 

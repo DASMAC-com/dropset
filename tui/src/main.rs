@@ -70,13 +70,10 @@ fn main() -> Result<()> {
         wallet_path,
         wallet,
         // Mainnet never starts the managed container — it indexes the localnet.
-        // Seeding the state as NO_DOCKER (rather than STARTING) keeps the status
-        // bar honest and, more importantly, stops `App`'s `Drop` from tearing
-        // down a container this session never brought up.
-        explorer_state: Arc::new(AtomicU8::new(match args.cluster {
-            Cluster::Localnet => explorer::state::STARTING,
-            Cluster::Mainnet => explorer::state::NO_DOCKER,
-        })),
+        // The distinction is load-bearing (it stops `App`'s `Drop` tearing down
+        // a container this session never brought up), so it lives in a tested
+        // function rather than inline here.
+        explorer_state: Arc::new(AtomicU8::new(explorer::initial_state(args.cluster))),
         explorer_lock: Arc::new(Mutex::new(())),
     };
     app::App::new(ctx)?.run(args.bootstrap)

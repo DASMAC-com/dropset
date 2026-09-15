@@ -265,7 +265,23 @@ impl Action {
             }
             Action::ProbeSwap => "spends real funds — no mainnet taker key",
             Action::Teardown => "use the headless teardown binary on a real cluster",
-            _ => "localnet demo control",
+            // Enumerated rather than a `_` arm, and that is the point:
+            // `available_on` above is exhaustive, so adding a variant is a
+            // compile error there and the author must decide its mainnet
+            // answer. A wildcard here would quietly hand that new variant the
+            // reason "localnet demo control" — a false statement to the
+            // operator, and one no test could catch, since the reason test only
+            // asserts the string is non-empty.
+            Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder
+            | Action::ResetAllLadders => "localnet demo control",
+            // Available on mainnet, so only reachable by a misuse the debug
+            // assertion above catches in test builds.
+            Action::OpenExplorer => "",
         }
     }
 
@@ -502,7 +518,29 @@ pub fn dispatch(
         }
         Action::OpenExplorer => {
             let targets = explorer_targets(state, selected);
+            let cluster = ctx.cluster;
             job::spawn(tx, "Open explorer", move |log| {
+                // Mainnet short-circuits before the Docker block, and both
+                // halves of that matter. The managed container indexes the
+                // localnet, so bringing it up here would start a container the
+                // entry banner promised this session would not — and would
+                // overwrite the NO_DOCKER sentinel that stops `Drop for App`
+                // tearing down a container it never owned. The URL then comes
+                // from the one owner of that rule, which is what stops this arm
+                // and `App::open_in_explorer` diverging again.
+                if cluster.is_mainnet() {
+                    // The endpoint is passed in deliberately rather than
+                    // blanked: the router ignores it on mainnet, and its test
+                    // pins that with a key-bearing URL, so this exercises the
+                    // same path the test asserts on.
+                    open_targets(log, &targets, |addr| {
+                        explorer::account_url_for(cluster, addr, &rpc_url, false)
+                    })?;
+                    return Ok(format!(
+                        "Opened {} account(s) in the hosted explorer (mainnet)",
+                        targets.len()
+                    ));
+                }
                 if !explorer::docker_available() {
                     log.log("Docker not found — opening the hosted explorer instead.");
                     log.log(
@@ -511,7 +549,7 @@ pub fn dispatch(
                          Chrome/Firefox.",
                     );
                     open_targets(log, &targets, |addr| {
-                        explorer::hosted_account_url(addr, &rpc_url)
+                        explorer::account_url_for(cluster, addr, &rpc_url, false)
                     })?;
                     return Ok(format!(
                         "Opened {} account(s) in the hosted explorer (fallback)",
@@ -528,7 +566,9 @@ pub fn dispatch(
                         explorer_state.store(explorer::state::READY, Ordering::SeqCst);
                     }
                 }
-                open_targets(log, &targets, |addr| explorer::account_url(addr, &rpc_url))?;
+                open_targets(log, &targets, |addr| {
+                    explorer::account_url_for(cluster, addr, &rpc_url, true)
+                })?;
                 Ok(format!(
                     "Opened {} account(s) in the local explorer",
                     targets.len()
@@ -1120,9 +1160,18 @@ mod tests {
         Phase::Ready,
     ];
 
-    /// Every action the menu or a shortcut can reach, so a cluster-gate test
-    /// covers the demo controls too — those are reachable only by keybinds,
-    /// never appear in `MENU`, and so would otherwise go unchecked.
+    /// Every `Action`, so a cluster-gate test covers the demo controls too —
+    /// those are reachable only by keybinds, never appear in `MENU`, and so
+    /// would otherwise go unchecked.
+    ///
+    /// Note the bound: this is every **`Action`**, not everything a keystroke
+    /// can reach. The maker/taker bot toggles are not `Action`s and are gated
+    /// separately in `App` (see `App::refuse_on_mainnet`); an earlier version
+    /// of this comment claimed the wider scope and was wrong.
+    ///
+    /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
+    /// `[Action; 16]` length annotation does not change when a variant is
+    /// added, so nothing else would notice the list going stale.
     const ALL_ACTIONS: [Action; 16] = [
         Action::Deploy,
         Action::InitRegistry,
@@ -1203,6 +1252,52 @@ mod tests {
         // Keeps ALL_ACTIONS honest if a new entry is added to MENU.
         for a in MENU {
             assert!(ALL_ACTIONS.contains(&a), "{:?} missing", a.label());
+        }
+    }
+
+    #[test]
+    fn all_actions_lists_every_variant() {
+        // The completeness guard the MENU check above cannot be: MENU holds 8
+        // of the 16 variants, so a new shortcut-only action would be absent from
+        // both MENU and ALL_ACTIONS and silently escape all four cluster-gate
+        // tests — a variant reachable only by a shortcut. PR 2 and PR 3 of this
+        // series add exactly that shape.
+        //
+        // Three assertions together are a complete proof. The match below has
+        // one arm and no wildcard, so adding a variant fails to compile here
+        // until someone edits this test; the count pins the fixture's size at
+        // the enum's size; and the pairwise check rules out duplicates. Sixteen
+        // distinct variants drawn from a sixteen-variant enum is all of them.
+        fn is_known(a: Action) -> bool {
+            match a {
+                Action::Deploy
+                | Action::InitRegistry
+                | Action::CreateMarket
+                | Action::CreateVault
+                | Action::OpenExplorer
+                | Action::BootstrapAll
+                | Action::ProbeSwap
+                | Action::Teardown
+                | Action::Wipe
+                | Action::RepegUp
+                | Action::RepegDown
+                | Action::WidenSpread
+                | Action::TightenSpread
+                | Action::ThinFarSide
+                | Action::ResetLadder
+                | Action::ResetAllLadders => true,
+            }
+        }
+        assert_eq!(
+            ALL_ACTIONS.len(),
+            16,
+            "ALL_ACTIONS must list every Action variant"
+        );
+        for (i, a) in ALL_ACTIONS.iter().enumerate() {
+            assert!(is_known(*a));
+            for b in &ALL_ACTIONS[i + 1..] {
+                assert_ne!(a, b, "ALL_ACTIONS lists {:?} twice", a.label());
+            }
         }
     }
 

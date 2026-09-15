@@ -26,9 +26,9 @@
 
 use crate::chain;
 use crate::validator;
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use solana_client::rpc_client::RpcClient;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 /// Solana mainnet-beta's genesis hash — the chain's permanent identity, and
 /// the only cluster this crate hard-codes. Verified against
@@ -114,9 +114,18 @@ impl Cluster {
         if self != Cluster::Mainnet {
             return Ok(());
         }
-        let seen = chain::genesis_hash(client).with_context(|| {
-            format!(
-                "read the genesis hash to confirm {} — is the endpoint reachable?",
+        // The source error is deliberately DROPPED rather than chained. It comes
+        // from the RPC client's HTTP layer, whose `Display` may include the
+        // request URL — and this endpoint is the one value in the process most
+        // likely to embed an API key. `main` propagates with `?`, so anything
+        // kept here is printed to stderr in full on the commonest first-run
+        // failure. Fixing it by construction beats reasoning about a
+        // dependency's formatting.
+        let seen = chain::genesis_hash(client).map_err(|_| {
+            anyhow!(
+                "could not read the genesis hash from the {} endpoint — is it \
+                 reachable? (the underlying error is withheld: it can carry the \
+                 endpoint URL, which commonly embeds a key)",
                 self.label()
             )
         })?;
@@ -154,12 +163,17 @@ pub fn ensure_not_mainnet(client: &RpcClient) -> Result<()> {
     }
 }
 
-/// Whether `rpc_url` targets the loopback validator.
+/// Whether `rpc_url` targets a validator on **this host**.
 ///
 /// Matches on the URL's **host component** exactly, not a substring: a remote
 /// host that merely contains the loopback token
 /// (`http://127.0.0.1.evil.com`, `https://127.0.0.1@evil.com`) resolves
 /// off-box and must not be classified as local.
+///
+/// "This host" rather than "loopback" because the accepted set includes
+/// `0.0.0.0`, which is the wildcard/unspecified address rather than a loopback
+/// one — correct for the intent, since a test validator bound to `0.0.0.0` is
+/// still this process's own, but the narrower word would be wrong.
 pub fn is_localnet(rpc_url: &str) -> bool {
     matches!(
         host_of(rpc_url).as_deref(),
@@ -191,6 +205,15 @@ pub fn host_of(rpc_url: &str) -> Option<String> {
 /// word — a bare `y` is too easy to hit by reflex for a gate whose whole job
 /// is to interrupt one.
 pub fn confirm() -> Result<()> {
+    // A gate whose whole job is to interrupt a reflex must not be satisfiable
+    // without a human at a terminal. EOF already failed closed (an empty line
+    // is not `yes`), but a pipe, a heredoc, or a verb typed into a terminal tab
+    // by automation would all have passed — and this repo does dispatch session
+    // verbs programmatically, so that is a live path rather than a theoretical
+    // one. Refuse explicitly instead of reading whatever arrives.
+    if !std::io::stdin().is_terminal() {
+        bail!("refusing to confirm on a non-interactive stdin — run this attended");
+    }
     eprint!("   Type 'yes' to continue: ");
     std::io::stderr().flush().ok();
     let mut line = String::new();

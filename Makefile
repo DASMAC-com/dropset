@@ -297,9 +297,18 @@ define require-env
 fi
 endef
 
-# Exported so `make tui-mainnet DROPSET_MAINNET_RPC_URL=<url>` reaches the
-# binary's environment too, not just make's own variable table. A plain
-# exported shell variable already works without this.
+# Exported so an in-Makefile assignment to this variable would reach a recipe's
+# environment. Note what this does NOT buy, since the obvious reading is wrong:
+# make already exports variables set on the command line and inherited from the
+# environment, so `make tui-mainnet DROPSET_MAINNET_RPC_URL=<url>` and a plain
+# exported shell variable both work without this line.
+#
+# One measured consequence for whoever adopts this shape next (the maker bot's
+# mainnet mode): a bare `export` with no assignment puts the name in every
+# recipe's environment as an EMPTY STRING, not absent. So a consumer testing
+# presence with `env::var(..).is_ok()` reads unset as configured. The cockpit
+# is immune because `Cluster::rpc_url` requires a non-empty value after
+# trimming; copy that, not a presence check.
 export DROPSET_MAINNET_RPC_URL
 
 # Mainnet cockpit — the same panel as `make tui`, pointed at a chain it does
