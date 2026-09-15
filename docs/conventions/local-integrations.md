@@ -969,17 +969,17 @@ clean cut with **no aliases** — the family is small and every launcher
 is the operator's own muscle memory, so a half-migration leaving both
 names alive was the outcome to avoid.
 
-| Verb                | Job                                      | Substrate   | Model          |
-| ------------------- | ---------------------------------------- | ----------- | -------------- |
-| `task <n>`          | worktree session on Linear task n        | Bedrock     | Opus 5, 1M, 1h |
-| `task local <n>`    | same, when the work needs web research   | seat        | saved default  |
-| `task resume [n]`   | resume by number (bare = the picker)     | as recorded | as launched    |
-| `explore <n\|name>` | worktree research / audit task           | seat only   | Fable pin      |
-| `plan`              | daily planning session                   | seat        | Fable pin      |
-| `housekeeping`      | upkeep; also the 5-hour-window opener    | seat        | saved default  |
-| `architect <topic>` | long-horizon design thread, own worktree | seat        | Fable pin      |
-| `fleet [go]`        | batch resume                             | per-window  | as launched    |
-| `cdds [n]`          | not a session verb — navigation          | —           | —              |
+| Verb                | Job                                        | Substrate   | Model          |
+| ------------------- | ------------------------------------------ | ----------- | -------------- |
+| `task <n>`          | worktree session on Linear task n          | Bedrock     | Opus 5, 1M, 1h |
+| `task local <n>`    | same, when the work needs web research     | seat        | saved default  |
+| `task resume [n]`   | resume by number (bare = the picker)       | as recorded | as launched    |
+| `explore <n\|name>` | research / audit, read-only, temp worktree | seat only   | Fable pin      |
+| `plan`              | daily planning session                     | seat        | Fable pin      |
+| `housekeeping`      | upkeep; also the 5-hour-window opener      | seat        | saved default  |
+| `architect <topic>` | design thread, read-only, temp worktree    | seat        | Fable pin      |
+| `fleet [go]`        | batch resume                               | per-window  | as launched    |
+| `cdds [n]`          | not a session verb — navigation            | —           | —              |
 
 **`explore resume` is gone**, and `explore` now requires a name.
 Both follow from the worktree home below: `explore <n|name>` is
@@ -988,15 +988,20 @@ worktree cannot be named without a name. `plan` and
 `housekeeping` remain **base-repo** seat verbs — they touch the
 board, not a branch.
 
-#### Spec-producing sessions get a worktree
+#### Architect and explore sessions: temporary worktree, no PR
 
-**A session whose deliverable is a spec or a findings document
-runs in its own worktree, and that document lives on a PR
-branch.** This covers `architect <topic>` and every
-`explore <n|name>` task — including audits, which are explore
-tasks. It is the canonical statement of the mechanism; the
-`architect`, `audit`, `audit-scope` and `plan` skills state
-their own duties and point here rather than redescribing it.
+**`architect <topic>` and every `explore <n|name>` task — audits
+included — run in their own worktree, but that worktree is
+TEMPORARY WORKING STATE and the session is READ-ONLY toward the
+repo: no commits, no PR.** Durable state is captured in
+**Linear**; a spec file is **optional**, and anything repo-bound
+lands later via a **follow-up worker task**. This is the
+canonical statement of the mechanism; the `architect`, `audit`,
+`audit-scope` and `plan` skills state their own duties and point
+here rather than redescribing it.
+
+Operator ruling, **2026-09-14**, superseding the 09-11 shape
+recorded on ENG-1367.
 
 **What names the worktree:**
 
@@ -1018,49 +1023,81 @@ whole arrangement exists to make protective. The session's
 role: `eng-*` implementers, `plan-*` planning, `ceo-*`
 architecture, `exp-*` research.
 
-The branch arrives named `worktree-<tag>` (there is no CLI flag
-to drop the prefix), so rename it to the bare tag before the
-first commit, as `init-pr` does. The spec itself goes at
-`docs/specs/<ENG-number>-<topic>.md`, which is **tracked** —
-`docs/specs/` is not ignored.
+There is **no branch to rename and no PR to open.** A spec file,
+when one is warranted at all, sits **untracked** in the worktree
+at `docs/specs/<issue-number>-<topic>.md` — a bare number,
+matching the existing `docs/specs/1313-mainnet-laptop.md`; the
+literal token `ENG-` is not part of the filename.
 
-**Why a worktree, when the session writes no product code.**
-This reverses the base-repo home both verbs shipped with
-(operator ruling, 2026-09-11, after one day live), and the old
-rule sounded right. What it missed is that the deliverable is a
-**file**, and an untracked file in the base checkout is
-protected by nothing: the first spec written this way sat in the
-base repo awaiting operator feedback, **its issue already marked
-Done while the read-back loop was still open**, and no part of
-the cleanup machinery recognized any of it as live work. A
-worktree plus an open PR makes the protection structural —
-`housekeeping` refuses to prune a worktree holding uncommitted
-or unpushed work and applies open-PR protection.
+**Why a worktree at all, if nothing is committed from it.** So
+the operator can iterate a spec or plan file **in a real editor**
+between turns, which is the whole point of the on-disk
+deliverable: they edit faster than they answer serialized
+questions. The worktree is where that file lives while it is
+being worked; it is not a staging area for the repo.
 
-For an audit the same failure is worse, since a live audit
-cleared by `housekeeping` or the purge loses findings nobody
-knew were in flight.
+**Two superseded framings, named so neither gets resurrected.**
+Both verbs originally ran in the **base repo**, where a spec
+left untracked was protected by nothing: the first one sat
+awaiting operator feedback with **its issue already marked Done
+while the read-back loop was still open**, and no part of the
+cleanup machinery recognized any of it as live work. The 09-11
+fix was a worktree **plus an open PR**, reasoning that
+`housekeeping` will not prune a worktree holding unpushed work.
+That is **superseded rather than unsolved** — and the
+distinction matters, because the PR argument is otherwise
+tempting enough to reinvent. The failure was the spec file being
+the **only copy of live work**. What prevents it is **durable
+state living in Linear**, which makes the worktree's contents
+expendable by construction and removes any need for a PR to
+protect them.
 
-**Two lifecycle rules follow, and they are what make the
-protection lapse safely:**
+**The protection is a PAIR, and the second half is the one that
+actually carries it:**
 
-- **The governing issue stays In Progress while the loop is
-  open**, reaching Done only at ratification plus fold. Marking
-  it Done at the handoff message is the measured mistake — the
-  handoff starts the operator's turn, it does not end the work.
-- **The spec PR closes at the fold; it does not merge.** The
-  planning session folds the ratified spec into the implementing
-  issue's body at dispatch, closes the PR and removes the
-  worktree **in one act**. The spec is scaffolding, not
-  committed history, so the fold *is* the cleanup and nothing
-  accumulates.
+1. **Prune-on-status-type** protects the working state for as
+   long as the issue is honest. `housekeeping` prunes a worktree
+   on its issue's **status type**, so an In Progress or In
+   Review issue is never a prune candidate. The state machine is
+   **In Progress** while the session runs, **In Review** when
+   the deliverable is handed off, **Done only on the operator's
+   ratification** — never self-marked, which is what keeps the
+   issue honest and narrows the window.
+1. **Durable state reaches Linear BEFORE the handoff**, so the
+   worktree's contents are expendable *by construction* at any
+   moment the state could lie. A wrongly-pruned worktree then
+   loses nothing that matters.
+
+**Do not read this as "the worktree must not be pruned while the
+session is live."** That is the weaker framing and it makes the
+worktree sound precious, which inverts the ruling: the worktree
+is **expendable**, and that is the property being relied on. The
+1313-class failure was the **file being the only copy** — that
+is what the ruling forbids, and it is both stronger and more
+useful than "keep the issue honest," because it holds even when
+the issue state is wrong.
+
+For an audit the pair is already satisfied by design: findings
+land as parked issues under `Audit findings`, which is durable
+from the moment they are filed, so the worktree holds nothing
+irreplaceable at any point.
+
+**Two exits, and only one involves a fold:**
+
+- **A spec** is folded by the planning session at dispatch:
+  copy it into the implementing issue's body, delete the file.
+- **Audit findings** are already durable as parked Linear
+  issues, so there is nothing to fold — the session closes and
+  the worktree is simply expendable.
 
 **The read-back protocol** — write the file, name its path in
 plain text, let the operator edit it in place, read it back
 **once**, ratify — plus the `NEEDS-CONFIRM` / `NEEDS-FEEDBACK`
 markers and the top-of-file index of open items, is specified in
 the `architect` skill and applies to explore-style spec tasks
-unchanged.
+unchanged. Naming the path out loud is a **hard requirement**:
+the operator works the file through an editor, and cannot edit a
+path they were never told.
 
 **What did not change:** `plan` and `housekeeping` are still
 base-repo seat verbs, and the **substrate** rule below is
@@ -1251,10 +1288,20 @@ drives the real zsh functions.
   worktree has already been pruned.
 
 - **`explore <n|name>`** — start **or resume** an explore session:
-  research, audits, and anything else whose deliverable is a spec or a
-  findings document rather than a code change. **It runs in its own
-  worktree** and a name is **required** — see "Spec-producing sessions
-  get a worktree" above for the naming rule and the lifecycle.
+  research, audits, and anything else whose output is Linear tasks and
+  findings rather than a code change. **It runs in its own temporary
+  worktree, read-only toward the repo**, and a name is **required** —
+  see "Architect and explore sessions: temporary worktree, no PR" above
+  for the naming rule and the lifecycle.
+
+  **A bare number keys it to a Linear issue**, and both spellings agree:
+  `explore 1196` and `explore eng-1196` normalize to the same worktree
+  (`eng-1196`), session name (`exp-1196`) and session id, as do
+  `explore 0123` and `explore 123`. That normalization happens *before*
+  the issue-keyed branch is chosen — an earlier revision decided the
+  branch first, so `explore eng-1196` fell through to the free-form path
+  and produced `exp-eng-1196`, invisible to `cdds`, `fleet` and
+  status-type pruning.
 
   **Idempotent**, like `plan` and `architect`: it creates the session if
   absent and resumes it if present. Keying on a computed id is what
@@ -1389,9 +1436,9 @@ drives the real zsh functions.
   one topic: the CEO hat, and the complement to `plan` rather than a
   variant of it. Same model pin, same idempotency; the different halves
   are the briefing (`/architect`), what it may write — **nothing to the
-  board** — and **where it runs**, which is now its own worktree
-  `ceo-<topic>` rather than the base repo (see "Spec-producing sessions
-  get a worktree").
+  board** — and **where it runs**, which is now its own temporary
+  worktree `ceo-<topic>` rather than the base repo (see "Architect and
+  explore sessions: temporary worktree, no PR").
 
   It keys on the **topic, not the date**, which is the one substantive
   difference from `plan` / `housekeeping`: a design thread outlives a day, so
@@ -1404,14 +1451,17 @@ drives the real zsh functions.
   by role: `eng-*` implementers, `plan-*` planning, `ceo-*`
   architecture, `exp-*` research. The topic is validated to lowercase
   letters, digits and dashes, since it reaches a session name, a
-  **worktree**, a branch and a filename — the worktree home is what
-  makes that shape binding rather than merely tidy.
+  **worktree** and a filename — the worktree home is what makes that
+  shape binding rather than merely tidy. (No branch: nothing is
+  committed from these sessions.)
 
   All four standing verbs share one core, `_ds_session`, which takes
   an already-computed id — `plan` and `housekeeping` hand it a daily id,
-  `architect` and `explore` a topic id. That split is deliberate: the
-  operator's stated abstraction is that these launchers differ **only in
-  the briefing**.
+  `architect` and `explore` a computed one keyed on their argument (a
+  topic for `architect`; for `explore` a topic *or* an issue number,
+  which is why the table above reads `<n|name>`). That split is
+  deliberate: the operator's stated abstraction is that these launchers
+  differ **only in the briefing**.
 
   `_ds_session` takes the worktree tag as an optional last argument, and
   **the `-w` flag rides the create branch only.** `-w` *creates* a
@@ -1543,11 +1593,13 @@ that invokes a CLI flag is checkable against that CLI's `--help`**, and
 this one would have been caught at filing time rather than at wiring
 time.
 
-The split is deliberate and matches the session kinds: worktree
+The split is deliberate and matches the session kinds: **implementation**
 sessions (`task` / `task resume`) run one deterministic spec to completion and
-are addressed by their Linear number; the standing sessions (`plan`,
+are addressed by their Linear number; the **daily standing** sessions (`plan`,
 `housekeeping`) run in the base repo, recur daily, and are addressed by the day
-they started.
+they started. `architect` and `explore` are a third kind and fit neither row —
+they take a worktree like the first but are addressed by **topic** (or, for an
+issue-keyed explore task, by its number) and are idempotent like the second.
 
 ### Driving a headless browser — the two paths that are not guessable
 

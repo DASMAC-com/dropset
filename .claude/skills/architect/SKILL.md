@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Run an architect session — the long-horizon design conversation, in the same seat quality as a planning session but doing a different job. Bootstraps minimally (the Planning document and the track umbrellas, nothing else), holds the conversation at decision altitude with deep code reads allowed and big surveys delegated, and writes NOTHING to the board: it hands its conclusions to the planning session through the Planning document's notes section and a direct message, naming the tracks its decisions likely affect without touching them. Its deliverable is an on-disk spec FILE the operator edits in place — not a conversation — living on a PR branch in the session's own worktree, read back once per round with greppable NEEDS- markers on the open items. Runs in that worktree on the mandated model, launched with `architect <topic>`.
+description: Run an architect session — the long-horizon design conversation, in the same seat quality as a planning session but doing a different job. Bootstraps minimally (the Planning document and the track umbrellas, nothing else), holds the conversation at decision altitude with deep code reads allowed and big surveys delegated, and writes NOTHING to the board: it hands its conclusions to the planning session through the Planning document's notes section and a direct message, naming the tracks its decisions likely affect without touching them. Its durable output is Linear tasks; when a longer-term repo artifact is warranted it also iterates an on-disk spec FILE the operator edits in place — not a conversation — read back once per round with greppable NEEDS- markers on the open items. Runs in its own worktree on the mandated model, launched with `architect <topic>`, but is READ-ONLY toward the repo: the worktree is temporary working state, there are no commits and no PR, and any repo-bound artifact lands via a follow-up worker task.
 user-invocable: true
 model: fable
 ---
@@ -34,45 +34,44 @@ the same lesson that folded `explore`'s start/resume pair, and
 idempotency.
 
 The worktree is named **`ceo-<topic>`** and the verb creates it
-for you; the branch arrives named `worktree-ceo-<topic>`, since
-there is no CLI flag to drop the prefix. Rename it to
-`ceo-<topic>` before the first commit, exactly as `init-pr`
-does for an implementation branch:
+for you. **It is temporary working state and nothing more** —
+somewhere to iterate a spec or plan file with the operator. Its
+contents are **expendable by construction**.
 
-```sh
-git branch -m worktree-ceo-<topic> ceo-<topic>
-```
+### This session is read-only toward the repo
 
-**This reverses the base-repo home this skill shipped with**
-(operator ruling, 2026-09-11, after one day live), and the
-reversal is worth understanding rather than just obeying,
-because the old rule sounded right: a session that writes no
-code has no obvious need for a branch.
+**No commits. No PR. No branch to rename.** Anything that
+belongs in the repo for the longer term — a ratified spec
+included — lands via a **follow-up worker task**, not from
+here. The durable record of everything decided is **Linear**.
 
-What that missed is that the deliverable is a **file**, and an
-untracked file in the base checkout is protected by nothing.
-The first spec produced this way sat in the base repo awaiting
-further operator feedback, its issue already marked Done while
-the read-back loop was still open, and **no part of the cleanup
-machinery recognized any of it as live work** — the operator
-caught the invalid state on their way out, hours before a
-`housekeeping` pass. A worktree plus an open PR makes the
-protection **structural**: `housekeeping` refuses to prune a
-worktree holding uncommitted or unpushed work and applies
-open-PR protection, so the spec survives cleanup by
-construction rather than by someone remembering it exists.
+**Two superseded framings, named so neither gets resurrected.**
+This is the third shape the question has taken, and the second
+one is the trap:
 
-Two consequences that are easy to get wrong:
+1. Originally this verb ran in the **base repo**. A spec left
+   untracked there was protected by nothing: the first one sat
+   awaiting operator feedback with its issue already marked
+   Done while the read-back loop was open, and **no part of the
+   cleanup machinery recognized any of it as live work**.
+1. The 09-11 fix was a worktree **plus an open PR**, reasoning
+   that `housekeeping` will not prune a worktree holding
+   uncommitted or unpushed work. **Superseded 2026-09-14** —
+   and superseded rather than *unsolved*, which is the part
+   worth understanding. The failure was the spec file being the
+   **only copy of live work**. What prevents it is **durable
+   state living in Linear**, which makes the worktree's
+   contents expendable and removes the need for a PR to protect
+   anything.
 
-- **The worktree name is deliberately not an `eng-###`.** An
-  architect topic has no issue of its own, and the `ceo-`
-  prefix is what keeps the fleet listing readable by role.
-- **The spec PR's title still needs an `ENG-###` scope**,
-  because the semantic-PR check requires one and a
-  guaranteed-failure run is durable noise in the checks
-  rollup. Worktree name and PR scope are independent, so
-  there is no conflict — see "The spec file is the
-  deliverable" for where that number comes from.
+So if you find yourself reaching for `git commit` or
+`gh pr create`, the answer is a Linear task instead. There is
+also no PR title to satisfy, which is why this skill no longer
+says anything about an `ENG-###` scope.
+
+**The worktree name is deliberately not an `eng-###`.** An
+architect topic has no issue of its own, and the `ceo-` prefix
+is what keeps the fleet listing readable by role.
 
 It is a **seat** verb, like `plan`: this session argues
 strategy, so it runs the top tier, and a seat launch is what
@@ -184,37 +183,58 @@ skipped at bootstrap.
   decision altitude; a survey narration in the main context is
   what drops it.
 
-- **No source edits — but the spec file is not a source
-  edit.** This bullet used to read "specs land through the
-  handoff, not through commits", and the second half is now
-  exactly wrong: the spec **is** a commit, on this session's own
-  PR branch, and that is the whole point of the worktree. What
-  survives is the part that was always the real rule — **no
-  product code**. A design that needs code to exist before it
-  can be judged is a spike, and a spike is an implementation
-  session.
+- **No source edits, and no commits at all.** A design that
+  needs code to exist before it can be judged is a spike, and a
+  spike is an implementation session.
 
-  So the branch carries the spec file and nothing else. If you
-  find yourself editing a crate to test an idea, stop and say
-  the design needs a spike.
+  The spec file is the one file you may **write**, and writing
+  it is not committing it: it lives in the worktree as working
+  state for the read-back loop. If you find yourself editing a
+  crate to test an idea, stop and say the design needs a spike.
 
-## The spec file is the deliverable
+  (This bullet briefly read "the spec **is** a commit, on this
+  session's own PR branch" during the 09-11 shape. That is
+  superseded — see "This session is read-only toward the repo".)
 
-**The output of this session is a markdown file the operator
-edits in place — not a conversation.** That is the process
-ruling this skill is built around (operator, 2026-09-11), and
-every rule below follows from it.
+## The deliverable: Linear tasks, and optionally a spec file
 
-It lives on this session's branch at:
+**Linear tasks are the durable output. A spec file is
+optional** — reach for one only when the thinking is too large
+to hold in issue bodies, or when a longer-term repo artifact is
+genuinely warranted. A design can be ratified purely as Linear
+tasks that workers then pick up, and that is a complete,
+normal outcome, not a shortcut.
+
+This is a correction worth stating plainly, because the 09-11
+shape made the file the *point*: it isn't. **The file is an
+iteration medium; Linear is the record.**
+
+When you do write one, it goes in the worktree at:
 
 ```txt
-docs/specs/<ENG-number>-<topic>.md
+docs/specs/<issue-number>-<topic>.md
 ```
 
-The number prefix is dropped only if no issue governs the
-thread yet. The path is **tracked and committed** — `docs/specs/`
-is not ignored, and the first spec written this way was
-untracked by omission rather than by rule.
+(A bare number, matching the existing
+`docs/specs/1313-mainnet-laptop.md` — the literal token `ENG-`
+is not part of the filename.)
+
+**You do not commit it.** If the operator decides the ratified
+spec should live in the repo for the longer term, that commit
+is a **follow-up worker task** — file it in Linear like any
+other repo-bound work.
+
+Two things follow from the file being working state rather than
+an artifact:
+
+- **Say its path in plain text the moment it exists**, so the
+  operator can open it in a real editor. This is a hard
+  requirement of the process, not a courtesy — the whole gain
+  is that they edit faster than they answer questions, and they
+  cannot edit a path they were never told.
+- **Nothing is lost when the worktree goes.** Whatever mattered
+  is in Linear by then. If that is not true, the fix is to
+  write the Linear task, not to protect the file.
 
 ### The loop: write, edit, read back ONCE
 
@@ -267,40 +287,44 @@ their input was actually wanted. A marker that means "I changed
 this" competes with one that means "I need you here", and only
 the second is worth a marker.
 
-### The governing issue, and its state
+### The governing issue, and its three states
 
-The spec PR's title needs an `ENG-###` scope, and this session
-**writes nothing to the board** — so it cannot file its own
-issue. If no number governs the thread yet, **ask for one**;
-this is precisely the pre-draft blocker `AskUserQuestion` is
-reserved for, since the file cannot be named without it.
+The state machine is **In Progress while the session runs → In
+Review when the deliverable is handed off → Done only on the
+operator's ratification**.
 
-**That issue stays In Progress for as long as the read-back
-loop is open**, and reaches Done only at ratification plus
-fold. Marking it Done at the handoff message is the measured
-mistake that produced the invalid state described under "Where
-it runs" — the handoff is the start of the operator's turn, not
-the end of the work.
+**Never self-mark Done.** That is the measured mistake which
+produced the invalid state described under "This session is
+read-only toward the repo": an issue marked Done while its
+read-back loop was still open, with nothing recognizing the
+work as live. Done is the operator's word, not yours.
 
-### Lifecycle: the fold is the cleanup
+If a spec file is named after an issue and no number governs
+the thread yet, **ask for one** — this session writes nothing
+to the board, so it cannot file its own. That is a legitimate
+pre-draft `AskUserQuestion`. It is also avoidable: a design
+whose output is Linear tasks needs no filename at all.
 
-**The spec PR closes; it does not merge.** The spec is
-scaffolding, not committed history — the ratified content lives
-in the Linear issue body once the planning session folds it in
-at dispatch, and that fold is also the cleanup: **close the PR
-and remove the worktree in the same act.** Nothing accumulates,
-and nothing depends on remembering that a loose file exists.
+### Lifecycle: nothing to close, nothing to clean
 
-`plan` owns the fold, so this session's job is only to leave the
-spec ratified and the PR open. Do not close it yourself on the
-way out.
+There is **no PR to close and no branch to delete**, so the
+cleanup is trivial by construction. When `plan` dispatches the
+work, it folds the ratified spec into the implementing issue's
+body and deletes the file; the worktree can go whenever, since
+its contents are expendable.
+
+This replaces a "the fold is the cleanup — close the PR and
+remove the worktree in one act" rule from the 09-11 shape. With
+no PR in the picture the three-part act collapses to one, and
+the ordering hazard it warned about disappears with it.
 
 ## Required artifacts
 
-These are the **spec file's** required contents, not a summary
-to narrate in the conversation. A bookkeeper would not produce
-them, and they are what make the session's output actionable
-rather than a transcript:
+These belong in the **deliverable** — the Linear tasks, or the
+spec file if there is one — not narrated in the conversation and
+left there. A bookkeeper would not produce them, and they are
+what make the session's output actionable rather than a
+transcript:
 
 - **The gap between current and intended state** — stated
   plainly, in the system's own terms.
@@ -349,19 +373,28 @@ Both, not either — they fail differently.
    This channel is **fast but not durable** — the message is
    lost if that session ends without acting. Hence both.
 
-**Both channels now carry a POINTER, not the content.** The
-spec file is the artifact, so the note names **its path, its
-PR, and the governing issue**, plus the affected track or issue
-numbers and a few lines on what was decided. It does not restate
-the decisions, the rejected alternatives or the failure paths —
-those are in the file, and duplicating them into the Planning
-document is how the document grows without bound between
-close-out rewrites.
+**Both channels carry a POINTER, not the content.** The note
+names the **governing issue**, the **Linear tasks** the session
+produced, the spec file's **path** if there is one, and the
+affected track or issue numbers — plus a few lines on what was
+decided. It does not restate the decisions, the rejected
+alternatives or the failure paths: those live in Linear, and
+duplicating them into the Planning document is how the document
+grows without bound between close-out rewrites.
 
-State explicitly whether the spec is **ratified** or **still in
-its read-back loop**, because that is what tells the planning
-session whether it may fold yet. The planning session executes
-every board consequence, and owns the fold-and-cleanup.
+State explicitly whether the design is **ratified** or **still
+in its read-back loop**, because that is what tells the planning
+session whether it may dispatch yet.
+
+**Move the governing issue to In Review as part of this
+handoff** — that is what the handoff *is*. Then stop: Done is
+the operator's call, and the planning session executes every
+board consequence.
+
+**And if any part of the outcome belongs in the repo, the note
+must say so as a task**, not as an instruction to a future
+reader. This session cannot commit, so a repo-bound conclusion
+nobody filed is one that will not happen.
 
 ## A note on the shared substrate
 
@@ -370,13 +403,17 @@ guard, the document conventions, the write-mangle rules,
 context economy — and differ in the **briefing**: the duty
 list, and what each is allowed to write.
 
-**Two items dropped off that shared list** when the spec home
-moved, and they are worth naming so the overlap is not
-overstated: the **launch directory** (`plan` is a base-repo seat
-verb; this one runs in its own worktree) and **no source
-edits** (this session commits a spec file, `plan` commits
-nothing at all). `explore` moved the same way this skill did, so
-the worktree home is shared with *it* rather than with `plan`.
+**One item dropped off that shared list** when the spec home
+moved: the **launch directory**. `plan` is a base-repo seat
+verb; this one runs in its own temporary worktree, and `explore`
+moved the same way, so the worktree home is shared with *it*
+rather than with `plan`.
+
+**No source edits is still shared**, and an intermediate draft
+of this section wrongly said otherwise — it claimed this session
+"commits a spec file" while `plan` "commits nothing at all".
+Neither of them commits anything. That is the 09-11 framing
+leaking; see "This session is read-only toward the repo".
 
 That overlap is real and worth de-duplicating **later**, when
 the template extraction lands. It is deliberately not a reason

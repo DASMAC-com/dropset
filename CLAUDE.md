@@ -77,24 +77,34 @@ architect hands its conclusions over through the Planning document's
 `Notes for the next planning session` heading **and** a direct
 message. Detail: the `architect` skill.
 
-**Its deliverable is an on-disk spec FILE the operator edits in
-place, not a conversation**, and that file lives on a PR branch in
-the session's **own worktree** — which reverses the base-repo home
-this verb shipped with. The loop is write → operator edits → read
+**It runs in its own worktree, but that worktree is TEMPORARY
+working state and the session is READ-ONLY toward the repo: no
+commits, no PR.** Durable state is captured in **Linear**; anything
+repo-bound — a ratified spec included — lands later via a
+**follow-up worker task**. **`explore` shares all of this**, audits
+included.
+
+**A spec FILE is optional**, not the default deliverable: a design
+can be ratified purely as Linear tasks that workers pick up. When
+one is warranted, the operator edits it **in place** rather than
+answering questions, so the loop is write → operator edits → read
 back **once** → ratify, with `AskUserQuestion` reserved for calls
-that must be answered before the spec can be drafted at all, because
-the operator edits faster than they answer serialized questions.
-Open items carry greppable **`NEEDS-CONFIRM`** / **`NEEDS-FEEDBACK`**
-markers and an index at the top of the file; **settled text carries
-no marker**, since a marker meaning "I changed this" competes with
-one meaning "I need you here". The governing issue stays **In
-Progress** while the loop is open, and the **spec PR closes at the
-fold rather than merging** — `plan` folds the ratified spec into the
-implementing issue's body at dispatch, closes the PR and removes the
-worktree in one act, so the fold *is* the cleanup. **`explore`
-shares all of this**, audits included. The mechanism, and the
-worktree naming rule, live in `docs/conventions/local-integrations.md`
-→ "Spec-producing sessions get a worktree".
+that must be answered before the spec can be drafted at all. Say the
+file's path in plain text so it can be opened in an editor. Open
+items carry greppable **`NEEDS-CONFIRM`** / **`NEEDS-FEEDBACK`**
+markers and an index at the top; **settled text carries no marker**,
+since a marker meaning "I changed this" competes with one meaning "I
+need you here".
+
+State is **In Progress** while the session runs, **In Review** at
+handoff, **Done only on the operator's ratification** — never
+self-marked. That, plus durable state reaching Linear *before* the
+handoff, is the pair that makes the worktree **expendable**: the
+failure being prevented is a spec file becoming the only copy of
+live work. (This **supersedes** a 09-11 shape in which the spec sat
+on a PR branch and an open PR was the protection.) Mechanism and
+naming rule: `docs/conventions/local-integrations.md` → "Architect
+and explore sessions: temporary worktree, no PR".
 
 ### Three more verbs
 

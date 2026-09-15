@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog, except a meta-flavored finding, which is promoted by swapping its milestone to `Claude meta` and stays parked), the parked `Claude meta` milestone — plus any open unpulled batch — swept and folded by default at bootstrap into small themed batches of roughly 4–5 parts each rather than one giant batch, none of them carrying a blocking edge and none of them gated on another meta issue being in flight (several short sessions beat one long one by enough that file contention is worth paying as an occasional rebase), promoted only as a file-disjoint set judged on the same collision clusters product work is judged on — and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `plan`), never in a worktree.
+description: Run a planning session — the complement to a worktree implementation session. Bootstraps from the "Planning" Linear document (id in `LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas unprompted and runs the audit heartbeat — read the audit-state table and either file an audit issue or explicitly decline with a recorded reason — then keeps the board coherent: the Queue honest, blocking edges curated, file collisions reconciled by reading, not by a tool (this session is the only place that happens at all — the automated collision machinery is retired and nothing files a collision link), parked audit findings offered for sequencing (promotion = clear the milestone AND move Todo → Backlog, except a meta-flavored finding, which is promoted by swapping its milestone to `Claude meta` and stays parked), the parked `Claude meta` milestone — plus any open unpulled batch — swept and folded by default at bootstrap into small themed batches of roughly 4–5 parts each rather than one giant batch, none of them carrying a blocking edge and none of them gated on another meta issue being in flight (several short sessions beat one long one by enough that file contention is worth paying as an occasional rebase), promoted only as a file-disjoint set judged on the same collision clusters product work is judged on — and issues filed and amended to house convention. Audits are ordinary Backlog work this session files and sequences — housekeeping runs none and reads no directive. When dispatching work an architect or explore session designed, folds that session's ratified spec file (if it wrote one) into the implementing issue's body and deletes the file — those sessions are read-only toward the repo, so there is no PR to close. Writes decisions back into the Planning doc incrementally and as a wholesale rewrite at close-out — consolidating at bootstrap too when the doc arrived carrying foreign or unconsolidated notes — which carries the bounded audit-state table forward — and captures the session's own token profile as parked lever issues. Planning sessions run in the base repo (started and resumed with `plan`), never in a worktree.
 user-invocable: true
 model: fable
 ---
@@ -853,40 +853,35 @@ Five things about the boundary:
 - **A batch is all-or-nothing on validation.** One bad verb
   dispatches none of them, so fix the typo and re-run the whole
   call; there is no half-dispatched batch to reconcile.
-- **Dispatching work that has a ratified spec means FOLDING
-  the spec first — and the fold is also the cleanup.** See
-  below; this is the one boundary item that writes something.
+- **Dispatching work that has a ratified spec FILE means
+  folding it in first.** This is the one boundary item that
+  writes something.
 
-### Folding a ratified spec at dispatch
+**Folding a ratified spec at dispatch.** An `architect` or
+`explore` session is **read-only toward the repo** — no commits,
+no PR — and its durable output is Linear tasks (see
+`docs/conventions/local-integrations.md` → "Architect and
+explore sessions: temporary worktree, no PR"). Often there is
+nothing to fold at all, because the design landed as tasks and
+this step is a no-op.
 
-An `architect` or `explore` session's deliverable is a **spec
-file on a PR branch in its own worktree** (see
-`docs/conventions/local-integrations.md` → "Spec-producing
-sessions get a worktree"). When you dispatch the work that spec
-describes, fold it in **first**, because a worktree session
-**cannot see another worktree's branch** — dispatching without
-folding hands the implementer a pointer it cannot follow.
+When such a session *did* iterate a spec **file**, it sits
+untracked in that session's temporary worktree, so a dispatched
+implementer **cannot see it** — a worktree session cannot read
+another worktree's files. So before dispatching: **copy the
+ratified spec into the implementing issue's body, then delete
+the file.** The issue body is where the implementer already
+reads, and it is the only copy that survives the worktree.
 
-The fold is three acts that belong together:
+There is **no PR to close and no branch to delete**; the
+worktree's contents are expendable once the content is in
+Linear. (A 09-11 version of this rule made the fold a
+three-part act with a PR close in the middle. That is
+superseded, and the ordering hazard went with it.)
 
-1. **Copy the ratified spec into the implementing issue's
-   body**, so the content lives where the implementer already
-   reads.
-1. **Close the spec PR** — it does not merge. The spec is
-   scaffolding, not committed history, and the issue body is
-   now its home.
-1. **Remove the spec worktree.**
-
-**Do all three, or none.** The fold is the *only* point at which
-the spec's protections are meant to lapse, so a fold that copies
-the body and leaves the PR open re-creates the accumulating
-loose-spec problem the worktree home was introduced to kill —
-and one that closes the PR without copying the body loses the
-spec outright.
-
-**Only fold a spec the architect session reported as
-ratified.** Its close-out note says which; a spec still in its
-read-back loop is live work, and its issue is still In Progress
+**Only fold a spec the session reported as ratified.** Its
+close-out note says which; a design still in its read-back loop
+is live work, and its issue sits In Progress or In Review
 precisely so this step leaves it alone.
 
 **6. Write back — incrementally, then rewritten at the
