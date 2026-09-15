@@ -23,6 +23,16 @@ the skill, re-typed by hand each run, are now **data with one owner** —
   (it does not honor gitignore), exposed with the generated families through
   ``--print-grep-excludes``.
 
+Two further gate facts are **derived by scanning rather than enumerated**, because
+a hand-kept list cannot learn what changed under it:
+
+* ``rust_fixture_hits`` — the diff paths some Rust test compiles in with
+  ``include_str!``. A list of globs cannot know a test started reading a new
+  fixture, and the blind spot is silent in the direction that costs a dequeue.
+* ``prose_heavy`` — whether the diff's added lines are mostly comment prose. A
+  diff can be documentation-heavy without touching a documentation *path*, which
+  the path-keyed lens gate cannot see.
+
 Usage::
 
     python3 .claude/tools/review_diff.py --base main --out /tmp/review-diff.txt --split
@@ -54,7 +64,10 @@ Prints JSON::
       "code_crates": 1,           // trees with an actual source change
       "runs_rust_suites": false,   // any path outside the CI code filter?
       "rust_reachable": false,     // any path a cargo build actually consumes?
+      "rust_fixture_hits": [],     // …including via a test's `include_str!`
       "runs_artifact_gates": false,// any generation input touched?
+      "added_shape": {"added": 412, "comment": 250, "ratio": 0.607},
+      "prose_heavy": true,         // added lines are mostly comment prose
       "ready": true,               // exactly `not blockers`
       "blockers": []               // why ready is false, if it is
     }
@@ -71,10 +84,14 @@ it can never drift from the reasons. Four things block:
   there is no source to review (the step 9/10 gates still apply — this is
   reported as its own reason rather than as "nothing to review").
 
-``--gate-only`` keeps the verdict fields — including the two skip predicates
-``runs_rust_suites`` / ``runs_artifact_gates``, which answer "what may I skip?"
-for two booleans — and drops the unbounded inventory (``commits``, ``files``,
-``slices``, ``diff_path``, ``diff_lines``). The full payload is what a
+``--gate-only`` keeps the verdict fields — including the skip predicates
+(``runs_rust_suites`` / ``rust_reachable`` / ``rust_fixture_hits`` /
+``runs_artifact_gates``) and ``prose_heavy``, which together answer "what may I
+skip?" — and drops the unbounded inventory (``commits``, ``files``, ``slices``,
+``diff_path``, ``diff_lines``). ``added_shape`` is dropped too, but for a
+different reason: three integers are bounded by construction, so it is not
+inventory — it merely *justifies* a fan-out choice, and a fan-out reads the full
+verdict anyway. The full payload is what a
 **fan-out** needs; a mid-review *re-check* consumes only ``base_fresh`` /
 ``ready`` / ``blockers``, and one measured run printed a 70-file ``files`` array
 to answer exactly that — for a diff that had just been rebased away. The gating
@@ -94,6 +111,7 @@ import argparse
 import fnmatch
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -204,7 +222,7 @@ SLICE_NAMES = ("source", "tests", "docs")
 
 # A mirror of the ``code`` filter in .github/workflows/test.yml, which runs with
 # ``predicate-quantifier: every`` — so a diff whose every path matches one of
-# these makes all three Tests jobs pass in seconds as path-filtered no-ops, and
+# these makes all four Tests jobs pass in seconds as path-filtered no-ops, and
 # running the Rust suites locally mirrors nothing.
 #
 # Drift here is silent and its only symptom is wasted wall-clock: the list once
@@ -337,6 +355,104 @@ def rust_is_reachable(paths) -> bool:
     suite that runs unnecessarily.
     """
     return any(matches_any(p, RUST_REACHABLE) for p in paths)
+
+
+#: A Rust ``include_str!`` / ``include_bytes!`` naming a path literal. The target
+#: routinely sits on a *following* line in this repo, so the whitespace classes
+#: deliberately span newlines; the literal itself may not.
+#:
+#: **Two forms are NOT matched**, and the omission is silent in the direction the
+#: scan exists to close, so it is named rather than left to be discovered: a raw
+#: string (``include_str!(r"…")``) and a computed path
+#: (``include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/x"))``). Every target in
+#: the tree today is a plain relative literal, so there is no live miss — but a
+#: future one would read as "no fixture" rather than as "cannot tell".
+#:
+#: The reverse case is benign: this also matches an ``include_str!("…")`` written
+#: inside a doc-comment code span, which costs at most one unnecessary suite run.
+_INCLUDE_RE = re.compile(r'include_(?:str|bytes)!\s*\(\s*"([^"\n]+)"')
+
+
+def repo_root() -> Path:
+    """The top of the working tree — the worktree's own root, not the base repo."""
+    return Path(_git(["rev-parse", "--show-toplevel"]).strip())
+
+
+def tracked_rust_sources() -> list[str]:
+    """Every tracked ``.rs`` path, repo-relative, from any cwd inside the repo.
+
+    ``--full-name`` plus a ``:(top,glob)`` pathspec is what makes the result
+    cwd-independent, matching how :func:`write_diff` addresses paths.
+    """
+    out = _git(["ls-files", "-z", "--full-name", "--", ":(top,glob)**/*.rs"])
+    return [p for p in out.split("\0") if p]
+
+
+def rust_include_fixtures(
+    sources: list[str] | None = None, root: Path | None = None
+) -> dict[str, list[str]]:
+    """Map each ``include_str!``-ed path to the Rust files that pull it in.
+
+    This is **derived by scanning, not enumerated**, and that is the whole point.
+    :data:`RUST_REACHABLE` is a hand-kept glob list, so it cannot learn that a
+    test started reading a new fixture — and the resulting blind spot is silent in
+    the one direction that costs a merge. A diff whose every path CI's ``code``
+    filter excludes makes all four Tests jobs pass in seconds as no-ops, while
+    the merge queue runs the **full** suite against the merged result; if one of
+    those excluded paths is compiled into a Rust test by ``include_str!``, the
+    only signal is a dequeue.
+
+    Measured (2026-09-11): the ENG-1308 dashboard PR was confined to
+    ``market-data/grafana/**`` and docs — every path excluded, all four PR-side
+    Tests jobs green — and the merge group dequeued it on one real failure,
+    because a ``market-data/tests/`` agreement test read the dashboard as a
+    venue's supported-widths source.
+
+    The scan over this tree finds **48** fixtures, **31** of which
+    :data:`RUST_REACHABLE` does not match, and they split into two failure classes
+    rather than one:
+
+    * ``infra/localnet/docker-compose.yml`` is CI-**excluded** and pulled in by
+      three Rust files, two of them tests. This is the dequeue class exactly: a
+      diff confined to it makes every Tests job a no-op while the merge queue
+      compiles it into the full suite.
+    * The other thirty are CI-*visible* but still unmatched — every
+      ``*/queries/*.sql`` a store module compiles in, ``sdk/idl/dropset.json``,
+      and the ``Makefile``. For these ``runs_rust_suites`` is true while
+      ``rust_reachable`` was false, so the documented "skip when unreachable" rule
+      skipped a **local** suite that CI was about to run against the very file the
+      diff changed.
+
+    So folding the scan into ``rust_reachable`` closes a broader hole than the one
+    that motivated it, and both halves fail in the same silent direction.
+
+    Targets resolve **relative to the including file's directory**, which is
+    Rust's own rule. One that escapes the worktree is dropped rather than
+    reported: it cannot be a diff path, so it could only ever be a false hit.
+    """
+    if sources is None:
+        sources = tracked_rust_sources()
+    if root is None:
+        root = repo_root()
+
+    fixtures: dict[str, list[str]] = {}
+    for src in sources:
+        text = _read_post_image(str(root / src))
+        if text is None:
+            continue
+        base = posixpath.dirname(src)
+        for target in _INCLUDE_RE.findall(text):
+            if posixpath.isabs(target):
+                continue
+            resolved = posixpath.normpath(posixpath.join(base, target))
+            # A path COMPONENT test, not a string prefix: a bare `startswith("..")`
+            # also drops a legitimate `..data/x.yml` at the repo root.
+            if resolved == ".." or resolved.startswith("../"):
+                continue
+            including = fixtures.setdefault(resolved, [])
+            if src not in including:
+                including.append(src)
+    return {target: sorted(paths) for target, paths in fixtures.items()}
 
 
 def matches(path: str, pattern: str) -> bool:
@@ -800,6 +916,187 @@ def _read_post_image(path: str) -> str | None:
         return None
 
 
+#: Comment markers per file extension. Keyed by extension rather than merged
+#: into one tuple because the markers genuinely conflict: a leading ``#`` is a
+#: comment in Python and YAML but an **attribute** in Rust, and a leading ``--``
+#: is a comment in SQL but a decrement elsewhere. A union would read Rust
+#: attributes and derive lists as prose and inflate the ratio on exactly the
+#: diffs this classification exists to judge.
+#:
+#: Named ``…_BY_EXT`` because ``search_source.py`` already owns a module-level
+#: ``COMMENT_MARKERS`` — a flat tuple, for its comment-in-an-alternation refusal.
+#: Same concept, different shape; one name for both invites a misread.
+#:
+#: The block-comment continuation marker is ``"* "`` **with the space**, not a
+#: bare ``*``: a bare one reads ``*self.count += 1;`` and ``*ptr = 0;`` as prose,
+#: which errs in the direction this classification promises never to take. Every
+#: formatter this repo runs emits ``* `` for a continuation line.
+COMMENT_MARKERS_BY_EXT = {
+    ".rs": ("///", "//!", "//", "/*", "*/", "* "),
+    ".py": ("#", '"""', "'''"),
+    ".ts": ("///", "//", "/*", "*/", "* "),
+    ".tsx": ("///", "//", "/*", "*/", "* "),
+    ".js": ("//", "/*", "*/", "* "),
+    ".jsx": ("//", "/*", "*/", "* "),
+    ".css": ("/*", "*/", "* "),
+    ".sql": ("--",),
+    ".sh": ("#",),
+    ".zsh": ("#",),
+    ".yml": ("#",),
+    ".yaml": ("#",),
+    ".toml": ("#",),
+}
+
+#: Extensions whose prose lives in a **delimited docstring** rather than behind a
+#: per-line marker. Without tracking the delimiter these read as code from the
+#: second line on, which defeats the flag on its own home surface: everything
+#: under ``.claude/tools/`` is Python and its prose is overwhelmingly docstring.
+DOCSTRING_EXTS = (".py",)
+
+#: The two Python docstring delimiters.
+DOCSTRING_DELIMITERS = ('"""', "'''")
+
+#: Extensions whose every line is prose by construction, so the marker table does
+#: not apply. These already trip the freshness gate's *path* triggers; counting
+#: them keeps the ratio honest on a mixed diff rather than diluting it.
+PROSE_EXTS = (".md", ".mdx")
+
+#: A diff is prose-heavy when this share of its substantive added lines is comment
+#: prose. 0.5 is "mostly", and the measured case that motivated the flag sat at
+#: ~0.6 (the ENG-1279 review: roughly 60% of added lines were new Rust doc
+#: comments, and both genuine defects the review found were comment-accuracy
+#: defects in that prose).
+PROSE_HEAVY_RATIO = 0.5
+
+#: ...and only once there is enough of it to be worth a lens. Without a floor a
+#: three-line diff that happens to add two comments would trip the gate, which
+#: would spend ~100k of sub-agent input to review two lines.
+PROSE_HEAVY_FLOOR = 20
+
+
+def added_line_shape(diff_path: Path) -> dict:
+    """Classify a diff's ADDED lines as comment prose vs code.
+
+    The point is that **a diff can be documentation-heavy without touching a
+    documentation path**. The freshness gate keys on changed paths, so a change
+    that is in substance prose — a rewritten module header, newly-documented
+    constants, long comments on a failure mode — reads as pure source and skips
+    the lenses that would check what it says. This is the same principle the
+    spelling pre-flight already states ("the trigger is the shape of what the
+    diff adds, not the file extension"), measured one step later in the review.
+
+    Blank added lines count as neither, so the ratio is a share of *substantive*
+    added lines. Counting them would let whitespace in a heavily-commented hunk
+    quietly pull the ratio under the threshold.
+
+    Classification is by the file's own comment markers
+    (:data:`COMMENT_MARKERS_BY_EXT`), tracked across ``diff --git`` headers as the
+    walk proceeds. An extension with no entry contributes to ``added`` and never
+    to ``comment``: unknown-means-code is the direction that under-reports rather
+    than inventing prose. A file with **no extension at all** (``Makefile``,
+    ``Dockerfile``) takes that same branch and so reads as pure code.
+
+    **A delimited docstring counts as prose for its whole body, not just its
+    opening line** (:data:`DOCSTRING_EXTS`). Matching a marker per line covers
+    Rust and TS, whose block comments carry a continuation marker, and silently
+    fails for Python, whose interior docstring lines carry nothing — which would
+    make the flag blindest on its own home surface, since everything under
+    ``.claude/tools/`` is Python and documents itself in docstring form.
+
+    The **state tracking** is deliberately approximate and errs toward code: a
+    diff shows added lines only, so a hunk can begin inside a docstring with no
+    delimiter in sight, and state therefore resets at every file *and* hunk header
+    rather than being carried across a gap it cannot see. A docstring spanning a
+    hunk boundary is counted low, never high.
+
+    **The classification itself can err the other way, and that is not the same
+    claim.** The branch fires on any line opening a triple-quoted run, not only a
+    docstring, so a multi-line *string literal* — embedded SQL, or a diff fixture
+    in a test — counts as prose for its whole body. :data:`PROSE_EXTS` is
+    over-broad in the same way: a fenced code block in markdown counts as prose.
+    Both are left as they are, because over-reporting costs one extra lens on a
+    gate whose whole purpose is quality rather than thrift; the point of saying so
+    is that "errs toward code" describes the state machine, not the result.
+
+    Two further gaps in the low direction, both accepted: an added line
+    whose own content starts with ``++`` is written ``+++…`` and is skipped with
+    the file header, and a path git **quotes** (an embedded space, or non-ASCII)
+    yields an extension with a trailing quote that matches no table entry, so
+    that file reads as code.
+    """
+    added = 0
+    comment = 0
+    ext = ""
+    in_docstring = False
+    with open(diff_path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            header = _diff_header_path(line)
+            if header is not None:
+                ext = posixpath.splitext(header)[1].lower()
+                in_docstring = False
+                continue
+            if line.startswith("@@"):
+                # A new hunk is discontinuous with the last, so any docstring
+                # state from it is unreliable. Reset rather than carry it.
+                in_docstring = False
+                continue
+            # `+++ b/path` rides in with the file header. Note this also drops an
+            # added line whose own content begins with `++`, which is accepted as
+            # counting low rather than being the only non-content `+` line.
+            if not line.startswith("+") or line.startswith("+++"):
+                continue
+            body = line[1:].strip()
+            if not body:
+                continue
+            added += 1
+
+            if ext in PROSE_EXTS:
+                comment += 1
+                continue
+
+            if ext in DOCSTRING_EXTS:
+                # Count the delimiter line itself, then every line until the
+                # closing one. An odd number of delimiters on a line toggles the
+                # state; an even number opens and closes within the line.
+                delimiters = sum(body.count(d) for d in DOCSTRING_DELIMITERS)
+                if in_docstring:
+                    comment += 1
+                    if delimiters % 2:
+                        in_docstring = False
+                    continue
+                if delimiters % 2:
+                    in_docstring = True
+                    comment += 1
+                    continue
+
+            markers = COMMENT_MARKERS_BY_EXT.get(ext)
+            if markers and body.startswith(markers):
+                comment += 1
+
+    # `ratio` is REPORTORIAL — rounded for the verdict a human reads.
+    # `is_prose_heavy` recomputes from the counts so the threshold comparison is
+    # exact; comparing the rounded value would make a true 0.4995 trip a gate
+    # documented as 0.5.
+    ratio = round(comment / added, 3) if added else 0.0
+    return {"added": added, "comment": comment, "ratio": ratio}
+
+
+def is_prose_heavy(shape: dict) -> bool:
+    """Whether ``shape`` clears both the ratio and the absolute floor.
+
+    Both halves are load-bearing: the ratio alone fires on a trivial diff, and
+    the floor alone fires on a large diff with a normal share of comments.
+
+    The ratio is recomputed from the counts rather than read off ``shape``'s
+    reportorial ``ratio``, which is rounded to three places — comparing that
+    would put the real threshold at 0.4995.
+    """
+    if shape["comment"] < PROSE_HEAVY_FLOOR:
+        return False
+    added = shape["added"]
+    return bool(added) and shape["comment"] / added >= PROSE_HEAVY_RATIO
+
+
 def split_diff(diff_path: Path, out_dir: Path) -> dict:
     """Partition a review diff into per-lens slices; return ``{name: {path, lines}}``.
 
@@ -1127,7 +1424,16 @@ def gate(
     else:
         gate_paths = [f["path"] for f in files]
     runs_rust_suites = touches_ci_code(gate_paths)
-    rust_reachable = rust_is_reachable(gate_paths)
+    # Fixtures a Rust test compiles in via `include_str!`, DERIVED from the tree
+    # rather than enumerated in RUST_REACHABLE. These paths are reachable by
+    # `rust_is_reachable`'s own definition — "what the build consumes" — so they
+    # fold into that flag rather than sitting beside it as a second boolean the
+    # caller has to remember to read. The specific hits ride along separately so
+    # the skill can name *why* it is running a suite the path list called
+    # unreachable.
+    fixtures = rust_include_fixtures()
+    rust_fixture_hits = sorted(p for p in gate_paths if p in fixtures)
+    rust_reachable = rust_is_reachable(gate_paths) or bool(rust_fixture_hits)
     # The artifact gate consults only the SOURCE-bearing paths. A docs-only path
     # under a generation-input tree is provably incapable of staling the artifact
     # generated from that tree, and firing the gate for one buys three multi-minute
@@ -1142,6 +1448,21 @@ def gate(
 
     base_fresh = not base_ahead
     diff_empty = diff_lines == 0
+
+    # Computed from the WRITTEN diff, deliberately unlike the gate predicates
+    # above. Those answer "what will CI do", which is a property of the branch, so
+    # they read the unlimited path list. This answers "what kind of content is
+    # under review", which is a property of the diff the lenses are handed — so
+    # `--only` narrowing it is correct rather than blinding.
+    added_shape = (
+        added_line_shape(out)
+        if not diff_empty
+        else {
+            "added": 0,
+            "comment": 0,
+            "ratio": 0.0,
+        }
+    )
 
     blockers = []
     if fetch_error is not None:
@@ -1217,7 +1538,17 @@ def gate(
         "code_crates": sum(1 for b in crates.values() if b["has_source"]),
         "runs_rust_suites": runs_rust_suites,
         "rust_reachable": rust_reachable,
+        # The diff paths a Rust file compiles in via `include_str!`, whether or
+        # not CI's `code` filter excludes them — NOT only the excluded ones (the
+        # scan's docstring records that thirty of the thirty-one unmatched
+        # fixtures are CI-visible). Non-empty is the "run the full local suite
+        # despite the path list" signal.
+        "rust_fixture_hits": rust_fixture_hits,
         "runs_artifact_gates": runs_artifact_gates,
+        # The added-line prose classification behind `prose_heavy`, reported so the
+        # lens decision can be justified rather than merely asserted.
+        "added_shape": added_shape,
+        "prose_heavy": is_prose_heavy(added_shape),
         "ready": not blockers,
         "blockers": blockers,
     }
@@ -1248,7 +1579,12 @@ GATE_ONLY_FIELDS = (
     "blockers",
     "runs_rust_suites",
     "rust_reachable",
+    # Both are decisions rather than inventory, and both are bounded — the hits
+    # list is empty on almost every diff. `added_shape` is deliberately NOT here:
+    # it justifies a fan-out choice, and a fan-out reads the full verdict.
+    "rust_fixture_hits",
     "runs_artifact_gates",
+    "prose_heavy",
 )
 
 
