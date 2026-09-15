@@ -87,9 +87,10 @@ and prints, as compact Markdown (or `--json`):
   model id.** Measured 2026-09-14: a Bedrock worker's
   transcript records `message.model` as the plain
   `claude-opus-5`, byte-identical to what a seat Opus session
-  records — the id is normalized and carries no region prefix,
-  so it cannot discriminate; nor can the model *name*, since
-  seat verbs also run on Opus. The tool reads the marker
+  records, and no region-prefixed or inference-profile id
+  appears in any local transcript — so the id cannot
+  discriminate; nor can the model *name*, since seat verbs also
+  run on Opus. The tool reads the marker
   `.claude/shell/init.zsh` writes, and **an absent marker
   reads as seat**, which is the safe direction: a missing
   figure is a visible gap, a wrong one silently corrupts the

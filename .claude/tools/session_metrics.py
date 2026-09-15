@@ -153,7 +153,11 @@ class Totals:
         # This request's prefix: everything the model had to process as input,
         # whether it came fresh, from a cache write, or from a cache read.
         prefix = fresh + written + read
-        if self.turns == 0:
+        # Pinned on the first NON-EMPTY prefix rather than on the first counted
+        # record: an interrupted or errored message can carry an all-zero usage
+        # block, and pinning zero there would report the whole of the first real
+        # prefix as growth.
+        if not self.prefix_first:
             self.prefix_first = prefix
         self.prefix_last = prefix
         self.prefix_max = max(self.prefix_max, prefix)
@@ -935,9 +939,22 @@ def to_markdown(report: dict, session_label: str) -> str:
                     money(session.total()), money(sub.total())
                 )
             )
-        out.append("at the verified Bedrock rates (2026-09-11).\n")
+        # Name where the substrate came from on this branch too. Without it an
+        # operator-asserted `--substrate bedrock` renders byte-identically to a
+        # marker-verified one — on precisely the figure the daily
+        # reconciliation consumes, where that provenance is the point.
         out.append(
-            "**Cost breakdown**: cache-read {} · cache-write {} · output {} · input {}\n".format(
+            "at the verified Bedrock rates (2026-09-11); substrate {}.\n".format(
+                report["substrate_reason"]
+            )
+        )
+        # **(all agents)** is load-bearing: these four figures price
+        # `total_cost`, which includes sub-agents, while the `**Totals**` line
+        # just below counts the main session only. Unlabelled, the two adjacent
+        # lines invite a dollars-per-token ratio that is wrong on any fan-out.
+        out.append(
+            "**Cost breakdown** (all agents): cache-read {} · cache-write {} · "
+            "output {} · input {}\n".format(
                 money(total.cache_read),
                 money(total.cache_write),
                 money(total.output),
@@ -952,7 +969,8 @@ def to_markdown(report: dict, session_label: str) -> str:
         )
 
     out.append(
-        "**Totals**: input {} · output {} · cache-write {} · cache-read {} · {} turns\n".format(
+        "**Totals** (main session): input {} · output {} · cache-write {} · "
+        "cache-read {} · {} turns\n".format(
             human(totals.input),
             human(totals.output),
             human(totals.cache_creation),
@@ -1136,10 +1154,18 @@ def tag_from_cwd(cwd: str | None) -> str | None:
     """
     if not cwd:
         return None
-    head, _, tail = cwd.partition(WORKTREE_SEGMENT)
-    if not tail or head == cwd:
+    _, sep, tail = cwd.partition(WORKTREE_SEGMENT)
+    if not sep:
         return None
     tag = tail.split("/", 1)[0].strip()
+    # The tag is interpolated into a marker path below, so reject outright the
+    # names that would leave the marker directory. `split("/")` already rules
+    # out a separator, and a NUL raises from the path layer rather than
+    # resolving — but both are stated explicitly here rather than relied on as
+    # implicit properties, matching how the `--session-id` guard further down
+    # this file defends the same shape.
+    if tag in {".", ".."} or "\x00" in tag:
+        return None
     return tag or None
 
 
@@ -1153,7 +1179,10 @@ def base_repo_from_cwd(cwd: str | None) -> Path | None:
     if not cwd:
         return None
     head, sep, _ = cwd.partition(WORKTREE_SEGMENT)
-    if not sep:
+    # An empty head is rejected rather than silently reinterpreted: `Path("")`
+    # resolves to `.`, which would turn the marker lookup into a RELATIVE read
+    # against whatever directory the mining process happens to be run from.
+    if not sep or not head:
         return None
     return Path(head)
 
@@ -1173,7 +1202,15 @@ def read_substrate_marker(cwd: str | None) -> str | None:
     marker = base / SUBSTRATE_DIR / tag
     try:
         recorded = marker.read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, ValueError):
+        # `ValueError` is not redundant with `OSError` here, and catching only
+        # the latter made this lookup able to kill the whole report: a strict
+        # UTF-8 `read_text` raises `UnicodeDecodeError` (a `ValueError`) on a
+        # malformed marker, and nothing up the call chain handles it. The writer
+        # in `.claude/shell/init.zsh` is a plain truncating redirect rather than
+        # an atomic rename, so a torn write is the realistic producer of one.
+        # Degrading to seat here is what makes the documented fail-toward-seat
+        # policy true for malformed content as well as for a missing file.
         return None
     return recorded or None
 
@@ -1203,11 +1240,18 @@ def resolve_substrate(cwd: str | None) -> tuple[str, str]:
         return SUBSTRATE_SEAT, "recorded by the launch verb"
     if recorded is None:
         if tag_from_cwd(cwd) is None:
-            return SUBSTRATE_SEAT, "base-repo session, so a seat verb"
+            if base_repo_from_cwd(cwd) is None:
+                return SUBSTRATE_SEAT, "base-repo session, so a seat verb"
+            # Inside the worktrees directory but carrying no tag component. That
+            # is a malformed path, not a base-repo session, so it does not get
+            # the base-repo reason string.
+            return SUBSTRATE_SEAT, "no worktree tag in the path, which reads as seat"
         return SUBSTRATE_SEAT, "no substrate marker found, which reads as seat"
     # A marker holding something unrecognized: treat it as unknown rather than
-    # guessing, and fail toward the branch that prints no dollars.
-    return SUBSTRATE_SEAT, f"unrecognized marker {recorded!r}, treated as seat"
+    # guessing, and fail toward the branch that prints no dollars. Truncated
+    # because this string reaches the report, and an unexpected file at that
+    # path should not have its whole body echoed into it.
+    return SUBSTRATE_SEAT, f"unrecognized marker {recorded[:32]!r}, treated as seat"
 
 
 def slugify(path: Path) -> str:
