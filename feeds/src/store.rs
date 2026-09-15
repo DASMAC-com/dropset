@@ -108,15 +108,75 @@ where
     W::Record: Send + Sync,
 {
     async fn handle(&mut self, batch: &Batch<W::Record>) -> Result<()> {
+        let requested = batch.records.len();
         let mut tx = self.pool.begin().await?;
         let written = self.writer.write_batch(&mut tx, &batch.records).await?;
+        record_ingestion(&mut tx, &self.feed, requested, written).await?;
         tx.commit().await?;
         if let Some(cursor) = &batch.cursor {
             self.cursors.save(&self.feed, cursor).await?;
         }
-        tracing::debug!(feed = %self.feed, written, "store sink committed batch");
+        tracing::debug!(
+            feed = %self.feed,
+            requested,
+            written,
+            "store sink committed batch"
+        );
         Ok(())
     }
+}
+
+/// Record one batch's requested-vs-written counts into `feed_batch_ingestion`.
+///
+/// **Inside the batch's own transaction, deliberately.** The alternative — a
+/// best-effort write after the commit, the shape [`connect_lazy`] exists to
+/// support — would let a batch commit rows and then fail to record that it had,
+/// leaving the detector quietly disagreeing with the data. Sharing the
+/// transaction makes the row and the commit atomic, so it can never disagree.
+///
+/// **What that does NOT buy, since the tempting claim is broader.** It does not
+/// make the detector fail closed in general: if `write_batch` itself returns an
+/// error, this function never runs, so the batch stores nothing *and* records
+/// nothing. Absence of a row is therefore not evidence of absence of a fault —
+/// the panel reading it has to say so, and does.
+///
+/// It also costs one extra server round trip per batch, not zero. What sharing
+/// the transaction saves is a second BEGIN/COMMIT, not the statement.
+///
+/// The blast radius is narrower than the schema fence alone implies. The fence
+/// guarantees the table EXISTS before any DB-backed app starts, so "no such
+/// table" is a startup failure rather than a per-batch one — but it probes
+/// existence as the migration role and says nothing about `INSERT` privilege as
+/// the writer's. Today every collector connects on the schema-owning `dropset`
+/// role (`infra/localnet/docker-compose.yml`), which is why no grant is needed
+/// here; a deployment that split those roles would have to grant `INSERT`
+/// explicitly, and would discover it as a per-batch failure on every feed.
+///
+/// `ON CONFLICT DO NOTHING` absorbs the primary-key collision so losing one
+/// telemetry row can never abort a data batch — see the migration's note on the
+/// key. Note it absorbs only that class: any other error here still aborts the
+/// batch, which is the price of the atomicity above.
+async fn record_ingestion(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    feed: &str,
+    requested: usize,
+    written: u64,
+) -> Result<()> {
+    // Postgres has no unsigned integer type, so both counts cross as BIGINT.
+    // Saturating rather than panicking: a count this large is impossible, and a
+    // telemetry cast is the wrong place to take down a collector if it happens.
+    let requested = i64::try_from(requested).unwrap_or(i64::MAX);
+    let written = i64::try_from(written).unwrap_or(i64::MAX);
+    sqlx::query(
+        "INSERT INTO feed_batch_ingestion (feed, requested, written) \
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+    )
+    .bind(feed)
+    .bind(requested)
+    .bind(written)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// The framework-owned [`CursorStore`], backed by the `feed_cursors` table.

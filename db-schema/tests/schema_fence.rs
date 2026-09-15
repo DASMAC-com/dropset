@@ -32,17 +32,20 @@
 //! cargo test -p dropset-db-schema -- --ignored
 //! ```
 
-use dropset_db_schema::{connect, expected_version, migrate, require_schema, MIGRATOR};
+use dropset_db_schema::{
+    connect, expected_version, migrate, require_schema, MIGRATOR, POSTGRES_IMAGE_TAG,
+};
 use sqlx::PgPool;
 use std::collections::BTreeMap;
 use std::fs;
 use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync};
+use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
 
 /// Start a throwaway Postgres and return a connected pool, with **no** schema
 /// applied — each test decides what state to put it in.
 async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
     let container = Postgres::default()
+        .with_tag(POSTGRES_IMAGE_TAG)
         .start()
         .await
         .expect("start postgres container");
@@ -69,6 +72,36 @@ async fn stamp_version(pool: &PgPool, version: i64, description: &str) {
     .execute(pool)
     .await
     .expect("stamp migration row");
+}
+
+/// The pinned container image is one the stack actually deploys.
+///
+/// **This is what makes the pin self-defending rather than self-documenting.**
+/// `POSTGRES_IMAGE_TAG` and the compose stack's image can drift apart in either
+/// direction with nothing to notice, and the failure that reintroduces is the one
+/// the constant exists to prevent: a fence guarding a server nothing runs.
+///
+/// Deliberately **not** `#[ignore]`d, and that is the whole point — it needs no
+/// container, so unlike every other test in this file it runs in the default
+/// suite, which is the only place CI executes this crate's tests at all.
+///
+/// The `include_str!` is load-bearing beyond just reading the file: it makes the
+/// compose file a compile-time input of a Rust target, which is what
+/// `review_diff.py`'s fixture scan looks for when deciding whether a diff can
+/// reach the Rust suites. It does **not** affect any GitHub Actions paths filter
+/// — a filter matches changed paths against globs and cannot see through a macro
+/// — so a workflow-level exclusion of this file would still hide it from CI.
+#[test]
+fn postgres_image_tag_matches_the_deployed_image() {
+    const COMPOSE: &str = include_str!("../../infra/localnet/docker-compose.yml");
+    let deployed = format!("postgres:{POSTGRES_IMAGE_TAG}");
+    assert!(
+        COMPOSE.contains(&deployed),
+        "POSTGRES_IMAGE_TAG is {POSTGRES_IMAGE_TAG}, so the compose stack should \
+         run {deployed} — but no such image appears in \
+         infra/localnet/docker-compose.yml. One of the two moved; reconcile them \
+         rather than letting the test containers drift off the deployed version."
+    );
 }
 
 #[tokio::test]
