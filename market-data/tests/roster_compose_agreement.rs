@@ -75,9 +75,17 @@
 //! lines are 70 and 68 columns, so either could legally move under the
 //! 80-column rule on a pure reformat that changed no roster at all — at which
 //! point byte-identity would fail spuriously. Measured both directions when the
-//! test was written: widening one venue's copy fails it and nothing else, while
-//! moving one venue's fold break a pair earlier, changing no roster, leaves the
-//! file green.
+//! test was written: widening one venue's copy together with its own Rust
+//! constant fails it and nothing else, while moving one venue's fold break a
+//! pair earlier, changing no roster, leaves the file green.
+//!
+//! **The residue that leaves, recorded rather than closed.** The two groupings
+//! are keyed separately — one on the outermost chain entry, one on every entry
+//! below it — so a roster that is one service's *own* override variable and
+//! another's inner link would land in neither group, each holding a single
+//! member. No service declares a shared roster outermost today, so nothing is
+//! uncovered; closing it would mean merging the two groupings, and that would
+//! cost the byte-identity the coinbase pair is correctly held to.
 //!
 //! **This file used to have a second, much weaker mode**, and what it cost is
 //! worth recording. The three keyed FX venues shared one
@@ -471,7 +479,8 @@ fn every_variable_chain_matches_its_declaration() {
 ///
 /// **What makes byte-identity SAFE here is that both values are single-line
 /// quoted scalars**, and that is a property of the coinbase pair rather than of
-/// shared rosters generally — see the bound in the module docs. A folded (`>-`)
+/// shared rosters generally — which is why
+/// `every_shared_chained_roster_agrees` compares sets instead. A folded (`>-`)
 /// value's unwrapped default carries whitespace from wherever the YAML fold
 /// happens to break, so byte-identity would fail on a pure re-fold that changed
 /// no roster at all.
@@ -511,9 +520,9 @@ fn every_shared_override_group_agrees() {
          coinbase legs both key off the bare `PRODUCT_IDS`. Three ways to get \
          here: they were de-coupled onto their own variables, one of them left \
          `wirings()`, or the shared variable moved out of the outermost slot — \
-         and that last one leaves the coupling LIVE but outside this grouping, \
-         so see the bound in the module docs before believing this test is \
-         obsolete. Re-point it at whatever pair is now shared; delete it only \
+         and that last one moves the coupling into \
+         `every_shared_chained_roster_agrees`'s grouping rather than leaving it \
+         uncovered. Re-point it at whatever pair is now shared; delete it only \
          if the grouping can never have a member again",
     );
     for (override_var, services) in shared {
@@ -575,7 +584,12 @@ fn every_shared_chained_roster_agrees() {
         // Skip the outermost entry — that is the service's own override
         // variable, and `every_shared_override_group_agrees` owns it. Every
         // later entry is a shared roster this service chains through.
-        for &shared_var in wiring.variable_chain.iter().skip(1) {
+        // Deduped: a chain naming one variable twice would otherwise push this
+        // service into that group twice, and a group whose two members are the
+        // same service compares a roster with itself — passing vacuously while
+        // also satisfying the non-vacuity guard below.
+        let shared_vars: BTreeSet<&str> = wiring.variable_chain.iter().skip(1).copied().collect();
+        for shared_var in shared_vars {
             groups
                 .entry(shared_var)
                 .or_default()
@@ -601,45 +615,50 @@ fn every_shared_chained_roster_agrees() {
          service can chain through one again",
     );
     for (shared_var, members) in shared {
-        let mut rosters = members.iter().map(|(service, chain)| {
-            assert_eq!(
-                chain.last(),
-                Some(&shared_var),
-                "service `{service}` chains through `{shared_var}`, but that is \
-                 not the innermost link in its chain {chain:?} — so the compose \
-                 default read here is some other variable's literal and this \
-                 comparison would pass for the wrong reason. Compare the \
-                 `{shared_var}` default directly instead of resolving to the \
-                 innermost one",
-            );
-            let roster = compose.get(*service).unwrap_or_else(|| {
-                panic!(
-                    "docker-compose.yml defines no PRODUCT_IDS default for \
-                     service `{service}` — add one, or drop that row from \
-                     `wirings()`"
-                )
-            });
-            (*service, roster)
-        });
-        let (first_service, first_roster) = rosters
-            .next()
+        // Collected eagerly rather than left as a lazy `map`: the innermost-link
+        // guard below is a thing this test asserts rather than assumes, and
+        // inside a lazy adapter it would run only for the members something
+        // downstream happens to consume.
+        let rosters: Vec<(&str, &String)> = members
+            .iter()
+            .map(|(service, chain)| {
+                assert_eq!(
+                    chain.last(),
+                    Some(&shared_var),
+                    "service `{service}` chains through `{shared_var}`, but \
+                     that is not the innermost link in its chain {chain:?} — so \
+                     the compose default read here is some other variable's \
+                     literal and this comparison would pass for the wrong \
+                     reason. Compare the `{shared_var}` default directly \
+                     instead of resolving to the innermost one",
+                );
+                let roster = compose.get(*service).unwrap_or_else(|| {
+                    panic!(
+                        "docker-compose.yml defines no PRODUCT_IDS default for \
+                         service `{service}` — add one, or drop that row from \
+                         `wirings()`"
+                    )
+                });
+                (*service, roster)
+            })
+            .collect();
+        let &(first_service, first_roster) = rosters
+            .first()
             .expect("a shared group has two or more members");
-        for (service, roster) in rosters {
+        let first_pairs = pairs(first_roster);
+        for &(service, roster) in &rosters[1..] {
+            let this_pairs = pairs(roster);
+            let only_in_first: Vec<_> = first_pairs.difference(&this_pairs).collect();
+            let only_in_this: Vec<_> = this_pairs.difference(&first_pairs).collect();
             assert_eq!(
-                pairs(first_roster),
-                pairs(roster),
+                first_pairs, this_pairs,
                 "services `{first_service}` and `{service}` both chain through \
                  `{shared_var}`, so an operator setting it reaches both — yet \
                  their own copies of its default disagree. Only in \
-                 `{first_service}`: {:?}; only in `{service}`: {:?}. Widen both \
-                 copies together, or stop chaining one of them through \
-                 `{shared_var}` if the two are meant to diverge",
-                pairs(first_roster)
-                    .difference(&pairs(roster))
-                    .collect::<Vec<_>>(),
-                pairs(roster)
-                    .difference(&pairs(first_roster))
-                    .collect::<Vec<_>>(),
+                 `{first_service}`: {only_in_first:?}; only in `{service}`: \
+                 {only_in_this:?}. Widen both copies together, or stop chaining \
+                 one of them through `{shared_var}` if the two are meant to \
+                 diverge",
             );
         }
     }
