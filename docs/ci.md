@@ -19,9 +19,13 @@ decides how often it is paid. Each Rust image therefore copies
 `rustup toolchain install` there, before any source `COPY`: the layer is then
 keyed only on the pin file, so it survives every source change and
 invalidates only on a deliberate bump. Both later stages descend from it, so
-`cargo chef cook` and `cargo build` share one compiler — otherwise the cooked
-dependency cache is keyed to a different rustc than the build uses and every
-dependency silently recompiles with all Docker layers hot.
+`cargo chef cook` and `cargo build` share one compiler. Before this, the cook
+stage held only `recipe.json` — no pin file — so it built on the image's own
+compiler while the build stage used the pinned one, and much of the cooked
+dependency set was invalid at build time: measured at 144 crates recompiled
+against 71 afterwards. On this workspace that costs well under a second, so
+treat it as a correctness tidy-up rather than a saving; the download above is
+where the time went.
 
 `.claude/tools/dockerfile_stages.py` asserts that structure (the
 `dockerfile-stages` pre-commit hook, or `make dockerfile-stages ARGS=--show`

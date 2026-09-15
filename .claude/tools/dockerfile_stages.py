@@ -23,8 +23,10 @@ structure is the real invariant). Per Dockerfile that builds Rust at all:
    the image's own floating compiler.
 4. **Every Rust stage descends from the pin stage**, so cook and build share
    one compiler. Compiled artifacts are keyed by compiler version, so a cook
-   stage on a different one silently recompiles every dependency at build time
-   even with all Docker layers hot.
+   stage on a different one leaves much of its output invalid at build time —
+   measured here at 144 crates recompiled against 71 once the compilers match.
+   Note the honest size of that: it is under a second on this workspace, so
+   this rule is a correctness tidy-up, not the saving. Rule 2 is the saving.
 5. **No stage names a version** — agreement with ``rust-toolchain.toml`` is by
    construction, never by duplication. The base image's major-only tag is the
    rustup bootstrap and stays allowed; an ``x.y`` tag or a version handed to
