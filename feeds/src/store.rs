@@ -108,15 +108,61 @@ where
     W::Record: Send + Sync,
 {
     async fn handle(&mut self, batch: &Batch<W::Record>) -> Result<()> {
+        let requested = batch.records.len();
         let mut tx = self.pool.begin().await?;
         let written = self.writer.write_batch(&mut tx, &batch.records).await?;
+        record_ingestion(&mut tx, &self.feed, requested, written).await?;
         tx.commit().await?;
         if let Some(cursor) = &batch.cursor {
             self.cursors.save(&self.feed, cursor).await?;
         }
-        tracing::debug!(feed = %self.feed, written, "store sink committed batch");
+        tracing::debug!(
+            feed = %self.feed,
+            requested,
+            written,
+            "store sink committed batch"
+        );
         Ok(())
     }
+}
+
+/// Record one batch's requested-vs-written counts into `feed_batch_ingestion`.
+///
+/// **Inside the batch's own transaction, deliberately.** The alternative — a
+/// best-effort write after the commit, the shape [`connect_lazy`] exists to
+/// support — would make the detector fail open: a batch could store nothing and
+/// *also* fail to record that it stored nothing, which is precisely the silent
+/// success this table exists to make visible. A detector that can go quiet
+/// without saying so is not one. Sharing the transaction also means the row can
+/// never disagree with what was committed, and costs no extra round trip.
+///
+/// The blast radius that buys is bounded by the schema fence: the migration
+/// guaranteeing this table runs before any DB-backed app starts, so "the table
+/// is missing" is a startup failure rather than a per-batch one.
+///
+/// `ON CONFLICT DO NOTHING` because losing one telemetry row must never abort a
+/// data batch — see the migration's note on the key.
+async fn record_ingestion(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    feed: &str,
+    requested: usize,
+    written: u64,
+) -> Result<()> {
+    // Postgres has no unsigned integer type, so both counts cross as BIGINT.
+    // Saturating rather than panicking: a count this large is impossible, and a
+    // telemetry cast is the wrong place to take down a collector if it happens.
+    let requested = i64::try_from(requested).unwrap_or(i64::MAX);
+    let written = i64::try_from(written).unwrap_or(i64::MAX);
+    sqlx::query(
+        "INSERT INTO feed_batch_ingestion (feed, requested, written) \
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+    )
+    .bind(feed)
+    .bind(requested)
+    .bind(written)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// The framework-owned [`CursorStore`], backed by the `feed_cursors` table.

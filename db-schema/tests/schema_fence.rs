@@ -32,17 +32,20 @@
 //! cargo test -p dropset-db-schema -- --ignored
 //! ```
 
-use dropset_db_schema::{connect, expected_version, migrate, require_schema, MIGRATOR};
+use dropset_db_schema::{
+    connect, expected_version, migrate, require_schema, MIGRATOR, POSTGRES_IMAGE_TAG,
+};
 use sqlx::PgPool;
 use std::collections::BTreeMap;
 use std::fs;
 use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync};
+use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
 
 /// Start a throwaway Postgres and return a connected pool, with **no** schema
 /// applied — each test decides what state to put it in.
 async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
     let container = Postgres::default()
+        .with_tag(POSTGRES_IMAGE_TAG)
         .start()
         .await
         .expect("start postgres container");

@@ -32,6 +32,26 @@ use sqlx::PgPool;
 /// anything on disk.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
+/// The Postgres image every throwaway test container pins, matching what the
+/// stack actually deploys (`infra/localnet/docker-compose.yml`).
+///
+/// **Declared here because this crate owns the migrations, and a migration is
+/// only as portable as the oldest server it is tested against.** The four test
+/// harnesses that spin a container — this crate's schema fence, plus the feeds,
+/// indexer and market-data store tests — all depend on this crate already, so
+/// one constant keeps them from drifting apart or from each pinning a different
+/// version.
+///
+/// **It is pinned rather than left to `Postgres::default()`, which is the bug
+/// this replaces.** That default resolved to Postgres **11** — a version nothing
+/// deploys — so the schema fence guarded a server nobody runs and no migration
+/// could use a feature newer than 2018. It failed in the least helpful way
+/// available: a generated column parses as `syntax error at or near "("`, which
+/// reads as a typo in the migration rather than as a server too old to have the
+/// feature. Being an implicit crate default, it would also have moved silently
+/// under a dependency bump.
+pub const POSTGRES_IMAGE_TAG: &str = "16-alpine";
+
 /// A pool for schema work. Two connections is plenty: the runner is a
 /// short-lived one-shot and the fence is a single query.
 pub async fn connect(url: &str) -> Result<PgPool> {
