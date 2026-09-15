@@ -34,11 +34,12 @@
 //! cargo test -p dropset-market-data -- --ignored
 //! ```
 //!
-//! **These are operator-run, not a merge gate.** CI's only `--run-ignored`
-//! invocation selects two other crates, so nothing here executes in the merge
-//! queue — the transposition proof below holds only as often as somebody runs
-//! it. Stated so a reader does not mistake a written test for a gated one; the
-//! wiring is tracked separately.
+//! **These are a merge gate.** The Tests (Postgres) job's `--run-ignored all`
+//! invocation selects `dropset-market-data`, so the transposition proof below
+//! runs on every PR and in the merge queue. Note the consequence, which is
+//! the reason `#[ignore]` is worth flagging either way: an `#[ignore]`d test
+//! is skipped by a bare local `cargo test`, so it can only ever fail in CI.
+//! Run it with the command above before pushing a change that touches it.
 
 mod common;
 

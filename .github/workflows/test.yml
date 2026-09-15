@@ -470,10 +470,11 @@ jobs:
         echo "SBF cache hit: ${H:-unknown}" >>"$S"
         sccache --show-stats >>"$S"
         echo '```' >>"$S"
-  # The SQL-backed crates (`dropset-feeds` and `dropset-indexer`) reach a real
-  # Postgres through testcontainers, so their store suites are `#[ignore]`d
-  # and the default `cargo nextest run` above skips them entirely — as it does
-  # the feature-gated unit tests, since the feeds transports are off by
+  # The SQL-backed crates (`dropset-feeds`, `dropset-indexer`,
+  # `dropset-market-data` and `dropset-db-schema`) reach a real Postgres
+  # through testcontainers, so their store suites are `#[ignore]`d and the
+  # default `cargo nextest run` above skips them entirely — as it does the
+  # feature-gated unit tests, since the feeds transports are off by
   # default. This job covers both gaps. It is deliberately toolchain-light:
   # nothing here builds or loads the program, so it skips install-toolchain,
   # the program keypair, and the SBF cache the other jobs need, and keeps its
@@ -511,22 +512,32 @@ jobs:
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'taiki-e/install-action@nextest'
-    # One invocation over both crates so the shared dependency graph compiles
-    # once. `--run-ignored all` runs the container-backed suites alongside the
-    # ordinary unit tests; the feeds features are named explicitly because a
-    # `-p` selection does not enable them.
+    # One invocation over all four crates so the shared dependency graph
+    # compiles once. `--run-ignored all` runs the container-backed suites
+    # alongside the ordinary unit tests; the feeds features are named
+    # explicitly because a `-p` selection does not enable them.
     #
     # The schema comes from `dropset-db-schema` inside the tests themselves
     # (docs/data-feeds.md §8) — there is no in-crate migrator left to lean on
     # since the single-schema-owner split, and no DDL is issued here.
+    #
+    # `oanda_direction` is filtered out because it is the one `#[ignore]`d
+    # target here gated on something other than Docker: it needs a network and
+    # the OANDA credential, and `--run-ignored all` would otherwise select it.
+    # A fork `pull_request` run receives no secrets, so it could never pass as
+    # a gate — it stays operator-run, and its own module doc says so. Excluded
+    # by binary rather than by package so the rest of `dropset-market-data`
+    # is still covered.
     - env:
         RUSTC_WRAPPER: 'sccache'
       if: |
         needs.changes.outputs.code == 'true'
       name: 'Run store and feature-gated tests against Postgres'
       run: |
-        cargo nextest run --run-ignored all -p dropset-feeds \
-        -p dropset-indexer --features dropset-feeds/store,dropset-feeds/http \
+        cargo nextest run --run-ignored all -E 'not binary(oanda_direction)' \
+        -p dropset-feeds -p dropset-indexer -p dropset-market-data \
+        -p dropset-db-schema \
+        --features dropset-feeds/store,dropset-feeds/http \
         --features dropset-feeds/rpc,dropset-feeds/stream
     # See the `test` job's summary step. No SBF line here: this job builds no
     # program and so has no `sbf-cache` step to report on.
