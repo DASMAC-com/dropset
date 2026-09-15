@@ -61,7 +61,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     // The left column stacks the phase-action menu (its entries + borders) over
     // the grouped "other actions" pane (a fixed number of control rows +
     // borders), with alerts taking the rest of the column below them.
-    let menu_height = (action::MENU.len() as u16 + 2).clamp(3, 14);
+    let menu_height = (app.menu_entries().len() as u16 + 2).clamp(3, 14);
     let [menu_area, other_area, alerts_area] = Layout::new(
         Direction::Vertical,
         [
@@ -207,17 +207,22 @@ fn explorer_status(app: &App) -> Span<'static> {
 fn draw_menu(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let phase = app.chain.phase();
     let next = action::recommended_next(phase);
-    let items: Vec<ListItem> = action::MENU
+    let items: Vec<ListItem> = app
+        .menu_entries()
         .iter()
         .enumerate()
         .map(|(i, &a)| menu_item(i, a, phase, next))
         .collect();
+    // Name the cluster in the border on mainnet, so the one pane the operator
+    // is always looking at says which chain this is. The localnet title is
+    // unchanged — every existing session reads the same as before.
+    let title = if app.ctx.cluster.is_mainnet() {
+        " actions · MAINNET ".to_string()
+    } else {
+        " actions · setup ".to_string()
+    };
     let list = List::new(items)
-        .block(
-            Block::default()
-                .title(" actions · setup ")
-                .borders(Borders::ALL),
-        )
+        .block(Block::default().title(title).borders(Borders::ALL))
         .highlight_style(
             Style::new()
                 .bg(Color::DarkGray)

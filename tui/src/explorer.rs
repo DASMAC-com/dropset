@@ -18,6 +18,7 @@
 //! time the operator opens it, and torn down on quit — the same ownership the
 //! validator has.
 
+use crate::cluster::Cluster;
 use crate::job::{self, Logger};
 use anyhow::{bail, Context, Result};
 use solana_pubkey::Pubkey;
@@ -133,6 +134,72 @@ pub fn hosted_tx_url(signature: &str, rpc_url: &str) -> String {
         "https://explorer.solana.com/tx/{signature}?cluster=custom&customUrl={}",
         percent_encode(rpc_url)
     )
+}
+
+/// The hosted-explorer URL for `address` on **mainnet-beta**.
+///
+/// Carries no `customUrl` — and that omission is the point, not an economy.
+/// The mainnet endpoint routinely embeds an API key in its URL (that is how
+/// most paid providers authenticate), and the `customUrl` form would paste it
+/// into a query string that lands in the browser's history, its address bar,
+/// and any referrer the explorer sends onward. The public explorer already
+/// defaults to mainnet-beta, so the parameter buys nothing and leaks a
+/// credential.
+pub fn mainnet_account_url(address: &Pubkey) -> String {
+    format!("https://explorer.solana.com/address/{address}")
+}
+
+/// The hosted-explorer transaction URL on mainnet-beta — same
+/// no-`customUrl` rule as [`mainnet_account_url`], for the same reason.
+pub fn mainnet_tx_url(signature: &str) -> String {
+    format!("https://explorer.solana.com/tx/{signature}")
+}
+
+/// The account URL to open, given the cluster and whether the local container
+/// is serving.
+///
+/// **One owner for the rule, because there were two.** `App::open_in_explorer`
+/// and `action::dispatch`'s `OpenExplorer` arm each chose a builder
+/// independently, and when mainnet arrived only the first learned about it — so
+/// the single action mainnet exposes went on percent-encoding the endpoint into
+/// a `customUrl=` parameter. A caller now *asks* which URL to use rather than
+/// choosing, which is the same reason `App::run_action` is the one choke point
+/// for the availability gates.
+pub fn account_url_for(
+    cluster: Cluster,
+    address: &Pubkey,
+    rpc_url: &str,
+    local_ready: bool,
+) -> String {
+    match cluster {
+        Cluster::Mainnet => mainnet_account_url(address),
+        Cluster::Localnet if local_ready => account_url(address, rpc_url),
+        Cluster::Localnet => hosted_account_url(address, rpc_url),
+    }
+}
+
+/// The transaction URL to open — same rule and same reasoning as
+/// [`account_url_for`].
+pub fn tx_url_for(cluster: Cluster, signature: &str, rpc_url: &str, local_ready: bool) -> String {
+    match cluster {
+        Cluster::Mainnet => mainnet_tx_url(signature),
+        Cluster::Localnet if local_ready => tx_url(signature, rpc_url),
+        Cluster::Localnet => hosted_tx_url(signature, rpc_url),
+    }
+}
+
+/// The lifecycle state a fresh session starts its explorer tracking in.
+///
+/// Mainnet starts at [`state::NO_DOCKER`] rather than [`state::STARTING`], and
+/// that is load-bearing rather than cosmetic: `App`'s `Drop` tears the managed
+/// container down unless the state is `NO_DOCKER`, so a session that never
+/// brings one up must not claim one. Extracted from the call site so it is
+/// testable — deleting the distinction used to break nothing.
+pub fn initial_state(cluster: Cluster) -> u8 {
+    match cluster {
+        Cluster::Localnet => state::STARTING,
+        Cluster::Mainnet => state::NO_DOCKER,
+    }
 }
 
 /// Whether a `docker` CLI is on PATH. A `false` steers "Open explorer" to the
@@ -274,5 +341,59 @@ mod tests {
         assert!(local.contains("customUrl=http%3A%2F%2F127.0.0.1%3A8899"));
         let hosted = hosted_tx_url(sig, "http://127.0.0.1:8899");
         assert!(hosted.starts_with("https://explorer.solana.com/tx/5xY5s1Vd7z9Kq2Rp8"));
+    }
+
+    #[test]
+    fn mainnet_builders_emit_no_query_string() {
+        let addr = Pubkey::new_from_array([3u8; 32]);
+        let url = mainnet_account_url(&addr);
+        assert_eq!(url, format!("https://explorer.solana.com/address/{addr}"));
+        assert!(!url.contains('?'));
+        let tx = mainnet_tx_url("5xY5s1Vd7z9Kq2Rp8");
+        assert_eq!(tx, "https://explorer.solana.com/tx/5xY5s1Vd7z9Kq2Rp8");
+        assert!(!tx.contains('?'));
+    }
+
+    #[test]
+    fn mainnet_routing_never_reaches_an_endpoint_bearing_url() {
+        // This assertion is deliberately at the ROUTING layer rather than on
+        // the builders. The builders cannot leak by construction — they take no
+        // endpoint at all — so asserting that their output omits one proves
+        // nothing their signature does not already guarantee. What actually
+        // regressed is a *caller* reaching for the localnet builder on mainnet,
+        // which no test of a builder alone can see.
+        let addr = Pubkey::new_from_array([4u8; 32]);
+        let keyed = "https://mainnet.example.com/?api-key=SUPERSECRET";
+
+        for local_ready in [true, false] {
+            let url = account_url_for(Cluster::Mainnet, &addr, keyed, local_ready);
+            assert!(!url.contains("SUPERSECRET"), "leaked the key: {url}");
+            assert!(!url.contains("customUrl"), "leaked the endpoint: {url}");
+            assert_eq!(url, mainnet_account_url(&addr));
+
+            let tx = tx_url_for(Cluster::Mainnet, "5xY5s1Vd7z9Kq2Rp8", keyed, local_ready);
+            assert!(!tx.contains("SUPERSECRET"), "leaked the key: {tx}");
+            assert!(!tx.contains("customUrl"), "leaked the endpoint: {tx}");
+            assert_eq!(tx, mainnet_tx_url("5xY5s1Vd7z9Kq2Rp8"));
+        }
+
+        // The contrast is what makes the assertions above falsifiable: the
+        // localnet builders DO embed the endpoint, deliberately. Both localnet
+        // branches embed it, so neither is a safe accidental fallback.
+        assert!(account_url_for(Cluster::Localnet, &addr, keyed, true).contains("SUPERSECRET"));
+        assert!(account_url_for(Cluster::Localnet, &addr, keyed, false).contains("SUPERSECRET"));
+        assert!(tx_url_for(Cluster::Localnet, "sig", keyed, true).contains("SUPERSECRET"));
+        assert!(tx_url_for(Cluster::Localnet, "sig", keyed, false).contains("SUPERSECRET"));
+    }
+
+    #[test]
+    fn mainnet_starts_its_explorer_tracking_as_no_docker() {
+        // Load-bearing, not cosmetic: `Drop for App` tears the managed
+        // container down unless the state is NO_DOCKER, so a mainnet session
+        // (which never starts one) must not claim one. Deleting the
+        // distinction used to break no test at all.
+        assert_eq!(initial_state(Cluster::Mainnet), state::NO_DOCKER);
+        assert_eq!(initial_state(Cluster::Localnet), state::STARTING);
+        assert_ne!(state::NO_DOCKER, state::STARTING);
     }
 }

@@ -76,6 +76,18 @@ pub fn rpc(url: &str) -> RpcClient {
     )
 }
 
+/// The cluster's genesis hash, base58-encoded — its permanent identity, and
+/// the only way to learn which chain an endpoint actually reaches (a URL
+/// says where the socket goes, not what answers). Used by
+/// [`crate::cluster`]'s guards; returned as a `String` so no caller needs the
+/// `solana-hash` type.
+pub fn genesis_hash(client: &RpcClient) -> Result<String> {
+    Ok(client
+        .get_genesis_hash()
+        .context("get_genesis_hash")?
+        .to_string())
+}
+
 // ── PDA / ATA derivations ────────────────────────────────────────────
 
 /// The singleton registry PDA — seeds `[b"registry"]`.

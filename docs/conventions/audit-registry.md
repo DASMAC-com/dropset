@@ -44,7 +44,7 @@ sdk-math (rust-lib, high): sdk/math-core/src/**, sdk/interface/src/**
 sdk-clients (gen-client, med): sdk/rs/src/**, sdk/ts/src/**, sdk/codama/**
 frontend (web-app, med): frontend/**
 decks (web-app, low): decks/**
-tui (rust-lib, low): tui/**
+tui (rust-lib, med): tui/**
 docs (specs, med): docs/**
 agent-infra (agent-infra, med): .claude/**, CLAUDE.md,
   docs/conventions/**

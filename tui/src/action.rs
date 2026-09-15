@@ -1,16 +1,28 @@
 //! The action menu: what each entry does, when it is enabled, and how it
 //! dispatches to a background job.
 //!
-//! Availability is a pure function of the derived [`Phase`] — the panel is
-//! always truthful about what is possible right now, and greys out the rest
-//! with a one-line reason. Bootstrapping is a sequence of discrete gated
-//! steps (deploy → init → create-market → create-vault) so each account and
-//! its rent can be watched appearing one at a time; "Bootstrap all" chains
-//! the whole sequence — deploying the program first when it isn't yet
-//! on-chain — for convenience.
+//! Availability has two independent gates. [`Action::enabled`] is a pure
+//! function of the derived [`Phase`] — the panel is always truthful about what
+//! is possible right now, and greys out the rest with a one-line reason.
+//! [`Action::available_on`] is a pure function of the [`Cluster`], and gates
+//! on what an action *means* rather than on what the chain currently holds:
+//! spawning a validator, airdropping SOL, or throwing a ledger away has no
+//! mainnet counterpart at all.
+//!
+//! The two are separate because they answer different questions and fail
+//! differently. A phase gate is a "not yet" that resolves as the chain moves;
+//! a cluster gate is a "not here" that no amount of waiting changes. Folding
+//! them together would report the second as the first, which is how an
+//! operator ends up waiting for a step that is never coming.
+//!
+//! Bootstrapping is a sequence of discrete gated steps (deploy → init →
+//! create-market → create-vault) so each account and its rent can be watched
+//! appearing one at a time; "Bootstrap all" chains the whole sequence —
+//! deploying the program first when it isn't yet on-chain — for convenience.
 
 use crate::accounts::{self, ChainState, Phase};
 use crate::chain;
+use crate::cluster::Cluster;
 use crate::deploy;
 use crate::explorer;
 use crate::job::{self, JobEvent, Logger};
@@ -106,6 +118,29 @@ pub const MENU: [Action; 8] = [
     Action::Wipe,
 ];
 
+/// The mainnet menu — every entry that is meaningful against real funds
+/// *today*.
+///
+/// Deliberately read-only. Mainnet mode currently plumbs the cluster, verifies
+/// the chain's identity and shows live state; the ceremony writes are gated
+/// off until they are existence-checked, because as written they mint their own
+/// mock mints and airdrop SOL (see [`Action::available_on`] for the per-action
+/// reasoning). Shipping the mode with the write paths reachable would put a
+/// counterfeit-mint keystroke one number key away.
+///
+/// Kept in sync with [`Action::available_on`] by a test rather than by care —
+/// two hand-maintained lists of the same fact drift, and the direction it
+/// would drift here is toward exposing a write.
+pub const MAINNET_MENU: [Action; 1] = [Action::OpenExplorer];
+
+/// The menu for `cluster`, in display order.
+pub fn menu_for(cluster: Cluster) -> &'static [Action] {
+    match cluster {
+        Cluster::Localnet => &MENU,
+        Cluster::Mainnet => &MAINNET_MENU,
+    }
+}
+
 /// The ordered bootstrap steps, used to pick the recommended next step.
 const BOOTSTRAP: [Action; 4] = [
     Action::Deploy,
@@ -174,6 +209,82 @@ impl Action {
         }
     }
 
+    /// Whether the action means anything on `cluster`.
+    ///
+    /// Orthogonal to [`Action::enabled`]: this asks whether the action has a
+    /// counterpart on that chain at all, not whether the chain is currently in
+    /// the right state for it. Everything is available on localnet — that is
+    /// the throwaway ledger the panel was built to drive.
+    pub fn available_on(self, cluster: Cluster) -> bool {
+        if !cluster.is_mainnet() {
+            return true;
+        }
+        match self {
+            // Reading an account in the explorer writes nothing.
+            Action::OpenExplorer => true,
+            // Localnet-only by construction: these spawn a validator, deploy
+            // through `anchor build`, airdrop the payer, or discard a ledger
+            // that exists only on this machine. On mainnet the program is
+            // published out of band and there is nothing to throw away.
+            Action::Deploy | Action::BootstrapAll | Action::Wipe => false,
+            // Mainnet-bound, but not yet mainnet-SAFE. Each of these mints its
+            // own mock pair and airdrops the payer, so on mainnet they would
+            // create counterfeit tokens rather than reference the real mints,
+            // and their existence check is menu greying off a stale poll
+            // rather than a refusal at send time.
+            Action::InitRegistry | Action::CreateMarket | Action::CreateVault => false,
+            // Spends real money, signed by a committed taker role key that has
+            // no mainnet counterpart.
+            Action::ProbeSwap => false,
+            // Closes every market, vault and the registry. On mainnet that
+            // stays behind the dedicated headless binary and its typed
+            // confirmation — never one keystroke in a panel.
+            Action::Teardown => false,
+            // The demo controls quote with committed localnet role keys, which
+            // are not the leader of any real vault.
+            Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder
+            | Action::ResetAllLadders => false,
+        }
+    }
+
+    /// One-line reason the action is absent on `cluster` (only meaningful when
+    /// [`Action::available_on`] is false).
+    pub fn unavailable_reason(self, cluster: Cluster) -> &'static str {
+        debug_assert!(!self.available_on(cluster));
+        match self {
+            Action::Deploy | Action::BootstrapAll | Action::Wipe => {
+                "localnet only — no validator or ledger to drive on mainnet"
+            }
+            Action::InitRegistry | Action::CreateMarket | Action::CreateVault => {
+                "the mainnet ceremony lands with the existence-checked commands"
+            }
+            Action::ProbeSwap => "spends real funds — no mainnet taker key",
+            Action::Teardown => "use the headless teardown binary on a real cluster",
+            // Enumerated rather than a `_` arm, and that is the point:
+            // `available_on` above is exhaustive, so adding a variant is a
+            // compile error there and the author must decide its mainnet
+            // answer. A wildcard here would quietly hand that new variant the
+            // reason "localnet demo control" — a false statement to the
+            // operator, and one no test could catch, since the reason test only
+            // asserts the string is non-empty.
+            Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder
+            | Action::ResetAllLadders => "localnet demo control",
+            // Available on mainnet, so only reachable by a misuse the debug
+            // assertion above catches in test builds.
+            Action::OpenExplorer => "",
+        }
+    }
+
     /// One-line reason the action is greyed out in `phase` (only meaningful
     /// when [`Action::enabled`] is false).
     pub fn disabled_reason(self, phase: Phase) -> &'static str {
@@ -229,6 +340,11 @@ pub fn recommended_next(phase: Phase) -> Option<Action> {
 /// thread owns everything it touches.
 pub struct JobContext {
     pub rpc_url: String,
+    /// Which chain this session drives. Carried here rather than re-derived
+    /// from `rpc_url` because the two can disagree — a loopback URL may be
+    /// forwarded to mainnet — and the operator's declared intent is what the
+    /// gates must key on.
+    pub cluster: Cluster,
     pub repo_root: PathBuf,
     pub wallet_path: String,
     pub wallet: Keypair,
@@ -402,7 +518,29 @@ pub fn dispatch(
         }
         Action::OpenExplorer => {
             let targets = explorer_targets(state, selected);
+            let cluster = ctx.cluster;
             job::spawn(tx, "Open explorer", move |log| {
+                // Mainnet short-circuits before the Docker block, and both
+                // halves of that matter. The managed container indexes the
+                // localnet, so bringing it up here would start a container the
+                // entry banner promised this session would not — and would
+                // overwrite the NO_DOCKER sentinel that stops `Drop for App`
+                // tearing down a container it never owned. The URL then comes
+                // from the one owner of that rule, which is what stops this arm
+                // and `App::open_in_explorer` diverging again.
+                if cluster.is_mainnet() {
+                    // The endpoint is passed in deliberately rather than
+                    // blanked: the router ignores it on mainnet, and its test
+                    // pins that with a key-bearing URL, so this exercises the
+                    // same path the test asserts on.
+                    open_targets(log, &targets, |addr| {
+                        explorer::account_url_for(cluster, addr, &rpc_url, false)
+                    })?;
+                    return Ok(format!(
+                        "Opened {} account(s) in the hosted explorer (mainnet)",
+                        targets.len()
+                    ));
+                }
                 if !explorer::docker_available() {
                     log.log("Docker not found — opening the hosted explorer instead.");
                     log.log(
@@ -411,7 +549,7 @@ pub fn dispatch(
                          Chrome/Firefox.",
                     );
                     open_targets(log, &targets, |addr| {
-                        explorer::hosted_account_url(addr, &rpc_url)
+                        explorer::account_url_for(cluster, addr, &rpc_url, false)
                     })?;
                     return Ok(format!(
                         "Opened {} account(s) in the hosted explorer (fallback)",
@@ -428,7 +566,9 @@ pub fn dispatch(
                         explorer_state.store(explorer::state::READY, Ordering::SeqCst);
                     }
                 }
-                open_targets(log, &targets, |addr| explorer::account_url(addr, &rpc_url))?;
+                open_targets(log, &targets, |addr| {
+                    explorer::account_url_for(cluster, addr, &rpc_url, true)
+                })?;
                 Ok(format!(
                     "Opened {} account(s) in the local explorer",
                     targets.len()
@@ -1019,6 +1159,147 @@ mod tests {
         Phase::VaultAbsent,
         Phase::Ready,
     ];
+
+    /// Every `Action`, so a cluster-gate test covers the demo controls too —
+    /// those are reachable only by keybinds, never appear in `MENU`, and so
+    /// would otherwise go unchecked.
+    ///
+    /// Note the bound: this is every **`Action`**, not everything a keystroke
+    /// can reach. The maker/taker bot toggles are not `Action`s and are gated
+    /// separately in `App` (see `App::refuse_on_mainnet`); an earlier version
+    /// of this comment claimed the wider scope and was wrong.
+    ///
+    /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
+    /// `[Action; 16]` length annotation does not change when a variant is
+    /// added, so nothing else would notice the list going stale.
+    const ALL_ACTIONS: [Action; 16] = [
+        Action::Deploy,
+        Action::InitRegistry,
+        Action::CreateMarket,
+        Action::CreateVault,
+        Action::OpenExplorer,
+        Action::BootstrapAll,
+        Action::ProbeSwap,
+        Action::Teardown,
+        Action::Wipe,
+        Action::RepegUp,
+        Action::RepegDown,
+        Action::WidenSpread,
+        Action::TightenSpread,
+        Action::ThinFarSide,
+        Action::ResetLadder,
+        Action::ResetAllLadders,
+    ];
+
+    #[test]
+    fn every_action_is_available_on_localnet() {
+        // Localnet is the throwaway ledger the panel exists to drive, so the
+        // cluster gate must never be what hides something there.
+        for a in ALL_ACTIONS {
+            assert!(a.available_on(Cluster::Localnet), "{:?}", a.label());
+        }
+    }
+
+    #[test]
+    fn mainnet_exposes_no_write_action() {
+        // The load-bearing assertion of the whole mode: on mainnet the only
+        // reachable action writes nothing. If a later change flips a ceremony
+        // action available before it is existence-checked, this fails.
+        for a in ALL_ACTIONS {
+            if a == Action::OpenExplorer {
+                assert!(a.available_on(Cluster::Mainnet));
+            } else {
+                assert!(
+                    !a.available_on(Cluster::Mainnet),
+                    "{:?} must not be reachable on mainnet yet",
+                    a.label()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mainnet_menu_agrees_with_the_cluster_gate() {
+        // Guards the drift between the two hand-written lists: the menu shows
+        // exactly the available actions, and nothing available is missing.
+        for a in MAINNET_MENU {
+            assert!(a.available_on(Cluster::Mainnet), "{:?}", a.label());
+        }
+        for a in ALL_ACTIONS {
+            if a.available_on(Cluster::Mainnet) {
+                assert!(MAINNET_MENU.contains(&a), "{:?} missing", a.label());
+            }
+        }
+        assert_eq!(menu_for(Cluster::Mainnet), &MAINNET_MENU);
+        assert_eq!(menu_for(Cluster::Localnet), &MENU);
+    }
+
+    #[test]
+    fn every_mainnet_unavailable_action_states_a_reason() {
+        for a in ALL_ACTIONS {
+            if !a.available_on(Cluster::Mainnet) {
+                assert!(
+                    !a.unavailable_reason(Cluster::Mainnet).is_empty(),
+                    "{:?}",
+                    a.label()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn all_actions_covers_the_localnet_menu() {
+        // Keeps ALL_ACTIONS honest if a new entry is added to MENU.
+        for a in MENU {
+            assert!(ALL_ACTIONS.contains(&a), "{:?} missing", a.label());
+        }
+    }
+
+    #[test]
+    fn all_actions_lists_every_variant() {
+        // The completeness guard the MENU check above cannot be: MENU holds 8
+        // of the 16 variants, so a new shortcut-only action would be absent from
+        // both MENU and ALL_ACTIONS and silently escape all four cluster-gate
+        // tests — a variant reachable only by a shortcut. PR 2 and PR 3 of this
+        // series add exactly that shape.
+        //
+        // Three assertions together are a complete proof. The match below has
+        // one arm and no wildcard, so adding a variant fails to compile here
+        // until someone edits this test; the count pins the fixture's size at
+        // the enum's size; and the pairwise check rules out duplicates. Sixteen
+        // distinct variants drawn from a sixteen-variant enum is all of them.
+        fn is_known(a: Action) -> bool {
+            match a {
+                Action::Deploy
+                | Action::InitRegistry
+                | Action::CreateMarket
+                | Action::CreateVault
+                | Action::OpenExplorer
+                | Action::BootstrapAll
+                | Action::ProbeSwap
+                | Action::Teardown
+                | Action::Wipe
+                | Action::RepegUp
+                | Action::RepegDown
+                | Action::WidenSpread
+                | Action::TightenSpread
+                | Action::ThinFarSide
+                | Action::ResetLadder
+                | Action::ResetAllLadders => true,
+            }
+        }
+        assert_eq!(
+            ALL_ACTIONS.len(),
+            16,
+            "ALL_ACTIONS must list every Action variant"
+        );
+        for (i, a) in ALL_ACTIONS.iter().enumerate() {
+            assert!(is_known(*a));
+            for b in &ALL_ACTIONS[i + 1..] {
+                assert_ne!(a, b, "ALL_ACTIONS lists {:?} twice", a.label());
+            }
+        }
+    }
 
     #[test]
     fn recommended_next_follows_the_bootstrap_order() {
