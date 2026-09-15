@@ -263,10 +263,19 @@ impl App {
     /// operator drives the numbered steps by hand.
     pub fn run(&mut self, auto_bootstrap: bool) -> Result<()> {
         self.auto_bootstrap = auto_bootstrap;
-        // Mainnet skips all three localnet services. The airdrop in
-        // particular is not merely useless there — it would hammer the
-        // endpoint with faucet requests that can only fail, and
-        // `chain::airdrop` retries each one past a rate-limit window.
+        // Mainnet skips the validator log line, the explorer container and the
+        // airdrops. The airdrop in particular is not merely useless there — it
+        // would hammer the endpoint with faucet requests that can only fail,
+        // and `chain::airdrop` retries each one past a rate-limit window.
+        //
+        // The fills subscription below is deliberately NOT skipped: it is
+        // read-only and a live fills pane is worth having on mainnet. Be honest
+        // about its limit, though, since the reasoning above half applies to it
+        // too — its endpoint is derived by swapping the http scheme for ws,
+        // which is often not a paid provider's websocket host, and its
+        // reconnect loop discards every error. So on mainnet it may retry
+        // silently forever and leave the pane empty. Surfacing that first
+        // failure belongs with the rest of the mainnet observability work.
         if self.ctx.cluster.is_mainnet() {
             self.log(
                 LogKind::Info,

@@ -19,10 +19,24 @@
 //!   because the genesis hash is the chain's permanent identity, but it costs
 //!   a round trip and needs a reachable endpoint.
 //!
-//! So the URL check picks the policy and the genesis check ratifies it. The
-//! pairing matters most in the direction that loses money: a loopback URL
-//! that *looks* like a throwaway ledger while actually reaching mainnet is
-//! exactly the case the cheap check waves through.
+//! Together the URL check picks a policy and the genesis check ratifies it,
+//! which matters most in the direction that loses money: a loopback URL that
+//! *looks* like a throwaway ledger while actually reaching mainnet is exactly
+//! the case the cheap check waves through.
+//!
+//! **Be precise about where that pairing is actually implemented, because this
+//! module owns the vocabulary for it and not every caller applies it.** The
+//! headless teardown binary does pair them: it classifies by URL, and where
+//! that classification lets it skip the interactive prompt it calls
+//! [`ensure_not_mainnet`] before closing anything.
+//!
+//! The cockpit does **not**. Its policy comes from the operator's declared
+//! `--cluster`, so a mainnet session is held to [`Cluster::verify_genesis`]
+//! while a localnet one is checked against nothing — the validator it spawns is
+//! assumed to be the thing answering on the loopback port. That assumption is
+//! older than this module and unchanged by it, but it is an assumption, and
+//! stating the pairing as though the cockpit implemented it would be a claim
+//! this file cannot support.
 
 use crate::chain;
 use crate::validator;

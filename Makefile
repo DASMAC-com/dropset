@@ -290,26 +290,22 @@ tui: tui-prebuild
 # the same way: this panel and the maker bot's mainnet mode both refuse to
 # start on an unset endpoint, and one shared recipe is what keeps the two
 # messages from drifting apart.
+#
+# Two things for whoever adopts this next. The test is `-z`, i.e. empty OR
+# unset, and that is deliberate: measured, a bare `export FOO` with no
+# assignment publishes FOO to every recipe as an EMPTY STRING rather than
+# leaving it absent, so anything distinguishing the two on presence alone
+# reads unset as configured. Check for a VALUE, never for presence — the
+# cockpit's own `Cluster::rpc_url` requires a non-empty value after trimming.
+# And no `export` of the variable is needed here: make already exports what
+# it takes from the command line or inherits from the environment, which are
+# the only two ways this gets set.
 define require-env
 @if [ -z "$${$(1)}" ]; then \
 	echo "$(1) is not set — $(2)"; \
 	exit 1; \
 fi
 endef
-
-# Exported so an in-Makefile assignment to this variable would reach a recipe's
-# environment. Note what this does NOT buy, since the obvious reading is wrong:
-# make already exports variables set on the command line and inherited from the
-# environment, so `make tui-mainnet DROPSET_MAINNET_RPC_URL=<url>` and a plain
-# exported shell variable both work without this line.
-#
-# One measured consequence for whoever adopts this shape next (the maker bot's
-# mainnet mode): a bare `export` with no assignment puts the name in every
-# recipe's environment as an EMPTY STRING, not absent. So a consumer testing
-# presence with `env::var(..).is_ok()` reads unset as configured. The cockpit
-# is immune because `Cluster::rpc_url` requires a non-empty value after
-# trimming; copy that, not a presence check.
-export DROPSET_MAINNET_RPC_URL
 
 # Mainnet cockpit — the same panel as `make tui`, pointed at a chain it does
 # not own. Deliberately shares nothing with the localnet targets above:
