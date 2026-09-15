@@ -145,6 +145,21 @@ class NarrowScope(unittest.TestCase):
         # read as a glued-on flag.
         self.assertEqual(guard.authored_text("git commit -a --amend"), [])
 
+    def test_a_non_flag_prefix_is_not_read_as_a_cluster(self):
+        """Reaches the isalpha guard, which nothing else does.
+
+        The case above is decided by the earlier `--` test and never gets here, so
+        deleting the isalpha line left the whole suite green. These tokens carry a
+        non-letter before the flag letter, so they are not flag clusters and the
+        `m` in them must not be read as one.
+        """
+        for command in (
+            "git commit -F/tmp/msg.txt",
+            "git commit -1m",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(guard.authored_text(command), [])
+
 
 class NoEscapeMarker(unittest.TestCase):
     """Deliberately absent, unlike the compound guard's `#compound-ok`."""

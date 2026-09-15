@@ -504,7 +504,7 @@ noticing a contradiction* — and the failure it guards is permanent, since
 a trailer in merged history cannot be corrected there any more than a
 shipped migration's comment can.
 
-Three design properties, each deliberate:
+Four design properties, each deliberate:
 
 - **No escape marker**, unlike the compound guard's `#compound-ok`. The
   rule admits no exception. A genuine human co-author is a real person

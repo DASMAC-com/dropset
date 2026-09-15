@@ -73,10 +73,14 @@ class ItermUnavailable(Exception):
     """iTerm automation cannot run here. Carries a one-line operator-facing why.
 
     ``ttys`` carries the PARTIAL positional result of a batch op that failed
-    partway through — the tabs the driver had already opened and typed into
-    before it broke. It is the empty list for every failure that opened nothing,
-    which is the safe default: a caller that reads it as "how many commands were
-    dispatched" then treats an unknown failure as having dispatched none.
+    partway through — the tabs the driver reached before it broke. It is the empty
+    list for every failure that reached nothing, which is the safe default: an
+    unknown failure then reads as having run nothing.
+
+    **Reaching a tab is not the same as running the command in it**, and reading
+    the list as "how many commands were dispatched" is the bug this class was
+    changed to prevent: a tab the driver opened but could not type into occupies a
+    position too. Ask :meth:`unfinished` rather than measuring ``ttys``.
 
     Why it lives on the exception rather than in a return value: the batch DID
     fail, and a caller that gets an ordinary return has no reason to check
@@ -293,6 +297,22 @@ def open_tabs(commands: list[str]) -> list[str | None]:
         # One round trip per tab against a GUI app, so the budget scales.
         timeout=DRIVER_TIMEOUT_SECONDS + PER_TAB_TIMEOUT_SECONDS * len(commands),
     )
+    # Enforced here rather than merely promised by the driver. The driver reports
+    # not-ok when it could not type into a tab, but THIS is the half that is
+    # testable, and it is also the half whose return type — a flat list of ttys —
+    # has nowhere to put `untyped`. So an ok response carrying one would have its
+    # field silently discarded and drop a command, which is the exact bug the
+    # `untyped` list was added to close. Refuse it instead of trusting the other
+    # side of a subprocess boundary to have got it right.
+    stranded = [n for n in response.get("untyped") or [] if isinstance(n, int)]
+    if stranded:
+        raise ItermUnavailable(
+            f"the iTerm2 driver opened {len(stranded)} tab(s) it could not type "
+            "into, but reported success",
+            ttys=response.get("ttys"),
+            untyped=stranded,
+        )
+
     ttys = list(response.get("ttys") or [])
     # Positional contract, defended here rather than trusted. Note precisely
     # what the pad buys: it restores the LENGTH, so `zip` cannot drop trailing
@@ -420,12 +440,33 @@ async def _driver_body(connection, request, result):  # pragma: no cover
             await session.async_send_text(command + "\n")
             # Appended BEFORE the tty is read, then filled in. The text is
             # already typed at this point, so the entry has to exist even if the
-            # read raises: `len(ttys)` is what tells the caller how many commands
-            # were dispatched, and truncating here would put an already-typed
-            # command back into the retry set. The placeholder is the same
-            # "opened, tty unreadable" value the branch above uses.
+            # read raises — truncating here would put an already-typed command
+            # back into the retry set. Note the placeholder is the same VALUE the
+            # branch above appends but not the same MEANING: there it marks a tab
+            # that ran nothing, here one that ran and whose tty is unknown. That
+            # is exactly why `untyped` exists.
             ttys.append(None)
             ttys[-1] = await session.async_get_variable("tty")
+
+        # A tab that was opened and typed nothing is NOT a success, and saying so
+        # here is what makes the `untyped` list reach a caller at all. `open_tabs`
+        # returns a flat list on the ok path, so anything the driver learned
+        # beyond a tty is discarded there — which left the silent-drop bug fully
+        # live on the path that actually fires, since an unreachable session does
+        # not raise and so completed the loop with ok: true.
+        #
+        # Reporting not-ok loses nothing: the exception carries `ttys` and
+        # `untyped`, so both callers still name the tabs that DID run as
+        # do-not-re-run and list only the rest for a hand-run. It also keeps the
+        # success path honest — `ok: true` now means every command was typed,
+        # which is what lets `fleet_resume`'s `no_tty` mean "typed, tty
+        # unreadable" rather than aliasing the two cases the way `ttys` did.
+        if untyped:
+            result["error"] = (
+                f"{len(untyped)} of {len(request['commands'])} tab(s) opened but "
+                "could not be typed into"
+            )
+            return
         result["ok"] = True
         return
 
