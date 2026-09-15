@@ -240,15 +240,12 @@ meta-flavored *audit* finding is promoted by swapping its
 milestone from `Audit findings` to `Claude meta` — not by
 moving it to Backlog.
 
-**The carve-out is an assembled batch**, which is the one
-`Claude meta` issue that *is* pulled on its own. A batch is a
-promotion **candidate, never a fold input** — re-folding one
-could only grow it past the 4–5 bound — so its promotion is the
-ordinary two halves: clear the milestone **and** move
-Todo → Backlog. Read the stray rule as being about the
-milestone's *inputs*; a batch is its output, and the two move
-in opposite directions. Detail:
-`docs/conventions/linear-automation.md`.
+**The carve-out is a PROMOTED batch**, which is pulled on its
+own — see "Claude: meta-work prefix" above, and
+`docs/conventions/linear-automation.md` → "An already-assembled
+parked batch is a promotion candidate, not a fold input" for
+the full rule, including what stays a legitimate fold input.
+Detail: `docs/conventions/linear-automation.md`.
 
 ### An audit is a board issue, not a directive
 

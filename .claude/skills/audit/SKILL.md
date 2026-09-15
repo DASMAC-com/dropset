@@ -97,10 +97,6 @@ exact verb that started it; there is no separate resume subcommand.
 naming rule, and the worktree's lifecycle. This section states only the
 **duty**: an audit takes that shape.
 
-The citation is deliberately to the **doc rather than a named section**,
-because that section is being written by the PR that owns the mechanism and
-its shape is still moving. Pin the heading once it has landed.
-
 **Why `explore` rather than the Bedrock implementation shape.** An audit
 only looks, researches, and produces either a spec or filed findings —
 it does no multi-turn PR creation, which is what the implementation
@@ -110,22 +106,41 @@ role** (per `CLAUDE.md` → "Session substrate: capability, not
 attendance"), so an audit running as an explore task inherits the seat
 rather than claiming an exception to the Bedrock default.
 
-**Why a worktree, which is the load-bearing half.** A findings loop that
-lives only in a session's transcript is invisible to the cleanup
-machinery: `housekeeping` prunes worktrees and the conversation purge
-reclaims transcripts, and neither can tell a live audit from a finished
-one. Naming the worktree after the issue is what fixes this — it makes
-the audit visible to every mechanism already keyed on `eng-###`, so
-`housekeeping`'s prune-on-issue-status-type sees an In Progress issue and
-leaves it alone. Any spec or findings file lives **in the worktree**,
-never in a scratch path outside the repo.
+**Why a worktree.** A findings loop that lives only in a session's
+transcript is invisible to the cleanup machinery, which cannot tell a
+live audit from a finished one. Naming the worktree after the issue makes
+the audit legible to the machinery already keyed on `eng-###`: in
+particular `housekeeping` prunes a worktree on its issue's **status
+type**, so an In Progress issue is not a prune candidate. Any spec or
+findings file lives **in the worktree**, never in a scratch path outside
+the repo.
+
+Be precise about the scope of that protection, because it is easy to
+overstate: it covers the **worktree prune**. The conversation purge is
+governed by an age rule and protects a transcript on an **open PR** —
+which an audit does not have (below) — so a transcript is not covered by
+the issue's state.
 
 **The worktree is temporary working state, and an audit opens no PR.** It
-is not a branch on its way to `main`: an audit's deliverable is filed
-findings or a spec, and the worktree is where that work is held while it
-is live. So the thing protecting an in-flight audit is the **issue being
-In Progress**, not a PR — which is why the status-type rule above is the
-load-bearing half and the worktree is merely what makes it visible.
+is not a branch on its way to `main`: an audit's deliverable is **filed
+findings or a ratified spec**, and the worktree is only where that work
+is held while it is live.
+
+So the guarantee is a **pair**, and the second half is what makes the
+first safe to rely on:
+
+- `housekeeping`'s prune-on-status-type protects the working state for as
+  long as the issue is honest — In Progress and In Review are never prune
+  candidates, and a session never self-marks Done; and
+- **durable state reaches Linear before the handoff**, so the worktree's
+  contents are expendable *by construction* at any moment the issue state
+  could be lying.
+
+State it that way round rather than as "don't prune a live audit's
+worktree", which inverts the ruling by making the worktree sound
+precious. The failure this comes from was **a file being the only copy** —
+that is what is forbidden, and it holds even when the issue state is
+wrong.
 
 **And the issue stays In Progress for as long as the findings loop is
 open** — it goes Done only at **ratification plus fold**, never at the
@@ -562,7 +577,7 @@ count climbs **one finding at a time, with no single decision to grow
 it**. Nothing in the append instruction asks how big the group already
 is, which is how an unbounded issue gets built by a sequence of
 individually-reasonable appends. So **count the parts already in a
-group before appending** — at 4–5, file the next finding as a fresh
+group before appending** — at **five**, file the next finding as a fresh
 sequential issue rather than a sixth part, and name the earlier issue in
 its body with the `**Suspected dependency**:` line above. That line
 exists for exactly this ordered case, and a rotation still files **no

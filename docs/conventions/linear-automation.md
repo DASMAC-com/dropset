@@ -549,33 +549,23 @@ into a batch. And a meta-flavored *audit* finding is promoted by
 stays parked, changing which rhythm will pick it up, rather than
 becoming available work.
 
-**An assembled batch is the carve-out, and it is the one `Claude meta`
-issue that is pulled on its own.** The rule above governs the
-milestone's *inputs*; a batch is its *output*, and the two move in
-opposite directions. So a batch is a promotion **candidate, never a
-fold input** — the only thing re-folding one could do is grow it past
-the roughly 4–5 parts the assembly sized it to, which is the bound the
-retirement of the one-giant-batch form exists to hold. Its promotion is
-therefore the **ordinary two halves**: clear the milestone and move
-Todo → Backlog.
+**A batch's own promotion is the same two halves**, and which batch is
+pulled follows from that: a **promoted** batch is pulled on its own,
+while an assembled batch the bootstrap does not promote stays parked
+like any other meta issue. The fold-input question is settled below,
+under "An already-assembled parked batch is a promotion candidate, not
+a fold input" — read it there rather than restating it, because the
+distinction turns on **parked vs. Backlog** and a shortened version
+loses exactly that.
 
-This is worth stating because retiring the one-giant-batch form broke
-an identity the old shape had made invisible: when assembly produced
-exactly one batch and promoted it in the same act, *assembling* and
-*promoting* were the same event, so no rule had to say which milestone
-state a batch rests in. Now that a bootstrap assembles several and
-promotes only a file-disjoint subset, the two come apart, and the
-remainder it does not promote needs a defined home. It has one: an
-assembled
-batch the bootstrap does **not** promote **stays parked** like any other
-meta issue — `Todo` plus `Claude meta` — and is promoted later by the
-same two halves, not by being folded again.
-
-The failure this rules out is a batch that is **parked and pullable at
-once** — promoted to Backlog while still carrying the milestone, which
-reads as available in the Next view and as parked to the next
-bootstrap's sweep. That state is what makes the two halves a single
-act rather than two independent writes.
+Worth recording *why* this needed saying at all, since neither statement
+carries the reason: retiring the one-giant-batch form broke an identity
+the old shape had made invisible. When assembly produced exactly one
+batch and promoted it in the same act, *assembling* and *promoting* were
+the same event, so no rule had to say which milestone state a batch
+rests in. Now that a bootstrap assembles several and promotes only a
+file-disjoint subset, the two come apart, and the remainder needs a
+defined home.
 
 **Every bootstrap says each parked count out loud.** Parked must be
 invisible to the queue without being invisible to the operator, and a

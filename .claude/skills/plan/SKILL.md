@@ -235,12 +235,10 @@ tag for both worktree and branch), never `task <tag>`. An
 audit only looks and researches and produces a spec or filed
 findings, so it wants the seat rather than the implementation
 substrate; `explore` is already a seat role, so this needs no
-carve-out. The worktree is **temporary working state** — an
-audit opens no PR — so what protects an in-flight audit is its
-issue sitting In Progress. The mechanism is
-`docs/conventions/local-integrations.md` (cited as the doc
-rather than a section, since that section is still being
-written by the PR that owns it); the reasoning is
+carve-out. The worktree is **temporary working state** and an
+audit opens no PR. The mechanism is
+`docs/conventions/local-integrations.md`; the reasoning, and
+what the issue state does and does not protect, is
 `.claude/skills/audit/SKILL.md` → "Where it runs".
 
 Two consequences for this session specifically. **Say the

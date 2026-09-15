@@ -363,12 +363,17 @@ sequence.
 **It refuses the two ways an N-task fold loses a lever**, which is the
 reason this is one call rather than one per task: a lever assigned to
 **no** group, and a lever assigned to **two**. The first is the
-dangerous one — an unassigned lever is folded nowhere, yet step 5 still
-closes its parked original, so the lever is lost with nothing pointing
-at the loss. It also errors on a grouped identifier absent from the dump
-(unlike `--exclude`, a group assignment is authoritative for the dump it
-is run against), and still fails loudly on any part with no
-`**Fingerprint**:` line.
+dangerous one — an unassigned lever would be folded nowhere while looking
+like a complete run, so the loss has nothing pointing at it. It also
+errors on a grouped identifier absent from the dump (unlike `--exclude`,
+a group assignment is authoritative for the dump it is run against), on a
+title carrying a newline or a `|` (which would forge a line in the
+summary a caller parses), and on any part with no `**Fingerprint**:`
+line — naming **every** offender rather than the first.
+
+To leave a lever out deliberately, **close it with its reason** (step 6)
+and re-dump; `list` has no per-identifier filter, so there is no way to
+omit one from the dump directly.
 
 A group over five parts is an **advisory**, not a refusal: the size rule
 is explicitly "roughly 4–5", and a hard limit would push you into
@@ -439,11 +444,17 @@ python3 .claude/tools/linear_issue.py create \
   --state Todo --milestone 'Claude meta' --priority 3
 ```
 
+The `--title` is the **whole** Linear title, prefix included — the same
+string you put in the group's `title` field, which is what the compose
+summary echoes back. Don't prepend `Claude:` a second time here.
+
 Composition is one call for the whole fold; **filing is one call per
-task**, since each is its own issue. Nothing folds them together
-afterwards, so a task you compose and do not file is simply not filed —
-and its levers get closed in step 5 regardless. File every composed
-file before moving on.
+task**, since each is its own issue. **File exactly the paths the compose
+summary named — never a glob of the output directory.** A reused
+directory can hold a body from an earlier compose that this run did not
+write, and filing it creates a phantom task whose parts duplicate real
+ones. The tool prints an `ADVISORY` naming any such file, so the summary
+is the manifest and the directory is not.
 
 Team, project and assignee resolve from the `LINEAR_*` environment.
 
@@ -476,7 +487,20 @@ a normal PR.
 
 **5. Close the parked originals — this is load-bearing, not tidiness.**
 A folded lever's content now lives in the aggregated task, so the parked
-issue is discharged. Closing it is what keeps the **producer** working:
+issue is discharged.
+
+**Close per FILED TASK, not per composed pool.** The premise above —
+that the lever's content now lives in a task — holds only for a task you
+actually filed, and a fold now emits several. So close the levers named
+in **that task's** `folded` list, which the compose summary already
+prints per task, and only once you hold its issue identifier. A composed
+task you did not file leaves its levers **parked**, where the next fold
+picks them up.
+
+This is what makes the guarantee mechanical rather than a matter of
+remembering: the alternative is closing the whole pool on the assumption
+that every task got filed, which silently discards a lever's only copy
+if one did not. Closing it is what keeps the **producer** working:
 the fold copies each `**Fingerprint**:` line into the aggregated task, so
 from this moment a fingerprint probe legitimately matches **two** issues.
 `session-metrics` resolves that by appending only to a lever that is

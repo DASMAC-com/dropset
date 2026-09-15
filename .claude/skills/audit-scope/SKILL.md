@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear issues — bounded to a short session, so a coherent set larger than one splits into sequential PRs of roughly 4–5 findings each — every issue parked in state Todo under the `Audit findings` project milestone rather than dropped into the pull queue, and with no relations or collision links filed at all. The sub-agent fan-out is authorized by the invocation itself — never substitute an inline pass, never silently skip it. The shared audit engine that `audit` drives one file at a time, and that a session pulling a planning-filed audit issue runs once against that issue's named target — as an `explore` task in its own worktree, with the issue In Progress until ratification-plus-fold.
+description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear issues — bounded to a short session, so a coherent set larger than one session's worth splits into sequential PRs of roughly 4–5 findings each — every issue parked in state Todo under the `Audit findings` project milestone rather than dropped into the pull queue, and with no relations or collision links filed at all. The sub-agent fan-out is authorized by the invocation itself — never substitute an inline pass, never silently skip it. The shared audit engine that `audit` drives one file at a time, and that a session pulling a planning-filed audit issue runs once against that issue's named target — as an `explore` task in its own worktree, with the issue In Progress until ratification-plus-fold.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -91,26 +91,22 @@ covering every audit however it was targeted. Launch it
 with the plain verb naming the issue's tag (`explore 1196`);
 the worktree is implicit in the verb, and it takes the
 issue's own tag for both worktree and branch. The mechanism
-is owned by `docs/conventions/local-integrations.md`, and the
-reasoning — why the seat rather than the implementation
-substrate, and why the worktree is the load-bearing half —
-is stated once in `.claude/skills/audit/SKILL.md` → "Where it
-runs". Don't restate either here. That citation names the doc
-rather than a section on purpose: the section is still being
-written by the PR that owns the mechanism.
+is owned by `docs/conventions/local-integrations.md`; the
+reasoning, and what the worktree's protection does and does
+not cover, is stated once in
+`.claude/skills/audit/SKILL.md` → "Where it runs". Don't
+restate either here.
 
 Two duties this skill owns directly:
 
 - **Findings files live in the worktree**, never in a scratch
-  path outside the repo — that is what keeps `housekeeping`'s
-  prune and the conversation purge from clearing a live audit
-  mid-flight. The worktree is temporary working state and an
-  audit opens **no PR**; what protects an in-flight audit is
-  its issue being In Progress.
+  path outside the repo.
 - **The audit issue stays In Progress while the findings
   loop is open**, and reaches Done only at ratification
   plus fold. Marking it Done at the handoff is the measured
-  mistake that produced the rule.
+  mistake that produced the rule — and under the no-PR shape
+  it is the issue state that the cleanup machinery reads, so
+  an honest state is the whole of this skill's obligation.
 
 A **delegated** run inherits its caller's session and
 worktree and does none of this itself.

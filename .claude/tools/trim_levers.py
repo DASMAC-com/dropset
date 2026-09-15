@@ -1013,6 +1013,11 @@ def compose_fold(
 # refusal and push callers into splitting a coherent theme to satisfy a tool.
 _MAX_GROUP_PARTS = 5
 
+# A body this tool emits, for telling one apart from whatever else a caller keeps
+# in the output directory. Matches the `f"{index:02d}-{slug}.md"` shape written
+# below, allowing three digits so the hundredth task is still recognized as ours.
+_TASK_FILE_RE = re.compile(r"^\d{2,3}-[a-z0-9-]*\.md$")
+
 
 def _slug(text: str) -> str:
     """A filename-safe slug for a task title."""
@@ -1050,6 +1055,19 @@ def parse_groups_spec(raw: str) -> list[tuple[str, tuple[str, ...]]]:
             raise TrimLeversError(
                 f'group {index} ("{title}") has no non-empty "levers" array'
             )
+        # A title is echoed verbatim into the pipe-delimited summary that a skill
+        # reads back, so an interior newline or a literal ` | ` can forge a line
+        # of machine-shaped output. `_slug` sanitizes the *filename*; nothing
+        # sanitizes the echo, so reject it at the boundary instead.
+        if any(ch in title for ch in "\n\r|") or any(
+            ord(ch) < 32 or ord(ch) == 127 for ch in title
+        ):
+            raise TrimLeversError(
+                f"group {index} has a title containing a newline, a '|', or a "
+                "control character — those forge a line in the summary this "
+                "tool prints for a caller to parse"
+            )
+
         names: list[str] = []
         for item in levers:
             if not isinstance(item, str) or not item.strip():
@@ -1093,6 +1111,17 @@ def compose_groups(
     for index, (_, levers) in enumerate(groups, start=1):
         for name in levers:
             if name in assigned:
+                # Same group twice and two different groups are the same defect
+                # — the lever lands as a part twice while the issue behind it
+                # closes once — but they are different mistakes to go and fix,
+                # and reporting "groups 1 and 1" reads as a tool bug and sends
+                # the caller hunting through the other groups.
+                if assigned[name] == index:
+                    raise TrimLeversError(
+                        f"{name} is listed twice in group {index} — a lever "
+                        "folds into exactly one part, or it lands twice while "
+                        "the issue behind it closes once"
+                    )
                 raise TrimLeversError(
                     f"{name} is assigned to more than one group (groups "
                     f"{assigned[name]} and {index}) — a lever folds into "
@@ -1149,7 +1178,13 @@ def compose_groups(
 
     return tasks, {
         "tasks": len(tasks),
-        "folded": sorted(assigned),
+        # The dump's own spelling, not the upper-cased match key — `compose_fold`'s
+        # summary and each task's `folded` both carry dump spellings, and one
+        # module handing back two normalizations under the same key name is a trap
+        # for the next consumer (most plausibly the step that closes the parked
+        # originals). Identifiers are `ENG-###`-shaped today, so the two coincide;
+        # that is exactly why the divergence would go unnoticed.
+        "folded": sorted(by_id[name][0] for name in assigned),
         "oversized": oversized,
     }
 
@@ -1348,6 +1383,12 @@ def _read_file(path: str, label: str) -> str:
             text = fh.read()
     except OSError as e:
         raise TrimLeversError(f"cannot read {label} {path}: {e}") from e
+    except UnicodeDecodeError as e:
+        # Not decorative: `--groups-file` is hand-authored, so a file saved in
+        # another encoding is a realistic mistake, and a UnicodeDecodeError is a
+        # ValueError rather than an OSError — so without this it escapes the CLI
+        # as a traceback instead of the one-line error every other failure gets.
+        raise TrimLeversError(f"{label} {path} is not valid UTF-8: {e}") from e
     if not text.strip():
         raise TrimLeversError(f"{label} {path} is empty")
     return text
@@ -1465,7 +1506,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     comp.add_argument(
         "--start",
         type=int,
-        default=1,
+        # None, not 1, so an explicit `--start 1` is distinguishable from an
+        # absent one. Otherwise the mode check below cannot see it and the
+        # documented promise — flags from both modes are refused rather than
+        # silently resolved — is not literally true.
+        default=None,
         help="single-task mode only: the first `# Part N` number (default 1) — "
         "pass the previous fold's next_part when one task is composed in "
         "halves. Parts always number from 1 per task in --groups-file mode",
@@ -1493,7 +1538,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
             parser.error("--groups-file requires --out-dir")
         if args.out and args.out_dir:
             parser.error("--out-dir belongs to --groups-file mode, not --out")
-        if args.groups_file and args.start != 1:
+        if args.groups_file and args.start is not None:
             parser.error(
                 "--start belongs to --out mode; in --groups-file mode each "
                 "task numbers its parts from 1"
@@ -1526,9 +1571,22 @@ def run(argv: list[str]) -> int:
         for index, task in enumerate(tasks, start=1):
             path = os.path.join(args.out_dir, f"{index:02d}-{_slug(task['title'])}.md")
             try:
-                handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                # O_NOFOLLOW because the mode below protects only content this
+                # call creates: a pre-planted symlink at our filename would
+                # redirect the write and leave the 0o600 guarding nothing.
+                # Scratchpads live under a shared /tmp root, so that is not
+                # purely theoretical. The chmod covers the same gap from the
+                # other side — O_CREAT applies its mode only when it creates, so
+                # re-running over an existing looser file would truncate and
+                # rewrite it while leaving that mode intact.
+                handle = os.open(
+                    path,
+                    os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+                    0o600,
+                )
                 with os.fdopen(handle, "w", encoding="utf-8") as fh:
                     fh.write(task["body"])
+                os.chmod(path, 0o600)
             except OSError as exc:
                 raise TrimLeversError(f"cannot write {path}: {exc}") from exc
             task["path"] = path
@@ -1541,6 +1599,25 @@ def run(argv: list[str]) -> int:
                 f"trim-levers: {task['path']} | {len(task['folded'])} part(s) "
                 f"| {', '.join(task['folded'])} | {task['title']}"
             )
+        # A reused --out-dir keeps bodies this run did not write: compose three
+        # groups, revise the grouping down to two, re-run, and `03-*.md` survives
+        # carrying levers that are now parts of tasks 1-2. A caller who files
+        # every body in the directory then files a phantom issue whose parts
+        # duplicate the real ones, and the fold closes the parked originals once.
+        # Reported, never deleted — a composer that removes files the caller may
+        # have put there is worse than the residue it cleans up.
+        written = {os.path.basename(task["path"]) for task in tasks}
+        stale = sorted(
+            name
+            for name in os.listdir(args.out_dir)
+            if _TASK_FILE_RE.match(name) and name not in written
+        )
+        if stale:
+            print(
+                "trim-levers: ADVISORY these files in "
+                f"{args.out_dir} are NOT from this run: {', '.join(stale)} — "
+                "left by an earlier compose. File only the paths listed above"
+            )
         for title, count in summary["oversized"]:
             print(
                 f"trim-levers: ADVISORY {count} parts exceeds the {_MAX_GROUP_PARTS}"
@@ -1551,9 +1628,12 @@ def run(argv: list[str]) -> int:
 
     if args.cmd == "compose":
         dump = _read_file(args.bodies_file, "bodies file")
+        # `--start` defaults to None so grouped mode can tell an explicit 1 from
+        # an absent one; this path wants the documented default of 1.
+        start = 1 if args.start is None else args.start
         body, summary = compose_fold(
             dump,
-            start=args.start,
+            start=start,
             exclude=tuple(args.exclude.split(",")),
         )
         try:
@@ -1566,7 +1646,7 @@ def run(argv: list[str]) -> int:
             f"trim-levers: composed {len(summary['folded'])} part(s) "
             f"({len(body)} chars) into {args.out}"
         )
-        print(f"trim-levers: parts {args.start}..{summary['next_part'] - 1}")
+        print(f"trim-levers: parts {start}..{summary['next_part'] - 1}")
         if summary["skipped"]:
             print(f"trim-levers: excluded {', '.join(summary['skipped'])}")
         if summary["unknown_exclusions"]:
