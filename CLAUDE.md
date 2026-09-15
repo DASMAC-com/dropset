@@ -68,14 +68,46 @@ Long-horizon **design** conversations run in their own session, not
 in a planning session: `plan` keeps the board coherent, `architect`
 asks whether the thing on the board is the right thing to build. Same
 seat quality, different job — so different sessions, not a mode
-toggle. Launched with **`architect <topic>`** (base repo, model-pinned,
+toggle. Launched with **`architect <topic>`** (model-pinned,
 idempotent, one resumable session per design thread, named
 `ceo-<topic>`). It bootstraps minimally — the Planning document and
-the track umbrellas, nothing else — and writes **nothing to the
-board**: the board monopoly stays with the planning session, and the
+the track umbrellas, nothing else — and makes **no scheduling
+writes** to the board: it files its own Linear tasks and moves its
+own governing issue to In Review, but places no edges,
+re-prioritizes nothing, closes nothing and touches no other issue.
+The **scheduling** monopoly stays with the planning session, and the
 architect hands its conclusions over through the Planning document's
 `Notes for the next planning session` heading **and** a direct
 message. Detail: the `architect` skill.
+
+**It runs in its own worktree, but that worktree is TEMPORARY
+working state and the session is READ-ONLY toward the repo: no
+commits, no PR.** Durable state is captured in **Linear**; anything
+repo-bound — a ratified spec included — lands later via a
+**follow-up worker task**. **`explore` shares all of this**, audits
+included.
+
+**A spec FILE is optional**, not the default deliverable: a design
+can be ratified purely as Linear tasks that workers pick up. When
+one is warranted, the operator edits it **in place** rather than
+answering questions, so the loop is write → operator edits → read
+back **once** → ratify, with `AskUserQuestion` reserved for calls
+that must be answered before the spec can be drafted at all. Say the
+file's path in plain text so it can be opened in an editor. Open
+items carry greppable **`NEEDS-CONFIRM`** / **`NEEDS-FEEDBACK`**
+markers and an index at the top; **settled text carries no marker**,
+since a marker meaning "I changed this" competes with one meaning "I
+need you here".
+
+State is **In Progress** while the session runs, **In Review** at
+handoff, **Done only on the operator's ratification** — never
+self-marked. That, plus durable state reaching Linear *before* the
+handoff, is the pair that makes the worktree **expendable**: the
+failure being prevented is a spec file becoming the only copy of
+live work. (This **supersedes** a 09-11 shape in which the spec sat
+on a PR branch and an open PR was the protection.) Mechanism and
+naming rule: `docs/conventions/local-integrations.md` → "Architect
+and explore sessions: temporary worktree, no PR".
 
 ### Three more verbs
 

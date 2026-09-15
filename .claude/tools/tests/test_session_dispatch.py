@@ -67,17 +67,47 @@ class Grammar(unittest.TestCase):
         with self.assertRaises(ValueError):
             session_dispatch.validate(["task", "main"])
 
-    def test_explore_bare_and_named(self):
-        self.assertEqual(session_dispatch.validate(["explore"]), ["explore"])
+    def test_explore_named(self):
         self.assertEqual(
             session_dispatch.validate(["explore", "feeds"]), ["explore", "feeds"]
         )
 
-    def test_explore_resume(self):
+    def test_explore_issue_keyed(self):
+        """A bare number is the audit-dispatch form: it keys the worktree to the
+        Linear issue, so `explore 1196` must validate exactly as a name does."""
         self.assertEqual(
-            session_dispatch.validate(["explore", "resume", "feeds"]),
-            ["explore", "resume", "feeds"],
+            session_dispatch.validate(["explore", "1196"]), ["explore", "1196"]
         )
+
+    def test_explore_rejects_zero_like_the_shell_does(self):
+        """`_NAME` admits `0`, but the shell refuses it — so dispatching would
+        open a tab, type the verb and leave an idle session that looks started.
+        Every spelling the shell normalizes to zero must be rejected here."""
+        for zero in ("0", "00", "eng-0", "eng-000"):
+            with self.subTest(arg=zero):
+                with self.assertRaises(ValueError):
+                    session_dispatch.validate(["explore", zero])
+
+    def test_explore_accepts_the_eng_prefixed_form(self):
+        """The shell normalizes `eng-1196` and `1196` to one worktree, so the
+        dispatcher must accept both spellings."""
+        self.assertEqual(
+            session_dispatch.validate(["explore", "eng-1196"]),
+            ["explore", "eng-1196"],
+        )
+
+    def test_explore_requires_a_name(self):
+        """Bare `explore` used to be legal and now is not — a name is required
+        because it names a worktree, and the shell rejects the bare form."""
+        with self.assertRaises(ValueError):
+            session_dispatch.validate(["explore"])
+
+    def test_explore_resume_is_retired(self):
+        """`explore <n|name>` resumes an existing session itself, so the twin
+        would type a command the shell now refuses."""
+        with self.assertRaises(ValueError) as caught:
+            session_dispatch.validate(["explore", "resume", "feeds"])
+        self.assertIn("retired", str(caught.exception))
 
     def test_architect_needs_a_topic(self):
         self.assertEqual(
@@ -125,7 +155,7 @@ class Grammar(unittest.TestCase):
             ["explore", "a`id`"],
             ["architect", "x && echo pwned"],
             ["task", "local", "1|sh"],
-            ["explore", "resume", "../../etc/passwd"],
+            ["explore", "../../etc/passwd"],
         ):
             with self.subTest(argv=hostile):
                 with self.assertRaises(ValueError):

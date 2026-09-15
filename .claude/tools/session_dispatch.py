@@ -100,14 +100,25 @@ def validate(argv: list[str]) -> list[str]:
         return ["task", args[0]]
 
     if verb == "explore":
-        if not args:
-            return ["explore"]
-        if args[0] == "resume":
-            if len(args) != 2 or not _NAME.match(args[1]):
-                raise ValueError("`explore resume` takes one name")
-            return ["explore", "resume", args[1]]
+        # A name is REQUIRED (it names a worktree) and the `resume` twin is
+        # retired, since `explore <n|name>` now resumes an existing session
+        # itself. `_NAME` admits a bare number, which is the issue-keyed form an
+        # audit dispatch uses — `explore 1196` lands in the `eng-1196` worktree.
+        if args and args[0] == "resume":
+            raise ValueError(
+                "`explore resume` is retired — dispatch `explore <n|name>`, "
+                "which resumes an existing session itself"
+            )
         if len(args) != 1 or not _NAME.match(args[0]):
-            raise ValueError("`explore` takes at most one lowercase name")
+            raise ValueError("`explore` takes one lowercase name or issue number")
+        # `_NAME` admits `0` and `eng-0`; the shell refuses both, since 0 is not a
+        # Linear issue number. Mirror that here rather than letting the dispatch
+        # succeed: it would open a tab, type the verb, and leave a session that
+        # LOOKS started and is idle — the exact silent failure the issue-keyed
+        # bootstrap prompt exists to remove. It would also break the documented
+        # all-or-nothing property, since one bad verb must dispatch none.
+        if re.fullmatch(r"(?:eng-)?0+", args[0], re.ASCII):
+            raise ValueError("`explore` needs a real issue number; 0 is not one")
         return ["explore", args[0]]
 
     if verb == "architect":
@@ -134,8 +145,8 @@ def validate(argv: list[str]) -> list[str]:
 #:
 #: A separator rather than inference, deliberately. The verb names are a closed
 #: set, so consecutive verbs look as if they could be split apart without one —
-#: but `explore` takes an
-#: optional lowercase name and `_NAME` matches `plan`, so `explore plan` is
+#: but `explore` takes a
+#: lowercase name and `_NAME` matches `plan`, so `explore plan` is
 #: genuinely ambiguous between one verb and two. On a boundary that types into a
 #: live shell, an explicit separator beats a heuristic that is right most of the
 #: time. `+` is not a legal verb or argument under the grammar above, so it can
