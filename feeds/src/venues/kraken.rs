@@ -3,6 +3,7 @@
 // cspell:word CADCUSD
 // cspell:word delisted
 // cspell:word EURCEUR
+// cspell:word MXNEUSD
 // cspell:word ZARPUSD
 //! The Kraken public-ticker adapter (docs/data-feeds.md §9) — the batched
 //! basis and **peg-truth** venue.
@@ -63,12 +64,22 @@
 //! endpoint (2026-09-15), because the shape of that answer is what bounds the
 //! re-admission path above: Kraken's pair `status` gates **order placement, not
 //! market data**. Of 1448 listed pairs, 78 were `cancel_only` and 17
-//! `post_only`, and every one probed priced normally — HTTP 200, an empty
-//! `error`, a populated `result` — both alone and batched beside `online` pairs.
+//! `post_only`; each of the **five** probed — three `cancel_only`, two
+//! `post_only` — priced normally alone (HTTP 200, an empty `error`, a populated
+//! `result`), and one of each priced again when batched beside an `online` pair.
 //! There is no `maintenance` status in `/0/public/AssetPairs` at all. So a
-//! restricted-trading window cannot produce the unlisted-pair refusal and
-//! cannot evict anything, and the only path to a *transient* refusal is a pair
-//! leaving the venue's listings and returning.
+//! restricted-trading window cannot produce the unlisted-pair refusal and cannot
+//! evict anything.
+//!
+//! **What that leaves, stated no more strongly than it was measured.** The path
+//! the TTL above is really for is a pair leaving the venue's listings and
+//! returning — and that is the only path *left after* the `status` measurement,
+//! not the only conceivable one. It was itself never witnessed on a real
+//! relisting: it is inferred from pairs being absent from `AssetPairs` plus the
+//! refusal shape recorded above. Whether a venue-wide maintenance window can
+//! produce the same refusal for a genuinely listed pair is **untested** — the
+//! `SystemStatus` endpoint announces such windows, and one was pending at the
+//! time of writing, but nothing was observed through one.
 
 use super::Quotes;
 use crate::{Batch, HttpClient, Source};
@@ -116,21 +127,40 @@ const UNKNOWN_PAIR_ERROR: &str = "Unknown asset pair";
 /// recovery is a **restart**.
 ///
 /// **One hour, and the reason it is hours rather than minutes is that eviction
-/// is usually CORRECT.** Measured against the live endpoint (2026-09-15), four
-/// of the Kraken spellings this repo derives are absent from `AssetPairs`
-/// outright — AUDD, CADC, MXNe and ZARP are not listed at all — so for a roster
-/// carrying them the steady state is a standing, accurate eviction that
-/// re-probing will never clear. The TTL is therefore priced as recurring waste
-/// against a rare win, and it wants to be long.
+/// is usually CORRECT.** Measured against the live endpoint (2026-09-15), four of
+/// the Kraken spellings this repo derives are absent from `AssetPairs` outright:
+/// `AUDDUSD`, `CADCUSD`, `MXNEUSD` and `ZARPUSD`. Those four tokens are listed
+/// against **no** quote currency, and none of them appears among Kraken's 843
+/// entries in `/0/public/Assets` either — so this is a token-level absence, not
+/// just a missing USD pair. For a roster carrying them the steady state is a
+/// standing, accurate eviction that re-probing will never clear. The TTL is
+/// therefore priced as recurring waste against a rare win, and it wants to be
+/// long.
 ///
 /// **What one expiry costs**, which is more than one request: a re-admitted pair
 /// rejoins the *batch*, and if the venue still refuses it that batch is refused
-/// whole, so the expiry spends one wasted batch request plus a full isolation
-/// pass of one request per roster entry. No reading is lost — the isolation pass
-/// recovers every pair that prices, which is the whole point of it — but at the
-/// [`MIN_REQUEST_INTERVAL`] floor a 5-pair roster spends ~6 s of a 15 s poll
-/// tick doing it. Hourly that is negligible; at a minute it would be most of
-/// what the source does.
+/// whole, so the expiry spends one wasted batch request plus an isolation pass of
+/// **at most** one request per roster entry — at most, because the pass covers
+/// the batch, which is the roster minus whatever is still evicted. No reading is
+/// lost — the isolation pass recovers every pair that prices, which is the whole
+/// point of it — but at the [`MIN_REQUEST_INTERVAL`] floor a fully re-admitted
+/// 5-pair roster spends ~6 s of a 15 s poll tick doing it. Hourly that is
+/// negligible; at a minute it would be most of what the source does.
+///
+/// **That cost is per eviction COHORT, not per source.** Pairs evicted by one
+/// isolation pass share a deadline and are retried by one later pass, but
+/// evictions made on different polls expire independently — so a source holding
+/// two cohorts twenty minutes apart pays two such cycles per hour, not one.
+///
+/// **And it is a typical cost rather than a bound**, because of a pre-existing
+/// deliberate asymmetry: `isolate` does not remember a pair whose *single-pair*
+/// request failed at the transport, since a transport error is no evidence a pair
+/// is unlisted. A re-admitted pair whose solo re-probe errors is therefore not
+/// re-evicted, refuses the next batch too, and forces another isolation pass on
+/// **every** poll until one cleanly reproduces the refusal. Before this TTL that
+/// state was unreachable after the first eviction; it is now re-entered once an
+/// hour, so the worst case is bounded by the venue's error rate rather than by
+/// this constant.
 ///
 /// **Why a TTL rather than a separate re-probe loop**, which the alternative
 /// design would have been: an expired pair rejoining the batch drives the
@@ -163,13 +193,22 @@ pub struct KrakenSource {
     /// the pair simply rejoins the batch; if the venue still refuses it, the
     /// ordinary isolation pass evicts it again with a fresh timestamp.
     ///
-    /// **The one transient this actually guards is a pair leaving the listings
-    /// and returning**, which the module docs record as the only path left after
-    /// the pair-`status` hypothesis was measured and ruled out. That case is not
-    /// hypothetical for this repo: the FX stablecoins the roster targets are
-    /// unlisted on Kraken **today**, so a new listing for one of them is an
-    /// expected event, and before this TTL a long-lived collector could not see
-    /// it happen.
+    /// **The refusals this re-admits are of two kinds**, and only one of them is
+    /// a transient:
+    ///
+    /// - **A pair that left the listings and returned** — the only *transient*
+    ///   path the module docs leave open once the pair-`status` hypothesis is
+    ///   measured and ruled out.
+    /// - **A pair that was never listed and later is.** This is not a transient
+    ///   at all; it is a permanent-until-listed refusal. It is also the case that
+    ///   actually motivates the TTL here, because it is not hypothetical: the FX
+    ///   stablecoins the roster targets are unlisted on Kraken **today**, so a
+    ///   *first* listing is an expected event, and before this TTL a long-lived
+    ///   collector had no way to notice one.
+    ///
+    /// The mechanism covers both without distinguishing them — a re-admitted pair
+    /// is simply tried again — which is why the distinction lives in this comment
+    /// rather than in the code.
     unlisted: Mutex<BTreeMap<String, Instant>>,
 }
 
@@ -191,6 +230,12 @@ impl KrakenSource {
     /// module docs) — so a refusal falls through to the private `isolate` pass,
     /// which recovers every pair that prices and remembers the ones that do not.
     pub async fn poll(&self) -> Result<Quotes<String>> {
+        // `batch_pairs` runs BEFORE the empty-batch early return, and that order
+        // is load-bearing: it is the only site that expires evictions, so with
+        // every roster entry evicted the early return would starve the sweep and
+        // strand the source permanently — the exact failure the TTL exists to
+        // end. Reversing these two lines is silent, and no test catches it,
+        // because the TTL tests drive `batch_pairs_at` directly.
         let pairs = self.batch_pairs();
         if pairs.is_empty() {
             return Ok(Quotes::new());
@@ -310,10 +355,13 @@ impl KrakenSource {
     /// two cases the code handles deliberately: a single-pair request that fails
     /// at the transport (nothing is remembered, because a transport error is not
     /// evidence a pair is unlisted), and a batch refusal that no single pair
-    /// reproduces. It also repeats once per [`EVICTION_TTL`], by design, since a
-    /// re-admitted pair that is still unlisted refuses the batch again — that
-    /// recurring cost is priced in the TTL's own docs. In those cases the
-    /// steady-state cost is one request per
+    /// reproduces. It also repeats once per [`EVICTION_TTL`] **per eviction
+    /// cohort**, by design, since a re-admitted pair that is still unlisted
+    /// refuses the batch again — pairs evicted together share a deadline and are
+    /// retried by one pass, while cohorts from different polls expire
+    /// independently. That recurring cost is priced in the TTL's own docs, along
+    /// with the transport-error case in which it is not hourly at all. In those
+    /// cases the steady-state cost is one request per
     /// roster entry per poll instead of one. At the 1.2 s floor that is ~6 s for
     /// the 5-pair default roster, inside the 15 s poll interval — but it scales
     /// linearly, so a roster past roughly a dozen pairs would outrun its own
@@ -359,17 +407,21 @@ impl KrakenSource {
             known.extend(unlisted.into_iter().map(|pair| (pair, evicted_at)));
             // Remembering the offenders is what stops the isolation pass running
             // every poll — but if it swallowed the entire roster, every later
-            // poll returns empty with nothing left to warn about. Say so once,
-            // here, rather than leaving the venue quietly dark.
+            // poll returns empty with nothing to warn about. Say so here, rather
+            // than leaving the venue quietly dark.
             //
+            // Not "say so once": with the TTL, an exhausted roster is re-admitted
+            // as its evictions expire, this pass runs again, and the predicate is
+            // true again — so this ERROR recurs about hourly for as long as the
+            // roster stays wrong. That is deliberate (see `roster_exhausted`),
+            // and it is why the message names the retry.
             if self.roster_exhausted(&known) {
                 tracing::error!(
                     venue = FEED_NAME,
                     roster = self.pairs.join(","),
                     "kraken lists NONE of the configured pairs; this venue will \
                      now produce nothing at all until the roster is fixed, \
-                     beyond an hourly retry of the whole roster as evictions \
-                     expire"
+                     beyond a retry as evictions expire hourly"
                 );
             }
         }
@@ -528,9 +580,12 @@ fn fold_isolated(responses: &[(&str, Value)]) -> (Quotes<String>, Vec<String>) {
 /// Drop every eviction whose [`EVICTION_TTL`] has elapsed as of `now`, and
 /// report the pairs that were re-admitted.
 ///
-/// Pure and free-standing for the same reason as [`fold_isolated`]: it is the
-/// half of the re-admission path worth testing, and taking `now` as an argument
-/// means testing it costs no sleeping and no fake clock.
+/// Free-standing and clock-injected for the same reason [`fold_isolated`] is
+/// free-standing: it is the half of the re-admission path worth testing, and
+/// taking `now` as an argument means testing it costs no sleeping and no fake
+/// clock. (Not *pure* — unlike `fold_isolated` it removes the expired entries
+/// from the map it is handed, which is what makes an expiry report once rather
+/// than on every later poll.)
 ///
 /// **`duration_since` saturates rather than panicking** when `now` precedes the
 /// stored instant, which is the behavior this wants: a clock that appears to run
@@ -720,11 +775,16 @@ mod tests {
     /// network — which is what makes the pair-filtering half of the memory
     /// testable with no mock server and no new dependency.
     fn source(pairs: &[&str]) -> KrakenSource {
-        source_at("http://127.0.0.1:1", pairs)
+        source_with_base("http://127.0.0.1:1", pairs)
     }
 
     /// A source over `base_url`, for the seam test that needs a live stub port.
-    fn source_at(base_url: &str, pairs: &[&str]) -> KrakenSource {
+    ///
+    /// Named `_with_base` rather than `_at` deliberately: this module now uses an
+    /// `_at` suffix to mean "as of this instant" (`batch_pairs_at`,
+    /// `remember_at`), and a second reading of the same suffix would blunt the one
+    /// the TTL work depends on.
+    fn source_with_base(base_url: &str, pairs: &[&str]) -> KrakenSource {
         let pairs = pairs.iter().map(|pair| (*pair).to_string()).collect();
         KrakenSource::new(base_url, pairs).expect("constructing performs no I/O")
     }
@@ -824,22 +884,34 @@ mod tests {
         // The state `roster_exhausted` alarms on used to be terminal for the
         // life of the process. It is now an outage with an end, which is the
         // behavioral claim that made the alarm's wording change.
+        //
+        // **This is the one expiry case asserted well PAST the deadline rather
+        // than on it**, and it is deliberate. Every other TTL test here reads at
+        // exactly `base + EVICTION_TTL`, which a `==` comparison would satisfy
+        // just as `>=` does — so without this case a relational mutant
+        // (`duration_since(..) == EVICTION_TTL`) survives the entire suite while
+        // being a total feature failure in production, where a poll never lands
+        // on the boundary instant. The siblings keep the exact-boundary reading
+        // so `>` versus `>=` stays pinned too; between them both mutants die.
         let base = Instant::now();
         let source = source(&["USDCUSD", "CADCUSD"]);
         remember_at(&source, &["USDCUSD", "CADCUSD"], base);
         assert!(source.batch_pairs_at(base).is_empty());
         assert_eq!(
-            source.batch_pairs_at(base + EVICTION_TTL),
+            source.batch_pairs_at(base + EVICTION_TTL * 2),
             vec!["USDCUSD".to_string(), "CADCUSD".to_string()]
         );
     }
 
     #[test]
-    fn an_expiry_is_reported_once_rather_than_every_poll() {
-        // Re-admission drops the entry, so the INFO line fires on the poll that
-        // re-admits and not on the ones after it. Were the entry left in place
-        // with only the filter changed, every subsequent poll would re-announce
-        // the same re-admission.
+    fn an_expiry_removes_the_entry_so_it_cannot_be_re_reported() {
+        // Named for what it asserts — removal — rather than for the consequence.
+        // Removal is the *mechanism* behind the INFO line firing once: were the
+        // entry left in place with only the filter changed, every later poll
+        // would re-announce the same re-admission. Nothing here captures
+        // `tracing`, so this is a proxy for the reporting claim rather than a
+        // test of it; a change that kept removal but hoisted the `info!` out of
+        // its `if !readmitted.is_empty()` guard would still pass.
         let base = Instant::now();
         let mut evicted = BTreeMap::from([("CADCUSD".to_string(), base)]);
         let now = base + EVICTION_TTL;
@@ -901,7 +973,7 @@ mod tests {
             json_response(&priced_alone().to_string()),
         ];
         let (port, heads) = serve_sequence_capturing(responses).await;
-        let source = source_at(&format!("http://127.0.0.1:{port}"), &["USDCUSD", "CADCUSD"]);
+        let source = source_with_base(&format!("http://127.0.0.1:{port}"), &["USDCUSD", "CADCUSD"]);
 
         // Poll one: the batch is refused, the isolation pass runs, and the pair
         // that prices survives the pair that does not. This is the whole claim
@@ -947,6 +1019,12 @@ mod tests {
         // private field, so it would catch a `batch_pairs` that filtered
         // correctly while `poll` went on sending the unfiltered roster.
         assert!(lines[3].contains("USDCUSD"), "{}", lines[3]);
+        // This negative is the SINGLE assertion pinning the memory end-to-end, so
+        // do not relax it. If the memory broke and poll two re-sent both pairs,
+        // the stub would still answer positionally with `priced_alone()` — a
+        // non-empty decode, so `Answered`, so no isolation, so still four
+        // requests and `second.len() == 1`. Every other assertion in this test
+        // holds in that world; only this one fails.
         assert!(
             !lines[3].contains("CADCUSD"),
             "the remembered pair reached the wire again: {}",
@@ -956,15 +1034,28 @@ mod tests {
 
     #[test]
     fn the_eviction_ttl_is_hours_rather_than_minutes() {
-        // A short TTL is not merely wasteful, it is self-defeating: each expiry
-        // spends a refused batch plus one request per roster entry, so at a
-        // minute the source would spend most of its polls re-probing pairs that
-        // are correctly evicted. Pinned against a well-meaning "make it more
-        // responsive" edit.
+        // Bounded on BOTH sides, because the two failures are different and a
+        // floor alone leaves the second one open.
+        //
+        // Too short is self-defeating: each expiry spends a refused batch plus up
+        // to one request per roster entry, so at a minute the source would spend
+        // most of its polls re-probing pairs that are correctly evicted. Pinned
+        // against a well-meaning "make it more responsive" edit.
+        //
+        // Too long silently reintroduces the bug this whole change exists to fix
+        // — at a week, eviction is permanent for any practical process lifetime
+        // and recovery is a restart again. That direction has no natural alarm,
+        // which is exactly why it needs an assertion.
         assert!(
             EVICTION_TTL >= Duration::from_secs(15 * 60),
             "an eviction TTL under 15 minutes cannot pay for its own isolation \
              pass: {EVICTION_TTL:?}"
+        );
+        assert!(
+            EVICTION_TTL <= Duration::from_secs(24 * 60 * 60),
+            "an eviction TTL over a day is permanent for any practical process \
+             lifetime, which is the failure this TTL exists to end: \
+             {EVICTION_TTL:?}"
         );
     }
 

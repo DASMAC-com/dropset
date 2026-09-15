@@ -15,7 +15,7 @@
 //! but every consumer does, and an ungated module would be dead code under a
 //! `--no-default-features` test build, which CI compiles with `-D warnings`.
 
-use std::sync::PoisonError;
+use std::sync::{Arc, Mutex, PoisonError};
 use tokio::sync::oneshot;
 
 /// Answer one request on loopback with `response`, returning the port to aim a
@@ -109,27 +109,44 @@ pub(crate) async fn serve_once_capturing(response: Vec<u8>) -> (u16, oneshot::Re
 /// requests its own source will make. Reading a `Mutex` after the polls have
 /// returned has no such ordering hazard.
 ///
-/// **Both connection strategies are served**, which is what makes this
-/// deterministic rather than merely usually-green: the outer loop accepts a new
-/// connection and the inner one keeps answering on it until the peer hangs up. A
-/// pooling client (reqwest reuses a keep-alive connection when the response
-/// carries a `Content-Length`, which [`json_response`] does) is served on one
-/// socket; a client that opens a fresh connection per request is served too.
-/// Handling only one of the two is the shape of a test that passes until an
-/// HTTP-client upgrade changes its pooling.
+/// **Both SEQUENTIAL connection strategies are served**: reuse of one socket,
+/// and a fresh socket per request once the previous one is closed. The outer loop
+/// accepts a connection and the inner one keeps answering on it until the peer
+/// hangs up. A delimited body is what *lets* a client keep the connection alive
+/// — [`json_response`] sets a `Content-Length`, so reuse is permitted — but
+/// which path reqwest actually takes is deliberately not relied on, and was not
+/// measured.
+///
+/// **Connections are served strictly one at a time, so concurrency is NOT
+/// served.** The inner loop blocks in `read` on the current socket, which means
+/// `accept` is unreachable while a connection is open and idle: a client that
+/// held one connection idle in its pool *while* opening a second would never have
+/// the second accepted, and would stall to reqwest's request timeout. Nothing in
+/// this crate does that — a `Source`'s `next` takes `&mut self`, and Kraken's
+/// isolation pass is a sequential loop — but the limit is real, so a future
+/// concurrent poll path needs a different stub rather than this one.
 ///
 /// Requests past `responses.len()` are not answered — the task stops accepting,
 /// so an extra request fails at the transport rather than hanging forever on a
 /// server that has nothing left to say.
+///
+/// **The captured heads are whole heads, request headers included** — the same
+/// hazard [`serve_once_capturing`] documents at length, and it applies here
+/// unchanged: assert through [`request_line`], and note that narrowing to the
+/// request line removes a *header*-borne credential but **not** a query-param
+/// one, since the query string is part of the request line. `alphavantage` and
+/// `twelvedata` both configure `with_secret_query_param` today, so a seam test
+/// for either must redact rather than rely on this helper. Kraken, this helper's
+/// only caller, is keyless.
 pub(crate) async fn serve_sequence_capturing(
     responses: Vec<Vec<u8>>,
-) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+) -> (u16, Arc<Mutex<Vec<String>>>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let heads = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let captured = std::sync::Arc::clone(&heads);
+    let heads = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&heads);
     tokio::spawn(async move {
         let mut sent = 0usize;
         while sent < responses.len() {
@@ -158,11 +175,25 @@ pub(crate) async fn serve_sequence_capturing(
                 if !complete {
                     break;
                 }
+                // Captured BEFORE the response is written, which is load-bearing
+                // rather than incidental: the caller reads these heads as soon as
+                // its own requests have returned, so storing head N after
+                // answering request N would race the client and could hand back a
+                // short `Vec`.
                 captured
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .push(String::from_utf8_lossy(&head).into_owned());
                 if socket.write_all(&responses[sent]).await.is_err() {
+                    // Roll the capture back, for the same reason the
+                    // incomplete-head path above declines to consume a response:
+                    // this request never received one, so leaving its head in
+                    // place would shift every later head against the response it
+                    // actually got.
+                    captured
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .pop();
                     break;
                 }
                 sent += 1;
