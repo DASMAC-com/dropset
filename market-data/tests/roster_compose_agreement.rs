@@ -81,11 +81,15 @@
 //!
 //! **The residue that leaves, recorded rather than closed.** The two groupings
 //! are keyed separately — one on the outermost chain entry, one on every entry
-//! below it — so a roster that is one service's *own* override variable and
+//! below it — so a variable that is one service's outermost override and
 //! another's inner link would land in neither group, each holding a single
-//! member. No service declares a shared roster outermost today, so nothing is
-//! uncovered; closing it would mean merging the two groupings, and that would
-//! cost the byte-identity the coinbase pair is correctly held to.
+//! member. No variable spans both roles today: `FX_PRODUCT_IDS` is nobody's
+//! outermost, and the bare `PRODUCT_IDS` the coinbase legs share is nobody's
+//! inner link. Covering that case with the machinery here would mean merging
+//! the two groupings, at the cost of the byte-identity the coinbase pair is
+//! correctly held to. The cheaper move, deliberately not taken, is a guard
+//! asserting that no variable holds both roles — which detects the case
+//! without grouping anything.
 //!
 //! **This file used to have a second, much weaker mode**, and what it cost is
 //! worth recording. The three keyed FX venues shared one
@@ -584,10 +588,13 @@ fn every_shared_chained_roster_agrees() {
         // Skip the outermost entry — that is the service's own override
         // variable, and `every_shared_override_group_agrees` owns it. Every
         // later entry is a shared roster this service chains through.
-        // Deduped: a chain naming one variable twice would otherwise push this
-        // service into that group twice, and a group whose two members are the
-        // same service compares a roster with itself — passing vacuously while
-        // also satisfying the non-vacuity guard below.
+        // Deduped WITHIN one chain: a chain naming one variable twice would
+        // otherwise push this service into that group twice, and a group whose
+        // two members are the same service compares a roster with itself —
+        // passing vacuously while also satisfying the non-vacuity guard below.
+        // Two `wirings()` rows carrying the same `service` string would reach
+        // that same state; nothing here guards it, and the eight rows are
+        // distinct by inspection.
         let shared_vars: BTreeSet<&str> = wiring.variable_chain.iter().skip(1).copied().collect();
         for shared_var in shared_vars {
             groups
