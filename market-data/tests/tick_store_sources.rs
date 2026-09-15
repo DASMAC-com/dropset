@@ -17,16 +17,20 @@
 //! cargo test -p dropset-market-data -- --ignored
 //! ```
 //!
-//! **Operator-run, not a merge gate — and be precise about what that costs.**
-//! CI's only `--run-ignored` invocation selects two other crates, so nothing here
-//! executes in the merge queue. That leaves the CI-visible set for this reader as
-//! the unit tests alone, which cover the ageing delegation, the placeholder set,
-//! the projected names and the table name — and **nothing that requires a
-//! server**. Concretely, these mutations merge green: `DESC` dropped from the
-//! ordering, either `WHERE` conjunct dropped, `$1`/`$2` transposed, or a decoder
-//! column renamed to one the statement does not project. Wiring this crate into
-//! the `--run-ignored` job is the fix and is not attempted here; until it lands,
-//! the guarantees below hold only when an operator runs them.
+//! **These ARE a merge gate.** The `Tests (Postgres)` job runs
+//! `cargo nextest run --run-ignored all` over this crate among four, so every
+//! test here executes in CI and in the merge queue — `oanda_direction` is the one
+//! target filtered out by name, because it needs a live venue and a credential.
+//!
+//! That matters for what the `#[ignore]` means: it gates on a **Docker daemon**,
+//! not on being optional. Skipping them locally is fine; they will run.
+//!
+//! It also means these tests carry real weight rather than advisory weight, which
+//! is worth stating because the CI-visible set would otherwise be the unit tests
+//! alone — and those cannot reach a server. Without this job, all of these
+//! mutations would merge green: `DESC` dropped from the ordering, either `WHERE`
+//! conjunct dropped, `$1`/`$2` transposed, or a decoder column renamed to one the
+//! statement does not project. Each is caught below.
 
 mod common;
 
