@@ -91,19 +91,22 @@ covering every audit however it was targeted. Launch it
 with the plain verb naming the issue's tag (`explore 1196`);
 the worktree is implicit in the verb, and it takes the
 issue's own tag for both worktree and branch. The mechanism
-is owned by `docs/conventions/local-integrations.md` →
-"Spec-producing sessions get a worktree", and the reasoning
-— why the seat rather than the implementation substrate, and
-why the worktree is the load-bearing half — is stated once
-in `.claude/skills/audit/SKILL.md` → "Where it runs". Don't
-restate either here.
+is owned by `docs/conventions/local-integrations.md`, and the
+reasoning — why the seat rather than the implementation
+substrate, and why the worktree is the load-bearing half —
+is stated once in `.claude/skills/audit/SKILL.md` → "Where it
+runs". Don't restate either here. That citation names the doc
+rather than a section on purpose: the section is still being
+written by the PR that owns the mechanism.
 
 Two duties this skill owns directly:
 
-- **Findings files live in the worktree, on the PR branch**,
-  never in a scratch path outside the repo — that is what
-  keeps `housekeeping`'s prune and the conversation purge
-  from clearing a live audit mid-flight.
+- **Findings files live in the worktree**, never in a scratch
+  path outside the repo — that is what keeps `housekeeping`'s
+  prune and the conversation purge from clearing a live audit
+  mid-flight. The worktree is temporary working state and an
+  audit opens **no PR**; what protects an in-flight audit is
+  its issue being In Progress.
 - **The audit issue stays In Progress while the findings
   loop is open**, and reaches Done only at ratification
   plus fold. Marking it Done at the handoff is the measured

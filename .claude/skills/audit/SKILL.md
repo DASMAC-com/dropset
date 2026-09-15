@@ -92,11 +92,14 @@ role. `explore <name>` is **idempotent** — it creates the session if
 absent and resumes it if present — so an audit is re-entered with the
 exact verb that started it; there is no separate resume subcommand.
 
-**The mechanism is not defined here.** See
-`docs/conventions/local-integrations.md` → "Spec-producing sessions get
-a worktree", which owns the launch shape, the naming rule, the branch,
-and the lifecycle of the PR the worktree carries. This section states
-only the **duty**: an audit takes that shape.
+**The mechanism is not defined here.** It is owned by
+`docs/conventions/local-integrations.md`, which holds the launch shape, the
+naming rule, and the worktree's lifecycle. This section states only the
+**duty**: an audit takes that shape.
+
+The citation is deliberately to the **doc rather than a named section**,
+because that section is being written by the PR that owns the mechanism and
+its shape is still moving. Pin the heading once it has landed.
 
 **Why `explore` rather than the Bedrock implementation shape.** An audit
 only looks, researches, and produces either a spec or filed findings —
@@ -114,8 +117,15 @@ reclaims transcripts, and neither can tell a live audit from a finished
 one. Naming the worktree after the issue is what fixes this — it makes
 the audit visible to every mechanism already keyed on `eng-###`, so
 `housekeeping`'s prune-on-issue-status-type sees an In Progress issue and
-leaves it alone. Any spec or findings file lives **in the worktree, on
-its PR branch**, never in a scratch path outside the repo.
+leaves it alone. Any spec or findings file lives **in the worktree**,
+never in a scratch path outside the repo.
+
+**The worktree is temporary working state, and an audit opens no PR.** It
+is not a branch on its way to `main`: an audit's deliverable is filed
+findings or a spec, and the worktree is where that work is held while it
+is live. So the thing protecting an in-flight audit is the **issue being
+In Progress**, not a PR — which is why the status-type rule above is the
+load-bearing half and the worktree is merely what makes it visible.
 
 **And the issue stays In Progress for as long as the findings loop is
 open** — it goes Done only at **ratification plus fold**, never at the
