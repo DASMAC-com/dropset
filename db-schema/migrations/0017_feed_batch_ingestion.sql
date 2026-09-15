@@ -13,9 +13,19 @@
 -- **Why now rather than earlier.** The candle intake guard drops a bad bar with
 -- a warning instead of failing the batch — the right trade, and what let
 -- `0012_candle_price_checks` be added VALIDATED — but it converts a loud stop
--- into a quiet gap by construction. An over-aggressive guard, or a venue that
--- starts emitting sentinels, now shrinks a batch silently. The conversion was
--- deliberate; the quiet gap had no detector.
+-- into a quiet gap by construction. The conversion was deliberate; the quiet gap
+-- had no detector.
+--
+-- **What this DOES and DOES NOT see, stated precisely, because the obvious
+-- reading is too generous.** `requested` is the count of records that reached
+-- the sink, so it is measured *after* intake has already dropped whatever it
+-- rejected. That means a batch which arrives EMPTY is visible here, and a batch
+-- which merely arrives SHORT is not: a guard that drops some bars and keeps
+-- others yields `requested = written` and an outcome of `stored`, identical to a
+-- healthy batch. Partial attrition therefore has no detector either, and this
+-- table does not claim one — the per-bar warning remains its only trace. What is
+-- closed is the total case, which is the filed symptom: a collector that keeps
+-- polling and stores nothing.
 --
 -- **Three outcomes, and the middle one is why this table is not just a row
 -- count.** Delivery is deliberately at-least-once: the cursor is saved after
@@ -60,12 +70,21 @@
 -- convert that design freedom into a migration-time failure for a writer that
 -- has done nothing wrong.
 --
+-- That freedom is why `empty_intake` tests BOTH counts rather than `requested`
+-- alone. Leaving the CHECK out makes `(requested = 0, written > 0)` schema-legal,
+-- and a `requested`-only test would label such a row `empty_intake` — reporting a
+-- feed as silent in the very row that proves it wrote. It folds into `stored`
+-- instead, which is what actually happened.
+--
 -- **Keyed `(feed, observed_at)`, and the insert is idempotent.** A single feed's
--- sink is sequential, so the only way to collide is one feed committing two
--- batches inside the same microsecond, which a commit's round trip rules out.
--- The writer still inserts `ON CONFLICT DO NOTHING`, because the failure mode of
--- being wrong about that must not be an aborted data batch: losing one telemetry
--- row is the correct price, per §8's idempotent-write rule.
+-- sink is sequential, and `now()` is transaction-START time, so a collision needs
+-- one feed to BEGIN two batch transactions inside the same microsecond. A commit
+-- and a client round trip separate them by far more than that in practice —
+-- though "in practice" is the honest strength of the claim, not "impossible".
+-- The writer therefore inserts `ON CONFLICT DO NOTHING`, because the failure mode
+-- of being wrong about it must not be an aborted data batch: silently losing one
+-- telemetry row is the correct price, per docs/data-feeds.md §8's
+-- idempotent-write rule.
 --
 -- **Grafana reads this; nothing surfaces it in the TUI.** `0002_reader_role`
 -- already grants `SELECT` on future tables in `public` to `dropset_ro`, so this
@@ -81,7 +100,7 @@ CREATE TABLE feed_batch_ingestion (
     written     BIGINT      NOT NULL,
     outcome     TEXT        GENERATED ALWAYS AS (
         CASE
-            WHEN requested = 0 THEN 'empty_intake'
+            WHEN requested = 0 AND written = 0 THEN 'empty_intake'
             WHEN written = 0 THEN 'all_duplicate'
             ELSE 'stored'
         END
@@ -94,5 +113,5 @@ CREATE TABLE feed_batch_ingestion (
 -- The primary key already serves a per-feed time range. This covers the
 -- cross-feed panel query — "which feeds stored nothing recently" — which scans
 -- by time first and does not name a feed.
-CREATE INDEX feed_batch_ingestion_observed_at
+CREATE INDEX feed_batch_ingestion_observed_at_idx
     ON feed_batch_ingestion (observed_at DESC);

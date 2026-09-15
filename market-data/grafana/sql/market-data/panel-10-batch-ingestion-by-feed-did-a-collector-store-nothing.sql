@@ -22,9 +22,12 @@
 -- name, not inside an expression, so the alias would resolve against the
 -- table and fail.
 --
--- A feed that is not running has no row here at all, the same absence Tick
--- coverage carries: this table records batches that happened, so a source
--- parked by decision contributes nothing rather than a zero.
+-- ABSENCE IS AMBIGUOUS. This records batches that happened, so a feed with no
+-- row in the window may be parked by decision, not running, erroring before the
+-- row is written (the counts share the batch transaction), or simply polling
+-- more slowly than the window. The ordering below can only rank a feed that has
+-- a row in range, so one that vanishes does NOT sort to the top -- cross-read
+-- Collector cursor age and Source coverage, which name every source regardless.
 SELECT
   feed,
   count(*) AS batches,

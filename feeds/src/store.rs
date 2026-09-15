@@ -130,18 +130,32 @@ where
 ///
 /// **Inside the batch's own transaction, deliberately.** The alternative — a
 /// best-effort write after the commit, the shape [`connect_lazy`] exists to
-/// support — would make the detector fail open: a batch could store nothing and
-/// *also* fail to record that it stored nothing, which is precisely the silent
-/// success this table exists to make visible. A detector that can go quiet
-/// without saying so is not one. Sharing the transaction also means the row can
-/// never disagree with what was committed, and costs no extra round trip.
+/// support — would let a batch commit rows and then fail to record that it had,
+/// leaving the detector quietly disagreeing with the data. Sharing the
+/// transaction makes the row and the commit atomic, so it can never disagree.
 ///
-/// The blast radius that buys is bounded by the schema fence: the migration
-/// guaranteeing this table runs before any DB-backed app starts, so "the table
-/// is missing" is a startup failure rather than a per-batch one.
+/// **What that does NOT buy, since the tempting claim is broader.** It does not
+/// make the detector fail closed in general: if `write_batch` itself returns an
+/// error, this function never runs, so the batch stores nothing *and* records
+/// nothing. Absence of a row is therefore not evidence of absence of a fault —
+/// the panel reading it has to say so, and does.
 ///
-/// `ON CONFLICT DO NOTHING` because losing one telemetry row must never abort a
-/// data batch — see the migration's note on the key.
+/// It also costs one extra server round trip per batch, not zero. What sharing
+/// the transaction saves is a second BEGIN/COMMIT, not the statement.
+///
+/// The blast radius is narrower than the schema fence alone implies. The fence
+/// guarantees the table EXISTS before any DB-backed app starts, so "no such
+/// table" is a startup failure rather than a per-batch one — but it probes
+/// existence as the migration role and says nothing about `INSERT` privilege as
+/// the writer's. Today every collector connects on the schema-owning `dropset`
+/// role (`infra/localnet/docker-compose.yml`), which is why no grant is needed
+/// here; a deployment that split those roles would have to grant `INSERT`
+/// explicitly, and would discover it as a per-batch failure on every feed.
+///
+/// `ON CONFLICT DO NOTHING` absorbs the primary-key collision so losing one
+/// telemetry row can never abort a data batch — see the migration's note on the
+/// key. Note it absorbs only that class: any other error here still aborts the
+/// batch, which is the price of the atomicity above.
 async fn record_ingestion(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     feed: &str,

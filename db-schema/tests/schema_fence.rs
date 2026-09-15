@@ -74,6 +74,31 @@ async fn stamp_version(pool: &PgPool, version: i64, description: &str) {
     .expect("stamp migration row");
 }
 
+/// The pinned container image is one the stack actually deploys.
+///
+/// **This is what makes the pin self-defending rather than self-documenting.**
+/// `POSTGRES_IMAGE_TAG` and the compose stack's image can drift apart in either
+/// direction with nothing to notice, and the failure that reintroduces is the one
+/// the constant exists to prevent: a fence guarding a server nothing runs.
+///
+/// Deliberately **not** `#[ignore]`d, and that is the whole point — it needs no
+/// container, so unlike every other test in this file it runs in the default
+/// suite, which is the only place CI executes this crate's tests at all. The
+/// `include_str!` also makes the compose file Rust-reachable, so a diff touching
+/// it is no longer invisible to the test-suite path filter.
+#[test]
+fn postgres_image_tag_matches_the_deployed_image() {
+    const COMPOSE: &str = include_str!("../../infra/localnet/docker-compose.yml");
+    let deployed = format!("postgres:{POSTGRES_IMAGE_TAG}");
+    assert!(
+        COMPOSE.contains(&deployed),
+        "POSTGRES_IMAGE_TAG is {POSTGRES_IMAGE_TAG}, so the compose stack should \
+         run {deployed} — but no such image appears in \
+         infra/localnet/docker-compose.yml. One of the two moved; reconcile them \
+         rather than letting the test containers drift off the deployed version."
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn fence_rejects_an_unprovisioned_database() {

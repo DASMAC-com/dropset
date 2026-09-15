@@ -199,10 +199,49 @@ async fn batch_ingestion_outcome_cannot_be_written_by_hand() {
     .expect_err("a generated column must reject a supplied value");
 
     // Postgres's wording for this is "cannot insert a non-DEFAULT value into
-    // column", which names no "generated column" — asserted as the server
-    // actually phrases it rather than as the feature is named.
+    // column \"outcome\"", which names no "generated column" — asserted as the
+    // server actually phrases it rather than as the feature is named. The column
+    // name is included so a future generated column elsewhere in the same
+    // statement cannot satisfy this assertion instead.
+    let msg = err.to_string();
     assert!(
-        err.to_string().contains("non-DEFAULT value"),
-        "expected a generated-column rejection, got: {err}"
+        msg.contains("non-DEFAULT value") && msg.contains("outcome"),
+        "expected a generated-column rejection naming `outcome`, got: {err}"
     );
+}
+
+/// A primary-key collision loses the telemetry row and leaves the data batch
+/// alone — the `ON CONFLICT DO NOTHING` contract.
+///
+/// **Worth pinning because the stakes are asymmetric.** The counts are written
+/// inside the batch's own transaction, so if that clause were ever dropped, a
+/// duplicate `(feed, observed_at)` would stop being a lost telemetry row and
+/// start aborting a genuine data batch. Nothing else in the suite would notice:
+/// the collision is unreachable from the sink, whose timestamps differ by a
+/// commit and a round trip, so only hand-written SQL can construct it.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_duplicate_batch_key_is_dropped_rather_than_erroring() {
+    let (_pg, pool) = start_pg().await;
+
+    let insert = "INSERT INTO feed_batch_ingestion (feed, observed_at, requested, written) \
+         VALUES ('test:collide', '2026-09-15T00:00:00Z', 3, 3) \
+         ON CONFLICT DO NOTHING";
+
+    sqlx::query(insert)
+        .execute(&pool)
+        .await
+        .expect("first insert");
+    // The same key again: no error, and no second row.
+    sqlx::query(insert)
+        .execute(&pool)
+        .await
+        .expect("a duplicate key must not error");
+
+    let rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM feed_batch_ingestion WHERE feed = 'test:collide'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows, 1, "the duplicate collapses to one row");
 }
