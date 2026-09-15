@@ -34,8 +34,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The migration and the startup fence are exercised against a real Postgres in
 # a throwaway container (tests/schema_fence.rs) — the only way to cover the
 # additive-only `>=` window, where a database ahead of the binary must still
-# pass. Those tests are `#[ignore]`d — they need a Docker daemon; run them with
-# `cargo test -p dropset-db-schema -- --ignored`.
+# pass. Those tests are `#[ignore]`d — they need a Docker daemon — but the
+# `Tests (Postgres)` job runs them, so they gate a merge. Run them locally
+# with `cargo test -p dropset-db-schema -- --ignored`.
 testcontainers-modules = { version = "0.11", features = ["postgres"] }
 
 [package]

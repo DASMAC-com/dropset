@@ -17,9 +17,10 @@
 //! cargo test -p dropset-market-data -- --ignored
 //! ```
 //!
-//! **Operator-run, not a merge gate** — CI's only `--run-ignored` invocation
-//! selects two other crates, so nothing here executes in the merge queue. The
-//! wiring is tracked separately.
+//! **A merge gate** — the Tests (Postgres) job's `--run-ignored all`
+//! invocation selects `dropset-market-data`, so this runs in the merge queue.
+//! It is still skipped by a bare local `cargo test`, so run the command above
+//! before pushing a change that touches it.
 
 mod common;
 

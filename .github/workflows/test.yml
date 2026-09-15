@@ -470,8 +470,9 @@ jobs:
         echo "SBF cache hit: ${H:-unknown}" >>"$S"
         sccache --show-stats >>"$S"
         echo '```' >>"$S"
-  # The SQL-backed crates (`dropset-feeds` and `dropset-indexer`) reach a real
-  # Postgres through testcontainers, so their store suites are `#[ignore]`d
+  # The SQL-backed crates (`dropset-feeds`, `dropset-indexer`,
+  # `dropset-market-data` and `dropset-db-schema`) reach a real Postgres
+  # through testcontainers, so their container-backed suites are `#[ignore]`d
   # and the default `cargo nextest run` above skips them entirely — as it does
   # the feature-gated unit tests, since the feeds transports are off by
   # default. This job covers both gaps. It is deliberately toolchain-light:
@@ -511,22 +512,40 @@ jobs:
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'taiki-e/install-action@nextest'
-    # One invocation over both crates so the shared dependency graph compiles
-    # once. `--run-ignored all` runs the container-backed suites alongside the
-    # ordinary unit tests; the feeds features are named explicitly because a
-    # `-p` selection does not enable them.
+    # One invocation over all four crates so the shared dependency graph
+    # compiles once. `--run-ignored all` runs the container-backed suites
+    # alongside the ordinary unit tests; the feeds features are named
+    # explicitly because a `-p` selection does not enable them.
     #
     # The schema comes from `dropset-db-schema` inside the tests themselves
     # (docs/data-feeds.md §8) — there is no in-crate migrator left to lean on
     # since the single-schema-owner split, and no DDL is issued here.
+    #
+    # `oanda_direction` is filtered out because it is the one `#[ignore]`d
+    # target across these four crates gated on something other than Docker:
+    # it needs a network and the OANDA credential, and `--run-ignored all`
+    # would otherwise select it. It can never be a gate here because a
+    # required check must not depend on a live third-party venue; and today
+    # no CI run holds that credential anyway — it lives in 1Password,
+    # reached through `secrets.local.env`. It stays operator-run, and its
+    # own module doc says so.
+    # Excluded by `binary_id` rather than by package, so the rest of
+    # `dropset-market-data` is still covered, and rather than by bare
+    # `binary`, which matches the unqualified name in every selected crate.
+    # A rename fails closed: nextest errors on a filter expression that
+    # matches no binary, so lost coverage reddens the job instead of
+    # passing quietly.
     - env:
         RUSTC_WRAPPER: 'sccache'
       if: |
         needs.changes.outputs.code == 'true'
       name: 'Run store and feature-gated tests against Postgres'
       run: |
-        cargo nextest run --run-ignored all -p dropset-feeds \
-        -p dropset-indexer --features dropset-feeds/store,dropset-feeds/http \
+        cargo nextest run --run-ignored all \
+        -E 'not binary_id(dropset-market-data::oanda_direction)' \
+        -p dropset-feeds -p dropset-indexer -p dropset-market-data \
+        -p dropset-db-schema \
+        --features dropset-feeds/store,dropset-feeds/http \
         --features dropset-feeds/rpc,dropset-feeds/stream
     # See the `test` job's summary step. No SBF line here: this job builds no
     # program and so has no `sbf-cache` step to report on.

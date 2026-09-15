@@ -15,7 +15,8 @@
 //! collector is still confirming from one left behind by a pair dropped from a
 //! roster.
 //!
-//! Needs a Docker daemon, so `#[ignore]`d like the fence tests:
+//! Needs a Docker daemon, so `#[ignore]`d like the fence tests — and, like
+//! them, run by the `Tests (Postgres)` job, so this is a merge gate:
 //!
 //! ```sh
 //! cargo test -p dropset-market-data -- --ignored
