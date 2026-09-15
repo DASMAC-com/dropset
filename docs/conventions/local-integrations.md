@@ -1052,14 +1052,25 @@ Three deliberate bounds on the gate:
   with no `aws` has nothing to log into, and blocking there would make
   the committed verb unusable on a checkout without AWS. A *failed or
   dismissed* login is a different condition and does stop the launch.
+
 - **An `aws` too OLD for a top-level `login` takes that same branch.**
   It is the same "AWS is not set up here" shape, so it warns and
   launches, naming the older `aws sso login` spelling. Without this it
   was strictly worse than having no CLI at all: the login failed with
   `Invalid choice: 'login'`, the re-probe failed, and the verb refused
-  to start — while a machine with no `aws` started fine. The gate
-  detects it with `aws login help` before attempting the real login, so
-  no spurious `Invalid choice` ever reaches the operator's terminal.
+  to start — while a machine with no `aws` started fine.
+
+  **The gate detects this AFTER the failed re-probe, not before the
+  login**, with `AWS_PAGER= aws login help`. That ordering is a safety
+  property, not an accident: `help` renders through groff and a pager,
+  the one part of the CLI that can fail for reasons unrelated to whether
+  a subcommand exists. Deciding the *hot* path on it would mean a broken
+  pager on a **current** CLI silently warn-and-launching every expired
+  session — the exact failure the gate exists to catch. Placed after the
+  re-probe it can only widen an outcome that is already a refusal. The
+  price is one stray `Invalid choice` from the attempted login on a
+  genuinely old CLI, which the warning tells the operator to ignore.
+
 - **`architect` is not gated.** It argues design rather than reading
   cost data, and a browser login is a poor thing to stand between the
   operator and a design thought. Add it only if an architect session is

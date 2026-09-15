@@ -157,15 +157,17 @@ through the credentialed server. The rules:
   service line for it at all, so the surface to prefer is the one whose
   cost is visible and free.
 
-**Where the SSO session comes from.** A session cannot log in for
-itself — `aws login` is interactive — so the two seat verbs that read
-cost data, `plan` and `housekeeping`, **gate their own launch** on a
-usable session: they probe, log in if the probe fails, re-probe, and
-refuse to launch if that still fails. See
-[local integrations](local-integrations.md) → "The AWS login gate". The
-consequence for anything reading cost data from inside a session is
-that credentials are a launch-time precondition, not something to
-handle mid-conversation.
+  **Where the SSO session comes from.** A session cannot log in for
+  itself — `aws login` is interactive — so the two seat verbs that read
+  cost data, `plan` and `housekeeping`, **gate their own launch** on
+  credentials that resolve: they probe, log in if the probe fails,
+  re-probe, and refuse to launch if that still fails. See
+  [local integrations](local-integrations.md) → "The AWS login gate".
+  The consequence for anything reading cost data from inside a session
+  is that credentials are a launch-time precondition, not something to
+  handle mid-conversation — bearing in mind that
+  `sts:GetCallerIdentity` is authorization-free, so the gate rules out
+  an expired session rather than proving `ce:*` is held.
 
 - **Discover before acting.** Search the AWS docs (via `aws-docs`) and
   retrieve the relevant skill *before* writing a template or running a

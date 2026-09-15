@@ -118,8 +118,9 @@ two modes, and the default is the non-interrupting one:
   Concretely: steps 7
   and 8 **propose / list** the perms cruft, any
   permission-refresh candidates, and the stale
-  memories, and change nothing — 7c stamps its marker even
-  unattended, since that records only that the mining ran;
+  memories, and **delete nothing** — 7c does stamp its cadence
+  marker even unattended, which is bookkeeping rather than a
+  change to the allowlist;
   and steps 9 and 10 **run** —
   session-metrics unconditionally, the purge **dry-run**
   in-pass — with only the purge's destructive apply deferring
@@ -928,7 +929,8 @@ it.
 Adding a permission widens what runs unattended, so it is
 strictly the operator's call — the candidates go through the
 closing gate's `AskUserQuestion` like the cruft, and an
-unattended pass proposes and writes nothing. `allowlist.py add`
+unattended pass proposes and writes **no allow-rule** (it does
+stamp the cadence marker, which grants nothing). `allowlist.py add`
 is the writer once approved, and its own floor still refuses a
 bare-verb wildcard.
 

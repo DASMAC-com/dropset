@@ -387,38 +387,51 @@ _ds_aws_login() {
     return 0
   fi
 
-  # An `aws` too old for a top-level `login` is the same "AWS is not set up
-  # here" shape as no `aws` at all, so it takes the same warn-and-launch branch.
-  # Without this it was strictly WORSE than having no CLI: `aws login` exits
-  # non-zero with `Invalid choice: 'login'`, the re-probe fails, and the verb
-  # refuses to start — while a machine with no `aws` launches fine. The
-  # absent-CLI rationale ("blocking would make the committed verb unusable on a
-  # checkout without AWS") applies verbatim here and was simply not honored.
-  if ! aws login help >/dev/null 2>&1; then
-    print -u2 "$verb: this \`aws\` has no top-level \`login\` command (needs a" \
-      "recent AWS CLI v2; measured on 2.35.22) — launching WITHOUT cost-read" \
-      "access. Upgrade the CLI, or run the older \`aws sso login\` by hand" \
-      "first."
-    return 0
-  fi
-
   print -u2 "$verb: AWS session expired or absent — logging in before launch."
   aws login "${profile[@]}"
 
-  if ! aws sts get-caller-identity "${profile[@]}" >/dev/null 2>&1; then
-    # Name BOTH causes. The probe cannot tell an expired session from an
-    # unreachable STS, so a session with perfectly good credentials that is
-    # merely offline lands here — and a message naming only the profile sends
-    # the operator to the wrong knob.
-    print -u2 "$verb: AWS credentials still do not resolve, so this session is" \
-      "NOT launching — it would hit the same error mid-conversation with no way" \
-      "to fix it from inside. Either the login did not complete, or AWS was" \
-      "unreachable (offline, captive portal, STS throttle). Re-run \`$verb\`" \
-      "once \`aws login\` succeeds, or check DS_AWS_PROFILE in the runtime" \
-      "config."
-    return 1
+  if aws sts get-caller-identity "${profile[@]}" >/dev/null 2>&1; then
+    return 0
   fi
-  return 0
+
+  # The re-probe failed, so this is a refusal — UNLESS this `aws` is simply too
+  # old to have a top-level `login` at all, which is the same "AWS is not set up
+  # here" shape as no `aws` and takes the same warn-and-launch branch. Blocking
+  # it would be strictly worse than having no CLI, which launches fine.
+  #
+  # **This check sits here, on the already-failing path, and not before the
+  # login where it reads more naturally.** The placement IS the safety property.
+  # `help` renders through groff and a pager — the one part of the CLI that can
+  # fail for reasons having nothing to do with whether a subcommand exists (no
+  # `groff`, a misconfigured `AWS_PAGER`, a pager that exits non-zero on closed
+  # stdout). Deciding the hot path on that call means a broken pager on a
+  # CURRENT CLI silently warn-and-launches every expired session, which is
+  # exactly the failure this gate exists to catch. Placed here it can only ever
+  # widen an outcome that is already a refusal. `AWS_PAGER=` removes the
+  # likeliest cause on top of that.
+  #
+  # The cost of the later placement is one stray `Invalid choice: 'login'` from
+  # the attempted login on a genuinely old CLI — worth paying to keep a fragile
+  # call off the path that matters, and the message below says to ignore it.
+  if ! AWS_PAGER= aws login help >/dev/null 2>&1; then
+    print -u2 "$verb: this \`aws\` has no top-level \`login\` command (needs a" \
+      "recent AWS CLI v2; measured on 2.35.22) — launching WITHOUT cost-read" \
+      "access, and ignore any \`Invalid choice\` above. Upgrade the CLI, or run" \
+      "the older \`aws sso login\` by hand first."
+    return 0
+  fi
+
+  # Name BOTH causes. The probe cannot tell an expired session from an
+  # unreachable STS, so a session with perfectly good credentials that is
+  # merely offline lands here — and a message naming only the profile sends
+  # the operator to the wrong knob.
+  print -u2 "$verb: AWS credentials still do not resolve, so this session is" \
+    "NOT launching — it would hit the same error mid-conversation with no way" \
+    "to fix it from inside. Either the login did not complete, or AWS was" \
+    "unreachable (offline, captive portal, STS throttle). Re-run \`$verb\`" \
+    "once \`aws login\` succeeds, or check DS_AWS_PROFILE in the runtime" \
+    "config."
+  return 1
 }
 
 # Internal: a deterministic per-day session UUID, seeded by kind + full date.
@@ -1058,9 +1071,13 @@ explore() {
 #     runs in the base repo.
 #   * The bootstrap. Passing `/plan` as the initial prompt means the skill's
 #     bootstrap read happens without being asked for.
-#   * The AWS session. `_ds_aws_login` is a HARD gate — a planning session reads
-#     cost and account data, the login is interactive, and a session cannot fix
-#     an expired token from the inside. It runs AFTER `_ds_seat_guard` on
+#   * The AWS session. `_ds_aws_login` refuses the launch when credentials do
+#     not resolve — a planning session reads cost and account data, the login is
+#     interactive, and a session cannot fix an expired token from the inside.
+#     Deliberately not called a "hard" gate: it has two documented
+#     warn-and-launch escapes (no `aws` at all, and an `aws` too old for
+#     `login`), so it is hard only when AWS is present and current. It runs
+#     AFTER `_ds_seat_guard` on
 #     purpose: the guard clears an `AWS_REGION` inherited from a previous `task`
 #     in the same tab, and the AWS CLI reads that variable, so probing first
 #     would probe under the Bedrock launcher's environment rather than the
@@ -1088,9 +1105,10 @@ plan() {
 # subscription window at the start of a day, which only a seat session does.
 # Moving it to Bedrock would silently retire that.
 #
-# It carries the same HARD `_ds_aws_login` gate as `plan`, and for the same
-# reason: this pass reports spend and runs the monthly permission refresh, both
-# of which need credentials the session cannot obtain for itself. `architect` is
+# It carries the same `_ds_aws_login` gate as `plan`, with the same two
+# warn-and-launch escapes, and for the same reason: this pass reports spend and
+# runs the monthly permission refresh, both of which need credentials the
+# session cannot obtain for itself. `architect` is
 # deliberately NOT gated — it argues design rather than reading cost data, and a
 # browser login is a poor thing to stand between the operator and a design
 # thought. Add it only if an architect session is actually found wanting one.

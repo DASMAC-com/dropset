@@ -64,8 +64,11 @@ _SUITE_OWNED_ENV = (
 # two proper words, and makes a stray empty argument invisible entirely. Both are
 # real bugs (`"${profile[*]}"` in place of `"${profile[@]}"` produces exactly
 # them), and both passed the space-joined assertions. Verified by mutation: with
-# `[*]` substituted, all 15 cases stayed green. The arity plus a delimiter that
-# cannot occur in an AWS argument is what makes the boundary observable.
+# `[*]` substituted, every case in the suite as it then stood stayed green. The
+# arity plus a delimiter that cannot occur in an AWS argument is what makes the
+# boundary observable. (No case count here on purpose — the evidence does not
+# depend on one, and a hard-coded number goes stale the next time a case is
+# added, which it already did once.)
 #
 # A `default)` branch returns 42 so an unexpected subcommand fails loudly rather
 # than reading as a success.
@@ -226,25 +229,48 @@ class AnOldCliWarnsRatherThanBlocking(GateHarness):
     here" shape as no `aws` at all, so it must take the same warn-and-launch
     branch. Before this, it was strictly WORSE than having no CLI: the login
     failed with `Invalid choice: 'login'`, the re-probe failed, and the verb
-    refused to start — while a machine with no `aws` launched fine."""
+    refused to start — while a machine with no `aws` launched fine.
+
+    The subcommand-exists probe deliberately runs AFTER the failed re-probe, so
+    an old CLI is modelled as: probe fails, login is attempted and achieves
+    nothing, re-probe fails, and only then does the gate ask whether `login`
+    exists at all.
+    """
+
+    def _old_cli(self):
+        # `post_login_sts_rc=1` because on a real old CLI the attempted login
+        # cannot repair anything — it fails with `Invalid choice`.
+        return self._gate(sts_rc=1, post_login_sts_rc=1, login_help_rc=1)
 
     def test_an_old_cli_still_allows_the_launch(self):
-        result, _ = self._gate(sts_rc=1, login_help_rc=1)
+        result, _ = self._old_cli()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_an_old_cli_never_attempts_the_login(self):
-        # Attempting it would print `Invalid choice` to the operator's terminal
-        # for no reason — the probe exists precisely to avoid that.
-        _, recorded = self._gate(sts_rc=1, login_help_rc=1)
-        real_logins = [
-            args for _, args in recorded if args[0] == "login" and "help" not in args
-        ]
-        self.assertEqual(real_logins, [], recorded)
+    def test_an_old_cli_asks_about_the_subcommand_only_after_the_reprobe(self):
+        # The ordering IS the safety property: `help` renders through groff and a
+        # pager and so can fail for reasons unrelated to the subcommand existing.
+        # On the hot path that would warn-and-launch every expired session on a
+        # CURRENT CLI; here it can only widen an already-failing outcome.
+        _, recorded = self._old_cli()
+        kinds = ["help" if "help" in args else args[0] for _, args in recorded]
+        self.assertEqual(kinds, ["sts", "login", "sts", "help"], recorded)
 
     def test_an_old_cli_says_what_is_wrong_and_names_the_older_spelling(self):
-        result, _ = self._gate(sts_rc=1, login_help_rc=1)
+        result, _ = self._old_cli()
         self.assertIn("no top-level", result.stderr)
         self.assertIn("aws sso login", result.stderr)
+
+    def test_an_old_cli_tells_the_operator_to_ignore_the_stray_error(self):
+        # The price of the later placement is one `Invalid choice` reaching the
+        # terminal, so the warning has to account for it or it reads as a defect.
+        result, _ = self._old_cli()
+        self.assertIn("Invalid choice", result.stderr)
+
+    def test_a_current_cli_never_reaches_the_subcommand_probe(self):
+        # The complement, and the one that pins the hot path: a session that
+        # repairs normally must not pay for `help` at all.
+        _, recorded = self._gate(sts_rc=1, post_login_sts_rc=0)
+        self.assertNotIn("help", [a for _, args in recorded for a in args], recorded)
 
 
 class ConfiguredProfileIsPassedThrough(GateHarness):

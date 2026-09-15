@@ -103,6 +103,7 @@ globbable
 gpgsign
 granularities
 griefer
+groff
 gyen
 générale
 headshot
