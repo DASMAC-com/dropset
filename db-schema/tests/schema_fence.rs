@@ -3,6 +3,7 @@
 // cspell:word matviews
 // cspell:word schemaname
 // cspell:word tablename
+// cspell:word timestamptz
 // cspell:word unlogged
 // cspell:word unprovisioned
 // cspell:word viewname
@@ -1831,4 +1832,136 @@ async fn fair_price_leg_stale_bounds_reject_what_they_name() {
             "{what}"
         );
     }
+}
+
+/// The FX session fence brackets the weekend, in Eastern time rather than at a
+/// fixed UTC offset, and leaves nothing covering an instant past its horizon.
+///
+/// The existence probe in `0015_fx_session_window.fence` cannot see any of this:
+/// a view resolving to the wrong spans would still exist. Each assertion below
+/// pins a property that a plausible rewrite would break.
+///
+/// **The daylight-saving assertion is the substantive one**, and it is the whole
+/// reason the boundary lives in Postgres rather than in application code. The
+/// rule is one wall-clock instant — Friday 17:00 in New York — so it is a
+/// *different* UTC instant either side of a transition. A view that hardcoded a
+/// UTC hour would pass every other assertion here and fail exactly one of these
+/// two, which is the defect this migration replaced.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn the_fx_session_fence_brackets_the_weekend() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    for (what, instant, expected) in [
+        ("a Saturday midday", "2026-09-12T12:00:00Z", "closed"),
+        ("a Wednesday midday", "2026-09-09T12:00:00Z", "open"),
+        // Either side of a Friday close, in summer when 17:00 ET is 21:00 UTC.
+        ("just before a Friday close", "2026-07-03T20:59:00Z", "open"),
+        (
+            "just after a Friday close",
+            "2026-07-03T21:01:00Z",
+            "closed",
+        ),
+    ] {
+        let state: String = sqlx::query_scalar(
+            "SELECT state FROM fx_session_window \
+             WHERE $1::text::timestamptz >= starts_at \
+               AND $1::text::timestamptz < ends_at",
+        )
+        .bind(instant)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("{what} ({instant}) must be covered: {e}"));
+        assert_eq!(state, expected, "{what} ({instant})");
+    }
+
+    // 17:00 ET is 21:00 UTC under EDT and 22:00 UTC under EST. Both are asserted,
+    // because a view that got the zone wrong in a fixed direction would still
+    // satisfy one of them.
+    for (what, day, expected_utc) in [
+        (
+            "a summer Friday close (EDT)",
+            "2026-07-03",
+            "2026-07-03 21:00:00",
+        ),
+        (
+            "a winter Friday close (EST)",
+            "2026-01-09",
+            "2026-01-09 22:00:00",
+        ),
+    ] {
+        let closes_at: String = sqlx::query_scalar(
+            "SELECT to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') \
+             FROM fx_session_window \
+             WHERE state = 'closed' \
+               AND starts_at >= ($1 || 'T00:00:00Z')::timestamptz \
+               AND starts_at < ($1 || 'T00:00:00Z')::timestamptz + INTERVAL '1 day'",
+        )
+        .bind(day)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("{what} must exist: {e}"));
+        assert_eq!(closes_at, expected_utc, "{what}");
+    }
+
+    // Contiguity is what lets a consumer read three states from two: with no gap
+    // between spans, an uncovered instant can only mean the authority has nothing
+    // to say, never that the market is shut.
+    let discontinuities: i64 = sqlx::query_scalar(
+        "WITH ordered AS ( \
+             SELECT ends_at, LEAD(starts_at) OVER (ORDER BY starts_at) AS next_starts \
+             FROM fx_session_window \
+         ) \
+         SELECT count(*) FROM ordered \
+         WHERE next_starts IS NOT NULL AND next_starts <> ends_at",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("contiguity probe");
+    assert_eq!(
+        discontinuities, 0,
+        "spans must abut exactly: a gap would read as an unestablished session \
+         and halt every consumer, an overlap would make the state ambiguous"
+    );
+
+    // And the third state is reachable, which is the property the fail-closed
+    // read depends on. If this ever returned a row, running past the horizon
+    // would silently resume quoting instead of halting.
+    let covered: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM fx_session_window \
+         WHERE $1::text::timestamptz >= starts_at \
+           AND $1::text::timestamptz < ends_at",
+    )
+    .bind("2099-01-01T00:00:00Z")
+    .fetch_one(&pool)
+    .await
+    .expect("horizon probe");
+    assert_eq!(
+        covered, 0,
+        "past the generated horizon nothing may cover an instant — that absence \
+         is what a consumer reads as unestablished"
+    );
+
+    // The horizon must also be GENEROUS, which the probe above cannot see. A
+    // truncated `generate_series` end bound would leave 2099 uncovered and pass
+    // every other assertion here, while bringing "every consumer halts" forward
+    // by years. The migration rests on that generosity explicitly, and its bytes
+    // are immutable once applied, so an accidental truncation could only be
+    // corrected by a whole further migration.
+    let far_ahead_covered: bool = sqlx::query_scalar(
+        "SELECT EXISTS ( \
+             SELECT 1 FROM fx_session_window \
+             WHERE now() + INTERVAL '5 years' >= starts_at \
+               AND now() + INTERVAL '5 years' < ends_at \
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("horizon generosity probe");
+    assert!(
+        far_ahead_covered,
+        "the horizon must still cover an instant five years out; a truncated end \
+         bound satisfies every other assertion in this test"
+    );
 }

@@ -51,10 +51,27 @@
 //! default: it is a fine corroborating tape and nobody has argued it should
 //! stand alone.
 //!
+//! **Twelve Data is also a grid rather than a self-fencing tape**, which is a
+//! second and independent thing about it. It emits a bar for every interval
+//! whether or not anyone traded, so unlike OANDA it does not go quiet when the FX
+//! market shuts and its staleness bound never fences it.
+//!
+//! That fact lives *here*, in the venue roster, rather than in the pricing crate
+//! — which is the crate's own principle, since it never interprets a source name
+//! and venue identity belongs to the consumer. The crate is told the **session
+//! state** and empties the FX leg wholesale on a shut market (see
+//! [`dropset_fair_value::FxSession`]), so it needs to know nothing about which
+//! venues can self-fence. An earlier revision of this change pushed that
+//! knowledge down into the crate as a per-candidate designation; it became
+//! redundant once the fence was an invariant on the leg rather than a rule about
+//! sources.
+//!
 //! Note "trusted" is not a [`dropset_fair_value::SourceClass`] — that enum is
-//! `Tape` or `Reference` and nothing else. Trust is a separate attribute of a
-//! candidate, which is why [`FxCandidateKind`] below is the product of the two
-//! rather than an extension of either.
+//! `Tape` or `Reference` and nothing else, and it prices the staleness bound,
+//! which a grid venue is entitled to take at tape cadence while its market is
+//! open. Trust is a separate attribute of a candidate, which is why
+//! [`FxCandidateKind`] below is the product of the two rather than an extension
+//! of either.
 
 use std::time::Duration;
 
@@ -79,20 +96,37 @@ pub const FX_STORE_SOURCES: [&str; 3] = [SOURCE_OANDA, SOURCE_TWELVEDATA, SOURCE
 
 /// How a store venue's reading is offered to the engine.
 ///
-/// This is the product of two independent things — the engine's `SourceClass`
-/// (`Tape` or `Reference`) and whether the candidate is trusted to stand alone
-/// — because the engine models them separately: class picks the staleness
-/// bound and whether the reading joins the fast median, trust decides whether
-/// one source is a sufficient leg. Keeping the mapping here as data, rather
-/// than as a chain of `if source == …` at the call site, is what lets the
-/// designation be tested without a database or a tick loop.
+/// This is the product of three independent things — the engine's `SourceClass`
+/// (`Tape` or `Reference`), whether the candidate is trusted to stand alone, and
+/// whether its liveness can be observed at all — because the engine models them
+/// separately: class picks the staleness bound and whether the reading joins the
+/// fast median, trust decides whether one source is a sufficient leg, and the
+/// session designation decides whether the reading survives a shut market.
+/// Keeping the mapping here as data, rather than as a chain of
+/// `if source == …` at the call site, is what lets the designation be tested
+/// without a database or a tick loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FxCandidateKind {
-    /// A live tape that still needs corroboration.
+    /// A live tape that still needs corroboration, and that goes quiet when its
+    /// market shuts — so the staleness bound fences it unaided.
     Tape,
     /// A live tape designated believable alone — the bottom rung of the
     /// degrade ladder rests on this existing.
     TrustedTape,
+    /// A live tape that publishes on a **grid**: a bar every interval whether or
+    /// not anyone traded, so it keeps printing straight through the close and its
+    /// staleness bound never fences it.
+    ///
+    /// Offered exactly like [`FxCandidateKind::Tape`], and that is the whole
+    /// behavioral story — this variant records a **fact about the venue**, not a
+    /// different handling. It exists because the fact is load-bearing and
+    /// undiscoverable from the reading itself: such a venue reports the same shape
+    /// of bar either side of the close, so nothing downstream can infer the
+    /// session from it. The engine is told the session state instead and empties
+    /// the FX leg wholesale on a shut market — see
+    /// [`dropset_fair_value::FxSession`] — which is why no per-source withdrawal
+    /// is needed here.
+    GridTape,
     /// A slow fix: authoritative for the moment it names, kept out of the fast
     /// median, and governed by the far looser reference staleness bound.
     Reference,
@@ -108,7 +142,11 @@ pub enum FxCandidateKind {
 pub fn fx_candidate_kind(source: &str) -> Option<FxCandidateKind> {
     match source {
         SOURCE_OANDA => Some(FxCandidateKind::TrustedTape),
-        SOURCE_TWELVEDATA => Some(FxCandidateKind::Tape),
+        // A grid, not a self-fencing tape: measured across a full window, it emits a
+        // bar for every interval with no intraday gaps and identical bar counts
+        // across pairs, including 28.6% of its series outside the FX session with
+        // 99% of those bars moving. Its silence therefore never marks the close.
+        SOURCE_TWELVEDATA => Some(FxCandidateKind::GridTape),
         SOURCE_ALPHAVANTAGE => Some(FxCandidateKind::Reference),
         _ => None,
     }
@@ -127,10 +165,18 @@ pub fn fx_candidate_kind(source: &str) -> Option<FxCandidateKind> {
 /// **contributors** — the sources actually credited in the value — rather than
 /// about what was offered, so a tape that was offered and then dropped for
 /// being stale correctly does not count.
+/// A [`FxCandidateKind::GridTape`] counts, because in session it is a live tape
+/// in every sense this question cares about. It needs no exclusion here, and both
+/// untrustworthy windows are covered — by different mechanisms, which is why this
+/// is worth stating rather than asserting a single one. On a **shut** market the
+/// engine empties the FX leg, so such a source cannot be credited in the value at
+/// all. On an **unestablished** session the composition pauses before this is
+/// consulted. Note the pause arm still reports the leg for diagnostics, so a grid
+/// venue may appear in the per-leg view without ever being a contributor.
 pub fn is_tape_source(source: &str) -> bool {
     matches!(
         fx_candidate_kind(source),
-        Some(FxCandidateKind::Tape | FxCandidateKind::TrustedTape)
+        Some(FxCandidateKind::Tape | FxCandidateKind::TrustedTape | FxCandidateKind::GridTape)
     ) || source == PYTH_SOURCE
 }
 
@@ -198,6 +244,7 @@ pub fn push_store_candidate(
     match fx_candidate_kind(source) {
         Some(FxCandidateKind::TrustedTape) => candidates.push_trusted(source, reading),
         Some(FxCandidateKind::Tape) => candidates.push(source, reading),
+        Some(FxCandidateKind::GridTape) => candidates.push(source, reading),
         Some(FxCandidateKind::Reference) => candidates.push_reference(source, reading),
         None => candidates,
     }
@@ -581,7 +628,9 @@ mod tests {
         );
         assert_eq!(
             fx_candidate_kind(SOURCE_TWELVEDATA),
-            Some(FxCandidateKind::Tape)
+            Some(FxCandidateKind::GridTape),
+            "a gap-free venue that prints through the close is a grid, so the \
+             engine has to be told the session is shut before it can withdraw it"
         );
         assert_eq!(
             fx_candidate_kind(SOURCE_ALPHAVANTAGE),
@@ -623,7 +672,11 @@ mod tests {
         for source in FX_STORE_SOURCES {
             match fx_candidate_kind(source) {
                 Some(FxCandidateKind::Reference) => seen_reference = true,
-                Some(FxCandidateKind::Tape | FxCandidateKind::TrustedTape) => assert!(
+                Some(
+                    FxCandidateKind::Tape
+                    | FxCandidateKind::TrustedTape
+                    | FxCandidateKind::GridTape,
+                ) => assert!(
                     !seen_reference,
                     "{source} is a tape offered after a reference — an over-full leg \
                      would drop it and keep the daily fix"

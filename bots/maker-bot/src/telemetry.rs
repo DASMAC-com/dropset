@@ -1825,7 +1825,12 @@ mod tests {
             static_usd: 1.14,
         };
         let mut engine = FairValueEngine::new(FairValueConfig::default());
-        let fair = engine.compose(legs, Duration::from_secs(5), Default::default());
+        // Stated, not defaulted: the default session is unestablished and pauses.
+        let fair = engine.compose(
+            legs,
+            Duration::from_secs(5),
+            dropset_fair_value::ClockCtx::in_session(),
+        );
 
         let rows = leg_samples(7, "EURC", &legs, STALE, BAND, &fair);
         let basis = rows
@@ -1893,13 +1898,21 @@ mod tests {
         };
 
         // Seed, then step the tape far enough to trip the innovation gate.
+        //
+        // The session is stated rather than defaulted: `ClockCtx`'s default is the
+        // unestablished session, which pauses before the estimators advance, and
+        // this test is about a tick that composes.
         engine.compose(
             pair(1.1400, 1.1401),
             Duration::from_secs(5),
-            Default::default(),
+            dropset_fair_value::ClockCtx::in_session(),
         );
         let legs = pair(1.1600, 1.1601);
-        let fair = engine.compose(legs, Duration::from_secs(5), Default::default());
+        let fair = engine.compose(
+            legs,
+            Duration::from_secs(5),
+            dropset_fair_value::ClockCtx::in_session(),
+        );
 
         let rows = leg_samples(9, "EURC", &legs, STALE, BAND, &fair);
         let fx = rows.iter().find(|r| r.leg == LEG_FX).unwrap();

@@ -84,8 +84,8 @@ pub use consensus::{
     SourceClass, MAX_CANDIDATES,
 };
 pub use engine::{
-    observed_basis, Anchor, ClockCtx, Degrade, FairValue, FairValueEngine, Health, LegReport, Legs,
-    Regime,
+    observed_basis, Anchor, ClockCtx, Degrade, FairValue, FairValueEngine, FxSession, Health,
+    LegReport, Legs, Regime,
 };
 // `FusedContribution`, not `Contribution`, so it cannot be mistaken for
 // `Contributor` above. The two are different mechanisms' attribution and the

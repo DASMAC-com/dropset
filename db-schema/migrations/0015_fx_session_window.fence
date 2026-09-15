@@ -1,0 +1,26 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# The existence probe is worth little on its own here: a view that resolved to
+# the wrong spans would still exist. What pins the content is
+# `the_fx_session_fence_brackets_the_weekend` in that same test file. What it
+# asserts, in full — because this list is what a later reader will trim the test
+# against, so an omission here invites deleting the property it omits:
+#
+#   * a known Saturday instant is covered by a 'closed' row, a known midweek
+#     instant by an 'open' row, and both sides of one Friday close;
+#   * the Friday close lands at 21:00 UTC under EDT and 22:00 UTC under EST.
+#     This is the substantive one: a view hardcoding a fixed UTC hour satisfies
+#     every other assertion here and fails exactly one of these two;
+#   * the spans abut exactly, checked exhaustively over the whole view rather
+#     than across a sampled range;
+#   * nothing covers an instant past the horizon, which is what makes the
+#     fail-closed third state reachable at all; and
+#   * something still covers an instant five years out, so the horizon is
+#     generous rather than merely non-empty — a truncated end bound passes
+#     every other assertion.
+#
+# `rows fx_session_window = N` is deliberately NOT used. The row count is a
+# function of the generated horizon, so pinning it would turn any later
+# extension of that horizon into a failing assertion here while saying nothing
+# about whether the boundary is right.
+view fx_session_window
