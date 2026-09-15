@@ -234,12 +234,18 @@ stray (a broken guard, an actively hurting verb) can be
 promoted on the spot rather than waiting for the rhythm.
 
 `Claude meta` differs from the other two in where promotion
-leads: a parked meta stray is consumed by the next **batch
+leads: a parked meta **stray** is consumed by the next **batch
 assembly** rather than being pulled on its own, and a
 meta-flavored *audit* finding is promoted by swapping its
 milestone from `Audit findings` to `Claude meta` — not by
-moving it to Backlog. Detail:
-`docs/conventions/linear-automation.md`.
+moving it to Backlog.
+
+**The carve-out is a PROMOTED batch**, which is pulled on its
+own — see "Claude: meta-work prefix" above, and
+`docs/conventions/linear-automation.md` → "An already-assembled
+parked batch is a promotion candidate, not a fold input" for
+the full rule, including what stays a legitimate fold input.
+Detail: `docs/conventions/linear-automation.md`.
 
 ### An audit is a board issue, not a directive
 

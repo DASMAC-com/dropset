@@ -1,6 +1,6 @@
 ---
 name: audit
-description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. This RANDOM rotation is now an explicitly ad-hoc invocation only — it is no longer any skill's default: housekeeping runs no audit at all, and targeted auditing reaches the board as a planning-filed audit issue that a pulling session executes as one scoped audit-scope run. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent issues (folding coupled findings that share a PR) in state Todo plus the `Audit findings` project milestone so they land PARKED rather than in the pull queue, files no relations or collision links at all (never a blocking edge — blocking is human-curated), announces counts and titles only, and stops. The adversarial sub-agent cross-check is authorized by this invocation; never substitute an inline pass and never silently skip it. Sequencing a parked finding into the Backlog is the `plan` skill's job, never this one's. No loop, no finding cap, no re-invocation — run it again for another rotation.
+description: One bounded platform-audit rotation, run once to completion — a fixed 7-unit pass that interleaves four randomly-chosen non-generated files (each audited via the `audit-scope` engine) with one randomly-chosen subsystem (internal-architecture lens), one randomly-chosen inter-subsystem interface (seam / contract-drift lens), and one repo-layout + spec-health pass, each adversarially cross-checked. This RANDOM rotation is now an explicitly ad-hoc invocation only — it is no longer any skill's default: housekeeping runs no audit at all, and targeted auditing reaches the board as a planning-filed audit issue that a pulling session executes as one scoped audit-scope run. Dedups against open or resolved Linear issues, files confirmed findings as the fewest coherent issues (folding coupled findings that share a PR, bounded to a short session — a larger coherent set splits into sequential PRs of roughly 4–5 findings each) in state Todo plus the `Audit findings` project milestone so they land PARKED rather than in the pull queue, files no relations or collision links at all (never a blocking edge — blocking is human-curated), announces counts and titles only, and stops. The adversarial sub-agent cross-check is authorized by this invocation; never substitute an inline pass and never silently skip it. Every audit runs as an `explore` task in its own worktree named for the audit issue's tag — seat substrate, since an audit only looks and researches — with the issue held In Progress until ratification-plus-fold so the prune and purge cannot clear it mid-flight. Sequencing a parked finding into the Backlog is the `plan` skill's job, never this one's. No loop, no finding cap, no re-invocation — run it again for another rotation.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -72,6 +72,82 @@ reason when it files none).
 
 This skill sets `disable-model-invocation: false`, so it can be invoked
 through the Skill tool directly.
+
+## Where it runs
+
+**Every audit runs as an `explore` task, in its own worktree.** Operator
+rule, 2026-09-11, and it covers both shapes — the weekly agent-infra run
+and any audit issue a planning session's heartbeat files. Launch it with
+the plain verb, naming the audit issue's own tag:
+
+```sh
+explore 1196
+```
+
+The worktree is **implicit in the verb** — there is no flag and no extra
+argument, and the bare number normalizes the same way `task` normalizes
+it, so this gives worktree and branch `eng-1196`. The session's display
+name stays role-prefixed (`exp-1196`) so a fleet listing still reads by
+role. `explore <name>` is **idempotent** — it creates the session if
+absent and resumes it if present — so an audit is re-entered with the
+exact verb that started it; there is no separate resume subcommand.
+
+**The mechanism is not defined here.** It is owned by
+`docs/conventions/local-integrations.md`, which holds the launch shape, the
+naming rule, and the worktree's lifecycle. This section states only the
+**duty**: an audit takes that shape.
+
+**Why `explore` rather than the Bedrock implementation shape.** An audit
+only looks, researches, and produces either a spec or filed findings —
+it does no multi-turn PR creation, which is what the implementation
+substrate is tuned for. So it wants the seat, on the mandated model, and
+it gets it without a carve-out: `explore` is already a **seat session by
+role** (per `CLAUDE.md` → "Session substrate: capability, not
+attendance"), so an audit running as an explore task inherits the seat
+rather than claiming an exception to the Bedrock default.
+
+**Why a worktree.** A findings loop that lives only in a session's
+transcript is invisible to the cleanup machinery, which cannot tell a
+live audit from a finished one. Naming the worktree after the issue makes
+the audit legible to the machinery already keyed on `eng-###`: in
+particular `housekeeping` prunes a worktree on its issue's **status
+type**, so an In Progress issue is not a prune candidate. Any spec or
+findings file lives **in the worktree**, never in a scratch path outside
+the repo.
+
+Be precise about the scope of that protection, because it is easy to
+overstate: it covers the **worktree prune**. The conversation purge is
+governed by an age rule and protects a transcript on an **open PR** —
+which an audit does not have (below) — so a transcript is not covered by
+the issue's state.
+
+**The worktree is temporary working state, and an audit opens no PR.** It
+is not a branch on its way to `main`: an audit's deliverable is **filed
+findings or a ratified spec**, and the worktree is only where that work
+is held while it is live.
+
+So the guarantee is a **pair**, and the second half is what makes the
+first safe to rely on:
+
+- `housekeeping`'s prune-on-status-type protects the working state for as
+  long as the issue is honest — In Progress and In Review are never prune
+  candidates, and a session never self-marks Done; and
+- **durable state reaches Linear before the handoff**, so the worktree's
+  contents are expendable *by construction* at any moment the issue state
+  could be lying.
+
+State it that way round rather than as "don't prune a live audit's
+worktree", which inverts the ruling by making the worktree sound
+precious. The failure this comes from was **a file being the only copy** —
+that is what is forbidden, and it holds even when the issue state is
+wrong.
+
+**And the issue stays In Progress for as long as the findings loop is
+open** — it goes Done only at **ratification plus fold**, never at the
+handoff message. This is the specific failure the ruling came from: a
+spec was handed off with its issue already marked Done, and nothing
+afterwards recognized it as live work, so it sat untracked while the
+cleanup machinery was free to remove it.
 
 ## The rotation
 
@@ -356,7 +432,9 @@ Only findings that survive the check proceed.
 
 **File the confirmed findings as parked issues** — folded into the
 fewest coherent PRs (see "Fold coupled findings into the fewest coherent
-issues" below), one issue per PR-group rather than one per finding.
+issues" below), one issue per PR-group rather than one per finding, and
+a PR-group too large for a short session split into sequential issues
+rather than grown without bound.
 File exactly as the
 `linear-task` skill does: a **plain issue with no parent**,
 assigned to the configured assignee, into the shared destination —
@@ -484,6 +562,30 @@ group you've already filed, **append it to that issue** rather than
 filing a fresh one. Nothing **merges or closes issues** for you, so
 coupled findings only become one issue if you file — or fold — them
 that way.
+
+**The fold is bounded by a short session, and the append step above is
+where a rotation breaks it.** Coherence says what may be folded; it
+never licensed one issue growing without bound. A coherent set larger
+than a short session splits into **sequential PRs** of roughly **4–5
+findings** each, because session cost is roughly quadratic in session
+length — see `docs/conventions/context-economy.md` → "Session length is
+itself a cost lever".
+
+The hazard is specific to this skill's shape: a seven-unit rotation
+keeps joining later findings to a group it has already filed, so the
+count climbs **one finding at a time, with no single decision to grow
+it**. Nothing in the append instruction asks how big the group already
+is, which is how an unbounded issue gets built by a sequence of
+individually-reasonable appends. So **count the parts already in a
+group before appending** — at **five**, file the next finding as a fresh
+sequential issue rather than a sixth part, and name the earlier issue in
+its body with the `**Suspected dependency**:` line above. That line
+exists for exactly this ordered case, and a rotation still files **no
+edge**.
+
+Where the two rules pull against each other: coherence wins at the
+floor — never fold across an app, language or deploy unit to reach 4–5 —
+and the size bound wins at the ceiling.
 
 **Grow an issue with `patch`, never a full-body rewrite.** This is the
 highest-volume append in the repo — a seven-unit rotation can fold into

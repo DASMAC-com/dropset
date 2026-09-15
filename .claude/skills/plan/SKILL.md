@@ -227,6 +227,30 @@ as before (state `Todo` plus the **Audit findings**
 milestone). Pulling and invoking the issue **is** the
 authorization for that run's adversarial sub-agent fan-out.
 
+**An audit issue dispatches as `explore`-with-worktree, not
+as an implementation task** — operator rule, 2026-09-11. So
+when you dispatch one, the verb is `explore <tag>` (the
+worktree is implicit in the verb, and takes the issue's own
+tag for both worktree and branch), never `task <tag>`. An
+audit only looks and researches and produces a spec or filed
+findings, so it wants the seat rather than the implementation
+substrate; `explore` is already a seat role, so this needs no
+carve-out. The worktree is **temporary working state** and an
+audit opens no PR. The mechanism is
+`docs/conventions/local-integrations.md`; the reasoning, and
+what the issue state does and does not protect, is
+`.claude/skills/audit/SKILL.md` → "Where it runs".
+
+Two consequences for this session specifically. **Say the
+dispatch verb in the issue's sequencing prose**, so the shape
+survives the gap between filing and pulling — an audit issue
+filed today may be pulled days later by a session that reads
+only the body. And **do not expect the issue to reach Done at
+its handoff**: an audit sits **In Progress** for as long as
+its findings loop is open and is ratified-and-folded before it
+closes, so a bootstrap that finds a weeks-old audit still In
+Progress is looking at a live session, not a stalled one.
+
 **An audit issue is a real capacity spend, so it competes in
 the queue like everything else.** That visibility is the
 point of the model: an audit that cannot win a priority

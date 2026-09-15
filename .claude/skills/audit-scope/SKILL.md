@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear issues, each parked in state Todo under the `Audit findings` project milestone rather than dropped into the pull queue, and with no relations or collision links filed at all. The sub-agent fan-out is authorized by the invocation itself — never substitute an inline pass, never silently skip it. The shared audit engine that `audit` drives one file at a time, and that a session pulling a planning-filed audit issue runs once against that issue's named target.
+description: Audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — across the dimensions its platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness), with adversarial sub-agent cross-checking, folding coupled findings and filing the fewest coherent Linear issues — bounded to a short session, so a coherent set larger than one session's worth splits into sequential PRs of roughly 4–5 findings each — every issue parked in state Todo under the `Audit findings` project milestone rather than dropped into the pull queue, and with no relations or collision links filed at all. The sub-agent fan-out is authorized by the invocation itself — never substitute an inline pass, never silently skip it. The shared audit engine that `audit` drives one file at a time, and that a session pulling a planning-filed audit issue runs once against that issue's named target — as an `explore` task in its own worktree, with the issue In Progress until ratification-plus-fold.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -13,7 +13,8 @@ Audit a defined scope of the codebase and file the
 confirmed findings as Linear issues **parked under the
 `Audit findings` project milestone** — folded
 into the fewest coherent PRs (coupled findings that share a
-PR become one issue; see Notes), in the same destination and
+PR become one issue, up to the size of a short session; see
+Notes), in the same destination and
 format `linear-task` and `audit` use. Use when a project
 milestone lands, a feature ships, or before declaring a
 subsystem "stable", and as the engine `audit` calls for its
@@ -81,6 +82,34 @@ rotation is `/audit`, an ad-hoc invocation.
 The work in between — classify the scope, fan out the
 dimensions, adversarially cross-check — is identical
 either way.
+
+## Where it runs
+
+**A session pulling an audit issue runs as an `explore`
+task, in its own worktree** — operator rule, 2026-09-11,
+covering every audit however it was targeted. Launch it
+with the plain verb naming the issue's tag (`explore 1196`);
+the worktree is implicit in the verb, and it takes the
+issue's own tag for both worktree and branch. The mechanism
+is owned by `docs/conventions/local-integrations.md`; the
+reasoning, and what the worktree's protection does and does
+not cover, is stated once in
+`.claude/skills/audit/SKILL.md` → "Where it runs". Don't
+restate either here.
+
+Two duties this skill owns directly:
+
+- **Findings files live in the worktree**, never in a scratch
+  path outside the repo.
+- **The audit issue stays In Progress while the findings
+  loop is open**, and reaches Done only at ratification
+  plus fold. Marking it Done at the handoff is the measured
+  mistake that produced the rule — and under the no-PR shape
+  it is the issue state that the cleanup machinery reads, so
+  an honest state is the whole of this skill's obligation.
+
+A **delegated** run inherits its caller's session and
+worktree and does none of this itself.
 
 ## Input
 
@@ -336,7 +365,9 @@ Optional (ask on a direct run if not provided):
      milestone**, otherwise exactly as `linear-task` does —
      **folding coupled findings into the fewest coherent
      PRs** (see the folding rule in Notes), one issue per
-     PR-group rather than one per finding.
+     PR-group rather than one per finding — and splitting a
+     PR-group too large for a short session into sequential
+     issues rather than letting one grow without bound.
 
      Parked means *not in the pull queue*: a first-class
      open issue for dedup and search,
@@ -506,6 +537,7 @@ Optional (ask on a direct run if not provided):
   edits source files; it only files Linear issues (or
   returns findings). Fixes happen in normal PRs picked up
   from the Backlog.
+
 - **Fold coupled findings into the fewest coherent issues.**
   When findings share a PR — same subsystem, crate, or
   language-domain, and they would land as one change (e.g.
@@ -516,10 +548,22 @@ Optional (ask on a direct run if not provided):
   coherence**, not same-file; but never fold across separate
   apps, languages, or deploy units (the **coherence floor**).
   Nothing merges issues for you, so coupled findings become
-  one issue only if you file them that way. Full rule:
+  one issue only if you file them that way.
+
+  **That floor bounds what may be *separated*, not how large
+  one issue may grow.** A coherent set larger than a short
+  session splits into **sequential PRs** of roughly 4–5
+  findings each, because session cost is roughly quadratic in
+  session length — see `docs/conventions/context-economy.md`
+  → "Session length is itself a cost lever". Where the two
+  pull against each other, coherence wins at the floor and
+  the size bound wins at the ceiling: never fold across a
+  deploy unit to reach 4–5, and never carry a coherent set
+  past a short session to avoid a second issue. Full rule:
   `CLAUDE.md` → "Structured filing fields" /
   `docs/conventions/linear-automation.md` → "Fold coupled
   findings into one issue".
+
 - Shell discipline (per `CLAUDE.md`): every command is a
   single bare call that reduces to an allow-glob — no
   `&&`, pipes, `$(…)`, redirects, or heredocs; content

@@ -542,12 +542,30 @@ is how a filer keeps its own output out of the pull queue.
 
 **Where promotion leads differs by milestone.** `Audit findings` and
 `Trim levers` promote into pullable Backlog work. `Claude meta` does
-not: a parked meta stray is consumed by the next **batch assembly**
+not: a parked meta **stray** is consumed by the next **batch assembly**
 rather than pulled on its own, so "promotion" there means being folded
 into a batch. And a meta-flavored *audit* finding is promoted by
 **swapping** its milestone from `Audit findings` to `Claude meta` — it
 stays parked, changing which rhythm will pick it up, rather than
 becoming available work.
+
+**A batch's own promotion is the same two halves**, and which batch is
+pulled follows from that: a **promoted** batch is pulled on its own,
+while an assembled batch the bootstrap does not promote stays parked
+like any other meta issue. The fold-input question is settled below,
+under "An already-assembled parked batch is a promotion candidate, not
+a fold input" — read it there rather than restating it, because the
+distinction turns on **parked vs. Backlog** and a shortened version
+loses exactly that.
+
+Worth recording *why* this needed saying at all, since neither statement
+carries the reason: retiring the one-giant-batch form broke an identity
+the old shape had made invisible. When assembly produced exactly one
+batch and promoted it in the same act, *assembling* and *promoting* were
+the same event, so no rule had to say which milestone state a batch
+rests in. Now that a bootstrap assembles several and promotes only a
+file-disjoint subset, the two come apart, and the remainder needs a
+defined home.
 
 **Every bootstrap says each parked count out loud.** Parked must be
 invisible to the queue without being invisible to the operator, and a

@@ -340,18 +340,50 @@ unblocked in the operator's Next view. The `Trim levers` milestone, this
 skill's own writer, and the per-lever fold below are all unchanged — only
 where the *output* lands moved, and how many outputs there are.
 
-**Compose the body with the tool, not by hand:**
+**Compose the bodies with the tool, not by hand — one call for the whole
+fold, however many tasks it splits into:**
 
 ```sh
 python3 .claude/tools/trim_levers.py compose \
-  --bodies-file <scratchpad>/levers.md --out <scratchpad>/folded.md
+  --bodies-file <scratchpad>/levers.md \
+  --groups-file <scratchpad>/groups.json --out-dir <scratchpad>/tasks
 ```
 
-It reads the `--bodies-out` dump from step 2 and emits the aggregated
-body, printing only a summary — the body stays on disk, which is the same
-zero-echo trade as the fetch half. `--exclude ENG-1,ENG-2` drops levers
-already folded; `--start N` continues the numbering when a batch is
-composed in halves (the summary prints the next part number).
+`groups.json` carries the themes you chose in step 3 — a JSON array of
+`{"title": …, "levers": […]}` objects, one per task. That grouping is
+the one part of the fold the tool cannot decide for you; everything
+after it is mechanical. It emits one conforming body per group in a
+single pass and prints only a summary naming each file, so the bodies
+stay on disk — the same zero-echo trade as the fetch half.
+
+**Each task numbers its parts from 1.** A task is a whole issue, so its
+parts are Part 1..N *of that issue*, not a slice of one continuous
+sequence.
+
+**It refuses the two ways an N-task fold loses a lever**, which is the
+reason this is one call rather than one per task: a lever assigned to
+**no** group, and a lever assigned to **two**. The first is the
+dangerous one — an unassigned lever would be folded nowhere while looking
+like a complete run, so the loss has nothing pointing at it. It also
+errors on a grouped identifier absent from the dump (unlike `--exclude`,
+a group assignment is authoritative for the dump it is run against), on a
+title carrying a newline or a `|` (which would forge a line in the
+summary a caller parses), and on any part with no `**Fingerprint**:`
+line — naming **every** offender rather than the first.
+
+To leave a lever out deliberately, **close it with its reason** (step 6)
+and re-dump; `list` has no per-identifier filter, so there is no way to
+omit one from the dump directly.
+
+A group over five parts is an **advisory**, not a refusal: the size rule
+is explicitly "roughly 4–5", and a hard limit would push you into
+splitting a coherent theme to satisfy a tool.
+
+**The single-task mode is unchanged** for a one-off — `--out <file>`
+composes one body, with `--exclude ENG-1,ENG-2` to drop levers already
+folded and `--start N` to continue the numbering when a single task is
+composed in halves. The two modes cannot be mixed; flags from both are
+refused rather than silently resolved.
 
 **Why this is a tool.** Under the **now-retired** whole-pool ruling a
 fold carried the entire parked pool — one pass folded **41 levers,
@@ -373,10 +405,16 @@ kind of thing that belongs in committed code rather than in prose:
   that looks right. A hand fold that summarizes instead of carrying the
   body drops them, and the loss is invisible until a later pass refiles
   a lever that was already folded.
+- **Complete, disjoint assignment across the tasks.** Once a fold emits
+  several tasks, "every lever landed in exactly one of them" stops being
+  checkable by eye — and the failure is silent in both directions, since
+  step 5 closes the parked originals whether or not a part was written
+  for them. The tool holds the whole pool and the whole grouping in one
+  call, so it is the only place the check can be made at all.
 
-Read the composed file before filing — the tool guarantees structure and
-fingerprints, not that the umbrella title you write actually describes
-the pool.
+Read each composed file before filing — the tool guarantees structure,
+fingerprints, and that every lever landed in exactly one task, not that
+the title you gave a group actually describes the levers in it.
 
 Its body is **one `# Part N — <title>` section per lever**, and
 carries:
@@ -395,14 +433,28 @@ Set `state`, `priority` and any relations in the **creating** call — a
 follow-up write buys a second full body echo for nothing (same convention
 doc → "Relations and state belong in the CREATING call").
 
-**File it through the zero-echo writer, not `save_issue`:**
+**File them through the zero-echo writer, not `save_issue`** — one call
+per composed file, taking the title from the group you gave it and the
+path from the compose summary:
 
 ```sh
 python3 .claude/tools/linear_issue.py create \
-  --title 'Claude: <umbrella summary of this fold>' \
-  --body-file <scratchpad>/folded.md \
+  --title 'Claude: <this task's theme>' \
+  --body-file <scratchpad>/tasks/01-<slug>.md \
   --state Todo --milestone 'Claude meta' --priority 3
 ```
+
+The `--title` is the **whole** Linear title, prefix included — the same
+string you put in the group's `title` field, which is what the compose
+summary echoes back. Don't prepend `Claude:` a second time here.
+
+Composition is one call for the whole fold; **filing is one call per
+task**, since each is its own issue. **File exactly the paths the compose
+summary named — never a glob of the output directory.** A reused
+directory can hold a body from an earlier compose that this run did not
+write, and filing it creates a phantom task whose parts duplicate real
+ones. The tool prints an `ADVISORY` naming any such file, so the summary
+is the manifest and the directory is not.
 
 Team, project and assignee resolve from the `LINEAR_*` environment.
 
@@ -435,7 +487,20 @@ a normal PR.
 
 **5. Close the parked originals — this is load-bearing, not tidiness.**
 A folded lever's content now lives in the aggregated task, so the parked
-issue is discharged. Closing it is what keeps the **producer** working:
+issue is discharged.
+
+**Close per FILED TASK, not per composed pool.** The premise above —
+that the lever's content now lives in a task — holds only for a task you
+actually filed, and a fold now emits several. So close the levers named
+in **that task's** `folded` list, which the compose summary already
+prints per task, and only once you hold its issue identifier. A composed
+task you did not file leaves its levers **parked**, where the next fold
+picks them up.
+
+This is what makes the guarantee mechanical rather than a matter of
+remembering: the alternative is closing the whole pool on the assumption
+that every task got filed, which silently discards a lever's only copy
+if one did not. Closing it is what keeps the **producer** working:
 the fold copies each `**Fingerprint**:` line into the aggregated task, so
 from this moment a fingerprint probe legitimately matches **two** issues.
 `session-metrics` resolves that by appending only to a lever that is
