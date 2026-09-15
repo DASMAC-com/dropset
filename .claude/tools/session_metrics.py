@@ -6,10 +6,26 @@ recommend concrete trims.
 Given a ``--session-id``, the tool resolves the session's on-disk transcript
 itself, reads it (and its sub-agent transcripts) in its **own** process — so the
 multi-megabyte file never enters the model's context — and prints a compact,
-ranked summary: session-wide token totals, a cache-hit rate, the tools whose
-results cost the most, the single largest results, a per-sub-agent rollup, and
-the repeated command shapes that are candidates to harden into a tool. Pass
-``--json`` for the same data as JSON.
+ranked summary: what the session cost, session-wide token totals, how far its
+replayed prefix grew, a cache-hit rate, the tools whose results cost the most,
+the single largest results, a per-sub-agent rollup, and the repeated command
+shapes that are candidates to harden into a tool. Pass ``--json`` for the same
+data as JSON.
+
+**Dollars lead, and the report splits by substrate.** A Bedrock worker session
+is metered per token, so its headline is a dollar figure computed from its own
+transcript at the verified rates, with the prefix growth beside it — together
+they make the quadratic visible, since every turn replays the whole prefix and a
+session's bill is roughly its average prefix times its turn count. A **seat**
+session bills against the Claude subscription, whose internal pricing is not
+transparent, so it reports a token profile and deliberately **no** dollar
+figure. :func:`resolve_substrate` decides which, from the marker a launch
+writes, and fails toward the seat branch — a missing figure is a visible gap,
+while a wrong one silently corrupts the daily reconciliation.
+
+Per-session cost comes from the transcript rather than from AWS on purpose: Cost
+Explorer has no session dimension and lags up to a day, so AWS is the
+reconciliation path, not the source.
 
 The hardening table is ranked by **result size, not call count**, and labels each
 candidate with which cost it actually represents — ``context``, ``wall-clock``,
@@ -74,6 +90,36 @@ CONTEXT_MIN_AVG_BYTES = 400
 # as if it were a token sink when it cost ~20 tokens.
 RUN_QUIET_MARKER = "run_quiet.py"
 
+# Bedrock per-million-token rates, in US dollars, for the model the worker
+# sessions run on. **Verified 2026-09-11** against the real bill: pricing one
+# session's own transcript usage records at these rates was hand-checked against
+# the billed amount and agreed. That is a single end-to-end agreement, not a
+# measured error bound — do not read it as one. Named with that date so the
+# daily Cost Explorer
+# reconciliation in the planning session knows exactly what to re-check — a rate
+# change, a new billed model, or an unexplained line shows up as drift between
+# the billed day and the sum of the fleet's transcript-priced estimates.
+#
+# One-hour cache writes are the only write tier used here (this fleet's sessions
+# run with the 1h TTL), so there is deliberately no 5-minute rate: adding one
+# would invite pricing a write at a tier the session did not use.
+INPUT_RATE_PER_MTOK = 5.50
+OUTPUT_RATE_PER_MTOK = 27.50
+CACHE_READ_RATE_PER_MTOK = 0.55
+CACHE_WRITE_1H_RATE_PER_MTOK = 11.00
+
+# Where a launch records the substrate it started on, relative to the base repo.
+# Written by `_ds_substrate_write` in `.claude/shell/init.zsh` and read back by
+# the resume verbs; git-ignored, so it is per-machine state, not history.
+SUBSTRATE_DIR = Path(".claude") / "session-substrate"
+
+# The path segment that separates a worktree checkout from its base repo, as
+# `claude --worktree` lays them out: `<base>/.claude/worktrees/<tag>`.
+WORKTREE_SEGMENT = "/.claude/worktrees/"
+
+SUBSTRATE_BEDROCK = "bedrock"
+SUBSTRATE_SEAT = "seat"
+
 
 # --------------------------------------------------------------------------- #
 # Token-cost aggregation (mirrors the former Rust `model.rs`).
@@ -89,17 +135,92 @@ class Totals:
     cache_creation: int = 0
     cache_read: int = 0
     turns: int = 0
+    # The prefix carried by the first and last billed request. Every turn
+    # re-sends the whole conversation, so this pair is the growth curve that
+    # makes the quadratic visible: a session's bill is roughly the average
+    # prefix times the turn count, which is why a fat early payload is paid many
+    # times over and why session length is itself the largest cost lever.
+    prefix_first: int = 0
+    prefix_last: int = 0
+    prefix_max: int = 0
 
     def add(self, usage: dict) -> None:
-        self.input += int(usage.get("input_tokens", 0) or 0)
+        fresh = int(usage.get("input_tokens", 0) or 0)
+        written = int(usage.get("cache_creation_input_tokens", 0) or 0)
+        read = int(usage.get("cache_read_input_tokens", 0) or 0)
+        self.input += fresh
         self.output += int(usage.get("output_tokens", 0) or 0)
-        self.cache_creation += int(usage.get("cache_creation_input_tokens", 0) or 0)
-        self.cache_read += int(usage.get("cache_read_input_tokens", 0) or 0)
+        self.cache_creation += written
+        self.cache_read += read
+        # This request's prefix: everything the model had to process as input,
+        # whether it came fresh, from a cache write, or from a cache read.
+        prefix = fresh + written + read
+        # An all-zero usage block (an interrupted or errored message) moves
+        # NEITHER bound. The two ends fail differently and both badly: pinned as
+        # `prefix_first` it reports the whole of the first real prefix as growth,
+        # and pinned as `prefix_last` it renders a large negative shrink — which,
+        # because the growth line has a `−` branch, reads as a plausible
+        # compaction rather than as an error. The turn still counts, and its
+        # tokens are still summed above; only the prefix bounds skip it.
+        if prefix:
+            if not self.prefix_first:
+                self.prefix_first = prefix
+            self.prefix_last = prefix
+            self.prefix_max = max(self.prefix_max, prefix)
         self.turns += 1
 
     def total_input(self) -> int:
         """Total input the model processed: fresh input plus both cache tiers."""
         return self.input + self.cache_creation + self.cache_read
+
+    def prefix_growth(self) -> int:
+        """How much the replayed prefix grew from the first request to the last."""
+        return self.prefix_last - self.prefix_first
+
+
+@dataclass
+class Cost:
+    """A dollar breakdown of one token profile, at the verified Bedrock rates.
+
+    **Only ever rendered in the Markdown headline for a Bedrock session** — the
+    figures are always present in ``--json``, for tooling that wants them, and a
+    test pins them there on the seat branch too. It is the rendered report, not
+    the data, that withholds a seat session's cost. A seat session bills against
+    the Claude subscription, whose internal pricing is not transparent, so
+    pricing its tokens at worker rates would invent a number that appears
+    nowhere on any bill. :func:`resolve_substrate` decides which branch applies
+    and fails toward the seat one, because a wrong dollar figure is a worse
+    error than a missing one.
+    """
+
+    input: float = 0.0
+    output: float = 0.0
+    cache_read: float = 0.0
+    cache_write: float = 0.0
+
+    @classmethod
+    def price(cls, tokens: Totals | SubAgentLine) -> Cost:
+        """Price a token profile. Takes anything carrying the four token fields."""
+        per_mtok = 1_000_000.0
+        return cls(
+            input=tokens.input / per_mtok * INPUT_RATE_PER_MTOK,
+            output=tokens.output / per_mtok * OUTPUT_RATE_PER_MTOK,
+            cache_read=tokens.cache_read / per_mtok * CACHE_READ_RATE_PER_MTOK,
+            cache_write=(
+                tokens.cache_creation / per_mtok * CACHE_WRITE_1H_RATE_PER_MTOK
+            ),
+        )
+
+    def total(self) -> float:
+        return self.input + self.output + self.cache_read + self.cache_write
+
+    def plus(self, other: Cost) -> Cost:
+        return Cost(
+            input=self.input + other.input,
+            output=self.output + other.output,
+            cache_read=self.cache_read + other.cache_read,
+            cache_write=self.cache_write + other.cache_write,
+        )
 
 
 @dataclass
@@ -304,6 +425,11 @@ class SessionAggregator:
         # to the shape that produced it. Result bytes only become known at
         # tool_result time, one or more records after the tool_use.
         self._bash_sig_by_id: dict[str, str] = {}
+        # The working directory the session ran in, taken from the first record
+        # that carries one. This is what the substrate lookup keys off, and
+        # reading it from the transcript rather than from `Path.cwd()` is what
+        # lets a session be mined correctly from somewhere else entirely.
+        self.cwd: str | None = None
         self.parse_errors = 0
 
     # -- ingestion -------------------------------------------------------- #
@@ -360,6 +486,10 @@ class SessionAggregator:
     def _ingest_main_record(self, rec) -> None:
         if not isinstance(rec, dict):
             return
+        if self.cwd is None:
+            cwd = rec.get("cwd")
+            if isinstance(cwd, str) and cwd.strip():
+                self.cwd = cwd.strip()
         msg = rec.get("message")
         if not isinstance(msg, dict):
             return
@@ -436,8 +566,12 @@ class SessionAggregator:
 
     # -- finishing -------------------------------------------------------- #
 
-    def finish(self) -> dict:
-        """Rank and truncate into the final report dict."""
+    def finish(self, substrate: str | None = None) -> dict:
+        """Rank and truncate into the final report dict.
+
+        ``substrate`` overrides the marker lookup; passing ``None`` (the
+        default) resolves it from the session's own recorded working directory.
+        """
         total_input = self.totals.total_input()
         cache_hit_rate = (
             0.0 if total_input == 0 else self.totals.cache_read / total_input
@@ -491,8 +625,28 @@ class SessionAggregator:
         candidates_omitted = max(0, len(candidates) - HARDENING_TOP_N)
         candidates = candidates[:HARDENING_TOP_N]
 
+        if substrate is None:
+            substrate, substrate_reason = resolve_substrate(self.cwd)
+        else:
+            substrate_reason = "given explicitly"
+
+        # Sub-agent tokens bill exactly like the main session's, so a fan-out
+        # session's cost is mostly theirs — reporting only the main line would
+        # understate the very sessions the small-PRs convention targets. They are
+        # priced separately as well as summed, so the split stays visible.
+        session_cost = Cost.price(self.totals)
+        subagent_cost = Cost()
+        for line in subagents:
+            subagent_cost = subagent_cost.plus(Cost.price(line))
+
         return {
             "totals": self.totals,
+            "substrate": substrate,
+            "substrate_reason": substrate_reason,
+            "cwd": self.cwd,
+            "session_cost": session_cost,
+            "subagent_cost": subagent_cost,
+            "total_cost": session_cost.plus(subagent_cost),
             "cache_hit_rate": cache_hit_rate,
             "tools": tools,
             "top_sinks": sinks,
@@ -765,18 +919,84 @@ def human(n: int) -> str:
     return str(n)
 
 
+def money(dollars: float) -> str:
+    """Format a dollar amount, keeping cents legible for a cheap session."""
+    if dollars >= 10.0:
+        return f"${dollars:.0f}"
+    if dollars >= 1.0:
+        return f"${dollars:.2f}"
+    return f"${dollars:.3f}"
+
+
 def to_markdown(report: dict, session_label: str) -> str:
     """Render the compact Markdown summary printed by default."""
     totals: Totals = report["totals"]
     out: list[str] = []
     out.append(f"## Session metrics — {session_label}\n\n")
+
+    # **Dollars first, and only for a Bedrock worker.** The headline is the
+    # number the small-PRs convention is trying to drive down, so it leads; a
+    # seat session says so instead of being priced at worker rates.
+    if report["substrate"] == SUBSTRATE_BEDROCK:
+        total: Cost = report["total_cost"]
+        session: Cost = report["session_cost"]
+        sub: Cost = report["subagent_cost"]
+        out.append(f"**This session cost about {money(total.total())}** ")
+        if sub.total() > 0.0:
+            out.append(
+                "(main {} + sub-agents {}) ".format(
+                    money(session.total()), money(sub.total())
+                )
+            )
+        # Name where the substrate came from on this branch too. Without it an
+        # operator-asserted `--substrate bedrock` renders byte-identically to a
+        # marker-verified one — on precisely the figure the daily
+        # reconciliation consumes, where that provenance is the point.
+        out.append(
+            "at the verified Bedrock rates (2026-09-11); substrate {}.\n".format(
+                report["substrate_reason"]
+            )
+        )
+        # **(all agents)** is load-bearing: these four figures price
+        # `total_cost`, which includes sub-agents, while the `**Totals**` line
+        # just below counts the main session only. Unlabelled, the two adjacent
+        # lines invite a dollars-per-token ratio that is wrong on any fan-out.
+        out.append(
+            "**Cost breakdown** (all agents): cache-read {} · cache-write {} · "
+            "output {} · input {}\n".format(
+                money(total.cache_read),
+                money(total.cache_write),
+                money(total.output),
+                money(total.input),
+            )
+        )
+    else:
+        out.append(
+            "**Substrate**: seat — billed to the Claude subscription, whose "
+            "internal pricing is not transparent, so this reports a token "
+            "profile and no dollar figure ({}).\n".format(report["substrate_reason"])
+        )
+
     out.append(
-        "**Totals**: input {} · output {} · cache-write {} · cache-read {} · {} turns\n".format(
+        "**Totals** (main session): input {} · output {} · cache-write {} · "
+        "cache-read {} · {} turns\n".format(
             human(totals.input),
             human(totals.output),
             human(totals.cache_creation),
             human(totals.cache_read),
             totals.turns,
+        )
+    )
+    # The growth curve, which is what makes the quadratic legible: every turn
+    # replays the whole prefix, so cost tracks the average prefix times turns.
+    out.append(
+        "**Prefix**: {} → {} ({}{} across {} turns, peak {})\n".format(
+            human(totals.prefix_first),
+            human(totals.prefix_last),
+            "+" if totals.prefix_growth() >= 0 else "−",
+            human(abs(totals.prefix_growth())),
+            totals.turns,
+            human(totals.prefix_max),
         )
     )
     out.append(
@@ -864,6 +1084,18 @@ def to_json(report: dict) -> str:
                 "cache_creation": obj.cache_creation,
                 "cache_read": obj.cache_read,
                 "turns": obj.turns,
+                "prefix_first": obj.prefix_first,
+                "prefix_last": obj.prefix_last,
+                "prefix_max": obj.prefix_max,
+                "prefix_growth": obj.prefix_growth(),
+            }
+        if isinstance(obj, Cost):
+            return {
+                "input": round(obj.input, 6),
+                "output": round(obj.output, 6),
+                "cache_read": round(obj.cache_read, 6),
+                "cache_write": round(obj.cache_write, 6),
+                "total": round(obj.total(), 6),
             }
         if isinstance(obj, ToolLine):
             return {
@@ -911,6 +1143,124 @@ def claude_home() -> Path:
     if not home:
         raise RuntimeError("neither CLAUDE_CONFIG_DIR nor HOME is set")
     return Path(home) / ".claude"
+
+
+def tag_from_cwd(cwd: str | None) -> str | None:
+    """The worktree tag a session ran in, or ``None`` for a base-repo session.
+
+    Derived purely from the path — `claude --worktree` lays a worktree out at
+    ``<base>/.claude/worktrees/<tag>``, so the tag is the segment after that
+    marker. A base-repo session (which is what every seat verb starts) has no
+    such segment and so no tag, which is the correct answer rather than a
+    failure: it has no marker either.
+
+    **Deliberately not named ``worktree_tag``**, which
+    `prune_conversations.py` already uses for a different input domain: that
+    one takes a **slug** (a path with ``/`` and ``.`` collapsed to ``-``) plus a
+    prefix, this one takes a real path. Two same-named helpers over different
+    domains in sibling tools is the kind of collision a reader resolves
+    wrongly, so the names are kept distinct instead.
+    """
+    if not cwd:
+        return None
+    _, sep, tail = cwd.partition(WORKTREE_SEGMENT)
+    if not sep:
+        return None
+    tag = tail.split("/", 1)[0].strip()
+    # The tag is interpolated into a marker path below, so reject outright the
+    # names that would leave the marker directory. `split("/")` already rules
+    # out a separator, and a NUL raises from the path layer rather than
+    # resolving — but both are stated explicitly here rather than relied on as
+    # implicit properties, matching how the `--session-id` guard further down
+    # this file defends the same shape.
+    if tag in {".", ".."} or "\x00" in tag:
+        return None
+    return tag or None
+
+
+def base_repo_from_cwd(cwd: str | None) -> Path | None:
+    """The base checkout containing a worktree session's cwd, or ``None``.
+
+    The substrate markers live in the **base** repo — one directory shared by
+    every worktree, the same way `settings.local.json` resolves — so a worktree
+    session has to walk back out to find its own marker.
+    """
+    if not cwd:
+        return None
+    head, sep, _ = cwd.partition(WORKTREE_SEGMENT)
+    # An empty head is rejected rather than silently reinterpreted: `Path("")`
+    # resolves to `.`, which would turn the marker lookup into a RELATIVE read
+    # against whatever directory the mining process happens to be run from.
+    if not sep or not head:
+        return None
+    return Path(head)
+
+
+def read_substrate_marker(cwd: str | None) -> str | None:
+    """The substrate recorded for this session's worktree, or ``None``.
+
+    ``None`` means *no marker was found* — a base-repo session, a marker never
+    written, or one cleaned up when the worktree was pruned. It is deliberately
+    distinct from a marker that says ``seat``, so the report can say which of
+    the two it is, even though both land on the same headline.
+    """
+    base = base_repo_from_cwd(cwd)
+    tag = tag_from_cwd(cwd)
+    if base is None or not tag:
+        return None
+    marker = base / SUBSTRATE_DIR / tag
+    try:
+        recorded = marker.read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        # `ValueError` is not redundant with `OSError` here, and catching only
+        # the latter made this lookup able to kill the whole report: a strict
+        # UTF-8 `read_text` raises `UnicodeDecodeError` (a `ValueError`) on a
+        # malformed marker, and nothing up the call chain handles it. The writer
+        # in `.claude/shell/init.zsh` is a plain truncating redirect rather than
+        # an atomic rename, so a torn write is the realistic producer of one.
+        # Degrading to seat here is what makes the documented fail-toward-seat
+        # policy true for malformed content as well as for a missing file.
+        return None
+    return recorded or None
+
+
+def resolve_substrate(cwd: str | None) -> tuple[str, str]:
+    """Decide a session's billing substrate, returning ``(substrate, reason)``.
+
+    **The transcript cannot answer this, which is why the marker is consulted
+    at all.** Measured on a Bedrock worker session (2026-09-14): its transcript
+    records ``message.model`` as the plain ``claude-opus-5``, byte-identical to
+    what a seat Opus session records, and no region-prefixed or
+    inference-profile form appears in any local transcript. Nor is the model *name* a usable
+    proxy, since seat verbs (`housekeeping`, `explore`) also run on Opus. The
+    only durable signal is the marker a launch writes, which is exactly what the
+    resume verbs already steer by.
+
+    **Absent reads as seat**, matching `_ds_substrate_read` in
+    `.claude/shell/init.zsh` and for a sharper reason here: the seat branch
+    prints no dollar figure, so an unknown substrate degrades to reporting a
+    token profile rather than to inventing a number. A missing figure is a
+    visible gap; a wrong one silently corrupts the reconciliation.
+    """
+    recorded = read_substrate_marker(cwd)
+    if recorded == SUBSTRATE_BEDROCK:
+        return SUBSTRATE_BEDROCK, "recorded by the launch verb"
+    if recorded == SUBSTRATE_SEAT:
+        return SUBSTRATE_SEAT, "recorded by the launch verb"
+    if recorded is None:
+        if tag_from_cwd(cwd) is None:
+            if base_repo_from_cwd(cwd) is None:
+                return SUBSTRATE_SEAT, "base-repo session, so a seat verb"
+            # Inside the worktrees directory but carrying no tag component. That
+            # is a malformed path, not a base-repo session, so it does not get
+            # the base-repo reason string.
+            return SUBSTRATE_SEAT, "no worktree tag in the path, which reads as seat"
+        return SUBSTRATE_SEAT, "no substrate marker found, which reads as seat"
+    # A marker holding something unrecognized: treat it as unknown rather than
+    # guessing, and fail toward the branch that prints no dollars. Truncated
+    # because this string reaches the report, and an unexpected file at that
+    # path should not have its whole body echoed into it.
+    return SUBSTRATE_SEAT, f"unrecognized marker {recorded[:32]!r}, treated as seat"
 
 
 def slugify(path: Path) -> str:
@@ -970,7 +1320,7 @@ def _read_lines(path: Path):
         yield from handle
 
 
-def aggregate(transcript: Path, session_id: str) -> dict:
+def aggregate(transcript: Path, session_id: str, substrate: str | None = None) -> dict:
     """Stream the main transcript and every sub-agent transcript into a report."""
     agg = SessionAggregator()
     for line in _read_lines(transcript):
@@ -986,7 +1336,7 @@ def aggregate(transcript: Path, session_id: str) -> dict:
             for line in _read_lines(entry):
                 agg.ingest_subagent_line(label, line)
 
-    return agg.finish()
+    return agg.finish(substrate)
 
 
 def short_id(session_id: str) -> str:
@@ -1012,6 +1362,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="emit the summary as JSON instead of Markdown",
     )
+    parser.add_argument(
+        "--substrate",
+        choices=(SUBSTRATE_BEDROCK, SUBSTRATE_SEAT),
+        default=None,
+        help=(
+            "override the substrate the launch recorded. The escape hatch for a "
+            "session whose marker is gone — pruning a worktree can take its "
+            "marker with it, and an absent marker reads as seat, so a historical "
+            "Bedrock session would otherwise report no dollar figure"
+        ),
+    )
     args = parser.parse_args(argv)
 
     session_id = args.session_id
@@ -1021,7 +1382,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--session-id must be a bare session id (a UUID), not a path")
 
     transcript = resolve_transcript(session_id)
-    report = aggregate(transcript, session_id)
+    report = aggregate(transcript, session_id, args.substrate)
 
     if args.json:
         print(to_json(report))

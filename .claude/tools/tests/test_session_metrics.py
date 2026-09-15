@@ -8,8 +8,14 @@ for the hardening-candidate detector.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
+import pathlib
+import tempfile
 import unittest
+from unittest import mock
 
 import session_metrics as sm
 
@@ -637,6 +643,422 @@ class Rendering(unittest.TestCase):
         self.assertEqual(candidate["cost_kind"], "context")
         self.assertGreater(candidate["result_bytes"], 5000)
         self.assertFalse(candidate["via_run_quiet"])
+
+
+class PrefixGrowth(unittest.TestCase):
+    """The growth curve that makes the quadratic legible."""
+
+    def _agg(self, prefixes: list[tuple[int, int, int]]) -> sm.Totals:
+        agg = sm.SessionAggregator()
+        for fresh, written, read in prefixes:
+            agg.ingest_main_line(
+                assistant(
+                    json.dumps(
+                        {
+                            "input_tokens": fresh,
+                            "output_tokens": 1,
+                            "cache_creation_input_tokens": written,
+                            "cache_read_input_tokens": read,
+                        }
+                    ),
+                    "",
+                )
+            )
+        return agg.finish()["totals"]
+
+    def test_tracks_first_last_and_growth(self):
+        totals = self._agg([(10, 90, 0), (5, 0, 400), (5, 0, 900)])
+        self.assertEqual(totals.prefix_first, 100)
+        self.assertEqual(totals.prefix_last, 905)
+        self.assertEqual(totals.prefix_growth(), 805)
+        self.assertEqual(totals.turns, 3)
+
+    def test_peak_survives_a_later_shrink(self):
+        # Compaction can drop the prefix, so the peak is its own number rather
+        # than being read off the final turn.
+        totals = self._agg([(10, 0, 0), (0, 0, 5000), (0, 0, 60)])
+        self.assertEqual(totals.prefix_max, 5000)
+        self.assertEqual(totals.prefix_last, 60)
+        self.assertEqual(totals.prefix_growth(), 50)
+
+    def test_a_single_turn_has_no_growth(self):
+        totals = self._agg([(10, 20, 30)])
+        self.assertEqual(totals.prefix_first, 60)
+        self.assertEqual(totals.prefix_last, 60)
+        self.assertEqual(totals.prefix_growth(), 0)
+
+    def test_an_all_zero_record_moves_neither_prefix_bound(self):
+        # An interrupted or errored message can carry an all-zero usage block,
+        # and it is wrong at BOTH ends: as `prefix_first` it reports the whole
+        # first real prefix as growth, as `prefix_last` it renders a large
+        # negative shrink that reads as a plausible compaction.
+        totals = self._agg([(0, 0, 0), (10, 0, 990), (0, 0, 0)])
+        self.assertEqual(totals.prefix_first, 1000)
+        self.assertEqual(totals.prefix_last, 1000)
+        self.assertEqual(totals.prefix_growth(), 0)
+        # The turn itself still counts, and its (zero) tokens still summed.
+        self.assertEqual(totals.turns, 3)
+
+    def test_an_empty_session_reports_zeroes(self):
+        totals = self._agg([])
+        self.assertEqual(totals.turns, 0)
+        self.assertEqual(totals.prefix_first, 0)
+        self.assertEqual(totals.prefix_growth(), 0)
+
+
+class Costing(unittest.TestCase):
+    """Dollars computed from the transcript at the verified Bedrock rates."""
+
+    def test_prices_each_tier_at_its_own_rate(self):
+        totals = sm.Totals(
+            input=1_000_000,
+            output=1_000_000,
+            cache_creation=1_000_000,
+            cache_read=1_000_000,
+        )
+        cost = sm.Cost.price(totals)
+        # A round million of each tier prices to exactly the per-Mtok rate, so a
+        # transposed rate cannot hide behind a plausible-looking total.
+        self.assertAlmostEqual(cost.input, 5.50, places=6)
+        self.assertAlmostEqual(cost.output, 27.50, places=6)
+        self.assertAlmostEqual(cost.cache_write, 11.00, places=6)
+        self.assertAlmostEqual(cost.cache_read, 0.55, places=6)
+        self.assertAlmostEqual(cost.total(), 44.55, places=6)
+
+    def test_cache_reads_dominate_a_long_session(self):
+        # The shape the issue is about: a session whose bill is mostly the
+        # replayed prefix, not its output.
+        totals = sm.Totals(input=1_000, output=30_000, cache_read=5_000_000)
+        cost = sm.Cost.price(totals)
+        self.assertGreater(cost.cache_read, cost.output)
+
+    def test_subagent_cost_is_summed_and_split_out(self):
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant_with_id("m1", '{"output_tokens":1000000}', ""))
+        for agent in ("lens-a", "lens-b"):
+            agg.ingest_subagent_line(
+                agent,
+                assistant_with_id(
+                    f"msg_{agent}", '{"cache_read_input_tokens":1000000}', ""
+                ),
+            )
+        report = agg.finish(sm.SUBSTRATE_BEDROCK)
+        self.assertAlmostEqual(report["session_cost"].total(), 27.50, places=6)
+        # two sub-agents, one million cache-read tokens each
+        self.assertAlmostEqual(report["subagent_cost"].total(), 1.10, places=6)
+        self.assertAlmostEqual(report["total_cost"].total(), 28.60, places=6)
+
+
+class SubstrateDetection(unittest.TestCase):
+    """Resolving the billing substrate from the marker a launch writes."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = pathlib.Path(self._tmp.name) / "dropset"
+        self.markers = self.base / sm.SUBSTRATE_DIR
+        self.markers.mkdir(parents=True)
+        self.worktree = f"{self.base}{sm.WORKTREE_SEGMENT}eng-1364"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write(self, tag: str, value: str) -> None:
+        (self.markers / tag).write_text(value, encoding="utf-8")
+
+    def _record(self, cwd: str | None = None) -> str:
+        """One assistant record carrying a `cwd`, which is what the substrate
+        lookup keys off."""
+        return json.dumps(
+            {
+                "type": "assistant",
+                "cwd": self.worktree if cwd is None else cwd,
+                "message": {
+                    "role": "assistant",
+                    "usage": {"output_tokens": 1},
+                    "content": [],
+                },
+            }
+        )
+
+    def test_a_dot_dot_tag_is_refused(self):
+        # `tag` is interpolated into the marker path, so the two names that
+        # would leave the marker directory are rejected outright rather than
+        # relying on a read of the parent happening to raise.
+        self.assertIsNone(sm.tag_from_cwd(f"{self.base}{sm.WORKTREE_SEGMENT}../x"))
+        self.assertIsNone(sm.tag_from_cwd(f"{self.base}{sm.WORKTREE_SEGMENT}."))
+
+    def test_an_empty_head_is_not_read_as_a_relative_path(self):
+        # `Path("")` is `.`, which would turn the marker lookup into a relative
+        # read against whatever directory the mining process runs from.
+        self.assertIsNone(sm.base_repo_from_cwd(f"{sm.WORKTREE_SEGMENT}eng-1"))
+
+    def test_a_path_ending_at_the_segment_is_not_called_a_base_repo_session(self):
+        # Base resolves but no tag does: malformed, not a base-repo session.
+        substrate, reason = sm.resolve_substrate(f"{self.base}{sm.WORKTREE_SEGMENT}")
+        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertIn("no worktree tag", reason)
+        self.assertNotIn("base-repo", reason)
+
+    def test_a_malformed_marker_degrades_to_seat_rather_than_raising(self):
+        # A strict UTF-8 read raises `UnicodeDecodeError` (a `ValueError`, not an
+        # `OSError`), and nothing up the call chain handles it — so catching only
+        # `OSError` let a torn marker write kill the entire report.
+        (self.markers / "eng-1364").write_bytes(b"\xff\xfe bedrock")
+        substrate, _ = sm.resolve_substrate(self.worktree)
+        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+
+    def test_an_unrecognized_marker_is_truncated_in_the_reason(self):
+        self._write("eng-1364", "x" * 200)
+        _, reason = sm.resolve_substrate(self.worktree)
+        self.assertIn("unrecognized marker", reason)
+        self.assertLess(len(reason), 100)
+
+    def test_derives_the_tag_and_base_from_a_worktree_path(self):
+        self.assertEqual(sm.tag_from_cwd(self.worktree), "eng-1364")
+        self.assertEqual(sm.base_repo_from_cwd(self.worktree), self.base)
+
+    def test_a_nested_path_inside_the_worktree_still_resolves(self):
+        deeper = f"{self.worktree}/frontend/src"
+        self.assertEqual(sm.tag_from_cwd(deeper), "eng-1364")
+        self.assertEqual(sm.base_repo_from_cwd(deeper), self.base)
+
+    def test_a_base_repo_session_has_no_tag(self):
+        self.assertIsNone(sm.tag_from_cwd(str(self.base)))
+        self.assertIsNone(sm.base_repo_from_cwd(str(self.base)))
+
+    def test_a_recorded_bedrock_marker_is_read(self):
+        self._write("eng-1364", "bedrock\n")
+        self.assertEqual(sm.read_substrate_marker(self.worktree), "bedrock")
+        substrate, reason = sm.resolve_substrate(self.worktree)
+        self.assertEqual(substrate, sm.SUBSTRATE_BEDROCK)
+        self.assertIn("launch verb", reason)
+
+    def test_a_recorded_seat_marker_is_read(self):
+        self._write("eng-1364", "seat\n")
+        substrate, _ = sm.resolve_substrate(self.worktree)
+        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+
+    def test_an_absent_marker_reads_as_seat(self):
+        # Matches `_ds_substrate_read` in `.claude/shell/init.zsh`, and fails
+        # toward the branch that prints no dollar figure.
+        self.assertIsNone(sm.read_substrate_marker(self.worktree))
+        substrate, reason = sm.resolve_substrate(self.worktree)
+        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertIn("no substrate marker", reason)
+
+    def test_a_base_repo_session_is_a_seat_verb(self):
+        substrate, reason = sm.resolve_substrate(str(self.base))
+        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertIn("base-repo", reason)
+
+    def test_an_unrecognized_marker_fails_toward_seat(self):
+        self._write("eng-1364", "vertex")
+        substrate, reason = sm.resolve_substrate(self.worktree)
+        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertIn("unrecognized", reason)
+
+    def test_a_missing_cwd_is_seat_rather_than_a_crash(self):
+        substrate, _ = sm.resolve_substrate(None)
+        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+
+    def test_an_explicit_substrate_beats_a_contradicting_marker(self):
+        # The whole point of the `--substrate` escape hatch: a worktree that was
+        # pruned may have taken its marker with it, and an absent marker reads
+        # as seat, so an operator must be able to assert bedrock over what the
+        # marker says.
+        self._write("eng-1364", "bedrock")
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(self._record())
+        report = agg.finish(sm.SUBSTRATE_SEAT)
+        self.assertEqual(report["substrate"], sm.SUBSTRATE_SEAT)
+        self.assertEqual(report["substrate_reason"], "given explicitly")
+
+    def test_the_override_reaches_the_report_through_aggregate(self):
+        # Covers `aggregate`'s value into `finish`. Asserted as a PAIR, so it
+        # fails if the override is ignored *or* if the marker is. The remaining
+        # hop — argparse into `aggregate` — is covered by the CLI test below,
+        # deliberately separately: calling `aggregate` directly cannot pin it.
+        self._write("eng-1364", "bedrock")
+        transcript = pathlib.Path(self._tmp.name) / "session.jsonl"
+        transcript.write_text(self._record() + "\n", encoding="utf-8")
+
+        overridden = sm.aggregate(transcript, "session", sm.SUBSTRATE_SEAT)
+        self.assertEqual(overridden["substrate"], sm.SUBSTRATE_SEAT)
+
+        from_marker = sm.aggregate(transcript, "session")
+        self.assertEqual(from_marker["substrate"], sm.SUBSTRATE_BEDROCK)
+
+    def test_the_cli_flag_reaches_the_report(self):
+        # The one hop no direct-call test can reach: argparse's value into
+        # `aggregate`. Drop `args.substrate` from that call and every other test
+        # in this class still passes, while the documented pruned-worktree
+        # recovery silently stops working. Asserted as a pair, as above.
+        self._write("eng-1364", "bedrock")
+        home = pathlib.Path(self._tmp.name) / "claude"
+        project = home / "projects" / "slug"
+        project.mkdir(parents=True)
+        (project / "mined.jsonl").write_text(self._record() + "\n", encoding="utf-8")
+
+        def run(argv: list[str]) -> dict:
+            buf = io.StringIO()
+            with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(home)}):
+                with contextlib.redirect_stdout(buf):
+                    self.assertEqual(sm.main(argv), 0)
+            return json.loads(buf.getvalue())
+
+        base = ["--session-id", "mined", "--json"]
+        self.assertEqual(run(base)["substrate"], sm.SUBSTRATE_BEDROCK)
+        self.assertEqual(
+            run([*base, "--substrate", "seat"])["substrate"], sm.SUBSTRATE_SEAT
+        )
+
+    def test_the_cwd_comes_from_the_transcript(self):
+        self._write("eng-1364", "bedrock")
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(self._record())
+        report = agg.finish()
+        self.assertEqual(report["cwd"], self.worktree)
+        self.assertEqual(report["substrate"], sm.SUBSTRATE_BEDROCK)
+
+
+class SubstrateRendering(unittest.TestCase):
+    """A seat session must never be handed a worker-rate dollar figure."""
+
+    def _report(self, substrate: str) -> dict:
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(
+            assistant(
+                '{"input_tokens":10,"output_tokens":500000,'
+                '"cache_creation_input_tokens":100,"cache_read_input_tokens":900}',
+                "",
+            )
+        )
+        return agg.finish(substrate)
+
+    def test_a_bedrock_session_leads_with_dollars(self):
+        md = sm.to_markdown(self._report(sm.SUBSTRATE_BEDROCK), "abcd1234")
+        self.assertIn("This session cost about $", md)
+        self.assertIn("verified Bedrock rates", md)
+        self.assertIn("Cost breakdown", md)
+
+    def test_a_seat_session_shows_no_dollar_figure_at_all(self):
+        md = sm.to_markdown(self._report(sm.SUBSTRATE_SEAT), "abcd1234")
+        # The regression that matters: not merely a different headline, but no
+        # dollar amount anywhere in the report.
+        self.assertNotIn("$", md)
+        self.assertNotIn("cost about", md)
+        self.assertIn("no dollar figure", md)
+        self.assertIn("subscription", md)
+
+    def test_both_branches_report_the_token_profile(self):
+        for substrate in (sm.SUBSTRATE_BEDROCK, sm.SUBSTRATE_SEAT):
+            md = sm.to_markdown(self._report(substrate), "abcd1234")
+            self.assertIn("**Totals**", md)
+            self.assertIn("**Prefix**", md)
+            self.assertIn("Cache-hit rate", md)
+
+    def test_json_carries_the_substrate_and_the_cost(self):
+        parsed = json.loads(sm.to_json(self._report(sm.SUBSTRATE_BEDROCK)))
+        self.assertEqual(parsed["substrate"], "bedrock")
+        self.assertAlmostEqual(parsed["total_cost"]["output"], 13.75, places=6)
+        self.assertEqual(parsed["totals"]["prefix_first"], 1010)
+        self.assertIn("substrate_reason", parsed)
+
+    def test_json_still_carries_cost_fields_for_a_seat_session(self):
+        # The numbers stay in the JSON for tooling that wants them; it is the
+        # rendered report that withholds the figure.
+        parsed = json.loads(sm.to_json(self._report(sm.SUBSTRATE_SEAT)))
+        self.assertEqual(parsed["substrate"], "seat")
+        # Assert the VALUES, not merely that the keys exist: the comment above
+        # is a claim about the numbers surviving, and a key-existence check
+        # stays green if the seat branch ever zeroes or blanks them.
+        self.assertAlmostEqual(parsed["total_cost"]["output"], 13.75, places=6)
+        self.assertAlmostEqual(parsed["session_cost"]["output"], 13.75, places=6)
+        self.assertIn("subagent_cost", parsed)
+
+    def test_the_rendered_prefix_line_carries_the_peak(self):
+        # The peak is only distinguishable from the final prefix on a session
+        # that SHRANK, so the single-turn fixture above cannot pin it.
+        agg = sm.SessionAggregator()
+        for read in (0, 5000, 60):
+            agg.ingest_main_line(
+                assistant(
+                    json.dumps(
+                        {
+                            "input_tokens": 10,
+                            "output_tokens": 1,
+                            "cache_read_input_tokens": read,
+                        }
+                    ),
+                    "",
+                )
+            )
+        report = agg.finish(sm.SUBSTRATE_SEAT)
+        md = sm.to_markdown(report, "abcd1234")
+        self.assertIn("peak 5.0k", md)
+        self.assertIn("→ 70 ", md)
+        self.assertEqual(json.loads(sm.to_json(report))["totals"]["prefix_max"], 5010)
+
+    def test_a_bedrock_report_names_where_the_substrate_came_from(self):
+        # Otherwise an operator-asserted `--substrate bedrock` renders
+        # byte-identically to a marker-verified one.
+        md = sm.to_markdown(self._report(sm.SUBSTRATE_BEDROCK), "abcd1234")
+        self.assertIn("substrate given explicitly", md)
+
+    def test_the_breakdown_says_it_spans_sub_agents(self):
+        # The breakdown prices `total_cost` while the Totals line below it counts
+        # the main session only; unlabelled, the two invite a wrong ratio.
+        md = sm.to_markdown(self._report(sm.SUBSTRATE_BEDROCK), "abcd1234")
+        self.assertIn("**Cost breakdown** (all agents)", md)
+        self.assertIn("**Totals** (main session)", md)
+
+    def test_the_headline_renders_an_actual_figure(self):
+        # The fixture prices to ≈$13.75, so this also pins `money()`'s
+        # >= 10.0 branch as it is actually reached through the report.
+        md = sm.to_markdown(self._report(sm.SUBSTRATE_BEDROCK), "abcd1234")
+        self.assertIn("This session cost about $14", md)
+
+
+class MoneyFormatting(unittest.TestCase):
+    """`money()`'s thresholds are otherwise unpinned, and transposing its format
+    specs would render every session's headline wrong with a green suite."""
+
+    def test_each_threshold_picks_its_own_precision(self):
+        self.assertEqual(sm.money(0.004), "$0.004")
+        self.assertEqual(sm.money(0.5), "$0.500")
+        self.assertEqual(sm.money(5.25), "$5.25")
+        self.assertEqual(sm.money(12.4), "$12")
+
+    def test_the_boundaries_take_the_coarser_form(self):
+        self.assertEqual(sm.money(1.0), "$1.00")
+        self.assertEqual(sm.money(10.0), "$10")
+
+
+class SubstrateLiteralsPinned(unittest.TestCase):
+    """Pin the Python copies of two shell-owned literals against the shell.
+
+    Every test in :class:`SubstrateDetection` builds its fixture out of these
+    same constants, so that class is self-consistent **by construction** and
+    cannot notice either literal drifting from the shell writer that actually
+    creates the markers: ``SUBSTRATE_DIR`` could read ``.claude/substrate`` and
+    all of those tests would pass while the tool found no marker on any real
+    machine. The path literal has three independent copies (`init.zsh`, its own
+    test, and this module), so this pins the one that can drift silently.
+    """
+
+    def _init_zsh(self) -> str:
+        path = pathlib.Path(__file__).resolve().parents[2] / "shell" / "init.zsh"
+        if not path.is_file():
+            self.skipTest(f"{path} is not present")
+        return path.read_text(encoding="utf-8")
+
+    def test_marker_dir_matches_the_shell_writer(self):
+        self.assertEqual(str(sm.SUBSTRATE_DIR), ".claude/session-substrate")
+        self.assertIn(".claude/session-substrate", self._init_zsh())
+
+    def test_worktree_segment_matches_the_shell_layout(self):
+        self.assertEqual(sm.WORKTREE_SEGMENT, "/.claude/worktrees/")
+        self.assertIn(".claude/worktrees", self._init_zsh())
 
 
 if __name__ == "__main__":
