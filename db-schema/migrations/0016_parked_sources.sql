@@ -51,12 +51,16 @@ CREATE TABLE parked_sources (
     -- collector startup, so it cannot reach a dashboard as a silently wrong
     -- date. The first line of defense is in the constant's own test suite
     -- rather than here, precisely because this file cannot be corrected once
-    -- applied: `feeds/src/parked.rs` range-checks every `since`, which turns a
-    -- transposed date into a red build instead of a bring-up failure.
+    -- applied: `feeds/src/parked.rs` validates every `since` as a real calendar
+    -- date -- month lengths and the leap rule, not merely a 1-to-31 range --
+    -- which turns a transposed or impossible date into a red build instead of a
+    -- bring-up failure.
     since       DATE   NOT NULL,
     -- Why it is parked and what would un-park it, verbatim from the constant.
-    -- Mirrored rather than summarized so the operator-visible copy and the
-    -- reader-visible copy cannot drift.
+    -- Mirrored rather than summarized so an ad-hoc query can read the reason
+    -- without the repository to hand. Note NO PANEL RENDERS IT: it is prose too
+    -- long for a table cell, so this column is for SQL, and the reader-visible
+    -- home of a park's reason stays the constant itself.
     reason      TEXT   NOT NULL,
     -- Unix seconds of the mirror write that last produced this row.
     --

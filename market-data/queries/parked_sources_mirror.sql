@@ -25,9 +25,12 @@
 -- $3 — the reasons (TEXT[])
 -- $4 — the epoch second of this mirror write (BIGINT)
 --
--- The three arrays are parallel and are zipped by `unnest`, which requires them
--- to be the same length; the Rust side builds them from one iteration over the
--- constant, so they cannot diverge.
+-- The three arrays are parallel and are zipped POSITIONALLY by `unnest`. Do not
+-- rely on it to police their lengths — a multi-argument `unnest` does not
+-- require them to match. What keeps them aligned is that the Rust side builds
+-- all three in one pass over the constant (`flatten_parked_set`, pinned by its
+-- own test), and what would catch a divergence here is the `NOT NULL` on
+-- `since` and `reason`.
 WITH incoming AS (
     SELECT
         venue,

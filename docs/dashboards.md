@@ -297,11 +297,14 @@ argued in that migration's own comment.
 
 Two panels use it, and a third case is deliberately left alone:
 
-- **Source coverage** joins the parked set instead of naming Pyth in its
-  own declared literal, which is what that literal's copy of the list
-  used to do. A parked source supplies its own row, whose role reads
-  parked-by-decision, with the date in **Parked since**. The eight-row
-  floor is now seven sources expected to run plus one per parked source.
+- **Source coverage** joins the parked set for a source's park *state*
+  rather than restating it in the query. Its declared roster still names
+  all eight sources — that literal is what gives the table its
+  unconditional eight-row floor — but it no longer says which of them is
+  parked: Pyth is declared with a **null role**, and the mirror supplies
+  the role text plus **Parked since** and **Park confirmed**. A park the
+  mirror has not confirmed therefore reads `UNCLASSIFIED` and sorts
+  first, rather than the row disappearing.
 - **Feed health** on the maker dashboard, and the **staleness alert**,
   exclude any feed named by `parked_source_feeds`. Exclusion rather than
   a grey row is right *here specifically* because both read

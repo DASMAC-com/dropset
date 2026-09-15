@@ -11,10 +11,12 @@
 -- registry inverts that, and a dark collector becomes a row reading 0 rather
 -- than a row that is not there.
 --
--- THE ROSTER IS A DECLARED LITERAL, so this table has a FLOOR of eight rows:
--- SEVEN sources the platform expects to be RUNNING, declared below, plus one
--- per PARKED source, which the mirror joined below supplies rather than the
--- literal restating. A further row appears if the
+-- THE ROSTER IS A DECLARED LITERAL of EIGHT sources -- seven the platform
+-- expects to be RUNNING plus the parked one -- so this table has an
+-- unconditional FLOOR of eight rows. What the mirror below supplies is the park
+-- STATE (the role text and the two dates), never the row itself: a row sourced
+-- from the mirror alone would vanish on any database no collector has started
+-- against. A further row appears if the
 -- registry ever holds a source nobody declared, which is the loud case below. A registry-only
 -- read cannot promise that, because a source leaves the registry when its
 -- collector stops registering -- exactly the invisible-rather-than-dark defect
@@ -68,12 +70,15 @@ WITH declared AS (
   ) AS d (source, role)
 ),
 
--- THE PARKED SET, JOINED RATHER THAN COPIED. This used to be an eighth row in
--- the literal above reading 'parked by decision', which made this query hold
--- its own copy of a list that is decided in `feeds/src/parked.rs` -- the exact
--- copy-drift the declared roster exists to kill, one level in. The collectors
--- mirror the constant into `parked_sources` at startup, so a park supplies its
--- own row here and the two can no longer disagree.
+-- THE PARK STATE, JOINED RATHER THAN COPIED. The literal above used to give
+-- pyth the role 'parked by decision', which made this query hold its own copy
+-- of a decision that lives in `feeds/src/parked.rs` -- the exact copy-drift the
+-- declared roster exists to kill, one level in. Now the literal names the
+-- source with a NULL role and the mirror says whether it is parked, so the
+-- park state has one home. Be precise about what that does and does not
+-- remove: the roster still names pyth, so un-parking it for good still means
+-- editing this literal -- but forgetting to costs a loud UNCLASSIFIED row
+-- rather than a stale claim that it is parked.
 --
 -- `mirrored_at` IS selected and IS shown, under a name that says what it dates.
 -- It dates the last COLLECTOR START rather than the park, so the risk is that a
@@ -148,7 +153,11 @@ FULL JOIN parked AS k ON coalesce(r.source, d.source) = k.source
 -- teach-the-eye-to-skip-the-table defect cited twice above. An undeclared source
 -- ranks first because it is the one thing here nobody has accounted for.
 -- RANKED IN THE SAME PRECEDENCE THE ROLE COLUMN USES, parked first-tested and
--- sorted last, so the two cannot disagree about what a row IS. An
+-- sorted last, so the two agree about which tier a row is in. They agree on
+-- PARKED-NESS specifically; a declared role added to the literal without a rank
+-- arm below still falls to the terminal ELSE and sorts among the parked, which
+-- is the pre-existing shape of this CASE rather than something the park state
+-- introduced. An
 -- UNCLASSIFIED row still ranks first because it is the one thing here nobody
 -- has accounted for -- which now includes a DECLARED source whose park the
 -- mirror has not confirmed, and that is the loud reading it should get.

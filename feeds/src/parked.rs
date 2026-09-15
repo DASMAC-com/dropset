@@ -298,13 +298,18 @@ mod tests {
     ///
     /// The shape check in `every_entry_is_well_formed` accepts `2026-13-45`,
     /// and the mirror write casts this string to a Postgres `DATE` — so a
-    /// transposed or out-of-range date passes every test here and then fails
-    /// the cast at collector startup, fatally, for all nine collectors. Range
-    /// checking it in the constant's own suite converts that fleet outage into
-    /// a red build. Deliberately hand-rolled rather than pulling a date crate
-    /// into this dependency-light module: what matters is the range, and the
-    /// calendar's leap-year subtleties cannot change whether Postgres accepts
-    /// these fields.
+    /// transposed or impossible date passes that check and then fails the cast
+    /// at collector startup, fatally, for every collector binary. Validating it
+    /// in the constant's own suite converts that outage into a red build.
+    ///
+    /// **It checks month LENGTHS, including the leap rule, because a bare
+    /// 1-to-31 range is not what Postgres accepts.** `2026-02-30`,
+    /// `2026-04-31` and `2027-02-29` all sit inside 1-31 and Postgres rejects
+    /// every one of them with `date/time field value out of range` — and
+    /// `2026-11-31` is exactly the fat-finger this test exists to catch, so the
+    /// looser form would have left the promise unkept. Hand-rolled rather than
+    /// pulling a date crate into this dependency-light module: the Gregorian
+    /// leap rule is four lines and is not going to change.
     #[test]
     fn every_since_is_a_real_date() {
         for p in PARKED_SOURCES {
@@ -317,6 +322,7 @@ mod tests {
                 p.since
             );
             assert_eq!(parts[0].len(), 4, "{} needs a 4-digit year", p.venue);
+            let year: u32 = parts[0].parse().expect("year parses");
             let month: u32 = parts[1].parse().expect("month parses");
             let day: u32 = parts[2].parse().expect("day parses");
             assert!(
@@ -324,9 +330,24 @@ mod tests {
                 "{}'s since names month {month}",
                 p.venue
             );
+            let leap =
+                year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+            let days_in_month = match month {
+                1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                4 | 6 | 9 | 11 => 30,
+                // Only reachable as 2, the range above having been asserted.
+                _ => {
+                    if leap {
+                        29
+                    } else {
+                        28
+                    }
+                }
+            };
             assert!(
-                (1..=31).contains(&day),
-                "{}'s since names day {day}",
+                (1..=days_in_month).contains(&day),
+                "{}'s since names day {day} of month {month}, which has \
+                 {days_in_month} — Postgres will reject the DATE cast",
                 p.venue
             );
         }

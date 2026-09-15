@@ -6,7 +6,8 @@
 //! loaded through `include_str!`, so nothing else in the repo executes them —
 //! the same gap `tests/instruments.rs` opens with, and the same consequence: a
 //! column typo or a bind mismatch would pass lint and every other test, then
-//! abort startup for all nine collectors, because the mirror write is
+//! abort startup for all nine collector binaries — eight of which an ordinary
+//! bring-up starts — because the mirror write is
 //! deliberately fatal.
 //!
 //! It also pins the behavior the fence manifest deliberately does not assert
