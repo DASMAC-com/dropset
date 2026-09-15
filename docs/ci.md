@@ -11,6 +11,27 @@ compiler version. No workflow names a version, and each Dockerfile that
 builds Rust takes `FROM rust:1-bookworm` — a major-version base image whose
 rustup then resolves this file, so the exact compiler still comes from here.
 
+**Where** an image resolves it is load-bearing, not incidental. The base tag
+floats, so rustup has to download the pinned toolchain — several hundred
+megabytes across five components — and the layer that download lands in
+decides how often it is paid. Each Rust image therefore copies
+`rust-toolchain.toml` **alone** into its `chef` stage and runs
+`rustup toolchain install` there, before any source `COPY`: the layer is then
+keyed only on the pin file, so it survives every source change and
+invalidates only on a deliberate bump. Both later stages descend from it, so
+`cargo chef cook` and `cargo build` share one compiler — otherwise the cooked
+dependency cache is keyed to a different rustc than the build uses and every
+dependency silently recompiles with all Docker layers hot.
+
+`.claude/tools/dockerfile_stages.py` asserts that structure (the
+`dockerfile-stages` pre-commit hook, or `make dockerfile-stages ARGS=--show`
+to see the graph). It fails a Rust stage that does not inherit the pin layer,
+a pin layer sitting behind a whole-tree `COPY`, a cargo call ahead of the
+resolve, and any stage that names a version instead of inheriting one. Before
+it existed, the pin file reached the images only via `COPY . .`, and every
+rebuild-after-commit re-paid the download — two multi-minute stalls on the
+demo path on 2026-09-15.
+
 CI reads it by using `actions-rust-lang/setup-rust-toolchain` with **no**
 `toolchain` input, which installs whatever the file specifies. The more
 common `dtolnay/rust-toolchain` cannot do this: its `toolchain` input

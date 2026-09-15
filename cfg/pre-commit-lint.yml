@@ -167,6 +167,27 @@ repos:
     name: 'Docker build context stays bounded'
     pass_filenames: false
   repo: 'local'
+# `rust:1-bookworm` floats and the workspace pins the compiler exactly, so
+# *something* in every Rust image downloads the pinned toolchain. This guard
+# asserts it happens in a layer keyed only on `rust-toolchain.toml`, ahead of
+# any source COPY, and that every Rust stage descends from that layer — the
+# structure, not a timing canary. Without it the download sat behind
+# `COPY . .` and every rebuild-after-commit re-paid it (two multi-minute
+# stalls on the demo path, 2026-09-15).
+#
+# `always_run` with `pass_filenames: false` for the same reason as the hook
+# above, plus one of its own: the check is cross-file (it must see every
+# Dockerfile to know it matched any Rust stage at all), and a `files` scoping
+# would hide the deletion of the last Rust image. Five small files, so it
+# costs milliseconds.
+- hooks:
+  - always_run: true
+    entry: 'python3 .claude/tools/dockerfile_stages.py'
+    id: 'dockerfile-stages'
+    language: 'system'
+    name: 'Rust images inherit the pinned-toolchain layer'
+    pass_filenames: false
+  repo: 'local'
 # hadolint-py wraps the hadolint binary so the hook needs neither Docker nor
 # a manual install. `files` matches `Dockerfile` and `*.Dockerfile` (identify
 # doesn't tag the latter as the `dockerfile` type), so `types: file`.
