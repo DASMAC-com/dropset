@@ -245,17 +245,23 @@ def run(argv: list[str]) -> int:
         # the whole batch, which is wrong in the one case that matters: a driver
         # failure after k tabs were opened and typed left those k running, and an
         # operator following the instructions typed a second copy of each into a
-        # new tab. `open_tabs` carries the partial out on the exception, and its
-        # length is the dispatch count.
-        dispatched = exc.ttys[: len(commands)]
-        remaining = commands[len(dispatched) :]
-        if dispatched:
+        # new tab.
+        #
+        # `unfinished()` owns the arithmetic rather than this caller deriving it
+        # from `len(exc.ttys)`, because the length alone is the WRONG question: a
+        # tab the driver reached but could not type into also needs re-running,
+        # and reading it as done dropped the command silently.
+        pending = set(exc.unfinished(len(commands)))
+        sent = [(n, command) for n, command in enumerate(commands) if n not in pending]
+        remaining = [command for n, command in enumerate(commands) if n in pending]
+        if sent:
             print(
-                f"session-dispatch: {len(dispatched)} tab(s) were already opened "
-                "and typed into — do NOT re-run these:",
+                f"session-dispatch: {len(sent)} tab(s) were already opened and "
+                "typed into — do NOT re-run these:",
                 file=sys.stderr,
             )
-            for command, tty in zip(commands, dispatched):
+            for n, command in sent:
+                tty = exc.ttys[n] if n < len(exc.ttys) else None
                 print(f"  {command} -> {tty or 'tty unknown'}", file=sys.stderr)
         if remaining:
             listing = "\n".join(f"  {command}" for command in remaining)

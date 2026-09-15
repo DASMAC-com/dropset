@@ -755,7 +755,7 @@ _ds_seat_guard() {
 #     flag was needed or the session would "prompt on every edit", which
 #     inverted the truth once auto became the default.
 #
-#     Explicit ask and deny rules still apply, and the four PreToolUse guard
+#     Explicit ask and deny rules still apply, and the five PreToolUse guard
 #     hooks fire regardless of permission mode — the policy layers compose
 #     rather than substitute.
 #   * `-n "$tag"` — a display name, so the session is identifiable in the

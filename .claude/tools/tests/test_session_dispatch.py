@@ -344,9 +344,9 @@ class Dispatch(unittest.TestCase):
 
 
 class BlockedDispatch(unittest.TestCase):
-    def _fail_with(self, message, ttys=None):
+    def _fail_with(self, message, ttys=None, untyped=None):
         def boom(_commands):
-            raise iterm_api.ItermUnavailable(message, ttys=ttys)
+            raise iterm_api.ItermUnavailable(message, ttys=ttys, untyped=untyped)
 
         original = iterm_api.open_tabs
         iterm_api.open_tabs = boom
@@ -407,9 +407,39 @@ class BlockedDispatch(unittest.TestCase):
         self.assertIn("already opened", text)
         self.assertIn("/dev/a", text)
         hand_run = text.split("run these by hand")[1]
-        self.assertNotIn("plan", hand_run)
+        # Anchored on the whole listing line, not the bare word: a substring
+        # test for "plan" silently stops testing anything the moment this block
+        # gains a word that contains it ("planning").
+        self.assertNotIn("\n  plan\n", hand_run)
         for command in ("task 1234", "fleet go"):
             self.assertIn(command, hand_run)
+
+    def test_a_tab_that_could_not_be_typed_into_is_offered_for_rerun(self):
+        """The silent DROP, which is the opposite failure to the double-type.
+
+        The driver records a position for a tab it created but could not reach a
+        session in, so that command never ran. Reading the partial's length as
+        the dispatch count reported it as already done and it was never offered
+        for a hand-run at all — for `fleet_resume`, an issue that silently never
+        got an agent.
+
+        The mutation this pins: deriving the retry set from `len(exc.ttys)`, or
+        filtering the falsy entries out of the partial, leaves every other test
+        in this file green and re-breaks exactly this case.
+        """
+        self._fail_with("driver broke", ttys=["/dev/a", None], untyped=[1])
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc = session_dispatch.run(["plan", "+", "task", "1234", "+", "fleet", "go"])
+        text = err.getvalue()
+        self.assertEqual(rc, 1)
+
+        # Only `plan` really ran, so only it may be in the do-not-re-run block.
+        self.assertIn("1 tab(s) were already opened", text)
+        hand_run = text.split("run these by hand")[1]
+        for command in ("task 1234", "fleet go"):
+            self.assertIn(command, hand_run)
+        self.assertNotIn("\n  plan\n", hand_run)
 
     def test_a_failure_that_opened_nothing_still_offers_the_whole_batch(self):
         # The exemption must not swallow the common case: an iTerm that was never

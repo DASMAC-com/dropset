@@ -40,7 +40,7 @@ write) and **dequeue probe** (a `gh api graphql` read) at
 the handoff, because the MCP exposes no merge-queue tool and
 its `pull_request_read` omits `mergeQueueEntry`; plus the
 **one-shot and watched reads** this skill makes with the
-compact `gh pr checks` (the CI wait — step 17 runs it under
+compact `gh pr checks` (the CI wait — step 18 runs it under
 `--watch`, so gh blocks until the checks settle rather than
 this skill polling) and field-selected `gh pr view --json`
 (the PR lookup in step 1 and the merge-clean check) — chosen
@@ -580,7 +580,7 @@ already being asked to start the review.
      in **one** call rather than two full-body echoes. (In
      Review can't be folded the same way — it's gated on
      CI-green at the merge-queue handoff, a different point
-     in the flow, so it stays its own write at step 18.)
+     in the flow, so it stays its own write at step 20.)
 
    - Extract every actionable requirement: markdown
      checkboxes (`- [ ]` open, `- [x]` already done),

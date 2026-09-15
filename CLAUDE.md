@@ -20,8 +20,9 @@ that references it — `review-pr`'s `CLAUDE.md`-freshness lens and
   live fleet-wide on 2026-09-11, so this is an **active** conflict
   rather than a hypothetical one, and it is now enforced
   mechanically: `.claude/hooks/no_ai_attribution.py` blocks a
-  `git commit` or `gh pr` call whose message or body carries one (no
-  escape marker, deliberately), and `review-pr` and
+  `git commit` or any `gh` create / edit / comment call whose message
+  or body carries one (no escape marker, deliberately, and clustered
+  short flags like `-am` included), and `review-pr` and
   `pr-title-description` run its `--scan` over a body they are about
   to submit through the GitHub MCP, which no Bash guard can see.
 - Commit messages: imperative, capitalized first letter, no trailing

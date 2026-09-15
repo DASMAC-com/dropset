@@ -30,10 +30,13 @@
   never be corrected.
 - **So it is enforced mechanically.**
   `.claude/hooks/no_ai_attribution.py` is a `PreToolUse` guard that
-  blocks a `git commit -m` / `gh pr create|edit|comment` call whose
-  message or body carries a Claude/Anthropic `Co-Authored-By:`
-  trailer, an `@anthropic.com` no-reply co-author address, or a
-  generated-with footer. Three properties are deliberate:
+  blocks a `git commit -m` — or any `gh` `create` / `edit` / `comment`
+  call, so `gh issue create` as well as `gh pr` — whose message or body
+  carries a `Co-Authored-By:` trailer naming Claude, Anthropic or a
+  model, an `@anthropic.com` no-reply co-author address, or a
+  generated-with footer. The short-flag forms include a **cluster**
+  (`-am`, `-Sam`), which is the commonest shorthand and was the widest
+  hole the guard had. Three properties are deliberate:
   - **No escape marker**, unlike the compound guard's `#compound-ok`.
     The rule admits no exception, so there is nothing to let through;
     a genuine human co-author is named as a real person and passes.

@@ -35,10 +35,18 @@ settled: none does. A human co-author is named as a real person.
 BOUNDS, stated because a guard that is trusted past its reach is worse than
 one that is not trusted at all:
 
-* It sees a message passed INLINE (``-m``, ``--body``). A commit written in an
-  editor, or passed via ``-F file`` / ``--body-file``, carries its text
-  somewhere this never sees. Those are not how an agent session commits, which
-  is what this defends, but they are a real gap rather than a theoretical one.
+* It sees a message passed INLINE (``-m``, ``--body``), including in a clustered
+  short flag (``-am``, ``-Sam``). A commit written in an editor, or passed via
+  ``-F file`` / ``--body-file``, carries its text somewhere this never sees.
+  Those are not how an agent session commits, which is what this defends, but
+  they are a real gap rather than a theoretical one.
+* It knows **authoring subcommands**, not the whole GitHub API. A body posted
+  through ``gh api ... -f body=...`` is not an authoring shape, so it is never
+  inspected; nor is a shell function or alias that wraps the real command.
+* An unquoted ``#`` in a value truncates the line, because ``shlex`` is asked to
+  strip comments — which is what keeps a ``#destructive-ok`` marker from being
+  read as message text. A real trailer needs a newline and therefore quoting, so
+  this costs nothing in practice.
 * Like the other guards, the script is committed and its ``PreToolUse`` wiring
   is user-local, so it is INERT until wired — ``make hook-wiring`` is the only
   statement of what is live on a given machine.
@@ -62,17 +70,26 @@ import sys
 # `noreply@anthropic.com` earns its own pattern rather than riding the trailer
 # one: it is the giveaway that survives a reworded trailer, and it cannot occur
 # in a legitimately hand-authored message.
+#: The vendor and model names an attribution can carry. The model brands are
+#: included deliberately: today's dictated strings say "Claude" and are caught
+#: twice over, but the instruction is a harness default that has been reworded
+#: before, and a trailer naming a model rather than the vendor would otherwise
+#: walk straight past every pattern. They are only ever matched INSIDE a
+#: co-author trailer or next to "generated with", so an ordinary commit message
+#: mentioning a model (`Pin the opus model id`) is unaffected.
+_AGENT_NAMES = r"claude|anthropic|opus|sonnet|haiku|fable"
+
 PATTERNS = (
     (
-        re.compile(r"^\s*co-authored-by:.*(?:claude|anthropic)", re.IGNORECASE),
-        "a `Co-Authored-By:` trailer naming Claude or Anthropic",
+        re.compile(rf"^\s*co-authored-by:.*(?:{_AGENT_NAMES})", re.IGNORECASE),
+        "a `Co-Authored-By:` trailer naming Claude, Anthropic or a model",
     ),
     (
         re.compile(r"noreply@anthropic\.com", re.IGNORECASE),
         "an Anthropic no-reply co-author address",
     ),
     (
-        re.compile(r"generated with[^\n]{0,40}(?:claude|anthropic)", re.IGNORECASE),
+        re.compile(rf"generated with[^\n]{{0,40}}(?:{_AGENT_NAMES})", re.IGNORECASE),
         'a "Generated with Claude Code" footer',
     ),
     (
@@ -152,23 +169,63 @@ def _flag_values(tokens, flags):
                 i += 1
                 matched = True
                 break
-            # Attached short form: the value glued onto the short flag. The
-            # `--` test stops a long flag being caught by the short flag's
-            # prefix test.
-            if (
-                len(flag) == 2
-                and not flag.startswith("--")
-                and token.startswith(flag)
-                and len(token) > 2
-                and not token.startswith("--")
-            ):
-                values.append(token[2:])
-                i += 1
+            # Short form, including a CLUSTER. `git commit -am "…"` and
+            # `-Sam "…"` are the common shorthands, and matching only a
+            # `token.startswith("-m")` missed both entirely — `-am` does not
+            # start with `-m`, so no value was collected and the guard returned
+            # 0. In a repo that mandates `-S` on every commit, `-Sm` / `-Sam` is
+            # the natural thing to type, which made this the widest hole in the
+            # guard.
+            #
+            # Follows git's own parse-options semantics: within a single-dash
+            # cluster, the flag letter either ends the token (the value is the
+            # next token) or is followed by the value glued on.
+            if len(flag) == 2 and not flag.startswith("--"):
+                if not token.startswith("-") or token.startswith("--"):
+                    continue
+                position = token.find(flag[1], 1)
+                if position == -1:
+                    continue
+                # Everything before the letter must itself be flag letters, or
+                # this is not a cluster and the match is a coincidence inside a
+                # value. An EMPTY prefix is the plain `-m` case and is fine —
+                # note `"".isalpha()` is False, so this cannot be written as a
+                # bare `.isalpha()` test.
+                preceding = token[1:position]
+                if preceding and not preceding.isalpha():
+                    continue
+                glued = token[position + 1 :]
+                if glued:
+                    values.append(glued)
+                    i += 1
+                elif i + 1 < len(tokens):
+                    values.append(tokens[i + 1])
+                    i += 2
+                else:
+                    i += 1
                 matched = True
                 break
         if not matched:
             i += 1
     return values
+
+
+#: A leading `VAR=value` environment assignment, which precedes the command word
+#: rather than being one.
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _is_command_position(tokens, idx):
+    """True iff ``tokens[idx]`` sits where a command word can sit.
+
+    Walks back over any run of `VAR=value` assignments to the token that
+    introduces the command, then asks whether that is a control operator or the
+    start of the line.
+    """
+    back = idx - 1
+    while back >= 0 and _ENV_ASSIGNMENT.match(tokens[back]):
+        back -= 1
+    return back < 0 or tokens[back] in CONTROL
 
 
 def _logical_lines(cmd):
@@ -241,7 +298,11 @@ def authored_text(cmd):
         for idx, token in enumerate(tokens):
             if token not in ("git", "gh"):
                 continue
-            if idx != 0 and tokens[idx - 1] not in CONTROL:
+            # A command word sits at position 0, after a control operator, or
+            # after one or more leading VAR=value assignments — `GIT_AUTHOR_DATE=
+            # now git commit -m …` is still a git commit, and skipping it meant
+            # a real (if unusual) shape was never checked at all.
+            if idx != 0 and not _is_command_position(tokens, idx):
                 continue
             rest = tokens[idx + 1 :]
             if token == "git":
@@ -306,11 +367,30 @@ def _scan(path):
     body created through the GitHub MCP never passes through Bash, so the skill
     checks it here rather than against a second copy of these patterns.
     """
-    if path in (None, "-"):
+    if path is None:
+        # A MISSING path is a usage error, not stdin. Defaulting to stdin here
+        # meant `--scan` with the argument dropped read an empty stdin, found
+        # nothing, and printed "no AI attribution found" with exit 0 — a clean
+        # bill of health on no input at all, which is the exact failure the
+        # three-way exit exists to prevent. Both committed call sites pass a
+        # placeholder path the agent substitutes, so dropping the argument is the
+        # plausible slip. Stdin now requires an explicit `-`.
+        sys.stderr.write(
+            "--scan needs a file path, or `-` for stdin; refusing to report "
+            "clean on no input\n"
+        )
+        return 2
+    if path == "-":
         text = sys.stdin.read()
     else:
         try:
-            with open(path, encoding="utf-8") as handle:
+            # `errors="replace"` rather than a bare read: a decode error is a
+            # ValueError, which escaped `main` and made CPython exit 1 — and 1
+            # is the code that means "attribution found", so a non-UTF-8 byte
+            # reported a finding that did not exist. Substituting replacement
+            # characters keeps the scan meaningful, and the patterns are ASCII
+            # so a mangled byte cannot hide a match.
+            with open(path, encoding="utf-8", errors="replace") as handle:
                 text = handle.read()
         except OSError as exc:
             sys.stderr.write(f"cannot read {path}: {exc}\n")
@@ -339,6 +419,17 @@ def _self_test():
         ('git commit -m "Subject\n\nAssisted-by: <noreply@anthropic.com>"', True),
         # Attached short form, which a separated-only parser would miss.
         (f'git commit -m"Subject\n\n{trailer}"', True),
+        # CLUSTERED short flags — the widest hole the guard had. `-am` is the
+        # commonest shorthand there is, and `-S` clustering is natural in a repo
+        # that mandates signing, so all four of these were live bypasses.
+        (f'git commit -am "Subject\n\n{trailer}"', True),
+        (f'git commit -Sam "Subject\n\n{trailer}"', True),
+        (f'git commit -Sm "Subject\n\n{trailer}"', True),
+        (f'git commit -Sm"Subject\n\n{trailer}"', True),
+        # A leading environment assignment does not stop it being a git commit.
+        (f'GIT_AUTHOR_DATE=now git commit -m "S\n\n{trailer}"', True),
+        # A model-named trailer, for a reworded harness instruction.
+        ('git commit -m "S\n\nCo-Authored-By: Fable 5.1 <bot@example.com>"', True),
         # After a control operator, so the command word is still a command.
         (f'git add -A && git commit -m "Subject\n\n{trailer}"', True),
         # --- allowed -------------------------------------------------------
@@ -354,6 +445,10 @@ def _self_test():
         (f"grep -rn '{trailer}' docs", False),
         ('git commit -m "feat(ENG-1299): Block AI attribution mechanically"', False),
         ("rg 'Generated with Claude Code' .claude", False),
+        # A model name OUTSIDE a trailer or a generated-with footer is ordinary
+        # prose and must pass — the brand alternation is scoped, not global.
+        ('git commit -m "feat(ENG-1): Pin the opus model id"', False),
+        ('git commit -am "fix(ENG-1): Widen the haiku fixture"', False),
         # `git`/`gh` as an argument rather than a command word.
         (f"echo git commit -m '{trailer}'", False),
         # A non-authoring git subcommand is not inspected.

@@ -222,11 +222,22 @@ ASK_PATTERNS = (
         # reading, which costs more than it protects.
         #
         # The dangerous case a reviewer wants flagged is the LEASE-LESS force,
-        # and every form of it still asks: bare `--force`, the short `-f`, the
-        # `+refspec:` spelling, and `--force-if-includes` (which forces nothing
-        # on its own, so it can only appear beside a real force). `--force`
-        # written alongside a lease also still asks, since the bare flag is
-        # matchable in its own right.
+        # and every form of it still asks: bare `--force`, the short `-f`
+        # INCLUDING INSIDE A CLUSTER, the `+refspec:` spelling, and
+        # `--force-if-includes` (which forces nothing on its own, so it can only
+        # appear beside a real force). `--force` written alongside a lease also
+        # still asks, since the bare flag is matchable in its own right.
+        #
+        # The cluster half was a pre-existing gap this comment would otherwise
+        # have claimed away: the old `(?<!\w)-f(?!\w)` missed `git push -fu` and
+        # `git push -uf`, which are ordinary git and exactly the shape a rebased
+        # first push produces. `git push` has no short flag other than `-f` that
+        # contains an `f`, so widening to a cluster costs no false positive.
+        #
+        # The cluster branch must not reach `--force-with-lease`, which is why it
+        # requires a non-hyphen after the dash and no hyphen before it: without
+        # that, the branch matches the `force` inside the lease spelling and
+        # silently undoes the exemption above.
         #
         # `\b` alone did not exclude the lease form: it matches between the `e`
         # of `--force` and the following `-`, so the lease spelling tripped this
@@ -235,7 +246,8 @@ ASK_PATTERNS = (
         # too.
         re.compile(
             r"\bgit\s+push\b.*(?:--force(?!-with-lease\b)\b"
-            r"|(?<!\w)-f(?!\w)|\+[\w./-]+:)"
+            r"|(?<![\w-])-(?!-)[A-Za-z]*f[A-Za-z]*(?![\w-])"
+            r"|\+[\w./-]+:)"
         ),
         "a force-push without a lease",
     ),
@@ -743,6 +755,10 @@ def _self_test():
         ("git push origin +eng-942:eng-942", "ask"),
         ("git push --force-if-includes origin eng-942", "ask"),
         ("git push --force-with-lease --force origin eng-942", "ask"),
+        # A clustered short force. Ordinary git, and exactly what a rebased first
+        # push produces; the un-clustered `-f` branch missed both spellings.
+        ("git push -fu origin eng-942", "ask"),
+        ("git push -uf origin eng-942", "ask"),
         ("git reset --hard HEAD~1", "ask"),
         ("git clean -fdx", "ask"),
         ("psql -c 'DROP TABLE ticks'", "ask"),

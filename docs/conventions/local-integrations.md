@@ -223,7 +223,7 @@ one to the other.
 
 ### Which guards are actually wired
 
-Reach was never the problem — **wiring** is. All **four** guard scripts
+Reach was never the problem — **wiring** is. All **five** guard scripts
 are committed under `.claude/hooks/`, but a script only runs if a
 `PreToolUse` entry points at it, and a committed-but-unwired guard is a
 documented protection that does not exist. That has happened: on
@@ -510,13 +510,20 @@ Three design properties, each deliberate:
   rule admits no exception. A genuine human co-author is a real person
   and passes.
 - **It reads the message/body argument VALUES only** — `git commit -m`,
-  `gh pr create|edit|comment --body|--title` — never the whole command
-  string. The repo's own agent material quotes the forbidden strings in
-  order to forbid them, so a whole-command scan would block
-  `search_source.py 'Co-Authored-By'` and every grep of the guard's own
-  docstring. That is the false-positive class that gets a guard turned
-  off; the destructive guard learned the same lesson through its
-  read-only span suppression.
+  and any `gh` `create` / `edit` / `comment` call's
+  `--body` / `--title` (so `gh issue create` too, not only `gh pr`) —
+  never the whole command string. The repo's own agent material quotes
+  the forbidden strings in order to forbid them, so a whole-command scan
+  would block `search_source.py 'Co-Authored-By'` and every grep of the
+  guard's own docstring. That is the false-positive class that gets a
+  guard turned off; the destructive guard learned the same lesson
+  through its read-only span suppression.
+- **Short flags include a CLUSTER.** `git commit -am` and `-Sam` are the
+  commonest shorthands, and matching only a token starting `-m` missed
+  both — in a repo that mandates `-S`, that was the widest hole the
+  guard had. It follows git's own parse-options semantics: within a
+  single-dash cluster the flag letter either ends the token (the value
+  is the next token) or the value is glued on after it.
 - **It fails open.** An unbalanced quote or unparseable payload allows
   the call, like every other guard here.
 
@@ -1519,7 +1526,7 @@ drives the real zsh functions.
     **Do not expect a fully unattended run.** The classifier still
     routes to a prompt: explicit `ask` rules apply, `deny` rules
     apply, and the git and Claude config trees are protected paths
-    that always go through it. The four `PreToolUse` guard hooks fire
+    that always go through it. The five `PreToolUse` guard hooks fire
     regardless of permission mode — the policy layers compose rather
     than substitute, so `auto` is not a way around a guard.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wait for a PR's CI checks to settle, then print one compact verdict.
 
-This is ``review-pr`` step 17's wait, hardened into a tool. What it replaces was
+This is ``review-pr`` step 18's wait, hardened into a tool. What it replaces was
 a model-driven loop, and the loop was the problem in three separate ways measured
 across eight sessions:
 

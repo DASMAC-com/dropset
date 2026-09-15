@@ -84,13 +84,52 @@ class ItermUnavailable(Exception):
     still handing over what survived. See :func:`open_tabs` for the contract.
     """
 
-    def __init__(self, message: str, ttys: list[str | None] | None = None):
+    def __init__(
+        self,
+        message: str,
+        ttys: list[str | None] | None = None,
+        untyped: list[int] | None = None,
+    ):
         super().__init__(message)
-        #: Length is the number of commands whose fate the driver recorded, so
-        #: `commands[len(ttys):]` is exactly what still needs running. An entry
-        #: may be None while still counting: that means the tab was opened and
-        #: typed into but its tty could not be read, which must NOT be retried.
-        self.ttys: list[str | None] = list(ttys or [])
+        #: Length is the number of commands whose fate the driver RECORDED, so
+        #: `commands[len(ttys):]` is what the driver never reached. An entry may
+        #: be None while still counting — but a None means only "no tty", and it
+        #: does NOT by itself mean the command ran: see `untyped`.
+        #:
+        #: Hardened against a malformed driver response rather than trusting it.
+        #: `list("abc")` would silently become a 3-entry over-count, and
+        #: `list(5)` raises TypeError from inside the `raise` statement — so the
+        #: caller's `except ItermUnavailable` never fires and the operator gets a
+        #: traceback instead of the hand-run list, losing exactly the
+        #: information this class exists to carry.
+        self.ttys: list[str | None] = list(ttys) if isinstance(ttys, list) else []
+        #: Indices into `ttys` that were NOT typed into: the driver created a tab
+        #: but could not reach a session in it, so it recorded the position and
+        #: moved on without sending anything.
+        #:
+        #: This exists because `None` in `ttys` aliases two states with OPPOSITE
+        #: handling — "typed, tty unreadable" (must not be retried) and "never
+        #: typed" (must be retried) — and the length contract alone cannot tell
+        #: them apart. Without it, a batch that hit an unreachable session and
+        #: then failed reported that command as already done and it was silently
+        #: DROPPED: for `fleet_resume` an issue that never got an agent, which is
+        #: quieter and harder to notice than the double-resume being fixed.
+        self.untyped: list[int] = (
+            [n for n in untyped if isinstance(n, int)]
+            if isinstance(untyped, list)
+            else []
+        )
+
+    def unfinished(self, count: int) -> list[int]:
+        """Indices in ``range(count)`` that still need running.
+
+        The single owner of that arithmetic, so the two consumers cannot drift:
+        everything the driver never reached, plus everything it reached but
+        could not type into.
+        """
+        reached = min(len(self.ttys), count)
+        pending = {n for n in self.untyped if 0 <= n < reached}
+        return [n for n in range(count) if n >= reached or n in pending]
 
 
 def bundled_interpreter(root: Path | None = None) -> Path | None:
@@ -192,6 +231,7 @@ def _call(request: dict, *, timeout: int | None = None) -> dict:
         raise ItermUnavailable(
             response.get("error") or "the iTerm2 API call failed",
             ttys=response.get("ttys"),
+            untyped=response.get("untyped"),
         )
     return response
 
@@ -213,12 +253,19 @@ def open_tabs(commands: list[str]) -> list[str | None]:
     badly with the tabs it is creating. The returned list is positional, so a
     ``None`` marks the tab whose tty could not be read — never a silent gap.
 
-    ON FAILURE, ``ItermUnavailable.ttys`` CARRIES THE PARTIAL, and its LENGTH is
-    the contract: ``commands[len(exc.ttys):]`` is what still needs running, and
-    everything before that index was already typed into a live tab. A caller
-    that re-runs the whole batch instead double-runs the first k commands — for
-    `fleet_resume` that is a double-resume of k sessions, and for
-    `session_dispatch` a second copy of k verbs typed into new tabs.
+    ON FAILURE, ``ItermUnavailable`` CARRIES THE PARTIAL, and
+    :meth:`ItermUnavailable.unfinished` turns it into the exact set of command
+    indices that still need running. A caller that re-runs the whole batch
+    instead double-runs the commands already typed — for `fleet_resume` a
+    double-resume of k sessions, and for `session_dispatch` a second copy of k
+    verbs typed into new tabs.
+
+    **Use `unfinished()`; do not derive the answer from `len(ttys)` alone.** The
+    length says how far the driver got, and that is not the same question: a
+    position the driver reached but could not type into is recorded in
+    ``untyped``, and treating it as done DROPS that command silently. Deriving
+    the retry set from the length alone was a real bug in the first version of
+    this change.
 
     The partial is deliberately NOT padded to ``len(commands)`` the way the
     success path is. Padding would make "opened, tty unreadable" and "never
@@ -226,11 +273,18 @@ def open_tabs(commands: list[str]) -> list[str | None]:
     must not be retried, the second must. On the success path every command was
     dispatched, so there the pad is a pure length repair.
 
-    Bound on what this recovers: a driver that ANSWERED. If it was killed at the
-    timeout, or returned nothing at all, there is no response to read a partial
-    out of and the list is empty — so tabs may exist that no caller can know
-    about. That is what :data:`PER_TAB_TIMEOUT_SECONDS` exists to make unlikely,
-    not something this can repair.
+    Two bounds on what this recovers, both real:
+
+    * **A driver that ANSWERED.** If it was killed at the timeout, or returned
+      nothing at all, there is no response to read a partial out of and the lists
+      are empty — so tabs may exist that no caller can know about. That is what
+      :data:`PER_TAB_TIMEOUT_SECONDS` exists to make unlikely, not something this
+      can repair.
+    * **A send that raised mid-line.** The entry is appended only after
+      ``async_send_text`` returns, so a raising send reports the command as never
+      reached and it will be retried. That is the safe direction — no newline was
+      delivered, so nothing executed — but the tab exists and may hold a partial
+      line, which the operator will see and no caller reports.
     """
     if not commands:
         return []
@@ -342,13 +396,26 @@ async def _driver_body(connection, request, result):  # pragma: no cover
         # it, since the error path returns no value.
         ttys = []
         result["ttys"] = ttys
-        for command in request["commands"]:
+        # Published before the loop for the same reason `ttys` is. This records
+        # the positions the loop reached but could NOT type into, which `ttys`
+        # cannot express: a None there means "no tty", and that is true both of a
+        # tab that was typed into and of one that was never reachable. Those two
+        # need opposite handling on a retry, so the distinction travels
+        # separately rather than being inferred from a falsy entry.
+        untyped = []
+        result["untyped"] = untyped
+        for index, command in enumerate(request["commands"]):
             tab = await window.async_create_tab()
             session = _first_session(tab) if tab is not None else None
             if session is None:
                 # Positional: record the gap rather than dropping the entry, so
-                # the caller can name which tab it could not reach.
+                # the caller can name which tab it could not reach. The index
+                # also goes in `untyped` — nothing was sent to this tab, so a
+                # caller that treated the entry as done would silently drop the
+                # command. `_first_session` returning None is a real, measured
+                # case, not a theoretical one; see its docstring.
                 ttys.append(None)
+                untyped.append(index)
                 continue
             await session.async_send_text(command + "\n")
             # Appended BEFORE the tty is read, then filled in. The text is

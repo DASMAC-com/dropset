@@ -66,6 +66,18 @@ class LogicalLines(unittest.TestCase):
         # rather than the splitter.
         self.assertTrue(_blocked(f'git commit -S -m "feat(ENG-1): X\n\n{TRAILER}"'))
 
+    def test_a_commit_on_a_LATER_line_is_inspected(self):
+        """The splitter's other direction, pinned through the PUBLIC surface.
+
+        The two cases above assert on `_logical_lines` directly, so they would
+        both survive a mutation at the CALL SITE — iterating `[command]` instead
+        of `_logical_lines(command)` in `evaluate()`. That mutation leaves the
+        newline-inside-quotes case green too, since its whole command is one
+        logical line. Only a command on a later line catches it: `shlex` would
+        then see `tokens[1] == "add"` and extract nothing.
+        """
+        self.assertTrue(_blocked(f'git add -A\ngit commit -m "S\n\n{TRAILER}"'))
+
 
 class NarrowScope(unittest.TestCase):
     """Only message/body VALUES are scanned, never the command string.
@@ -102,6 +114,36 @@ class NarrowScope(unittest.TestCase):
             guard.authored_text('git commit -m "Subject line" --no-verify'),
             ["Subject line"],
         )
+
+    def test_all_three_flag_spellings_yield_the_value(self):
+        # Separated, long-with-equals, and glued-on. Each has its own branch in
+        # `_flag_values`, so each needs its own case: dropping the `=` branch
+        # would otherwise fail open with every other test still green.
+        for command in (
+            'git commit -m "S"',
+            'git commit --message="S"',
+            "git commit -mS",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(guard.authored_text(command), ["S"])
+
+    def test_a_clustered_short_flag_yields_the_value(self):
+        # `-am` / `-Sam` were live bypasses: neither equals `-m` nor starts with
+        # it, so no value was collected and the guard returned 0 on the commonest
+        # shorthand there is.
+        for command in (
+            'git commit -am "S"',
+            'git commit -Sam "S"',
+            'git commit -Sm "S"',
+            "git commit -SmS",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(guard.authored_text(command), ["S"])
+
+    def test_a_cluster_is_not_confused_with_a_value_containing_the_letter(self):
+        # `-a` carries no message, so the `m` in the following value must not be
+        # read as a glued-on flag.
+        self.assertEqual(guard.authored_text("git commit -a --amend"), [])
 
 
 class NoEscapeMarker(unittest.TestCase):
@@ -152,6 +194,52 @@ class ScanMode(unittest.TestCase):
             timeout=60,
         )
         self.assertEqual(result.returncode, 2)
+
+    def test_an_OMITTED_path_is_a_usage_error_not_a_pass(self):
+        """The clean bill of health on no input at all.
+
+        `--scan` with the argument dropped used to fall back to stdin, read
+        nothing, find nothing, and exit 0 — defeating the whole point of the
+        three-way exit. Both committed call sites pass a placeholder path the
+        agent substitutes, so dropping the argument is the plausible slip.
+        """
+        result = subprocess.run(
+            [sys.executable, str(GUARD), "--scan"],
+            capture_output=True,
+            text=True,
+            input="",
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn("no AI attribution found", result.stdout)
+
+    def test_stdin_still_works_when_asked_for_explicitly(self):
+        result = subprocess.run(
+            [sys.executable, str(GUARD), "--scan", "-"],
+            capture_output=True,
+            text=True,
+            input=f"Body\n\n{TRAILER}\n",
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 1)
+
+    def test_an_undecodable_file_does_not_exit_one(self):
+        """Exit 1 means "attribution found" — a decode error must not claim that.
+
+        A non-UTF-8 byte raised `UnicodeDecodeError`, which escaped `main` and
+        made CPython exit 1, reporting a finding that did not exist.
+        """
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "body.md"
+            path.write_bytes(b"## Summary\n\nA clean body.\n\xff\xfe\n")
+            result = subprocess.run(
+                [sys.executable, str(GUARD), "--scan", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn("Traceback", result.stderr)
 
 
 class FailsOpen(unittest.TestCase):

@@ -369,24 +369,29 @@ def run(argv: list[str]) -> int:
             # rather than the information: name every verb that went UNTYPED so
             # the fleet can be brought back by hand.
             #
-            # "Untyped", not "every verb". This used to list the whole batch, and
-            # a mid-batch driver failure therefore told the operator to re-resume
-            # sessions that were already open and running — a double-resume of
-            # the first k issues, which is the expensive direction: two agents on
-            # one branch. `iterm_api.open_tabs` carries the partial out on the
-            # exception and its length is the dispatch count.
-            dispatched = exc.ttys[: len(tags)]
-            remaining = tags[len(dispatched) :]
+            # Only the tags NOT resumed, not every tag. This used to list the
+            # whole batch, so a mid-batch driver failure told the operator to
+            # re-resume sessions that were already open and running — a
+            # double-resume of the first k issues, which is the expensive
+            # direction: two agents on one branch.
+            #
+            # `unfinished()` owns the arithmetic rather than this caller deriving
+            # it from `len(exc.ttys)`. The length alone answers the wrong
+            # question: a tab the driver reached but could not type into also
+            # needs re-running, and reading it as resumed meant that issue
+            # silently never got an agent at all — quieter, and worse, than the
+            # double-resume being fixed.
+            pending = set(exc.unfinished(len(tags)))
+            resumed = [tag for n, tag in enumerate(tags) if n not in pending]
+            remaining = [tag for n, tag in enumerate(tags) if n in pending]
             lines = [str(exc)]
-            if dispatched:
+            if resumed:
                 lines.append(
-                    f"  {len(dispatched)} session(s) were already resumed — do "
+                    f"  {len(resumed)} session(s) were already resumed — do "
                     "NOT re-run these (they carry no attend mark, since marking "
                     "happens after the batch):"
                 )
-                lines += [
-                    f"    {resume_command(tag)}" for tag in tags[: len(dispatched)]
-                ]
+                lines += [f"    {resume_command(tag)}" for tag in resumed]
             if remaining:
                 lines.append("  run these by hand:")
                 lines += [f"    {resume_command(tag)}" for tag in remaining]
