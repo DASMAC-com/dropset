@@ -151,12 +151,14 @@ what keeps the glob narrow enough to grant. The broad
 the whole system temp tree is exactly what the allowlist safety floor
 exists to reject.
 
-**Nothing will catch it later.** Nothing sweeps approvals into rules any
-more — the `firm-perms` skill that used to is retired, and firming is now
-an explicit `allowlist.py add`. So a recurring prompt that the operator
-keeps approving one-off never surfaces as a pattern at all. This one was
-found by hand-probing after the prompts got annoying, not by any
-tooling. So the allow-rule is part of adding the tool, in the same PR,
+**Do not rely on something catching it later.** The `firm-perms` skill
+that used to sweep approvals into rules is retired, and the ordinary path
+is an explicit `allowlist.py add`. There *is* a periodic adder again —
+`housekeeping` step 7c mines recent transcripts on a roughly **monthly**
+gate (`allowlist.py refresh-due`) — but a month is far too slow to help
+the PR that adds a tool, and it proposes rather than writes. The prompt
+that motivated this was found by hand-probing after it got annoying, not
+by tooling. So the allow-rule is part of adding the tool, in the same PR,
 or it does not happen.
 
 One related note, so it does not get re-diagnosed:

@@ -1013,8 +1013,20 @@ The gate is `_ds_aws_login` in the committed
 
 **Step 3 is the load-bearing one.** `aws login` can exit 0 having left a
 profile that still cannot call STS, so the gate trusts the probe rather
-than the login's exit status: the invariant defended is "this session
-can read cost data", never "a login ran".
+than the login's exit status: the invariant defended is "this session's
+credentials **resolve**", never "a login ran".
+
+**Two bounds on that invariant, because the stronger phrasing is wrong.**
+`sts:GetCallerIdentity` is authorization-free — it succeeds for any
+signature that verifies — so a green gate does **not** prove Cost
+Explorer is readable, and on this account cost access is separately
+gated (a root-only billing toggle, and `PowerUserAccess` does not cover
+everything). And the probe checks validity *now*, not remaining
+lifetime: a token with a minute left passes, while SSO tokens are
+hours-scoped and a planning session is long-lived and resumable. So the
+gate **narrows** the mid-conversation failure rather than closing it.
+Reading the SSO cache's `expiresAt` and re-logging below a threshold
+would close more of it; that is deliberately not built.
 
 `aws login` is the spelling this CLI prescribes for itself. Measured on
 `aws-cli/2.35.22`, an expired session fails naming that exact command:
@@ -1033,17 +1045,34 @@ unset, the CLI resolves its own default, which is the common case. It is
 not a committed constant because this account's profile names carry the
 account id.
 
-Two deliberate bounds on the gate:
+Three deliberate bounds on the gate:
 
 - **An absent `aws` CLI warns and launches anyway.** The gate exists to
   catch an *expired token*, which is the measured failure. A machine
   with no `aws` has nothing to log into, and blocking there would make
   the committed verb unusable on a checkout without AWS. A *failed or
   dismissed* login is a different condition and does stop the launch.
+- **An `aws` too OLD for a top-level `login` takes that same branch.**
+  It is the same "AWS is not set up here" shape, so it warns and
+  launches, naming the older `aws sso login` spelling. Without this it
+  was strictly worse than having no CLI at all: the login failed with
+  `Invalid choice: 'login'`, the re-probe failed, and the verb refused
+  to start — while a machine with no `aws` started fine. The gate
+  detects it with `aws login help` before attempting the real login, so
+  no spurious `Invalid choice` ever reaches the operator's terminal.
 - **`architect` is not gated.** It argues design rather than reading
   cost data, and a browser login is a poor thing to stand between the
   operator and a design thought. Add it only if an architect session is
   actually found wanting one.
+
+**One consequence worth knowing: `aws login` blocks on a browser.** That
+is exactly right for a verb the operator types — which `plan` and
+`housekeeping` are, being the seat verbs that open the day. It would be
+wrong for a verb typed into a tab by automation, so note that
+`session_dispatch.py` dispatches `task` verbs, which run on Bedrock and
+are deliberately **not** gated. Keep it that way: gating a dispatched
+verb would hang a tab nobody is watching, with the device code rendered
+there.
 
 It runs **after** `_ds_seat_guard`, which matters: the guard clears an
 `AWS_REGION` inherited from a previous `task` in the same tab, and the
@@ -1052,9 +1081,9 @@ Bedrock launcher's environment rather than the operator's own.
 
 ##### "AWS changes take a while to get picked up" — the two mechanisms
 
-The observation is real, but it names **two** different things, and the
-useful finding is that only one of them has a number worth designing
-around — neither does, in fact:
+The observation is real, but it names **two** different things. It is
+worth asking which of the two has a number worth designing around;
+neither does:
 
 - **SSO session expiry** is a *local* credential cache. `aws login`
   refreshes it and the result is usable immediately; there is no

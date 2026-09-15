@@ -129,7 +129,7 @@ through the credentialed server. The rules:
   Documentation server is the canonical pick.)
 
 - **Account actions → the AWS CLI, with the SigV4 `aws-mcp` server as
-  the richer path when it is up.** The credentialed remote server (the
+  fallback even when it is healthy.** The credentialed remote server (the
   managed [Agent Toolkit for AWS][toolkit] proxy) is scoped to actual
   account work — deploy, inspect, CLI execution, and skill retrieval
   (`aws___retrieve_skill`) — where the IAM auth and least-privilege

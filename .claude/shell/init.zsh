@@ -336,8 +336,23 @@ _ds_secrets() {
 #     fails with `Your session has expired` when they do not.
 #   * **The probe is what decides, not the login's exit status.** `aws login` can
 #     exit 0 having left a profile that still cannot call STS, so the gate
-#     re-probes afterwards and trusts only that. The invariant defended is "this
-#     session can read cost data", never "a login ran".
+#     re-probes afterwards and trusts only that. The invariant defended is
+#     "this session's credentials RESOLVE", never "a login ran".
+#
+#     Be precise about that invariant, because the obvious stronger phrasing is
+#     wrong: `sts:GetCallerIdentity` is authorization-free, succeeding for any
+#     signature that verifies, so a green gate does **not** prove Cost Explorer
+#     is readable — on this account cost access is separately gated (it needs a
+#     root-only billing toggle, and `PowerUserAccess` does not cover
+#     everything). The gate rules out an EXPIRED session, which is the measured
+#     failure; it does not rule out a live session lacking `ce:*`.
+#
+#     It also checks validity NOW, not remaining lifetime: a token with a minute
+#     left passes, and SSO tokens are hours-scoped while a planning session is
+#     long-lived and resumable. So this narrows the mid-conversation failure
+#     rather than closing it. A stricter form would read the SSO cache's
+#     `expiresAt` and re-login below a threshold; that is deliberately not built
+#     yet.
 #   * **The profile comes from the untracked runtime config**, never from here.
 #     `DS_AWS_PROFILE` is honored when set; unset, the CLI resolves its own
 #     default, which is the common case. Naming a profile in a committed file
@@ -372,13 +387,33 @@ _ds_aws_login() {
     return 0
   fi
 
+  # An `aws` too old for a top-level `login` is the same "AWS is not set up
+  # here" shape as no `aws` at all, so it takes the same warn-and-launch branch.
+  # Without this it was strictly WORSE than having no CLI: `aws login` exits
+  # non-zero with `Invalid choice: 'login'`, the re-probe fails, and the verb
+  # refuses to start — while a machine with no `aws` launches fine. The
+  # absent-CLI rationale ("blocking would make the committed verb unusable on a
+  # checkout without AWS") applies verbatim here and was simply not honored.
+  if ! aws login help >/dev/null 2>&1; then
+    print -u2 "$verb: this \`aws\` has no top-level \`login\` command (needs a" \
+      "recent AWS CLI v2; measured on 2.35.22) — launching WITHOUT cost-read" \
+      "access. Upgrade the CLI, or run the older \`aws sso login\` by hand" \
+      "first."
+    return 0
+  fi
+
   print -u2 "$verb: AWS session expired or absent — logging in before launch."
   aws login "${profile[@]}"
 
   if ! aws sts get-caller-identity "${profile[@]}" >/dev/null 2>&1; then
-    print -u2 "$verb: AWS login did not produce usable credentials, so this" \
-      "session is NOT launching — it would hit the same expired-session error" \
-      "mid-conversation, with no way to fix it from inside. Re-run \`$verb\`" \
+    # Name BOTH causes. The probe cannot tell an expired session from an
+    # unreachable STS, so a session with perfectly good credentials that is
+    # merely offline lands here — and a message naming only the profile sends
+    # the operator to the wrong knob.
+    print -u2 "$verb: AWS credentials still do not resolve, so this session is" \
+      "NOT launching — it would hit the same error mid-conversation with no way" \
+      "to fix it from inside. Either the login did not complete, or AWS was" \
+      "unreachable (offline, captive portal, STS throttle). Re-run \`$verb\`" \
       "once \`aws login\` succeeds, or check DS_AWS_PROFILE in the runtime" \
       "config."
     return 1

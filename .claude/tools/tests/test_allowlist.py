@@ -629,12 +629,35 @@ class RefreshDecideTests(unittest.TestCase):
         self.assertTrue(due)
         self.assertIn("no usable timestamp", reason)
 
+    def test_a_marker_with_no_timestamp_key_at_all_is_due(self):
+        due, reason = refresh_decide({"rules_added": 3}, self.NOW)
+        self.assertTrue(due)
+        self.assertIn("no usable timestamp", reason)
+
     def test_a_naive_timestamp_is_read_as_utc(self):
         # A hand-edited marker is the realistic source of a naive stamp, and
         # comparing it to an aware `now` would raise rather than decide.
-        marker = {"last_refresh": "2026-08-01T12:00:00"}
-        due, _ = refresh_decide(marker, self.NOW)
-        self.assertTrue(due)
+        #
+        # Asserted through the NOT-due direction on purpose. Asserting `due` for
+        # an out-of-interval naive stamp is vacuous: rejecting naive stamps
+        # outright would ALSO report due (via "no usable timestamp"), so the
+        # green test would survive the very coercion being removed. A naive stamp
+        # inside the interval can only be not-due if the coercion happened.
+        marker = {"last_refresh": "2026-09-11T12:00:00"}  # 3 days before NOW
+        due, reason = refresh_decide(marker, self.NOW)
+        self.assertFalse(due, reason)
+        self.assertNotIn("no usable timestamp", reason)
+
+    def test_a_future_timestamp_is_due(self):
+        # The bug this pins: a future-dated marker made `elapsed_days` negative,
+        # so `-N >= 30` was false and the refresh was reported NOT due —
+        # silently, until wall-clock caught up. A clock ahead at stamp time or a
+        # year typo would disable the monthly step for a year. Every other
+        # bad-marker branch fails toward refreshing; this one has to as well.
+        marker = {"last_refresh": (self.NOW + timedelta(days=400)).isoformat()}
+        due, reason = refresh_decide(marker, self.NOW)
+        self.assertTrue(due, reason)
+        self.assertIn("future", reason)
 
     def test_a_non_dict_marker_is_due(self):
         self.assertTrue(refresh_decide(["nope"], self.NOW)[0])
@@ -680,6 +703,30 @@ class RefreshMarkerTests(unittest.TestCase):
             out = refresh_due(settings, DEFAULT_REFRESH_INTERVAL_DAYS)
         self.assertTrue(out["due"])
         self.assertIsNone(out["last_refresh"])
+
+    def test_an_invalid_utf8_marker_reads_as_absent(self):
+        # The narrower `json.JSONDecodeError` clause did NOT cover this:
+        # `read_text(encoding="utf-8")` raises `UnicodeDecodeError` before any
+        # JSON parsing happens, and `main()` catches neither — so one stray byte
+        # in a bookkeeping file killed the command instead of being ignored.
+        with tempfile.TemporaryDirectory() as d:
+            settings = Path(d) / "settings.local.json"
+            settings.write_text(json.dumps(_settings([])), encoding="utf-8")
+            refresh_marker_path(settings).write_bytes(b"\x80\x81not utf8")
+            out = refresh_due(settings, DEFAULT_REFRESH_INTERVAL_DAYS)
+        self.assertTrue(out["due"])
+        self.assertIsNone(out["last_refresh"])
+
+    def test_an_unwritable_marker_path_raises_a_clear_error(self):
+        # The read side swallows OSError; the write side must not inherit that
+        # asymmetry silently. A stamp that cannot be written means the cadence
+        # never advances, so it is reported as an AllowlistError (which `main()`
+        # formats) rather than escaping as a traceback out of `run()`.
+        with tempfile.TemporaryDirectory() as d:
+            settings = Path(d) / "missing-dir" / "settings.local.json"
+            with self.assertRaises(AllowlistError) as caught:
+                refresh_record(settings, added=1)
+        self.assertIn("refresh marker", str(caught.exception))
 
     def test_the_marker_does_not_become_an_allow_rule(self):
         # The regression this guards: writing cadence state into the settings
@@ -764,6 +811,39 @@ class CliTests(unittest.TestCase):
         self.assertEqual((rc_rec, rc_due), (0, 0))
         self.assertEqual(rec["rules_added"], 2)
         self.assertFalse(due["due"])
+
+    def test_refresh_due_rejects_a_non_finite_interval(self):
+        # `nan >= x` is always False, so a bare `type=float` would have accepted
+        # this and reported the refresh never due, permanently, with exit 0 —
+        # the one input that disables the gate rather than mis-tuning it.
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, ["Bash(git:*)"])
+            with self.assertRaises(SystemExit):
+                self._run_capture(
+                    [
+                        "allowlist.py",
+                        "--settings",
+                        p,
+                        "refresh-due",
+                        "--interval-days",
+                        "nan",
+                    ]
+                )
+
+    def test_refresh_due_rejects_a_negative_interval(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, ["Bash(git:*)"])
+            with self.assertRaises(SystemExit):
+                self._run_capture(
+                    [
+                        "allowlist.py",
+                        "--settings",
+                        p,
+                        "refresh-due",
+                        "--interval-days",
+                        "-5",
+                    ]
+                )
 
     def test_refresh_due_dispatch_honors_a_custom_interval(self):
         # A zero-day interval is always due — the knob genuinely reaches the rule

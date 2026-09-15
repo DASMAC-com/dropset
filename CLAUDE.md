@@ -350,8 +350,9 @@ keys, single-quoted strings, block style, folded block scalars for long
 ARNs. Authoring is
 agent-assisted: documentation lookups go to the credential-free
 `aws-docs` MCP server; account actions go to the **AWS CLI** under an
-SSO profile, with the SigV4 `aws-mcp` server (deploy / inspect / skill
-retrieval) as the richer path when it is up — it has been failing to
+SSO profile, with the SigV4 `aws-mcp` server **fallback even when
+healthy** — its one unique capability being `aws___retrieve_skill`, and
+the CLI's spend being the visible, free surface. It has been failing to
 connect across sessions, and that is **its own bug, not a substrate
 one**, since a locally configured server reaches Bedrock too. The real
 loss while it is down is `aws___retrieve_skill`, which has no CLI
@@ -366,9 +367,12 @@ servers' wiring is user-local, never committed.
 
 **A session cannot log itself in** — `aws login` is interactive — so the
 two seat verbs that read cost data, `plan` and `housekeeping`, **gate
-their own launch** on a usable session (probe, log in, re-probe, refuse);
-`architect` deliberately does not. The profile is `DS_AWS_PROFILE` in the
-untracked runtime config. Treat credentials as a launch-time
+their own launch** on credentials that resolve (probe, log in, re-probe,
+refuse); `architect` deliberately does not. The profile is an **optional**
+`DS_AWS_PROFILE` in the untracked runtime config; unset means the CLI's
+own default. Note the gate's bound: `sts:GetCallerIdentity` is
+authorization-free, so it rules out an **expired** session and not a live
+one lacking `ce:*`. Treat credentials as a launch-time
 precondition, and note that AWS publishes **no** propagation bound for
 an IAM change — verify by retrying the call rather than waiting a folk
 interval. Full detail:

@@ -92,6 +92,7 @@ import argparse
 import functools
 import importlib.util
 import json
+import math
 import re
 import sys
 from datetime import datetime, timezone
@@ -516,6 +517,27 @@ DEFAULT_REFRESH_INTERVAL_DAYS = 30.0
 REFRESH_MARKER_NAME = ".allowlist-refresh.json"
 
 
+def _interval_days(value: str) -> float:
+    """An `--interval-days` that is finite and not negative.
+
+    `type=float` alone accepts `nan`, and `nan >= x` is **always false** — so a
+    single stray argument would report the refresh as never due, silently and
+    permanently, with a zero exit. That is the one input that disables the gate
+    rather than merely mis-tuning it, so it is rejected at the boundary.
+    """
+    try:
+        days = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {value!r}")
+    if not math.isfinite(days):
+        raise argparse.ArgumentTypeError(
+            f"must be finite (a non-finite interval never comes due): {value!r}"
+        )
+    if days < 0:
+        raise argparse.ArgumentTypeError(f"must not be negative: {value!r}")
+    return days
+
+
 def refresh_marker_path(settings_path: Path) -> Path:
     """Beside the settings file, never inside it.
 
@@ -530,9 +552,17 @@ def _read_refresh_marker(path: Path) -> dict | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError, RecursionError):
         # A corrupt marker reads as absent — the gate just refreshes again,
         # which is the safe direction: the cost is one extra proposal pass.
+        #
+        # `ValueError`, not `json.JSONDecodeError`, which is a strict SUBSET of
+        # it. `read_text(encoding="utf-8")` raises `UnicodeDecodeError` — also a
+        # `ValueError` — on a marker holding one invalid byte, and deeply nested
+        # JSON raises `RecursionError`; neither is a `JSONDecodeError`, so both
+        # escaped the narrower clause. `main()` catches neither, so a byte of
+        # garbage in a bookkeeping file killed the whole command instead of
+        # being ignored — the opposite of what this handler is for.
         return None
     return data if isinstance(data, dict) else None
 
@@ -566,6 +596,16 @@ def refresh_decide(
     if last is None:
         return True, "prior refresh has no usable timestamp"
     elapsed_days = (now - last).total_seconds() / 86400.0
+    if elapsed_days < 0:
+        # A future-dated marker is as unusable as an unparseable one, so it must
+        # fail the SAME way — toward refreshing. Without this clause it failed
+        # the other way and silently: `-412 >= 30` is false, so the refresh was
+        # reported not-due until wall-clock caught up, and the reason string read
+        # `only -412.0d since last refresh`. A clock that was ahead at stamp
+        # time, or a year typo in a hand-edited marker, would disable the monthly
+        # step for a year. Every other bad-marker branch above fails toward
+        # refreshing; this one is the odd case out and was the bug.
+        return True, f"marker timestamp is {-elapsed_days:.1f}d in the future"
     if elapsed_days >= min_interval_days:
         return (
             True,
@@ -599,7 +639,15 @@ def refresh_record(settings_path: Path, added: int = 0) -> dict:
         "last_refresh": datetime.now(timezone.utc).isoformat(),
         "rules_added": added,
     }
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    try:
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError as e:
+        # The read side deliberately swallows `OSError`; this side must not
+        # simply inherit that asymmetry by accident. A stamp that cannot be
+        # written is worth saying out loud rather than escaping as a traceback
+        # out of `run()`: the cadence never advances, so the caller would refresh
+        # on every pass — which is the per-session behavior this gate replaced.
+        raise AllowlistError(f"could not write the refresh marker {path}: {e}")
     return {"recorded": payload["last_refresh"], "rules_added": added}
 
 
@@ -629,7 +677,7 @@ def run(argv: list[str]) -> int:
     p_due = sub.add_parser("refresh-due", help="is a permission refresh due?")
     p_due.add_argument(
         "--interval-days",
-        type=float,
+        type=_interval_days,
         default=DEFAULT_REFRESH_INTERVAL_DAYS,
         help=f"minimum days between refreshes (default: "
         f"{DEFAULT_REFRESH_INTERVAL_DAYS:g})",
