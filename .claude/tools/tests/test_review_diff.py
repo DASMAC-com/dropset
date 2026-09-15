@@ -1537,6 +1537,12 @@ class RustIncludeFixtureTests(unittest.TestCase):
         self.write("a/t.rs", 'include_str!("../../../outside/secret.txt")\n')
         self.assertEqual(self.scan("a/t.rs"), {})
 
+    def test_a_sibling_starting_WITH_dots_is_not_mistaken_for_an_escape(self):
+        # The guard is a path-component test, so a repo-root file whose name merely
+        # begins `..` survives. A bare `startswith("..")` would drop it.
+        self.write("t.rs", 'include_str!("..data/x.yml")\n')
+        self.assertEqual(self.scan("t.rs"), {"..data/x.yml": ["t.rs"]})
+
     def test_an_absolute_target_is_dropped(self):
         self.write("a/t.rs", 'include_str!("/etc/hosts")\n')
         self.assertEqual(self.scan("a/t.rs"), {})
@@ -1567,9 +1573,11 @@ class RustIncludeFixtureTests(unittest.TestCase):
         self.write("a/t.rs", 'include_str!(r"../raw.yml")\n')
         self.write("a/u.rs", 'include_str!(concat!(env!("DIR"), "/c.yml"))\n')
         self.assertEqual(self.scan("a/t.rs"), {})
-        # The `concat!` form matches its inner literal rather than the real path,
-        # so it yields a wrong-but-harmless key, never the intended one.
-        self.assertNotIn("c.yml", self.scan("a/u.rs"))
+        # The `concat!` form yields NO key at all: the pattern requires the literal
+        # immediately after the open paren, and the next character here is `c`.
+        # Asserted as an exact empty dict rather than a missing key, so loosening
+        # the regex later fails loudly instead of passing vacuously.
+        self.assertEqual(self.scan("a/u.rs"), {})
 
     def test_the_hits_field_rides_the_gate_only_projection(self):
         # A caller taking `--gate-only` must still see the reason to run a suite the

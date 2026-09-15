@@ -222,7 +222,7 @@ SLICE_NAMES = ("source", "tests", "docs")
 
 # A mirror of the ``code`` filter in .github/workflows/test.yml, which runs with
 # ``predicate-quantifier: every`` — so a diff whose every path matches one of
-# these makes all three Tests jobs pass in seconds as path-filtered no-ops, and
+# these makes all four Tests jobs pass in seconds as path-filtered no-ops, and
 # running the Rust suites locally mirrors nothing.
 #
 # Drift here is silent and its only symptom is wasted wall-clock: the list once
@@ -397,7 +397,7 @@ def rust_include_fixtures(
     :data:`RUST_REACHABLE` is a hand-kept glob list, so it cannot learn that a
     test started reading a new fixture — and the resulting blind spot is silent in
     the one direction that costs a merge. A diff whose every path CI's ``code``
-    filter excludes makes all three Tests jobs pass in seconds as no-ops, while
+    filter excludes makes all four Tests jobs pass in seconds as no-ops, while
     the merge queue runs the **full** suite against the merged result; if one of
     those excluded paths is compiled into a Rust test by ``include_str!``, the
     only signal is a dequeue.
@@ -445,7 +445,9 @@ def rust_include_fixtures(
             if posixpath.isabs(target):
                 continue
             resolved = posixpath.normpath(posixpath.join(base, target))
-            if resolved.startswith(".."):
+            # A path COMPONENT test, not a string prefix: a bare `startswith("..")`
+            # also drops a legitimate `..data/x.yml` at the repo root.
+            if resolved == ".." or resolved.startswith("../"):
                 continue
             including = fixtures.setdefault(resolved, [])
             if src not in including:
@@ -1001,13 +1003,22 @@ def added_line_shape(diff_path: Path) -> dict:
     make the flag blindest on its own home surface, since everything under
     ``.claude/tools/`` is Python and documents itself in docstring form.
 
-    The tracking is deliberately **approximate, and errs toward code**. A diff
-    shows added lines only, so a hunk can begin inside a docstring with no
-    delimiter in sight; state therefore resets at every file *and* hunk header
+    The **state tracking** is deliberately approximate and errs toward code: a
+    diff shows added lines only, so a hunk can begin inside a docstring with no
+    delimiter in sight, and state therefore resets at every file *and* hunk header
     rather than being carried across a gap it cannot see. A docstring spanning a
     hunk boundary is counted low, never high.
 
-    Two further gaps in the same direction, both accepted: an added line
+    **The classification itself can err the other way, and that is not the same
+    claim.** The branch fires on any line opening a triple-quoted run, not only a
+    docstring, so a multi-line *string literal* — embedded SQL, or a diff fixture
+    in a test — counts as prose for its whole body. :data:`PROSE_EXTS` is
+    over-broad in the same way: a fenced code block in markdown counts as prose.
+    Both are left as they are, because over-reporting costs one extra lens on a
+    gate whose whole purpose is quality rather than thrift; the point of saying so
+    is that "errs toward code" describes the state machine, not the result.
+
+    Two further gaps in the low direction, both accepted: an added line
     whose own content starts with ``++`` is written ``+++…`` and is skipped with
     the file header, and a path git **quotes** (an embedded space, or non-ASCII)
     yields an extension with a trailing quote that matches no table entry, so

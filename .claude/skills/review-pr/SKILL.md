@@ -4335,7 +4335,7 @@ already being asked to start the review.
    `test.yml` gates its Tests jobs on a `code` filter that
    **excludes** the doc / frontend / decks / `.claude` / config
    surfaces, under a `predicate-quantifier` of `every` — so a
-   diff confined entirely to them makes all three Tests jobs
+   diff confined entirely to them makes all four Tests jobs
    pass in seconds as path-filtered no-ops. Step 5's
    `review_diff.py` verdict already decides this:
    **`runs_rust_suites`**, computed from the mirror of that
@@ -5730,7 +5730,13 @@ already being asked to start the review.
    Branch on the single result:
 
    - `merged: true` (or `state: "MERGED"` / `"CLOSED"`) → it
-     landed; report the merge. **The Linear issue stays In
+     landed; report the merge — **but read `merged` before
+     saying so.** This branch is keyed on `CLOSED` too, and a
+     `CLOSED` PR with `merged: false` was **abandoned, not
+     landed**: report that instead, and skip the post-merge
+     tidy below (there is nothing to dismiss and the worktree
+     may still be wanted). The invariant above speaks only of
+     `MERGED`, deliberately. **The Linear issue stays In
      Review, and nothing here writes a state.** Linear's
      GitHub integration makes **no** transition on merge (a
      team setting), and `Done` means operator-ratified — never
