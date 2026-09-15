@@ -11,6 +11,32 @@ compiler version. No workflow names a version, and each Dockerfile that
 builds Rust takes `FROM rust:1-bookworm` — a major-version base image whose
 rustup then resolves this file, so the exact compiler still comes from here.
 
+**Where** an image resolves it is load-bearing, not incidental. The base tag
+floats, so rustup has to download the pinned toolchain — five components, and
+roughly five minutes of them when measured on an Apple-silicon laptop — and the
+layer that download lands in decides how often it is paid. Each Rust image
+therefore copies `rust-toolchain.toml` **alone** into its `chef` stage and runs
+`rustup toolchain install` there, before any source `COPY`: the layer is then
+keyed only on the pin file, so it survives every source change, and
+invalidates only on a pin bump or a new base-image digest. Both later stages
+descend from it, so `cargo chef cook` and `cargo build` share one compiler.
+Before this, the cook stage held only `recipe.json` — no pin file — so it built
+on the image's own compiler while the build stage used the pinned one, and much
+of the cooked dependency set was invalid at build time: measured at 144 crates
+recompiled against 71 afterwards. On this workspace that costs well under a
+second, so treat it as a correctness tidy-up rather than a saving; the download
+above is where the time went.
+
+`.claude/tools/dockerfile_stages.py` asserts that structure (the
+`dockerfile-stages` pre-commit hook, or `make dockerfile-stages ARGS=--show`
+to see the graph). It fails a Rust stage that does not inherit the pin layer,
+a pin layer sitting behind a whole-tree `COPY`, a cargo call ahead of the
+resolve, and any stage that names a second compiler version instead of
+inheriting one. Before it existed, the pin file reached the images only via
+`COPY . .`, so every rebuild-after-commit re-paid the download **twice** — the
+planner and the builder are sibling stages, so neither could reuse the other's
+— measured at 349.2s and 216.2s in one rebuild on 2026-09-15.
+
 CI reads it by using `actions-rust-lang/setup-rust-toolchain` with **no**
 `toolchain` input, which installs whatever the file specifies. The more
 common `dtolnay/rust-toolchain` cannot do this: its `toolchain` input

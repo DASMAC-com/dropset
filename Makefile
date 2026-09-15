@@ -1014,6 +1014,16 @@ lint:
 docker-context:
 	python3 .claude/tools/docker_context.py $(ARGS)
 
+# Check every Rust image still resolves the pinned toolchain in a layer keyed
+# only on rust-toolchain.toml, ahead of any source COPY, with every Rust stage
+# descending from it. Run by the `dockerfile-stages` pre-commit hook too, so
+# `make lint` covers it; this target is for looking at the graph directly.
+# `ARGS=--show` prints each stage, which of them build Rust, and where each one
+# inherits the pin from.
+.PHONY: dockerfile-stages
+dockerfile-stages:
+	python3 .claude/tools/dockerfile_stages.py $(ARGS)
+
 # Report committed guard hooks that no settings file wires. A script under
 # .claude/hooks/ does nothing until a PreToolUse entry points at it, and the
 # wiring is deliberately uncommitted (both settings files are git-ignored), so
