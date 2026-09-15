@@ -11,8 +11,12 @@
 -- registry inverts that, and a dark collector becomes a row reading 0 rather
 -- than a row that is not there.
 --
--- THE ROSTER IS A DECLARED LITERAL, so this table has a FLOOR of eight rows,
--- one per source the platform is meant to have -- and a ninth appears if the
+-- THE ROSTER IS A DECLARED LITERAL of EIGHT sources -- seven the platform
+-- expects to be RUNNING plus the parked one -- so this table has an
+-- unconditional FLOOR of eight rows. What the mirror below supplies is the park
+-- STATE (the role text and the two dates), never the row itself: a row sourced
+-- from the mirror alone would vanish on any database no collector has started
+-- against. A further row appears if the
 -- registry ever holds a source nobody declared, which is the loud case below. A registry-only
 -- read cannot promise that, because a source leaves the registry when its
 -- collector stops registering -- exactly the invisible-rather-than-dark defect
@@ -50,8 +54,44 @@ WITH declared AS (
     ('alphavantage', 'daily reference'),
     ('erapi', 'daily reference'),
     ('frankfurter', 'daily reference'),
-    ('pyth', 'parked by decision')
+    -- PYTH STAYS IN THE ROSTER WITH A NULL ROLE, and both halves of that are
+    -- load-bearing. It stays because the roster is what gives this table its
+    -- FLOOR: sourcing a parked source's row from the mirror alone would make
+    -- it VANISH on any database no collector has started against -- rendering
+    -- as never-configured, which is the invisible-rather-than-dark defect this
+    -- panel exists to catch, reintroduced by the fix for it. Its role is NULL
+    -- because a designation is not what the roster knows about a parked source
+    -- and 'parked by decision' is not a designation: the park state comes from
+    -- the mirror below, so this literal holds no copy of the parked list. A
+    -- parked source whose mirror row is missing therefore reads UNCLASSIFIED
+    -- and sorts FIRST -- loud, which is the correct reading of "declared, dark,
+    -- and nothing can tell me why".
+    ('pyth', NULL)
   ) AS d (source, role)
+),
+
+-- THE PARK STATE, JOINED RATHER THAN COPIED. The literal above used to give
+-- pyth the role 'parked by decision', which made this query hold its own copy
+-- of a decision that lives in `feeds/src/parked.rs` -- the exact copy-drift the
+-- declared roster exists to kill, one level in. Now the literal names the
+-- source with a NULL role and the mirror says whether it is parked, so the
+-- park state has one home. Be precise about what that does and does not
+-- remove: the roster still names pyth, so un-parking it for good still means
+-- editing this literal -- but forgetting to costs a loud UNCLASSIFIED row
+-- rather than a stale claim that it is parked.
+--
+-- `mirrored_at` IS selected and IS shown, under a name that says what it dates.
+-- It dates the last COLLECTOR START rather than the park, so the risk is that a
+-- reader takes it for a data-freshness signal -- but withholding it costs more
+-- than that risk: a stale mirror is the one failure mode of this whole design,
+-- and if no surface renders the column then "mirrored_at makes staleness
+-- legible" is a claim with nothing behind it.
+parked AS (
+  SELECT
+    p.venue AS source,
+    p.since,
+    p.mirrored_at
+  FROM parked_sources AS p
 ),
 
 rolled AS (
@@ -71,8 +111,26 @@ rolled AS (
 )
 
 SELECT
-  coalesce(r.source, d.source) AS source,
-  coalesce(d.role, 'UNCLASSIFIED') AS role,
+  coalesce(r.source, d.source, k.source) AS source,
+  -- PARKED-NESS WINS OVER A DECLARED ROLE, and the order of these arms is the
+  -- whole of that. Coalescing `d.role` first would mean a source that is BOTH
+  -- declared and parked renders under its old designation with zero counts --
+  -- i.e. as a faulted tape -- which is exactly the confusion this panel is
+  -- meant to end, and it is the state a park transition passes through.
+  CASE
+    WHEN k.source IS NOT NULL THEN 'parked by decision'
+    ELSE coalesce(d.role, 'UNCLASSIFIED')
+  END AS role,
+  k.since AS parked_since,
+  -- THE MIRROR'S OWN AGE, shown rather than withheld. A parked row is only as
+  -- current as the last collector start, so a mirror that has fallen behind the
+  -- code constant is a real state -- and every other statement about this set
+  -- calls `mirrored_at` the thing that makes that legible, which is only true if
+  -- something renders it. Nothing else does: no other panel reads it and no
+  -- alert rule watches it. Read it as "when was this park state last
+  -- confirmed", never as a data-freshness signal for the source itself, which
+  -- is what `latest` and `age_secs` are for.
+  to_timestamp(k.mirrored_at) AS park_confirmed,
   coalesce(r.products, 0) AS products,
   coalesce(r.ever_produced, 0) AS ever_produced,
   coalesce(r.printing_now, 0) AS printing_now,
@@ -81,19 +139,36 @@ SELECT
   (extract(epoch FROM now()) - r.latest)::bigint AS age_secs
 FROM rolled AS r
 FULL JOIN declared AS d ON r.source = d.source
+-- A THIRD FULL JOIN, for the same fail-closed reason as the second. A parked
+-- source is in neither the registry nor the declared roster -- that is what
+-- being parked means -- so an inner or left join would drop its row and this
+-- panel would go back to being unable to say the word. Joining on the coalesce
+-- of the two sides above is what lets a source that is BOTH declared and parked
+-- still match one row rather than two.
+FULL JOIN parked AS k ON coalesce(r.source, d.source) = k.source
 -- ORDERED BY ROLE RANK, not alphabetically. Alphabetical put the three daily
 -- references at the TOP -- and they read 0 under printing_now between
 -- publications, so the first three rows of the table were permanently red while
 -- the designated tape sat near the bottom. That is precisely the
 -- teach-the-eye-to-skip-the-table defect cited twice above. An undeclared source
 -- ranks first because it is the one thing here nobody has accounted for.
+-- RANKED IN THE SAME PRECEDENCE THE ROLE COLUMN USES, parked first-tested and
+-- sorted last, so the two agree about which tier a row is in. They agree on
+-- PARKED-NESS specifically; a declared role added to the literal without a rank
+-- arm below still falls to the terminal ELSE and sorts among the parked, which
+-- is the pre-existing shape of this CASE rather than something the park state
+-- introduced. An
+-- UNCLASSIFIED row still ranks first because it is the one thing here nobody
+-- has accounted for -- which now includes a DECLARED source whose park the
+-- mirror has not confirmed, and that is the loud reading it should get.
 ORDER BY
-  CASE coalesce(d.role, 'UNCLASSIFIED')
-    WHEN 'UNCLASSIFIED' THEN 0
-    WHEN 'tape (FX)' THEN 1
-    WHEN 'intraday margin (FX)' THEN 2
-    WHEN 'tape (crypto/peg)' THEN 3
-    WHEN 'daily reference' THEN 4
+  CASE
+    WHEN k.source IS NOT NULL THEN 5
+    WHEN d.role IS NULL THEN 0
+    WHEN d.role = 'tape (FX)' THEN 1
+    WHEN d.role = 'intraday margin (FX)' THEN 2
+    WHEN d.role = 'tape (crypto/peg)' THEN 3
+    WHEN d.role = 'daily reference' THEN 4
     ELSE 5
   END ASC,
-  coalesce(r.source, d.source) ASC
+  coalesce(r.source, d.source, k.source) ASC

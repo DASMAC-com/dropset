@@ -28,10 +28,23 @@
 //! parked and still runs — which is worse than not describing it at all. Add
 //! the entry and the check together.
 //!
-//! **The consequence for a dashboard, which is not yet resolved.** Because the
-//! set lives in code, a panel separating parked from faulted cannot join
-//! against it — it either carries its own copy of the list, or a later change
-//! seeds this set into reference data the panel can read.
+//! **How a dashboard reaches this set, which used to be unresolved.** Because
+//! the set lives in code, a panel separating parked from faulted cannot join
+//! against it directly. The resolution is a **mirror**, not a move: the
+//! market-data collectors replace the whole of this set in the
+//! `parked_sources` / `parked_source_feeds` reference tables at startup
+//! (`0016_parked_sources.sql`, written by `market-data/src/parked_mirror.rs`),
+//! so a panel joins the tables while this constant stays the only place a park
+//! is *decided*. Nothing reads those tables to decide whether to spawn a tier,
+//! and nothing writes them by hand.
+//!
+//! Two consequences a reader should not have to derive. The mirror is only as
+//! fresh as the last collector start, so a park added since then is real in
+//! code and absent from SQL — `parked_sources.mirrored_at` is what says how
+//! stale the answer is, and it is why a panel must never treat the mirror as
+//! the authority on what is running. And because the write replaces the whole
+//! set, removing an entry here deletes its rows at the next bring-up; no
+//! migration is involved in parking or un-parking anything.
 //!
 //! Parking a source rewrites no query, but it does change what one table
 //! *contains*, and the difference matters on exactly the surfaces that render
@@ -40,9 +53,16 @@
 //! **framework** name, `pyth-hermes` rather than the bare token below — is left
 //! frozen with `last_ok_at` NULL, and the unfiltered `ok_age_secs > 1800` alert
 //! keeps firing on it with nothing running that could ever clear it. Before the
-//! park that row was self-healing: a credential arriving was enough. Retiring
-//! it needs either an exclusion on the alert or a one-off delete, neither of
-//! which lives here.
+//! park that row was self-healing: a credential arriving was enough.
+//!
+//! Retiring that firing needs **both** halves, and they are different kinds of
+//! thing. The alert and the maker feed-health panel now exclude any feed named
+//! by [`ParkedSource::health_feeds`], which is the durable half and the reason
+//! that field exists. The frozen row itself is **data**, so it goes by a
+//! one-off `DELETE` an operator runs against the shared database — recorded in
+//! `docs/data-feeds.md` §8, never as a migration, because a migration would
+//! bake one database's accumulated state into the history every fresh database
+//! then replays.
 //!
 //! **The venue token is the bare one**, matching
 //! `instrument_source_liveness.source` (`pyth`, `oanda`, `kraken`) — *not* a
@@ -84,6 +104,42 @@ pub struct ParkedSource {
     pub since: &'static str,
     /// Why it is parked, and what would un-park it.
     pub reason: &'static str,
+    /// The `feed_health.feed` spellings this park silences — the **framework**
+    /// names, not the bare [`venue`](Self::venue) token above.
+    ///
+    /// This field exists to keep a vocabulary bridge out of SQL. A park is
+    /// decided against the bare token, while the health table and the staleness
+    /// alert are keyed by framework name, so an exclusion written in SQL would
+    /// have to relate the two vocabularies — the silent-join failure the schema
+    /// catalog forbids, and unlike most such joins this one *looks* right,
+    /// because for this adapter the two spellings differ by a suffix. Declaring
+    /// the mapping here puts it where both spellings are known and leaves every
+    /// query doing single-vocabulary equality.
+    ///
+    /// **An empty list is meaningful, not a default.** It says this park
+    /// silences no health row — correct for a venue whose collector never wrote
+    /// one. It is not the place to record uncertainty: an entry whose feed does
+    /// write health rows, left empty here, goes on firing the staleness alert
+    /// with nothing able to clear it, which is the exact defect the exclusion
+    /// closes.
+    ///
+    /// **The over-broad direction is the dangerous one, and it is the reason
+    /// each name must contain its venue token.** Too few names fails *open* —
+    /// the alert keeps firing, which is noisy and safe. A name that matches a
+    /// **running** venue's `feed_health.feed` fails *closed*: it removes that
+    /// venue from the staleness alert and the maker feed-health panel
+    /// permanently, and because the exclusion works by making a row absent,
+    /// nothing renders the fact that anything was excluded. That is a live
+    /// feed going dark with no signal anywhere. `every_entry_is_well_formed`
+    /// below pins the containment check that catches a foreign or typo'd name;
+    /// it cannot catch a name that is wrong *within* the same venue.
+    ///
+    /// The exclusion keys on **membership in this list**, never on a NULL
+    /// `last_ok_at`. Never-answered is deliberately a firing state — a worse
+    /// one than stopped-answering — so exempting NULL would blind the alert to
+    /// every genuinely never-answered feed, and nothing in a diff would show
+    /// it.
+    pub health_feeds: &'static [&'static str],
 }
 
 /// Every source parked by decision.
@@ -105,6 +161,10 @@ pub const PARKED_SOURCES: &[ParkedSource] = &[ParkedSource {
     reason: "Hermes went keyed in the Pyth Core upgrade and there is no usable \
              free tier, so no machine running this stack holds a credential; \
              kept for forensic use. Un-parked by a key or a self-hosted Hermes.",
+    // `PythHermesSource::name()` and the maker bot's fusion tag are both this
+    // string, which is what the maker wrote into `feed_health` while the tier
+    // still ran — and what its frozen row is still keyed by.
+    health_feeds: &["pyth-hermes"],
 }];
 
 /// The park record for `venue`, or `None` if it is expected to be running.
@@ -180,6 +240,135 @@ mod tests {
                 "{} since must be digits and dashes only",
                 p.venue
             );
+            // The health-feed names are the OTHER vocabulary, and an empty
+            // string would mirror a row matching nothing while reading as
+            // coverage. The list itself may legitimately be empty — see the
+            // field docs — so emptiness of the LIST is deliberately not
+            // asserted here.
+            for feed in p.health_feeds {
+                assert!(
+                    !feed.is_empty(),
+                    "{} has an empty health feed name",
+                    p.venue
+                );
+                // The containment guard the field docs promise. A name that
+                // does not mention its own venue is either a typo or another
+                // venue's feed, and the second case silences a RUNNING feed's
+                // staleness alert with nothing rendering the exclusion. Not
+                // `starts_with`: a framework name may be prefixed
+                // (`cex:coinbase:EURC-USDC`), so containment is the strongest
+                // form that holds for every shape.
+                assert!(
+                    feed.contains(p.venue),
+                    "{}'s health feed {feed:?} does not name its own venue — a \
+                     foreign name here silences a feed nobody parked",
+                    p.venue
+                );
+            }
         }
+    }
+
+    /// Venues must be DISTINCT, and this is a database guard rather than a
+    /// tidiness one.
+    ///
+    /// `parked_sources.venue` is the primary key and the mirror write upserts
+    /// with `ON CONFLICT (venue) DO UPDATE`, which Postgres aborts with
+    /// `ON CONFLICT DO UPDATE command cannot affect row a second time` when one
+    /// statement presents the same key twice. The mirror write is fatal at
+    /// collector startup, so a duplicated entry here would take down every
+    /// market-data collector at the next bring-up — with a cardinality error
+    /// that names neither the duplicate nor this file. Nothing else catches it:
+    /// the character checks above are per entry, so a duplicate passes them
+    /// twice.
+    #[test]
+    fn every_venue_is_distinct() {
+        let mut seen: Vec<&str> = Vec::with_capacity(PARKED_SOURCES.len());
+        for p in PARKED_SOURCES {
+            assert!(
+                !seen.contains(&p.venue),
+                "{} is parked twice — the mirror's upsert cannot take one \
+                 venue's key twice in a statement",
+                p.venue
+            );
+            seen.push(p.venue);
+        }
+    }
+
+    /// `since` must be a real calendar date, not merely date-SHAPED.
+    ///
+    /// The shape check in `every_entry_is_well_formed` accepts `2026-13-45`,
+    /// and the mirror write casts this string to a Postgres `DATE` — so a
+    /// transposed or impossible date passes that check and then fails the cast
+    /// at collector startup, fatally, for every collector binary. Validating it
+    /// in the constant's own suite converts that outage into a red build.
+    ///
+    /// **It checks month LENGTHS, including the leap rule, because a bare
+    /// 1-to-31 range is not what Postgres accepts.** `2026-02-30`,
+    /// `2026-04-31` and `2027-02-29` all sit inside 1-31 and Postgres rejects
+    /// every one of them with `date/time field value out of range` — and
+    /// `2026-11-31` is exactly the fat-finger this test exists to catch, so the
+    /// looser form would have left the promise unkept. Hand-rolled rather than
+    /// pulling a date crate into this dependency-light module: the Gregorian
+    /// leap rule is four lines and is not going to change.
+    #[test]
+    fn every_since_is_a_real_date() {
+        for p in PARKED_SOURCES {
+            let parts: Vec<&str> = p.since.split('-').collect();
+            assert_eq!(
+                parts.len(),
+                3,
+                "{}'s since {:?} is not YYYY-MM-DD",
+                p.venue,
+                p.since
+            );
+            assert_eq!(parts[0].len(), 4, "{} needs a 4-digit year", p.venue);
+            let year: u32 = parts[0].parse().expect("year parses");
+            let month: u32 = parts[1].parse().expect("month parses");
+            let day: u32 = parts[2].parse().expect("day parses");
+            assert!(
+                (1..=12).contains(&month),
+                "{}'s since names month {month}",
+                p.venue
+            );
+            let leap =
+                year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+            let days_in_month = match month {
+                1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                4 | 6 | 9 | 11 => 30,
+                // Only reachable as 2, the range above having been asserted.
+                _ => {
+                    if leap {
+                        29
+                    } else {
+                        28
+                    }
+                }
+            };
+            assert!(
+                (1..=days_in_month).contains(&day),
+                "{}'s since names day {day} of month {month}, which has \
+                 {days_in_month} — Postgres will reject the DATE cast",
+                p.venue
+            );
+        }
+    }
+
+    /// The bridge is only useful if it crosses vocabularies, so pin that it
+    /// does. A `health_feeds` entry equal to the bare token is the shape a
+    /// reader produces by filling the field in from the line above it, and it
+    /// would silence nothing while looking complete — `feed_health` for this
+    /// park is keyed `pyth-hermes`, so an exclusion on `pyth` matches no row.
+    ///
+    /// Stated as an assertion about *this* park rather than a blanket rule,
+    /// because a venue whose framework name genuinely is its bare token is
+    /// possible and would not be a defect.
+    #[test]
+    fn the_health_feed_name_is_the_framework_one() {
+        let p = parked_source("pyth").expect("pyth is parked by decision");
+        assert_eq!(
+            p.health_feeds,
+            &["pyth-hermes"],
+            "the exclusion must key on what the maker wrote into feed_health"
+        );
     }
 }

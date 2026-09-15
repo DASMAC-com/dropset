@@ -464,10 +464,45 @@ feeds <-> ci-infra: which sources are deliberately NOT running exists
   of this seam is absent by design, not by omission: instrument_registry
   is written only by a RUNNING collector, so a parked source can never
   write the row that would say it is parked, and no consumer of the
-  parked set can reach it from SQL. Note the sibling seam
+  parked set can reach it THROUGH THE REGISTRY. It is reachable from SQL
+  by another route as of 0016 — see the parked-set mirror seam below,
+  which is a different table written by a different mechanism and does
+  not disturb the reasoning above. Note the sibling seam
   market-data/tests/roster_compose_agreement.rs is the identical
   Rust-constant-versus-compose-text shape for each collector's default
   PRODUCT_IDS roster, and is otherwise uncovered here.
+parked set (feeds <-> market-data <-> db-schema <-> grafana): the SECOND
+  four-party contract on one closed vocabulary, and the structural twin of
+  push liveness above — with its failure direction inverted, which is the
+  thing to hold onto. feeds/src/parked.rs PARKED_SOURCES declares each park
+  as a bare venue token PLUS the feed_health framework names it silences
+  (ParkedSource::health_feeds); market-data/src/parked_mirror.rs replaces
+  the whole set at every collector startup through
+  market-data/queries/parked_source{s,_feeds}_mirror.sql;
+  db-schema/migrations/0016_parked_sources.sql owns the two tables; and the
+  consumers are the source-coverage panel in
+  market-data/grafana/dashboards/market-data.json (joining on the BARE
+  token) and both the maker feed-health panel and the stale-feed alert rule
+  in maker-operations.json / provisioning/alerting/maker.yml (excluding on
+  the FRAMEWORK name). TWO vocabularies cross this seam by design and a
+  query that joins the wrong one matches nothing silently — that is why the
+  bridge is declared in the constant rather than related in SQL.
+  The inverted failure: push liveness fails open when an alert predicate
+  stops matching, so a dead link reads green. Here the alert predicate
+  matching TOO MUCH is the hazard — a mirror row naming a feed that is no
+  longer parked silences a feed nobody parked, and an over-broad exclusion
+  removes a firing row rather than adding one. Both directions end in a
+  fault rendering as health, reached from opposite sides.
+  Two further asymmetries. The mirror is only as fresh as the last
+  collector start (parked_sources.mirrored_at is the only thing that says
+  so), so this seam can be stale without being wrong. And the exclusion
+  keys on membership, never on a NULL last_ok_at: never-answered is
+  deliberately a FIRING state, so an exclusion rewritten to key on NULL
+  would blind the alert to every genuinely never-answered feed with nothing
+  in a diff to show it. market-data/tests/parked_mirror.rs holds the writer
+  end (whole-set write, both prune paths, the cascade); nothing in the repo
+  semantically validates the two Grafana consumers, so those hops are held
+  by review alone, exactly as push liveness's last two are.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit

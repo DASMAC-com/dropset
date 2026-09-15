@@ -265,10 +265,13 @@ page can render.
 `feeds/src/parked.rs`: one entry per parked source, carrying the date it
 has been parked since and the reason. It is keyed on the bare venue
 token (`pyth`), not the framework feed name (`pyth-hermes`) that
-`feed_health` records. It is a Rust constant rather than a column on
-`instrument_registry` because that table is written only by a *running*
-collector, through `register_instruments` — so a parked source can never
-write the row that would say it is parked. The maker bot reads the set at
+`feed_health` records — and each entry names the `feed_health` spellings
+it silences, so that bridge between the two vocabularies is declared
+where both are known rather than related in a query. It is a Rust
+constant rather than a column on `instrument_registry` because that table
+is written only by a *running* collector, through `register_instruments`
+— so a parked source can never write the row that would say it is parked.
+It reaches SQL as a mirror instead; see below. The maker bot reads the set at
 its Pyth spawn site and does not start that tier, which makes the
 *not-running* half of the rule above hold by construction — but only for a
 venue whose spawn site is wired to check. There is no central dispatcher
@@ -282,21 +285,77 @@ the Makefile's start lists must not name it. A deliberate opt-in start
 (`make pyth-up`) is still possible and is what a park is for; what the
 test forbids is starting as a side effect of the ordinary bring-up.
 
-**What this page cannot do with it yet.** Because the set lives in code,
-no panel query can join against it: separating parked from faulted here
-needs either a copy of the list inside the query or a later change
-seeding it into reference data. The marker changes nothing about what the
-existing coverage query returns — that query reads `instrument_registry`,
-which a parked source never wrote in the first place. It does change
-`feed_health`: parking removes the tier's only writer, so its row stops
-being updated, and in a fresh database it never appears at all. A parked
-source therefore renders on the feed-health panel and the staleness alert
-exactly as the "invisible, not dark" hazard below describes — absent, or
-frozen at its last value — never labelled parked. Worse for a row written
-before the park: it keeps `last_ok_at` NULL, so the unfiltered
-`ok_age_secs > 1800` alert goes on firing with nothing left running that
-could clear it. Before the park a credential arriving would have cleared
-it; now only an exclusion on the alert or a one-off delete will.
+**How the panels reach it: a mirror, not a move.** The set stays in code
+and the market-data collectors replace the whole of it at startup in
+`parked_sources` and `parked_source_feeds`
+(`0016_parked_sources.sql`), so a query joins the tables while the
+constant remains the only place a park is decided. Every collector writes
+the same content, because a park is a platform-wide decision that belongs
+to no single collector; the rejected alternatives — seeding the list in
+the migration, or a dedicated writer with its own deploy unit — are
+argued in that migration's own comment.
+
+Two panels use it, and a third case is deliberately left alone:
+
+- **Source coverage** joins the parked set for a source's park *state*
+  rather than restating it in the query. Its declared roster still names
+  all eight sources — that literal is what gives the table its
+  unconditional eight-row floor — but it no longer says which of them is
+  parked: Pyth is declared with a **null role**, and the mirror supplies
+  the role text plus **Parked since** and **Park confirmed**. A park the
+  mirror has not confirmed therefore reads `UNCLASSIFIED` and sorts
+  first, rather than the row disappearing.
+- **Feed health** on the maker dashboard, and the **staleness alert**,
+  exclude any feed named by `parked_source_feeds`. Exclusion rather than
+  a grey row is right *here specifically* because both read
+  `feed_health`, where a parked source has no honest row to render.
+- **Live venues per pair** gains nothing and was not changed. Its
+  constant Pyth column was removed by the 2026-09-10 adjudication for
+  reading zero in every row, and restoring it on the strength of a join
+  would undo that ruling; the panel points at source coverage for
+  by-name parked visibility instead.
+
+**The exclusion keys on parked-ness, never on a NULL `last_ok_at`.** The
+two coincide on exactly the row that motivated this work and mean
+opposite things: a park says nothing is running to clear the row, while a
+NULL `last_ok_at` is the never-answered state the alert deliberately
+fires on (§4 above, and the rule's own comment). Exempting NULL would be
+a shorter change and would blind the alert to every genuinely
+never-answered feed, invisibly.
+
+**What a mirror still cannot tell you.** The rows say what the
+last-started collector's build believed, so a park decided since then is
+real in code and not yet in SQL. `parked_sources.mirrored_at` is what
+dates that, and the coverage panel renders it as **Park confirmed** —
+which is the only place it is legible, so do not describe the column as
+a safeguard on any page that does not show it. A source declared in the
+roster whose park the mirror has *not* confirmed reads `UNCLASSIFIED`
+and sorts first, which is the loud reading it should get.
+
+**A parked venue started anyway is caught by no panel, and this is the
+open half of item 8 below.** Because the mirror describes the
+*decision*, it renders as properly parked whatever the process is doing.
+The one available tell is the coverage row's own counts — a running
+collector registers products and prints, so a parked row with non-zero
+`Products` or `Printing now` is a started-anyway venue. **Do not send a
+reader to `Collector cursor age` for it**: that panel builds its
+expectation from a four-source literal Pyth is not in, and a
+latest-price feed writes no cursor row even when perfectly healthy, so
+it is structurally incapable of showing this for the only parked source
+that exists. The marker changes nothing about what the coverage query's
+registry read returns, either — a parked source never wrote
+`instrument_registry` in the first place.
+
+**The frozen row is data, and needs an operator.** Parking removed the
+tier's only writer, so a `feed_health` row written before the park keeps
+`last_ok_at` NULL and the pre-exclusion alert fired on it continuously
+with nothing able to clear it — where before the park a credential
+arriving would have. The exclusion above stops the next park doing that;
+retiring the existing Pyth row is a one-off `DELETE` an operator runs
+against the shared database, recorded in `docs/data-feeds.md` §8. It is
+deliberately not a migration: an applied migration is replayed by every
+fresh database, which would bake one database's accumulated state into
+the history.
 
 **A weekend is not a fault either.** Alpha Vantage produces weekday
 daily bars, so on any Sunday it is correctly silent while reading dark
@@ -543,6 +602,20 @@ Both directions of drift are real, so both checks are worth running.
    parked-versus-faulted rendering is the front half of that fix — it
    is what makes the state legible; the back half is noticing the
    process at all, which no panel does today.
+
+   *The front half is built and the back half is not, which sharpens
+   rather than closes this item.* Source coverage now labels a parked
+   source by joining the mirrored parked set, and the staleness alert
+   and maker feed-health panel exclude it. But every one of those
+   surfaces describes the **decision**, so a parked venue started anyway
+   reads as properly parked on all three — the quiet fault §4 calls the
+   worst thing this page can render. **Still no panel surfaces it**, as
+   this item said before and continues to say: the cursor-age panel is
+   not the exception it might look like, since its expectation comes
+   from a four-source literal Pyth is not in and a latest-price feed
+   writes no cursor at all. The one incidental tell is the coverage
+   row's own non-zero counts (§4). Making the state legible has, if
+   anything, made the back half easier to forget.
 
 1. **The §3.1 QCAD tripwire is specified but not collected.** *Closed* —
    `QCAD-USD` is on the Kraken roster, so §2's row for it describes a

@@ -17,6 +17,7 @@ use dropset_feeds::{
 use dropset_market_data::{
     fx::{quota_floor_secs, secret, twelvedata_symbol, FxConfig, FxDefaults},
     instruments::register as register_instruments,
+    parked_mirror::mirror as mirror_parked_sources,
     roster::resolve_venue,
     store::CexWriter,
     supervise::run_all,
@@ -65,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
     // The canonical ids, not the venue spellings beside them.
     let products: Vec<String> = symbols.iter().map(|s| s.product_id.clone()).collect();
     register_instruments(&pool, SOURCE, &products).await?;
+    mirror_parked_sources(&pool).await?;
     let cursors = PgCursorStore::new(pool.clone());
 
     // One transport for the process, cloned per feed: on a metered tier a

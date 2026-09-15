@@ -20,6 +20,7 @@ use dropset_feeds::{
 use dropset_market_data::{
     fx::{oanda_instrument, oanda_source, secret, FxConfig, FxDefaults},
     instruments::register as register_instruments,
+    parked_mirror::mirror as mirror_parked_sources,
     roster::resolve_venue,
     store::CexWriter,
     supervise::run_all,
@@ -66,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
     // keys on what the rows are stored under.
     let products: Vec<String> = instruments.iter().map(|i| i.product_id.clone()).collect();
     register_instruments(&pool, SOURCE, &products).await?;
+    mirror_parked_sources(&pool).await?;
     let cursors = PgCursorStore::new(pool.clone());
 
     // One transport for the process, cloned per feed, so the roster draws on a

@@ -3,7 +3,10 @@
 -- Regenerate: make dashboard-sql
 
 SELECT
-feed,
-coalesce(extract(epoch FROM now()) - last_ok_at, 9999999)
+h.feed,
+coalesce(extract(epoch FROM now()) - h.last_ok_at, 9999999)
 ::double precision AS ok_age_secs
-FROM feed_health
+FROM feed_health AS h
+WHERE NOT EXISTS (
+SELECT 1 FROM parked_source_feeds AS p WHERE p.feed = h.feed
+)

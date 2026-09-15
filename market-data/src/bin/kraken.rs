@@ -41,6 +41,7 @@ use dropset_feeds::{
 };
 use dropset_market_data::{
     instruments::register as register_instruments,
+    parked_mirror::mirror as mirror_parked_sources,
     roster::{kraken_pair, resolve_venue, roster_from_env},
     ticks::{SilenceWatch, Tick, TickConfig, TickDefaults, TickSource, TickWriter},
 };
@@ -103,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
     // The canonical ids, not the venue spellings beside them — `venue_pairs`
     // above is the same type and in scope.
     register_instruments(&pool, SOURCE, &canonical).await?;
+    mirror_parked_sources(&pool).await?;
     // Kraken answers under the name it was asked with, so this maps its keys
     // back onto the canonical ids the rows are stored under. `resolve_venue`
     // has already rejected a duplicate venue symbol, so no entry is lost here.

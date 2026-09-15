@@ -1,0 +1,10 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# No `rows` directive on either table, and that is the whole point of the shape
+# this migration chose: the rows are written by a collector at bring-up, not by
+# the migration, so a count here would assert against an empty table on a fresh
+# database and fail. What pins the content instead is
+# `market-data/tests/parked_mirror.rs`, which runs the real write against a
+# container and asserts the mirrored set matches `PARKED_SOURCES`.
+table parked_sources
+table parked_source_feeds

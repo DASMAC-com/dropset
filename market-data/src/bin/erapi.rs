@@ -43,6 +43,7 @@ use dropset_feeds::{
 use dropset_market_data::{
     fx::{usd_quoted_currencies, UsdRoster},
     instruments::register as register_instruments,
+    parked_mirror::mirror as mirror_parked_sources,
     roster::{canonical_only, roster_from_env},
     ticks::{SilenceWatch, Tick, TickConfig, TickDefaults, TickSource, TickWriter},
 };
@@ -168,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = connect(&cfg.database_url).await?;
     dropset_db_schema::require_schema(&pool).await?;
     register_instruments(&pool, SOURCE, &ids).await?;
+    mirror_parked_sources(&pool).await?;
     tracing::info!(
         products = %ids.join(","),
         poll_secs = cfg.poll_interval_secs,
