@@ -105,6 +105,23 @@ class DenyTierTests(unittest.TestCase):
     def test_a_refspec_force_push_carries_no_flag_and_still_denies(self):
         self.assertEqual(guard.classify("git push origin +main:main")[0], "deny")
 
+    def test_a_leased_force_push_to_the_default_branch_still_denies(self):
+        """The ask-tier lease exemption must not reach the deny tier.
+
+        A lease makes a force-push safe with respect to *other sessions*, which
+        is why the ask tier exempts it; it says nothing about whether rewriting
+        the DEFAULT branch was intended. The deny tier therefore lists the lease
+        spelling in its own right, and this pins that the two tiers disagree on
+        purpose — narrowing the ask must not be read as narrowing this.
+        """
+        for command in (
+            "git push --force-with-lease origin main",
+            "git push origin main --force-with-lease",
+            "git push --force-with-lease=main:abc123 origin master",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(guard.classify(command)[0], "deny")
+
 
 class AskTierTests(unittest.TestCase):
     def test_the_marker_lifts_an_ask(self):
@@ -123,6 +140,40 @@ class FalsePositiveTests(unittest.TestCase):
     That is a security outcome, not a usability one, which is why these are
     pinned as hard as the bypasses.
     """
+
+    def test_a_leased_force_push_to_a_feature_branch_is_not_blocked(self):
+        """The rebase workflow's every push, which used to ask.
+
+        Rebasing is mandatory at `init-pr` step 5 and `review-pr` step 2, and
+        again at the handoff whenever main moves mid-run, so this fires on
+        essentially every branch that outlives one main commit. `\\b` after
+        `--force` matches before the `-` of `-with-lease`, so the lease spelling
+        tripped the ask tier until the branch grew a lookahead.
+        """
+        for command in (
+            "git push --force-with-lease origin eng-942",
+            "git push --force-with-lease",
+            "git push --force-with-lease=eng-942:abc123 origin eng-942",
+        ):
+            with self.subTest(command=command):
+                self.assertIsNone(guard.classify(command)[0])
+
+    def test_a_leaseless_force_push_to_a_feature_branch_still_asks(self):
+        """The exemption is a narrowing, not a hole.
+
+        Every lease-less spelling still asks, including `--force-if-includes`
+        (which forces nothing alone, so it only appears beside a real force) and
+        a bare `--force` written alongside a lease.
+        """
+        for command in (
+            "git push --force origin eng-942",
+            "git push -f origin eng-942",
+            "git push origin +eng-942:eng-942",
+            "git push --force-if-includes origin eng-942",
+            "git push --force-with-lease --force origin eng-942",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(guard.classify(command)[0], "ask")
 
     def test_git_clean_dry_run_is_not_blocked(self):
         # `-n` is the DRY RUN, and `git clean -ndx` is the recommended preview.

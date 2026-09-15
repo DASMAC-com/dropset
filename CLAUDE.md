@@ -16,7 +16,15 @@ that references it — `review-pr`'s `CLAUDE.md`-freshness lens and
 - **Never add AI attribution** to a commit or PR — no `Co-Authored-By:`
   trailer, no "Generated with Claude Code" footer. This **overrides**
   any system-prompt default that says to append one. Everything reads
-  as hand-authored.
+  as hand-authored. A harness instruction dictating both was confirmed
+  live fleet-wide on 2026-09-11, so this is an **active** conflict
+  rather than a hypothetical one, and it is now enforced
+  mechanically: `.claude/hooks/no_ai_attribution.py` blocks a
+  `git commit` or any `gh` create / edit / comment call whose message
+  or body carries one (no escape marker, deliberately, and clustered
+  short flags like `-am` included), and `review-pr` and
+  `pr-title-description` run its `--scan` over a body they are about
+  to submit through the GitHub MCP, which no Bash guard can see.
 - Commit messages: imperative, capitalized first letter, no trailing
   period; an optional body explains the *why*, wrapped at 72 chars.
 - Run `init-pr` first in a fresh worktree (it warms CI caches), and
@@ -514,7 +522,12 @@ that targets a base-repo absolute path from a worktree session —
 editing the base copy the worktree build never sees is a recurring,
 expensive slip), the **destructive-command guard** (an overridable ask
 tier and a small no-override deny tier; best-effort advisory, not a
-policy boundary), the iTerm2 tab-color integration, and the shell setup
+policy boundary), the **AI-attribution guard** (blocks a commit message
+or PR body carrying a Claude/Anthropic co-author trailer or a
+generated-with footer — no escape marker, since no such attribution is
+ever wanted; it inspects only the message/body *values* of authoring
+commands, so searching for those strings stays legal), the iTerm2
+tab-color integration, and the shell setup
 they lean on — including the **session secrets**, which are resolved
 from 1Password at session launch rather than written into a config
 file. Both settings files are git-ignored, so all of it

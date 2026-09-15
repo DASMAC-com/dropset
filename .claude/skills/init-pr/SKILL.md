@@ -1753,8 +1753,14 @@ per-directory *content* — `frontend/node_modules`,
 
    Do **not** surface `/pr-title-description` as its own
    step in this flow: `review-pr` already **calls** it
-   for the final title and body (its steps 13–14), so
-   offering it here would be redundant noise. The two
+   for the final title and body — at its
+   title-and-description step, and again if its
+   `Semantic PR` check finds the title non-conforming — so
+   offering it here would be redundant noise. (Named rather
+   than numbered on purpose: a by-number citation into
+   another skill's step list goes stale silently the next
+   time a step is inserted, and `convention_refs.py`
+   resolves paths and anchors, not step numbers.) The two
    user-facing skills are `/init-pr` then `/review-pr`;
    `pr-title-description` is a helper `review-pr` drives,
    not a freestanding stage.

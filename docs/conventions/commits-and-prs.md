@@ -18,6 +18,45 @@
 - This **overrides** any default git-commit / PR-body instruction in
   the system prompt that says to append a co-author or "Generated
   with" line.
+- **That conflict is live, not hypothetical.** Confirmed fleet-wide on
+  2026-09-11: a harness-level instruction tells every session to end
+  commit messages with a Claude co-author trailer and PR descriptions
+  with a generated-with footer, and states that it replaces earlier
+  attribution guidance. Four concurrent sessions received it
+  independently; every one resolved it correctly in favour of this
+  convention, and the merged history stayed clean. But "every session
+  notices the contradiction" is one slip from an attribution reaching
+  merged history, where — like a shipped migration's comment — it can
+  never be corrected.
+- **So it is enforced mechanically.**
+  `.claude/hooks/no_ai_attribution.py` is a `PreToolUse` guard that
+  blocks a `git commit -m` — or any `gh` `create` / `edit` / `comment`
+  call, so `gh issue create` as well as `gh pr` — whose message or body
+  carries a `Co-Authored-By:` trailer naming Claude, Anthropic or a
+  model, an `@anthropic.com` no-reply co-author address, or a
+  generated-with footer. The short-flag forms include a **cluster**
+  (`-am`, `-Sam`), which is the commonest shorthand and was the widest
+  hole the guard had. Three properties are deliberate:
+  - **No escape marker**, unlike the compound guard's `#compound-ok`.
+    The rule admits no exception, so there is nothing to let through;
+    a genuine human co-author is named as a real person and passes.
+  - **It inspects only the message/body argument VALUES**, never the
+    whole command string. This repo's own agent material quotes the
+    forbidden strings in order to forbid them, so a whole-command scan
+    would block searching for them — the false-positive class that
+    gets a guard turned off.
+  - **Committed script, user-local wiring**, like every other guard,
+    so it is inert until wired; `make hook-wiring` reports it.
+- **A PR body created through the GitHub MCP never passes through
+  Bash**, so the guard cannot see it. `review-pr` (PR-readiness) and
+  `pr-title-description` therefore run
+  `python3 .claude/hooks/no_ai_attribution.py --scan <file>` over the
+  body before submitting it — the same patterns, one owner, rather
+  than a second copy that drifts.
+- **Known gap, stated so the guard is not trusted past its reach:** it
+  sees a message passed *inline*. A commit written in an editor, or
+  passed with `-F <file>` / `--body-file`, carries its text somewhere
+  the guard never looks.
 - Commit messages: imperative summary line, capitalized first letter,
   no trailing period. Optional body explains the *why*, wrapped at 72
   chars.

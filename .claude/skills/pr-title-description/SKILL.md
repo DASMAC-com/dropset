@@ -126,6 +126,32 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    (step 3) is the one exception — that's required by
    `semantic-pr` and stays.
 
+1. **Scan the body for AI attribution before submitting
+   it.** Write the description to a scratchpad file and
+   run the guard over it:
+
+   ```sh
+   python3 .claude/hooks/no_ai_attribution.py --scan <scratchpad>/body.md
+   ```
+
+   Exit 0 is clean; **exit 1 means attribution is
+   present** — strip it and re-scan. (Exit 2 is a usage
+   error, e.g. a path that does not exist, so a typo
+   cannot read as a clean bill of health.)
+
+   This step exists because the `PreToolUse` guard that
+   enforces the rule inspects **Bash** commands, and the
+   write below goes through the **GitHub MCP** — so the
+   body never passes the guard. The rule itself is
+   absolute (`CLAUDE.md` → "Commits and PRs"): no
+   `Co-Authored-By:` trailer naming Claude or Anthropic,
+   no "Generated with Claude Code" footer. A
+   harness-level instruction dictating both was confirmed
+   live fleet-wide on 2026-09-11, so treat this as an
+   active conflict to resolve in the convention's favour,
+   not a formality. Calling the guard rather than
+   eyeballing it keeps one owner of the patterns.
+
 1. If a PR already exists for the branch, update it with
    `mcp__github__update_pull_request`. The title and body
    are **structured tool arguments**, so the whole

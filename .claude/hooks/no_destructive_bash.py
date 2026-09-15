@@ -209,8 +209,47 @@ ASK_PATTERNS = (
         # `[\w./-]`, not `(?:\w|/)`: a hyphen is legal in a refname and every
         # branch in this repo has one (`+eng-942:eng-942`), so the narrower
         # class matched no real refspec force-push here at all.
-        re.compile(r"\bgit\s+push\b.*(?:--force\b|(?<!\w)-f(?!\w)|\+[\w./-]+:)"),
-        "a force-push",
+        #
+        # `--force-with-lease` is EXEMPT, and the exemption narrows the guard
+        # rather than weakening it. The lease is what makes the form safe: the
+        # push aborts if the remote moved unexpectedly, so it cannot clobber
+        # another session's work. It is also the form this repo's flow produces
+        # on essentially every branch that outlives one main commit — rebase is
+        # mandatory at `init-pr` step 5, at `review-pr` step 2, and again at the
+        # handoff whenever main moves mid-run (one session's ask fired after
+        # main moved twice during a single lint run). An ask that fires on every
+        # push of the normal workflow trains the operator to approve without
+        # reading, which costs more than it protects.
+        #
+        # The dangerous case a reviewer wants flagged is the LEASE-LESS force,
+        # and every form of it still asks: bare `--force`, the short `-f`
+        # INCLUDING INSIDE A CLUSTER, the `+refspec:` spelling, and
+        # `--force-if-includes` (which forces nothing on its own, so it can only
+        # appear beside a real force). `--force` written alongside a lease also
+        # still asks, since the bare flag is matchable in its own right.
+        #
+        # The cluster half was a pre-existing gap this comment would otherwise
+        # have claimed away: the old `(?<!\w)-f(?!\w)` missed `git push -fu` and
+        # `git push -uf`, which are ordinary git and exactly the shape a rebased
+        # first push produces. `git push` has no short flag other than `-f` that
+        # contains an `f`, so widening to a cluster costs no false positive.
+        #
+        # The cluster branch must not reach `--force-with-lease`, which is why it
+        # requires a non-hyphen after the dash and no hyphen before it: without
+        # that, the branch matches the `force` inside the lease spelling and
+        # silently undoes the exemption above.
+        #
+        # `\b` alone did not exclude the lease form: it matches between the `e`
+        # of `--force` and the following `-`, so the lease spelling tripped this
+        # branch on every push. The lookahead is what does the work, and it
+        # tolerates the `=<refname>` argument because `\b` sits before the `=`
+        # too.
+        re.compile(
+            r"\bgit\s+push\b.*(?:--force(?!-with-lease\b)\b"
+            r"|(?<![\w-])-(?!-)[A-Za-z]*f[A-Za-z]*(?![\w-])"
+            r"|\+[\w./-]+:)"
+        ),
+        "a force-push without a lease",
     ),
     (re.compile(r"\bgit\s+reset\s+--hard\b"), "a hard reset, which discards changes"),
     (
@@ -689,6 +728,12 @@ def _self_test():
         ("rm /tmp/one-file.txt", None),
         ("git push -u origin eng-942", None),
         ("psql -c 'DELETE FROM ticks WHERE ts < now()'", None),
+        # A LEASED force-push is the rebase workflow's normal push, so it must
+        # not ask. `\b` after `--force` matches before the `-` of `-with-lease`,
+        # so these tripped the ask tier on every rebased branch.
+        ("git push --force-with-lease origin eng-942", None),
+        ("git push --force-with-lease", None),
+        ("git push --force-with-lease=eng-942:abc123 origin eng-942", None),
         # False positives that would get the guard turned off. `-n` is git
         # clean's DRY RUN, and destructive SQL words occur constantly in this
         # repo's commit messages.
@@ -703,6 +748,17 @@ def _self_test():
         ("rm -r -f build", "ask"),
         ("git push --force origin eng-942", "ask"),
         ("git push -f origin eng-942", "ask"),
+        # ...and the lease exemption must not become a bypass for the lease-LESS
+        # forms, which are the ones worth flagging. `--force-if-includes` forces
+        # nothing by itself, so it only ever appears beside a real force; a bare
+        # `--force` written alongside a lease is still matchable on its own.
+        ("git push origin +eng-942:eng-942", "ask"),
+        ("git push --force-if-includes origin eng-942", "ask"),
+        ("git push --force-with-lease --force origin eng-942", "ask"),
+        # A clustered short force. Ordinary git, and exactly what a rebased first
+        # push produces; the un-clustered `-f` branch missed both spellings.
+        ("git push -fu origin eng-942", "ask"),
+        ("git push -uf origin eng-942", "ask"),
         ("git reset --hard HEAD~1", "ask"),
         ("git clean -fdx", "ask"),
         ("psql -c 'DROP TABLE ticks'", "ask"),

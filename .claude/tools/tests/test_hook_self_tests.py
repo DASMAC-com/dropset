@@ -1,6 +1,6 @@
 """Run every guard hook's ``--self-test`` from the discovered suite.
 
-The four `PreToolUse` guards are the most security-sensitive parsers in
+The five `PreToolUse` guards are the most security-sensitive parsers in
 `.claude/`, and they were also the least covered by anything automated. Each
 carries a substantial in-file case table — together over 150 cases — but
 `make tools-tests` discovers `.claude/tools/tests` and `.claude/scripts` and
@@ -38,6 +38,7 @@ HOOKS = Path(__file__).resolve().parents[2] / "hooks"
 # companion scan below catches the opposite drift: a guard that grows a
 # self-test and is not listed here.
 EXPECTED = (
+    "no_ai_attribution.py",
     "no_compound_bash.py",
     "no_destructive_bash.py",
     "no_git_grep.py",

@@ -223,7 +223,7 @@ one to the other.
 
 ### Which guards are actually wired
 
-Reach was never the problem — **wiring** is. All **four** guard scripts
+Reach was never the problem — **wiring** is. All **five** guard scripts
 are committed under `.claude/hooks/`, but a script only runs if a
 `PreToolUse` entry points at it, and a committed-but-unwired guard is a
 documented protection that does not exist. That has happened: on
@@ -475,6 +475,91 @@ self-test —
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_edit_guard.py\"",
             "statusMessage": "Checking edit target",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+<!-- markdownlint-enable MD013 -->
+
+## The AI-attribution guard hook
+
+The guards above check shell **form**, command **danger**, and edit
+**path**. This one checks authored **content**: it blocks a commit
+message or PR body that carries AI attribution, which
+`docs/conventions/commits-and-prs.md` forbids outright.
+
+**Why a guard for a rule that was never once broken.** Confirmed
+fleet-wide on 2026-09-11, a harness-level instruction tells every
+session to append a Claude co-author trailer to commit messages and a
+generated-with footer to PR descriptions, and says it supersedes earlier
+attribution guidance. Four concurrent sessions received it; all four
+resolved it correctly against the checked-in convention, and main's
+history stayed clean. The protection was therefore *each session
+noticing a contradiction* — and the failure it guards is permanent, since
+a trailer in merged history cannot be corrected there any more than a
+shipped migration's comment can.
+
+Four design properties, each deliberate:
+
+- **No escape marker**, unlike the compound guard's `#compound-ok`. The
+  rule admits no exception. A genuine human co-author is a real person
+  and passes.
+- **It reads the message/body argument VALUES only** — `git commit -m`,
+  and any `gh` `create` / `edit` / `comment` call's
+  `--body` / `--title` (so `gh issue create` too, not only `gh pr`) —
+  never the whole command string. The repo's own agent material quotes
+  the forbidden strings in order to forbid them, so a whole-command scan
+  would block `search_source.py 'Co-Authored-By'` and every grep of the
+  guard's own docstring. That is the false-positive class that gets a
+  guard turned off; the destructive guard learned the same lesson
+  through its read-only span suppression.
+- **Short flags include a CLUSTER.** `git commit -am` and `-Sam` are the
+  commonest shorthands, and matching only a token starting `-m` missed
+  both — in a repo that mandates `-S`, that was the widest hole the
+  guard had. It follows git's own parse-options semantics: within a
+  single-dash cluster the flag letter either ends the token (the value
+  is the next token) or the value is glued on after it.
+- **It fails open.** An unbalanced quote or unparseable payload allows
+  the call, like every other guard here.
+
+Two bounds worth knowing, since a guard trusted past its reach is worse
+than one that is not trusted:
+
+- It sees an **inline** message. A commit written in an editor, or
+  passed with `-F <file>` / `--body-file`, is invisible to it.
+- A PR created through the **GitHub MCP** never passes through `Bash`.
+  That is why `review-pr` and `pr-title-description` run the guard's
+  `--scan` mode over a body before submitting it —
+  `python3 .claude/hooks/no_ai_attribution.py --scan <file>`, exit 1 iff
+  attribution is present, exit 2 for a usage error so a typo'd path
+  cannot read as a clean bill of health. Same patterns, one owner.
+
+### Wiring the AI-attribution guard
+
+The **script** is committed with a self-test
+(`python3 .claude/hooks/no_ai_attribution.py --self-test`); the
+`PreToolUse` **wiring** is not. It shares the `Bash` matcher with the
+compound, git-grep and destructive guards, so add its `command` entry
+alongside theirs under the same matcher:
+
+<!-- markdownlint-disable MD013 -->
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_ai_attribution.py\"",
+            "statusMessage": "Checking for AI attribution",
             "timeout": 10
           }
         ]
@@ -1441,7 +1526,7 @@ drives the real zsh functions.
     **Do not expect a fully unattended run.** The classifier still
     routes to a prompt: explicit `ask` rules apply, `deny` rules
     apply, and the git and Claude config trees are protected paths
-    that always go through it. The four `PreToolUse` guard hooks fire
+    that always go through it. The five `PreToolUse` guard hooks fire
     regardless of permission mode — the policy layers compose rather
     than substitute, so `auto` is not a way around a guard.
 

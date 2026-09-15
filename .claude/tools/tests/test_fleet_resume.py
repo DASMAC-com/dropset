@@ -482,6 +482,101 @@ class Cli(unittest.TestCase):
         self.assertEqual(parsed["no_tty"], ["1042"])
         self.assertIn("1042", err)
 
+    def test_a_failure_part_way_through_does_not_offer_resumed_tags_for_rerun(self):
+        """The double-resume this exists to prevent.
+
+        A driver failure after k tabs were opened left those k sessions running,
+        and listing the whole batch under "run these by hand" put a second agent
+        on each of those branches — the expensive direction. Only the
+        tail that was never opened may appear there.
+        """
+        with (
+            mock.patch.object(
+                fr,
+                "_post",
+                return_value=_page(
+                    [_issue("ENG-889"), _issue("ENG-890"), _issue("ENG-891")]
+                ),
+            ),
+            mock.patch.object(fr, "live_tags", return_value=set()),
+            mock.patch.object(
+                fr.iterm_api,
+                "open_tabs",
+                side_effect=fr.iterm_api.ItermUnavailable(
+                    "driver broke", ttys=["/dev/ttys009"]
+                ),
+            ),
+        ):
+            with self.assertRaises(fr.FleetResumeError) as caught:
+                fr.run(["fleet_resume.py", "--apply"])
+        message = str(caught.exception)
+        self.assertIn("already resumed", message)
+
+        # 889 was dispatched, so it must not be in the hand-run list; the other
+        # two must be.
+        hand_run = message.split("run these by hand:")[1]
+        self.assertNotIn("889", hand_run)
+        self.assertIn("890", hand_run)
+        self.assertIn("891", hand_run)
+
+    def test_a_tag_whose_tab_was_never_typed_into_is_still_listed(self):
+        """The silent dropped resume — worse than the double-resume it replaces.
+
+        The driver recorded a position for tag 890's tab but could not reach a
+        session in it, so no resume verb was ever typed. Deriving the retry set
+        from the partial's LENGTH reported 890 as already resumed, and that issue
+        silently never got an agent.
+        """
+        with (
+            mock.patch.object(
+                fr,
+                "_post",
+                return_value=_page(
+                    [_issue("ENG-889"), _issue("ENG-890"), _issue("ENG-891")]
+                ),
+            ),
+            mock.patch.object(fr, "live_tags", return_value=set()),
+            mock.patch.object(
+                fr.iterm_api,
+                "open_tabs",
+                side_effect=fr.iterm_api.ItermUnavailable(
+                    "driver broke", ttys=["/dev/ttys009", None], untyped=[1]
+                ),
+            ),
+        ):
+            with self.assertRaises(fr.FleetResumeError) as caught:
+                fr.run(["fleet_resume.py", "--apply"])
+        message = str(caught.exception)
+
+        # Only 889 actually resumed.
+        self.assertIn("1 session(s) were already resumed", message)
+        hand_run = message.split("run these by hand:")[1]
+        self.assertIn("890", hand_run)
+        self.assertIn("891", hand_run)
+        self.assertNotIn("889", hand_run)
+
+    def test_a_failure_that_opened_nothing_still_lists_every_tag(self):
+        # An iTerm that was never reachable resumed nothing, so the whole batch
+        # is still a hand-run. The partial must not swallow the common case.
+        with (
+            mock.patch.object(
+                fr, "_post", return_value=_page([_issue("ENG-889"), _issue("ENG-890")])
+            ),
+            mock.patch.object(fr, "live_tags", return_value=set()),
+            mock.patch.object(
+                fr.iterm_api,
+                "open_tabs",
+                side_effect=fr.iterm_api.ItermUnavailable("API off"),
+            ),
+        ):
+            with self.assertRaises(fr.FleetResumeError) as caught:
+                fr.run(["fleet_resume.py", "--apply"])
+        message = str(caught.exception)
+        self.assertNotIn("already resumed", message)
+        hand_run = message.split("run these by hand:")[1]
+        self.assertIn("889", hand_run)
+        self.assertIn("890", hand_run)
+
     def test_a_missing_env_var_raises_a_user_facing_error(self):
         with mock.patch.dict(os.environ, {"LINEAR_API_KEY": ""}):
             with self.assertRaises(fr.FleetResumeError) as caught:

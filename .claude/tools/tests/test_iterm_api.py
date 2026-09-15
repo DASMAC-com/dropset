@@ -273,6 +273,239 @@ class OpenTabsPositional(DriverStub, unittest.TestCase):
         self.assertEqual(iterm_api.open_tabs(["x"]), ["/dev/a"])
 
 
+class PartialBatchRecovery(DriverStub, unittest.TestCase):
+    """A batch that fails at tab k still reports the first k tabs.
+
+    The driver publishes its tty list before the per-tab loop specifically so
+    this is possible, and `_call` used to discard it on the not-ok branch — so
+    the protection the driver's own comment describes never reached a caller.
+    Every caller was told the whole batch failed, and a retry re-ran the
+    commands that had already been typed.
+    """
+
+    def test_a_failure_part_way_through_carries_the_tabs_already_opened(self):
+        # The driver got through two of four tabs, then broke.
+        self._stub(
+            stdout=json.dumps(
+                {
+                    "ok": False,
+                    "error": "iTerm2 API call failed: boom",
+                    "ttys": ["/dev/a", "/dev/b"],
+                }
+            )
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["w", "x", "y", "z"])
+        self.assertEqual(caught.exception.ttys, ["/dev/a", "/dev/b"])
+        self.assertIn("boom", str(caught.exception))
+
+    def test_the_partial_is_not_padded_to_the_command_count(self):
+        """Padding would erase the distinction `unfinished()` depends on.
+
+        The partial's length says how far the driver got. Padding it to
+        `len(commands)` would make "the driver reached this position" and "the
+        driver never got here" indistinguishable, and those need opposite
+        handling. (The retry set itself comes from `unfinished()`, not from this
+        length — see `UnfinishedCommands`.)
+        """
+        self._stub(
+            stdout=json.dumps({"ok": False, "error": "boom", "ttys": ["/dev/a"]})
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["x", "y", "z"])
+        self.assertEqual(len(caught.exception.ttys), 1)
+
+    def test_a_null_entry_still_counts_as_dispatched(self):
+        # "Opened and typed into, but its tty could not be read" — a retry of
+        # this command would double-run it, so it occupies a position.
+        self._stub(
+            stdout=json.dumps({"ok": False, "error": "boom", "ttys": ["/dev/a", None]})
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["x", "y", "z"])
+        self.assertEqual(caught.exception.ttys, ["/dev/a", None])
+
+    def test_a_failure_that_opened_nothing_carries_an_empty_partial(self):
+        self._stub(stdout=json.dumps({"ok": False, "error": "no window"}))
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["x", "y"])
+        self.assertEqual(caught.exception.ttys, [])
+
+    def test_a_killed_driver_carries_no_partial(self):
+        """The honest bound: this recovers a driver that ANSWERED.
+
+        A timeout leaves no response to read a partial out of, so tabs may exist
+        that no caller can know about. `PER_TAB_TIMEOUT_SECONDS` is what makes
+        that unlikely; nothing here can repair it.
+        """
+        self._stub(
+            stdout="",
+            raises=iterm_api.subprocess.TimeoutExpired(cmd="driver", timeout=1),
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["x", "y"])
+        self.assertEqual(caught.exception.ttys, [])
+
+    def test_a_non_batch_op_failure_carries_an_empty_partial(self):
+        self._stub(stdout=json.dumps({"ok": False, "error": "no window"}))
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.session_names()
+        self.assertEqual(caught.exception.ttys, [])
+
+
+class UnfinishedCommands(DriverStub, unittest.TestCase):
+    """`unfinished()` — which commands still need running.
+
+    The length of the partial is NOT the answer, and reading it as the answer was
+    a real bug: the driver records a position for a tab it created but could not
+    type into, so a command that was never sent looked already-done and was
+    silently DROPPED from the retry set.
+    """
+
+    def test_a_tab_that_was_never_typed_into_is_still_unfinished(self):
+        # The driver reached three tabs: A typed, B unreachable (never typed),
+        # then it broke before C.
+        self._stub(
+            stdout=json.dumps(
+                {
+                    "ok": False,
+                    "error": "boom",
+                    "ttys": ["/dev/a", None],
+                    "untyped": [1],
+                }
+            )
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["A", "B", "C"])
+        exc = caught.exception
+        self.assertEqual(exc.untyped, [1])
+        # B AND C, not just C. B occupies a recorded position but ran nothing.
+        self.assertEqual(exc.unfinished(3), [1, 2])
+
+    def test_a_null_tty_that_WAS_typed_into_is_finished(self):
+        # The other side of the same coin: no `untyped` entry, so the None means
+        # only "tty unreadable" and re-running it would double-run the command.
+        self._stub(
+            stdout=json.dumps({"ok": False, "error": "boom", "ttys": ["/dev/a", None]})
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["A", "B", "C"])
+        self.assertEqual(caught.exception.unfinished(3), [2])
+
+    def test_every_command_is_unfinished_when_nothing_was_reached(self):
+        self._stub(stdout=json.dumps({"ok": False, "error": "no window"}))
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["A", "B"])
+        self.assertEqual(caught.exception.unfinished(2), [0, 1])
+
+    def test_an_over_long_partial_cannot_report_negative_work(self):
+        self._stub(
+            stdout=json.dumps(
+                {"ok": False, "error": "boom", "ttys": ["/dev/a", "/dev/b", "/dev/c"]}
+            )
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["A"])
+        self.assertEqual(caught.exception.unfinished(1), [])
+
+    def test_an_out_of_range_untyped_index_is_ignored(self):
+        self._stub(
+            stdout=json.dumps(
+                {"ok": False, "error": "boom", "ttys": ["/dev/a"], "untyped": [7]}
+            )
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["A", "B"])
+        self.assertEqual(caught.exception.unfinished(2), [1])
+
+
+class MalformedPartial(DriverStub, unittest.TestCase):
+    """A malformed driver response must not defeat `_call`'s fail-soft contract.
+
+    `_call` converts every other driver problem into `ItermUnavailable`. A bare
+    `list(ttys or [])` broke that here: a string became a per-character
+    over-count, and an int raised TypeError from inside the `raise` statement, so
+    the caller's `except ItermUnavailable` never fired and the operator got a
+    traceback instead of the hand-run list.
+    """
+
+    def test_a_string_ttys_does_not_become_a_per_character_overcount(self):
+        self._stub(stdout=json.dumps({"ok": False, "error": "boom", "ttys": "abc"}))
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["A", "B", "C"])
+        self.assertEqual(caught.exception.ttys, [])
+        self.assertEqual(caught.exception.unfinished(3), [0, 1, 2])
+
+    def test_a_non_list_ttys_raises_ItermUnavailable_not_TypeError(self):
+        self._stub(stdout=json.dumps({"ok": False, "error": "boom", "ttys": 5}))
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["A"])
+        self.assertEqual(caught.exception.ttys, [])
+
+    def test_a_tab_that_ran_nothing_is_not_reported_as_success(self):
+        """The gap the first version of this fix left wide open.
+
+        `_first_session` returning None does not raise — the loop `continue`s — so
+        the batch used to complete with `ok: true`. `open_tabs` returns a flat
+        list on that path, so `untyped` was discarded and the never-typed command
+        was silently dropped: the very bug the fix was for, still live on the path
+        that actually fires. The driver now refuses to call that a success.
+        """
+        self._stub(
+            stdout=json.dumps(
+                {
+                    "ok": False,
+                    "error": "1 of 3 tab(s) opened but could not be typed into",
+                    "ttys": ["/dev/a", None, "/dev/c"],
+                    "untyped": [1],
+                }
+            )
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["A", "B", "C"])
+        exc = caught.exception
+        self.assertIn("could not be typed into", str(exc))
+        # B alone — A and C really ran, so re-running them would double them.
+        self.assertEqual(exc.unfinished(3), [1])
+
+    def test_a_success_response_carrying_untyped_is_refused(self):
+        """The invariant is enforced in the half that can be tested.
+
+        The driver refuses to report success when it could not type into a tab —
+        but the driver is `# pragma: no cover` and needs a live iTerm, so that
+        promise is untestable. `open_tabs` returns a flat list with nowhere to put
+        `untyped`, so an ok response carrying one would discard it and drop a
+        command. Refusing here closes the class from the testable side.
+        """
+        self._stub(
+            stdout=json.dumps({"ok": True, "ttys": ["/dev/a", None], "untyped": [1]})
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["A", "B"])
+        self.assertIn("reported success", str(caught.exception))
+        self.assertEqual(caught.exception.unfinished(2), [1])
+
+    def test_a_success_response_with_an_empty_untyped_is_fine(self):
+        # The ordinary path must not be disturbed by the check above.
+        self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a"], "untyped": []}))
+        self.assertEqual(iterm_api.open_tabs(["A"]), ["/dev/a"])
+
+    def test_a_malformed_untyped_is_ignored(self):
+        self._stub(
+            stdout=json.dumps(
+                {
+                    "ok": False,
+                    "error": "boom",
+                    "ttys": ["/dev/a"],
+                    "untyped": ["nope", None],
+                }
+            )
+        )
+        with self.assertRaises(iterm_api.ItermUnavailable) as caught:
+            iterm_api.open_tabs(["A", "B"])
+        self.assertEqual(caught.exception.untyped, [])
+
+
 class FirstSession(unittest.TestCase):
     """`_first_session` — the fix for a real failure on the first live run.
 
