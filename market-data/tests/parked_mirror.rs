@@ -17,34 +17,19 @@
 //! prune paths, which are the only way an un-parked source stops rendering as
 //! quiet-by-decision.
 //!
-//! Needs a Docker daemon, so `#[ignore]`d like the fence tests:
+//! Needs a Docker daemon, so `#[ignore]`d like the fence tests — and, like
+//! them, run by the `Tests (Postgres)` job, so this is a merge gate:
 //!
 //! ```sh
 //! cargo test -p dropset-market-data -- --ignored
 //! ```
 
-use dropset_db_schema::{connect, migrate};
+mod common;
+
+use common::start_pg;
 use dropset_feeds::{ParkedSource, PARKED_SOURCES};
 use dropset_market_data::parked_mirror::{mirror, mirror_set};
 use sqlx::PgPool;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync};
-
-/// A throwaway Postgres with the schema applied.
-async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
-    let container = Postgres::default()
-        .start()
-        .await
-        .expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("resolve mapped port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = connect(&url).await.expect("connect pool");
-    migrate(&pool).await.expect("apply migrations");
-    (container, pool)
-}
 
 /// The mirrored venue tokens, in a stable order.
 async fn mirrored_venues(pool: &PgPool) -> Vec<String> {
