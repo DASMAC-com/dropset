@@ -71,15 +71,29 @@
 //! restricted-trading window cannot produce the unlisted-pair refusal and cannot
 //! evict anything.
 //!
-//! **What that leaves, stated no more strongly than it was measured.** The path
-//! the TTL above is really for is a pair leaving the venue's listings and
-//! returning — and that is the only path *left after* the `status` measurement,
-//! not the only conceivable one. It was itself never witnessed on a real
-//! relisting: it is inferred from pairs being absent from `AssetPairs` plus the
-//! refusal shape recorded above. Whether a venue-wide maintenance window can
-//! produce the same refusal for a genuinely listed pair is **untested** — the
-//! `SystemStatus` endpoint announces such windows, and one was pending at the
-//! time of writing, but nothing was observed through one.
+//! **What that leaves, stated no more strongly than it was measured.** The TTL
+//! re-admits two kinds of refusal, and it is worth being precise about which one
+//! is doing the work, because only one of them is a *transient*:
+//!
+//! - **A pair that left the listings and returned.** This is the only
+//!   *transient* path left after the `status` measurement — not the only
+//!   conceivable one — and it was never witnessed on a real relisting: it is
+//!   inferred from pairs being absent from `AssetPairs` plus the refusal shape
+//!   recorded above.
+//! - **A pair that was never listed and later is.** Not a transient at all, and
+//!   **this is the concrete motivation**: the FX stablecoins this repo's roster
+//!   targets are unlisted on Kraken today, so a *first* listing is an expected
+//!   event that a long-lived collector previously had no way to notice.
+//!
+//! Note the two are priced differently and both readings are correct: a first
+//! listing is *expected eventually* while being rare on any given hour, which is
+//! why `EVICTION_TTL`'s own docs weigh a "rare win" against recurring waste.
+//! The `unlisted` field docs carry the same split.
+//!
+//! Whether a venue-wide maintenance window can produce the same refusal for a
+//! genuinely listed pair is **untested** — the `SystemStatus` endpoint announces
+//! such windows, and one was pending at the time of writing, but nothing was
+//! observed through one.
 
 use super::Quotes;
 use crate::{Batch, HttpClient, Source};
@@ -129,10 +143,11 @@ const UNKNOWN_PAIR_ERROR: &str = "Unknown asset pair";
 /// **One hour, and the reason it is hours rather than minutes is that eviction
 /// is usually CORRECT.** Measured against the live endpoint (2026-09-15), four of
 /// the Kraken spellings this repo derives are absent from `AssetPairs` outright:
-/// `AUDDUSD`, `CADCUSD`, `MXNEUSD` and `ZARPUSD`. Those four tokens are listed
-/// against **no** quote currency, and none of them appears among Kraken's 843
-/// entries in `/0/public/Assets` either — so this is a token-level absence, not
-/// just a missing USD pair. For a roster carrying them the steady state is a
+/// `AUDDUSD`, `CADCUSD`, `MXNEUSD` and `ZARPUSD`. The absence is **token-level,
+/// not just a missing USD pair**: the asset codes `AUDD`, `CADC`, `MXNE` and
+/// `ZARP` are the base leg of **no** listed pair against any quote currency, and
+/// none of those four codes appears among the 843 entries `/0/public/Assets`
+/// returns. For a roster carrying them the steady state is a
 /// standing, accurate eviction that re-probing will never clear. The TTL is
 /// therefore priced as recurring waste against a rare win, and it wants to be
 /// long.
@@ -230,12 +245,17 @@ impl KrakenSource {
     /// module docs) — so a refusal falls through to the private `isolate` pass,
     /// which recovers every pair that prices and remembers the ones that do not.
     pub async fn poll(&self) -> Result<Quotes<String>> {
-        // `batch_pairs` runs BEFORE the empty-batch early return, and that order
-        // is load-bearing: it is the only site that expires evictions, so with
-        // every roster entry evicted the early return would starve the sweep and
-        // strand the source permanently — the exact failure the TTL exists to
-        // end. Reversing these two lines is silent, and no test catches it,
-        // because the TTL tests drive `batch_pairs_at` directly.
+        // `batch_pairs` is the ONLY site that expires evictions, so it has to run
+        // before anything that can return early. With every roster entry evicted
+        // it is what un-strands the source, and a return placed ahead of it would
+        // starve the sweep permanently — the exact failure the TTL exists to end.
+        //
+        // The hazard is *inserting* an earlier return, not reordering these two
+        // lines: the `is_empty` check consumes the binding above it, so swapping
+        // them would not compile. A short-circuit keyed off the `unlisted` map —
+        // "nothing to do if everything is evicted" reads like an optimization —
+        // is the edit to refuse, and no test would catch it, because the TTL
+        // tests drive `batch_pairs_at` directly rather than through `poll`.
         let pairs = self.batch_pairs();
         if pairs.is_empty() {
             return Ok(Quotes::new());
@@ -855,13 +875,32 @@ mod tests {
         let base = Instant::now();
         let source = source(&["USDCUSD", "CADCUSD", "EURCEUR"]);
         remember_at(&source, &["CADCUSD"], base);
-        assert_eq!(
-            source.batch_pairs_at(base + EVICTION_TTL),
-            vec![
-                "USDCUSD".to_string(),
-                "CADCUSD".to_string(),
-                "EURCEUR".to_string()
-            ]
+        let full = vec![
+            "USDCUSD".to_string(),
+            "CADCUSD".to_string(),
+            "EURCEUR".to_string(),
+        ];
+        assert_eq!(source.batch_pairs_at(base + EVICTION_TTL), full);
+        // Called a SECOND time at the same instant, and asserted on the map below,
+        // so that removal is pinned DIRECTLY at the source level rather than
+        // inferred from the batch.
+        //
+        // Measured, because the tempting rationale for this is wrong: an
+        // `expire_evictions` that removes nothing does **not** slip past the batch
+        // assertions — `batch_pairs_at` filters on the map *after* calling it, so
+        // an unremoved key stays filtered out and the batch comes back short.
+        // That mutation fails four tests here, this one included. What the extra
+        // call and the map assertion buy is a direct statement of the invariant
+        // instead of a consequence of it, which is worth two cheap lines on the
+        // property the whole change rests on.
+        assert_eq!(source.batch_pairs_at(base + EVICTION_TTL), full);
+        assert!(
+            source
+                .unlisted
+                .lock()
+                .expect("this test holds the lock alone")
+                .is_empty(),
+            "the expired eviction should be gone from the map, not just filtered"
         );
     }
 
@@ -922,13 +961,21 @@ mod tests {
 
     #[test]
     fn a_clock_running_backwards_does_not_re_admit_early() {
-        // `duration_since` saturates at zero, so the conservative outcome. Pinned
-        // because the arithmetic would otherwise be a subtraction that panics in
-        // debug and wraps in release.
+        // `duration_since` saturates at zero, so the conservative outcome: a pair
+        // whose stamp is in the future stays evicted. Pinned because a subtraction
+        // would instead **panic** here — `Instant`/`Duration` subtraction goes
+        // through `checked_sub().expect(..)`, which panics in release as well as
+        // debug; nothing wraps.
+        //
+        // The eviction is stamped in the FUTURE rather than the read being placed
+        // in the past, which is the same comparison without the portability trap:
+        // `Instant::now() - Duration` panics on underflow, so subtracting 30 s
+        // would panic on a host whose monotonic clock is younger than that — a
+        // fresh container or VM, i.e. CI.
         let base = Instant::now();
-        let mut evicted = BTreeMap::from([("CADCUSD".to_string(), base)]);
-        let earlier = base - Duration::from_secs(30);
-        assert!(expire_evictions(&mut evicted, earlier).is_empty());
+        let stamped_ahead = base + Duration::from_secs(30);
+        let mut evicted = BTreeMap::from([("CADCUSD".to_string(), stamped_ahead)]);
+        assert!(expire_evictions(&mut evicted, base).is_empty());
         assert_eq!(evicted.len(), 1);
     }
 

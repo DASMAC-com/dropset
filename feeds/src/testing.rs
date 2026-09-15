@@ -92,7 +92,13 @@ pub(crate) async fn serve_once_capturing(response: Vec<u8>) -> (u16, oneshot::Re
     (port, rx)
 }
 
-/// Answer a **sequence** of requests on one port, capturing every request head.
+/// Answer a **sequence** of requests on one port, capturing every **answered**
+/// request head.
+///
+/// "Answered" is exact, not hedging: a request whose response write fails has its
+/// head rolled back (see the write path below), so the captured count is the
+/// number of requests actually served. That is what lets a caller assert on
+/// `heads.len()` as a request count.
 ///
 /// [`serve_once_capturing`] covers an adapter whose poll is one request. It
 /// cannot cover one whose poll *fans out* — Kraken's batch refusal falls through
