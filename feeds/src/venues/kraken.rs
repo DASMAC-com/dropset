@@ -149,7 +149,14 @@ impl KrakenSource {
                 // Isolating would not help (it would multiply a failing call by
                 // the roster size), but staying quiet here would reproduce the
                 // exact whole-venue silence this module exists to end, one error
-                // class over. So say it, once, on the poll it happens.
+                // class over.
+                //
+                // Unlike the unlisted-pair path there is no memory behind this,
+                // so it fires on **every** poll while the condition persists —
+                // once every 15 s for a 200-wrapped rate limit. That is the
+                // intended trade while it is still unknown which error classes
+                // can reach here: a repeated line is recoverable, and the
+                // silence it replaces was not.
                 if quotes.is_empty() {
                     if let Some(errors) = venue_errors(&body) {
                         tracing::warn!(
@@ -363,14 +370,32 @@ pub fn classify_ticker(body: &Value, pairs: &[&str]) -> TickerBatch {
 /// `None` and `Some` are the distinction that matters to both callers: a venue
 /// that reported no error at all is a different thing from one that reported an
 /// error this adapter does not recognize.
+///
+/// **`None` is reserved for "the venue reported nothing wrong", and an
+/// unreadable `error` is not that.** Both callers key off `None` — the
+/// classifier stops looking for an unlisted pair, and `poll` stops warning about
+/// an empty batch — so folding a shape this adapter cannot read into `None`
+/// would put a refusal back into the silent path this module exists to end, with
+/// one JSON shape change disabling the detection and the alarm together. So a
+/// present-but-unreadable `error` returns its raw text instead: worse to read,
+/// impossible to miss.
 fn venue_errors(body: &Value) -> Option<String> {
-    let errors: Vec<&str> = body
-        .get("error")?
-        .as_array()?
-        .iter()
-        .filter_map(Value::as_str)
-        .collect();
-    (!errors.is_empty()).then(|| errors.join("; "))
+    let error = body.get("error")?;
+    match error.as_array() {
+        // The documented shape, and the only one that can mean "no error".
+        Some(errors) if errors.is_empty() => None,
+        Some(errors) => {
+            let strings: Vec<&str> = errors.iter().filter_map(Value::as_str).collect();
+            match strings.is_empty() {
+                // A non-empty array holding no strings — readable as JSON only.
+                true => Some(error.to_string()),
+                false => Some(strings.join("; ")),
+            }
+        }
+        // Not an array at all. A bare string would in fact be the friendlier
+        // shape; either way it is reported rather than swallowed.
+        None => Some(error.to_string()),
+    }
 }
 
 /// Whether the response's `error` array names an unlisted pair.
@@ -627,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unrecognized_error_class_still_reports_an_empty_batch() {
+    fn venue_errors_distinguishes_no_error_from_an_unrecognized_one() {
         // Not a log assertion (nothing here captures tracing) — this pins the
         // input that drives the warning: an empty answer with a populated error
         // array is distinguishable from a venue that reported no error at all.
@@ -636,8 +661,34 @@ mod tests {
             venue_errors(&unrecognized).as_deref(),
             Some("EGeneral:Invalid arguments")
         );
+        // Only these two are "the venue reported nothing wrong".
         assert_eq!(venue_errors(&json!({ "error": [] })), None);
         assert_eq!(venue_errors(&json!({ "result": {} })), None);
+    }
+
+    #[test]
+    fn an_unreadable_error_shape_is_reported_rather_than_swallowed() {
+        // Both callers key off `None`, so folding a shape this adapter cannot
+        // read into `None` would disable the classifier and the empty-batch
+        // warning together — one JSON change putting a refusal back into the
+        // silent path. Every unreadable shape must therefore be `Some`.
+        for unreadable in [
+            json!({ "error": "EQuery:Unknown asset pair" }),
+            json!({ "error": { "code": "EQuery" } }),
+            json!({ "error": [{ "code": "EQuery" }] }),
+        ] {
+            assert!(
+                venue_errors(&unreadable).is_some(),
+                "an unreadable error shape must not read as no-error: {unreadable}"
+            );
+        }
+        // And a bare-string refusal still routes to isolation rather than being
+        // classified as "the venue quoted nothing".
+        let as_string = json!({ "error": "EQuery:Unknown asset pair" });
+        assert_eq!(
+            classify_ticker(&as_string, &["USDCUSD"]),
+            TickerBatch::UnknownPair
+        );
     }
 
     #[test]

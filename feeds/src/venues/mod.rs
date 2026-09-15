@@ -34,9 +34,9 @@
 //!
 //! **That is a contract on the adapter, not a description of the venues.** Some
 //! venues refuse a batch they cannot fully price, and the adapter is what makes
-//! up the difference — [`kraken`] answers HTTP 200 with an error and no results
-//! at all for a batch holding one unlisted pair, so it isolates the batch to
-//! recover the pairs that do price. When adding a batched venue, test the
+//! up the difference — Kraken answers HTTP 200 with an error and no results at
+//! all for a batch holding one unlisted pair, so [`kraken`] isolates the batch
+//! to recover the pairs that do price. When adding a batched venue, test the
 //! one-unlisted-pair case against the live endpoint rather than assuming
 //! per-symbol omission: the failure it produces otherwise is a silent total
 //! loss of the venue, which reads as a quiet market.
