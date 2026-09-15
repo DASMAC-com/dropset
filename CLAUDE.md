@@ -358,8 +358,22 @@ loss while it is down is `aws___retrieve_skill`, which has no CLI
 equivalent. Search
 the AWS docs before acting and keep to least privilege (the MCP-gated
 `*-agent-provisioning` role, deploys via the passed `*-cfn-deployment`
-role). Both servers' wiring is user-local, never committed. Full detail:
-`docs/conventions/aws-infra.md`.
+role) — noting that the provisioning role is **inert by decision**, not
+by omission: its grants are conditioned on two AWS-MCP keys the current
+wiring never satisfies, so IAM-creating deploys run from the admin
+login and wiring the MCP to assume it is ruled out, not pending. Both
+servers' wiring is user-local, never committed.
+
+**A session cannot log itself in** — `aws login` is interactive — so the
+two seat verbs that read cost data, `plan` and `housekeeping`, **gate
+their own launch** on a usable session (probe, log in, re-probe, refuse);
+`architect` deliberately does not. The profile is `DS_AWS_PROFILE` in the
+untracked runtime config. Treat credentials as a launch-time
+precondition, and note that AWS publishes **no** propagation bound for
+an IAM change — verify by retrying the call rather than waiting a folk
+interval. Full detail:
+`docs/conventions/aws-infra.md` and
+`docs/conventions/local-integrations.md` → "The AWS login gate".
 
 ## Skill tooling
 
@@ -462,6 +476,14 @@ the always-re-prompt patterns are in
 `docs/conventions/shell-commands.md`; the guards' `settings.json`
 wiring lives with the other local integrations — see "Local
 integrations and guard hooks" below.
+
+**Firming has three homes and no per-session sweep.** `allowlist.py add`
+ad hoc (the dominant path), `fewer-permission-prompts` on demand, and
+`housekeeping` step 7c on a roughly **monthly** gate — the only periodic
+adder, because the auto permission-mode classifier that made a
+per-session sweep unnecessary is also what makes the remaining churn
+invisible. Step 7a still prunes. Do not reinstate a per-session pass;
+the bar is net-negative instruction cost.
 
 ## Local integrations and guard hooks
 

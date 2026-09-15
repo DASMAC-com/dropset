@@ -10,6 +10,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from unittest import mock
@@ -18,13 +19,19 @@ import allowlist
 import firm_core
 
 from allowlist import (
+    DEFAULT_REFRESH_INTERVAL_DAYS,
     DEFAULT_SETTINGS,
+    REFRESH_MARKER_NAME,
     AllowlistError,
     add,
     classify,
     covers,
     cruft,
     load_allow,
+    refresh_decide,
+    refresh_due,
+    refresh_marker_path,
+    refresh_record,
     resolve_settings_path,
     run,
 )
@@ -577,6 +584,115 @@ class AddTests(unittest.TestCase):
             )
 
 
+class RefreshDecideTests(unittest.TestCase):
+    """The pure cadence rule. ``now`` is injected, so none of this needs a clock."""
+
+    NOW = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
+
+    def test_no_marker_is_due(self):
+        # Never having refreshed is the strongest possible reason to.
+        due, reason = refresh_decide(None, self.NOW)
+        self.assertTrue(due)
+        self.assertIn("no prior refresh", reason)
+
+    def test_a_recent_refresh_is_not_due(self):
+        marker = {"last_refresh": (self.NOW - timedelta(days=3)).isoformat()}
+        due, reason = refresh_decide(marker, self.NOW)
+        self.assertFalse(due)
+        self.assertIn("3.0d", reason)
+
+    def test_an_old_refresh_is_due(self):
+        marker = {"last_refresh": (self.NOW - timedelta(days=31)).isoformat()}
+        due, reason = refresh_decide(marker, self.NOW)
+        self.assertTrue(due)
+        self.assertIn("31.0d", reason)
+
+    def test_exactly_the_interval_is_due(self):
+        # `>=`, so the boundary refreshes rather than waiting another whole day.
+        marker = {
+            "last_refresh": (
+                self.NOW - timedelta(days=DEFAULT_REFRESH_INTERVAL_DAYS)
+            ).isoformat()
+        }
+        due, _ = refresh_decide(marker, self.NOW)
+        self.assertTrue(due)
+
+    def test_a_custom_interval_is_honored(self):
+        marker = {"last_refresh": (self.NOW - timedelta(days=8)).isoformat()}
+        self.assertFalse(refresh_decide(marker, self.NOW, 30.0)[0])
+        self.assertTrue(refresh_decide(marker, self.NOW, 7.0)[0])
+
+    def test_an_unparseable_timestamp_is_due(self):
+        # Fail toward refreshing: the cost is one extra proposal pass, where the
+        # cost of silently never refreshing again is the gap this tool closes.
+        due, reason = refresh_decide({"last_refresh": "not-a-date"}, self.NOW)
+        self.assertTrue(due)
+        self.assertIn("no usable timestamp", reason)
+
+    def test_a_naive_timestamp_is_read_as_utc(self):
+        # A hand-edited marker is the realistic source of a naive stamp, and
+        # comparing it to an aware `now` would raise rather than decide.
+        marker = {"last_refresh": "2026-08-01T12:00:00"}
+        due, _ = refresh_decide(marker, self.NOW)
+        self.assertTrue(due)
+
+    def test_a_non_dict_marker_is_due(self):
+        self.assertTrue(refresh_decide(["nope"], self.NOW)[0])
+
+
+class RefreshMarkerTests(unittest.TestCase):
+    def test_the_marker_sits_beside_the_settings_file(self):
+        # Never inside it: a stray key in `settings.local.json` would at best
+        # confuse the allowlist reader and at worst be read as a rule.
+        path = refresh_marker_path(Path("/tmp/x/.claude/settings.local.json"))
+        self.assertEqual(path, Path("/tmp/x/.claude") / REFRESH_MARKER_NAME)
+
+    def test_record_then_due_round_trips_to_not_due(self):
+        with tempfile.TemporaryDirectory() as d:
+            settings = Path(d) / "settings.local.json"
+            settings.write_text(json.dumps(_settings([])), encoding="utf-8")
+
+            self.assertTrue(refresh_due(settings, DEFAULT_REFRESH_INTERVAL_DAYS)["due"])
+            refresh_record(settings, added=3)
+            after = refresh_due(settings, DEFAULT_REFRESH_INTERVAL_DAYS)
+
+        self.assertFalse(after["due"])
+        self.assertIsNotNone(after["last_refresh"])
+
+    def test_record_keeps_the_yield_without_asserting_on_it(self):
+        # A zero-yield pass is still a pass — the stamp tracks the cadence, and a
+        # run of zero-yield refreshes is itself the signal to lengthen it.
+        with tempfile.TemporaryDirectory() as d:
+            settings = Path(d) / "settings.local.json"
+            settings.write_text(json.dumps(_settings([])), encoding="utf-8")
+            out = refresh_record(settings, added=0)
+            marker = json.loads(
+                refresh_marker_path(settings).read_text(encoding="utf-8")
+            )
+        self.assertEqual(out["rules_added"], 0)
+        self.assertEqual(marker["rules_added"], 0)
+
+    def test_a_corrupt_marker_reads_as_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            settings = Path(d) / "settings.local.json"
+            settings.write_text(json.dumps(_settings([])), encoding="utf-8")
+            refresh_marker_path(settings).write_text("{not json", encoding="utf-8")
+            out = refresh_due(settings, DEFAULT_REFRESH_INTERVAL_DAYS)
+        self.assertTrue(out["due"])
+        self.assertIsNone(out["last_refresh"])
+
+    def test_the_marker_does_not_become_an_allow_rule(self):
+        # The regression this guards: writing cadence state into the settings
+        # file itself. `load_allow` must be untouched by a recorded refresh.
+        with tempfile.TemporaryDirectory() as d:
+            settings = Path(d) / "settings.local.json"
+            settings.write_text(
+                json.dumps(_settings(["Bash(git:*)"])), encoding="utf-8"
+            )
+            refresh_record(settings, added=1)
+            self.assertEqual(load_allow(settings), ["Bash(git:*)"])
+
+
 class CliTests(unittest.TestCase):
     """The ``--settings`` option + subcommand dispatch live in ``run()``."""
 
@@ -625,6 +741,47 @@ class CliTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertTrue(out["added"])
             self.assertIn("Bash(cargo test:*)", load_allow(Path(p)))
+
+    def test_refresh_due_dispatch_on_a_fresh_tree_is_due(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, ["Bash(git:*)"])
+            rc, out = self._run_capture(
+                ["allowlist.py", "--settings", p, "refresh-due"]
+            )
+        self.assertEqual(rc, 0)
+        self.assertTrue(out["due"])
+        self.assertIsNone(out["last_refresh"])
+
+    def test_refresh_record_then_due_dispatch_reports_not_due(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, ["Bash(git:*)"])
+            rc_rec, rec = self._run_capture(
+                ["allowlist.py", "--settings", p, "refresh-record", "--added", "2"]
+            )
+            rc_due, due = self._run_capture(
+                ["allowlist.py", "--settings", p, "refresh-due"]
+            )
+        self.assertEqual((rc_rec, rc_due), (0, 0))
+        self.assertEqual(rec["rules_added"], 2)
+        self.assertFalse(due["due"])
+
+    def test_refresh_due_dispatch_honors_a_custom_interval(self):
+        # A zero-day interval is always due — the knob genuinely reaches the rule
+        # rather than the default being hard-coded at the dispatch site.
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, ["Bash(git:*)"])
+            self._run_capture(["allowlist.py", "--settings", p, "refresh-record"])
+            _, out = self._run_capture(
+                [
+                    "allowlist.py",
+                    "--settings",
+                    p,
+                    "refresh-due",
+                    "--interval-days",
+                    "0",
+                ]
+            )
+        self.assertTrue(out["due"])
 
     def test_add_dispatch_on_a_missing_file_does_not_error(self):
         with tempfile.TemporaryDirectory() as d:

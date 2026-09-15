@@ -94,6 +94,7 @@ import importlib.util
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import firm_core
@@ -489,6 +490,119 @@ def cruft(allow: list[str], settings_path: Path | None = None) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# The refresh cadence — the ADD side's periodic trigger.
+#
+# `cruft` prunes and `add` grants, but nothing periodically mined observed usage
+# for rules worth ADDING, which is the gap this closes. The per-session firming
+# sweep was retired on measurement (the auto permission-mode classifier made
+# prompts rare enough that it stopped paying its instruction cost), and the
+# retirement was right — but the classifier is precisely why the churn is no
+# longer *visible*, so the refresh has to happen on a slow clock instead of a
+# per-session one.
+#
+# Deliberately UNLIKE `memory_scan_gate`, which this otherwise imitates: there
+# is no content signature. Keying on the settings file's contents would make the
+# refresh fire every time `cruft` removed a rule, and a removal is not evidence
+# that new shapes want granting. Elapsed time since the last MINING pass is the
+# only honest trigger.
+# ---------------------------------------------------------------------------
+
+#: A month, because that is the cadence the operator asked for and because a
+#: mining pass reads transcripts — the cost scales with how many have
+#: accumulated, so a shorter clock buys proportionally less per run.
+DEFAULT_REFRESH_INTERVAL_DAYS = 30.0
+
+REFRESH_MARKER_NAME = ".allowlist-refresh.json"
+
+
+def refresh_marker_path(settings_path: Path) -> Path:
+    """Beside the settings file, never inside it.
+
+    The marker is cadence bookkeeping; a stray key inside `settings.local.json`
+    would at best confuse the allowlist reader and at worst be read as a rule.
+    """
+    return settings_path.parent / REFRESH_MARKER_NAME
+
+
+def _read_refresh_marker(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        # A corrupt marker reads as absent — the gate just refreshes again,
+        # which is the safe direction: the cost is one extra proposal pass.
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _parse_iso(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def refresh_decide(
+    marker: dict | None,
+    now: datetime,
+    min_interval_days: float = DEFAULT_REFRESH_INTERVAL_DAYS,
+) -> tuple[bool, str]:
+    """Pure decision: is a permission refresh due? Returns ``(due, reason)``.
+
+    ``now`` and ``min_interval_days`` are injected so the rule is testable
+    without a clock. A first run is always due — never having refreshed is the
+    strongest possible reason to.
+    """
+    if not isinstance(marker, dict):
+        return True, "no prior refresh recorded"
+    last = _parse_iso(marker.get("last_refresh"))
+    if last is None:
+        return True, "prior refresh has no usable timestamp"
+    elapsed_days = (now - last).total_seconds() / 86400.0
+    if elapsed_days >= min_interval_days:
+        return (
+            True,
+            f"{elapsed_days:.1f}d since last refresh (>= {min_interval_days:g}d)",
+        )
+    return False, f"only {elapsed_days:.1f}d since last refresh"
+
+
+def refresh_due(settings_path: Path, min_interval_days: float) -> dict:
+    marker = _read_refresh_marker(refresh_marker_path(settings_path))
+    due, reason = refresh_decide(marker, datetime.now(timezone.utc), min_interval_days)
+    return {
+        "due": due,
+        "reason": reason,
+        "last_refresh": marker.get("last_refresh")
+        if isinstance(marker, dict)
+        else None,
+    }
+
+
+def refresh_record(settings_path: Path, added: int = 0) -> dict:
+    """Stamp a completed refresh.
+
+    ``added`` is recorded rather than asserted on: a pass that proposed nothing
+    is still a pass, and the point of the stamp is the cadence, not the yield.
+    A run of zero-yield refreshes is itself the signal that the interval could
+    lengthen.
+    """
+    path = refresh_marker_path(settings_path)
+    payload = {
+        "last_refresh": datetime.now(timezone.utc).isoformat(),
+        "rules_added": added,
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return {"recorded": payload["last_refresh"], "rules_added": added}
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="allowlist.py")
     parser.add_argument(
@@ -512,6 +626,23 @@ def run(argv: list[str]) -> int:
 
     sub.add_parser("cruft", help="return only the suspicious entries")
 
+    p_due = sub.add_parser("refresh-due", help="is a permission refresh due?")
+    p_due.add_argument(
+        "--interval-days",
+        type=float,
+        default=DEFAULT_REFRESH_INTERVAL_DAYS,
+        help=f"minimum days between refreshes (default: "
+        f"{DEFAULT_REFRESH_INTERVAL_DAYS:g})",
+    )
+
+    p_rec = sub.add_parser("refresh-record", help="stamp a completed refresh")
+    p_rec.add_argument(
+        "--added",
+        type=int,
+        default=0,
+        help="how many rules the refresh added (recorded, not asserted on)",
+    )
+
     args = parser.parse_args(argv[1:])
     # Resolve the default to the main checkout — Claude Code resolves the file
     # that way, so a worktree legitimately has no copy of its own. An
@@ -525,6 +656,10 @@ def run(argv: list[str]) -> int:
         result = add(args.rule, settings_path)
     elif args.cmd == "covers":
         result = covers(args.rule, load_allow(settings_path))
+    elif args.cmd == "refresh-due":
+        result = refresh_due(settings_path, args.interval_days)
+    elif args.cmd == "refresh-record":
+        result = refresh_record(settings_path, args.added)
     else:
         result = cruft(load_allow(settings_path), settings_path)
 

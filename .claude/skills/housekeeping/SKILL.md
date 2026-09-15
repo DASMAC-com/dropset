@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (small themed propose-only tasks of roughly 4–5 levers each, sized to a short session), then capture session metrics and run the purge dry-run. It proposes NO meta-work merges: a `Claude:` filing parks under the `Claude meta` milestone and the planning bootstrap folds that milestone once a day, so that step is retired (one writer, one rhythm). It runs NO audit of its own and reads no Planning document: auditing is planning-filed board work — a planning session files an audit issue naming its target, and the session that pulls it runs one scoped audit-scope pass (the broad random rotation survives only as an explicit ad-hoc /audit). It does NOT analyze the board and files no collision links at all (that machinery is retired): Backlog-wide merge groups and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
+description: The thing to fire up when you arrive — one pass of day-to-day repo upkeep, run from the base repo root: fast-forward main so the run uses the latest skills, upgrade the Claude Code CLI (best-effort brew cask), prune the worktrees of already-merged PRs (refusing any still holding uncommitted or unpushed work) and dismiss their stale GitHub notifications, fold the parked trim levers via trim-context (small themed propose-only tasks of roughly 4–5 levers each, sized to a short session), then capture session metrics and run the purge dry-run. It audits the base repo's settings files three ways: the allowlist for cruft, the guard hooks for wiring, and — on a roughly monthly gate, so most passes skip it after one cheap call — the allowlist for ADDITIONS, mining recent transcripts for repeated shapes worth granting and proposing them at the closing gate (this is where permission firming now lives, the retired per-session sweep having been replaced by a slow clock rather than reinstated). It proposes NO meta-work merges: a `Claude:` filing parks under the `Claude meta` milestone and the planning bootstrap folds that milestone once a day, so that step is retired (one writer, one rhythm). It runs NO audit of its own and reads no Planning document: auditing is planning-filed board work — a planning session files an audit issue naming its target, and the session that pulls it runs one scoped audit-scope pass (the broad random rotation survives only as an explicit ad-hoc /audit). It does NOT analyze the board and files no collision links at all (that machinery is retired): Backlog-wide merge groups and scheduling smells belong to the `plan` skill. The cspell dictionary check is opt-in (pass `cspell`) and off by default. By default it runs one-shot — start to finish with no prompts interrupting the upkeep (pass `interactive` to restore the per-step AskUserQuestion gates); one-shot defers approvals, not work, and it closes with one batched AskUserQuestion for the destructive items, which an unattended run can leave unanswered. Run it once at the start of the day, or drive ad-hoc upkeep with `/loop 30m housekeeping`. One pass per invocation, safe to repeat.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -92,8 +92,10 @@ order:
   non-prompting branch so the morning driver never stalls
   waiting on an answer. Passing `interactive` (e.g.
   `housekeeping interactive`) restores the prompts — the
-  perms-cruft removal (step 7), the stale-memory purge
-  (step 8), and the purge-conversations **apply** (step 10).
+  perms-cruft removal (step 7a), the permission-refresh
+  additions (step 7c, only on the months it is due), the
+  stale-memory purge (step 8), and the purge-conversations
+  **apply** (step 10).
   Session metrics (step 9) runs unconditionally in both modes
   and has no prompt to restore. See "One-shot vs.
   interactive mode" for the full mapping.
@@ -114,8 +116,11 @@ two modes, and the default is the non-interrupting one:
   **non-prompting branch** — the same branch the steps below
   label the *unattended* pass.
   Concretely: steps 7
-  and 8 **propose / list** the perms cruft and the stale
-  memories and delete nothing; and steps 9 and 10 **run** —
+  and 8 **propose / list** the perms cruft, any
+  permission-refresh candidates, and the stale
+  memories, and change nothing — 7c stamps its marker even
+  unattended, since that records only that the mining ran;
+  and steps 9 and 10 **run** —
   session-metrics unconditionally, the purge **dry-run**
   in-pass — with only the purge's destructive apply deferring
   to the closing gate. The deferred items are filed or
@@ -166,7 +171,10 @@ re-derives the identical list from scratch.
 
 Batch these, each **only when non-empty**:
 
-- the **allowlist cruft** approved for removal in step 7;
+- the **allowlist cruft** approved for removal in step 7a;
+- the **permission-refresh additions** approved for granting in
+  step 7c — absent on any pass where the monthly gate said
+  `due: false`, which is most of them;
 - the **stale memories** approved for purge in step 8;
   There is deliberately **no inbox category**. The Session
   Metrics inbox document is retired — `trim-context` sweeps a
@@ -733,10 +741,12 @@ writer, one rhythm.**
 Say "meta-work merges are the planning bootstrap's job" in
 the report, and move on.
 
-**7. Audit the base repo's settings files.** Two checks over
-the same git-ignored pair, both of which only this session is
+**7. Audit the base repo's settings files.** Three checks over
+the same git-ignored pair, all of which only this session is
 positioned to run — it is the one that works from the base
-repo, where those files resolve.
+repo, where those files resolve. Two prune or report (7a, 7b);
+the third (7c) is the add side, and it is **gated to roughly
+monthly**, so most passes pay it one cheap call and move on.
 
 **7a. The permission allowlist, for cruft.** Firming only ever
 **adds** to `<base>/.claude/settings.local.json` (unions,
@@ -871,6 +881,56 @@ step-12 report and, in an attended pass, raise it at the
 closing gate; write nothing either way. The tool prints the
 pointer to each guard's paste-ready block rather than a
 settings diff, for the same reason.
+
+**7c. The permission allowlist, for ADDITIONS — monthly, and
+gated.** 7a prunes; nothing periodically *adds*, which is the
+gap. Ask the gate first, and on `due: false` say one line in
+the step-12 report and do nothing else:
+
+```sh
+python3 .claude/tools/allowlist.py \
+  --settings <base>/.claude/settings.local.json refresh-due
+```
+
+**The gate is the whole design.** The per-session firming
+sweep was retired on measurement — the auto permission-mode
+classifier made prompts rare enough that a sweep stopped
+paying its instruction cost, confirmed by a later pass that
+firmed nothing because every repeated shape was already
+covered. That retirement was correct and is not being undone.
+But the classifier is exactly *why* the churn is no longer
+visible, so the refresh moves to a slow clock rather than
+back into every session. Most passes therefore skip this step
+after one cheap call.
+
+When `due` is `true`, run the **`fewer-permission-prompts`**
+skill's mining — scan recent transcripts for repeated
+read-only shapes, test each candidate with
+`allowlist.py covers` (the existing check, so nothing already
+granted is re-proposed), and carry the survivors to the
+closing gate. Then stamp it, whatever the yield:
+
+```sh
+python3 .claude/tools/allowlist.py \
+  --settings <base>/.claude/settings.local.json \
+  refresh-record --added <n>
+```
+
+**Stamp even a zero-yield pass.** The marker tracks the
+cadence, not the harvest, and an unstamped empty pass makes
+the next one due immediately — which is how a monthly step
+decays back into a per-session one. A run of zero-yield
+refreshes is itself the signal that the interval could
+lengthen; say so in the report rather than quietly shortening
+it.
+
+**Same autonomy bound as 7a: propose, never auto-add.**
+Adding a permission widens what runs unattended, so it is
+strictly the operator's call — the candidates go through the
+closing gate's `AskUserQuestion` like the cruft, and an
+unattended pass proposes and writes nothing. `allowlist.py add`
+is the writer once approved, and its own floor still refuses a
+bare-verb wildcard.
 
 **8. Review saved auto-memory for staleness.** The saved
 auto-memory (`~/.claude/projects/<slug>/memory/*.md` plus the
@@ -1068,6 +1128,12 @@ more useful than skipping the step and calling it deferred.
 - Permission allowlist: the `settings.local.json`
   entries flagged as cruft and, for an attended pass, which
   the human approved removing — or that it was clean.
+- Permission refresh: whether the monthly gate was **due**, and
+  if it ran, how many candidates the mining proposed and how
+  many were granted — or one line saying it is not due yet and
+  when it next is. Say the zero-yield streak if there is one:
+  several empty refreshes in a row is the evidence for
+  lengthening the interval, and it is only visible here.
 - Guard-hook wiring: the committed `.claude/hooks/` scripts
   that **nothing wires** (named individually — an unwired
   guard is a documented protection that does not exist), or
@@ -1091,8 +1157,9 @@ this skill deliberately dropped.
 
 **12. Fire the closing gate.** With the report printed, batch
 every deferred decision into the single `AskUserQuestion`
-described in "The closing gate" above — the allowlist cruft
-and the stale memories — including only the categories that are
+described in "The closing gate" above — the allowlist cruft,
+any permission-refresh additions, and the stale memories —
+including only the categories that are
 non-empty. This runs in **both** modes.
 
 **Nothing about auditing rides this gate**, because this
