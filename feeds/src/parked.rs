@@ -123,6 +123,17 @@ pub struct ParkedSource {
     /// with nothing able to clear it, which is the exact defect the exclusion
     /// closes.
     ///
+    /// **The over-broad direction is the dangerous one, and it is the reason
+    /// each name must contain its venue token.** Too few names fails *open* —
+    /// the alert keeps firing, which is noisy and safe. A name that matches a
+    /// **running** venue's `feed_health.feed` fails *closed*: it removes that
+    /// venue from the staleness alert and the maker feed-health panel
+    /// permanently, and because the exclusion works by making a row absent,
+    /// nothing renders the fact that anything was excluded. That is a live
+    /// feed going dark with no signal anywhere. `every_entry_is_well_formed`
+    /// below pins the containment check that catches a foreign or typo'd name;
+    /// it cannot catch a name that is wrong *within* the same venue.
+    ///
     /// The exclusion keys on **membership in this list**, never on a NULL
     /// `last_ok_at`. Never-answered is deliberately a firing state — a worse
     /// one than stopped-answering — so exempting NULL would blind the alert to
@@ -240,7 +251,84 @@ mod tests {
                     "{} has an empty health feed name",
                     p.venue
                 );
+                // The containment guard the field docs promise. A name that
+                // does not mention its own venue is either a typo or another
+                // venue's feed, and the second case silences a RUNNING feed's
+                // staleness alert with nothing rendering the exclusion. Not
+                // `starts_with`: a framework name may be prefixed
+                // (`cex:coinbase:EURC-USDC`), so containment is the strongest
+                // form that holds for every shape.
+                assert!(
+                    feed.contains(p.venue),
+                    "{}'s health feed {feed:?} does not name its own venue — a \
+                     foreign name here silences a feed nobody parked",
+                    p.venue
+                );
             }
+        }
+    }
+
+    /// Venues must be DISTINCT, and this is a database guard rather than a
+    /// tidiness one.
+    ///
+    /// `parked_sources.venue` is the primary key and the mirror write upserts
+    /// with `ON CONFLICT (venue) DO UPDATE`, which Postgres aborts with
+    /// `ON CONFLICT DO UPDATE command cannot affect row a second time` when one
+    /// statement presents the same key twice. The mirror write is fatal at
+    /// collector startup, so a duplicated entry here would take down every
+    /// market-data collector at the next bring-up — with a cardinality error
+    /// that names neither the duplicate nor this file. Nothing else catches it:
+    /// the character checks above are per entry, so a duplicate passes them
+    /// twice.
+    #[test]
+    fn every_venue_is_distinct() {
+        let mut seen: Vec<&str> = Vec::with_capacity(PARKED_SOURCES.len());
+        for p in PARKED_SOURCES {
+            assert!(
+                !seen.contains(&p.venue),
+                "{} is parked twice — the mirror's upsert cannot take one \
+                 venue's key twice in a statement",
+                p.venue
+            );
+            seen.push(p.venue);
+        }
+    }
+
+    /// `since` must be a real calendar date, not merely date-SHAPED.
+    ///
+    /// The shape check in `every_entry_is_well_formed` accepts `2026-13-45`,
+    /// and the mirror write casts this string to a Postgres `DATE` — so a
+    /// transposed or out-of-range date passes every test here and then fails
+    /// the cast at collector startup, fatally, for all nine collectors. Range
+    /// checking it in the constant's own suite converts that fleet outage into
+    /// a red build. Deliberately hand-rolled rather than pulling a date crate
+    /// into this dependency-light module: what matters is the range, and the
+    /// calendar's leap-year subtleties cannot change whether Postgres accepts
+    /// these fields.
+    #[test]
+    fn every_since_is_a_real_date() {
+        for p in PARKED_SOURCES {
+            let parts: Vec<&str> = p.since.split('-').collect();
+            assert_eq!(
+                parts.len(),
+                3,
+                "{}'s since {:?} is not YYYY-MM-DD",
+                p.venue,
+                p.since
+            );
+            assert_eq!(parts[0].len(), 4, "{} needs a 4-digit year", p.venue);
+            let month: u32 = parts[1].parse().expect("month parses");
+            let day: u32 = parts[2].parse().expect("day parses");
+            assert!(
+                (1..=12).contains(&month),
+                "{}'s since names month {month}",
+                p.venue
+            );
+            assert!(
+                (1..=31).contains(&day),
+                "{}'s since names day {day}",
+                p.venue
+            );
         }
     }
 
@@ -260,10 +348,6 @@ mod tests {
             p.health_feeds,
             &["pyth-hermes"],
             "the exclusion must key on what the maker wrote into feed_health"
-        );
-        assert!(
-            !p.health_feeds.contains(&p.venue),
-            "the bare token is not a feed_health key"
         );
     }
 }

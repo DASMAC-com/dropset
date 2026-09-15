@@ -322,12 +322,25 @@ never-answered feed, invisibly.
 
 **What a mirror still cannot tell you.** The rows say what the
 last-started collector's build believed, so a park decided since then is
-real in code and absent from SQL — `parked_sources.mirrored_at` is what
-makes that legible. And because the mirror describes the *decision*, a
-parked venue whose container was started anyway still renders as
-properly parked here: that quiet fault is caught by the cursor-age panel,
-not by this join. The marker changes nothing about what the coverage
-query's registry read returns, either — a parked source never wrote
+real in code and not yet in SQL. `parked_sources.mirrored_at` is what
+dates that, and the coverage panel renders it as **Park confirmed** —
+which is the only place it is legible, so do not describe the column as
+a safeguard on any page that does not show it. A source declared in the
+roster whose park the mirror has *not* confirmed reads `UNCLASSIFIED`
+and sorts first, which is the loud reading it should get.
+
+**A parked venue started anyway is caught by no panel, and this is the
+open half of item 8 below.** Because the mirror describes the
+*decision*, it renders as properly parked whatever the process is doing.
+The one available tell is the coverage row's own counts — a running
+collector registers products and prints, so a parked row with non-zero
+`Products` or `Printing now` is a started-anyway venue. **Do not send a
+reader to `Collector cursor age` for it**: that panel builds its
+expectation from a four-source literal Pyth is not in, and a
+latest-price feed writes no cursor row even when perfectly healthy, so
+it is structurally incapable of showing this for the only parked source
+that exists. The marker changes nothing about what the coverage query's
+registry read returns, either — a parked source never wrote
 `instrument_registry` in the first place.
 
 **The frozen row is data, and needs an operator.** Parking removed the
@@ -592,11 +605,14 @@ Both directions of drift are real, so both checks are worth running.
    source by joining the mirrored parked set, and the staleness alert
    and maker feed-health panel exclude it. But every one of those
    surfaces describes the **decision**, so a parked venue started anyway
-   reads exactly like a properly parked one on all three — the quiet
-   fault §4 calls the worst thing this page can render. The cursor-age
-   panel is the only place it surfaces, and only if the collector
-   commits a cursor. Making the state legible has, if anything, made the
-   back half easier to forget.
+   reads as properly parked on all three — the quiet fault §4 calls the
+   worst thing this page can render. **Still no panel surfaces it**, as
+   this item said before and continues to say: the cursor-age panel is
+   not the exception it might look like, since its expectation comes
+   from a four-source literal Pyth is not in and a latest-price feed
+   writes no cursor at all. The one incidental tell is the coverage
+   row's own non-zero counts (§4). Making the state legible has, if
+   anything, made the back half easier to forget.
 
 1. **The §3.1 QCAD tripwire is specified but not collected.** *Closed* —
    `QCAD-USD` is on the Kraken roster, so §2's row for it describes a

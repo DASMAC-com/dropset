@@ -46,12 +46,13 @@ CREATE TABLE parked_sources (
     -- DATE rather than the BIGINT unix seconds this schema uses elsewhere,
     -- because this is a calendar decision date rather than a measured instant —
     -- there is no clock reading here to preserve. The cast from the constant's
-    -- `YYYY-MM-DD` string is therefore also the validation: a malformed date in
-    -- a park entry fails the mirror write, which fails collector startup at the
-    -- next bring-up, loudly and naming the value. That is the same
-    -- fatal-at-startup class as instrument registration and is the intended
-    -- direction — a park entry nobody can parse should not reach a dashboard as
-    -- a silently wrong date.
+    -- `YYYY-MM-DD` string is therefore also a validation: a malformed date in a
+    -- park entry fails the mirror write, and the mirror write is fatal at
+    -- collector startup, so it cannot reach a dashboard as a silently wrong
+    -- date. The first line of defense is in the constant's own test suite
+    -- rather than here, precisely because this file cannot be corrected once
+    -- applied: `feeds/src/parked.rs` range-checks every `since`, which turns a
+    -- transposed date into a red build instead of a bring-up failure.
     since       DATE   NOT NULL,
     -- Why it is parked and what would un-park it, verbatim from the constant.
     -- Mirrored rather than summarized so the operator-visible copy and the

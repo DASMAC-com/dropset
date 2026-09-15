@@ -651,8 +651,12 @@ a design error, not a configuration choice.
 
 **The parked-source mirror is the one entry whose writer is plural, and
 it is a real exception to that rule rather than a loophole in it.** Every
-market-data collector writes the whole of both tables at startup, so on a
-full bring-up nine processes write them. What the rule protects against
+market-data collector writes the whole of both tables at startup, so an
+ordinary bring-up has **eight** processes writing them — nine binaries
+carry the call, but the ninth is the parked venue's own collector, which
+a bring-up deliberately does not start (that is what the park means, and
+`feeds/tests/parked_compose_agreement.rs` holds it). What the rule
+protects against
 is two writers holding *different* notions of a row and overwriting each
 other's — and that cannot arise here, because the content is a pure
 function of one compile-time constant (`PARKED_SOURCES` in

@@ -23,8 +23,8 @@
 //! ```
 
 use dropset_db_schema::{connect, migrate};
-use dropset_feeds::PARKED_SOURCES;
-use dropset_market_data::parked_mirror::mirror;
+use dropset_feeds::{ParkedSource, PARKED_SOURCES};
+use dropset_market_data::parked_mirror::{mirror, mirror_set};
 use sqlx::PgPool;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync};
@@ -93,35 +93,110 @@ async fn mirroring_writes_the_whole_constant() {
 
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
-async fn re_mirroring_is_idempotent_and_advances_only_the_stamp() {
+async fn re_mirroring_refreshes_every_column_it_claims_to() {
     let (_pg, pool) = start_pg().await;
     mirror(&pool).await.expect("first mirror");
-    let first: Vec<(String, i64)> =
-        sqlx::query_as("SELECT venue, mirrored_at FROM parked_sources ORDER BY venue")
-            .fetch_all(&pool)
-            .await
-            .expect("read first stamps");
+
+    // CLOBBER the stored row, then re-mirror. This is what makes the test
+    // falsifiable, and the naive version — mirror twice and assert the stamp
+    // did not go backwards — is not: `mirrored_at` is `now_secs()`, so two
+    // mirrors inside one second are EQUAL, and `>=` holds even if the upsert's
+    // whole `DO UPDATE SET` body is deleted. That would leave an operator's
+    // edit to a park's date or reason silently never reaching the dashboard,
+    // with four green tests. Writing a sentinel first means only a real
+    // refresh can clear it.
+    sqlx::query(
+        "UPDATE parked_sources
+             SET mirrored_at = 0, reason = 'clobbered', since = DATE '1970-01-01'",
+    )
+    .execute(&pool)
+    .await
+    .expect("clobber the stored row");
 
     // Every collector runs this at startup, so a restart — or nine collectors
     // starting at once — must not duplicate a row or fail on a conflict.
     mirror(&pool).await.expect("second mirror");
-    let second: Vec<(String, i64)> =
-        sqlx::query_as("SELECT venue, mirrored_at FROM parked_sources ORDER BY venue")
-            .fetch_all(&pool)
-            .await
-            .expect("read second stamps");
 
+    // `since::TEXT` rather than a date type: Postgres renders a DATE as
+    // `YYYY-MM-DD`, which is exactly the constant's own spelling, so the
+    // comparison needs no date library and no `chrono` feature on sqlx.
+    let rows: Vec<(String, i64, String, String)> = sqlx::query_as(
+        "SELECT venue, mirrored_at, reason, since::TEXT FROM parked_sources
+             ORDER BY venue",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("read refreshed rows");
+
+    let mut expected: Vec<&str> = PARKED_SOURCES.iter().map(|p| p.venue).collect();
+    expected.sort();
     assert_eq!(
-        first.iter().map(|(v, _)| v).collect::<Vec<_>>(),
-        second.iter().map(|(v, _)| v).collect::<Vec<_>>(),
-        "the venue set must not change"
+        rows.iter().map(|(v, ..)| v.as_str()).collect::<Vec<_>>(),
+        expected,
+        "the venue set must not change across a re-mirror"
     );
-    for ((_, before), (venue, after)) in first.iter().zip(second.iter()) {
+
+    for (venue, mirrored_at, reason, since) in &rows {
+        let park = PARKED_SOURCES
+            .iter()
+            .find(|p| p.venue == venue)
+            .expect("a mirrored venue is in the constant");
         assert!(
-            after >= before,
-            "{venue}: mirrored_at went backwards, {before} to {after}"
+            *mirrored_at > 0,
+            "{venue}: mirrored_at was not refreshed, so the upsert's update \
+             half is not running"
         );
+        assert_eq!(reason, park.reason, "{venue}: reason was not refreshed");
+        assert_eq!(since, park.since, "{venue}: since was not refreshed");
     }
+}
+
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn un_parking_the_last_source_empties_the_mirror() {
+    let (_pg, pool) = start_pg().await;
+
+    // Two parks first, so the emptying is a real transition from a populated
+    // mirror rather than a no-op against a fresh table — and so the multi-park
+    // shape the constant cannot currently reach gets exercised end to end
+    // against the real statements.
+    let parks = [
+        ParkedSource {
+            venue: "alpha",
+            since: "2026-01-01",
+            reason: "parked for the test",
+            health_feeds: &["alpha-hermes"],
+        },
+        ParkedSource {
+            venue: "beta",
+            since: "2026-02-02",
+            reason: "also parked",
+            health_feeds: &[],
+        },
+    ];
+    mirror_set(&pool, &parks).await.expect("mirror two parks");
+    assert_eq!(mirrored_venues(&pool).await, ["alpha", "beta"]);
+    assert_eq!(
+        mirrored_feeds(&pool).await,
+        [("alpha".to_string(), "alpha-hermes".to_string())],
+        "a park naming no health feed contributes no child row"
+    );
+
+    // Now un-park everything. This is the state the writer must still EXECUTE
+    // in: an early return on an empty set would leave both previously-parked
+    // sources rendering as quiet-by-decision forever, and would leave
+    // `alpha-hermes` excluded from the staleness alert for a feed nobody parks
+    // any more. It is also the state that makes every other test in this file
+    // vacuous if it is ever reached by accident.
+    mirror_set(&pool, &[]).await.expect("mirror the empty set");
+    assert!(
+        mirrored_venues(&pool).await.is_empty(),
+        "un-parking every source must empty the parent table"
+    );
+    assert!(
+        mirrored_feeds(&pool).await.is_empty(),
+        "and must leave no exclusion behind"
+    );
 }
 
 #[tokio::test]
@@ -156,9 +231,12 @@ async fn a_source_no_longer_parked_is_pruned() {
         !venues.iter().any(|v| v == "gone_venue"),
         "an un-parked source must be pruned, got {venues:?}"
     );
-    // The child row goes with it, via ON DELETE CASCADE rather than by being
-    // named — which is what keeps a stale exclusion from outliving its park and
-    // silencing a feed nobody parked.
+    // The child row goes with it. Note what this assertion does and does not
+    // distinguish: the pair is absent from the incoming set too, so the child
+    // statement's own prune would remove it even with no cascade. What the
+    // cascade is actually pinned by is the FK itself — drop `ON DELETE
+    // CASCADE` and the re-mirror above fails outright on a foreign-key
+    // violation rather than reaching here.
     let feeds = mirrored_feeds(&pool).await;
     assert!(
         !feeds.iter().any(|(v, _)| v == "gone_venue"),
@@ -176,7 +254,16 @@ async fn a_dropped_feed_name_is_pruned_while_its_venue_stays() {
     // parent row survives and nothing cascades, but one of its health-feed
     // names is no longer declared. Without the child statement's own prune this
     // pair would survive and go on excluding a feed from the staleness alert.
-    let venue = PARKED_SOURCES[0].venue;
+    //
+    // Pick a park that actually NAMES a health feed rather than index 0: an
+    // empty `health_feeds` is legitimate, so a no-feed park landing first would
+    // make the surviving-venue assertion below vacuous — it reads the child
+    // table, where such a park has no row at all.
+    let venue = PARKED_SOURCES
+        .iter()
+        .find(|p| !p.health_feeds.is_empty())
+        .expect("a park naming at least one health feed")
+        .venue;
     sqlx::query("INSERT INTO parked_source_feeds (venue, feed) VALUES ($1, 'stale-feed-name')")
         .bind(venue)
         .execute(&pool)

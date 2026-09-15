@@ -53,7 +53,8 @@
 //! [`instruments`] is its mirror: where `pyth_roster` reads roster reference
 //! data the store owns, `instruments` writes the roster the *environment* owns
 //! into the store, so a dashboard can ask what kind of thing a product is
-//! without hardcoding a product list into a panel. Both run once, at startup.
+//! without hardcoding a product list into a panel. All three run once, at
+//! startup — the third being [`parked_mirror`] below.
 //!
 //! [`parked_mirror`] is the third of that family and the one whose subject is
 //! not this process: it mirrors the platform-wide parked-source decision from
