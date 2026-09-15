@@ -472,9 +472,9 @@ jobs:
         echo '```' >>"$S"
   # The SQL-backed crates (`dropset-feeds`, `dropset-indexer`,
   # `dropset-market-data` and `dropset-db-schema`) reach a real Postgres
-  # through testcontainers, so their store suites are `#[ignore]`d and the
-  # default `cargo nextest run` above skips them entirely — as it does the
-  # feature-gated unit tests, since the feeds transports are off by
+  # through testcontainers, so their container-backed suites are `#[ignore]`d
+  # and the default `cargo nextest run` above skips them entirely — as it does
+  # the feature-gated unit tests, since the feeds transports are off by
   # default. This job covers both gaps. It is deliberately toolchain-light:
   # nothing here builds or loads the program, so it skips install-toolchain,
   # the program keypair, and the SBF cache the other jobs need, and keeps its
@@ -522,19 +522,25 @@ jobs:
     # since the single-schema-owner split, and no DDL is issued here.
     #
     # `oanda_direction` is filtered out because it is the one `#[ignore]`d
-    # target here gated on something other than Docker: it needs a network and
-    # the OANDA credential, and `--run-ignored all` would otherwise select it.
-    # A fork `pull_request` run receives no secrets, so it could never pass as
-    # a gate — it stays operator-run, and its own module doc says so. Excluded
-    # by binary rather than by package so the rest of `dropset-market-data`
-    # is still covered.
+    # target across these four crates gated on something other than Docker:
+    # it needs a network and the OANDA credential, and `--run-ignored all`
+    # would otherwise select it. No CI run holds that credential — it lives
+    # in 1Password, reached through `secrets.local.env` — so it can never be
+    # a gate here; it stays operator-run, and its own module doc says so.
+    # Excluded by `binary_id` rather than by package, so the rest of
+    # `dropset-market-data` is still covered, and rather than by bare
+    # `binary`, which matches the unqualified name in every selected crate.
+    # A rename fails closed: nextest errors on a filter expression that
+    # matches no binary, so lost coverage reddens the job instead of
+    # passing quietly.
     - env:
         RUSTC_WRAPPER: 'sccache'
       if: |
         needs.changes.outputs.code == 'true'
       name: 'Run store and feature-gated tests against Postgres'
       run: |
-        cargo nextest run --run-ignored all -E 'not binary(oanda_direction)' \
+        cargo nextest run --run-ignored all \
+        -E 'not binary_id(dropset-market-data::oanda_direction)' \
         -p dropset-feeds -p dropset-indexer -p dropset-market-data \
         -p dropset-db-schema \
         --features dropset-feeds/store,dropset-feeds/http \

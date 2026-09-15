@@ -106,9 +106,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Postgres in a throwaway container, matching db-schema's own fence tests. It
 # earns the dependency because that statement is reachable from no other gate:
 # it is a runtime (string-typed) query loaded by `include_str!`, so neither
-# clippy nor a compile-time macro can see it, and a typo in it would pass every
-# check in the repo and then abort startup for all seven collectors. The test is
-# `#[ignore]`d — it needs a Docker daemon; run it with
+# clippy nor a compile-time macro can see it, and a typo in it would abort
+# startup for all seven collectors. The `Tests (Postgres)` job now runs this
+# suite, so such a typo fails a required check rather than reaching a deploy.
+# The test is `#[ignore]`d — it needs a Docker daemon; run it with
 # `cargo test -p dropset-market-data -- --ignored`.
 testcontainers-modules = { version = "0.11", features = ["postgres"] }
 

@@ -28,7 +28,11 @@
 //! the discriminating assertion is the reciprocal check in
 //! `the_stored_series_is_canonical_end_to_end`, not the band.
 //!
-//! Needs a network and a credential, so `#[ignore]`d like the fence tests:
+//! Needs a network and a credential, so `#[ignore]`d — and unlike the fence
+//! tests, which the `Tests (Postgres)` job now runs, this suite is excluded
+//! from CI by name (`binary_id(dropset-market-data::oanda_direction)`): no CI
+//! run holds the credential. It stays operator-run, so renaming this file
+//! disarms that exclusion and reddens the job:
 //!
 //! ```sh
 //! op run --env-file=infra/localnet/secrets.local.env -- \

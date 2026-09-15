@@ -27,7 +27,8 @@
 //! a sidecar rather than a comment in the SQL.
 //!
 //! Most of these need a Docker daemon, so they are `#[ignore]`d and skipped by
-//! the default test run. Run them with:
+//! the default test run. The `Tests (Postgres)` job runs them, so they are a
+//! merge gate; run them locally with:
 //!
 //! ```sh
 //! cargo test -p dropset-db-schema -- --ignored

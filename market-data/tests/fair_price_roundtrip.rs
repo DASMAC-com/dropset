@@ -36,10 +36,11 @@
 //!
 //! **These are a merge gate.** The Tests (Postgres) job's `--run-ignored all`
 //! invocation selects `dropset-market-data`, so the transposition proof below
-//! runs on every PR and in the merge queue. Note the consequence, which is
-//! the reason `#[ignore]` is worth flagging either way: an `#[ignore]`d test
-//! is skipped by a bare local `cargo test`, so it can only ever fail in CI.
-//! Run it with the command above before pushing a change that touches it.
+//! runs in the merge queue, and on any PR that trips the workflow's `code`
+//! filter. Note the consequence: an `#[ignore]`d test is skipped by a bare
+//! local `cargo test`, so unless you run the command above you will first
+//! learn of a failure from CI. Run it before pushing a change that touches
+//! this file.
 
 mod common;
 
