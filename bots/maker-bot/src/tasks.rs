@@ -987,7 +987,23 @@ pub fn run_supervisor(
         // and the same second dates every Pyth reading this cycle.
         let wall = SystemTime::now();
         let weekend = is_weekend(wall);
-        let clock = ClockCtx { weekend };
+        // Still the locally derived bracket, not an imposed session authority —
+        // see `weekend_from_unix` for what that costs.
+        //
+        // Safe in the meantime, and the reason is arithmetic rather than
+        // optimism. The bracket shuts at 21:00 UTC and reopens at 22:00, which
+        // are the *earlier* of the two possible closes (17:00 EDT) and the
+        // *later* of the two possible reopens (17:00 EST). So under EDT the
+        // close is exact and the reopen an hour late; under EST the close is an
+        // hour early and the reopen exact. Both deviations hold the market shut
+        // for LONGER than it really is, in either half of the year — never
+        // shorter, which is the direction that would quote a live market's
+        // prices at a shut one.
+        let clock = if weekend {
+            ClockCtx::weekend()
+        } else {
+            ClockCtx::in_session()
+        };
         let tick = TickCtx {
             now,
             now_unix: unix_secs(wall) as i64,

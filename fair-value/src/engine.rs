@@ -65,27 +65,106 @@ pub struct Legs {
 /// The wall-clock context for one tick — facts about *when* the tick is, as
 /// opposed to what the feeds said.
 ///
-/// A struct rather than a bare `weekend: bool` because session state is not the
+/// A struct rather than a bare [`FxSession`] because session state is not the
 /// only clock fact the composition needs: proximity to a scheduled macro
-/// release is the same kind of input (global, not per-leg, derived from the
-/// clock rather than observed), and belongs beside this one rather than as
-/// another positional bool.
-#[derive(Clone, Copy, Debug, Default)]
+/// release is the same kind of input (global, not per-leg, imposed rather than
+/// observed), and belongs beside this one rather than as another positional
+/// field.
+#[derive(Clone, Copy, Debug)]
 pub struct ClockCtx {
-    /// The FX session is closed (§1 fm2), inside which an absent FX anchor is
-    /// the structural crypto-only state rather than a degrade.
-    pub weekend: bool,
+    /// Whether the FX market is open, shut, or **unestablished** (§1 fm2).
+    pub session: FxSession,
+}
+
+/// Whether the FX market is open for the tick being composed.
+///
+/// # Why this is imposed and not derived
+///
+/// The engine cannot work this out from its own inputs, and the attempts to do
+/// so are what this type replaces. A source that self-fences stops publishing
+/// when its market shuts, so its silence looks like the market closing — but a
+/// **grid** venue publishes on every interval regardless, so as long as one such
+/// venue is on the roster the leg stays live straight through the close and the
+/// composition reads a shut market as a healthy one. Feed liveness is therefore not evidence about
+/// the session, and no amount of it becomes evidence.
+///
+/// So the state arrives from a **session authority** that owns the calendar and
+/// its daylight-saving transitions, and the engine's whole job here is to be
+/// told.
+///
+/// # The third state is the point
+///
+/// [`FxSession::Unknown`] exists so that *not knowing* is representable, which
+/// is what makes the fence fail closed. Two states would force an authority
+/// outage to be reported as one of the two real answers, and either choice is
+/// wrong: called open, a shut market quotes off indicative prints; called shut,
+/// an open market silently stops quoting and reads as a normal weekend. A
+/// distinct third state lets an outage halt loudly instead.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FxSession {
+    /// The market is trading — the normal composition applies.
+    Open,
+    /// The market is shut. An absent FX anchor is the structural crypto-only
+    /// state rather than a degrade (§1 fm2), and a grid venue's readings are
+    /// withdrawn rather than quoted.
+    Closed,
+    /// The session state could not be established — the authority is
+    /// unreachable, or names no window covering this tick.
+    ///
+    /// **The default**, deliberately: a `ClockCtx` that nobody filled in must not
+    /// read as a trading market. The composition pauses on this, so the failure
+    /// is a halt rather than a quote.
+    #[default]
+    Unknown,
+}
+
+impl FxSession {
+    /// Whether the market is shut — the structural crypto-only window.
+    ///
+    /// [`FxSession::Unknown`] is **not** shut. It is tempting to fold the two
+    /// together, since neither one quotes, but they differ in kind: a shut market
+    /// is a healthy, expected state the composition handles, while an
+    /// unestablished one is a fault. Collapsing them would report every fence
+    /// outage as an ordinary weekend, which is the alarm this type exists to
+    /// raise.
+    pub fn is_closed(self) -> bool {
+        matches!(self, Self::Closed)
+    }
+
+    /// Whether the session state was established at all.
+    pub fn is_known(self) -> bool {
+        !matches!(self, Self::Unknown)
+    }
+}
+
+impl Default for ClockCtx {
+    /// Fail closed: an unfilled context is [`FxSession::Unknown`], which pauses.
+    fn default() -> Self {
+        Self::unknown()
+    }
 }
 
 impl ClockCtx {
     /// A context for a tick inside the open FX session.
     pub fn in_session() -> Self {
-        Self { weekend: false }
+        Self {
+            session: FxSession::Open,
+        }
     }
 
     /// A context for a tick in the FX-closed window.
     pub fn weekend() -> Self {
-        Self { weekend: true }
+        Self {
+            session: FxSession::Closed,
+        }
+    }
+
+    /// A context whose session state could not be established — see
+    /// [`FxSession::Unknown`].
+    pub fn unknown() -> Self {
+        Self {
+            session: FxSession::Unknown,
+        }
     }
 }
 
@@ -509,15 +588,106 @@ impl FairValueEngine {
 
     /// Compose the fair value for this market from its live `legs`. `dt` is the
     /// elapsed time since the previous `compose`; the engine accumulates it so
-    /// the basis EMA sees the time since the last basis update. `weekend` marks
-    /// the FX-closed session window (§1 fm2), inside which FX-stale is the
-    /// normal crypto-only state rather than a degrade.
-    pub fn compose(&mut self, legs: Legs, dt: Duration, clock: ClockCtx) -> FairValue {
+    /// the basis EMA sees the time since the last basis update. `clock` carries the
+    /// imposed [`FxSession`] (§1 fm2): a shut market makes FX-stale the normal
+    /// crypto-only state rather than a degrade and withdraws every grid venue from
+    /// the FX leg, while an unestablished one pauses outright.
+    pub fn compose(&mut self, mut legs: Legs, dt: Duration, clock: ClockCtx) -> FairValue {
         let stale = self.cfg.leg_stale;
         let dispersion = self.cfg.leg_dispersion_frac;
         // Carry the inter-tick time forward; the normal arm consumes it and
         // resets it when it actually folds an observation into the EMA.
+        //
+        // Accumulated *before* the fence check below, so a long authority outage
+        // still ages the carried basis. Skipping it would leave the estimate
+        // looking as young on recovery as it was when the fence went dark, which
+        // is the one thing `usable_basis` exists to prevent.
         self.since_basis = self.since_basis.saturating_add(dt);
+
+        // SESSION UNESTABLISHED: halt, whatever the feeds say (§1 fm2).
+        //
+        // This is the fail-closed arm, and it is deliberately the *first*
+        // decision: an unknown session state makes every FX reading
+        // uninterpretable, because the thing we cannot establish is precisely
+        // whether those readings describe a trading market. Composing anyway
+        // would price off readings whose meaning is unknown, which is the
+        // failure the fence exists to remove — and it would do so silently,
+        // since a grid venue's closed-market print is indistinguishable from its
+        // open-market one.
+        //
+        // `Regime::Paused` rather than a dedicated regime: pausing is exactly the
+        // required behavior and every consumer already halts on it, whereas a new
+        // variant would have to be threaded through every site that matches
+        // `Regime::` — spanning both bots, the telemetry writer and the
+        // market-data publisher — with a wrong-branch risk at each `_ =>` arm. The cost is that the regime alone does not
+        // say *why*, so the maker names the fence outage in its own telemetry,
+        // where the knowledge actually lives.
+        //
+        // The legs are still resolved and reported, because an operator
+        // diagnosing a dark fence needs to see what the feeds were doing. The
+        // fusion estimators are deliberately *not* advanced: folding readings
+        // whose session is unknown is how an outage would corrupt the estimate
+        // the composition prices off once the fence recovers.
+        //
+        // KNOWN GAP, and it belongs to whoever gives this arm a producer.
+        // Skipping the update also skips `Fusion::predict`, so the filters do not
+        // age across an outage and the prior returns from one carrying its
+        // pre-outage VARIANCE — fresh readings are then under-weighted against a
+        // stale prior. Nothing constructs [`FxSession::Unknown`] yet, so the arm
+        // is unreachable and the gap is latent.
+        //
+        // The remedy is deliberately NOT "call `update` from here": `predict`
+        // advances the state estimate as well as widening variance, so feeding a
+        // long outage's `dt` through it would move the mean on zero observations,
+        // which is not obviously safer than freezing it. What is wanted is
+        // variance inflation proportional to the outage, applied on recovery.
+        // Wiring a real session authority must land that first, or this goes live.
+        if !clock.session.is_known() {
+            let mut out = FairValue::of(Regime::Paused, Anchor::None, None);
+            out.fx_leg = legs.fx.resolve(stale, dispersion).into();
+            out.crypto_leg = legs.crypto_usdc.resolve(stale, dispersion).into();
+            return out;
+        }
+
+        // MARKET SHUT: nothing prices the FX leg (§1 fm2).
+        //
+        // This is the fix for a market that kept quoting all weekend, and it is
+        // deliberately a property of the **leg** rather than of any source. The
+        // session flag alone could not fix it, because it only made an *absent*
+        // FX anchor benign and never made a present one absent — so a venue that
+        // keeps publishing through the close held the leg live on indicative
+        // prints and the composition read `Normal`.
+        //
+        // # Why the whole leg rather than the offending sources
+        //
+        // Withdrawing only the sources known not to self-fence was implemented
+        // first and is wrong: it **relocates** the defect instead of removing it.
+        // `resolve` falls back to a leg's *reference* candidates when no tape
+        // survives, so withdrawing the tapes promotes a daily fix into the fast
+        // set and the composition reaches `Normal` again by another route. Any
+        // such rule is an exception list whose completeness is a claim about
+        // today's roster, and a new venue lands outside it silently.
+        //
+        // Emptying the leg is an invariant instead: on a shut market the FX
+        // anchor is absent by construction, whatever the roster holds, so the
+        // crypto-only arm below fires deterministically and the weekday-only
+        // posture enforces itself. It is also the only reading consistent with
+        // *imposing* the session rather than deriving it — a source still
+        // printing through a shut window means the fence is wrong, which is a
+        // fence bug to fix and not a license to believe a feed over the calendar.
+        //
+        // The operator still sees what the feeds were doing: the original set is
+        // resolved once, here, for the per-leg report. That value is a
+        // `Consensus` rather than a `Candidates`, so it **cannot** re-enter the
+        // pricing path even by mistake — the composition and both estimators only
+        // ever consume the emptied leg.
+        let fx_reported = if clock.session.is_closed() {
+            let reported = legs.fx.resolve(stale, dispersion);
+            legs.fx = Candidates::none();
+            Some(reported)
+        } else {
+            None
+        };
 
         // Resolve every leg's sources by consensus before composing anything.
         // This is what replaced the tier ladder: the ladder took whichever tier
@@ -565,7 +735,9 @@ impl FairValueEngine {
         // The per-leg view is reported whatever the composition did with it, so
         // an operator can see a dispersed leg even on a tick that degraded for
         // some unrelated reason.
-        out.fx_leg = fx.into();
+        // On a shut market this reports the ORIGINAL set, resolved before the leg
+        // was emptied, so the per-leg view still shows what the feeds published.
+        out.fx_leg = fx_reported.unwrap_or(fx).into();
         out.crypto_leg = crypto.into();
         out.fx_fusion = fx_fusion;
         out.crypto_fusion = crypto_fusion;
@@ -753,7 +925,7 @@ impl FairValueEngine {
                 // session.
                 let regime = if crypto_leg.state.is_dispersed() {
                     Regime::Degraded(Degrade::LegDispersed)
-                } else if clock.weekend {
+                } else if clock.session.is_closed() {
                     Regime::CryptoOnly
                 } else if legs.fx.any_invalid(self.cfg.leg_stale) {
                     Regime::Degraded(Degrade::FxInvalid)
@@ -1110,6 +1282,141 @@ mod tests {
         assert_eq!(r.health, Health::Ok);
         assert_eq!(r.fair, Some(1.14));
         assert_eq!(r.basis, None);
+    }
+
+    /// The reported defect, in one assertion: a market that kept quoting all
+    /// weekend.
+    ///
+    /// A grid venue prints straight through the close, so before the withdrawal
+    /// existed this composed `Normal` off an indicative reading — a live FX anchor
+    /// on a shut market. The session flag alone could never fix it, because it
+    /// only made an *absent* anchor benign and this anchor is present.
+    #[test]
+    fn a_grid_venue_is_withdrawn_when_the_market_shuts() {
+        let legs = || Legs {
+            fx: Candidates::none().push("grid", Some(fresh(1.10))),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: Candidates::none(),
+            static_usd: 1.14,
+        };
+
+        // In session it is a full tape and anchors the mid — this is not a
+        // demotion, and a fix that quietly distrusted the venue would break here.
+        //
+        // The regime is `Uncorroborated` rather than `Normal` because this leg
+        // carries a single source with no designation, which is the existing
+        // lone-source rule and has nothing to do with the session. `Anchor::Fx` is
+        // the part that matters here: the grid reading is what prices the mid.
+        let mut e = engine();
+        let open = e.compose(legs(), secs(5), ClockCtx::in_session());
+        assert_eq!(open.anchor, Anchor::Fx);
+        assert_eq!(open.regime, Regime::Uncorroborated);
+
+        // Shut, the same reading is withdrawn, so the leg empties and the existing
+        // crypto-only arm takes over — structurally healthy, not a degrade.
+        let mut e = engine();
+        let shut = e.compose(legs(), secs(5), ClockCtx::weekend());
+        assert_eq!(shut.regime, Regime::CryptoOnly);
+        assert_eq!(shut.anchor, Anchor::CryptoReference);
+        assert_eq!(shut.health, Health::Ok);
+        assert_eq!(shut.fair, Some(1.14));
+    }
+
+    /// A shut market prices off **no** FX source, whatever its designation — and
+    /// the per-leg report still shows what the feeds published.
+    ///
+    /// This **replaces** an earlier test that pinned the opposite: that only the
+    /// sources unable to self-fence were withdrawn, leaving a still-printing
+    /// trusted tape to anchor the mid. That narrowness turned out to be a defect
+    /// rather than a feature — [`Candidates::resolve`] falls back to a leg's
+    /// reference candidates when no tape survives, so withdrawing per source
+    /// merely moved the anchor from one venue to another and still composed
+    /// [`Regime::Normal`] through the close.
+    ///
+    /// A **trusted** tape is the strongest case available here: if the invariant
+    /// holds for a source designated believable on its own, it holds for
+    /// everything weaker. A source still printing through a shut window means the
+    /// *fence* is wrong, and the fence is the thing that gets fixed — believing
+    /// the feed over the calendar is what imposing the session rules out.
+    #[test]
+    fn a_shut_market_prices_off_no_fx_source() {
+        let mut e = engine();
+        let legs = Legs {
+            fx: Candidates::none().push_trusted("self-fencing", Some(fresh(1.10))),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: Candidates::none(),
+            static_usd: 1.14,
+        };
+        let r = e.compose(legs, secs(5), ClockCtx::weekend());
+        assert_eq!(
+            r.anchor,
+            Anchor::CryptoReference,
+            "a trusted tape still printing must not anchor a shut market — the \
+             calendar is imposed, not inferred from whoever is still publishing"
+        );
+        assert_eq!(r.regime, Regime::CryptoOnly);
+        // The replaced test's surviving rationale: emptying the leg must not cost
+        // the operator the per-leg view of what the feeds were doing.
+        assert!(
+            r.fx_leg.n > 0,
+            "the FX leg is reported from the pre-emptied set, so a shut market \
+             still shows its sources"
+        );
+    }
+
+    /// An unestablished session halts, however healthy the feeds look.
+    #[test]
+    fn an_unestablished_session_pauses_with_both_legs_live() {
+        let mut e = engine();
+        let legs = Legs {
+            fx: src(fresh(1.10)),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: Candidates::none(),
+            static_usd: 1.14,
+        };
+        let r = e.compose(legs, secs(5), ClockCtx::unknown());
+        assert_eq!(r.regime, Regime::Paused);
+        assert_eq!(r.anchor, Anchor::None);
+        assert_eq!(r.health, Health::Pause);
+        assert_eq!(
+            r.fair, None,
+            "the readings are uninterpretable until the session is known, so \
+             there is no fair value to publish"
+        );
+        // The legs are still reported, because an operator diagnosing a dark
+        // fence needs to see what the feeds were doing.
+        assert!(
+            r.fx_leg.n > 0,
+            "the paused tick must still report what the FX leg resolved to"
+        );
+    }
+
+    /// The fail-closed default: a context nobody filled in pauses rather than
+    /// reading as a trading market.
+    #[test]
+    fn an_unfilled_clock_context_pauses() {
+        let mut e = engine();
+        let legs = Legs {
+            fx: src(fresh(1.10)),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: Candidates::none(),
+            static_usd: 1.14,
+        };
+        assert_eq!(FxSession::default(), FxSession::Unknown);
+        let r = e.compose(legs, secs(5), ClockCtx::default());
+        assert_eq!(r.regime, Regime::Paused);
+    }
+
+    /// `Unknown` is not a synonym for shut, and collapsing the two would report
+    /// every fence outage as an ordinary weekend.
+    #[test]
+    fn unknown_is_not_closed() {
+        assert!(!FxSession::Unknown.is_closed());
+        assert!(!FxSession::Unknown.is_known());
+        assert!(FxSession::Closed.is_closed());
+        assert!(FxSession::Closed.is_known());
+        assert!(!FxSession::Open.is_closed());
+        assert!(FxSession::Open.is_known());
     }
 
     #[test]
