@@ -258,14 +258,17 @@ db-schema <-> market-data: db-schema/migrations defines cex_prices and
   half-width to NULL rather than letting the CHECK abort a batch and
   crash-loop the collector; that coercion and the constraint have to move
   together.
-market-data cex_prices read path: the store read that is on the PRICE
-  path rather than the collection path. market-data/queries/fx_store_latest.sql
+market-data <-> maker-bot cex_prices read path: the store read that is on
+  the PRICE path rather than the collection path.
+  market-data/queries/fx_store_latest.sql
   selects (source, product_id, bucket_start + granularity_secs, close) for
   whichever venues the caller asks for, and market-data/src/fx_store.rs
   decodes those four columns BY NAME at runtime, so a renamed column or
   alias breaks a consumer at run time rather than at compile time — the
   reader deliberately asserts no schema version, so nothing here fails
-  fast on a schema it was not built for.
+  fast on a schema it was not built for. Note maker-bot now links
+  db-schema transitively through dropset-market-data but still calls no
+  version check, so the dependency exists without the guard.
   Three things must move together: the column names the query projects,
   the names fx_store decodes, and the venue labels, since FX_STORE_SOURCES
   matches cex_prices.source literally against the collectors' own SOURCE
@@ -276,9 +279,11 @@ market-data cex_prices read path: the store read that is on the PRICE
   The consumer boundary is the part that moved and the part to re-check
   when auditing: the reader is no longer maker-owned, so
   bots/maker-bot depends on dropset-market-data for it and re-exports the
-  module under its old path. Two consumers with DIFFERENT failure
-  postures now share it, which is the contract-drift risk here: for the
-  maker this read is load-bearing in a way the write seams are not — its
+  module under its old path. The maker is the ONLY consumer today; the
+  fair-value estimator will be a second one, with a different failure
+  posture, and that divergence is the contract-drift risk to re-check when
+  it lands. For the maker this read is load-bearing in a way the write
+  seams are not — its
   absence halts every market (HaltReason::PriceStoreUnavailable), so a
   change that silently empties it stops quoting rather than degrading it.
   The reader's ROSTER is the caller's, not the reader's: FxStoreSource::new
@@ -341,23 +346,38 @@ db-schema <-> market-data fair price: the FOURTH write path into the
   declined pause, and the two processes tick on their own clocks, so a
   query correlating them must join on a window rather than on equality.
   0014 adds the two staleness BOUNDS the composition was judged at
-  (leg_stale_tape_secs, leg_stale_reference_secs, ordered by CHECK), and
-  publish takes them as an argument rather than reading a config, so the
-  recorded bound cannot disagree with the one the engine used — take them
-  from FairValueEngine::leg_bounds, never a second config read. They are
-  bounds, not observed ages, and reading them as ages is the misuse to
-  watch for. Note the bind chain is now fifteen positional binds against
+  (leg_stale_tape_secs, leg_stale_reference_secs, constrained positive and
+  ordered — a zero bound is rejected as well as an inversion, and the zero
+  half is the one an ordering-only CHECK would admit), and
+  publish takes them as an argument rather than reading a config, which
+  moves the choice to the caller — it does NOT constrain it. The caller
+  must take them from FairValueEngine::leg_bounds; nothing enforces that,
+  so a recorded bound CAN disagree with the one the composition was judged
+  at, and an auditor should look for exactly that drift. (The round-trip
+  tests are themselves an instance: they bind a hand-picked pair beside a
+  composition the engine produced at its default bounds, correctly, because
+  they need distinguishable values.) Making it a real invariant means a
+  bound type only leg_bounds can construct, which is estimator-side work.
+  They are bounds, not observed ages, and reading them as ages is the
+  second misuse to watch for. Note the bind chain is now fifteen
+  positional binds against
   four adjacent BOOLEANs, two nullable DOUBLE PRECISIONs and four
   BIGINTs, where a transposition is accepted silently by Postgres into
   rows that are never revised; market-data/tests/fair_price_roundtrip.rs
-  pins it one-hot across four rows, which is the only shape that can
-  catch every pairwise boolean swap.
-  publish's error is CLASSIFIED, not opaque: PublishError splits a row a
-  database refused (permanent — a CHECK violation, a schema mismatch)
-  from one that never reached a database (transient), with everything
-  unclassified falling to permanent. A caller must branch on retryable()
-  before retrying; retrying a permanent failure is a silent stall that
-  looks like a busy estimator publishing nothing.
+  pins it one-hot across four rows, because no SINGLE row can catch every
+  pairwise boolean swap — two columns holding the same value are
+  interchangeable by construction.
+  publish's error is CLASSIFIED, not opaque: PublishError splits a failure
+  worth retrying from one that will be refused forever. Do NOT read the
+  split as reached-a-database vs never-reached — several SQLSTATE classes
+  the database itself reports are transient. Transient means a connection,
+  rollback, resource, shutdown or external-system SQLSTATE, or a
+  non-Database sqlx variant (Io, Tls, Protocol, PoolTimedOut, PoolClosed,
+  WorkerCrashed); everything else — including a Database error carrying no
+  SQLSTATE, and any sqlx variant added later — falls to permanent, which is
+  the fail-closed direction. A caller must branch on retryable() before
+  retrying; retrying a permanent failure is a silent stall that looks like
+  a busy estimator publishing nothing.
 db-schema <-> grafana dashboards: db-schema/migrations owns the
   dropset_ro reader role and the SELECT grants behind it, which the
   provisioned datasource

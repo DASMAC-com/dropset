@@ -18,12 +18,14 @@
 //! never revised. A `usdc_breach` reported as an `uncertain` is a
 //! portfolio-wide halt condition rendered as "quote, but widen".
 //!
-//! **The booleans are pinned one-hot across four rows, which is the only shape
-//! that works.** Within a single row, two boolean columns holding the same
-//! value are interchangeable by construction, so no single row — however
-//! carefully chosen — can detect every pairwise transposition among four of
-//! them. Setting exactly one true per row makes every pair differ in at least
-//! one row, so any swap moves a `true` to a column that must read `false`.
+//! **The booleans are therefore pinned across four rows, one-hot.** Within a
+//! single row, two boolean columns holding the same value are interchangeable by
+//! construction, so no single row — however carefully chosen — can detect every
+//! pairwise transposition among four of them. Setting exactly one true per row
+//! makes every pair differ in at least one row, so any swap moves a `true` to a
+//! column that must read `false`. One-hot is *sufficient* rather than unique
+//! (`1100` plus `1010` separates all six pairs too); it is chosen because one
+//! row per column is the shape that says which column each row is about.
 //!
 //! Needs a Docker daemon, so `#[ignore]`d like the fence tests and the
 //! roster-registration test beside it:
@@ -64,7 +66,13 @@ fn composed() -> FairValue {
     engine.compose(legs, Duration::from_secs(5), ClockCtx::in_session())
 }
 
-/// Every column the statement writes, read back by name.
+/// Every column the statement writes except the two that key the read back.
+///
+/// `ts` and `product_id` are absent because `read_row` looks the row up by them,
+/// which pins them a different way: a transposition involving either means no
+/// row matches and `fetch_one` fails. The diagnostic is worse than a named
+/// column mismatch — an opaque "read back EUR-USD at ..." — so if that ever
+/// fires, suspect the key columns first.
 ///
 /// Read by name rather than by index deliberately: reading positionally would
 /// reproduce the very assumption under test, so a transposed column list would
@@ -295,7 +303,7 @@ async fn a_constraint_violation_is_permanent_not_transient() {
         .expect_err("a non-canonical product id must be refused");
     assert!(
         !err.retryable(),
-        "a CHECK violation classified as retryable is the silent-stall defect: {err}"
+        "a CHECK violation classified as retryable is the silent-stall defect: {err:?}"
     );
     assert_eq!(err.class(), "permanent");
 
@@ -310,7 +318,7 @@ async fn a_constraint_violation_is_permanent_not_transient() {
         .expect_err("inverted staleness bounds must be refused");
     assert!(
         !err.retryable(),
-        "an inverted bound pair is permanent: {err}"
+        "an inverted bound pair is permanent: {err:?}"
     );
 
     // The other half of that CHECK, and the one an ordering-only constraint
@@ -325,5 +333,44 @@ async fn a_constraint_violation_is_permanent_not_transient() {
     let err = publish(&pool, 1_700_000_402, "EUR-USD", &fv, zeroed)
         .await
         .expect_err("a zero staleness bound must be refused");
-    assert!(!err.retryable(), "a zero bound is permanent: {err}");
+    assert!(!err.retryable(), "a zero bound is permanent: {err:?}");
+}
+
+/// A failure that never reached a database is TRANSIENT.
+///
+/// The counterpart to the test above, and the one that matters most: every other
+/// error case here is a CHECK violation, so without this the `Transient` variant
+/// is never constructed, `"transient"` is never asserted, and **a `classify` that
+/// returned `Permanent` unconditionally would pass the entire suite** — silently
+/// collapsing the split back to the single-class behavior it exists to replace.
+///
+/// Closing the pool is the cheapest way to reach the non-`Database` arm with no
+/// fake and no trait impl: the pool is gone, so the row cannot reach a server
+/// that could judge it.
+///
+/// Asserts through `retryable()` / `class()` rather than on the variant, because
+/// which non-`Database` error a closed pool yields (`PoolClosed` against
+/// `PoolTimedOut`) is sqlx's choice and not this module's contract.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_failure_that_never_reached_a_database_is_transient() {
+    let (_pg, pool) = start_pg().await;
+    let fv = composed();
+
+    // Prove the pool worked first, so a failure below is the close and not a
+    // broken fixture.
+    publish(&pool, 1_700_000_500, "EUR-USD", &fv, STALE)
+        .await
+        .expect("the pool must work before it is closed");
+
+    pool.close().await;
+
+    let err = publish(&pool, 1_700_000_501, "EUR-USD", &fv, STALE)
+        .await
+        .expect_err("publishing through a closed pool must fail");
+    assert!(
+        err.retryable(),
+        "a failure that never reached a database must be retryable: {err:?}"
+    );
+    assert_eq!(err.class(), "transient");
 }

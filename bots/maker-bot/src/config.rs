@@ -765,7 +765,10 @@ mod tests {
     #[test]
     fn the_startup_grace_outlasts_two_store_polls() {
         let poll = BotConfig::default().feeds.fx_store_poll;
-        let grace = crate::fx_store::STARTUP_TAPE_GRACE;
+        // Spelled through the owning crate rather than this crate's re-export,
+        // because the whole point of this test living here is that the two ends
+        // are in different crates.
+        let grace = dropset_market_data::fx_store::STARTUP_TAPE_GRACE;
         assert!(
             grace >= 2 * poll,
             "the grace ({grace:?}) must cover two store polls ({poll:?}), \

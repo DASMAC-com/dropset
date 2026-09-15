@@ -11,12 +11,14 @@
 //! neither reads the store nor composes anything.
 //!
 //! Assembling the candidate sets the engine composes *from* is
-//! [`crate::fx_store`], and driving the two is the `market-data-estimator`
-//! binary — both in this crate but not in this module. The boundary that
-//! matters is the one
-//! this module keeps, between serializing a composition and producing it; an
-//! earlier version of this note drew it at the crate edge instead, which stopped
-//! being true when the reader joined the writers it reads behind.
+//! [`crate::fx_store`], and the process that will drive the two — reading the
+//! store, composing, and publishing on its own tick — does not exist yet; it
+//! arrives with the estimator. Both live in this crate without living in this
+//! module.
+//!
+//! The boundary that matters is the one this module keeps: between serializing a
+//! composition and producing it. Not the crate edge, which is where a reader
+//! might expect it — the reader sits beside the writers it reads behind.
 //!
 //! The engine's enums reach the database as TEXT rather than as an integer
 //! discriminant, matching every enum-ish column in 0003 and 0007. The reason is
@@ -79,10 +81,15 @@ impl PublishError {
 }
 
 impl std::fmt::Display for PublishError {
+    /// Names **this layer only** — the cause comes from the `Error::source`
+    /// impl below, so a chain-aware printer (`{:#}` on an `anyhow` wrapper, or
+    /// any `Error` walker) renders it once rather than twice. Embedding the
+    /// inner message here as well duplicated it in every such print. A caller
+    /// wanting both in one string without a walker takes `{:?}`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Permanent(e) => write!(f, "permanent publish failure: {e}"),
-            Self::Transient(e) => write!(f, "transient publish failure: {e}"),
+            Self::Permanent(_) => f.write_str("permanent publish failure"),
+            Self::Transient(_) => f.write_str("transient publish failure"),
         }
     }
 }
@@ -95,6 +102,61 @@ impl std::error::Error for PublishError {
     }
 }
 
+/// Each SQLSTATE a retry could plausibly get past, as a **whole code**.
+///
+/// Whole codes rather than two-character classes, because no class here is
+/// uniformly retryable and three of them contain a code that is *deterministic
+/// about the statement* — retrying which produces exactly the silent stall the
+/// split exists to prevent:
+///
+///   * `57014 query_canceled` — a `statement_timeout` cancels the same statement
+///     every tick, forever. The server answered; it answered no.
+///   * `40002` is an integrity-constraint violation that happens to live inside
+///     the rollback class.
+///   * `53100 disk_full`, `53400`, `57P04 database_dropped`, `58P01`/`58P02` —
+///     deterministic until a human acts, which is what a visible halt summons.
+///
+/// The listed codes are the ones an ordinary operational event produces, and
+/// omitting one costs a needless halt on a rolling restart or a failover, so the
+/// rolling-restart family (`57P01`/`57P02`/`57P03`) and the contention family
+/// (`40001`/`40P01`) are load-bearing entries rather than padding.
+///
+/// `40003 statement_completion_unknown` is retryable **only** because the
+/// statement is `ON CONFLICT … DO NOTHING` and therefore idempotent; if that
+/// clause ever goes, this entry goes with it.
+const TRANSIENT_SQLSTATE_CODES: [&str; 17] = [
+    // Class 08 — connection exception. Listed in full rather than matched as a
+    // prefix: `08004` is a server-side rejection and `08P01` a protocol
+    // violation, so the class is not uniformly "the link broke" either. Retrying
+    // them is harmless, which is why they are in; not because the class is clean.
+    "08000", "08001", "08003", "08004", "08006", "08007", "08P01",
+    // Contention and in-doubt completion. `40002` is deliberately absent — it is
+    // an integrity-constraint violation that happens to live in this class.
+    "40000", "40001", "40003", "40P01",
+    // Resource pressure that clears on its own. `53100 disk_full` and `53400`
+    // are deliberately absent: they need an operator.
+    "53000", "53200", "53300",
+    // Shutdown and failover — a rolling restart or a failover must not halt the
+    // estimator. `57014 query_canceled` is deliberately absent, and is the code
+    // that motivated enumerating whole codes: a `statement_timeout` would cancel
+    // the same statement on every tick, forever.
+    "57P01", "57P02", "57P03",
+];
+
+/// Whether a SQLSTATE names a failure a retry could get past.
+///
+/// Split out as a pure function over the code so it is unit-testable without a
+/// database — the classification is the part most worth pinning, and building a
+/// `sqlx::Error::Database` with a chosen code requires implementing a foreign
+/// trait.
+///
+/// Takes the code by `&str` and compares whole codes, so there is no slicing and
+/// therefore no length or char-boundary precondition: a malformed, empty or
+/// truncated code simply matches nothing and takes the fail-closed default.
+fn sqlstate_is_transient(code: &str) -> bool {
+    TRANSIENT_SQLSTATE_CODES.contains(&code)
+}
+
 /// Sort one `sqlx` failure into the two classes.
 ///
 /// **Unclassified failures land in `Permanent`**, which is the fail-closed
@@ -104,24 +166,15 @@ impl std::error::Error for PublishError {
 /// prevent. So the transient set is an **allowlist** of failures known not to
 /// be about the row, and everything else — including a variant `sqlx` adds
 /// later — is permanent until someone establishes otherwise.
+///
+/// An allowlist rather than a denylist of the deterministic codes, for the same
+/// asymmetry: an omission from an allowlist is a visible halt, while an omission
+/// from a denylist is the silent retry.
 fn classify(err: sqlx::Error) -> PublishError {
-    // SQLSTATE classes that describe the server or the link rather than the
-    // row. `08` connection exception, `40` transaction rollback (serialization
-    // failure, deadlock — the retry is the documented remedy), `53`
-    // insufficient resources, `57` operator intervention (`57P01` admin
-    // shutdown is what a restarting Postgres answers), `58` external system
-    // error. Everything else a database reports is about the statement or the
-    // row: `22` data exception, `23` integrity constraint violation — 0011's
-    // and 0014's CHECKs — `42` syntax or access rule violation, `3D`/`3F`
-    // invalid catalog or schema name.
-    const TRANSIENT_SQLSTATE_CLASSES: [&str; 5] = ["08", "40", "53", "57", "58"];
-
     if let sqlx::Error::Database(ref db) = err {
-        // A driver that reports no SQLSTATE cannot be placed by class, so it
-        // takes the fail-closed default with everything else unclassified.
-        let transient = db
-            .code()
-            .is_some_and(|code| TRANSIENT_SQLSTATE_CLASSES.contains(&&code[..2]));
+        // A driver reporting no SQLSTATE cannot be placed at all, so it takes
+        // the fail-closed default with everything else unclassified.
+        let transient = db.code().is_some_and(|code| sqlstate_is_transient(&code));
         return if transient {
             PublishError::Transient(err.into())
         } else {
@@ -282,6 +335,87 @@ pub async fn publish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The retryable set contains what an ordinary operational event produces.
+    ///
+    /// Omitting one of these costs a needless halt on a rolling restart or under
+    /// contention — the cheap-but-wrong direction, and the one an allowlist is
+    /// prone to.
+    #[test]
+    fn an_operational_failure_is_transient() {
+        for code in ["08006", "08001", "40001", "40P01", "57P01", "53300"] {
+            assert!(
+                sqlstate_is_transient(code),
+                "{code} names a failure a retry gets past and must be transient"
+            );
+        }
+    }
+
+    /// The codes a retry can NEVER get past must not be in the set.
+    ///
+    /// This is the expensive direction: each of these is deterministic about the
+    /// statement or needs an operator, so classifying one as transient turns a
+    /// visible halt into an estimator that looks busy and publishes nothing.
+    /// `57014` and `40002` are the two that a two-character class match admitted,
+    /// which is what motivated enumerating whole codes.
+    #[test]
+    fn a_deterministic_failure_is_never_transient() {
+        for code in [
+            "57014", // statement_timeout cancels the same statement forever
+            "40002", // an integrity violation inside the rollback class
+            "53100", // disk_full — needs a human
+            "53400", // configuration_limit_exceeded
+            "57P04", // database_dropped
+            "58P01", // undefined_file
+            "23514", // the CHECK violations 0011 and 0014 declare
+            "23505", // unique_violation
+            "22P02", // invalid_text_representation
+            "42703", // undefined_column — a schema mismatch
+        ] {
+            assert!(
+                !sqlstate_is_transient(code),
+                "{code} cannot be got past by retrying and must be permanent"
+            );
+        }
+    }
+
+    /// A malformed code matches nothing and does not panic.
+    ///
+    /// The whole-code comparison has no length or char-boundary precondition,
+    /// which is the point: an earlier version sliced `code[..2]` and would panic
+    /// on any of these — inside the error path, destroying the very halt this
+    /// module exists to let a caller name.
+    #[test]
+    fn a_malformed_sqlstate_is_permanent_rather_than_a_panic() {
+        for code in ["", "5", "0", "4000", "40001X", "é", "  "] {
+            assert!(
+                !sqlstate_is_transient(code),
+                "a malformed code ({code:?}) must take the fail-closed default"
+            );
+        }
+    }
+
+    /// Every entry is a well-formed five-character SQLSTATE.
+    ///
+    /// A typo'd entry is invisible at runtime — it simply never matches, so the
+    /// failure it was meant to admit halts instead, which reads as correct
+    /// fail-closed behavior rather than as a defect.
+    #[test]
+    fn every_listed_sqlstate_is_well_formed() {
+        for code in TRANSIENT_SQLSTATE_CODES {
+            assert_eq!(code.len(), 5, "{code} is not a five-character SQLSTATE");
+            assert!(
+                code.chars()
+                    .all(|c| c.is_ascii_digit() || c.is_ascii_uppercase()),
+                "{code} carries a character no SQLSTATE uses"
+            );
+        }
+        let mut seen: Vec<&str> = TRANSIENT_SQLSTATE_CODES.to_vec();
+        let count = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), count, "a SQLSTATE is listed twice");
+    }
 
     /// Every degrade variant must map to a distinct, non-empty name. A
     /// collision would merge two operator-facing causes into one label, and the

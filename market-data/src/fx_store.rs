@@ -1,12 +1,15 @@
 //! The shared market-data store, read as an intraday FX source.
 //!
-//! Every other price source in this bot polls a venue directly. This one does
-//! not, and the asymmetry is deliberate: the intraday FX venues (OANDA, Twelve
-//! Data, Alpha Vantage) are **keyed and metered**, the market-data collectors
-//! already poll them on a budget sized to the free tier, and a second consumer
-//! on the same credential is a self-inflicted rate-limit landing on the price
-//! anchor. So the collectors own the venue relationship and the maker reads
-//! their rows.
+//! A consumer's other price sources poll a venue directly. This one does not,
+//! and the asymmetry is deliberate: the intraday FX venues (OANDA, Twelve Data,
+//! Alpha Vantage) are **keyed and metered**, this crate's collectors already
+//! poll them on a budget sized to the free tier, and a second consumer on the
+//! same credential is a self-inflicted rate-limit landing on the price anchor.
+//! So the collectors own the venue relationship and a consumer reads their rows.
+//!
+//! This module therefore sits beside the writers it reads behind rather than in
+//! any one consumer. It was the maker bot's until the fair-value estimator
+//! needed the same rows; `dropset-maker-bot` re-exports it under its old path.
 //!
 //! Two consequences worth stating, because they are the reason this module is
 //! shaped the way it is.
@@ -40,7 +43,7 @@
 //!
 //! **OANDA is designated believable alone, and that is a ruling rather than a
 //! default.** The degrade ladder has a quote-on-one-venue mode, and that mode
-//! is only sound if the last venue standing is one the bot will trust without
+//! is only sound if the last venue standing is one a consumer will trust without
 //! corroboration — otherwise the ladder's bottom rung is unreachable and the
 //! leg darks instead of degrading. OANDA is the roster's FX anchor by role
 //! (deepest history, real tick volume, a per-candle `complete` flag), so it
@@ -275,7 +278,7 @@ pub struct FxStoreSnapshot {
 
 /// The age to hand the engine for a store row.
 ///
-/// This follows the same contract as the bot's other per-source readers:
+/// This follows the same contract as a consumer's other per-source readers:
 ///
 /// ```text
 /// age = max(publication_age, receipt_age)
@@ -361,8 +364,12 @@ pub struct FxStoreSource {
 }
 
 impl FxStoreSource {
-    /// `products` are canonical pair ids (`AUD-USD`), `sources` the venue
-    /// labels written to `cex_prices.source`.
+    /// `sources` are the venue labels written to `cex_prices.source`;
+    /// `products` are canonical pair ids (`AUD-USD`). **Stated in signature
+    /// order deliberately** — they are adjacent `Vec<String>` parameters, so a
+    /// transposed call compiles, and per the note below a wrong source list
+    /// returns no error and merely fewer rows. Reading them here in the opposite
+    /// order to the signature is exactly the invitation to get it wrong.
     ///
     /// **Both lists are the caller's**, and the source list in particular used
     /// to be [`FX_STORE_SOURCES`] hardcoded here. It moved out because the
@@ -409,10 +416,13 @@ impl FxStoreSource {
 
     /// Read the newest closed bucket for every configured series.
     ///
-    /// Runtime-typed, like every other query this bot runs: the SQL lives in
-    /// `queries/` and is bound positionally, so the bot needs no
-    /// `DATABASE_URL` at compile time and — more to the point — takes no
-    /// dependency on the schema owner and asserts no schema version. It reads
+    /// Runtime-typed, like every other query here: the SQL lives in `queries/`
+    /// and is bound positionally, so no consumer needs a `DATABASE_URL` at
+    /// compile time and — more to the point — **this reader asserts no schema
+    /// version**. Note the distinction, which the move narrowed: this crate does
+    /// depend on the schema owner (the collector binaries call
+    /// `require_schema` at startup), but nothing on *this* path does, so a
+    /// consumer that only reads is not fenced. It reads
     /// four columns of one table and tolerates the rest of the store moving
     /// underneath it.
     pub async fn latest(&self) -> Result<Vec<FxStoreRow>> {

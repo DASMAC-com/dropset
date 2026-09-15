@@ -15,6 +15,10 @@
 --
 -- So the detection contract is the `rows_affected() = 0` that `publish` returns
 -- as `false`. A caller must log or count it.
+-- Fifteen positional binds, with three groups of same-typed adjacent columns —
+-- four BOOLEAN, two nullable DOUBLE PRECISION, four BIGINT — so a transposition
+-- inside any group is accepted silently by Postgres, into rows that are never
+-- revised. `market-data/tests/fair_price_roundtrip.rs` is what catches that.
 INSERT INTO fair_price (
     ts, product_id, fair, anchor, regime, degrade, health,
     basis, basis_age_secs, basis_outlier, uncertain, basis_breach, usdc_breach,
