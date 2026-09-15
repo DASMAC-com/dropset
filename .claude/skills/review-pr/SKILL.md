@@ -305,8 +305,8 @@ already being asked to start the review.
      *semantic* conflict (the base renamed or changed
      something this branch still calls), so flag those
      for the adversarial review (step 5) and the test
-     run (step 10) to catch. The rebase rewrote history,
-     so the branch must be force-pushed — step 11 does
+     run (step 11) to catch. The rebase rewrote history,
+     so the branch must be force-pushed — step 12 does
      this with `--force-with-lease`.
 
    **Triage what the base actually gained.** Capture the
