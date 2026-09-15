@@ -31,8 +31,9 @@
 //! Needs a network and a credential, so `#[ignore]`d — and unlike the fence
 //! tests, which the `Tests (Postgres)` job now runs, this suite is excluded
 //! from CI by name (`binary_id(dropset-market-data::oanda_direction)`): no CI
-//! run holds the credential. It stays operator-run, so renaming this file
-//! disarms that exclusion and reddens the job:
+//! run holds the credential. It stays operator-run; renaming this file makes
+//! the exclusion match nothing, which fails the job outright rather than
+//! letting this suite run there:
 //!
 //! ```sh
 //! op run --env-file=infra/localnet/secrets.local.env -- \

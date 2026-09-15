@@ -524,9 +524,11 @@ jobs:
     # `oanda_direction` is filtered out because it is the one `#[ignore]`d
     # target across these four crates gated on something other than Docker:
     # it needs a network and the OANDA credential, and `--run-ignored all`
-    # would otherwise select it. No CI run holds that credential — it lives
-    # in 1Password, reached through `secrets.local.env` — so it can never be
-    # a gate here; it stays operator-run, and its own module doc says so.
+    # would otherwise select it. It can never be a gate here because a
+    # required check must not depend on a live third-party venue; and today
+    # no CI run holds that credential anyway — it lives in 1Password,
+    # reached through `secrets.local.env`. It stays operator-run, and its
+    # own module doc says so.
     # Excluded by `binary_id` rather than by package, so the rest of
     # `dropset-market-data` is still covered, and rather than by bare
     # `binary`, which matches the unqualified name in every selected crate.
