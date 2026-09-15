@@ -1549,8 +1549,27 @@ class RustIncludeFixtureTests(unittest.TestCase):
         )
         self.assertEqual(self.scan("a/t.rs"), {})
 
+    def test_a_doc_comment_carrying_a_COMPLETE_call_is_an_accepted_false_hit(self):
+        # The paren-less form above is the shape that exists in the tree. A doc
+        # comment carrying a complete call in a code span DOES match, and that is
+        # accepted rather than fixed: the cost is one unnecessary suite run, where
+        # a regex tightened to exclude comment lines risks missing a real fixture.
+        # Pinned so the behavior is a decision, not an accident.
+        self.write("a/t.rs", '/// see `include_str!("../x.yml")` for the shape\n')
+        self.assertEqual(self.scan("a/t.rs"), {"x.yml": ["a/t.rs"]})
+
     def test_a_missing_source_is_skipped_not_raised(self):
         self.assertEqual(self.scan("gone/never.rs"), {})
+
+    def test_a_raw_string_or_computed_path_is_NOT_matched(self):
+        # Both are named in the regex's own comment as known blind spots. Pinned
+        # so a future reader learns it from a test rather than from a dequeue.
+        self.write("a/t.rs", 'include_str!(r"../raw.yml")\n')
+        self.write("a/u.rs", 'include_str!(concat!(env!("DIR"), "/c.yml"))\n')
+        self.assertEqual(self.scan("a/t.rs"), {})
+        # The `concat!` form matches its inner literal rather than the real path,
+        # so it yields a wrong-but-harmless key, never the intended one.
+        self.assertNotIn("c.yml", self.scan("a/u.rs"))
 
     def test_the_hits_field_rides_the_gate_only_projection(self):
         # A caller taking `--gate-only` must still see the reason to run a suite the
@@ -1616,11 +1635,38 @@ class FixtureReachabilityGateTests(unittest.TestCase):
         # measuring what it claims to.
         self.assertFalse(rd.rust_is_reachable([self.FIXTURE]))
         self.assertFalse(rd.touches_ci_code([self.FIXTURE]))
+        # The negative case below rests on this too: if the README were ever
+        # RUST_REACHABLE, `test_an_unrelated_excluded_path_stays_unreachable`
+        # would be asserting nothing.
+        self.assertFalse(rd.rust_is_reachable(["infra/localnet/README.md"]))
 
     def test_touching_the_fixture_is_reachable_and_names_the_hit(self):
         verdict = self._commit_change(self.FIXTURE, "services: {db: {}}\n")
         self.assertTrue(verdict["rust_reachable"])
         self.assertEqual(verdict["rust_fixture_hits"], [self.FIXTURE])
+
+    def test_two_touched_fixtures_are_both_named_and_sorted(self):
+        # The gate projects a sorted LIST out of a dict keyed by fixture, so
+        # ordering and multiplicity are properties of the projection rather than of
+        # the scanner — which the scanner's own sort/dedup tests cannot cover.
+        second = "infra/localnet/extra.yml"
+        self._write(
+            self.READER,
+            f'const A: &str = include_str!("../../{self.FIXTURE}");\nconst B: &str = include_str!("../../{second}");\n',
+        )
+        self._write(second, "a: 1\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "Add a second fixture")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+        self._write(second, "a: 2\n")
+        self._write(self.FIXTURE, "services: {db: {}}\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "Touch both")
+        verdict = rd.gate("main", self.out, fetch=False)
+
+        self.assertEqual(verdict["rust_fixture_hits"], sorted([self.FIXTURE, second]))
+        self.assertTrue(verdict["rust_reachable"])
 
     def test_an_unrelated_excluded_path_stays_unreachable(self):
         # The list did not go blunt: only a path some test actually reads flips.
@@ -1661,10 +1707,13 @@ class ProseHeavyGateTests(unittest.TestCase):
         os.chdir(self._cwd)
         self._tmp.cleanup()
 
-    def _gate(self, rel, text):
+    def _write(self, rel, text):
         target = self.repo / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
+
+    def _gate(self, rel, text):
+        self._write(rel, text)
         git(self.repo, "add", rel)
         git(self.repo, "commit", "-q", "-m", "Change")
         return rd.gate("main", self.out, fetch=False)
@@ -1691,9 +1740,33 @@ class ProseHeavyGateTests(unittest.TestCase):
         self.assertEqual(verdict["added_shape"]["ratio"], 1.0)
         self.assertFalse(verdict["prose_heavy"])
 
+    def test_only_narrows_added_shape_but_NOT_the_other_predicates(self):
+        # The deliberate asymmetry, which a comment at the call site is otherwise
+        # the only thing defending: `added_shape` is computed from the WRITTEN diff
+        # (so `--only` narrows it, because it answers "what content is under
+        # review"), while the path predicates read the unlimited list (they answer
+        # "what will CI do"). A later reader is apt to "fix" this into consistency.
+        prose = "".join(f"/// doc line {i}\n" for i in range(30))
+        self._write("feeds/src/venues/oanda.rs", prose)
+        self._write("docs/note.md", "just prose\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "Change")
+
+        whole = rd.gate("main", self.out, fetch=False)
+        narrowed = rd.gate("main", self.out, fetch=False, only=["docs/**"])
+
+        # The shape follows the narrowing...
+        self.assertEqual(whole["added_shape"]["added"], 31)
+        self.assertEqual(narrowed["added_shape"]["added"], 1)
+        # ...while the branch-wide predicate does not.
+        self.assertEqual(whole["rust_reachable"], narrowed["rust_reachable"])
+        self.assertTrue(narrowed["rust_reachable"])
+
     def test_an_empty_diff_reports_a_zero_shape_rather_than_failing(self):
-        # `gate()` skips the classifier when the diff is empty; the field must
-        # still be present and well-formed for a caller that reads it.
+        # The field is present and zeroed, so a caller reading it gets a
+        # well-formed shape rather than a KeyError. Note this does NOT pin the
+        # skip: `added_line_shape` returns the same zeroed dict on an empty diff,
+        # so removing the short-circuit changes nothing observable here.
         verdict = self._gate("pnpm-lock.yaml", "lockfile: 1\n")
         self.assertTrue(verdict["diff_empty"])
         self.assertEqual(
@@ -1736,8 +1809,11 @@ class AddedLineShapeTests(unittest.TestCase):
         # The reason the marker table is keyed by extension: `#` is a comment in
         # Python and an attribute in Rust, and a union would read every derive as
         # prose on exactly the diffs this flag judges.
+        # Assert the WHOLE dict: `comment == 0` alone would also pass if the
+        # branch stopped counting the lines in `added` at all, which would shrink
+        # the denominator and inflate the ratio.
         shape = self.shape(self._diff("a/x.rs", "+#[derive(Debug)]", "+#[cfg(test)]"))
-        self.assertEqual(shape["comment"], 0)
+        self.assertEqual(shape, {"added": 2, "comment": 0, "ratio": 0.0})
 
     def test_python_hashes_are_prose(self):
         shape = self.shape(self._diff("a/x.py", "+# why this exists", "+value = 1"))
@@ -1771,17 +1847,97 @@ class AddedLineShapeTests(unittest.TestCase):
         self.assertEqual(shape, {"added": 2, "comment": 2, "ratio": 1.0})
 
     def test_an_unknown_extension_reads_as_code(self):
-        # Unknown-means-code under-reports rather than inventing prose.
+        # Unknown-means-code under-reports rather than inventing prose. Whole dict
+        # again: the claim is two-part — such a line contributes to `added` AND
+        # never to `comment` — so asserting only the second half leaves the first
+        # untested.
         shape = self.shape(self._diff("a/thing.weird", "+// looks like a comment"))
-        self.assertEqual(shape["comment"], 0)
+        self.assertEqual(shape, {"added": 1, "comment": 0, "ratio": 0.0})
+
+    def test_a_file_with_no_extension_reads_as_code(self):
+        # `Makefile` / `Dockerfile` take the same no-table-entry branch, so their
+        # `#` prose reads as code. Documented in the docstring as an accepted
+        # under-report; pinned here so it is a decision rather than a surprise.
+        shape = self.shape(self._diff("Makefile", "+# the demo target", "+demo:"))
+        self.assertEqual(shape, {"added": 2, "comment": 0, "ratio": 0.0})
 
     def test_the_extension_is_tracked_across_file_headers(self):
-        text = self._diff("a/x.rs", "+/// doc") + self._diff("a/y.py", "+code = 1")
+        # The second file's line must be a comment under ITS OWN extension and not
+        # under the first's, or a tracker stuck on the first extension still
+        # produces the expected counts. `#` is a Python comment and a Rust
+        # attribute, which is exactly the conflict the table is keyed for.
+        text = self._diff("a/x.rs", "+/// doc") + self._diff("a/y.py", "+# note")
         shape = self.shape(text)
-        self.assertEqual((shape["added"], shape["comment"]), (2, 1))
+        self.assertEqual((shape["added"], shape["comment"]), (2, 2))
 
     def test_an_empty_diff_has_a_zero_ratio_not_a_crash(self):
         self.assertEqual(self.shape(""), {"added": 0, "comment": 0, "ratio": 0.0})
+
+    def test_a_python_docstring_body_is_prose_not_just_its_delimiter(self):
+        # The case that makes the flag work on its own home surface: everything
+        # under `.claude/tools/` is Python and documents itself that way, so
+        # counting only the `"""` line reads the prose as code from line two on.
+        shape = self.shape(
+            self._diff(
+                "a/tool.py",
+                '+    """Summary line.',
+                "+",
+                "+    A paragraph of rationale that is prose, not code.",
+                "+    A second line of it.",
+                '+    """',
+                "+    return 1",
+            )
+        )
+        # The blank line is excluded from `added` entirely (blank lines are
+        # neither), so this is four prose lines — summary, two body lines, closing
+        # delimiter — against the one `return`.
+        self.assertEqual(shape, {"added": 5, "comment": 4, "ratio": 0.8})
+
+    def test_a_one_line_python_docstring_does_not_open_a_run(self):
+        # An even number of delimiters opens and closes within the line, so the
+        # code after it must not be swallowed as prose.
+        shape = self.shape(
+            self._diff("a/tool.py", '+    """One liner."""', "+    return 1")
+        )
+        self.assertEqual(shape, {"added": 2, "comment": 1, "ratio": 0.5})
+
+    def test_docstring_state_resets_at_a_hunk_boundary(self):
+        # A hunk is discontinuous, so state from the previous one is unreliable.
+        # Resetting counts a docstring spanning the gap low; carrying it would
+        # count every line after an unclosed one high, which is the worse error.
+        head = "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n"
+        text = head + '@@ -1,0 +1,2 @@\n+    """Open and never closed here.\n'
+        text += "@@ -20,0 +20,1 @@\n+    value = 1\n"
+        shape = self.shape(text)
+        self.assertEqual(shape, {"added": 2, "comment": 1, "ratio": 0.5})
+
+    def test_docstring_state_does_not_leak_across_files(self):
+        text = self._diff("a/one.py", '+    """Unclosed.')
+        text += self._diff("a/two.py", "+value = 1")
+        shape = self.shape(text)
+        self.assertEqual(shape, {"added": 2, "comment": 1, "ratio": 0.5})
+
+    def test_a_rust_deref_is_not_read_as_a_block_comment(self):
+        # The continuation marker is `"* "` with the space; a bare `*` would read
+        # a deref as prose, erring in the direction the docstring forbids.
+        shape = self.shape(self._diff("a/x.rs", "+*self.count += 1;", "+*ptr = 0;"))
+        self.assertEqual(shape, {"added": 2, "comment": 0, "ratio": 0.0})
+
+    def test_a_real_block_comment_continuation_is_still_prose(self):
+        shape = self.shape(self._diff("a/x.rs", "+/* opening", "+ * continued", "+ */"))
+        self.assertEqual(shape, {"added": 3, "comment": 3, "ratio": 1.0})
+
+    def test_the_threshold_is_compared_before_rounding(self):
+        # 0.4995 rounds to 0.5 (well, to 0.499/0.5 depending on the counts), so a
+        # gate reading the rounded field would fire below its documented bound.
+        # 999/2000 = 0.4995 exactly.
+        self.assertFalse(
+            rd.is_prose_heavy({"added": 2000, "comment": 999, "ratio": 0.5})
+        )
+        # ...and exactly at the bound it does fire.
+        self.assertTrue(
+            rd.is_prose_heavy({"added": 2000, "comment": 1000, "ratio": 0.5})
+        )
 
     def test_prose_heavy_needs_the_ratio_AND_the_floor(self):
         # Both halves are load-bearing: the ratio alone fires on a three-line diff,

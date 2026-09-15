@@ -88,8 +88,10 @@ it can never drift from the reasons. Four things block:
 (``runs_rust_suites`` / ``rust_reachable`` / ``rust_fixture_hits`` /
 ``runs_artifact_gates``) and ``prose_heavy``, which together answer "what may I
 skip?" — and drops the unbounded inventory (``commits``, ``files``, ``slices``,
-``diff_path``, ``diff_lines``, and the ``added_shape`` counts behind
-``prose_heavy``). The full payload is what a
+``diff_path``, ``diff_lines``). ``added_shape`` is dropped too, but for a
+different reason: three integers are bounded by construction, so it is not
+inventory — it merely *justifies* a fan-out choice, and a fan-out reads the full
+verdict anyway. The full payload is what a
 **fan-out** needs; a mid-review *re-check* consumes only ``base_fresh`` /
 ``ready`` / ``blockers``, and one measured run printed a 70-file ``files`` array
 to answer exactly that — for a diff that had just been rebased away. The gating
@@ -358,6 +360,16 @@ def rust_is_reachable(paths) -> bool:
 #: A Rust ``include_str!`` / ``include_bytes!`` naming a path literal. The target
 #: routinely sits on a *following* line in this repo, so the whitespace classes
 #: deliberately span newlines; the literal itself may not.
+#:
+#: **Two forms are NOT matched**, and the omission is silent in the direction the
+#: scan exists to close, so it is named rather than left to be discovered: a raw
+#: string (``include_str!(r"…")``) and a computed path
+#: (``include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/x"))``). Every target in
+#: the tree today is a plain relative literal, so there is no live miss — but a
+#: future one would read as "no fixture" rather than as "cannot tell".
+#:
+#: The reverse case is benign: this also matches an ``include_str!("…")`` written
+#: inside a doc-comment code span, which costs at most one unnecessary suite run.
 _INCLUDE_RE = re.compile(r'include_(?:str|bytes)!\s*\(\s*"([^"\n]+)"')
 
 
@@ -908,14 +920,23 @@ def _read_post_image(path: str) -> str | None:
 #: is a comment in SQL but a decrement elsewhere. A union would read Rust
 #: attributes and derive lists as prose and inflate the ratio on exactly the
 #: diffs this classification exists to judge.
-COMMENT_MARKERS = {
-    ".rs": ("///", "//!", "//", "/*", "*/", "*"),
+#:
+#: Named ``…_BY_EXT`` because ``search_source.py`` already owns a module-level
+#: ``COMMENT_MARKERS`` — a flat tuple, for its comment-in-an-alternation refusal.
+#: Same concept, different shape; one name for both invites a misread.
+#:
+#: The block-comment continuation marker is ``"* "`` **with the space**, not a
+#: bare ``*``: a bare one reads ``*self.count += 1;`` and ``*ptr = 0;`` as prose,
+#: which errs in the direction this classification promises never to take. Every
+#: formatter this repo runs emits ``* `` for a continuation line.
+COMMENT_MARKERS_BY_EXT = {
+    ".rs": ("///", "//!", "//", "/*", "*/", "* "),
     ".py": ("#", '"""', "'''"),
-    ".ts": ("///", "//", "/*", "*/", "*"),
-    ".tsx": ("///", "//", "/*", "*/", "*"),
-    ".js": ("//", "/*", "*/", "*"),
-    ".jsx": ("//", "/*", "*/", "*"),
-    ".css": ("/*", "*/", "*"),
+    ".ts": ("///", "//", "/*", "*/", "* "),
+    ".tsx": ("///", "//", "/*", "*/", "* "),
+    ".js": ("//", "/*", "*/", "* "),
+    ".jsx": ("//", "/*", "*/", "* "),
+    ".css": ("/*", "*/", "* "),
     ".sql": ("--",),
     ".sh": ("#",),
     ".zsh": ("#",),
@@ -923,6 +944,15 @@ COMMENT_MARKERS = {
     ".yaml": ("#",),
     ".toml": ("#",),
 }
+
+#: Extensions whose prose lives in a **delimited docstring** rather than behind a
+#: per-line marker. Without tracking the delimiter these read as code from the
+#: second line on, which defeats the flag on its own home surface: everything
+#: under ``.claude/tools/`` is Python and its prose is overwhelmingly docstring.
+DOCSTRING_EXTS = (".py",)
+
+#: The two Python docstring delimiters.
+DOCSTRING_DELIMITERS = ('"""', "'''")
 
 #: Extensions whose every line is prose by construction, so the marker table does
 #: not apply. These already trip the freshness gate's *path* triggers; counting
@@ -957,35 +987,85 @@ def added_line_shape(diff_path: Path) -> dict:
     added lines. Counting them would let whitespace in a heavily-commented hunk
     quietly pull the ratio under the threshold.
 
-    Classification is by the file's own comment markers (:data:`COMMENT_MARKERS`),
-    tracked across ``diff --git`` headers as the walk proceeds. An extension with
-    no entry contributes to ``added`` and never to ``comment``: unknown-means-code
-    is the direction that under-reports rather than inventing prose.
+    Classification is by the file's own comment markers
+    (:data:`COMMENT_MARKERS_BY_EXT`), tracked across ``diff --git`` headers as the
+    walk proceeds. An extension with no entry contributes to ``added`` and never
+    to ``comment``: unknown-means-code is the direction that under-reports rather
+    than inventing prose. A file with **no extension at all** (``Makefile``,
+    ``Dockerfile``) takes that same branch and so reads as pure code.
+
+    **A delimited docstring counts as prose for its whole body, not just its
+    opening line** (:data:`DOCSTRING_EXTS`). Matching a marker per line covers
+    Rust and TS, whose block comments carry a continuation marker, and silently
+    fails for Python, whose interior docstring lines carry nothing — which would
+    make the flag blindest on its own home surface, since everything under
+    ``.claude/tools/`` is Python and documents itself in docstring form.
+
+    The tracking is deliberately **approximate, and errs toward code**. A diff
+    shows added lines only, so a hunk can begin inside a docstring with no
+    delimiter in sight; state therefore resets at every file *and* hunk header
+    rather than being carried across a gap it cannot see. A docstring spanning a
+    hunk boundary is counted low, never high.
+
+    Two further gaps in the same direction, both accepted: an added line
+    whose own content starts with ``++`` is written ``+++…`` and is skipped with
+    the file header, and a path git **quotes** (an embedded space, or non-ASCII)
+    yields an extension with a trailing quote that matches no table entry, so
+    that file reads as code.
     """
     added = 0
     comment = 0
     ext = ""
+    in_docstring = False
     with open(diff_path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             header = _diff_header_path(line)
             if header is not None:
                 ext = posixpath.splitext(header)[1].lower()
+                in_docstring = False
                 continue
-            # `+++ b/path` is a header, not an added line; it is also the only
-            # `+`-leading line that is not content.
+            if line.startswith("@@"):
+                # A new hunk is discontinuous with the last, so any docstring
+                # state from it is unreliable. Reset rather than carry it.
+                in_docstring = False
+                continue
+            # `+++ b/path` rides in with the file header. Note this also drops an
+            # added line whose own content begins with `++`, which is accepted as
+            # counting low rather than being the only non-content `+` line.
             if not line.startswith("+") or line.startswith("+++"):
                 continue
             body = line[1:].strip()
             if not body:
                 continue
             added += 1
+
             if ext in PROSE_EXTS:
                 comment += 1
                 continue
-            markers = COMMENT_MARKERS.get(ext)
+
+            if ext in DOCSTRING_EXTS:
+                # Count the delimiter line itself, then every line until the
+                # closing one. An odd number of delimiters on a line toggles the
+                # state; an even number opens and closes within the line.
+                delimiters = sum(body.count(d) for d in DOCSTRING_DELIMITERS)
+                if in_docstring:
+                    comment += 1
+                    if delimiters % 2:
+                        in_docstring = False
+                    continue
+                if delimiters % 2:
+                    in_docstring = True
+                    comment += 1
+                    continue
+
+            markers = COMMENT_MARKERS_BY_EXT.get(ext)
             if markers and body.startswith(markers):
                 comment += 1
 
+    # `ratio` is REPORTORIAL — rounded for the verdict a human reads.
+    # `is_prose_heavy` recomputes from the counts so the threshold comparison is
+    # exact; comparing the rounded value would make a true 0.4995 trip a gate
+    # documented as 0.5.
     ratio = round(comment / added, 3) if added else 0.0
     return {"added": added, "comment": comment, "ratio": ratio}
 
@@ -995,8 +1075,15 @@ def is_prose_heavy(shape: dict) -> bool:
 
     Both halves are load-bearing: the ratio alone fires on a trivial diff, and
     the floor alone fires on a large diff with a normal share of comments.
+
+    The ratio is recomputed from the counts rather than read off ``shape``'s
+    reportorial ``ratio``, which is rounded to three places — comparing that
+    would put the real threshold at 0.4995.
     """
-    return shape["comment"] >= PROSE_HEAVY_FLOOR and shape["ratio"] >= PROSE_HEAVY_RATIO
+    if shape["comment"] < PROSE_HEAVY_FLOOR:
+        return False
+    added = shape["added"]
+    return bool(added) and shape["comment"] / added >= PROSE_HEAVY_RATIO
 
 
 def split_diff(diff_path: Path, out_dir: Path) -> dict:
@@ -1440,8 +1527,11 @@ def gate(
         "code_crates": sum(1 for b in crates.values() if b["has_source"]),
         "runs_rust_suites": runs_rust_suites,
         "rust_reachable": rust_reachable,
-        # The excluded-by-CI paths a Rust test compiles in, if any. Non-empty is
-        # the "run the full local suite despite the path list" signal.
+        # The diff paths a Rust file compiles in via `include_str!`, whether or
+        # not CI's `code` filter excludes them — NOT only the excluded ones (the
+        # scan's docstring records that thirty of the thirty-one unmatched
+        # fixtures are CI-visible). Non-empty is the "run the full local suite
+        # despite the path list" signal.
         "rust_fixture_hits": rust_fixture_hits,
         "runs_artifact_gates": runs_artifact_gates,
         # The added-line prose classification behind `prose_heavy`, reported so the

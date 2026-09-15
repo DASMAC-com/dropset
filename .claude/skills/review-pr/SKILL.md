@@ -4385,8 +4385,9 @@ already being asked to start the review.
    The scan over this tree finds **48** fixtures, **31** of them
    unmatched by `RUST_REACHABLE`, and they split into two classes
    rather than one. `infra/localnet/docker-compose.yml` is
-   CI-**excluded** and read by two tests — the dequeue class
-   above. The other thirty are CI-*visible* but were still
+   CI-**excluded** and read by three Rust files, two of them
+   tests — the dequeue class above. The other thirty are
+   CI-*visible* but were still
    unmatched (every `*/queries/*.sql` a store module compiles in,
    `sdk/idl/dropset.json`, and the `Makefile`), so for them
    `runs_rust_suites` was true while `rust_reachable` was false
@@ -5879,10 +5880,14 @@ already being asked to start the review.
      - **PR #424** — GraphQL reported `state: MERGED`,
        `merged: true` and a null queue entry, while
        `gh pr view` *at the same moment* still said `OPEN`
-       with a null `mergedAt`. GraphQL was **ahead**, and the
-       prescribed tiebreak was the stale source. Following the
-       old rule literally concludes "not merged yet" on a
-       landed PR.
+       with a null `mergedAt`. So the **prescribed tiebreak was
+       itself the stale source**, which is what proves the lag
+       direction is not fixed. (Note #424 would not have gone
+       wrong via *this* branch — a probe returning
+       `merged: true` takes the landed branch above and never
+       consults the tiebreak. What it refutes is the tiebreak's
+       premise, which is why the fix is the hoisted invariant
+       rather than a repair to this bullet's branch.)
      - **PR #420** — GraphQL still read
        `mergeQueueEntry.state: AWAITING_CHECKS` after all four
        queue-branch runs were green, while `gh pr view`
