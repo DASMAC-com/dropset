@@ -208,7 +208,6 @@ raydium
 readback
 reauthored
 recalibratable
-recompiles
 refspec
 regclass
 rels

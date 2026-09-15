@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word ONBUILD
 """Guard the Dockerfiles' stage graph: every Rust stage inherits the pin layer.
 
 The failure this exists for, measured live on 2026-09-15 while the operator
@@ -38,9 +39,12 @@ guard that silently checks nothing is worse than no guard.
 
 The parse is deliberately small and local — comments dropped, continuations
 joined, ``FROM``/``RUN``/``COPY``/``WORKDIR`` read positionally. It is not a
-Dockerfile interpreter: no ``ARG`` substitution, no heredocs. Both are absent
-from this repo's five files, and a full parser would be a dependency this
-guard does not earn.
+Dockerfile interpreter: no ``ARG`` substitution, no heredocs. Heredocs are
+absent from all five of this repo's Dockerfiles (checked). ``ARG`` is not — the
+Node-only ``explorer.Dockerfile`` interpolates one into its ``FROM`` — and that
+is harmless here only because the file has no Rust stage, so an unexpanded
+``${NODE_VERSION}`` never reaches a decision. A full parser would be a
+dependency this guard does not earn.
 """
 
 from __future__ import annotations
@@ -75,6 +79,18 @@ _ROOT_MARKERS = ("Cargo.toml", "pnpm-workspace.yaml")
 # is reached as `cargo chef`, so the `cargo` branch already covers it.
 _RUST_CMD_RE = re.compile(r"(?<![\w./-])(cargo|rustc|rustup)(?![\w-])")
 
+# The subset that COMPILES, and so is the thing that must not run before the
+# pin resolves. `rustup` itself downloads no crates and is deliberately absent:
+# `RUN rustup --version` ahead of the pin COPY is harmless, and flagging it
+# blocked a correct Dockerfile with the message "runs cargo before resolving
+# the pin", which it does not.
+_CARGO_CMD_RE = re.compile(r"(?<![\w./-])(cargo|rustc)(?![\w-])")
+
+# A loose mention of the toolchain, used only for the per-file backstop below.
+# Deliberately wider than `_RUST_CMD_RE`: its job is to notice a file that
+# looks Rust-shaped while the precise detector found nothing in it.
+_RUST_HINT_RE = re.compile(r"(?i)(cargo|rustc|rustup|\brust\b|rust:)")
+
 # The two sane spellings of "resolve whatever rust-toolchain.toml says". Both
 # read the override file in the working directory and neither names a version:
 # `rustup toolchain install` with no argument installs the active toolchain
@@ -108,6 +124,11 @@ class Instruction(NamedTuple):
         return self.keyword == "RUN" and bool(_RUST_CMD_RE.search(self.args))
 
     @property
+    def is_cargo(self) -> bool:
+        """Whether this instruction COMPILES — cargo or rustc, never rustup."""
+        return self.keyword == "RUN" and bool(_CARGO_CMD_RE.search(self.args))
+
+    @property
     def is_resolve(self) -> bool:
         """Whether this instruction resolves the pin file's toolchain."""
         return self.keyword == "RUN" and bool(_RESOLVE_RE.search(self.args))
@@ -131,15 +152,33 @@ class Stage(NamedTuple):
         return any(inst.is_rust for inst in self.instructions)
 
 
+def _operands(args: str) -> list[str]:
+    """The operands of a ``COPY``/``ADD``, flags dropped, JSON form unwrapped.
+
+    Docker accepts an exec/JSON form — ``COPY [".", "."]`` — and a naive
+    whitespace split leaves the brackets and quotes attached, so ``".",``
+    matches nothing in ``_BROAD_SOURCES`` and a whole-context copy in that
+    spelling silently fails to disqualify a pin stage. That is the same
+    false-negative class as an unchecked ancestor, so it is normalized here
+    rather than documented as out of scope.
+    """
+    body = args.strip()
+    if body.startswith("["):
+        body = body.strip("[]")
+        parts = [part.strip().strip('"').strip("'") for part in body.split(",")]
+        return [part for part in parts if part]
+    return [tok for tok in body.split() if not tok.startswith("--")]
+
+
 def copy_sources(args: str) -> list[str]:
     """The source operands of a ``COPY``/``ADD``, flags and target dropped."""
-    tokens = [tok for tok in args.split() if not tok.startswith("--")]
+    tokens = _operands(args)
     return tokens[:-1] if len(tokens) > 1 else []
 
 
 def copy_target(args: str) -> str | None:
     """The target operand of a ``COPY``/``ADD``."""
-    tokens = [tok for tok in args.split() if not tok.startswith("--")]
+    tokens = _operands(args)
     return tokens[-1] if len(tokens) > 1 else None
 
 
@@ -155,7 +194,14 @@ def is_broad_copy(inst: Instruction) -> bool:
 
 
 def copies_toolchain_alone(inst: Instruction) -> bool:
-    """Whether an instruction copies the pin file and nothing else."""
+    """Whether an instruction copies the pin file and nothing else.
+
+    ``COPY`` only, while :func:`is_broad_copy` also accepts ``ADD`` — so
+    ``ADD rust-toolchain.toml ./`` reads as "no pin provider" and the file is
+    rejected. That asymmetry fails closed, and is deliberate: ``ADD`` also
+    fetches URLs and unpacks archives, so it is the wrong instruction for a
+    layer whose whole purpose is a stable cache key.
+    """
     if inst.keyword != "COPY" or "--from=" in inst.args:
         return False
     sources = copy_sources(inst.args)
@@ -174,12 +220,8 @@ def rust_before_resolve(inst: Instruction) -> bool:
     resolve = _RESOLVE_RE.search(inst.args)
     if resolve is None:
         return False
-    for match in _RUST_CMD_RE.finditer(inst.args):
-        if match.start() >= resolve.start():
-            return False
-        if match.group(1) != "rustup":
-            return True
-    return False
+    match = _CARGO_CMD_RE.search(inst.args)
+    return match is not None and match.start() < resolve.start()
 
 
 def parse(text: str) -> list[Stage]:
@@ -257,13 +299,20 @@ def provides_pin(stage: Stage) -> int | None:
 
 
 def chain(stage: Stage, by_name: dict[str, Stage]) -> list[Stage]:
-    """``stage`` and its ancestors, nearest first, following ``FROM`` names."""
+    """``stage`` and its ancestors, nearest first, following ``FROM`` names.
+
+    A name resolves to a stage only if that stage is declared **earlier**;
+    Docker treats a forward reference as an image name, so crediting a stage
+    with a pin declared below it would be a false pass.
+    """
     result: list[Stage] = []
     seen: set[str] = set()
     current: Stage | None = stage
     while current is not None:
         result.append(current)
         parent = by_name.get(current.base.lower())
+        if parent is not None and parent.line >= current.line:
+            parent = None
         # A stage whose name is its own base, or a cycle: stop rather than
         # loop. Docker would reject it; this guard just declines to hang.
         if parent is None or (parent.name or "") in seen:
@@ -309,8 +358,13 @@ def _version_problems(
         # (`rust:1-bookworm`) is fine. An `x.y` tag is a second pin that can
         # silently disagree with the file.
         if stage.base.lower() not in by_name:
-            image, _, tag = stage.base.partition(":")
-            repo = image.rsplit("/", 1)[-1].lower()
+            # Split the tag off the LAST path component: a registry with a
+            # port (`registry.example:5000/rust:1.98-bookworm`) puts a colon before the
+            # image name, so partitioning the whole reference reads the
+            # registry as the repo and skips the check entirely.
+            last = stage.base.rsplit("/", 1)[-1]
+            repo, _, tag = last.partition(":")
+            repo = repo.lower()
             if repo == "rust" and _VERSION_RE.search(tag):
                 problems.append(
                     f"{path}:{stage.line}: stage '{stage.label}' pins the "
@@ -326,10 +380,14 @@ def _version_problems(
             # (`… && cargo install cargo-chef --version 0.1.68`), and reading
             # that as a compiler pin is a false positive with a confidently
             # wrong diagnosis attached.
+            # `\brustup\s` matches the COMMAND, not the string: a bare
+            # substring test also fires on `rustup-init-1.28.1` and on a
+            # pinned download URL like `…/rustup/1.28.1/…`, blocking a stage
+            # that bootstraps rustup itself with a misdiagnosis of a URL.
             rustup_versions = [
                 segment
                 for segment in _SEGMENT_RE.split(inst.args)
-                if "rustup" in segment and _VERSION_RE.search(segment)
+                if re.search(r"\brustup\s", segment) and _VERSION_RE.search(segment)
             ]
             if rustup_versions:
                 problems.append(
@@ -354,6 +412,32 @@ def check_file(path: str, text: str) -> tuple[list[str], int]:
     by_name = {stage.name: stage for stage in stages if stage.name}
     rust_stages = [stage for stage in stages if stage.is_rust]
     if not rust_stages:
+        # Backstop for the detector itself. The zero-Rust alarm in `check()` is
+        # repo-GLOBAL, so while the four known images keep the total non-zero,
+        # a fifth file whose cargo invocation this regex misses — a wrapper
+        # script, a path-qualified binary, an `ONBUILD` — would pass in total
+        # silence. A file that looks Rust-shaped and yields no Rust stage is
+        # therefore reported per file. Comments are already dropped by `parse`,
+        # so an incidental mention in prose cannot trip this.
+        hint_line: int | None = None
+        for stage in stages:
+            if _RUST_HINT_RE.search(stage.base):
+                hint_line = stage.line
+                break
+            for inst in stage.instructions:
+                if _RUST_HINT_RE.search(inst.args):
+                    hint_line = inst.line
+                    break
+            if hint_line is not None:
+                break
+        if hint_line is not None:
+            return [
+                f"{path}:{hint_line}: this Dockerfile mentions the Rust "
+                "toolchain, but the guard found no Rust build stage in it — so "
+                "nothing in this file was checked. Either the detection missed "
+                "a cargo invocation (a wrapper script, a path-qualified "
+                "binary, an ONBUILD) or the mention is incidental."
+            ], 0
         return [], 0
 
     problems = _version_problems(path, stages, by_name)
@@ -387,10 +471,28 @@ def check_file(path: str, text: str) -> tuple[list[str], int]:
 
         # Anything cargo-shaped before the resolve compiles on the base
         # image's own floating compiler.
+        # Rule 2 reaches ANCESTORS, not just this stage. An ancestor's
+        # whole-tree COPY runs before this stage exists, so it keys the pin
+        # layer on the source tree exactly as one in the same stage would — and
+        # `provides_pin` scans a single stage, so it cannot see it. Without
+        # this, a two-stage shape (`base` doing `COPY . .`, `chef` resolving the
+        # pin) reproduced the measured bug and passed the guard.
+        for ancestor in ancestry[1:]:
+            broad = next(
+                (inst for inst in ancestor.instructions if is_broad_copy(inst)), None
+            )
+            if broad is not None:
+                problems.append(
+                    f"{path}:{broad.line}: stage '{provider.label}' resolves "
+                    f"the pin, but its ancestor '{ancestor.label}' copies the "
+                    "whole build context first — so the pin layer is keyed on "
+                    "the source tree anyway and every commit re-pays the "
+                    "download. Move the broad COPY into a descendant stage."
+                )
+                break
+
         earlier = [
-            inst
-            for inst in provider.instructions[:resolve_index]
-            if inst.is_rust and not inst.is_resolve
+            inst for inst in provider.instructions[:resolve_index] if inst.is_cargo
         ]
         if earlier or rust_before_resolve(resolve):
             offender = earlier[0] if earlier else resolve
@@ -409,16 +511,29 @@ def check_file(path: str, text: str) -> tuple[list[str], int]:
             if copies_toolchain_alone(inst)
         ]
         if copies:
-            copy = copies[-1]
-            target = copy_target(copy.args) or "."
-            copy_dir = _resolve_dir(target, workdir_at(ancestry, copy))
             run_dir = os.path.normpath(workdir_at(ancestry, resolve) or "/")
-            if copy_dir != run_dir:
+            copy_dirs = [
+                _resolve_dir(copy_target(copy.args) or ".", workdir_at(ancestry, copy))
+                for copy in copies
+            ]
+            # At or BELOW, and ANY of the copies. Two corrections to a stricter
+            # earlier form: rustup searches the working directory *and its
+            # parents* for the override file (verified — resolving from
+            # `db-schema/` picked up the repo-root pin), so a resolve in a
+            # subdirectory of the copy target is correct; and `provides_pin`
+            # accepts the FIRST toolchain copy while a later one may be the one
+            # that lands, so adjudicating only the last produced a false
+            # positive when a stage copied it twice.
+            if not any(
+                run_dir == copy_dir or run_dir.startswith(copy_dir.rstrip("/") + "/")
+                for copy_dir in copy_dirs
+            ):
                 problems.append(
                     f"{path}:{resolve.line}: stage '{provider.label}' resolves "
-                    f"the toolchain in {run_dir} but copied {TOOLCHAIN_FILE} "
-                    f"into {copy_dir}, so rustup reads no override there and "
-                    "the download moves back onto the build path."
+                    f"the toolchain in {run_dir}, which is neither "
+                    f"{' nor '.join(copy_dirs)} nor below it, so rustup reads "
+                    "no override there and the download moves back onto the "
+                    "build path."
                 )
 
     return problems, len(rust_stages)

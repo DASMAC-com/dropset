@@ -21,9 +21,11 @@ guard's own parse cannot see (it reads Dockerfiles, not the build context).
 
 from __future__ import annotations
 
+import io
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 
 import docker_context as dc
 import dockerfile_stages as ds
@@ -160,6 +162,45 @@ class TestRustDetection(unittest.TestCase):
         )
         self.assertFalse(stages[0].is_rust)
 
+    def test_the_two_regex_boundaries_are_pinned_separately(self) -> None:
+        # One fixture cannot pin both halves: `/var/cargo-cache` is rejected by
+        # the lookbehind AND the lookahead, so deleting either alone leaves it
+        # passing. These two fail on exactly one boundary each.
+        lookbehind = ds.parse("FROM debian:x AS b\nRUN ./cargo build\n")
+        lookahead = ds.parse("FROM debian:x AS b\nRUN cargo-deny check\n")
+        self.assertFalse(lookbehind[0].is_rust)
+        self.assertFalse(lookahead[0].is_rust)
+
+    def test_rustc_also_marks_a_stage_rust(self) -> None:
+        text = "FROM rust:1-bookworm AS solo\nCOPY . .\nRUN rustc --version\n"
+        self.assertEqual(rust_count(text), 1)
+
+    def test_a_rust_looking_file_with_no_rust_stage_is_reported(self) -> None:
+        # The backstop for the detector itself: the zero-Rust alarm is
+        # repo-global, so a single file whose cargo call the regex misses would
+        # otherwise pass in silence while the known images keep the total
+        # non-zero. Here the build runs through a wrapper script.
+        text = (
+            "FROM rust:1-bookworm AS builder\n"
+            "WORKDIR /app\n"
+            "COPY . .\n"
+            "RUN ./scripts/build.sh\n"
+        )
+        self.assertEqual(rust_count(text), 0)
+        found = problems(text)
+        self.assertTrue(
+            any("no Rust build stage" in line for line in found),
+            f"a Rust-looking file was silently unchecked: {found}",
+        )
+
+    def test_a_complaint_names_a_line(self) -> None:
+        # The line number is the only thing pointing an operator at the stage
+        # that failed, and every other assertion here matches on message text.
+        found = problems(BROKEN)
+        self.assertTrue(found)
+        for line in found:
+            self.assertRegex(line, r"^f\.Dockerfile:\d+: ")
+
 
 class TestPinProvider(unittest.TestCase):
     def test_recognizes_the_pin_stage(self) -> None:
@@ -208,6 +249,54 @@ class TestPinProvider(unittest.TestCase):
         builder = next(stage for stage in stages if stage.name == "builder")
         self.assertFalse(ds.is_broad_copy(builder.instructions[0]))
 
+    def test_copying_a_different_single_file_is_not_the_pin(self) -> None:
+        # The check is on the BASENAME, not merely on "exactly one source": a
+        # stage that copies some other single file and then resolves would key
+        # the download on that file instead of on the pin.
+        text = (
+            "FROM rust:1-bookworm AS chef\n"
+            "WORKDIR /app\n"
+            "COPY Cargo.lock ./\n"
+            "RUN rustup toolchain install\n"
+        )
+        self.assertIsNone(ds.provides_pin(ds.parse(text)[0]))
+
+    def test_rustup_show_also_resolves(self) -> None:
+        text = (
+            "FROM rust:1-bookworm AS chef\n"
+            "WORKDIR /app\n"
+            "COPY rust-toolchain.toml ./\n"
+            "RUN rustup show\n"
+            "RUN cargo build\n"
+        )
+        self.assertEqual(problems(text), [])
+
+    def test_a_bare_rustup_call_is_not_the_resolve(self) -> None:
+        # Narrowness matters as much as breadth: `rustup --version` installs
+        # nothing, so a stage whose only post-copy rustup call is that one has
+        # no pin layer and the download stays on the build path.
+        text = (
+            "FROM rust:1-bookworm AS chef\n"
+            "WORKDIR /app\n"
+            "COPY rust-toolchain.toml ./\n"
+            "RUN rustup --version\n"
+            "RUN cargo build\n"
+        )
+        self.assertIsNone(ds.provides_pin(ds.parse(text)[0]))
+        self.assertIn("does not inherit", " ".join(problems(text)))
+
+    def test_a_json_form_broad_copy_disqualifies(self) -> None:
+        # `COPY [".", "."]` is a whole-context copy in Docker's exec form. A
+        # naive whitespace split leaves the brackets attached, so it matched
+        # nothing in the broad-source set and silently failed to disqualify.
+        text = (
+            "FROM rust:1-bookworm AS chef\n"
+            'WORKDIR /app\nCOPY [".", "."]\n'
+            "COPY rust-toolchain.toml ./\n"
+            "RUN rustup toolchain install\n"
+        )
+        self.assertIsNone(ds.provides_pin(ds.parse(text)[0]))
+
 
 class TestInheritance(unittest.TestCase):
     def test_the_broken_shape_is_rejected_at_every_rust_stage(self) -> None:
@@ -224,6 +313,12 @@ class TestInheritance(unittest.TestCase):
 
     def test_pin_inherited_through_a_grandparent(self) -> None:
         text = FIXED.replace("FROM chef AS builder", "FROM planner AS builder")
+        # Guard the anchor. Every `.replace` fixture whose expected result is
+        # `[]` is silently vacuous if the anchor drifts: the replace no-ops,
+        # `text is FIXED`, and the assertion reduces to one another test
+        # already makes — so the two-hop chain walk would go untested while
+        # this still passed.
+        self.assertNotEqual(text, FIXED)
         self.assertEqual(problems(text), [])
 
     def test_a_rust_stage_off_the_chain_is_caught(self) -> None:
@@ -242,6 +337,48 @@ class TestInheritance(unittest.TestCase):
     def test_a_self_referential_base_does_not_hang(self) -> None:
         text = "FROM chef AS chef\nCOPY . .\nRUN cargo build\n"
         self.assertEqual(len(problems(text)), 1)
+
+    def test_a_broad_copy_in_an_ANCESTOR_is_caught(self) -> None:
+        # The bypass that shipped in the first draft of this guard, and the
+        # sharpest possible regression test: every per-stage rule is satisfied
+        # — `chef` copies the pin alone and resolves it, and both later stages
+        # descend from `chef` — yet the pin layer's parent is a whole-tree COPY
+        # in `base`, so the download is source-keyed and re-paid on every
+        # commit. That is the exact measured bug, and it passed the guard.
+        text = (
+            "FROM rust:1-bookworm AS base\n"
+            "WORKDIR /app\n"
+            "COPY . .\n"
+            "\n"
+            "FROM base AS chef\n"
+            "COPY rust-toolchain.toml ./\n"
+            "RUN rustup toolchain install \\\n"
+            "    && cargo install cargo-chef --locked\n"
+        )
+        found = problems(text)
+        self.assertTrue(
+            any("ancestor 'base'" in line for line in found),
+            f"an ancestor's broad COPY was not reported: {found}",
+        )
+
+    def test_a_forward_stage_reference_is_not_credited_with_a_pin(self) -> None:
+        # Docker resolves a `FROM` name only against stages declared earlier,
+        # so this `builder` builds on the base image and inherits nothing.
+        text = (
+            "FROM rust:1-bookworm AS builder\n"
+            "COPY . .\n"
+            "RUN cargo build --release\n"
+            "\n"
+            "FROM rust:1-bookworm AS chef\n"
+            "WORKDIR /app\n"
+            "COPY rust-toolchain.toml ./\n"
+            "RUN rustup toolchain install\n"
+        )
+        found = problems(text)
+        self.assertTrue(
+            any("'builder'" in line and "does not inherit" in line for line in found),
+            f"a forward reference was credited with a later stage's pin: {found}",
+        )
 
 
 class TestOrderWithinThePinStage(unittest.TestCase):
@@ -277,6 +414,7 @@ class TestOrderWithinThePinStage(unittest.TestCase):
             "RUN rustup toolchain install \\",
             "RUN rustup --version \\\n    && rustup toolchain install \\",
         )
+        self.assertNotEqual(text, FIXED)
         self.assertEqual(problems(text), [])
 
     def test_resolve_outside_the_copy_directory_is_caught(self) -> None:
@@ -302,16 +440,64 @@ class TestOrderWithinThePinStage(unittest.TestCase):
         self.assertEqual(problems(text), [])
 
     def test_workdir_inherited_from_the_parent_stage(self) -> None:
+        # Discriminating on purpose. With a relative `./` target both sides of
+        # the comparison derive from the same inherited value, so dropping
+        # ancestor inheritance would collapse both to "/" and still compare
+        # equal — passing for the wrong reason. An ABSOLUTE copy target and no
+        # local WORKDIR means this passes only if inheritance really works.
         text = (
             "FROM rust:1-bookworm AS base\n"
             "WORKDIR /app\n"
             "\n"
             "FROM base AS chef\n"
-            "COPY rust-toolchain.toml ./\n"
+            "COPY rust-toolchain.toml /app/rust-toolchain.toml\n"
             "RUN rustup toolchain install\n"
             "RUN cargo build\n"
         )
         self.assertEqual(problems(text), [])
+
+    def test_a_rustup_call_before_the_pin_copy_is_not_a_cargo_call(self) -> None:
+        # rustup compiles nothing, so this is a legitimate Dockerfile. Flagging
+        # it produced the message "runs cargo before resolving the pin" about a
+        # stage that runs no cargo — a false positive with a wrong diagnosis.
+        text = (
+            "FROM rust:1-bookworm AS chef\n"
+            "WORKDIR /app\n"
+            "RUN rustup --version\n"
+            "COPY rust-toolchain.toml ./\n"
+            "RUN rustup toolchain install \\\n"
+            "    && cargo install cargo-chef --locked\n"
+        )
+        self.assertEqual(problems(text), [])
+
+    def test_resolving_below_the_copy_directory_is_accepted(self) -> None:
+        # rustup searches the working directory AND its parents for the
+        # override file (verified against rustup 1.29.0), so a resolve in a
+        # subdirectory of the copy target reads the pin correctly. An equality
+        # check rejected this legitimate shape.
+        text = (
+            "FROM rust:1-bookworm AS chef\n"
+            "WORKDIR /app\n"
+            "COPY rust-toolchain.toml ./\n"
+            "WORKDIR /app/crates\n"
+            "RUN rustup toolchain install\n"
+            "RUN cargo build\n"
+        )
+        self.assertEqual(problems(text), [])
+
+    def test_resolving_above_the_copy_directory_is_still_caught(self) -> None:
+        # The bound on the rule above: upward search does not help when the
+        # resolve runs in a PARENT of the directory the file landed in.
+        text = (
+            "FROM rust:1-bookworm AS chef\n"
+            "WORKDIR /app/crates\n"
+            "COPY rust-toolchain.toml ./\n"
+            "WORKDIR /app\n"
+            "RUN rustup toolchain install\n"
+            "RUN cargo build\n"
+        )
+        found = problems(text)
+        self.assertTrue(any("reads no override" in line for line in found), found)
 
 
 class TestVersionDuplication(unittest.TestCase):
@@ -336,6 +522,31 @@ class TestVersionDuplication(unittest.TestCase):
         text = FIXED.replace("RUN cargo build --release", "RUN cargo +nightly build")
         found = problems(text)
         self.assertTrue(any("per-command" in line for line in found), found)
+
+    def test_a_registry_port_does_not_hide_the_tag(self) -> None:
+        # `partition(":")` on the whole reference splits at the registry's
+        # port, reads the repo as the registry host, and skips the check.
+        text = FIXED.replace(
+            "rust:1-bookworm", "registry.example:5000/rust:1.98-bookworm"
+        )
+        self.assertNotEqual(text, FIXED)
+        found = problems(text)
+        self.assertTrue(any("base image tag" in line for line in found), found)
+
+    def test_a_pinned_rustup_download_url_is_not_a_compiler_pin(self) -> None:
+        # A bare `"rustup" in segment` test also matches a URL and a tarball
+        # name, blocking a stage that bootstraps rustup itself with a
+        # misdiagnosis of a download path.
+        text = (
+            "FROM debian:bookworm-slim AS chef\n"
+            "WORKDIR /app\n"
+            "COPY rust-toolchain.toml ./\n"
+            "RUN curl -sSf https://static.rust-lang.org/rustup/1.28.1/init.sh "
+            "-o init.sh\n"
+            "RUN rustup toolchain install\n"
+            "RUN cargo build\n"
+        )
+        self.assertEqual(problems(text), [])
 
     def test_a_version_elsewhere_is_not_a_rust_pin(self) -> None:
         # Only the rustup *command* is scanned for a version, not the whole
@@ -408,12 +619,100 @@ class TestCheckDriver(unittest.TestCase):
         self.assertFalse(ds.is_dockerfile("docker-compose.yml"))
 
 
+class TestCli(unittest.TestCase):
+    """The entry point `cfg/pre-commit-lint.yml` actually invokes.
+
+    Everything else here drives `check_file` / `check` directly, so `main()`
+    was the one surface with no coverage at all — argparse wiring, `--root`,
+    path normalization, `--show`, and exit-code propagation. A `main()` that
+    returned 0 unconditionally passed the whole suite.
+    """
+
+    def write(self, root: str, rel: str, body: str) -> None:
+        full = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as handle:
+            handle.write(body)
+
+    def test_exit_zero_on_a_clean_root(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.write(root, "a.Dockerfile", FIXED)
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(ds.main(["--root", root]), 0)
+
+    def test_exit_one_and_report_on_a_broken_root(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.write(root, "a.Dockerfile", BROKEN)
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(ds.main(["--root", root]), 1)
+        self.assertIn("does not inherit", err.getvalue())
+
+    def test_show_prints_the_graph_and_exits_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.write(root, "a.Dockerfile", BROKEN)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                # `--show` is an inspection view, so it reports even on a tree
+                # the guard would reject.
+                self.assertEqual(ds.main(["--root", root, "--show"]), 0)
+        printed = out.getvalue()
+        self.assertIn("a.Dockerfile", printed)
+        self.assertIn("NO PIN", printed)
+
+    def test_an_explicit_path_suppresses_the_zero_rust_alarm(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.write(root, "web.Dockerfile", NODE_ONLY)
+            target = os.path.join(root, "web.Dockerfile")
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(ds.main(["--root", root, target]), 0)
+
+
 class TestThisCheckout(unittest.TestCase):
     """The guard, and two of its preconditions, against the real repo."""
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.root = ds.find_root(os.path.dirname(os.path.abspath(__file__)))
+
+    def test_find_root_resolves_to_this_checkout(self) -> None:
+        # Worktrees live UNDER the base checkout
+        # (`<base>/.claude/worktrees/<tag>/`), so an upward walk that missed the
+        # worktree's own marker files would resolve to the base repo — and every
+        # assertion in this class would then be made against a different tree
+        # while still reporting green.
+        self.assertTrue(
+            os.path.abspath(__file__).startswith(self.root + os.sep),
+            f"find_root returned {self.root}, which does not contain this test",
+        )
+
+    def test_the_pin_prefix_is_byte_identical_across_the_rust_images(self) -> None:
+        # The measured win — ONE shared pin layer for all four images, so the
+        # toolchain downloads once per machine rather than once per image —
+        # holds only while the instruction text matches exactly. Every per-file
+        # rule would still pass if one image drifted to
+        # `COPY rust-toolchain.toml /app/`, silently turning one download into
+        # four, so the cross-file identity needs its own assertion.
+        prefixes: dict[str, tuple[tuple[str, str], ...]] = {}
+        for rel in ds.discover(self.root):
+            with open(os.path.join(self.root, rel), encoding="utf-8") as handle:
+                stages = ds.parse(handle.read())
+            for stage in stages:
+                index = ds.provides_pin(stage)
+                if index is None:
+                    continue
+                prefixes[rel] = tuple(
+                    (inst.keyword, inst.args)
+                    for inst in stage.instructions[: index + 1]
+                )
+        self.assertGreaterEqual(
+            len(prefixes), 4, f"expected four pin stages: {prefixes}"
+        )
+        self.assertEqual(
+            len(set(prefixes.values())),
+            1,
+            f"the pin prefix diverges across images: {prefixes}",
+        )
 
     def test_the_repo_passes(self) -> None:
         code, lines = ds.check(self.root)
