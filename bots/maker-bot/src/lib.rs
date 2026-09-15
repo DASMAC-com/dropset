@@ -46,8 +46,14 @@ pub mod chain;
 pub mod config;
 pub mod context;
 pub mod fills;
-pub mod fx_store;
 pub mod model;
 pub mod quote_state;
 pub mod tasks;
 pub mod telemetry;
+
+// The store reader lives with the collectors that fill the table it reads:
+// `market-data` owns every writer of the tick tables and the fair-price
+// publisher, so the reader belongs beside them rather than in its first
+// consumer. Re-exported under the name it had here so the paths that
+// reference it — including this crate's own doc links — keep resolving.
+pub use dropset_market_data::fx_store;

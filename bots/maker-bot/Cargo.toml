@@ -43,6 +43,12 @@ dropset-fair-value = { path = "../../fair-value" }
 # the bridge out of the synchronous tick, so the two features compose rather
 # than duplicating a transport.
 dropset-feeds = { path = "../../feeds", features = ["http", "store", "stream"] }
+# The collectors app, for its `fx_store` reader only — the FX anchor rows this
+# bot prices off are written by that crate's venue binaries, so the reader that
+# interprets them lives with the writers rather than here, its first consumer.
+# Depended on for that one module; nothing in the quoting path touches the
+# collectors themselves.
+dropset-market-data = { path = "../../market-data" }
 # Shared chain plumbing: `rpc`'s Agave `http`→`ws` PubSub-URL derivation
 # (the fill subscription's endpoint). The `emit_cpi!` fill decode is the SDK's
 # shared `events` codec, not a hand-rolled discriminator.

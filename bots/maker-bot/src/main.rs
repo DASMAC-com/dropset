@@ -693,7 +693,7 @@ fn spawn_price_feeds(
     };
     let fx_store = spawn_feed(
         rt,
-        FxStoreSource::new(
+        FxStoreSource::fx(
             "store:fx",
             pool,
             roster
@@ -842,7 +842,7 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
                     .iter()
                     .filter_map(|c| fx_store::fx_product_id(c))
                     .collect();
-                rt.block_on(FxStoreSource::new("store:fx", pool, products).latest())
+                rt.block_on(FxStoreSource::fx("store:fx", pool, products).latest())
                     .unwrap_or_else(|e| {
                         eprintln!("[dry-run] the market-data store did not answer: {e}");
                         Vec::new()

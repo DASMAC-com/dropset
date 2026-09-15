@@ -2,7 +2,6 @@
 // cspell:word matview
 // cspell:word matviews
 // cspell:word schemaname
-// cspell:word SQLSTATE
 // cspell:word tablename
 // cspell:word unlogged
 // cspell:word unprovisioned
@@ -1708,5 +1707,95 @@ async fn candle_price_checks_reject_what_they_name() {
             Err(e) => e,
         };
         assert_eq!(violated_constraint(&err), expected, "{what}");
+    }
+}
+
+/// Insert one `fair_price` row carrying the given staleness bounds.
+///
+/// Only the NOT NULL columns are supplied; the four nullable ones (`fair`,
+/// `degrade`, `basis`, `basis_age_secs`) are left out, which is also the shape a
+/// paused composition writes. The values are otherwise uninteresting — this
+/// helper exists to vary the two bounds and nothing else.
+async fn insert_fair_price(
+    pool: &PgPool,
+    ts: i64,
+    tape_secs: i64,
+    reference_secs: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO fair_price
+             (ts, product_id, anchor, regime, health,
+              basis_outlier, uncertain, basis_breach, usdc_breach,
+              leg_stale_tape_secs, leg_stale_reference_secs)
+         VALUES ($1, 'EUR-USD', 'fx', 'normal', 'ok',
+                 false, false, false, false, $2, $3)",
+    )
+    .bind(ts)
+    .bind(tape_secs)
+    .bind(reference_secs)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+/// The staleness-bound CHECK rejects exactly what its name claims, and accepts
+/// an equal pair.
+///
+/// `0014_fair_price_leg_staleness.sql` adds two columns and one CHECK to a table
+/// 0011 created, so — exactly as for 0012 above — the existence probe is
+/// structurally blind to its whole payload and its manifest declares `none`.
+/// A dropped or weakened CHECK would apply cleanly, pass the entire fence, and
+/// silently re-admit rows whose recorded bounds describe a composition the
+/// engine would have refused to compute.
+///
+/// Three properties, each of which a plausible later edit would break:
+///
+///   * **A zero bound is rejected.** This is the half an ordering-only
+///     constraint admits, since `0 >= 0` holds, and it is the half that matters:
+///     a zero bound ages every source of that class out instantly, so a row
+///     carrying one describes a composition with no live inputs at all.
+///     `FairValueConfig::validate` refuses it on the engine side; this is the
+///     database saying the same thing about a stored row.
+///   * **An equal pair is ACCEPTED.** Equal bounds are degenerate rather than
+///     inverted — the engine's own validator draws the line at
+///     `reference < tape` — so a tightening to `>` would reject a legitimate
+///     uniform configuration. This is the highest-consequence regression
+///     available here, because it would fail every publish at runtime rather
+///     than rejecting one row.
+///   * **An inverted pair is rejected.** A reference bound shorter than the tape
+///     bound would let a daily fix age out faster than a live tape, which is the
+///     inversion the source-class split exists to remove.
+///
+/// The constraint NAME is asserted rather than the mere failure, for the reason
+/// 0012's manifest gives: the name is the whole diagnostic a violation carries,
+/// so merging this CHECK into another would keep rejecting these rows while
+/// destroying the attribution.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn fair_price_leg_stale_bounds_reject_what_they_name() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    insert_fair_price(&pool, 1, 300, 900)
+        .await
+        .expect("a well-formed bound pair must be accepted");
+    insert_fair_price(&pool, 2, 60, 60)
+        .await
+        .expect("an equal pair is degenerate, not inverted, and must be accepted");
+
+    for (what, tape, reference) in [
+        ("a zero tape bound", 0, 900),
+        ("a zero pair", 0, 0),
+        ("an inverted pair", 300, 60),
+    ] {
+        let err = match insert_fair_price(&pool, 3, tape, reference).await {
+            Ok(()) => panic!("{what} was accepted and must not be"),
+            Err(e) => e,
+        };
+        assert_eq!(
+            violated_constraint(&err),
+            "fair_price_leg_stale_bounds_valid",
+            "{what}"
+        );
     }
 }

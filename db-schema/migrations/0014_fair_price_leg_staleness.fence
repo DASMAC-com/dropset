@@ -1,0 +1,19 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# Two ADD COLUMNs and an ADD CONSTRAINT against a table 0011 created, plus two
+# `COMMENT ON COLUMN` statements. None of those is a relation, so the existence
+# probe is blind to this migration's entire payload — the same position
+# 0012_candle_price_checks is in, and the reasoning there applies unchanged: a
+# CHECK that is dropped, weakened or merged applies cleanly and passes the whole
+# fence while silently changing what the store accepts.
+#
+# So the behavior is asserted directly, by
+# `fair_price_leg_stale_bounds_reject_what_they_name` in that same test file.
+# Note that test is `#[ignore]`d and CI's only `--run-ignored` invocation selects
+# other crates, so it is operator-run rather than a merge gate — the assertion
+# exists, but do not read this manifest as saying the queue checks it.
+# Note what the existence probe would NOT catch even for the columns: they are
+# NOT NULL, so a later migration making one nullable would keep the relation
+# intact and quietly re-admit the unrecorded-bound rows this migration exists to
+# forbid.
+none alters a table 0011 created — adds columns, a CHECK and column comments, not a relation
