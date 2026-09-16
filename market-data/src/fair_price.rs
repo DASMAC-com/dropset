@@ -11,10 +11,9 @@
 //! neither reads the store nor composes anything.
 //!
 //! Assembling the candidate sets the engine composes *from* is
-//! [`crate::fx_store`], and the process that will drive the two — reading the
-//! store, composing, and publishing on its own tick — does not exist yet; it
-//! arrives with the estimator. Both live in this crate without living in this
-//! module.
+//! [`crate::fx_store`], and the process that drives the two — reading the
+//! store, composing, and publishing on its own tick — is [`crate::estimator`].
+//! Both live in this crate without living in this module.
 //!
 //! The boundary that matters is the one this module keeps: between serializing a
 //! composition and producing it. Not the crate edge, which is where a reader
@@ -106,13 +105,22 @@ impl From<sqlx::Error> for PublishError {
     /// Sort a `sqlx` failure into the two classes — the private `classify`'s
     /// rules, reached through `?`.
     ///
-    /// **Intended for the statements that COMPLETE a publish, not for reads.**
+    /// **Intended for the statements that carry a publish, not for reads.**
     /// [`publish`] takes any executor precisely so a caller can land a whole
     /// tick in one transaction, and the `COMMIT` that finishes it can fail on
     /// exactly the terms an `INSERT` can — a serialization failure is retryable,
     /// a constraint the database deferred is not. Without this the commit's
     /// error would arrive unclassified and a caller would have to guess, which
     /// is the guessing the split exists to remove.
+    ///
+    /// Three call sites reach it, not two: the `INSERT` itself, the `COMMIT`,
+    /// and the `BEGIN` that opens the transaction. Connection acquisition is
+    /// neither a read nor a completing statement, so it is worth naming — it
+    /// classifies correctly anyway, because every ordinary connection failure is
+    /// in the transient set (`08006`, `08001`, `53300`, `57P03`, and
+    /// `PoolTimedOut` / `PoolClosed`). What lands `Permanent` from a `BEGIN` is
+    /// a bad credential or a misconfiguration, which is deterministic and so is
+    /// filed correctly by the fail-closed default.
     ///
     /// A **read** failure is not a publish failure and must not borrow this
     /// vocabulary: an unreadable store means the composition rests on nothing,

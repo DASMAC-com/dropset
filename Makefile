@@ -608,7 +608,8 @@ indexer-down: check-docker
 # regime, which is how an absent price stays distinguishable from a stopped
 # estimator.
 #
-# Five keyless feeds, across both tiers. Candles into `cex_prices`: the
+# Five keyless **feeds** plus the estimator, across both tiers. Candles into
+# `cex_prices`: the
 # Coinbase reference price. Spot ticks into `spot_ticks`: the Coinbase ticker
 # (the prints between candle closes), Kraken (batched peg truth — a real
 # market print of `USDC/USD`), er-api (the widest keyless table, one

@@ -288,6 +288,15 @@ async fn the_peg_leg_comes_from_the_tick_table() {
     // silently change what the market is anchored on. Stated here so a future
     // change that darks a market on a breach fails visibly rather than passing
     // the assertion above.
+    // Assert the basis actually resolved before comparing the two runs. Both
+    // seed the same world, so anything that nulls the crypto leg — a mis-seeded
+    // `coinbase EURC-USDC`, a renamed source label — nulls it on both sides and
+    // every equality below passes trivially on `None == None`.
+    assert!(
+        with.basis.is_some(),
+        "the crypto leg did not resolve, so the three equalities below would \
+         compare None to None and pin nothing"
+    );
     assert_eq!(without.regime, with.regime);
     assert_eq!(without.anchor, with.anchor);
     assert_eq!(

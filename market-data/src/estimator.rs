@@ -1,7 +1,7 @@
 //! The fair-value estimator process: read the store, compose one fair value per
 //! market, publish the tick.
 //!
-//! This is the driver the [`crate::fair_price`] module said "does not exist yet".
+//! This is the driver [`crate::fair_price`] points to.
 //! That module serializes one finished composition and nothing else; this one
 //! reads the legs, holds the stateful engines, decides when a tick happens, and
 //! owns the failure posture. The split is the same one the store side keeps:
@@ -24,8 +24,8 @@
 //! **The peg leg is in the other table, and that is why this crate has two
 //! readers.** `USDC-USD` is written by one collector, `market-data-kraken`, into
 //! `spot_ticks`; nothing writes it to `cex_prices`. See
-//! [`crate::tick_store`] for the full writer split and why a `UNION` would be
-//! the wrong shape.
+//! [`crate::tick_store`] for the writer split, and `queries/tick_store_latest.sql`
+//! for why a `UNION` would have to mislabel one side.
 //!
 //! **The peg leg is portfolio-wide, not per-market.** A USDC/USD deviation is
 //! one event for the whole book (§1 fm1), so one resolved reading is offered to
@@ -94,7 +94,7 @@ use crate::tick_store::{TickStoreReader, TickStoreRow, SOURCE_KRAKEN, USDC_USD_P
 /// not the ticker: the ticker writes `spot_ticks` and republishes a last print
 /// whether or not one happened, which is the aging problem the pinned markets
 /// exist to avoid.
-pub const SOURCE_COINBASE: &str = "coinbase";
+const SOURCE_COINBASE: &str = "coinbase";
 
 /// How long publishing may keep failing **transiently** before the estimator
 /// halts anyway.
@@ -115,7 +115,9 @@ pub const MAX_PUBLISH_RETRY_WINDOW: Duration = Duration::from_secs(5 * 60);
 ///
 /// `&'static str` throughout rather than `String`: this is a compiled-in roster,
 /// and the engine's candidate API takes `&'static str` source labels anyway so a
-/// contributor name can be reported without an allocation per tick.
+/// *contributor name* can be reported without an allocation per tick. The one
+/// deliberate exception is [`Self::fx_product`], which derives its cross and so
+/// returns an owned `String` — deriving it beats duplicating it in the roster.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EstimatorMarket {
     /// The canonical product published to `fair_price`, e.g. `EURC-USDC`.
@@ -134,7 +136,9 @@ pub struct EstimatorMarket {
     /// Exactly one of this and [`Self::pinned_basis`] is `Some` — see the test
     /// that enforces it, and the module docs for why two markets are pinned.
     pub crypto_product: Option<&'static str>,
-    /// Basis to pin because the market has no independent basis source.
+    /// Basis to pin because the market has no basis source worth observing:
+    /// CADC has no `*-USDC` series at all, and AUDD's is too thin to trust —
+    /// see the module docs for why a thin book is worse than none here.
     pub pinned_basis: Option<f64>,
     /// Last-resort static USD-per-token peg, used only when every live leg is
     /// down. A representative spot value; a live anchor supersedes it whenever
@@ -179,8 +183,10 @@ pub const MVP_MARKETS: [EstimatorMarket; 3] = [
     EstimatorMarket {
         product_id: "EURC-USDC",
         currency: "EUR",
-        // The one market with a wired CEX basis: Coinbase lists `EURC-USDC` and
-        // the candle collector rosters it.
+        // The one market whose CEX basis is liquid enough to observe: Coinbase
+        // lists `EURC-USDC` and the candle collector rosters it. That collector
+        // rosters `AUDD-USDC` too, but that book stopped producing — which is
+        // why AUDD is pinned rather than unwired.
         crypto_product: Some("EURC-USDC"),
         pinned_basis: None,
         static_usd: 1.14,
@@ -252,15 +258,17 @@ impl std::error::Error for Halt {}
 #[derive(Clone, Debug)]
 pub struct EstimatorConfig {
     pub database_url: String,
-    /// Seconds between composed-and-published ticks.
+    /// The interval between composed-and-published ticks.
     pub tick_interval: Duration,
 }
 
 /// Seconds between estimator ticks.
 ///
-/// Matched to the candle collectors' own poll cadence: the finest bucket any
-/// venue publishes is 60s, so ticking faster than the collectors poll composes
-/// repeatedly from the same rows and writes a row per tick to say so.
+/// Matched to the candle collectors' own poll cadence (`config.rs`'s 15s
+/// default), so the estimator never ticks faster than new rows can arrive. The
+/// finest bucket any venue publishes is 60s, so several ticks still recompose
+/// from the same rows — deliberately: a tick also re-ages the legs and re-runs
+/// the guards, so an unchanged row can still change the published health.
 ///
 /// **Floored at one second, and that floor is load-bearing.** `fair_price`'s
 /// primary key is `(product_id, ts)` in whole seconds, so two ticks inside one
@@ -341,6 +349,9 @@ pub enum Ticked {
 }
 
 /// The estimator process.
+///
+/// No `Debug` derive: it holds the non-`Debug` [`TickStoreReader`], whose own
+/// docs explain that omission, and nothing formats an `Estimator`.
 pub struct Estimator {
     pool: PgPool,
     markets: Vec<EstimatorMarket>,
@@ -534,7 +545,7 @@ impl Estimator {
                 // schema will refuse it again. Halt on the first one — retrying is
                 // the spin the class split exists to name.
                 if !err.retryable() {
-                    tracing::error!(class, error = ?err, "the database refused the row");
+                    tracing::error!(class, error = ?err, "the publish failed permanently");
                     return Err(Halt::Publish { class });
                 }
                 // Transient: retry, but not forever, or the halt never arrives and
@@ -646,8 +657,10 @@ impl Estimator {
 /// Whether the Unix timestamp `secs` falls in the FX-closed weekend window.
 ///
 /// Interbank FX and CME 6E are shut Fri ~17:00 → Sun ~17:00 ET (§1 fm2);
-/// approximated here in UTC as Fri 21:00 → Sun 22:00 (≈ 17:00 ET, ignoring DST).
-/// The exact session thresholds are TBD(analytics).
+/// approximated here in UTC as Fri 21:00 → Sun 22:00. Each bound is 17:00 ET
+/// under one DST regime — Friday under EDT, Sunday under EST — so the asymmetric
+/// pair brackets the close conservatively rather than tracking DST. The exact
+/// session thresholds are TBD(analytics).
 ///
 /// **Private to this crate, and deliberately a second copy** of the maker bot's
 /// `weekend_from_unix` rather than a shared helper. Hoisting the arithmetic into
@@ -1142,9 +1155,19 @@ mod tests {
 
     /// The transient window must not exceed the store-silence bound.
     ///
-    /// If it did, a store outage that also broke publishing would be reported as
-    /// a publish halt rather than as the read failure it is — the operator would
-    /// go looking at the wrong end of the pipe.
+    /// The two are **equal** today (both five minutes), and it is that equality
+    /// plus program order that produces the right diagnosis on a simultaneous
+    /// outage: [`Estimator::tick_once`] tests `store_unavailable` and returns
+    /// [`Halt::StoreSilent`] *before* it attempts a publish, so when both bounds
+    /// elapse on the same tick the read failure is what gets reported and the
+    /// operator is sent to the right end of the pipe.
+    ///
+    /// Note what this assertion does and does not buy. It forbids a window
+    /// *longer* than the store bound; it permits a **shorter** one, and a
+    /// shorter one is the arrangement that would misreport a store outage as
+    /// `publish:transient`, because the publish halt would fire first. So the
+    /// bound worth holding is the equality, and this test is the weaker `<=`
+    /// form of it.
     #[test]
     fn the_publish_window_does_not_outlast_the_store_bound() {
         assert!(MAX_PUBLISH_RETRY_WINDOW <= crate::fx_store::MAX_STORE_SILENCE);
@@ -1209,7 +1232,7 @@ mod tests {
     }
 
     /// The derived clock reaches exactly two of the three session states, and a
-    /// nonsense clock does not silently read as a trading market.
+    /// pre-epoch clock lands *in session* rather than inventing `Unknown`.
     #[test]
     fn the_derived_clock_is_never_unknown() {
         const FRI_00: i64 = 1_609_459_200; // 2021-01-01 00:00 UTC (Friday)

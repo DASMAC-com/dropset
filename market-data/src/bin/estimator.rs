@@ -20,6 +20,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = EstimatorConfig::from_env()?;
+    // Never format the URL into a diagnostic here or in `connect`. This is the
+    // one place in the process that holds it, and in every deployment it carries
+    // the password, so the boot path's credential safety rests on `connect`
+    // returning a bare error with no context string interpolating it.
     let pool = connect(&cfg.database_url).await?;
     // DB-primary in both directions: without `cex_prices` and `spot_ticks` there
     // are no legs to compose, and without `fair_price` there is nowhere to put
