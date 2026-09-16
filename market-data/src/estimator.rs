@@ -863,7 +863,7 @@ async fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dropset_fair_value::{Anchor, Regime};
+    use dropset_fair_value::{Anchor, FxSession, Regime};
 
     fn candle(source: &str, product_id: &str, published_at: i64, close: f64) -> FxStoreRow {
         FxStoreRow {
@@ -1178,5 +1178,50 @@ mod tests {
         assert_eq!(snapshot.receipt_age(later), Duration::from_secs(90));
         // Before the first read there is no floor to apply.
         assert_eq!(Snapshot::default().receipt_age(later), Duration::ZERO);
+    }
+
+    /// The same boundaries the maker bot's own copy pins, at the same anchors.
+    ///
+    /// **Deliberately duplicated rather than shared.** The two derivations are a
+    /// sanctioned second copy (see [`weekend_from_unix`]), and a duplicated rule
+    /// is only defensible while both copies are pinned: with one of them untested
+    /// they could drift apart and nothing would fail. Cross-calling is not
+    /// available — the bot's copy is private to another crate — so agreement is
+    /// enforced by both tests naming the same instants, and a divergence surfaces
+    /// as a failure in whichever crate moved.
+    #[test]
+    fn the_weekend_window_brackets_the_fx_session_close() {
+        // Anchored to known UTC instants in Jan 2021: the 1st was a Friday.
+        const FRI_00: u64 = 1_609_459_200; // 2021-01-01 00:00 UTC (Friday)
+        let h = |base: u64, hour: u64| base + hour * 3_600;
+        let d = |base: u64, days: u64| base + days * 86_400;
+
+        // Friday: open through the day, closed from 21:00 UTC.
+        assert!(!weekend_from_unix(h(FRI_00, 12)));
+        assert!(weekend_from_unix(h(FRI_00, 21)));
+        // Saturday: closed all day.
+        assert!(weekend_from_unix(h(d(FRI_00, 1), 3)));
+        // Sunday: closed until the 22:00 UTC reopen, then open.
+        assert!(weekend_from_unix(h(d(FRI_00, 2), 21)));
+        assert!(!weekend_from_unix(h(d(FRI_00, 2), 23)));
+        // Monday: open.
+        assert!(!weekend_from_unix(h(d(FRI_00, 3), 12)));
+    }
+
+    /// The derived clock reaches exactly two of the three session states, and a
+    /// nonsense clock does not silently read as a trading market.
+    #[test]
+    fn the_derived_clock_is_never_unknown() {
+        const FRI_00: i64 = 1_609_459_200; // 2021-01-01 00:00 UTC (Friday)
+        let in_session = derived_clock(FRI_00 + 12 * 3_600);
+        let closed = derived_clock(FRI_00 + 21 * 3_600);
+        assert_eq!(in_session.session, FxSession::Open);
+        assert_eq!(closed.session, FxSession::Closed);
+
+        // A pre-epoch clock reads as zero — 1970-01-01 was a Thursday, so it
+        // lands in session. This pins the saturating conversion, not a policy:
+        // `Unknown` is what a *fence* answers when the authority is unreachable,
+        // and this helper never consults one, so it must not invent that state.
+        assert_eq!(derived_clock(-1).session, FxSession::Open);
     }
 }
