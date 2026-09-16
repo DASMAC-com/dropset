@@ -6,20 +6,25 @@ The failure this exists for, measured live on 2026-09-15 while the operator
 brought up a demo. ``rust:1-bookworm`` floats and had moved to rustc 1.98.1;
 the workspace pins 1.98.0 *exactly*. Every Rust stage received the pin file
 only with the whole-tree ``COPY . .``, so the first ``cargo`` invocation after
-it made rustup download the full pinned toolchain — five components, several
-hundred megabytes — inside a layer whose parent was that COPY. Any source
-change invalidated it, so the download was re-paid on **every**
-rebuild-after-commit, once per image. Two multi-minute stalls on the demo path.
+it made rustup download the full pinned toolchain — five components, and
+roughly five minutes of them where this was measured — inside a layer whose
+parent was that COPY. Any source change invalidated it, so the download was
+re-paid on **every** rebuild-after-commit, twice per image (the planner and the
+builder are sibling stages, so neither could reuse the other's).
 
 Fixing the layer order once does not keep it fixed, so this guard asserts the
 structure rather than any timing (a timing canary would be flaky, and the
 structure is the real invariant). Per Dockerfile that builds Rust at all:
 
 1. **One stage provides the pin** — it copies ``rust-toolchain.toml`` alone and
-   resolves it, so the download lands in a layer keyed only on that file and
-   invalidates only on a deliberate pin bump.
-2. **Nothing broad precedes the resolve** — no whole-tree COPY in that stage or
-   any ancestor before it, which is exactly what made the layer source-keyed.
+   resolves it with ``rustup toolchain install`` taking no toolchain argument,
+   so the download lands in a layer keyed only on that file. That layer then
+   invalidates on a pin bump or a new base-image digest, and on nothing else;
+   the base tag floats, so it is not a pin bump alone.
+2. **No context copy precedes the resolve** — not in that stage and not in any
+   ancestor. The test is where the content comes FROM, not how broad the source
+   looks: ``COPY src /app`` keys the layer on the source tree exactly as
+   ``COPY . .`` does.
 3. **The resolve is that stage's first Rust command**, so nothing compiles on
    the image's own floating compiler.
 4. **Every Rust stage descends from the pin stage**, so cook and build share
@@ -30,12 +35,20 @@ structure is the real invariant). Per Dockerfile that builds Rust at all:
    this rule is a correctness tidy-up, not the saving. Rule 2 is the saving.
 5. **No stage names a version** — agreement with ``rust-toolchain.toml`` is by
    construction, never by duplication. The base image's major-only tag is the
-   rustup bootstrap and stays allowed; an ``x.y`` tag or a version handed to
-   rustup is not.
+   rustup bootstrap and stays allowed; an ``x.y`` tag, a version or channel
+   handed to rustup, a ``cargo +tok`` override, and ``ENV RUSTUP_TOOLCHAIN``
+   are not.
+6. **The resolve runs where the pin file landed** — at that directory or below
+   it, since rustup searches the working directory and its parents (verified;
+   resolving from a subdirectory picked up the repo-root pin). A resolve in a
+   *parent* of the copy target reads no override.
 
-Matching **zero** Rust stages across every Dockerfile is itself a failure: it
-means the discovery broke (a renamed file, a new instruction spelling), and a
-guard that silently checks nothing is worse than no guard.
+Two ways of checking nothing at all, both of which are failures. Matching
+**zero** Rust stages across every Dockerfile means the discovery broke (a
+renamed file, a new instruction spelling). And per file, a Dockerfile building
+``FROM`` a Rust image in which no stage runs cargo is reported too — the
+repo-global alarm cannot see that one, because the four known images keep the
+total non-zero. A guard that silently checks nothing is worse than no guard.
 
 The parse is deliberately small and local — comments dropped, continuations
 joined, ``FROM``/``RUN``/``COPY``/``WORKDIR`` read positionally. It is not a
@@ -86,19 +99,63 @@ _RUST_CMD_RE = re.compile(r"(?<![\w./-])(cargo|rustc|rustup)(?![\w-])")
 # the pin", which it does not.
 _CARGO_CMD_RE = re.compile(r"(?<![\w./-])(cargo|rustc)(?![\w-])")
 
-# A loose mention of the toolchain, used only for the per-file backstop below.
-# Deliberately wider than `_RUST_CMD_RE`: its job is to notice a file that
-# looks Rust-shaped while the precise detector found nothing in it.
-_RUST_HINT_RE = re.compile(r"(?i)(cargo|rustc|rustup|\brust\b|rust:)")
 
-# The two sane spellings of "resolve whatever rust-toolchain.toml says". Both
-# read the override file in the working directory and neither names a version:
-# `rustup toolchain install` with no argument installs the active toolchain
-# (rustup >= 1.28), and `rustup show` reports it.
-_RESOLVE_RE = re.compile(r"\brustup\s+(?:toolchain\s+install|show)\b")
+def _resolve_match(args: str) -> re.Match[str] | None:
+    """The pin-resolving command in ``args``, if one is there.
+
+    A ``rustup toolchain install`` that names a toolchain is **not** a resolve
+    — it overrides the pin file rather than reading it — so each candidate is
+    rejected if any of its tokens looks like a toolchain specifier.
+
+    Matching the specifier is deliberate, rather than the simpler "reject any
+    non-flag token": that form rejected ``--profile minimal``, because a flag's
+    VALUE is not itself flag-shaped. Getting it right the other way would mean
+    knowing which rustup flags take a value (``--profile`` does,
+    ``--no-self-update`` does not), which is a table that rots.
+    """
+    for match in _RESOLVE_RE.finditer(args):
+        if not any(_TOOLCHAIN_ARG_RE.match(tok) for tok in match.group(1).split()):
+            return match
+    return None
+
+
+def _is_rust_image(base: str) -> bool:
+    """Whether a base reference names the official ``rust`` image.
+
+    The tag is split off the LAST path component, so a registry carrying a port
+    (``registry.example:5000/rust:1-bookworm``) does not read as a repo named
+    for the registry host.
+    """
+    repo, _, _tag = base.rsplit("/", 1)[-1].partition(":")
+    return repo.lower() == "rust"
+
+
+# The pin resolve, and it is deliberately ONE spelling:
+# `rustup toolchain install` carrying no toolchain argument, so the override
+# file is the only thing that can decide the version. The trailing group
+# captures the rest of that shell command (stopping at a separator) and
+# `_resolve_match` rejects the command if any non-flag token follows.
+#
+# Two forms were accepted earlier and both were wrong. `install stable` names a
+# channel, which no version regex can see, so it read as a valid pin layer
+# while installing the wrong toolchain. And `rustup show` was accepted on the
+# assumption that it installs the active toolchain — never verified here, and
+# rustup 1.28 stopped auto-installing on `show`, so a stage using it would
+# resolve nothing and leave the download on the build path. Requiring the
+# install command fails closed: it can reject a Dockerfile that would have
+# worked, which is the safe direction for this guard.
+_RESOLVE_RE = re.compile(r"\brustup\s+toolchain\s+install\b([^&|;]*)")
 
 # A literal compiler version, in a base image tag or on a rustup command line.
 _VERSION_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)?\b")
+
+# A rustup toolchain specifier: a channel, a version, either optionally dated
+# and optionally carrying a host triple. Used to tell `rustup toolchain install`
+# (which reads the pin file) from `… install stable` (which overrides it).
+_TOOLCHAIN_ARG_RE = re.compile(
+    r"^(?:stable|beta|nightly|\d+\.\d+(?:\.\d+)?)"
+    r"(?:-\d{4}-\d{2}-\d{2})?(?:-[\w.]+)*$"
+)
 
 # `cargo +1.98.0 build` / `rustc +stable` — a per-command toolchain override,
 # which is the other way to disagree with the pin file.
@@ -131,7 +188,7 @@ class Instruction(NamedTuple):
     @property
     def is_resolve(self) -> bool:
         """Whether this instruction resolves the pin file's toolchain."""
-        return self.keyword == "RUN" and bool(_RESOLVE_RE.search(self.args))
+        return self.keyword == "RUN" and _resolve_match(self.args) is not None
 
 
 class Stage(NamedTuple):
@@ -193,6 +250,19 @@ def is_broad_copy(inst: Instruction) -> bool:
     return any(src in _BROAD_SOURCES for src in copy_sources(inst.args))
 
 
+def is_context_copy(inst: Instruction) -> bool:
+    """Whether an instruction copies from the BUILD CONTEXT, not another stage.
+
+    This is the honest form of the rule, and `is_broad_copy` was the wrong
+    frame: ``COPY src /app`` keys the pin layer on the source tree exactly as
+    ``COPY . .`` does, so enumerating "broad" spellings left the hole open
+    while reading as complete. What matters is only whether the content comes
+    from the context — ``COPY --from=<stage>`` moves a built artifact and
+    cannot make a layer source-keyed.
+    """
+    return inst.keyword in ("COPY", "ADD") and "--from=" not in inst.args
+
+
 def copies_toolchain_alone(inst: Instruction) -> bool:
     """Whether an instruction copies the pin file and nothing else.
 
@@ -217,7 +287,7 @@ def rust_before_resolve(inst: Instruction) -> bool:
     unpinned compile the separate-instruction check would have caught. Another
     ``rustup`` before the resolve is fine: rustup itself downloads nothing.
     """
-    resolve = _RESOLVE_RE.search(inst.args)
+    resolve = _resolve_match(inst.args)
     if resolve is None:
         return False
     match = _CARGO_CMD_RE.search(inst.args)
@@ -288,11 +358,11 @@ def provides_pin(stage: Stage) -> int | None:
     """
     copied_at: int | None = None
     for index, inst in enumerate(stage.instructions):
-        if is_broad_copy(inst):
-            return None
         if copied_at is None and copies_toolchain_alone(inst):
             copied_at = index
             continue
+        if is_context_copy(inst) and not copies_toolchain_alone(inst):
+            return None
         if copied_at is not None and inst.is_resolve:
             return index
     return None
@@ -358,14 +428,12 @@ def _version_problems(
         # (`rust:1-bookworm`) is fine. An `x.y` tag is a second pin that can
         # silently disagree with the file.
         if stage.base.lower() not in by_name:
-            # Split the tag off the LAST path component: a registry with a
-            # port (`registry.example:5000/rust:1.98-bookworm`) puts a colon before the
-            # image name, so partitioning the whole reference reads the
-            # registry as the repo and skips the check entirely.
-            last = stage.base.rsplit("/", 1)[-1]
-            repo, _, tag = last.partition(":")
-            repo = repo.lower()
-            if repo == "rust" and _VERSION_RE.search(tag):
+            # `_is_rust_image` splits the tag off the last path component, so a
+            # registry carrying a port
+            # (`registry.example:5000/rust:1.98-bookworm`) cannot hide the tag
+            # behind a repo name read from the registry host.
+            _, _, tag = stage.base.rsplit("/", 1)[-1].partition(":")
+            if _is_rust_image(stage.base) and _VERSION_RE.search(tag):
                 problems.append(
                     f"{path}:{stage.line}: stage '{stage.label}' pins the "
                     f"compiler in its base image tag ('{stage.base}'). The "
@@ -373,6 +441,17 @@ def _version_problems(
                     "the pin, and two of them drift apart silently."
                 )
         for inst in stage.instructions:
+            # `ENV RUSTUP_TOOLCHAIN=…` overrides the pin file for every later
+            # command in the stage, so it names a version as surely as a rustup
+            # argument does — and the scan below only reads `RUN`, which is how
+            # this escaped. It fails OPEN, which is why it is worth a check.
+            if inst.keyword == "ENV" and "RUSTUP_TOOLCHAIN" in inst.args:
+                problems.append(
+                    f"{path}:{inst.line}: stage '{stage.label}' sets "
+                    "RUSTUP_TOOLCHAIN, which overrides the pin file for every "
+                    f"later command in the stage. Remove it and let "
+                    f"{TOOLCHAIN_FILE} decide the compiler."
+                )
             if inst.keyword != "RUN":
                 continue
             # Per shell command, not per instruction: a consolidated RUN can
@@ -419,24 +498,23 @@ def check_file(path: str, text: str) -> tuple[list[str], int]:
         # silence. A file that looks Rust-shaped and yields no Rust stage is
         # therefore reported per file. Comments are already dropped by `parse`,
         # so an incidental mention in prose cannot trip this.
-        hint_line: int | None = None
-        for stage in stages:
-            if _RUST_HINT_RE.search(stage.base):
-                hint_line = stage.line
-                break
-            for inst in stage.instructions:
-                if _RUST_HINT_RE.search(inst.args):
-                    hint_line = inst.line
-                    break
-            if hint_line is not None:
-                break
-        if hint_line is not None:
+        # Keyed on the BASE IMAGE, not on a prose mention. An earlier form
+        # matched any occurrence of cargo/rust/rustup anywhere in an
+        # instruction, which fires on a thin runtime image doing
+        # `COPY --from=builder /usr/local/cargo/bin/tool /usr/local/bin/` — a
+        # false positive on a hook wired `always_run`, where one of those
+        # blocks every commit in the repo.
+        rust_based = next(
+            (stage for stage in stages if _is_rust_image(stage.base)), None
+        )
+        if rust_based is not None:
             return [
-                f"{path}:{hint_line}: this Dockerfile mentions the Rust "
-                "toolchain, but the guard found no Rust build stage in it — so "
-                "nothing in this file was checked. Either the detection missed "
-                "a cargo invocation (a wrapper script, a path-qualified "
-                "binary, an ONBUILD) or the mention is incidental."
+                f"{path}:{rust_based.line}: stage '{rust_based.label}' builds "
+                "FROM a Rust image, but no stage in this file runs cargo — so "
+                "nothing here was checked. Either the detection missed a build "
+                "command (a wrapper script, a path-qualified binary, an "
+                "ONBUILD) or this image only ships a prebuilt binary, in which "
+                "case a thinner base than `rust` is the better fix."
             ], 0
         return [], 0
 
@@ -477,19 +555,30 @@ def check_file(path: str, text: str) -> tuple[list[str], int]:
         # `provides_pin` scans a single stage, so it cannot see it. Without
         # this, a two-stage shape (`base` doing `COPY . .`, `chef` resolving the
         # pin) reproduced the measured bug and passed the guard.
-        for ancestor in ancestry[1:]:
-            broad = next(
-                (inst for inst in ancestor.instructions if is_broad_copy(inst)), None
+        for position, ancestor in enumerate(ancestry[1:], start=1):
+            offending = next(
+                (inst for inst in ancestor.instructions if is_context_copy(inst)),
+                None,
             )
-            if broad is not None:
-                problems.append(
-                    f"{path}:{broad.line}: stage '{provider.label}' resolves "
-                    f"the pin, but its ancestor '{ancestor.label}' copies the "
-                    "whole build context first — so the pin layer is keyed on "
-                    "the source tree anyway and every commit re-pays the "
-                    "download. Move the broad COPY into a descendant stage."
-                )
+            if offending is None:
+                continue
+            # Unless a stage ABOVE the offending one already provides a pin. A
+            # stage that inherits a valid pin layer and then defensively
+            # repeats the resolve downloads nothing — the toolchain is already
+            # in the inherited layer — so complaining that it "re-pays the
+            # download" would be both a false positive and a false statement.
+            if any(
+                provides_pin(above) is not None for above in ancestry[position + 1 :]
+            ):
                 break
+            problems.append(
+                f"{path}:{offending.line}: stage '{provider.label}' resolves "
+                f"the pin, but its ancestor '{ancestor.label}' copies from the "
+                "build context first — so the pin layer is keyed on that "
+                "content anyway and every commit re-pays the download. Move "
+                "the context COPY into a descendant stage."
+            )
+            break
 
         earlier = [
             inst for inst in provider.instructions[:resolve_index] if inst.is_cargo
@@ -628,10 +717,10 @@ def check(root: str, paths: list[str] | None = None) -> tuple[int, list[str]]:
             "",
             *problems,
             "",
-            "Why this is a guard: the pin file arriving with `COPY . .` put a "
-            "several-hundred-megabyte toolchain download in a source-keyed "
-            "layer, so every rebuild-after-commit re-paid it (measured "
-            "2026-09-15, two multi-minute stalls on the demo path).",
+            "Why this is a guard: the pin file arriving with `COPY . .` put the "
+            "toolchain download in a source-keyed layer, so every "
+            "rebuild-after-commit re-paid it — measured 2026-09-15 at 566s per "
+            "rebuild, against 9.8s once the layer was keyed on the pin file.",
         ]
     # Silent on success: this hook is `always_run`, so a line here would print
     # on every commit. `--show` is how you ask for the graph.

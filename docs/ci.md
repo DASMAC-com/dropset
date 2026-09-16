@@ -29,13 +29,28 @@ above is where the time went.
 
 `.claude/tools/dockerfile_stages.py` asserts that structure (the
 `dockerfile-stages` pre-commit hook, or `make dockerfile-stages ARGS=--show`
-to see the graph). It fails a Rust stage that does not inherit the pin layer,
-a pin layer sitting behind a whole-tree `COPY`, a cargo call ahead of the
-resolve, and any stage that names a second compiler version instead of
-inheriting one. Before it existed, the pin file reached the images only via
-`COPY . .`, so every rebuild-after-commit re-paid the download **twice** — the
-planner and the builder are sibling stages, so neither could reuse the other's
-— measured at 349.2s and 216.2s in one rebuild on 2026-09-15.
+to see the graph). It fails:
+
+- a Rust stage that does not inherit the pin layer;
+- a pin layer sitting behind a copy from the build context — in that stage or
+  in any ancestor, and the test is where the content comes *from*, not how
+  broad the source looks;
+- a cargo call ahead of the resolve, whether in an earlier instruction or
+  earlier in the same `RUN`;
+- a resolve that runs somewhere the pin file did not land (rustup searches the
+  working directory and its parents, so at-or-below is fine and a parent is
+  not);
+- any stage naming a second compiler version instead of inheriting one — an
+  `x.y` base tag, a version or channel handed to rustup, `cargo +tok`, or
+  `ENV RUSTUP_TOOLCHAIN`;
+- and a file that builds `FROM` a Rust image in which no stage runs cargo,
+  which means the guard checked nothing there.
+
+Before it existed, the pin file reached the images only via `COPY . .`, so
+every rebuild-after-commit re-paid the download **twice** — the planner and the
+builder are sibling stages, so neither could reuse the other's. Those two
+stages took 349.2s and 216.2s in one measured rebuild on 2026-09-15; each is a
+whole-step total, roughly 10s of which is cargo and the rest the download.
 
 CI reads it by using `actions-rust-lang/setup-rust-toolchain` with **no**
 `toolchain` input, which installs whatever the file specifies. The more

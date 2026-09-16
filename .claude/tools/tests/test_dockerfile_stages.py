@@ -189,7 +189,7 @@ class TestRustDetection(unittest.TestCase):
         self.assertEqual(rust_count(text), 0)
         found = problems(text)
         self.assertTrue(
-            any("no Rust build stage" in line for line in found),
+            any("nothing here was checked" in line for line in found),
             f"a Rust-looking file was silently unchecked: {found}",
         )
 
@@ -261,7 +261,12 @@ class TestPinProvider(unittest.TestCase):
         )
         self.assertIsNone(ds.provides_pin(ds.parse(text)[0]))
 
-    def test_rustup_show_also_resolves(self) -> None:
+    def test_rustup_show_is_not_the_resolve(self) -> None:
+        # This test previously asserted the opposite. `rustup show` was accepted
+        # as a resolve on the assumption that it installs the active toolchain —
+        # never verified, and rustup 1.28 stopped auto-installing on `show`, so
+        # such a stage would resolve nothing and leave the download on the build
+        # path. Requiring the install command fails closed.
         text = (
             "FROM rust:1-bookworm AS chef\n"
             "WORKDIR /app\n"
@@ -269,7 +274,47 @@ class TestPinProvider(unittest.TestCase):
             "RUN rustup show\n"
             "RUN cargo build\n"
         )
+        self.assertIsNone(ds.provides_pin(ds.parse(text)[0]))
+
+    def test_installing_a_named_toolchain_is_not_the_resolve(self) -> None:
+        # The hole the adversarial pass found: an argument to
+        # `rustup toolchain install` overrides the pin file, and a channel name
+        # carries no digits for the version scan to catch — so this read as a
+        # valid pin layer while installing the wrong compiler.
+        for spelling in ("stable", "nightly", "1.98.0"):
+            with self.subTest(spelling=spelling):
+                text = (
+                    "FROM rust:1-bookworm AS chef\n"
+                    "WORKDIR /app\n"
+                    "COPY rust-toolchain.toml ./\n"
+                    f"RUN rustup toolchain install {spelling}\n"
+                    "RUN cargo build\n"
+                )
+                self.assertIsNone(ds.provides_pin(ds.parse(text)[0]))
+
+    def test_flags_on_the_resolve_are_still_the_resolve(self) -> None:
+        # The bound on the rule above: a flag is not a toolchain name.
+        text = (
+            "FROM rust:1-bookworm AS chef\n"
+            "WORKDIR /app\n"
+            "COPY rust-toolchain.toml ./\n"
+            "RUN rustup toolchain install --profile minimal\n"
+            "RUN cargo build\n"
+        )
         self.assertEqual(problems(text), [])
+
+    def test_a_narrow_context_copy_before_the_resolve_disqualifies(self) -> None:
+        # `COPY src /app` is not "broad", and keys the pin layer on the source
+        # tree exactly as `COPY . .` would. Enumerating broad spellings left
+        # this open while reading as complete.
+        text = (
+            "FROM rust:1-bookworm AS chef\n"
+            "WORKDIR /app\n"
+            "COPY src /app\n"
+            "COPY rust-toolchain.toml ./\n"
+            "RUN rustup toolchain install\n"
+        )
+        self.assertIsNone(ds.provides_pin(ds.parse(text)[0]))
 
     def test_a_bare_rustup_call_is_not_the_resolve(self) -> None:
         # Narrowness matters as much as breadth: `rustup --version` installs
@@ -360,6 +405,29 @@ class TestInheritance(unittest.TestCase):
             any("ancestor 'base'" in line for line in found),
             f"an ancestor's broad COPY was not reported: {found}",
         )
+
+    def test_a_redundant_resolve_below_a_valid_pin_is_not_reported(self) -> None:
+        # The ancestor rule's own false positive. `tools` inherits chef's pin
+        # layer through `deps`, so its defensive repeat of the resolve downloads
+        # nothing — the toolchain is already in the inherited layer. Reporting
+        # that it "re-pays the download" would be a false statement as well as a
+        # false positive, on a hook where one blocks every commit in the repo.
+        text = (
+            "FROM rust:1-bookworm AS chef\n"
+            "WORKDIR /app\n"
+            "COPY rust-toolchain.toml ./\n"
+            "RUN rustup toolchain install\n"
+            "\n"
+            "FROM chef AS deps\n"
+            "COPY . .\n"
+            "RUN cargo build --release\n"
+            "\n"
+            "FROM deps AS tools\n"
+            "COPY rust-toolchain.toml ./\n"
+            "RUN rustup toolchain install\n"
+            "RUN cargo install --path tools\n"
+        )
+        self.assertEqual(problems(text), [])
 
     def test_a_forward_stage_reference_is_not_credited_with_a_pin(self) -> None:
         # Docker resolves a `FROM` name only against stages declared earlier,
@@ -533,6 +601,17 @@ class TestVersionDuplication(unittest.TestCase):
         found = problems(text)
         self.assertTrue(any("base image tag" in line for line in found), found)
 
+    def test_env_rustup_toolchain_is_caught(self) -> None:
+        # It overrides the pin file for every later command in the stage, so it
+        # names a version as surely as a rustup argument does — and the version
+        # scan reads only `RUN`, which is how it escaped. Fails OPEN.
+        text = FIXED.replace(
+            "WORKDIR /app\n", "WORKDIR /app\nENV RUSTUP_TOOLCHAIN=1.98.1\n"
+        )
+        self.assertNotEqual(text, FIXED)
+        found = problems(text)
+        self.assertTrue(any("RUSTUP_TOOLCHAIN" in line for line in found), found)
+
     def test_a_pinned_rustup_download_url_is_not_a_compiler_pin(self) -> None:
         # A bare `"rustup" in segment` test also matches a URL and a tarball
         # name, blocking a stage that bootstraps rustup itself with a
@@ -686,14 +765,24 @@ class TestThisCheckout(unittest.TestCase):
             f"find_root returned {self.root}, which does not contain this test",
         )
 
-    def test_the_pin_prefix_is_byte_identical_across_the_rust_images(self) -> None:
+    def test_the_pin_layer_is_identical_across_the_rust_images(self) -> None:
         # The measured win — ONE shared pin layer for all four images, so the
         # toolchain downloads once per machine rather than once per image —
-        # holds only while the instruction text matches exactly. Every per-file
-        # rule would still pass if one image drifted to
+        # holds only while the layer's cache key matches. Every per-file rule
+        # would still pass if one image drifted to
         # `COPY rust-toolchain.toml /app/`, silently turning one download into
         # four, so the cross-file identity needs its own assertion.
-        prefixes: dict[str, tuple[tuple[str, str], ...]] = {}
+        #
+        # The BASE IMAGE is part of the compared tuple, and leaving it out was
+        # the gap the cross-check found: one image moving to
+        # `FROM rust:1-slim` keeps every instruction identical while splitting
+        # the layer four ways — exactly the regression this test exists for.
+        #
+        # What it deliberately does NOT assert, so the name promises no more
+        # than it checks: the comparison is on the PARSED form, which collapses
+        # inside a continued `RUN` where Docker's cache key would not. A
+        # re-indented continuation still passes here.
+        keys: dict[str, tuple[object, ...]] = {}
         for rel in ds.discover(self.root):
             with open(os.path.join(self.root, rel), encoding="utf-8") as handle:
                 stages = ds.parse(handle.read())
@@ -701,17 +790,20 @@ class TestThisCheckout(unittest.TestCase):
                 index = ds.provides_pin(stage)
                 if index is None:
                     continue
-                prefixes[rel] = tuple(
-                    (inst.keyword, inst.args)
-                    for inst in stage.instructions[: index + 1]
+                # Keyed per stage rather than per file: a file carrying two pin
+                # stages would otherwise record only the last.
+                keys[f"{rel}:{stage.label}"] = (
+                    stage.base,
+                    tuple(
+                        (inst.keyword, inst.args)
+                        for inst in stage.instructions[: index + 1]
+                    ),
                 )
-        self.assertGreaterEqual(
-            len(prefixes), 4, f"expected four pin stages: {prefixes}"
-        )
+        self.assertGreaterEqual(len(keys), 4, f"expected four pin stages: {keys}")
         self.assertEqual(
-            len(set(prefixes.values())),
+            len(set(keys.values())),
             1,
-            f"the pin prefix diverges across images: {prefixes}",
+            f"the pin layer diverges across images: {keys}",
         )
 
     def test_the_repo_passes(self) -> None:

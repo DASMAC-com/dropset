@@ -178,8 +178,10 @@ repos:
 # `always_run` with `pass_filenames: false` for the same reason as the hook
 # above, plus one of its own: the check is cross-file (it must see every
 # Dockerfile to know it matched any Rust stage at all), and a `files` scoping
-# would hide the deletion of the last Rust image. Five small files, so it
-# costs milliseconds.
+# would hide the deletion of the last Rust image. The walk prunes the fat trees
+# and reads only Dockerfiles, so it costs milliseconds — deliberately not
+# stated as a file count, since the guard's own zero-Rust alarm exists in order
+# not to trust one.
 - hooks:
   - always_run: true
     entry: 'python3 .claude/tools/dockerfile_stages.py'
