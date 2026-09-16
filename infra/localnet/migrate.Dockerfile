@@ -14,8 +14,20 @@
 # (`sqlx::migrate!`), so the runtime image carries only the binary.
 
 FROM rust:1-bookworm AS chef
-RUN cargo install cargo-chef --locked
 WORKDIR /app
+# The pinned toolchain, in a layer keyed ONLY on `rust-toolchain.toml` and
+# ahead of every source COPY: the tag above floats, so rustup has to download
+# the pin, and a source-keyed layer re-pays that download on every
+# rebuild-after-commit. `rustup toolchain install` takes no argument on
+# purpose — the file is the one pin. Every later Rust stage inherits this
+# layer, so planner, cook and build all share one compiler.
+# Asserted by `.claude/tools/dockerfile_stages.py`; see docs/ci.md §1.
+COPY rust-toolchain.toml ./
+# One RUN, resolve first: cargo-chef then builds on the pinned compiler too,
+# and consolidating keeps hadolint's DL3059 quiet. The order inside the line
+# matters as much as between instructions, and the guard checks both.
+RUN rustup toolchain install \
+    && cargo install cargo-chef --locked
 
 FROM chef AS planner
 COPY . .

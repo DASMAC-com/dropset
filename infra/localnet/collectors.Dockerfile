@@ -20,15 +20,31 @@
 # `dropset-migrate` (migrate.Dockerfile), the single schema owner
 # (docs/data-feeds.md §8). This image only ever asserts the schema.
 #
-# Context is the repo root (see docker-compose.yml). The `rust:1-bookworm` tag
-# is what pins the compiler: the workspace commits no `rust-toolchain.toml`, so
-# there is nothing in-tree for the image to honour and the tag is the only pin.
-# The insert SQL is embedded at compile time (`include_str!`), so the runtime
-# image carries only the binaries.
+# Context is the repo root (see docker-compose.yml). The committed
+# `rust-toolchain.toml` is what pins the compiler — authoritative for CI,
+# local builds and this image alike — and the `rust:1-bookworm` tag is only
+# the rustup bootstrap that resolves it. An earlier revision of this comment
+# claimed the opposite (that the workspace commits no toolchain file, so the
+# tag was the only pin); that has been false since the 2026-08-24 pin commit,
+# and it misdirected the diagnosis of exactly the stall the chef stage below
+# now prevents. The insert SQL is embedded at compile time (`include_str!`), so
+# the runtime image carries only the binaries.
 
 FROM rust:1-bookworm AS chef
-RUN cargo install cargo-chef --locked
 WORKDIR /app
+# The pinned toolchain, in a layer keyed ONLY on `rust-toolchain.toml` and
+# ahead of every source COPY: the tag above floats, so rustup has to download
+# the pin, and a source-keyed layer re-pays that download on every
+# rebuild-after-commit. `rustup toolchain install` takes no argument on
+# purpose — the file is the one pin. Every later Rust stage inherits this
+# layer, so planner, cook and build all share one compiler.
+# Asserted by `.claude/tools/dockerfile_stages.py`; see docs/ci.md §1.
+COPY rust-toolchain.toml ./
+# One RUN, resolve first: cargo-chef then builds on the pinned compiler too,
+# and consolidating keeps hadolint's DL3059 quiet. The order inside the line
+# matters as much as between instructions, and the guard checks both.
+RUN rustup toolchain install \
+    && cargo install cargo-chef --locked
 
 FROM chef AS planner
 COPY . .
