@@ -102,6 +102,28 @@ impl std::error::Error for PublishError {
     }
 }
 
+impl From<sqlx::Error> for PublishError {
+    /// Sort a `sqlx` failure into the two classes — the private `classify`'s
+    /// rules, reached through `?`.
+    ///
+    /// **Intended for the statements that COMPLETE a publish, not for reads.**
+    /// [`publish`] takes any executor precisely so a caller can land a whole
+    /// tick in one transaction, and the `COMMIT` that finishes it can fail on
+    /// exactly the terms an `INSERT` can — a serialization failure is retryable,
+    /// a constraint the database deferred is not. Without this the commit's
+    /// error would arrive unclassified and a caller would have to guess, which
+    /// is the guessing the split exists to remove.
+    ///
+    /// A **read** failure is not a publish failure and must not borrow this
+    /// vocabulary: an unreadable store means the composition rests on nothing,
+    /// which is a different halt with a different reason. The readers in
+    /// [`crate::fx_store`] and [`crate::tick_store`] therefore return
+    /// `anyhow::Error` and never convert through here.
+    fn from(err: sqlx::Error) -> Self {
+        classify(err)
+    }
+}
+
 /// Each SQLSTATE a retry could plausibly get past, as a **whole code**.
 ///
 /// Whole codes rather than two-character classes, because no class here is

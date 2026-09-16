@@ -593,10 +593,20 @@ indexer-down: check-docker
 		rm -sf indexer indexer-api
 
 # Market-data collectors: the shared Postgres + the schema migration + every
-# **keyless** feed (docs/data-feeds.md §5, §8). Independent of the
+# **keyless** feed (docs/data-feeds.md §5, §8), plus the fair-value estimator.
+# Independent of the
 # validator — these poll public REST APIs — so they run with or without a
 # localnet up, and they share the one `dropset` database with the indexer.
 # Stopping them leaves the recorded history on the volume.
+#
+# The **estimator** is in this bring-up but is not a feed: it polls nothing, and
+# instead reads `cex_prices` and `spot_ticks` and publishes `fair_price` on its
+# own tick. It comes up here because it is keyless and because a running feed
+# with nothing composing off it is only half the price path — the dashboards
+# read the composed series, not the raw legs. It is fine for it to start before
+# the collectors have written anything: an unpriced market publishes a paused
+# regime, which is how an absent price stays distinguishable from a stopped
+# estimator.
 #
 # Five keyless feeds, across both tiers. Candles into `cex_prices`: the
 # Coinbase reference price. Spot ticks into `spot_ticks`: the Coinbase ticker
@@ -771,16 +781,26 @@ OP_ACCT = $(if $(DROPSET_OP_ACCOUNT),--account '$(DROPSET_OP_ACCOUNT)',)
 # the truth. `FX_COMPOSE` is shared for the same reason — `ps -q` resolves a
 # service only under the same compose file and profile that started it.
 KEYED_SERVICES = oanda twelvedata alphavantage
-# The five keyless feeds, named once: `collectors-up` starts them and
+# The keyless market-data services, named once: `collectors-up` starts them and
 # `collectors-down` removes them, and a teardown that quietly loses a name
 # leaves the container up for the next bring-up to reuse. The bring-up also
 # starts `postgres`, `migrate` and `grafana`, which stay out of this variable
 # deliberately — the first two are shared infrastructure the teardown never
-# removes, and grafana is not a collector — so the two service lists are not
-# symmetric and one start-and-stop variable would be wrong. Keep this list
-# profile-free: the bring-up enables no profile, so a profiled service added
-# here would be silently skipped there while the teardown still removed it.
-KEYLESS_SERVICES = coinbase coinbase-ticker kraken erapi frankfurter
+# removes, and grafana is not a market-data service — so the two service lists
+# are not symmetric and one start-and-stop variable would be wrong. Keep this
+# list profile-free: the bring-up enables no profile, so a profiled service
+# added here would be silently skipped there while the teardown still removed
+# it.
+#
+# Five keyless **feeds** plus the **estimator**, which is a publisher rather
+# than a feed: it polls no venue, reads both store tables and writes
+# `fair_price`. It belongs in this variable anyway, and the reason is what the
+# variable is for rather than what its members have in common — it is keyless,
+# and both the bring-up and the teardown have to name it or its container
+# survives into the next bring-up. Splitting it into a second variable would buy
+# an accurate name and reintroduce exactly the lose-a-name failure the single
+# list prevents.
+KEYLESS_SERVICES = coinbase coinbase-ticker kraken erapi frankfurter estimator
 # Pyth is removal-only, and the asymmetry is the point: no target here starts
 # it (it went keyed and is started deliberately once a key exists — see the
 # `collectors-up` comment above), but `collectors-down` still removes it so a
