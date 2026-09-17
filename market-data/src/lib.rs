@@ -25,6 +25,15 @@
 //! row shapes, and which collector writes where is not guessable from a venue's
 //! name. [`tick_store`] states the split and why one statement cannot serve both.
 //!
+//! [`estimator`] is the process that drives all three: it reads the legs,
+//! composes one fair value per market, and publishes the tick. It is the one
+//! binary here that is **not** a collector — it polls no venue — and the one that
+//! does not run on the feeds runner, because that runner retries any source error
+//! forever, which is the right policy for a gap in a series and the wrong one for
+//! a publisher that must distinguish a failure worth retrying from one that will
+//! never succeed. Two readers rather than one because the peg leg lives in the
+//! other table.
+//!
 //! The first feed was the shared Coinbase EURC/USDC reference price
 //! (`data-feeds.md` §9). Two row shapes come out of the collectors, and the
 //! distinction is the spine of this crate: the [`store`] module maps every
@@ -76,6 +85,7 @@
 //! logs.
 
 pub mod config;
+pub mod estimator;
 pub mod fair_price;
 pub mod fx;
 pub mod fx_store;
