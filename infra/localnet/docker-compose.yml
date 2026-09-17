@@ -192,20 +192,30 @@ services:
     # collectors having written something, not on a credential: it is keyless
     # and comes up with `make collectors-up`.
     #
-    # It composes and publishes regardless of whether any leg answered — an
-    # unpriced market publishes a paused regime rather than nothing, which is
-    # what makes an absent price distinguishable from a stopped estimator. What
-    # it will not do is retry a refused row: a permanent publish failure halts
-    # the process on the first occurrence, and it exits non-zero, so
-    # `restart: unless-stopped` turns that into a crash-loop rather than a
-    # quietly-stopped publisher.
+    # It composes and publishes regardless of whether any leg answered, and it
+    # is worth being precise about what that produces, because it is NOT a
+    # paused row. Every market in the roster carries a usable `static_usd`, and
+    # the engine's fallback pauses only when even that is unusable — so a market
+    # with no live leg publishes its **static fallback**: a real price, at a
+    # degraded regime anchored `static`. `paused` (a NULL price) is unreachable
+    # for the current three. That matters at bring-up: started before any
+    # collector has written, this publishes EURC at its 1.14 constant. The
+    # regime and anchor are what distinguish that from a fed market, not the
+    # presence of a price; a stopped estimator is distinguished by the row being
+    # absent altogether.
+    #
+    # What it will not do is retry a publish it classifies as permanent: that
+    # halts the process on the first occurrence, so `restart: unless-stopped`
+    # loops it. A refused row is the clearest case of that class — an
+    # integrity-constraint violation is never retryable — though a bad
+    # credential reaches it too.
     #
     # That crash-loop is **not** yet alarmed. Nothing watches `fair_price`
     # freshness — the alerting set is all maker-side — so the loop surfaces only
-    # in `docker compose ps` and as an absent row in the panels that read the
-    # composed series. The absent row IS the distinguishing signal (a paused
-    # market still writes a row), so the state is legible; it just is not
-    # pushed at anyone.
+    # in `docker compose ps`, in the process's non-zero exit, and as an absent
+    # row in the panels that read the composed series. The absent row is the
+    # distinguishing signal, since a market that is merely unfed still writes
+    # one. So the state is legible; it just is not pushed at anyone.
     #
     # `TICK_INTERVAL_SECS` is floored at 1 by the binary: `fair_price`'s primary
     # key is `(product_id, ts)` in whole seconds, so a sub-second cadence would

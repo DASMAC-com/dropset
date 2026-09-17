@@ -43,10 +43,14 @@
 //!
 //! Only EURC composes on an **observed** basis. AUDD and CADC quote off the FX
 //! anchor times a pinned 1:1 redemption peg, because the re-scope for the first
-//! fills says the FX composite alone is enough for them — and because a thin
-//! product's ticker returns its last print whether or not one happened recently,
-//! so an unwired basis is honest where a stale-print basis would *corroborate*
-//! the leg with a number nobody traded. The engine drops a pinned market's whole
+//! fills says the FX composite alone is enough for them — and because neither
+//! has a `*-USDC` candle series to compose from: CADC was never listed, and
+//! `AUDD-USDC` stopped producing. Pinning is honest where composing off a book
+//! that has gone quiet would *corroborate* the leg with a number nobody traded.
+//!
+//! Note the leg this concerns is the **candle** series in `cex_prices`, not the
+//! ticker — see [`SOURCE_COINBASE`] — which is why the ticker's habit of
+//! republishing its last print is not the argument here. The engine drops a pinned market's whole
 //! crypto candidate set unconditionally, so a stray reading can never price one.
 //!
 //! # Failure posture: this process classifies its own errors
@@ -94,7 +98,7 @@ use crate::tick_store::{TickStoreReader, TickStoreRow, SOURCE_KRAKEN, USDC_USD_P
 /// not the ticker: the ticker writes `spot_ticks` and republishes a last print
 /// whether or not one happened, which is the aging problem the pinned markets
 /// exist to avoid.
-const SOURCE_COINBASE: &str = "coinbase";
+pub const SOURCE_COINBASE: &str = "coinbase";
 
 /// How long publishing may keep failing **transiently** before the estimator
 /// halts anyway.
@@ -136,9 +140,9 @@ pub struct EstimatorMarket {
     /// Exactly one of this and [`Self::pinned_basis`] is `Some` — see the test
     /// that enforces it, and the module docs for why two markets are pinned.
     pub crypto_product: Option<&'static str>,
-    /// Basis to pin because the market has no basis source worth observing:
-    /// CADC has no `*-USDC` series at all, and AUDD's is too thin to trust —
-    /// see the module docs for why a thin book is worse than none here.
+    /// Basis to pin because the market has no `*-USDC` candle series to compose
+    /// from: CADC was never listed, and `AUDD-USDC` stopped producing. The
+    /// module docs carry the argument.
     pub pinned_basis: Option<f64>,
     /// Last-resort static USD-per-token peg, used only when every live leg is
     /// down. A representative spot value; a live anchor supersedes it whenever
@@ -844,10 +848,16 @@ fn log_tick(market: &EstimatorMarket, fair: &FairValue, stale: LegStaleness, fre
 /// Resolve when the process should stop: `SIGTERM` (what an orchestrator sends)
 /// or `SIGINT`.
 ///
-/// Both, because handling only `ctrl_c` means a container stop falls through to
-/// the runtime's `SIGKILL` grace period — the tick in flight is abandoned rather
-/// than finished, and the publish it was mid-transaction on rolls back with
-/// nothing said about it.
+/// Both, because handling only `ctrl_c` would mean a container stop always fell
+/// through to the runtime's `SIGKILL` grace period, abandoning the tick in
+/// flight rather than finishing it and rolling back the publish it was
+/// mid-transaction on with nothing said about it.
+///
+/// **This narrows that window; it does not close it.** The stream is
+/// reconstructed per loop iteration and awaited only in the sleep, so a signal
+/// arriving while the tick body is running has no live listener and is dropped —
+/// that stop still falls through to `SIGKILL`. Closing it means hoisting one
+/// long-lived stream out of the loop, or racing the tick against it.
 async fn shutdown() {
     #[cfg(unix)]
     {
@@ -1162,15 +1172,19 @@ mod tests {
     /// elapse on the same tick the read failure is what gets reported and the
     /// operator is sent to the right end of the pipe.
     ///
-    /// Note what this assertion does and does not buy. It forbids a window
-    /// *longer* than the store bound; it permits a **shorter** one, and a
-    /// shorter one is the arrangement that would misreport a store outage as
-    /// `publish:transient`, because the publish halt would fire first. So the
-    /// bound worth holding is the equality, and this test is the weaker `<=`
-    /// form of it.
+    /// So the assertion is an equality rather than the `<=` it started as, and
+    /// the direction matters: a window *longer* than the store bound is benign
+    /// (it only delays a publish halt — the store halt still fires first, at its
+    /// own bound, and still diagnoses correctly), while a **shorter** one is the
+    /// single harmful arrangement, because then `Halt::Publish` fires first and
+    /// sends the operator to the wrong end of the pipe. An inequality in either
+    /// direction would therefore permit the harmful case or forbid the harmless
+    /// one; only the equality pins the property the paragraph above describes.
+    /// Deliberately divergent bounds would need this test rewritten to say which
+    /// direction is intended and why.
     #[test]
     fn the_publish_window_does_not_outlast_the_store_bound() {
-        assert!(MAX_PUBLISH_RETRY_WINDOW <= crate::fx_store::MAX_STORE_SILENCE);
+        assert_eq!(MAX_PUBLISH_RETRY_WINDOW, crate::fx_store::MAX_STORE_SILENCE);
     }
 
     /// A configured zero is clamped, because a sub-second tick would collide

@@ -594,23 +594,24 @@ indexer-down: check-docker
 
 # Market-data collectors: the shared Postgres + the schema migration + every
 # **keyless** feed (docs/data-feeds.md §5, §8), plus the fair-value estimator.
-# Independent of the
-# validator — these poll public REST APIs — so they run with or without a
-# localnet up, and they share the one `dropset` database with the indexer.
-# Stopping them leaves the recorded history on the volume.
+# Independent of the validator — these poll public REST APIs — so they run
+# with or without a localnet up, and they share the one `dropset` database
+# with the indexer. Stopping them leaves the recorded history on the volume.
 #
 # The **estimator** is in this bring-up but is not a feed: it polls nothing, and
 # instead reads `cex_prices` and `spot_ticks` and publishes `fair_price` on its
 # own tick. It comes up here because it is keyless and because a running feed
 # with nothing composing off it is only half the price path — the dashboards
-# read the composed series, not the raw legs. It is fine for it to start before
-# the collectors have written anything: an unpriced market publishes a paused
-# regime, which is how an absent price stays distinguishable from a stopped
-# estimator.
+# read the composed series, not the raw legs. Starting it before the collectors
+# have written anything is safe but not silent: a market with no live leg
+# publishes its static fallback — a real price, at a degraded regime anchored
+# `static` — rather than a paused row. Expect EURC at its 1.14 constant
+# until the feeds answer. See the compose service comment for why `paused`
+# is unreachable for the current roster.
 #
-# Five keyless **feeds** plus the estimator, across both tiers. Candles into
-# `cex_prices`: the
-# Coinbase reference price. Spot ticks into `spot_ticks`: the Coinbase ticker
+# Five keyless **feeds** across both tiers, plus the estimator. Candles into
+# `cex_prices`: the Coinbase reference price. Spot ticks into `spot_ticks`:
+# the Coinbase ticker
 # (the prints between candle closes), Kraken (batched peg truth — a real
 # market print of `USDC/USD`), er-api (the widest keyless table, one
 # daily snapshot priced across the whole roster, and the only source of

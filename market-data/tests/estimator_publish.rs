@@ -33,7 +33,9 @@ use std::time::Duration;
 
 use common::{insert_bucket, insert_tick, start_pg};
 use dropset_feeds::now_secs;
-use dropset_market_data::estimator::{Estimator, EstimatorMarket, Ticked, MVP_MARKETS};
+use dropset_market_data::estimator::{
+    Estimator, EstimatorMarket, Ticked, MVP_MARKETS, SOURCE_COINBASE,
+};
 use dropset_market_data::tick_store::{TickStoreReader, SOURCE_KRAKEN, USDC_USD_PRODUCT};
 use sqlx::{PgPool, Row};
 
@@ -89,7 +91,7 @@ async fn seed_all_legs(pool: &PgPool, now: i64) {
         insert_bucket(pool, "twelvedata", &product, now, rate + 0.0002).await;
     }
     // EURC's crypto reference — the one observed basis on the roster.
-    insert_bucket(pool, "coinbase", "EURC-USDC", now, 1.1410).await;
+    insert_bucket(pool, SOURCE_COINBASE, "EURC-USDC", now, 1.1410).await;
     // The peg leg, in the OTHER table. This is the row the whole second reader
     // exists for.
     insert_tick(pool, SOURCE_KRAKEN, USDC_USD_PRODUCT, now, 0.9999).await;
@@ -253,7 +255,7 @@ async fn the_peg_leg_comes_from_the_tick_table() {
         let now = now_secs();
         insert_bucket(&pool, "oanda", "EUR-USD", now, 1.1400).await;
         insert_bucket(&pool, "twelvedata", "EUR-USD", now, 1.1402).await;
-        insert_bucket(&pool, "coinbase", "EURC-USDC", now, 1.1410).await;
+        insert_bucket(&pool, SOURCE_COINBASE, "EURC-USDC", now, 1.1410).await;
         if let Some(price) = peg {
             insert_tick(&pool, SOURCE_KRAKEN, USDC_USD_PRODUCT, now, price).await;
         }
@@ -320,7 +322,7 @@ async fn a_pinned_market_publishes_unverified() {
     insert_bucket(&pool, "oanda", "AUD-USD", now, 0.7200).await;
     // A crypto row for its pair EXISTS — the candle collector rosters
     // `AUDD-USDC` — so a market that priced off it would be visible here.
-    insert_bucket(&pool, "coinbase", "AUDD-USDC", now, 0.9999).await;
+    insert_bucket(&pool, SOURCE_COINBASE, "AUDD-USDC", now, 0.9999).await;
 
     let mut estimator =
         Estimator::new(pool.clone(), vec![audd], Duration::from_secs(15)).expect("constructible");
