@@ -36,6 +36,7 @@ bpf
 brale
 bytemuck
 cadc
+cadd
 cagr
 cargobill
 cdds
