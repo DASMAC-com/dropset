@@ -196,6 +196,20 @@
           "url": "https://loon.finance/",
           "socials": { "x": "CADCstablecoin" }
         }
+      },
+      {
+        "symbol": "CADD",
+        "name": "CAD Digital Inc",
+        "mint": "Az9eyxEaiZD9AX4j5nP19Cm79eyfNriTuddMSQmLNEBm",
+        "mintSourceUrl": "https://tetradg.com/supported-blockchains/",
+        "decimals": 6,
+        "tokenProgram": "token2022",
+        "icon": "https://tetradg.com/wp-content/uploads/2026/07/Jul3__CADD_Option4_DeepMaple_GradientBevel.svg",
+        "issuer": {
+          "name": ["Tetra Digital Group"],
+          "url": "https://tetradg.com/cadd-stablecoin/",
+          "socials": { "x": "TetraDigitalGrp" }
+        }
       }
     ]
   },
