@@ -24,7 +24,7 @@
 // from brand-assets/ rather than from public/, so it stays fully populated,
 // the --strict gate reads the same source and still passes, and the unit
 // tests only ever compare manifest strings. Every check would stay green
-// while all 25 token icons 404.
+// while every token icon 404s.
 //
 // Usage: node brand-assets/copy-brand-assets.mjs <dest-dir>
 //   where <dest-dir> is the app's public/ dir relative to the repo root,

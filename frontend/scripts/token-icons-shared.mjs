@@ -32,7 +32,7 @@ export const ICON_DIR = resolve(here, "../../brand-assets/token-icons");
 // the directory into each app's public/ under its own basename, so the served
 // prefix IS that basename by construction. Spelled as a literal, renaming the
 // committed directory would keep every test and every gate green while serving
-// 404s for all 25 icons — the manifest strings are what the tests assert on,
+// a 404 for every icon — the manifest strings are what the tests assert on,
 // and no test opens the path they name.
 export const URL_PREFIX = `/${basename(ICON_DIR)}`;
 
