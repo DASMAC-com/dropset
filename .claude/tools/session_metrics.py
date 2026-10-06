@@ -206,7 +206,7 @@ class Totals:
     prefix_last: int = 0
     prefix_max: int = 0
 
-    def add(self, usage: dict, model: str = UNRECORDED_MODEL) -> None:
+    def add(self, usage: dict, model: str) -> None:
         self.by_model.setdefault(model, Tokens()).add(usage)
         fresh = int(usage.get("input_tokens", 0) or 0)
         written = int(usage.get("cache_creation_input_tokens", 0) or 0)

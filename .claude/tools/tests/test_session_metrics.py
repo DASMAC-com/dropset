@@ -1053,6 +1053,41 @@ class SubstrateRendering(unittest.TestCase):
         self.assertIsNone(parsed["total_cost"])
         self.assertEqual(parsed["unpriced_models"], ["claude-x"])
 
+    def test_a_mixed_session_names_every_model_standing(self):
+        # Labelling only the first priced model would read a partly-projected
+        # session as fully verified — the mislabel the standing exists to stop.
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant('{"output_tokens":1000}', "", "claude-opus-5"))
+        agg.ingest_main_line(assistant('{"output_tokens":1000}', "", "claude-opus-5-5"))
+        md = sm.to_markdown(agg.finish(sm.SUBSTRATE_BEDROCK), "abcd1234")
+        self.assertIn("`claude-opus-5` verified 2026-09-11", md)
+        self.assertIn("`claude-opus-5-5` projected, unverified", md)
+
+    def test_a_seat_session_on_an_unpriced_model_still_reports_no_figure(self):
+        # The normal seat case: its model has no Bedrock row, so the costs are
+        # None — and the seat branch must neither read them nor say "withheld".
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant('{"output_tokens":1000}', "", "claude-x"))
+        report = agg.finish(sm.SUBSTRATE_SEAT)
+        md = sm.to_markdown(report, "abcd1234")
+        self.assertIsNone(report["total_cost"])
+        self.assertNotIn("$", md)
+        self.assertNotIn("Cost withheld", md)
+        self.assertIn("no dollar figure", md)
+
+    def test_json_carries_the_per_model_split(self):
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant('{"output_tokens":7}', "", "claude-opus-5-5"))
+        agg.ingest_subagent_line(
+            "lens",
+            assistant_with_id("msg_lens", '{"cache_read_input_tokens":9}', ""),
+        )
+        parsed = json.loads(sm.to_json(agg.finish(sm.SUBSTRATE_BEDROCK)))
+        self.assertEqual(parsed["totals"]["by_model"]["claude-opus-5-5"]["output"], 7)
+        self.assertEqual(
+            parsed["subagents"][0]["by_model"]["claude-opus-5"]["cache_read"], 9
+        )
+
     def test_a_seat_session_shows_no_dollar_figure_at_all(self):
         md = sm.to_markdown(self._report(sm.SUBSTRATE_SEAT), "abcd1234")
         # The regression that matters: not merely a different headline, but no

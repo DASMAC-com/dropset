@@ -471,8 +471,8 @@ launch that misbehaves:
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=us-west-2
 export ANTHROPIC_MODEL='us.anthropic.claude-opus-5-5[1m]'
-fast='us.anthropic.claude-haiku-4-5-20251001-v1:0'
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="$fast"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=\
+'us.anthropic.claude-haiku-4-5-20251001-v1:0'
 export ENABLE_PROMPT_CACHING_1H=1
 export AWS_BEARER_TOKEN_BEDROCK="$(op read \
   --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")"
@@ -501,7 +501,11 @@ operator's to make.
 background sub-turns bill to credits alongside the primary model,
 rather than falling back to the subscription. The id needs its `-v1:0`
 suffix: Claude Code passes it through verbatim, and Bedrock rejects the
-bare `…-20251001` form as an invalid model identifier.
+bare `…-20251001` form as an invalid model identifier. A
+`ResourceNotFoundException` on the suffixed id saying model use case
+details have not been submitted means the account has not filed
+Anthropic's use-case form for that model yet — the id is right, and the
+form is an operator step.
 
 Setting `ANTHROPIC_MODEL` does more than pick the primary model: on
 Bedrock it also routes background tasks (session titles and the like) to

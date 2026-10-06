@@ -402,7 +402,11 @@ class BedrockEnvGate(SubstrateHarness):
         self.assertIn("CACHE=1", result.stdout)
         # The fast tier is pinned so background sub-turns bill to credits too,
         # rather than quietly falling back to the subscription.
-        self.assertIn("FAST=us.anthropic.claude-haiku", result.stdout)
+        # The full id, suffix included: Bedrock rejects the bare form as an
+        # invalid identifier, so a prefix check would let that revert ship.
+        self.assertIn(
+            "FAST=us.anthropic.claude-haiku-4-5-20251001-v1:0\n", result.stdout
+        )
 
     def test_the_region_is_overridable(self):
         result = self._zsh(
