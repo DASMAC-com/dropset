@@ -197,6 +197,9 @@ pub struct MarketHeader {
     /// Same as `accrued_base_fee_atoms`, for the quote leg.
     pub accrued_quote_fee_atoms: LeU64,
     pub bump: u8,
+    /// Last vault number handed out; the next `CreateVault` stamps one past
+    /// it onto `Vault::seq`.
+    pub next_vault_seq: LeU64,
 }
 
 #[repr(C)]
@@ -206,6 +209,9 @@ pub struct Vault {
     pub prev: LeU32,
     pub leader: [u8; 32],
     pub quote_authority: [u8; 32],
+    /// Per-market vault number: with the market, the vault's identity.
+    /// Survives a leader rotation; a reused sector gets a new one.
+    pub seq: LeU64,
     pub reference_price: ReferencePrice,
     pub base_atoms: LeU64,
     pub quote_atoms: LeU64,
@@ -227,8 +233,8 @@ pub struct Vault {
 // the program layout (without regenerating against a fresh IDL + updating
 // this mirror) breaks the SDK build here rather than silently
 // misdecoding the slab.
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 253);
-const _: () = assert!(core::mem::size_of::<Vault>() == 692);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 261);
+const _: () = assert!(core::mem::size_of::<Vault>() == 700);
 // Sectors stay aligned across the slab: stride must be a multiple of the
 // on-chain Vault alignment (see VAULT_ALIGN / MarketView::load).
 const _: () = assert!(core::mem::size_of::<Vault>().is_multiple_of(VAULT_ALIGN));

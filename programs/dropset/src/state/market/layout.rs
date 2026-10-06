@@ -182,6 +182,12 @@ pub struct Vault {
     /// Authority for quote-mutating ix; always populated. See the spec's
     /// **Vault** for rotation semantics.
     pub quote_authority: Address,
+    /// Per-market vault number, stamped at `CreateVault` from
+    /// [`MarketHeader::next_vault_seq`]. The vault's identity is the pair
+    /// `(market, seq)`: a leader rotation keeps it, a reclaim-and-reuse of
+    /// the sector stamps a new one. `0` means never stamped. Addressing
+    /// stays by sector index; no instruction takes `seq` as input.
+    pub seq: PodU64,
     /// Packed `(stamp, price, quote_slot, quote_unix)` — the two expiry
     /// datums plus the price, written together on `SetReferencePrice`.
     pub reference_price: ReferencePrice,
@@ -441,6 +447,11 @@ pub struct MarketHeader {
     pub accrued_quote_fee_atoms: PodU64,
     /// Market PDA bump.
     pub bump: u8,
+    /// Last vault number handed out; `CreateVault` checked-increments it
+    /// and stamps the result on `Vault::seq`, so the first vault on a
+    /// market is `1`. A `u64` so exhaustion is physically unreachable —
+    /// an overflow would permanently brick vault creation on the market.
+    pub next_vault_seq: PodU64,
 }
 
 impl MarketHeader {
@@ -473,8 +484,8 @@ impl MarketHeader {
 // again (localnet does this on every run). A deploy that must preserve
 // live accounts needs a real migration or a version gate before it
 // changes anything below.
-const _: () = assert!(core::mem::size_of::<Vault>() == 692);
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 253);
+const _: () = assert!(core::mem::size_of::<Vault>() == 700);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 261);
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 14);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 20);
 
@@ -491,9 +502,9 @@ const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 20);
 const _: () = assert!(core::mem::offset_of!(Vault, next) == 0);
 const _: () = assert!(core::mem::offset_of!(Vault, prev) == 4);
 const _: () = assert!(core::mem::offset_of!(Vault, leader) == 8);
-const _: () = assert!(core::mem::offset_of!(Vault, tombstoned) == 143);
-const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 144);
-const _: () = assert!(core::mem::offset_of!(Vault, profile) == 148);
+const _: () = assert!(core::mem::offset_of!(Vault, tombstoned) == 151);
+const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 152);
+const _: () = assert!(core::mem::offset_of!(Vault, profile) == 156);
 // `quote_authority` is the authorization field and `reference_price` is the
 // fused store's target, so both are load-bearing in the same sense as the
 // pins above. They are pinned here, absolutely, because `asm_offsets.rs`
@@ -502,9 +513,11 @@ const _: () = assert!(core::mem::offset_of!(Vault, profile) == 148);
 // whose bytes a coordinated reorder would silently re-interpret. Pinning
 // `ReferencePrice.stamp` at 0 additionally closes a compensating pair:
 // `asm_offsets.rs` checks `reference_price + stamp` as a sum, which a
-// 68-plus-4 reorder would satisfy.
+// 76-plus-4 reorder would satisfy. `seq` is pinned beside them as the
+// vault's identity field, which off-chain readers decode at this offset.
 const _: () = assert!(core::mem::offset_of!(Vault, quote_authority) == 40);
-const _: () = assert!(core::mem::offset_of!(Vault, reference_price) == 72);
+const _: () = assert!(core::mem::offset_of!(Vault, seq) == 72);
+const _: () = assert!(core::mem::offset_of!(Vault, reference_price) == 80);
 const _: () = assert!(core::mem::offset_of!(ReferencePrice, stamp) == 0);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 8);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, tombstone_head) == 12);

@@ -1,6 +1,7 @@
 //! `create_vault` integration tests — admin leader-override path,
 //! non-admin fee path, the perf-fee bound, the cap-exceeded gate, the
-//! quote-authority guard, and active-DLL linkage. All built on the
+//! quote-authority guard, active-DLL linkage, and the `seq` vault-number
+//! stamp across the vault lifecycle. All built on the
 //! shared [`Fixture`].
 
 mod common;
@@ -119,4 +120,61 @@ fn vault_lands_at_active_head_and_increments_count() {
         "most recent vault prepended at the active head"
     );
     assert_eq!(f.market_header().active_count.get(), 2);
+}
+
+#[test]
+fn seq_counts_up_from_one_per_market() {
+    let mut f = Fixture::bootstrap();
+    assert_eq!(
+        f.market_header().next_vault_seq.get(),
+        0,
+        "fresh market has handed out no vault numbers"
+    );
+
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("first vault");
+    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect("second vault");
+
+    assert_eq!(f.vault(0).seq.get(), 1, "first vault on a market is #1");
+    assert_eq!(f.vault(1).seq.get(), 2);
+    assert_eq!(
+        f.market_header().next_vault_seq.get(),
+        2,
+        "header counter tracks the last number handed out"
+    );
+}
+
+#[test]
+fn seq_survives_lifecycle_until_sector_reuse() {
+    // `seeded` already ran create → set_reference_price →
+    // set_liquidity_profile → deposit_leader on sector 0.
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    let leader = f.authority.insecure_clone();
+    assert_eq!(f.vault(0).seq.get(), 1);
+
+    f.set_quote_authority(&leader, 0, Keypair::new().pubkey())
+        .expect("rotate quote authority");
+    assert_eq!(f.vault(0).seq.get(), 1, "rotation keeps the identity");
+
+    f.close_vault(&leader, 0).expect("tombstone");
+    assert_eq!(f.vault(0).seq.get(), 1, "tombstoning keeps the identity");
+
+    let shares = f.vault(0).leader_shares.get();
+    f.withdraw_leader(0, shares, 0, 0)
+        .expect("full exit reclaims");
+    assert_eq!(f.market_header().free_head.get(), 0, "sector 0 is free");
+    assert_eq!(
+        f.vault(0).seq.get(),
+        1,
+        "reclaim zeroes only the leader; the stale seq is never read"
+    );
+
+    // Re-create lands on the same sector, as a new vault (distinct perf so
+    // the txn differs from `seeded`'s create).
+    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect("re-create on the freed sector");
+    assert_eq!(f.market_header().head.get(), 0, "free sector 0 reused");
+    assert_eq!(f.vault(0).seq.get(), 2, "reuse stamps a new identity");
+    assert_eq!(f.market_header().next_vault_seq.get(), 2);
 }

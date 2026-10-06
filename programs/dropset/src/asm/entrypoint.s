@@ -88,22 +88,22 @@
 .equ MARKET_DATA_LEN_OFF, MARKET_BASE + 80
 .equ MARKET_DATA_OFF, MARKET_BASE + 88
 
-# --- market data framing: [disc(8)][MarketHeader(253)][len:u32][pad][vaults] ---
+# --- market data framing: [disc(8)][MarketHeader(261)][len:u32][pad][vaults] ---
 # align_of::<Vault>() == 4 (Vault embeds the u32-aligned Price), so items
-# start at align_up(8 + 253 + 4, 4) = 268, not 265.
+# start at align_up(8 + 261 + 4, 4) = 276, not 273.
 .equ MARKET_NONCE_OFF, MARKET_DATA_OFF + 8       # MarketHeader.nonce (u64)
-.equ MARKET_LEN_OFF, MARKET_DATA_OFF + 261       # slab len (u32)
-.equ SLAB_ITEMS_OFF, 268                         # first Vault, within data
-.equ VAULT_SIZE, 692
+.equ MARKET_LEN_OFF, MARKET_DATA_OFF + 269       # slab len (u32)
+.equ SLAB_ITEMS_OFF, 276                         # first Vault, within data
+.equ VAULT_SIZE, 700
 .equ PROFILE_SIZE, 224                           # size_of::<LiquidityProfile>()
 
 # --- Vault field offsets ---
 .equ VAULT_QUOTE_AUTHORITY_OFF, 40
-.equ RP_STAMP_OFF, 72             # reference_price.stamp (u64)
-.equ RP_PRICE_OFF, 80             # reference_price.price (u32)
-.equ RP_QUOTE_SLOT_OFF, 84        # reference_price.quote_slot (u32)
-.equ RP_QUOTE_UNIX_OFF, 88        # reference_price.quote_unix (u32)
-.equ VAULT_PROFILE_OFF, 148       # profile (LiquidityProfile, PROFILE_SIZE B)
+.equ RP_STAMP_OFF, 80             # reference_price.stamp (u64)
+.equ RP_PRICE_OFF, 88             # reference_price.price (u32)
+.equ RP_QUOTE_SLOT_OFF, 92        # reference_price.quote_slot (u32)
+.equ RP_QUOTE_UNIX_OFF, 96        # reference_price.quote_unix (u32)
+.equ VAULT_PROFILE_OFF, 156       # profile (LiquidityProfile, PROFILE_SIZE B)
 
 # --- constants ---
 .equ FLUSH_BIT, 0x8000000000000000
@@ -275,7 +275,7 @@ quote_write:
     # separately.
     #
     # The STORE is the weaker claim: &vault is only 4-aligned (VAULT_SIZE
-    # 692 and SLAB_ITEMS_OFF 268 are both ≡ 4 mod 8, so every even sector
+    # 700 and SLAB_ITEMS_OFF 276 are both ≡ 4 mod 8, so every even sector
     # sits at a 4-aligned address), which means the stxdw at RP_STAMP_OFF
     # above has always been a 4-aligned 8-byte store.
     #

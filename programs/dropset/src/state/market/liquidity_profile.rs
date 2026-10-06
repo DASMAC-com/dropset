@@ -30,7 +30,7 @@ pub const PROFILE_SIZE: usize = size_of::<LiquidityProfile>();
 // the build here rather than leaving the assembly copying to the wrong
 // offset or the wrong width. `PROFILE_SIZE` is cross-checked against the
 // per-level derivation `layout.rs` asserts (`2 * N_LEVELS * 14`).
-const _: () = assert!(VAULT_PROFILE_OFF == 148);
+const _: () = assert!(VAULT_PROFILE_OFF == 156);
 const _: () = assert!(PROFILE_SIZE == 224);
 const _: () = assert!(PROFILE_SIZE == 2 * N_LEVELS * 14);
 
