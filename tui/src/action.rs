@@ -27,7 +27,7 @@
 //! when the thing it would create is already there (see `Outcome`). A failed
 //! read refuses too, rather than reading as "absent".
 
-use crate::accounts::{self, ChainState, Phase};
+use crate::accounts::{self, ChainState, Phase, VaultSeat};
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::deploy;
@@ -284,6 +284,15 @@ impl Action {
         }
     }
 
+    /// Whether the action must wait for a verified chain identity (see
+    /// [`crate::cluster::Identity`]). Everything that writes does. The two
+    /// exceptions are the explorer, which only reads, and the wipe, which
+    /// discards only this process's own ledger — the operator's way out when
+    /// the identity check has refused everything else.
+    pub fn needs_verified_chain(self) -> bool {
+        !matches!(self, Action::OpenExplorer | Action::Wipe)
+    }
+
     /// One-line reason the action is absent on `cluster` (only meaningful when
     /// [`Action::available_on`] is false).
     pub fn unavailable_reason(self, cluster: Cluster) -> &'static str {
@@ -513,6 +522,12 @@ pub fn dispatch(
                     deploy::deploy_program(log, &repo_root, &rpc_url, &wallet_path, &pubkey)?;
                 }
                 let client = chain::rpc(&rpc_url);
+                // Localnet only, and the code below relies on it: it iterates
+                // the localnet `market::PAIRS` (every mint keypair-backed) and
+                // mints both legs. The cluster gate keeps it off mainnet;
+                // `seed_vault` would refuse a minting mode on a real mint
+                // anyway.
+                //
                 // Sequential prelude — everything the parallel phase must not
                 // race on. The registry and the shared USDC quote mint are
                 // created once here (both create-once accounts). The shared
@@ -1230,7 +1245,7 @@ fn do_create_vault(
     let market_address = chain::market_pda(&base_mint, &quote_mint);
     let seats = accounts::vault_seats_fresh(client, &market_address)?
         .context("market not found — create the market first")?;
-    if let Some(seat) = accounts::seats_led_by(&seats, &leader.pubkey()).first() {
+    if let Some(seat) = existing_seat(&seats, &leader.pubkey()) {
         return Ok(Outcome::AlreadyThere(format!(
             "leader {} already leads vault {} on the {} market — never opening a second",
             leader.pubkey(),
@@ -1265,16 +1280,50 @@ fn do_create_vault(
     )))
 }
 
-/// Seed `leader`'s vault on `config`'s market once: set the quote ladder and
-/// make the opening deposit (see [`market::seed_vault`]). The market stays
-/// **dark** until a maker bot quotes it — `seed_vault` documents why that is
-/// the correct opening state.
+/// The leader's existing vault among `seats`, if any — what makes
+/// [`do_create_vault`] refuse. Any vault at all counts: one is the most a
+/// leader may lead.
+fn existing_seat(seats: &[VaultSeat], leader: &Pubkey) -> Option<VaultSeat> {
+    accounts::seats_led_by(seats, leader).first().copied()
+}
+
+/// What [`do_deposit`] found for the leader among a market's vaults.
+#[derive(Debug, PartialEq, Eq)]
+enum DepositSeat {
+    /// Exactly one vault, empty — the one to seed.
+    Fund(VaultSeat),
+    /// Exactly one vault, already holding a deposit — nothing to do.
+    Seeded(VaultSeat),
+    /// No vault for this leader — create it first.
+    NoVault,
+    /// More than one — ambiguous, and guessing which to fund is not this
+    /// step's call.
+    Ambiguous(usize),
+}
+
+/// Classify the leader's vaults on a market for the deposit step.
+fn deposit_seat(seats: &[VaultSeat], leader: &Pubkey) -> DepositSeat {
+    match accounts::seats_led_by(seats, leader)[..] {
+        [] => DepositSeat::NoVault,
+        [seat] if seat.seeded => DepositSeat::Seeded(seat),
+        [seat] => DepositSeat::Fund(seat),
+        ref many => DepositSeat::Ambiguous(many.len()),
+    }
+}
+
+/// Seed `leader`'s vault on `config`'s market: set the quote ladder and make
+/// the opening deposit (see [`market::seed_vault`]). The market stays **dark**
+/// until a maker bot quotes it — `seed_vault` documents why that is the correct
+/// opening state.
 ///
-/// One-shot, read fresh: the leader's vault is located in the market slab
-/// **by leader**, never by an assumed sector index, and a vault that already
-/// holds a deposit is `AlreadyThere`, so a retry never deposits twice. A
-/// leader with no vault, or with more than one, is refused outright — the
-/// second is ambiguous, and guessing which to fund is not this step's call.
+/// Read fresh, and classified by [`deposit_seat`]: the leader's vault is
+/// located in the market slab **by leader**, never by an assumed sector index,
+/// and a vault that already holds a deposit is `AlreadyThere`, so a retry never
+/// deposits on top of a deposit. Note the bound: "holds a deposit" is read off
+/// the vault's shares and inventory, so a vault later drained back to empty
+/// reads as unseeded and may be seeded again — deliberately, since it is then
+/// an empty vault like any other. A leader with no vault, or with more than
+/// one, is refused outright.
 #[allow(clippy::too_many_arguments)]
 fn do_deposit(
     client: &solana_client::rpc_client::RpcClient,
@@ -1290,26 +1339,25 @@ fn do_deposit(
     let market_address = chain::market_pda(&base_mint, &quote_mint);
     let seats = accounts::vault_seats_fresh(client, &market_address)?
         .context("market not found — create the market first")?;
-    let seat = match accounts::seats_led_by(&seats, &leader.pubkey())[..] {
-        [] => anyhow::bail!(
+    let seat = match deposit_seat(&seats, &leader.pubkey()) {
+        DepositSeat::Fund(seat) => seat,
+        DepositSeat::Seeded(seat) => {
+            return Ok(Outcome::AlreadyThere(format!(
+                "the {} vault ({}) already holds a deposit",
+                config.base.symbol, seat.idx
+            )))
+        }
+        DepositSeat::NoVault => anyhow::bail!(
             "leader {} leads no vault on the {} market — create the vault first",
             leader.pubkey(),
             config.base.symbol
         ),
-        [seat] => seat,
-        ref many => anyhow::bail!(
-            "leader {} leads {} vaults on the {} market — refusing to guess which to seed",
+        DepositSeat::Ambiguous(n) => anyhow::bail!(
+            "leader {} leads {n} vaults on the {} market — refusing to guess which to seed",
             leader.pubkey(),
-            many.len(),
             config.base.symbol
         ),
     };
-    if seat.seeded {
-        return Ok(Outcome::AlreadyThere(format!(
-            "the {} vault ({}) already holds a deposit",
-            config.base.symbol, seat.idx
-        )));
-    }
     ensure_funded(client, &wallet.pubkey(), cluster, log)?;
     // The treasuries and decimals `seed_vault` needs. A failed read here is
     // after the existence check, so it can only abort, never double-send.
@@ -1553,6 +1601,110 @@ mod tests {
         assert_eq!(
             recommended_next(Phase::VaultUnseeded, M),
             Some(Action::Deposit)
+        );
+    }
+
+    fn seat(idx: u32, leader: Pubkey, seeded: bool) -> VaultSeat {
+        VaultSeat {
+            idx,
+            leader,
+            seeded,
+        }
+    }
+
+    #[test]
+    fn create_vault_refuses_when_the_leader_already_leads_one() {
+        // The one guard against a second vault for a leader: the program does
+        // not enforce one-vault-per-leader, so this is it.
+        let me = Pubkey::new_unique();
+        let stranger = Pubkey::new_unique();
+        // A stranger's vault on the market does not block ours.
+        assert_eq!(existing_seat(&[seat(0, stranger, true)], &me), None);
+        // Ours, seeded or not, does.
+        let seats = [seat(0, stranger, true), seat(4, me, false)];
+        assert_eq!(existing_seat(&seats, &me), Some(seats[1]));
+    }
+
+    #[test]
+    fn deposit_seeds_only_the_leaders_single_empty_vault() {
+        let me = Pubkey::new_unique();
+        let stranger = Pubkey::new_unique();
+        assert_eq!(
+            deposit_seat(&[seat(0, stranger, false)], &me),
+            DepositSeat::NoVault
+        );
+        assert_eq!(
+            deposit_seat(&[seat(0, stranger, false), seat(2, me, false)], &me),
+            DepositSeat::Fund(seat(2, me, false))
+        );
+        // Never on top of a deposit — the retry case.
+        assert_eq!(
+            deposit_seat(&[seat(2, me, true)], &me),
+            DepositSeat::Seeded(seat(2, me, true))
+        );
+        // Two under one leader is ambiguous, not "pick the first".
+        assert_eq!(
+            deposit_seat(&[seat(2, me, false), seat(5, me, false)], &me),
+            DepositSeat::Ambiguous(2)
+        );
+    }
+
+    #[test]
+    fn over_roster_resumes_skips_and_refuses_when_nothing_was_left() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let log = Logger::new(tx);
+        // Every pair already there: the command did nothing, so it refuses.
+        let err = over_roster(L, "market", &log, |c| {
+            Ok(Outcome::AlreadyThere(c.base.symbol.into()))
+        })
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("refused"), "{err:#}");
+        // A partial run: the already-present pairs are skipped, the rest done.
+        let mut first = true;
+        let summary = over_roster(L, "market", &log, |c| {
+            Ok(if std::mem::take(&mut first) {
+                Outcome::AlreadyThere(c.base.symbol.into())
+            } else {
+                Outcome::Done(c.base.symbol.into())
+            })
+        })
+        .unwrap();
+        let total = market::roster(L).len();
+        assert_eq!(
+            summary,
+            format!("{} market(s) done, 1 already on-chain", total - 1)
+        );
+        // The first real error stops the loop: nothing after it runs.
+        let mut calls = 0;
+        assert!(over_roster(L, "market", &log, |_| {
+            calls += 1;
+            anyhow::bail!("send failed")
+        })
+        .is_err());
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn every_write_waits_for_a_verified_chain() {
+        for a in ALL_ACTIONS {
+            let exempt = matches!(a, Action::OpenExplorer | Action::Wipe);
+            assert_eq!(a.needs_verified_chain(), !exempt, "{:?}", a.label());
+        }
+    }
+
+    #[test]
+    fn bootstrap_order_is_the_five_ceremony_steps() {
+        // Pinned here because `each_bootstrap_step_is_enabled_in_exactly_one_
+        // phase` iterates this constant, so it cannot notice a step missing.
+        assert_eq!(
+            BOOTSTRAP,
+            [
+                Action::Deploy,
+                Action::InitRegistry,
+                Action::CreateMarket,
+                Action::CreateVault,
+                Action::Deposit,
+            ]
         );
     }
 

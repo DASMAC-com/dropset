@@ -91,8 +91,9 @@ pub struct MarketView {
     pub active_count: u32,
     /// `(sector_index, leader)` for every live vault — drives teardown.
     pub live_vaults: Vec<(u32, Pubkey)>,
-    /// How many of the live vaults hold no shares yet — opened, never seeded.
-    pub unseeded_vaults: u32,
+    /// The leader of every live vault that holds no deposit yet — opened,
+    /// never seeded (or drained back to empty).
+    pub unseeded_leaders: Vec<Pubkey>,
     /// The `reference_price.quote_slot` of the first live vault — the one whose
     /// leader the accounts pane shows as the MM bot. Drives the leader's
     /// liveness (freshness against the poll's head slot). `None` when the market
@@ -179,6 +180,13 @@ pub struct ChainState {
     /// can measure progress against what *should* exist. Empty means no
     /// roster is known, and the phase falls back to the discovered markets.
     pub roster_markets: Vec<Pubkey>,
+    /// The session's vault leader, set by the caller beside
+    /// [`Self::roster_markets`]. When known, the vault phases count only
+    /// **this** leader's vaults — the same key the ceremony steps check — so a
+    /// vault someone else opened (`create_vault` is permissionless) neither
+    /// greys out "Create vault" nor pins the phase at unseeded. `None` falls
+    /// back to counting every vault.
+    pub roster_leader: Option<Pubkey>,
 }
 
 impl ChainState {
@@ -220,9 +228,17 @@ impl ChainState {
         if tracked.is_empty() {
             return Phase::MarketAbsent;
         }
-        if tracked.iter().any(|m| m.active_count == 0) {
+        let has_vault = |m: &MarketView| match self.roster_leader {
+            Some(leader) => m.live_vaults.iter().any(|(_, l)| *l == leader),
+            None => m.active_count > 0,
+        };
+        let unseeded = |m: &MarketView| match self.roster_leader {
+            Some(leader) => m.unseeded_leaders.contains(&leader),
+            None => !m.unseeded_leaders.is_empty(),
+        };
+        if tracked.iter().any(|m| !has_vault(m)) {
             Phase::VaultAbsent
-        } else if tracked.iter().any(|m| m.unseeded_vaults > 0) {
+        } else if tracked.iter().any(|m| unseeded(m)) {
             Phase::VaultUnseeded
         } else {
             Phase::Ready
@@ -568,7 +584,7 @@ fn read_markets(
         // the first one (the vault the accounts pane surfaces as the MM bot),
         // its quote slot for the leader's liveness.
         let mut live_vaults: Vec<(u32, Pubkey)> = Vec::new();
-        let mut unseeded_vaults = 0u32;
+        let mut unseeded_leaders: Vec<Pubkey> = Vec::new();
         let mut leader_quote_slot: Option<u32> = None;
         let mut leader_reference: Option<Price> = None;
         for (idx, v) in view.active_vaults() {
@@ -585,7 +601,7 @@ fn read_markets(
             }
             live_vaults.push((idx, Pubkey::new_from_array(v.leader)));
             if !is_seeded(v) {
-                unseeded_vaults += 1;
+                unseeded_leaders.push(Pubkey::new_from_array(v.leader));
             }
         }
 
@@ -639,7 +655,7 @@ fn read_markets(
             quote_treasury_lamports: lamports(1),
             active_count: header.active_count.get(),
             live_vaults,
-            unseeded_vaults,
+            unseeded_leaders,
             leader_quote_slot,
             reference_price,
             depositors,
@@ -670,7 +686,7 @@ mod tests {
             quote_treasury_lamports: 0,
             active_count,
             live_vaults: Vec::new(),
-            unseeded_vaults: 0,
+            unseeded_leaders: Vec::new(),
             leader_quote_slot: None,
             reference_price: None,
             depositors: Vec::new(),
@@ -767,7 +783,7 @@ mod tests {
         );
         // A vault that exists but holds nothing yet gates on the deposit step.
         let mut unseeded = market(1, 2);
-        unseeded.unseeded_vaults = 1;
+        unseeded.unseeded_leaders = vec![Pubkey::new_unique()];
         assert_eq!(
             ready_state(vec![market(1, 1), unseeded]).phase(),
             Phase::VaultUnseeded
@@ -815,6 +831,52 @@ mod tests {
         ];
         assert_eq!(seats_led_by(&seats, &me), vec![seats[1]]);
         assert!(seats_led_by(&seats, &Pubkey::new_unique()).is_empty());
+        // Two seats under one leader both come back, in order — the shape the
+        // deposit step must refuse as ambiguous rather than pick from.
+        let doubled = [seats[1], VaultSeat { idx: 7, ..seats[1] }];
+        assert_eq!(seats_led_by(&doubled, &me).len(), 2);
+    }
+
+    #[test]
+    fn phase_counts_only_the_session_leaders_vaults() {
+        // `create_vault` is permissionless, so a stranger can open a vault on a
+        // roster market. Counted, it greyed out "Create vault" for a leader
+        // who had none — unrecoverable on mainnet.
+        let me = Pubkey::new_unique();
+        let stranger = Pubkey::new_unique();
+        let mut theirs = market(1, 1);
+        theirs.live_vaults = vec![(0, stranger)];
+        let mut state = ready_state(vec![theirs]);
+        state.roster_markets = vec![Pubkey::new_from_array([1; 32])];
+        state.roster_leader = Some(me);
+        assert_eq!(state.phase(), Phase::VaultAbsent);
+        // Their empty vault must not pin the phase at unseeded either, once
+        // ours exists and is seeded.
+        state.markets[0].live_vaults.push((1, me));
+        state.markets[0].unseeded_leaders = vec![stranger];
+        assert_eq!(state.phase(), Phase::Ready);
+        // Ours unseeded is what gates on the deposit step.
+        state.markets[0].unseeded_leaders.push(me);
+        assert_eq!(state.phase(), Phase::VaultUnseeded);
+        // Without a known leader, every vault counts (the old behavior).
+        state.roster_leader = None;
+        assert_eq!(state.phase(), Phase::VaultUnseeded);
+    }
+
+    #[test]
+    fn a_vault_is_seeded_by_any_shares_or_inventory() {
+        // The deposit step's never-twice guard rests on this predicate.
+        use bytemuck::Zeroable;
+        let mut v = Vault::zeroed();
+        assert!(!is_seeded(&v));
+        v.total_shares = 1u64.into();
+        assert!(is_seeded(&v));
+        let mut v = Vault::zeroed();
+        v.base_atoms = 5u64.into();
+        assert!(is_seeded(&v));
+        let mut v = Vault::zeroed();
+        v.quote_atoms = 5u64.into();
+        assert!(is_seeded(&v));
     }
 
     #[test]

@@ -138,22 +138,16 @@ const fn fx_market(
     decimals: u8,
     reference_price: f64,
 ) -> PairConfig {
-    PairConfig {
-        base: MintSpec {
+    fx_pair(
+        MintSpec {
             symbol,
             key: MintKey::Keypair(keypair_file),
             decimals,
         },
-        quote: MintSpec {
-            symbol: "USDC",
-            key: MintKey::Keypair("keys/USDC.json"),
-            decimals: 6,
-        },
-        leader: LeaderKey::Keypair("keys/EEEE.json"),
+        MintKey::Keypair("keys/USDC.json"),
+        LeaderKey::Keypair("keys/EEEE.json"),
         reference_price,
-        // Never expires in wall time; re-armed by the maker bot.
-        expiry_offset_secs: WallSpan::UNBOUNDED,
-    }
+    )
 }
 
 /// Circle's mainnet USDC — the quote leg of every mainnet pair, and the mint
@@ -161,28 +155,46 @@ const fn fx_market(
 pub const MAINNET_USDC: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
 /// A mainnet `<token>/USDC` pair over a real, existing base mint, led by the
-/// operator-supplied leader. Shares [`fx_market`]'s ladder, expiry and seed
-/// reference so a mainnet vault opens with the same shape and sizing as its
-/// localnet rehearsal.
+/// operator-supplied leader. Built through the same [`fx_pair`] as
+/// [`fx_market`], so the two rosters differ only in where their addresses and
+/// leader come from — a mainnet vault opens with the same expiry and seed
+/// sizing as its localnet rehearsal.
 const fn mainnet_fx_market(
     symbol: &'static str,
     mint: Pubkey,
     decimals: u8,
     reference_price: f64,
 ) -> PairConfig {
-    PairConfig {
-        base: MintSpec {
+    fx_pair(
+        MintSpec {
             symbol,
             key: MintKey::Existing(mint),
             decimals,
         },
+        MintKey::Existing(MAINNET_USDC),
+        LeaderKey::Operator,
+        reference_price,
+    )
+}
+
+/// The one `<token>/USDC` constructor both rosters share. USDC is 6 decimals
+/// on every cluster; only where its address comes from (`usdc`) differs.
+const fn fx_pair(
+    base: MintSpec,
+    usdc: MintKey,
+    leader: LeaderKey,
+    reference_price: f64,
+) -> PairConfig {
+    PairConfig {
+        base,
         quote: MintSpec {
             symbol: "USDC",
-            key: MintKey::Existing(MAINNET_USDC),
+            key: usdc,
             decimals: 6,
         },
-        leader: LeaderKey::Operator,
+        leader,
         reference_price,
+        // Never expires in wall time; re-armed by the maker bot.
         expiry_offset_secs: WallSpan::UNBOUNDED,
     }
 }
@@ -450,8 +462,8 @@ pub fn ensure_quote_mints(
     let mut seen = std::collections::HashSet::new();
     for config in PAIRS {
         if seen.insert(config.quote.address(repo_root)?) {
-            ensure_mint(client, wallet, repo_root, &config.quote, log)
-                .with_context(|| format!("create shared quote mint {}", config.quote.symbol))?;
+            // `ensure_mint` names the mint in its own error context.
+            ensure_mint(client, wallet, repo_root, &config.quote, log)?;
         }
     }
     Ok(())
@@ -460,7 +472,7 @@ pub fn ensure_quote_mints(
 /// Pre-fund each shared leader's quote (USDC) ATA once, up front, with the
 /// total quote deposit across the markets that share it — so the parallel
 /// bootstrap can skip the per-market quote top-up entirely (see
-/// [`seed_vault`]'s `prefunded_quote`).
+/// [`Funding::MintBaseOnly`]).
 ///
 /// Every FX pair deposits from the one leader's one USDC ATA in the identical
 /// amount, so if each market minted its own quote top-up concurrently, those
@@ -521,8 +533,9 @@ pub enum Funding {
 }
 
 /// Bring the market's freshly-created vault up: set the quote ladder, then
-/// fund the leader's ATAs (from the admin mint authority) and seed the vault
-/// with `deposit_leader`. The `leader` must be `config`'s leader key — it
+/// seed the vault with `deposit_leader` — first minting the leader's legs from
+/// the admin mint authority under the localnet `Mint*` modes, or checking the
+/// leader already holds them under [`Funding::LeaderHeld`]. The `leader` must be `config`'s leader key — it
 /// co-signs each instruction as the vault's quote authority / leader, while
 /// `wallet` (admin) pays the fees.
 ///
@@ -558,19 +571,21 @@ pub fn seed_vault(
     funding: Funding,
     log: &Logger,
 ) -> Result<()> {
-    // 1. Quote ladder — a multi-rung symmetric ladder at the default spread, so
-    //    the maker's first quote fans the book out across several price levels
-    //    (not the single rung it would otherwise start from) at the tighter
-    //    default spread. Shape only: it rests inert, pricing nothing, until a
-    //    reference price is stamped.
-    log.log("set_liquidity_profile");
-    let bytes = ladder_profile_bytes(
-        &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
-        config.expiry_offset_secs,
-    );
-    // Check the leader can cover the deposit before the first send, so an
-    // underfunded mainnet leader is refused with nothing written rather than
-    // left with a ladder and no inventory.
+    // 0. Refuse before the first send. A `Mint*` mode against a real
+    //    (`Existing`) mint can only fail — the admin is not its authority — and
+    //    would fail after the ladder had landed; the caller picks `Funding` by
+    //    cluster today, and this makes the rule hold by construction instead.
+    //    Under `LeaderHeld`, check the leader can cover the deposit, so an
+    //    underfunded (or frozen) mainnet leader is refused with nothing written
+    //    rather than left with a ladder and no inventory.
+    let existing = |s: &MintSpec| matches!(s.key, MintKey::Existing(_));
+    if funding != Funding::LeaderHeld && (existing(&config.base) || existing(&config.quote)) {
+        anyhow::bail!(
+            "the {} pair references real mints, which are never minted — fund the \
+             leader and deposit with `Funding::LeaderHeld`; nothing was sent",
+            config.base.symbol
+        );
+    }
     let (base_atoms, quote_atoms) = seed_deposit(config);
     if funding == Funding::LeaderHeld {
         for (mint, need, symbol) in [
@@ -588,6 +603,17 @@ pub fn seed_vault(
             }
         }
     }
+
+    // 1. Quote ladder — a multi-rung symmetric ladder at the default spread, so
+    //    the maker's first quote fans the book out across several price levels
+    //    (not the single rung it would otherwise start from) at the tighter
+    //    default spread. Shape only: it rests inert, pricing nothing, until a
+    //    reference price is stamped.
+    log.log("set_liquidity_profile");
+    let bytes = ladder_profile_bytes(
+        &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
+        config.expiry_offset_secs,
+    );
     let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, vault_idx, bytes);
     chain::send_logged(
         client,
@@ -599,7 +625,9 @@ pub fn seed_vault(
     )
     .context("set_liquidity_profile")?;
 
-    // 2. Fund the leader's ATAs (admin is the mint authority), then seed. The
+    // 2. Under the localnet `Mint*` modes, fund the leader's ATAs (admin is
+    //    the mock mints' authority), then seed; under `LeaderHeld`, step 0
+    //    already confirmed the legs are there. The
     //    base leg is minted under either `Mint*` mode — each market's base
     //    mint / amount is unique, so it can't collide across parallel workers.
     //    The quote leg is minted only under `MintBoth`: see `Funding`.

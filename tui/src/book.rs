@@ -285,7 +285,7 @@ mod tests {
             quote_treasury_lamports: 0,
             active_count: 1,
             live_vaults: Vec::new(),
-            unseeded_vaults: 0,
+            unseeded_leaders: Vec::new(),
             leader_quote_slot: None,
             reference_price: None,
             depositors: Vec::new(),

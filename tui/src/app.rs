@@ -139,6 +139,12 @@ pub struct App {
     /// The roster's market PDAs, resolved once at startup and stamped onto
     /// every poll so the phase measures progress against what should exist.
     roster_markets: Vec<Pubkey>,
+    /// The session's vault leader (localnet's committed role key, or the
+    /// operator's `--leader`), stamped onto every poll beside
+    /// `roster_markets` so the vault phases count only this leader's vaults.
+    /// Every roster pair shares one leader on both clusters, so the first
+    /// pair's answers for all. `None` on mainnet without `--leader`.
+    roster_leader: Option<Pubkey>,
     /// Which chain is behind the endpoint. A mainnet session starts
     /// [`Identity::Verified`] (its genesis was checked at launch); a localnet
     /// one starts [`Identity::Unchecked`] and is classified on the first poll
@@ -233,6 +239,10 @@ impl App {
         // Resolve the known mint tickers once — used to label the accounts pane.
         let mint_symbols = market::mint_symbols(&ctx.repo_root, ctx.cluster);
         let roster_markets = market::roster_markets(&ctx.repo_root, ctx.cluster);
+        let roster_leader = market::roster(ctx.cluster)
+            .first()
+            .and_then(|c| market::leader(&ctx.repo_root, c, ctx.leader.as_ref()).ok())
+            .map(|k| k.pubkey());
         let identity = if ctx.cluster.is_mainnet() {
             Identity::Verified
         } else {
@@ -251,6 +261,7 @@ impl App {
             swapper,
             mint_symbols,
             roster_markets,
+            roster_leader,
             identity,
             selected_market: 0,
             swap_units: action::DEFAULT_PROBE_UNITS,
@@ -349,8 +360,13 @@ impl App {
         // construction" has to mean the loop cannot fire it, not merely that
         // the entry point refuses to arm it. Two cheap checks are worth more
         // than one, for a path that would deploy a program with real funds.
+        // Waits for the identity check too, rather than firing into its
+        // refusal: the flag is cleared on the first fire, so a fire that a
+        // still-unverified identity refused would lose the turnkey bootstrap
+        // for the whole session.
         if self.auto_bootstrap
             && !self.job_running
+            && self.identity == Identity::Verified
             && Action::BootstrapAll.available_on(self.ctx.cluster)
             && Action::BootstrapAll.enabled(self.chain.phase(), self.ctx.cluster)
         {
@@ -917,10 +933,9 @@ impl App {
             );
             return;
         }
-        // Every write waits on a verified chain identity. The explorer reads
-        // and the wipe discards only this process's own ledger, so both stay
-        // reachable — the wipe is how an operator recovers.
-        if !matches!(action, Action::OpenExplorer | Action::Wipe) {
+        // Every write waits on a verified chain identity; see
+        // `Action::needs_verified_chain` for the two exemptions.
+        if action.needs_verified_chain() {
             if let Some(reason) = self.identity.write_refusal() {
                 self.log(LogKind::Err, format!("{} — {reason}", action.label()));
                 return;
@@ -1079,6 +1094,7 @@ impl App {
                 &self.mint_symbols,
             );
             self.chain.roster_markets = self.roster_markets.clone();
+            self.chain.roster_leader = self.roster_leader;
             self.check_identity();
             let log = Logger::new(self.tx.clone());
             self.bots.reap(&log);

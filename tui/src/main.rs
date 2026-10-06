@@ -69,14 +69,24 @@ fn main() -> Result<()> {
             "--leader is mainnet-only — the localnet roster leads with its committed role key"
         ),
         Some(path) => {
-            let kp = solana_keypair::read_keypair_file(path)
-                .map_err(|e| anyhow!("read leader keypair {path}: {e}"))?;
+            let kp = wallet::load_leader(path)?;
             if kp.pubkey() == wallet.pubkey() {
                 bail!("--leader must differ from --wallet: the program rejects one key as both admin and leader");
             }
             Some(kp)
         }
     };
+
+    // A committed keypair's secret is public, so on mainnet neither role may
+    // be one. This also makes `--wallet` mandatory there: the default is the
+    // committed localnet admin.
+    if args.cluster.is_mainnet() {
+        let committed = wallet::committed_pubkeys(&repo_root);
+        wallet::refuse_committed(&wallet.pubkey(), "--wallet", &committed)?;
+        if let Some(leader) = &leader {
+            wallet::refuse_committed(&leader.pubkey(), "--leader", &committed)?;
+        }
+    }
 
     let rpc_url = args.cluster.rpc_url()?;
     if args.cluster.is_mainnet() {
