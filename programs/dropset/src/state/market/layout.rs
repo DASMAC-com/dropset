@@ -183,10 +183,8 @@ pub struct Vault {
     /// **Vault** for rotation semantics.
     pub quote_authority: Address,
     /// Per-market vault number, stamped at `CreateVault` from
-    /// [`MarketHeader::next_vault_seq`]. The vault's identity is the pair
-    /// `(market, seq)`: a leader rotation keeps it, a reclaim-and-reuse of
-    /// the sector stamps a new one. `0` means never stamped. Addressing
-    /// stays by sector index; no instruction takes `seq` as input.
+    /// [`MarketHeader::next_vault_seq`]; with the market, the vault's
+    /// identity. A rotation keeps it, a reused sector gets a new one.
     pub seq: PodU64,
     /// Packed `(stamp, price, quote_slot, quote_unix)` — the two expiry
     /// datums plus the price, written together on `SetReferencePrice`.
@@ -513,8 +511,8 @@ const _: () = assert!(core::mem::offset_of!(Vault, profile) == 156);
 // whose bytes a coordinated reorder would silently re-interpret. Pinning
 // `ReferencePrice.stamp` at 0 additionally closes a compensating pair:
 // `asm_offsets.rs` checks `reference_price + stamp` as a sum, which a
-// 76-plus-4 reorder would satisfy. `seq` is pinned beside them as the
-// vault's identity field, which off-chain readers decode at this offset.
+// 76-plus-4 reorder would satisfy. `seq` is pinned beside them because it
+// is the vault's identity, which a reorder would silently re-interpret.
 const _: () = assert!(core::mem::offset_of!(Vault, quote_authority) == 40);
 const _: () = assert!(core::mem::offset_of!(Vault, seq) == 72);
 const _: () = assert!(core::mem::offset_of!(Vault, reference_price) == 80);

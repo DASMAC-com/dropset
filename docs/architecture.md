@@ -580,10 +580,10 @@ pointers (`next` / `prev`) thread it into one of three lists (see
   vault's `seq`; a reclaim-and-reuse of the sector is a **new** vault
   with a new one. `sector_idx` remains the addressing handle every
   instruction takes — no instruction takes `seq` — and user surfaces
-  render "Vault #N" rather than the sector index. The counter is a `u64`
+  are to render "Vault #N", never the sector index. The counter is a `u64`
   because exhaustion would permanently brick vault creation on the
   market, and a `u32` is reachable at a zero create fee. Re-creating a
-  market restarts the sequence; an indexer fences that by time.
+  market restarts the sequence; an indexer must fence that by time.
 
 **`ReferencePrice` — stamp encoding.** `stamp` packs `market.nonce` at
 the last `SetReferencePrice` / `SetLiquidityProfile`, OR'd with

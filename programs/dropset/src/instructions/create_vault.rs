@@ -161,17 +161,6 @@ impl CreateVault {
         // detached (`next == prev == NULL_SECTOR`).
         let sector = self.market.allocate_sector(self.payer.as_ref())?;
 
-        // Stamp the new sector BEFORE threading it onto the active DLL
-        // (WARNING 1e). `swap.rs` relies on the invariant "a vault on
-        // the active DLL has a non-default leader"; linking first and
-        // stamping after would briefly publish a sector on the active
-        // list with `leader == Address::default()`. No observer can
-        // race us inside a single transaction, but ordering the writes
-        // so the invariant holds at every step keeps the matching
-        // engine's assumption honest. `allocate_sector` zeroed the
-        // sector, so we only write the leader-controlled fields.
-        let market_addr = *self.market.address();
-        let min_leader_share = self.market.default_min_leader_share.get();
         // Hand out the next vault number. Checked, though a `u64` cannot
         // be exhausted in practice: a wrap would re-issue a live identity.
         let seq = self
@@ -181,6 +170,18 @@ impl CreateVault {
             .checked_add(1)
             .ok_or(DropsetError::MathOverflow)?;
         self.market.next_vault_seq = seq.into();
+
+        // Stamp the new sector BEFORE threading it onto the active DLL
+        // (WARNING 1e). `swap.rs` relies on the invariant "a vault on
+        // the active DLL has a non-default leader"; linking first and
+        // stamping after would briefly publish a sector on the active
+        // list with `leader == Address::default()`. No observer can
+        // race us inside a single transaction, but ordering the writes
+        // so the invariant holds at every step keeps the matching
+        // engine's assumption honest. `allocate_sector` zeroed the
+        // sector, so we only write the fields this handler sets.
+        let market_addr = *self.market.address();
+        let min_leader_share = self.market.default_min_leader_share.get();
         {
             // `sector` came straight from `allocate_sector`, so it is
             // in range by construction; the accessor's bounds check is a
