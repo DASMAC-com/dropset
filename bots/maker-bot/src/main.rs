@@ -33,10 +33,11 @@ use dropset_feeds::{
     run_until_with_metrics, HttpClient, RunConfig, Sink, Source, MAX_ERROR_CHARS, PARKED_SOURCES,
 };
 use dropset_maker_bot::config::{
-    BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS, QUOTE_KEYPAIR_FILE,
-    USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
+    published_product, BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS,
+    QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
 };
 use dropset_maker_bot::context::Context as BotContext;
+use dropset_maker_bot::fair_price::{FairPriceRow, FairPriceSource};
 use dropset_maker_bot::fx_store::{self, FxStoreSource};
 use dropset_maker_bot::model::fair_mid::build_legs;
 use dropset_maker_bot::quote_state::QuoteStateStore;
@@ -461,6 +462,9 @@ struct FeedRoster {
     /// tokens tracking one fiat share a currency, so this is not one per
     /// market.
     currencies: Vec<String>,
+    /// Product ids the fair-price estimator publishes, for the markets this
+    /// run quotes that it covers ([`published_product`]).
+    published: Vec<String>,
 }
 
 impl FeedRoster {
@@ -514,6 +518,11 @@ impl FeedRoster {
         coinmarketcap.sort_unstable();
         coinmarketcap.dedup();
 
+        let published: Vec<String> = markets
+            .iter()
+            .filter_map(|m| published_product(m.symbol).map(str::to_string))
+            .collect();
+
         Self {
             pyth,
             kraken,
@@ -521,6 +530,7 @@ impl FeedRoster {
             coingecko,
             coinmarketcap,
             currencies,
+            published,
         }
     }
 }
@@ -691,6 +701,20 @@ fn spawn_price_feeds(
             )
         })?
     };
+    // The estimator's published rows, on the same pool: one database, two
+    // tables. Spawned even when this run quotes no published market — an empty
+    // product list returns an empty snapshot, which costs one cheap query per
+    // poll and keeps the receiver unconditional.
+    let fair_price = spawn_feed(
+        rt,
+        FairPriceSource::new("store:fair-price", pool.clone(), roster.published.clone()),
+        RunConfig {
+            poll_interval: cfg.fair_price_poll,
+            error_backoff: FEED_ERROR_BACKOFF,
+        },
+        telemetry,
+        HealthRow::Report,
+    );
     let fx_store = spawn_feed(
         rt,
         FxStoreSource::fx(
@@ -718,6 +742,7 @@ fn spawn_price_feeds(
         frankfurter,
         erapi,
         fx_store,
+        fair_price,
     })
 }
 
@@ -798,6 +823,11 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     // unreachable database: a dry run is a wiring check, and reporting "no
     // rows" is the diagnosis rather than a reason to refuse to run. The
     // fail-closed rule governs quoting, and a dry run does not quote.
+    //
+    // The published fair price rides the same pool, so suppressing `fx-store`
+    // suppresses it too and every published market then renders as stalled —
+    // which is what the live bot would do without that database.
+    let mut fair_rows: Vec<FairPriceRow> = Vec::new();
     let fx_store_rows: Vec<_> = if drop("fx-store") {
         Vec::new()
     } else {
@@ -837,6 +867,19 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         };
         match pool {
             Some(pool) => {
+                fair_rows = rt
+                    .block_on(
+                        FairPriceSource::new(
+                            "store:fair-price",
+                            pool.clone(),
+                            roster.published.clone(),
+                        )
+                        .latest(),
+                    )
+                    .unwrap_or_else(|e| {
+                        eprintln!("[dry-run] the published fair price did not answer: {e}");
+                        Vec::new()
+                    });
                 let products = roster
                     .currencies
                     .iter()
@@ -1065,6 +1108,18 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
             fx_col,
             describe_leg(&fair.crypto_leg),
         );
+        // A published market does not quote off the row above — the live bot
+        // reads the estimator instead — so its actual verdict gets its own
+        // line, from the same judgment the tick loop applies. The inline row
+        // stays as the wiring check it always was.
+        if let Some(product) = published_product(m.symbol) {
+            let row = fair_rows.iter().find(|r| r.product_id == product);
+            println!(
+                "  {:<10}  live: {}",
+                "",
+                tasks::describe_published_for_dry_run(row, m.requires_live_tape, dry_run_now_unix)
+            );
+        }
     }
     Ok(())
 }

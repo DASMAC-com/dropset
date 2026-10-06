@@ -21,20 +21,25 @@
 //! used — it bumps on every re-quote, so it can't tell a fill from a re-quote.)
 
 use crate::chain;
-use crate::config::{BotConfig, MarketConfig, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR};
+use crate::config::{
+    published_product, BotConfig, MarketConfig, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
+};
 use crate::context::{Context, ProfileKind, VaultSnapshot};
+use crate::fair_price::{FairPriceRow, FairPriceSnapshot, MAX_PUBLISHED_FAIR_AGE};
 use crate::fills::Fill;
 use crate::fx_store::{self, FxStoreSnapshot};
 use crate::model::fair_mid::{build_legs, FairValue};
 use crate::model::invalidate::{self, InvalidateReason};
 use crate::model::inventory::Inventory;
-use crate::model::killswitch::{self, Action};
+use crate::model::killswitch::{self, Action, HaltReason};
 use crate::model::ladder::{self, Side};
 use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
 use crate::telemetry::{self, MarketId, Outcome, Record, SampleBuilder};
 use anyhow::Result;
-use dropset_fair_value::{Candidates, ClockCtx, LegReport, LegStaleness, Legs, Reading};
+use dropset_fair_value::{
+    Anchor, Candidates, ClockCtx, FusionReport, LegReport, LegStaleness, Legs, Reading, Regime,
+};
 use dropset_feeds::venues::{ErApiSnapshot, FrankfurterSnapshot, FxQuote};
 use dropset_sdk::layout::LiquidityProfile;
 use solana_pubkey::Pubkey;
@@ -79,6 +84,11 @@ pub struct FeedReceivers {
     /// Unlike every other tier, losing this one **halts** rather than
     /// degrading; see [`crate::fx_store`].
     pub fx_store: broadcast::Receiver<FxStoreSnapshot>,
+    /// The fair-price estimator's published rows, for the markets it publishes
+    /// ([`crate::config::published_product`]). Those markets quote off this
+    /// instead of composing inline, and losing it halts them —
+    /// [`HaltReason::EstimatorStalled`].
+    pub fair_price: broadcast::Receiver<FairPriceSnapshot>,
 }
 
 /// Drain every reading queued on `rx` into `cache`, stamping `now` as the read
@@ -213,6 +223,148 @@ fn drain_fx_store_into(
     answered
 }
 
+/// Drain published fair-price snapshots into `cache`, keyed by product id.
+///
+/// Returns whether any snapshot arrived, for the same reason
+/// [`drain_fx_store_into`] does: an empty snapshot is the estimator having
+/// published nothing for a pair, a missing one is the read failing, and the
+/// startup grace turns on the difference.
+fn drain_fair_price_into(
+    rx: &mut broadcast::Receiver<FairPriceSnapshot>,
+    cache: &mut HashMap<String, FairPriceRow>,
+) -> bool {
+    let mut answered = false;
+    loop {
+        match rx.try_recv() {
+            Ok(snap) => {
+                answered = true;
+                for row in snap.rows {
+                    cache.insert(row.product_id.clone(), row);
+                }
+            }
+            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            Err(TryRecvError::Lagged(_)) => continue,
+        }
+    }
+    answered
+}
+
+/// What the estimator's output says about one published market this tick.
+#[derive(Clone, Debug)]
+enum Published {
+    /// Nothing has been read yet and the startup grace has not elapsed, so an
+    /// empty cache is "not polled yet" rather than "not published" — the same
+    /// excuse [`StoreStatus::tape_guard_armed`] makes, for the same reason: a
+    /// market that halted on it would alarm and pull its book on every startup.
+    NotYet,
+    /// The estimator is not publishing a usable row; the string says why.
+    Stalled(String),
+    /// A fresh row, decoded, with whether its FX leg rested on a live tape.
+    /// Boxed because a `FairValue` carries its fusion reports and dwarfs the
+    /// other variants.
+    Fresh {
+        fair: Box<FairValue>,
+        tape_live: bool,
+    },
+}
+
+/// Judge a published market's newest row.
+///
+/// A free function over its inputs, like [`tape_shortfall`], so the judgment is
+/// testable without a hub or a database. Aged from the row's own tick stamp,
+/// which needs no receipt floor: a cached row whose poller has died keeps its
+/// stamp, so it ages out on the wall clock regardless.
+fn judge_published(row: Option<&FairPriceRow>, armed: bool, now_unix: i64) -> Published {
+    let Some(row) = row else {
+        return if armed {
+            Published::Stalled("no row published for this market".into())
+        } else {
+            Published::NotYet
+        };
+    };
+    if fx_store::future_stamped(row.ts, now_unix) {
+        return Published::Stalled(format!(
+            "newest row is stamped {}s ahead of this host's clock",
+            row.ts - now_unix
+        ));
+    }
+    let age = row.age(now_unix);
+    if age > MAX_PUBLISHED_FAIR_AGE {
+        return Published::Stalled(format!("newest row is {}s old", age.as_secs()));
+    }
+    match row.fair_value() {
+        Ok(fair) => Published::Fresh {
+            fair: Box::new(fair),
+            // NULL is a row from before 0019 recorded the fact: no evidence of
+            // a tape, which is the fail-closed reading.
+            tape_live: row.fx_tape_live.unwrap_or(false),
+        },
+        Err(e) => Published::Stalled(e.to_string()),
+    }
+}
+
+/// The live verdict for a published market, rendered for the dry run.
+///
+/// Built on `judge_published` for the reason [`tape_shortfall_for_dry_run`]
+/// shares its predicate: a dry run that judged the row independently could
+/// disagree with the tick loop, which is the one thing it exists not to do.
+/// Always armed — a dry run polls once and has no startup grace to be inside.
+pub fn describe_published_for_dry_run(
+    row: Option<&FairPriceRow>,
+    requires_live_tape: bool,
+    now_unix: i64,
+) -> String {
+    match judge_published(row, true, now_unix) {
+        // Unreachable when armed; named rather than a panic all the same.
+        Published::NotYet => "not polled".to_string(),
+        Published::Stalled(why) => format!("HALT: estimator stalled ({why})"),
+        Published::Fresh { fair, tape_live } => {
+            let mid = fair.fair.map_or("—".to_string(), |v| format!("{v:.8}"));
+            let verdict = format!("published {mid} {:?}/{:?}", fair.regime, fair.health);
+            if requires_live_tape && !tape_live {
+                format!("HALT: no tape ({verdict})")
+            } else {
+                verdict
+            }
+        }
+    }
+}
+
+/// Where this tick's fair value for one market came from, carrying what the
+/// guards need to know about that source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Priced {
+    /// Composed inline from this bot's own feeds.
+    Inline,
+    /// Read from the estimator. `tape_live` is its recorded `fx_tape_live`.
+    Published { tape_live: bool },
+    /// The estimator stopped publishing — halt before anything reads the value.
+    Stalled,
+}
+
+/// The composition a tick carries when there is none: paused, no mid, no
+/// guard signals. What a published market quotes off while its row is not yet
+/// read — the pause path holds the reference — and what a stalled one records
+/// beside its halt.
+fn no_composition() -> FairValue {
+    FairValue {
+        fair: None,
+        anchor: Anchor::None,
+        regime: Regime::Paused,
+        basis: None,
+        basis_age: None,
+        basis_outlier: false,
+        fx_leg: LegReport::default(),
+        crypto_leg: LegReport::default(),
+        fx_fusion: FusionReport::none(),
+        crypto_fusion: FusionReport::none(),
+        health: Regime::Paused.health(),
+        uncertain: false,
+        basis_breach: false,
+        usdc_breach: false,
+    }
+}
+
 /// This tick's view of the market-data store, shared by every market.
 ///
 /// Two facts rather than one, because the per-market tape guard needs to tell
@@ -285,6 +437,12 @@ struct FeedHub {
     /// Measuring from startup gives the first poll a bounded chance to arrive
     /// and halts if it never does.
     started_at: Instant,
+    /// `published product id → newest row`, for the markets the estimator
+    /// publishes.
+    fair_price: HashMap<String, FairPriceRow>,
+    /// Whether the fair-price reader has ever answered — one half of the
+    /// startup grace, exactly as `fx_store_last_ok` is for the tape guard.
+    fair_price_answered: bool,
 }
 
 impl FeedHub {
@@ -300,7 +458,21 @@ impl FeedHub {
             fx_store: HashMap::new(),
             fx_store_last_ok: None,
             started_at: Instant::now(),
+            fair_price: HashMap::new(),
+            fair_price_answered: false,
         }
+    }
+
+    /// The estimator's verdict for one published product this tick.
+    ///
+    /// The stall guard arms on the same two disjuncts as the tape guard — the
+    /// reader has answered, or the startup grace has run out — and for the
+    /// same reason: armed on the answer alone, a database down at boot would
+    /// leave a published market paused rather than halted indefinitely.
+    fn published(&self, product: &str, now: Instant, now_unix: i64) -> Published {
+        let armed = self.fair_price_answered
+            || now.duration_since(self.started_at) > fx_store::STARTUP_TAPE_GRACE;
+        judge_published(self.fair_price.get(product), armed, now_unix)
     }
 
     /// Whether the price store has been silent long enough to stop quoting.
@@ -340,6 +512,9 @@ impl FeedHub {
         drain_erapi_into(&mut rx.erapi, &mut self.erapi, now);
         if drain_fx_store_into(&mut rx.fx_store, &mut self.fx_store, now) {
             self.fx_store_last_ok = Some(now);
+        }
+        if drain_fair_price_into(&mut rx.fair_price, &mut self.fair_price) {
+            self.fair_price_answered = true;
         }
     }
 
@@ -1030,6 +1205,30 @@ pub fn run_supervisor(
             );
         }
         for ctx in &mut markets {
+            let got_fill = routed.get(&ctx.market.market).copied();
+            // A market the estimator publishes quotes off its row and composes
+            // nothing here: the published value is the one authority for it,
+            // and a second, unrecorded composition beside it could only
+            // disagree. Nor does it emit leg or contribution samples — the row
+            // carries no per-source breakdown, so there is nothing true to
+            // emit, and a sample built from an empty leg report would read as
+            // a leg with no sources.
+            if let Some(product) = published_product(ctx.cfg.symbol) {
+                let (fair, priced) = match hub.published(product, now, tick.now_unix) {
+                    Published::NotYet => (no_composition(), Priced::Published { tape_live: false }),
+                    Published::Stalled(why) => {
+                        eprintln!("[{}] estimator stalled: {why}", ctx.cfg.symbol);
+                        (no_composition(), Priced::Stalled)
+                    }
+                    Published::Fresh { fair, tape_live } => {
+                        (*fair, Priced::Published { tape_live })
+                    }
+                };
+                if let Err(e) = quote_market(ctx, &cfg, now, ts, fair, priced, got_fill, store) {
+                    eprintln!("[{}] tick error: {e}", ctx.cfg.symbol);
+                }
+                continue;
+            }
             let legs = hub.legs(&ctx.cfg, &tick);
             check_first_basis(ctx, &cfg, legs);
             // Resolved here rather than read off the composed reference,
@@ -1068,8 +1267,8 @@ pub fn run_supervisor(
                     &fair,
                 )));
             report_leg_health(ctx, &fair);
-            let got_fill = routed.get(&ctx.market.market).copied();
-            if let Err(e) = quote_market(ctx, &cfg, now, ts, fair, got_fill, store) {
+            if let Err(e) = quote_market(ctx, &cfg, now, ts, fair, Priced::Inline, got_fill, store)
+            {
                 eprintln!("[{}] tick error: {e}", ctx.cfg.symbol);
             }
         }
@@ -1339,12 +1538,14 @@ fn drain_fills(
 ///
 /// The error is recorded and then returned unchanged: telemetry observes the
 /// tick's outcome, it never alters it.
+#[allow(clippy::too_many_arguments)]
 fn quote_market(
     ctx: &mut Context,
     cfg: &BotConfig,
     now: Instant,
     ts: i64,
     fair: FairValue,
+    priced: Priced,
     got_fill: Option<(u64, u64)>,
     store: StoreStatus,
 ) -> Result<()> {
@@ -1353,7 +1554,17 @@ fn quote_market(
         .last_set(ctx.last_set_price)
         .ladder(&cfg.strategy.ladder);
 
-    let result = quote_market_inner(ctx, cfg, now, ts, fair, got_fill, store, &mut sample);
+    let result = quote_market_inner(
+        ctx,
+        cfg,
+        now,
+        ts,
+        fair,
+        priced,
+        got_fill,
+        store,
+        &mut sample,
+    );
     if let Err(e) = &result {
         // Recorded *alongside* whatever the tick decided, never over it. A
         // halt whose kill stamp then failed is the most alarming row the
@@ -1381,6 +1592,7 @@ fn quote_market_inner(
     now: Instant,
     ts: i64,
     fair: FairValue,
+    priced: Priced,
     got_fill: Option<(u64, u64)>,
     store: StoreStatus,
     sample: &mut SampleBuilder,
@@ -1409,6 +1621,16 @@ fn quote_market_inner(
         );
         sample.outcome(Outcome::Frozen);
         return Ok(());
+    }
+
+    // Ahead of the pause path, which a stalled market would otherwise take:
+    // it carries no mid, and pausing *holds* the reference until the
+    // staleness bound — a stalled estimator stands the book down now, as store
+    // silence does, rather than leaving it matchable at the last row's price.
+    if priced == Priced::Stalled {
+        let reason = HaltReason::EstimatorStalled;
+        sample.outcome(Outcome::Decided(Action::Halt(reason)));
+        return stand_down(ctx, cfg, &vault, now, ts, reason);
     }
 
     let Some(mid) = fair.fair else {
@@ -1464,7 +1686,18 @@ fn quote_market_inner(
         }
     };
 
-    let tape_shortfall = tape_shortfall(ctx.cfg.requires_live_tape, store, &fair.fx_leg);
+    // The evidence depends on where the value came from. An inline composition
+    // still holds its FX leg report; a published one does not, and carries the
+    // estimator's own recorded answer instead. No startup conjunct on the
+    // published arm: a row that exists is the estimator's verdict on a tick it
+    // composed, so there is no empty cache to excuse.
+    let tape_shortfall = match priced {
+        Priced::Inline => tape_shortfall(ctx.cfg.requires_live_tape, store, &fair.fx_leg),
+        Priced::Published { tape_live } => ctx.cfg.requires_live_tape && !tape_live,
+        // Halted above, so never reached; fail-closed rather than a panic that
+        // would take every other market down with it if that ever changed.
+        Priced::Stalled => true,
+    };
     // Suppressed while the store is silent, because `evaluate` reports
     // `PriceStoreUnavailable` in that case and this line would name a venue
     // failure for what is an infrastructure one. The two halt reasons are
@@ -1500,29 +1733,7 @@ fn quote_market_inner(
 
     // Cold path first — at most one ix per cycle.
     match action {
-        Action::Halt(reason) => {
-            eprintln!(
-                "[{}][ALERT] kill switch: {reason:?} — halting quotes for review",
-                ctx.cfg.symbol
-            );
-            // Standing down fully takes two instructions and the cycle budget is
-            // one, so send them in order of what actually protects the vault.
-            // The kill stamp takes the resting book out of the matching set;
-            // zeroing the profile only stops the *next* flush from materializing
-            // more levels, which does nothing about what is already resting. So
-            // the stamp goes first — a halt fires exactly when a stale price is
-            // most worth picking off, and deferring the stamp a whole cycle
-            // leaves the book live through it.
-            //
-            // Ordering it this way also keeps the profile send from starving it:
-            // that send propagates its error and only records `Halted` on
-            // success, so a persistently failing cold path would otherwise retry
-            // forever and the book would never go dark at all.
-            if !invalidate_resting_book(ctx, cfg, &vault, None, InvalidateReason::Halted)? {
-                zero_both_sides(ctx, cfg, now, ts)?;
-            }
-            return Ok(());
-        }
+        Action::Halt(reason) => return stand_down(ctx, cfg, &vault, now, ts, reason),
         Action::FreezeSide(side) => {
             if ctx.profile_kind != ProfileKind::FrozenSide(side) {
                 freeze_side(ctx, cfg, side, now, ts)?;
@@ -1586,6 +1797,39 @@ fn quote_market_inner(
             "[{}][ref] set {reference:.8} (skew {skew_bps:+.1} bps, slot {slot})",
             ctx.cfg.symbol
         );
+    }
+    Ok(())
+}
+
+/// Stand this market down for `reason`: take the resting book dark, and zero
+/// the profile once it is.
+///
+/// Standing down fully takes two instructions and the cycle budget is one, so
+/// they are sent in order of what actually protects the vault. The kill stamp
+/// takes the resting book out of the matching set; zeroing the profile only
+/// stops the *next* flush from materializing more levels, which does nothing
+/// about what is already resting. So the stamp goes first — a halt fires
+/// exactly when a stale price is most worth picking off, and deferring the
+/// stamp a whole cycle leaves the book live through it.
+///
+/// Ordering it this way also keeps the profile send from starving it: that
+/// send propagates its error and only records `Halted` on success, so a
+/// persistently failing cold path would otherwise retry forever and the book
+/// would never go dark at all.
+fn stand_down(
+    ctx: &mut Context,
+    cfg: &BotConfig,
+    vault: &VaultSnapshot,
+    now: Instant,
+    ts: i64,
+    reason: HaltReason,
+) -> Result<()> {
+    eprintln!(
+        "[{}][ALERT] kill switch: {reason:?} — halting quotes for review",
+        ctx.cfg.symbol
+    );
+    if !invalidate_resting_book(ctx, cfg, vault, None, InvalidateReason::Halted)? {
+        zero_both_sides(ctx, cfg, now, ts)?;
     }
     Ok(())
 }
@@ -3321,5 +3565,137 @@ mod tests {
         // Drained dry — a second pass is a no-op, not a re-read.
         drain_entries_into(&mut rx, &mut cache, now);
         assert_eq!(cache.len(), 1);
+    }
+
+    /// A well-formed, normal-regime row stamped at `ts`.
+    fn published_row(ts: i64, fx_tape_live: Option<bool>) -> FairPriceRow {
+        FairPriceRow {
+            ts,
+            product_id: "EURC-USDC".into(),
+            fair: Some(1.14),
+            anchor: "fx".into(),
+            regime: "normal".into(),
+            degrade: None,
+            health: "ok".into(),
+            basis: Some(1.0),
+            basis_age_secs: Some(0),
+            basis_outlier: false,
+            uncertain: false,
+            basis_breach: false,
+            usdc_breach: false,
+            fx_tape_live,
+        }
+    }
+
+    /// Before the reader has answered and inside the grace, an absent row is
+    /// "not polled yet"; once armed, the same absence is a stall.
+    #[test]
+    fn an_absent_row_stalls_only_once_the_guard_is_armed() {
+        assert!(matches!(
+            judge_published(None, false, 1_000),
+            Published::NotYet
+        ));
+        assert!(matches!(
+            judge_published(None, true, 1_000),
+            Published::Stalled(_)
+        ));
+    }
+
+    /// A row past the age bound is a stall, and one exactly at it is not — the
+    /// bound is inclusive of a row the estimator is merely slow to replace.
+    #[test]
+    fn a_row_older_than_the_bound_is_a_stall() {
+        let bound = MAX_PUBLISHED_FAIR_AGE.as_secs() as i64;
+        let row = published_row(1_000, Some(true));
+        assert!(matches!(
+            judge_published(Some(&row), true, 1_000 + bound),
+            Published::Fresh { .. }
+        ));
+        assert!(matches!(
+            judge_published(Some(&row), true, 1_000 + bound + 1),
+            Published::Stalled(_)
+        ));
+    }
+
+    /// A row stamped implausibly far ahead is refused rather than read as age
+    /// zero forever — the same hole the store reader's skew refusal closes.
+    #[test]
+    fn a_future_stamped_row_is_a_stall() {
+        let skew = fx_store::MAX_PUBLICATION_SKEW.as_secs() as i64;
+        let row = published_row(1_000 + skew + 1, Some(true));
+        assert!(matches!(
+            judge_published(Some(&row), true, 1_000),
+            Published::Stalled(_)
+        ));
+    }
+
+    /// A row that does not decode halts by name rather than quoting a guess.
+    #[test]
+    fn an_undecodable_row_is_a_stall() {
+        let row = FairPriceRow {
+            regime: "degraded".into(),
+            degrade: None,
+            ..published_row(1_000, Some(true))
+        };
+        match judge_published(Some(&row), true, 1_000) {
+            Published::Stalled(why) => assert!(why.contains("regime"), "{why}"),
+            other => panic!("expected a stall, got {other:?}"),
+        }
+    }
+
+    /// The recorded tape flag is carried through, and a NULL — a row written
+    /// before migration 0019 — reads as no tape.
+    #[test]
+    fn the_tape_flag_is_carried_and_null_reads_as_no_tape() {
+        for (stored, expected) in [(Some(true), true), (Some(false), false), (None, false)] {
+            let row = published_row(1_000, stored);
+            match judge_published(Some(&row), true, 1_000) {
+                Published::Fresh { tape_live, fair } => {
+                    assert_eq!(tape_live, expected, "stored {stored:?}");
+                    assert_eq!(fair.fair, Some(1.14));
+                }
+                other => panic!("expected a fresh row, got {other:?}"),
+            }
+        }
+    }
+
+    /// The placeholder composition takes the pause path: no mid, and none of
+    /// the guard signals that would halt or tighten.
+    #[test]
+    fn no_composition_is_a_bare_pause() {
+        let fv = no_composition();
+        assert_eq!(fv.fair, None);
+        assert_eq!(fv.regime, Regime::Paused);
+        assert!(!fv.degraded() && !fv.basis_breach && !fv.usdc_breach);
+    }
+
+    /// The published cache keeps the newest row per product, and reports
+    /// whether the reader answered at all — an empty snapshot included.
+    #[test]
+    fn drain_fair_price_into_keeps_the_latest_and_reports_an_answer() {
+        let (tx, mut rx) = broadcast::channel::<FairPriceSnapshot>(8);
+        let mut cache: HashMap<String, FairPriceRow> = HashMap::new();
+        assert!(
+            !drain_fair_price_into(&mut rx, &mut cache),
+            "nothing sent yet"
+        );
+
+        tx.send(FairPriceSnapshot::default()).unwrap();
+        assert!(
+            drain_fair_price_into(&mut rx, &mut cache),
+            "an empty snapshot is still an answer"
+        );
+        assert!(cache.is_empty());
+
+        tx.send(FairPriceSnapshot {
+            rows: vec![published_row(1_000, Some(true))],
+        })
+        .unwrap();
+        tx.send(FairPriceSnapshot {
+            rows: vec![published_row(1_015, Some(false))],
+        })
+        .unwrap();
+        assert!(drain_fair_price_into(&mut rx, &mut cache));
+        assert_eq!(cache["EURC-USDC"].ts, 1_015);
     }
 }

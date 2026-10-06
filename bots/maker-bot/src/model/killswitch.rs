@@ -103,7 +103,29 @@ pub enum HaltReason {
     /// Only markets flagged [`crate::config::MarketConfig::requires_live_tape`]
     /// can reach this. The thin-roster pairs have no intraday source and never
     /// will, so for them a daily fix is not a degradation, it is the design.
+    ///
+    /// For a published market the evidence is the estimator's recorded
+    /// `fx_tape_live` rather than a leg this bot composed, and a row that
+    /// recorded nothing (NULL, written before migration 0019) counts as no
+    /// tape — the fail-closed reading.
     NoLiveTape,
+    /// This market quotes off the fair-price estimator, and the estimator has
+    /// stopped publishing a usable row for it: none at all past the startup
+    /// grace, the newest one older than
+    /// [`crate::fair_price::MAX_PUBLISHED_FAIR_AGE`] or stamped implausibly
+    /// far ahead, or one that does not decode.
+    ///
+    /// The fail-closed rule carried one hop up. Store silence halts because
+    /// the data the operator chose to price off is gone; for a published
+    /// market the thing priced off is the estimator's output, so its absence
+    /// halts the same way rather than falling back to an inline composition
+    /// nobody recorded. Separate from
+    /// [`HaltReason::PriceStoreUnavailable`] because the response differs: a
+    /// process to restart, not a database. Note a database outage reaches this
+    /// one first — the row ages past its bound within a minute, well before
+    /// the store's own silence bound — so this reason also covers the first
+    /// minutes of an outage on a published market.
+    EstimatorStalled,
     /// USDC/USD left its common-mode band — a correlated, portfolio-wide depeg
     /// that moves every market's basis at once (§1 fm1, §4). The most systemic
     /// halt, so it is evaluated before the per-market peg event.

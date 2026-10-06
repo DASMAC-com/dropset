@@ -48,10 +48,10 @@ use std::time::Duration;
 
 use common::start_pg;
 use dropset_fair_value::{
-    Anchor, Candidates, ClockCtx, FairValue, FairValueConfig, FairValueEngine, Health,
-    LegStaleness, Legs, Reading, Regime,
+    Anchor, Candidates, ClockCtx, Degrade, FairValue, FairValueConfig, FairValueEngine, Health,
+    LegReport, LegStaleness, Legs, Reading, Regime,
 };
-use dropset_market_data::fair_price::publish;
+use dropset_market_data::fair_price::{publish, FairPriceSource};
 use sqlx::{PgPool, Row};
 
 /// One real composition, to be overridden field by field below.
@@ -99,13 +99,14 @@ struct StoredRow {
     usdc_breach: bool,
     leg_stale_tape_secs: i64,
     leg_stale_reference_secs: i64,
+    fx_tape_live: Option<bool>,
 }
 
 async fn read_row(pool: &PgPool, product_id: &str, ts: i64) -> StoredRow {
     let row = sqlx::query(
         "SELECT fair, anchor, regime, degrade, health, basis, basis_age_secs,
                 basis_outlier, uncertain, basis_breach, usdc_breach,
-                leg_stale_tape_secs, leg_stale_reference_secs
+                leg_stale_tape_secs, leg_stale_reference_secs, fx_tape_live
              FROM fair_price WHERE product_id = $1 AND ts = $2",
     )
     .bind(product_id)
@@ -132,6 +133,7 @@ async fn read_row(pool: &PgPool, product_id: &str, ts: i64) -> StoredRow {
         leg_stale_reference_secs: row
             .try_get("leg_stale_reference_secs")
             .expect("leg_stale_reference_secs"),
+        fx_tape_live: row.try_get("fx_tape_live").expect("fx_tape_live"),
     }
 }
 
@@ -192,7 +194,13 @@ async fn every_column_round_trips_with_a_distinguishable_value() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn each_guard_flag_lands_in_its_own_column() {
     let (_pg, pool) = start_pg().await;
-    let base = composed();
+    // An FX leg with nothing credited, so the derived fifth BOOLEAN
+    // (`fx_tape_live`, 0019) reads FALSE in every case below and a guard flag
+    // transposed into it is caught too.
+    let base = FairValue {
+        fx_leg: LegReport::default(),
+        ..composed()
+    };
 
     // One row per boolean, that boolean alone true. See the module note on why
     // a single row cannot cover this.
@@ -239,7 +247,109 @@ async fn each_guard_flag_lands_in_its_own_column() {
                  the wrong column"
             );
         }
+        assert_eq!(
+            got.fx_tape_live,
+            Some(false),
+            "with only {name} set, fx_tape_live must read FALSE"
+        );
     }
+}
+
+/// `fx_tape_live` (0019) follows the FX leg's contributors and nothing else: a
+/// leg credited a tape reads TRUE with every guard flag false, and one credited
+/// only a daily fix reads FALSE.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn fx_tape_live_follows_the_fx_leg_contributors() {
+    let (_pg, pool) = start_pg().await;
+    let quiet = |fv: FairValue| FairValue {
+        basis_outlier: false,
+        uncertain: false,
+        basis_breach: false,
+        usdc_breach: false,
+        ..fv
+    };
+
+    // `composed()` credits Pyth on the FX leg, which is a tape source.
+    let taped = quiet(composed());
+    publish(&pool, 1_700_000_400, "EUR-USD", &taped, STALE)
+        .await
+        .expect("publish a taped composition");
+    let got = read_row(&pool, "EUR-USD", 1_700_000_400).await;
+    assert_eq!(got.fx_tape_live, Some(true), "a tape was credited");
+    assert!(!(got.basis_outlier || got.uncertain || got.basis_breach || got.usdc_breach));
+
+    // The same engine fed a daily fix alone on the FX leg.
+    let age = Duration::from_secs(1);
+    let mut engine = FairValueEngine::new(FairValueConfig::default());
+    let legs = Legs {
+        fx: Candidates::none().push_reference("frankfurter", Some(Reading::new(1.14, age))),
+        crypto_usdc: Candidates::none().push("coinbase", Some(Reading::new(1.141, age))),
+        usdc_usd: Candidates::none().push("kraken", Some(Reading::new(1.0, age))),
+        static_usd: 1.14,
+    };
+    let fixed = quiet(engine.compose(legs, Duration::from_secs(5), ClockCtx::in_session()));
+    publish(&pool, 1_700_000_401, "EUR-USD", &fixed, STALE)
+        .await
+        .expect("publish a fix-only composition");
+    let got = read_row(&pool, "EUR-USD", 1_700_000_401).await;
+    assert_eq!(
+        got.fx_tape_live,
+        Some(false),
+        "only a daily fix was credited"
+    );
+}
+
+/// A **degraded** composition — the case no test wrote before, so the degrade
+/// vocabulary went unexercised in both directions — survives publish, the
+/// reader's query, and decoding back into the composition the maker quotes off.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_degraded_composition_reads_back_through_the_reader() {
+    let (_pg, pool) = start_pg().await;
+    let fv = FairValue {
+        regime: Regime::Degraded(Degrade::StaticPeg),
+        anchor: Anchor::Static,
+        health: Health::Degraded,
+        fair: Some(0.7244),
+        basis: None,
+        basis_age: None,
+        ..composed()
+    };
+    // Two stamps for one pair, so the reader's newest-per-product choice is
+    // exercised and not just its decoding.
+    let older = FairValue {
+        regime: Regime::Normal,
+        anchor: Anchor::Fx,
+        health: Health::Ok,
+        ..fv
+    };
+    publish(&pool, 1_700_000_500, "CADC-USDC", &older, STALE)
+        .await
+        .expect("publish the older tick");
+    publish(&pool, 1_700_000_515, "CADC-USDC", &fv, STALE)
+        .await
+        .expect("publish the degraded tick");
+
+    let stored = read_row(&pool, "CADC-USDC", 1_700_000_515).await;
+    assert_eq!(stored.regime, "degraded");
+    assert_eq!(
+        stored.degrade.as_deref(),
+        Some("static_peg"),
+        "a non-NULL degrade"
+    );
+
+    let rows = FairPriceSource::new("test", pool.clone(), vec!["CADC-USDC".into()])
+        .latest()
+        .await
+        .expect("read the newest rows");
+    assert_eq!(rows.len(), 1, "one row per product");
+    assert_eq!(rows[0].ts, 1_700_000_515, "the newest tick wins");
+    let back = rows[0].fair_value().expect("a published row decodes");
+    assert_eq!(back.regime, Regime::Degraded(Degrade::StaticPeg));
+    assert_eq!(back.anchor, Anchor::Static);
+    assert!(back.degraded());
+    assert_eq!(back.fair, Some(0.7244));
 }
 
 #[tokio::test]

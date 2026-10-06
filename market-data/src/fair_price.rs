@@ -6,9 +6,13 @@
 //! table is defined in `dropset-db-schema` and created by `dropset-migrate`,
 //! the single schema owner.
 //!
-//! **What lives here is the serialization of one composition, and nothing
-//! else.** This module takes a finished [`FairValue`] and writes it down; it
-//! neither reads the store nor composes anything.
+//! **What lives here is the serialization of one composition, in both
+//! directions, and nothing else.** This module takes a finished [`FairValue`]
+//! and writes it down, and reads a written row back into one for the maker
+//! ([`FairPriceRow::fair_value`], [`FairPriceSource`]); it neither reads the
+//! price store nor composes anything. The read side lives here rather than in
+//! the maker because the wire names are a vocabulary, and a vocabulary with
+//! its encoder in one crate and its decoder in another is two vocabularies.
 //!
 //! Assembling the candidate sets the engine composes *from* is
 //! [`crate::fx_store`], and the process that drives the two — reading the
@@ -27,7 +31,17 @@
 //! renaming a Rust variant must not silently re-label a column that dashboards
 //! and analytics already filter on.
 
-use dropset_fair_value::{Anchor, Degrade, FairValue, Health, LegStaleness, Regime};
+use std::time::Duration;
+
+use anyhow::Result;
+use async_trait::async_trait;
+use dropset_fair_value::{
+    Anchor, Degrade, FairValue, FusionReport, Health, LegReport, LegStaleness, Regime,
+};
+use dropset_feeds::{Batch, Source};
+use sqlx::{PgPool, Row};
+
+use crate::fx_store::is_tape_source;
 
 /// Why a publish failed, split by whether **retrying the same row could ever
 /// succeed**.
@@ -290,6 +304,70 @@ pub fn health_name(health: Health) -> &'static str {
     }
 }
 
+/// Whether an intraday tape was credited on this composition's FX leg — the
+/// `fx_tape_live` column (0019).
+///
+/// Reads the leg's **contributors**, not its candidates, for the reason the
+/// maker's tape guard always has: a tape offered and then dropped for staleness
+/// priced nothing, so counting it would clear the guard in exactly the case it
+/// exists for.
+pub fn fx_tape_live(fv: &FairValue) -> bool {
+    fv.fx_leg
+        .contributors
+        .iter()
+        .any(|c| is_tape_source(c.source))
+}
+
+/// The inverse of [`anchor_name`].
+pub fn parse_anchor(name: &str) -> Option<Anchor> {
+    Some(match name {
+        "fx" => Anchor::Fx,
+        "crypto_reference" => Anchor::CryptoReference,
+        "static" => Anchor::Static,
+        "none" => Anchor::None,
+        _ => return None,
+    })
+}
+
+/// The inverse of [`regime_name`] and [`degrade_name`] together.
+///
+/// Takes the column pair because neither half names a regime alone. A pair
+/// that breaks 0011's invariant — `degraded` with no cause, or a cause beside
+/// any other regime — is refused rather than repaired: guessing which half is
+/// wrong would put a regime on the quoting path that the estimator never
+/// published.
+pub fn parse_regime(regime: &str, degrade: Option<&str>) -> Option<Regime> {
+    let plain = |r| degrade.is_none().then_some(r);
+    match regime {
+        "normal" => plain(Regime::Normal),
+        "crypto_only" => plain(Regime::CryptoOnly),
+        "fx_pinned" => plain(Regime::FxPinned),
+        "uncorroborated" => plain(Regime::Uncorroborated),
+        "paused" => plain(Regime::Paused),
+        "degraded" => Some(Regime::Degraded(match degrade? {
+            "fx_stale" => Degrade::FxStale,
+            "leg_dispersed" => Degrade::LegDispersed,
+            "fx_invalid" => Degrade::FxInvalid,
+            "no_basis_leg" => Degrade::NoBasisLeg,
+            "basis_unusable" => Degrade::BasisUnusable,
+            "static_peg" => Degrade::StaticPeg,
+            _ => return None,
+        })),
+        _ => None,
+    }
+}
+
+/// The inverse of [`health_name`].
+pub fn parse_health(name: &str) -> Option<Health> {
+    Some(match name {
+        "ok" => Health::Ok,
+        "unverified" => Health::Unverified,
+        "degraded" => Health::Degraded,
+        "pause" => Health::Pause,
+        _ => return None,
+    })
+}
+
 /// Publish one composition for one pair.
 ///
 /// `ts` is the **estimator's** tick stamp in Unix seconds, not the write time:
@@ -356,10 +434,198 @@ pub async fn publish(
         // the columns and `basis_age_secs` above.
         .bind(stale.tape.as_secs() as i64)
         .bind(stale.reference.as_secs() as i64)
+        // Whether a tape was credited on the FX leg (0019). Derived here rather
+        // than passed in, because it is a fact about `fv` itself: a caller-side
+        // copy could describe a different leg report than the one serialized.
+        .bind(fx_tape_live(fv))
         .execute(executor)
         .await
         .map_err(classify)?;
     Ok(res.rows_affected() > 0)
+}
+
+/// How old the newest published row for a pair may be before a consumer treats
+/// the estimator as **stalled** for it.
+///
+/// Four ticks at the estimator's default 15s cadence, so one slow or missed
+/// tick does not halt anything while a stopped estimator halts within a minute.
+/// Deliberately far inside [`crate::fx_store::MAX_STORE_SILENCE`]: that bound
+/// asks whether the *database* answers, this one whether the *process writing
+/// to it* still does, and a fair value is a price — a minute-old one is already
+/// a price nobody is standing behind.
+pub const MAX_PUBLISHED_FAIR_AGE: Duration = Duration::from_secs(60);
+
+/// One published composition, as read back from `fair_price`.
+///
+/// Carries the wire names as stored rather than parsed, so a row this crate
+/// cannot decode still reaches the consumer and can be refused *by name* —
+/// dropping it here would make an unreadable row indistinguishable from an
+/// absent one, which is a stalled estimator, which is a different alarm.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FairPriceRow {
+    /// The estimator's tick stamp, in Unix seconds — what a consumer ages from.
+    pub ts: i64,
+    pub product_id: String,
+    pub fair: Option<f64>,
+    pub anchor: String,
+    pub regime: String,
+    pub degrade: Option<String>,
+    pub health: String,
+    pub basis: Option<f64>,
+    pub basis_age_secs: Option<i64>,
+    pub basis_outlier: bool,
+    pub uncertain: bool,
+    pub basis_breach: bool,
+    pub usdc_breach: bool,
+    /// `None` on a row written before 0019, which a consumer must read as no
+    /// evidence of a tape — see the migration.
+    pub fx_tape_live: Option<bool>,
+}
+
+/// A row whose wire names this crate could not decode, naming the column.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MalformedRow(pub &'static str);
+
+impl std::fmt::Display for MalformedRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fair_price row has an unreadable `{}`", self.0)
+    }
+}
+
+impl std::error::Error for MalformedRow {}
+
+impl FairPriceRow {
+    /// Rebuild the composition this row serialized.
+    ///
+    /// **The leg and fusion reports come back empty**, because the table never
+    /// stored them: a consumer gets the result, the guard flags and the regime,
+    /// not the per-source breakdown that produced them. What the breakdown was
+    /// needed for on the quoting path — the tape guard — is carried instead as
+    /// [`Self::fx_tape_live`].
+    ///
+    /// `health` is read back and **checked** against the regime rather than
+    /// re-derived from it. It is a total function of the regime in the engine,
+    /// so a disagreement means the row was written by a writer whose mapping
+    /// differs from this one, and quoting off either half would be a guess.
+    ///
+    /// # Errors
+    ///
+    /// [`MalformedRow`] when a wire name does not decode, the regime pair breaks
+    /// 0011's invariant, or the stored health disagrees with the regime.
+    pub fn fair_value(&self) -> Result<FairValue, MalformedRow> {
+        let anchor = parse_anchor(&self.anchor).ok_or(MalformedRow("anchor"))?;
+        let regime =
+            parse_regime(&self.regime, self.degrade.as_deref()).ok_or(MalformedRow("regime"))?;
+        let health = parse_health(&self.health).ok_or(MalformedRow("health"))?;
+        if health != regime.health() {
+            return Err(MalformedRow("health"));
+        }
+        Ok(FairValue {
+            fair: self.fair,
+            anchor,
+            regime,
+            basis: self.basis,
+            basis_age: self
+                .basis_age_secs
+                .map(|s| Duration::from_secs(s.max(0) as u64)),
+            basis_outlier: self.basis_outlier,
+            fx_leg: LegReport::default(),
+            crypto_leg: LegReport::default(),
+            fx_fusion: FusionReport::none(),
+            crypto_fusion: FusionReport::none(),
+            health,
+            uncertain: self.uncertain,
+            basis_breach: self.basis_breach,
+            usdc_breach: self.usdc_breach,
+        })
+    }
+
+    /// How old this row is at `now_unix`, floored at zero.
+    ///
+    /// A row stamped ahead of the reader's clock reads as age zero here; the
+    /// consumer refuses one stamped *implausibly* far ahead separately, through
+    /// [`crate::fx_store::future_stamped`], for the reason that function gives.
+    pub fn age(&self, now_unix: i64) -> Duration {
+        Duration::from_secs(now_unix.saturating_sub(self.ts).max(0) as u64)
+    }
+}
+
+/// One poll's worth of published rows — the newest per requested product.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FairPriceSnapshot {
+    pub rows: Vec<FairPriceRow>,
+}
+
+/// Polls `fair_price` for the newest row per product.
+///
+/// A [`Source`] for the same reason [`crate::fx_store::FxStoreSource`] is one:
+/// it rides the shared spawn / backoff / health machinery, and from the tick
+/// loop's side it is one more receiver to drain. Like that reader it asserts
+/// no schema version — but note it does read 0019's column, so against a
+/// database 0019 has not reached every poll fails, which the consumer sees as
+/// silence and
+/// halts on. That is the fail-closed direction, and the feed health row names
+/// the error.
+pub struct FairPriceSource {
+    name: String,
+    pool: PgPool,
+    products: Vec<String>,
+}
+
+impl FairPriceSource {
+    /// `products` are published product ids, e.g. `EURC-USDC`.
+    pub fn new(name: impl Into<String>, pool: PgPool, products: Vec<String>) -> Self {
+        Self {
+            name: name.into(),
+            pool,
+            products,
+        }
+    }
+
+    /// Read the newest published row for every configured product.
+    pub async fn latest(&self) -> Result<Vec<FairPriceRow>> {
+        let rows = sqlx::query(include_str!("../queries/fair_price_latest.sql"))
+            .bind(&self.products)
+            .fetch_all(&self.pool)
+            .await?;
+
+        rows.iter()
+            .map(|r| {
+                Ok(FairPriceRow {
+                    ts: r.try_get("ts")?,
+                    product_id: r.try_get("product_id")?,
+                    fair: r.try_get("fair")?,
+                    anchor: r.try_get("anchor")?,
+                    regime: r.try_get("regime")?,
+                    degrade: r.try_get("degrade")?,
+                    health: r.try_get("health")?,
+                    basis: r.try_get("basis")?,
+                    basis_age_secs: r.try_get("basis_age_secs")?,
+                    basis_outlier: r.try_get("basis_outlier")?,
+                    uncertain: r.try_get("uncertain")?,
+                    basis_breach: r.try_get("basis_breach")?,
+                    usdc_breach: r.try_get("usdc_breach")?,
+                    fx_tape_live: r.try_get("fx_tape_live")?,
+                })
+            })
+            .collect()
+    }
+}
+
+#[async_trait]
+impl Source for FairPriceSource {
+    type Record = FairPriceSnapshot;
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn next(&mut self) -> Result<Batch<Self::Record>> {
+        let rows = self.latest().await?;
+        // Always emit, even empty, so the consumer can tell "the estimator has
+        // published nothing for this pair" from "the read failed".
+        Ok(Batch::new(vec![FairPriceSnapshot { rows }]).with_caught_up(true))
+    }
 }
 
 #[cfg(test)]
@@ -559,5 +825,119 @@ mod tests {
         assert_eq!(health_name(Health::Unverified), "unverified");
         assert_eq!(health_name(Health::Degraded), "degraded");
         assert_eq!(health_name(Health::Pause), "pause");
+    }
+
+    /// Every regime the engine can produce — each degrade included — survives
+    /// encode-then-decode, and so does every anchor and health. This is the
+    /// round trip the degrade vocabulary had in neither direction until the
+    /// maker started reading it back.
+    #[test]
+    fn every_wire_name_round_trips() {
+        let regimes = [
+            Regime::Normal,
+            Regime::CryptoOnly,
+            Regime::FxPinned,
+            Regime::Uncorroborated,
+            Regime::Paused,
+            Regime::Degraded(Degrade::FxStale),
+            Regime::Degraded(Degrade::LegDispersed),
+            Regime::Degraded(Degrade::FxInvalid),
+            Regime::Degraded(Degrade::NoBasisLeg),
+            Regime::Degraded(Degrade::BasisUnusable),
+            Regime::Degraded(Degrade::StaticPeg),
+        ];
+        for regime in regimes {
+            assert_eq!(
+                parse_regime(regime_name(regime), degrade_name(regime)),
+                Some(regime),
+                "{regime:?} does not survive the wire"
+            );
+        }
+        for anchor in [
+            Anchor::Fx,
+            Anchor::CryptoReference,
+            Anchor::Static,
+            Anchor::None,
+        ] {
+            assert_eq!(parse_anchor(anchor_name(anchor)), Some(anchor));
+        }
+        for health in [
+            Health::Ok,
+            Health::Unverified,
+            Health::Degraded,
+            Health::Pause,
+        ] {
+            assert_eq!(parse_health(health_name(health)), Some(health));
+        }
+    }
+
+    /// A regime pair breaking 0011's invariant is refused, not repaired.
+    #[test]
+    fn a_regime_pair_breaking_the_invariant_is_refused() {
+        assert_eq!(parse_regime("degraded", None), None);
+        assert_eq!(parse_regime("normal", Some("fx_stale")), None);
+        assert_eq!(parse_regime("degraded", Some("not_a_degrade")), None);
+        assert_eq!(parse_regime("not_a_regime", None), None);
+    }
+
+    fn row(regime: &str, degrade: Option<&str>, health: &str) -> FairPriceRow {
+        FairPriceRow {
+            ts: 1_000,
+            product_id: "EURC-USDC".into(),
+            fair: Some(1.08),
+            anchor: "fx".into(),
+            regime: regime.into(),
+            degrade: degrade.map(Into::into),
+            health: health.into(),
+            basis: Some(1.0),
+            basis_age_secs: Some(7),
+            basis_outlier: false,
+            uncertain: true,
+            basis_breach: false,
+            usdc_breach: true,
+            fx_tape_live: Some(true),
+        }
+    }
+
+    /// A degraded row rebuilds the composition the kill switch reads — the
+    /// regime, its tightened health, and the guard flags carried verbatim.
+    #[test]
+    fn a_degraded_row_rebuilds_its_composition() {
+        let fv = row("degraded", Some("leg_dispersed"), "degraded")
+            .fair_value()
+            .expect("a well-formed row decodes");
+        assert_eq!(fv.regime, Regime::Degraded(Degrade::LegDispersed));
+        assert!(fv.degraded());
+        assert_eq!(fv.fair, Some(1.08));
+        assert_eq!(fv.basis_age, Some(Duration::from_secs(7)));
+        assert!(fv.uncertain && fv.usdc_breach && !fv.basis_breach);
+        // Nothing stored the per-source breakdown, so none is invented.
+        assert_eq!(fv.fx_leg.n, 0);
+        assert!(!fx_tape_live(&fv));
+    }
+
+    /// A stored health that disagrees with its regime is refused by name.
+    #[test]
+    fn a_health_disagreeing_with_its_regime_is_refused() {
+        assert_eq!(
+            row("degraded", Some("fx_stale"), "ok").fair_value().err(),
+            Some(MalformedRow("health"))
+        );
+        assert_eq!(
+            row("normal", None, "ok")
+                .fair_value()
+                .map(|fv| fv.health)
+                .ok(),
+            Some(Health::Ok)
+        );
+    }
+
+    /// A row stamped ahead of the reader reads as age zero rather than
+    /// wrapping into an enormous age.
+    #[test]
+    fn age_floors_at_zero() {
+        let r = row("normal", None, "ok");
+        assert_eq!(r.age(1_030), Duration::from_secs(30));
+        assert_eq!(r.age(900), Duration::ZERO);
     }
 }
