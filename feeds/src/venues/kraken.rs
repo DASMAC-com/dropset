@@ -1085,8 +1085,10 @@ mod tests {
         // transport is not evidence the pair is unlisted, so it must NOT be
         // remembered. Getting this wrong ships green everywhere else — a blip
         // would silently cost the pair a full `EVICTION_TTL` of readings — and
-        // since the TTL re-enters isolation hourly, this arm is also the
-        // worst-case cost path, so its behavior is worth pinning exactly.
+        // since nothing is remembered, a still-refused batch re-enters
+        // isolation on every poll rather than hourly, until the refused pair's
+        // own probe is answered. That makes this arm the worst-case cost path,
+        // so its behavior is worth pinning exactly.
         //
         // Same shape as the seam test above, with the CADCUSD probe replaced by
         // a hang-up: the refused batch, the USDCUSD probe, the CADCUSD probe
