@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word mkfifo
 """PreToolUse guard: block AI attribution in a commit message or PR body.
 
 CLAUDE.md forbids AI attribution outright — no ``Co-Authored-By:`` trailer
@@ -36,10 +37,13 @@ BOUNDS, stated because a guard that is trusted past its reach is worse than
 one that is not trusted at all:
 
 * It sees a message passed INLINE (``-m``, ``--body``), including in a clustered
-  short flag (``-am``, ``-Sam``). A commit written in an editor, or passed via
-  ``-F file`` / ``--body-file``, carries its text somewhere this never sees.
-  Those are not how an agent session commits, which is what this defends, but
-  they are a real gap rather than a theoretical one.
+  short flag (``-am``, ``-Sam``), and one passed as a FILE (``git commit -F``,
+  ``gh … --body-file``): the file is read, up to ``MESSAGE_FILE_CAP`` characters, and
+  scanned like an inline value. The file path matters because the sibling
+  compound guard tells agents to pass a large message exactly that way. A
+  relative path resolves against the payload's ``cwd``; stdin (``-F -``) and a
+  file that cannot be read fail open. A commit written in an EDITOR still
+  carries its text somewhere this never sees.
 * It knows **authoring subcommands**, not the whole GitHub API. A body posted
   through ``gh api ... -f body=...`` is not an authoring shape, so it is never
   inspected; nor is a shell function or alias that wraps the real command.
@@ -60,9 +64,12 @@ second, drifting copy of them.
 """
 
 import json
+import os
 import re
 import shlex
+import stat
 import sys
+import tempfile
 
 # The attribution shapes, each with the name used in the block message. Matched
 # case-insensitively and per line, against message/body TEXT only.
@@ -108,6 +115,15 @@ CONTROL = {"|", "||", "&&", ";", "&", "|&"}
 #: `--message=x` token cannot be mistaken for an attached-short `-m` value.
 GIT_TEXT_FLAGS = ("--message", "-m")
 GH_TEXT_FLAGS = ("--body", "--title", "-b", "-t")
+
+#: Flags whose value is a PATH to authored prose. `git commit -F` / `--file`,
+#: and `gh`'s `-F` / `--body-file` — spelled `--notes-file` on `gh release`.
+GIT_FILE_FLAGS = ("--file", "-F")
+GH_FILE_FLAGS = ("--body-file", "--notes-file", "-F")
+
+#: How much of a message file is read. A trailer sits at the end of a message,
+#: but no real commit message or PR body approaches this.
+MESSAGE_FILE_CAP = 1_000_000
 
 #: `gh` subcommands that author prose. `gh pr create`, `gh pr edit`,
 #: `gh pr comment`, `gh issue create`, `gh issue comment`, `gh release create`.
@@ -280,14 +296,45 @@ def _logical_lines(cmd):
     return segments
 
 
-def authored_text(cmd):
+def _file_texts(paths, cwd):
+    """The contents of each message file in ``paths`` that can be read.
+
+    ``-`` is stdin, which a hook cannot see, so it is skipped; so is any file
+    that cannot be opened. Both fail OPEN, like every other parse problem here.
+
+    Only a REGULAR file is opened. Opening a named pipe for reading blocks until
+    a writer appears, and a tty blocks on read, so `-F` aimed at either would
+    hang the hook — and with it the Bash call — until the harness timed it out.
+    A NUL in the path raises ValueError rather than OSError, so both are caught.
+    """
+    texts = []
+    for path in paths:
+        if path == "-":
+            continue
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path) and cwd:
+            path = os.path.join(cwd, path)
+        try:
+            if not stat.S_ISREG(os.stat(path).st_mode):
+                continue
+            # `errors="replace"` for the same reason `_scan` uses it: a decode
+            # error must not escape as an exception.
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                texts.append(handle.read(MESSAGE_FILE_CAP))
+        except (OSError, ValueError):
+            continue
+    return texts
+
+
+def authored_text(cmd, cwd=None):
     """Every stretch of authored prose in ``cmd``.
 
     Only message/body values of authoring commands, never the command string
     itself — see the module docstring on why the narrow scope is the point.
     Quote-aware via ``shlex``; a segment whose quotes do not balance is skipped,
     so the guard fails OPEN rather than wedging a session on a shape it cannot
-    parse.
+    parse. A message passed as a file is read, a relative path resolving
+    against ``cwd``.
     """
     found = []
     for line in _logical_lines(cmd):
@@ -308,8 +355,10 @@ def authored_text(cmd):
             if token == "git":
                 if _git_subcommand(rest) == "commit":
                     found += _flag_values(rest, GIT_TEXT_FLAGS)
+                    found += _file_texts(_flag_values(rest, GIT_FILE_FLAGS), cwd)
             elif any(word in GH_AUTHORING for word in rest):
                 found += _flag_values(rest, GH_TEXT_FLAGS)
+                found += _file_texts(_flag_values(rest, GH_FILE_FLAGS), cwd)
     return found
 
 
@@ -352,8 +401,9 @@ def evaluate(payload):
     cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
     if not isinstance(cmd, str) or not cmd.strip():
         return 0, ""
+    cwd = payload.get("cwd")
     hits = []
-    for text in authored_text(cmd):
+    for text in authored_text(cmd, cwd if isinstance(cwd, str) else None):
         hits += findings(text)
     if hits:
         return 2, _deny_message(hits)
@@ -466,6 +516,51 @@ def _self_test():
                 % (cmd[:60], should_block, blocked)
             )
 
+    # A message passed as a FILE. The sibling compound guard tells agents to
+    # pass a large message via `git commit -F`, so never reading it let a
+    # trailer written with the Write tool walk straight into merged history.
+    with tempfile.TemporaryDirectory() as tmp:
+        dirty = os.path.join(tmp, "dirty.txt")
+        clean = os.path.join(tmp, "clean.txt")
+        with open(dirty, "w", encoding="utf-8") as handle:
+            handle.write(f"fix(ENG-1): Subject\n\n{trailer}\n")
+        with open(clean, "w", encoding="utf-8") as handle:
+            handle.write("fix(ENG-1): Subject\n\nA body explaining the why.\n")
+        file_cases = [
+            (f"git commit -S -F {dirty}", None, True),
+            (f"git commit --file={dirty}", None, True),
+            (f"git commit -SF {dirty}", None, True),
+            ("git commit -F dirty.txt", tmp, True),
+            (f"gh pr create --title x --body-file {dirty}", None, True),
+            (f"gh pr comment 1 -F {dirty}", None, True),
+            (f"gh pr create --title x --body-file={dirty}", None, True),
+            ("gh pr comment 1 -F dirty.txt", tmp, True),
+            (f"gh release create v1 --notes-file {dirty}", None, True),
+            (f"git commit -S -F {clean}", None, False),
+            # Stdin and an unreadable path fail open.
+            ("git commit -F -", tmp, False),
+            (f"git commit -F {tmp}/missing.txt", None, False),
+            (f"git commit -F {tmp}", None, False),
+            # A non-authoring subcommand still is not inspected.
+            (f"git log -F {dirty}", None, False),
+        ]
+        # A named pipe must be skipped, not opened: opening one for reading
+        # blocks until a writer appears, so a regression here HANGS.
+        if hasattr(os, "mkfifo"):
+            pipe = os.path.join(tmp, "pipe")
+            os.mkfifo(pipe)
+            file_cases.append((f"git commit -F {pipe}", None, False))
+        for cmd, cwd, should_block in file_cases:
+            payload = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+            if cwd is not None:
+                payload["cwd"] = cwd
+            blocked = evaluate(payload)[0] == 2
+            if blocked != should_block:
+                failures.append(
+                    "  %-60r expected block=%s got block=%s"
+                    % (cmd[:60], should_block, blocked)
+                )
+
     # Non-Bash tools are never touched.
     if evaluate({"tool_name": "Read", "tool_input": {}})[0] != 0:
         failures.append("  non-Bash tool was blocked")
@@ -481,7 +576,7 @@ def _self_test():
     if failures:
         sys.stderr.write("self-test FAILED:\n" + "\n".join(failures) + "\n")
         return 1
-    sys.stdout.write("self-test OK (%d cases)\n" % len(cases))
+    sys.stdout.write("self-test OK (%d cases)\n" % (len(cases) + len(file_cases)))
     return 0
 
 

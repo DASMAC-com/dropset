@@ -26,7 +26,6 @@ more verb than the approval did.
 """
 
 # cspell:word chgrp
-# cspell:word doas
 # cspell:word rustup
 # cspell:word setsid
 

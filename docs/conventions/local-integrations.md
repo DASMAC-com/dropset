@@ -335,9 +335,17 @@ tiers**:
   `#destructive-ok` in the command — so a deliberate one stays
   possible and stays auditable in the transcript.
 - **DENY** — a very small catastrophic set that **no marker lifts**: a
-  recursive delete of `/`, `~`, or `$HOME` (bare, trailing-slash or
-  globbed), and a force-push to the default branch in any of its
-  spellings.
+  recursive delete of `/`, `~`, `$HOME`, or the home directory's
+  absolute path (bare, trailing-slash or globbed; force flag or not),
+  and a force-push to the default branch in any of its spellings. An
+  `rm` being run — at the start of a line, after a control operator,
+  or as a shell's `-c` payload — denies with the target anywhere among
+  its unquoted operands; a line of a quoted message is prose, so there
+  only the flags-only shape applies.
+
+Every git rule matches through git's global options, so
+`git -C <path> push --force origin main` is the same deny as the bare
+spelling.
 
 **Two places the coverage is deliberately narrow, so it is not
 over-read:**
@@ -530,8 +538,10 @@ Four design properties, each deliberate:
 Two bounds worth knowing, since a guard trusted past its reach is worse
 than one that is not trusted:
 
-- It sees an **inline** message. A commit written in an editor, or
-  passed with `-F <file>` / `--body-file`, is invisible to it.
+- It sees a message passed **inline** or as a **file**
+  (`git commit -F <file>`, `gh … --body-file`), which it reads and
+  scans. A commit written in an editor, or a message on stdin
+  (`-F -`), is invisible to it.
 - A PR created through the **GitHub MCP** never passes through `Bash`.
   That is why `review-pr` and `pr-title-description` run the guard's
   `--scan` mode over a body before submitting it —
