@@ -335,9 +335,14 @@ tiers**:
   `#destructive-ok` in the command — so a deliberate one stays
   possible and stays auditable in the transcript.
 - **DENY** — a very small catastrophic set that **no marker lifts**: a
-  recursive delete of `/`, `~`, or `$HOME` (bare, trailing-slash or
-  globbed), and a force-push to the default branch in any of its
-  spellings.
+  recursive delete of `/`, `~`, `$HOME`, or the home directory's
+  absolute path (bare, trailing-slash or globbed; force flag or not;
+  the target anywhere among the operands), and a force-push to the
+  default branch in any of its spellings.
+
+Every git rule matches through git's global options, so
+`git -C <path> push --force origin main` is the same deny as the bare
+spelling.
 
 **Two places the coverage is deliberately narrow, so it is not
 over-read:**
