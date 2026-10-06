@@ -140,6 +140,40 @@ default branch and merge-queue runs restore it. `lint.yml` does **not** run
 on `push: main`, and `sdk.yml` no longer saves at all (see below) — which is
 the second reason both read the test jobs' key instead of keeping their own.
 
+### Only a push to main saves
+
+The rust-cache steps in `test.yml` and the toolchain save in
+`install-toolchain` save only on a push to main. Every other run restores
+and never writes. The reason is the scoping rule above. A merge-queue run's
+ref (`gh-readonly-queue/main/pr-N-<sha>`) is used once, so nothing ever
+reads what it saves. A PR ref's entries are read only by that same PR. Both
+kinds still count against the 10 GB repo limit.
+
+Before this rule, every off-main run saved whenever it missed. A miss is
+exactly what follows main's entry being evicted, so the misses fed the
+eviction. Measured on 2026-10-05: 11.4 GB across 2,908 entries, the oldest
+surviving entry about 90 minutes old. Each queue entry added roughly 2 GB of
+rust-cache and toolchain copies on its own ref. That run's toolchain lookup
+had missed main, so every queue run was cold. With saves confined to main:
+
+- the pool holds one copy of each layer, on the default branch;
+- every PR and queue run restores that copy, and each restore counts as an
+  access. Any CI activity therefore keeps main's entries alive against
+  GitHub's 7-day idle eviction.
+
+What it does not cover:
+
+- **A week with no CI runs at all.** Main's entries still expire. The next
+  queue entry pays a cold build, and the push after it republishes the
+  entries. A scheduled warm-up job would close this gap and is deliberately
+  not used.
+- **A PR that changes the lockfile or toolchain pins.** It misses main and
+  stays cold on its own re-runs until it merges. Before this rule, its first
+  run seeded a PR-scoped copy for those re-runs.
+- **sccache and the SBF caches.** They still save from every ref. The SBF
+  entries are about 100 KB each. sccache writes per-object entries as it
+  compiles, so these steps cannot gate it.
+
 The `pre-commit` hook cache is still lint-only and still has no
 default-branch copy, so it remains cold on merge-queue runs and on the first
 run of a new PR. That costs the `install-hooks` step, measured at ~100s.
@@ -151,7 +185,8 @@ the test jobs' `rust-test` one. That input **replaces** rust-cache's
 automatic job-id component, so jobs naming the same key resolve to the same
 entry instead of each storing a near-identical copy.
 
-Only the three test jobs **write** that entry. `lint` and `sdk` set
+Only the three test jobs **write** that entry, and only on a push to main
+(see above). `lint` and `sdk` set
 `save-if: false` and are restore-only, which is load-bearing rather than
 tidy: rust-cache skips its save whenever the restore was an exact key match,
 so the first job to finish on a fresh key decides that entry's contents for
