@@ -132,6 +132,14 @@ pub(crate) async fn serve_once_capturing(response: Vec<u8>) -> (u16, oneshot::Re
 /// isolation pass is a sequential loop — but the limit is real, so a future
 /// concurrent poll path needs a different stub rather than this one.
 ///
+/// **An empty response is a scripted transport failure** — build it with
+/// [`hang_up`]. The server reads that request's head, then closes the socket
+/// without writing a byte, so the client sees a connection closed mid-exchange
+/// rather than any HTTP status. Its head *is* captured: unlike a failed write,
+/// the hang-up is the scripted answer to that request, so it counts toward
+/// `heads.len()` like any other. This is what lets a caller pin a code path
+/// that must treat a transport error differently from anything the venue said.
+///
 /// Requests past `responses.len()` are not answered — the task stops accepting,
 /// so an extra request fails at the transport rather than hanging forever on a
 /// server that has nothing left to say.
@@ -190,6 +198,13 @@ pub(crate) async fn serve_sequence_capturing(
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .push(String::from_utf8_lossy(&head).into_owned());
+                // A scripted hang-up: the request arrived, so its head stays
+                // captured and it consumes its slot, but the socket is dropped
+                // unanswered and the next request has to reconnect.
+                if responses[sent].is_empty() {
+                    sent += 1;
+                    break;
+                }
                 if socket.write_all(&responses[sent]).await.is_err() {
                     // Roll the capture back, for the same reason the
                     // incomplete-head path above declines to consume a response:
@@ -220,6 +235,11 @@ pub(crate) fn json_response(body: &str) -> Vec<u8> {
         body.len()
     )
     .into_bytes()
+}
+
+/// A [`serve_sequence_capturing`] entry that closes the connection unanswered.
+pub(crate) fn hang_up() -> Vec<u8> {
+    Vec::new()
 }
 
 /// The request line — `GET /path?query HTTP/1.1` — out of a captured head.

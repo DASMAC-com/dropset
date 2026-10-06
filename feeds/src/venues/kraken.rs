@@ -651,7 +651,7 @@ fn mid_or_last(entry: &Value) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{json_response, request_line, serve_sequence_capturing};
+    use crate::testing::{hang_up, json_response, request_line, serve_sequence_capturing};
     use crate::venues::requests_per_window;
     use serde_json::json;
 
@@ -1075,6 +1075,64 @@ mod tests {
         assert!(
             !lines[3].contains("CADCUSD"),
             "the remembered pair reached the wire again: {}",
+            lines[3]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_transport_error_during_isolation_does_not_evict_the_pair() {
+        // The other arm of `isolate`: a single-pair re-probe that fails at the
+        // transport is not evidence the pair is unlisted, so it must NOT be
+        // remembered. Getting this wrong ships green everywhere else — a blip
+        // would silently cost the pair a full `EVICTION_TTL` of readings — and
+        // since nothing is remembered, a still-refused batch re-enters
+        // isolation on every poll rather than hourly, until the refused pair's
+        // own probe is answered. That makes this arm the worst-case cost path,
+        // so its behavior is worth pinning exactly.
+        //
+        // Same shape as the seam test above, with the CADCUSD probe replaced by
+        // a hang-up: the refused batch, the USDCUSD probe, the CADCUSD probe
+        // the server drops unanswered, then the next poll's batch.
+        let responses = vec![
+            json_response(&live_refusal().to_string()),
+            json_response(&priced_alone().to_string()),
+            hang_up(),
+            json_response(&priced_alone().to_string()),
+        ];
+        let (port, heads) = serve_sequence_capturing(responses).await;
+        let source = source_with_base(&format!("http://127.0.0.1:{port}"), &["USDCUSD", "CADCUSD"]);
+
+        // The failed probe degrades the poll rather than failing it: the pair
+        // that answered still prices.
+        let first = source
+            .poll()
+            .await
+            .expect("a failed probe is skipped, not raised");
+        assert_eq!(first.len(), 1, "the healthy pair should survive: {first:?}");
+        assert!(first.contains_key("USDCUSD"));
+
+        let second = source.poll().await.expect("the stub answers every request");
+        assert!(second.contains_key("USDCUSD"), "{second:?}");
+
+        let heads = heads.lock().expect("the server task is done writing");
+        let lines: Vec<&str> = heads.iter().map(|head| request_line(head)).collect();
+        assert_eq!(lines.len(), 4, "expected four requests, got {lines:?}");
+
+        // The hang-up really landed on the CADCUSD probe, so the arm under test
+        // is the one that ran — not a refusal, and not a skipped request.
+        assert!(
+            lines[2].contains("CADCUSD") && !lines[2].contains("USDCUSD"),
+            "{}",
+            lines[2]
+        );
+
+        // The pin. Had the transport error been remembered as an eviction, poll
+        // two's batch would carry USDCUSD alone. This is the mirror image of the
+        // seam test's closing negative, and the only assertion here that fails
+        // in that world.
+        assert!(
+            lines[3].contains("USDCUSD") && lines[3].contains("CADCUSD"),
+            "a transport error evicted the pair: {}",
             lines[3]
         );
     }
