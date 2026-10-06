@@ -144,22 +144,25 @@ the second reason both read the test jobs' key instead of keeping their own.
 
 The rust-cache steps in `test.yml` and the toolchain save in
 `install-toolchain` save only on a push to main. Every other run restores
-and never writes. The reason is the scoping rule above. A merge-queue run's
-ref (`gh-readonly-queue/main/pr-N-<sha>`) is used once, so nothing ever
-reads what it saves. A PR ref's entries are read only by that same PR. Both
-kinds still count against the 10 GB repo limit.
+those layers and never writes them. The reason is the scoping rule above. A
+merge-queue run's ref (`gh-readonly-queue/main/pr-N-<sha>`) is used once, so
+nothing reads what it saves again. A PR ref's entries are read only by that
+same PR's re-runs. Both kinds still count against the 10 GB repo limit.
 
 Before this rule, every off-main run saved whenever it missed. A miss is
 exactly what follows main's entry being evicted, so the misses fed the
-eviction. Measured on 2026-10-05: 11.4 GB across 2,908 entries, the oldest
-surviving entry about 90 minutes old. Each queue entry added roughly 2 GB of
-rust-cache and toolchain copies on its own ref. That run's toolchain lookup
-had missed main, so every queue run was cold. With saves confined to main:
+eviction. Measured on 2026-10-06 at about 01:07 UTC: 11.4 GB across 2,908
+entries, the oldest surviving entry about 90 minutes old. The one queue ref
+inspected (an entry for PR 452) carried roughly 2 GB of rust-cache and
+toolchain copies, and its toolchain save shows its lookup had missed main.
+With saves confined to main:
 
-- the pool holds one copy of each layer, on the default branch;
-- every PR and queue run restores that copy, and each restore counts as an
-  access. Any CI activity therefore keeps main's entries alive against
-  GitHub's 7-day idle eviction.
+- the rust-cache and toolchain layers are saved only on the default branch;
+- every merge-queue run, and every PR run that touches code, restores main's
+  entry on the same key. A restore advances the entry's last-accessed time.
+  Observed on two PR-scoped entries, whose immutable keys were touched
+  again by a later run's restore. That activity keeps main's entries inside
+  GitHub's 7-day idle window.
 
 What it does not cover:
 
@@ -167,12 +170,15 @@ What it does not cover:
   queue entry pays a cold build, and the push after it republishes the
   entries. A scheduled warm-up job would close this gap and is deliberately
   not used.
-- **A PR that changes the lockfile or toolchain pins.** It misses main and
-  stays cold on its own re-runs until it merges. Before this rule, its first
-  run seeded a PR-scoped copy for those re-runs.
-- **sccache and the SBF caches.** They still save from every ref. The SBF
-  entries are about 100 KB each. sccache writes per-object entries as it
-  compiles, so these steps cannot gate it.
+- **A PR that changes the lockfile or toolchain pins.** It misses main's
+  exact entry on its own re-runs until it merges. Before this rule, its first
+  run seeded a PR-scoped copy for those re-runs. Queue runs that land before
+  the post-merge push has saved the new key miss too.
+- **sccache, the SBF caches, and other workflows' caches.** They still save
+  from every ref. The SBF entries are about 100 KB each. sccache writes
+  per-object entries as it compiles, so these steps cannot gate it. The
+  `pnpm`, `pre-commit` and `pip` caches belong to workflows this rule does
+  not touch. They can still crowd main's entries under the limit.
 
 The `pre-commit` hook cache is still lint-only and still has no
 default-branch copy, so it remains cold on merge-queue runs and on the first

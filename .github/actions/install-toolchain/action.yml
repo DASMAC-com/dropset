@@ -81,10 +81,10 @@ runs:
   # re-saves over an entry it did not first delete.
   #
   # And only on a push to main, for the scoping reason PURGE_ALLOWED gives: a
-  # PR or merge-queue save lands in a scope nothing else reads, while its
-  # ~0.7 GB counts against the repo's 10 GB ceiling and helps evict the
-  # main-scoped entry every run does read. A miss off main reinstalls and
-  # waits for the next push to republish.
+  # merge-queue save lands in a scope never read again and a PR save in one
+  # only that PR's re-runs read, while its ~0.7 GB counts against the repo's
+  # 10 GB cache limit alongside the main-scoped entry other runs restore. A
+  # miss off main reinstalls and waits for the next push to republish.
   #
   # Expect benign noise here on any run that installs. All the toolchain jobs
   # reach this save at roughly the same moment, where the post-step saves this

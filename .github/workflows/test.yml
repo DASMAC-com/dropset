@@ -163,20 +163,21 @@ jobs:
     # Only a push to main saves. A cache entry is scoped to the ref that saved
     # it, and a run can restore only its own ref's entries or main's — so a
     # merge-queue save (`gh-readonly-queue/main/pr-N-<sha>`, a ref used once)
-    # is never read by anything, and a PR save is read only by that PR. Both
-    # used to happen on every miss, and a miss is exactly what follows main's
-    # entry being evicted: measured at 11.4 GB against the 10 GB ceiling, the
-    # oldest surviving entry ~90 min old, ~2 GB of rust-cache and toolchain
-    # copies per queue entry. That bloat is what evicts main's entry next, so
-    # every run stayed cold. Restore-only off main breaks the loop, and turns
-    # every PR and queue run into an access that keeps main's entry alive
-    # against the 7-day idle eviction.
+    # is never read again, and a PR save is read only by that PR's re-runs.
+    # Both used to happen on every miss while counting against the repo's
+    # 10 GB cache limit, and the bloat evicts main's entry, which causes the
+    # next miss. Restore-only off main breaks that loop, and leaves main's
+    # entry restored by every queue run and code-changing PR on the same key,
+    # which keeps it inside GitHub's 7-day idle window. Measurements:
+    # docs/ci.md §3.
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
-        save-if: '${{ github.event_name == ''push'' }}'
+        save-if: >-
+          ${{ github.event_name == 'push'
+          && github.ref == 'refs/heads/main' }}
         shared-key: 'rust-test-${{ runner.os }}'
     # Cache the built program .so itself — rust-cache prunes workspace-crate
     # artifacts and never restores the SBF target, so without this the .so is
@@ -301,14 +302,17 @@ jobs:
     # is recompiled feature-off. rust-cache prunes the workspace crates from
     # target/ before saving, so restoring here no longer drags in the full
     # default-feature target/ that previously doubled the on-disk footprint
-    # and crashed the runner with "No space left on device". Saves only on a
-    # push to main, for the reason given on the `test` job's step.
+    # and crashed the runner with "No space left on device".
+    #
+    # Saves only on a push to main; see the `test` job's rust-cache step.
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
-        save-if: '${{ github.event_name == ''push'' }}'
+        save-if: >-
+          ${{ github.event_name == 'push'
+          && github.ref == 'refs/heads/main' }}
         shared-key: 'rust-test-${{ runner.os }}'
     # Feature-off counterpart of the `test` job's SBF cache. Keyed with its
     # own `no-teardown` tag so the two jobs cache distinct binaries (the .so
@@ -408,13 +412,15 @@ jobs:
       uses: 'mozilla-actions/sccache-action@v0.0.10'
       with:
         version: 'v0.17.0'
-    # Push-to-main-only save, as on the `test` job's step.
+    # Saves only on a push to main; see the `test` job's rust-cache step.
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
-        save-if: '${{ github.event_name == ''push'' }}'
+        save-if: >-
+          ${{ github.event_name == 'push'
+          && github.ref == 'refs/heads/main' }}
         shared-key: 'rust-test-${{ runner.os }}'
     # Cache BOTH parity artifacts under one content-addressed key (same
     # inputs as the other jobs' SBF caches, distinct `parity` tag). An
@@ -520,13 +526,15 @@ jobs:
       uses: 'mozilla-actions/sccache-action@v0.0.10'
       with:
         version: 'v0.17.0'
-    # Push-to-main-only save, as on the `test` job's step.
+    # Saves only on a push to main; see the `test` job's rust-cache step.
     - if: |
         needs.changes.outputs.code == 'true'
       uses: 'Swatinem/rust-cache@v2'
       with:
         cache-on-failure: true
-        save-if: '${{ github.event_name == ''push'' }}'
+        save-if: >-
+          ${{ github.event_name == 'push'
+          && github.ref == 'refs/heads/main' }}
         shared-key: 'rust-postgres-${{ runner.os }}'
     - if: |
         needs.changes.outputs.code == 'true'
