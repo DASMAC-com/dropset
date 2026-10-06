@@ -289,21 +289,25 @@ pub fn confirm() -> Result<()> {
 /// Runs before the alternate screen is entered, so the warning is in the
 /// scrollback rather than painted over by the first frame.
 ///
-/// `leader` is the operator-supplied vault leader, named here so the key that
-/// will sign the vault steps is confirmed along with everything else; `None`
-/// says plainly that those steps will refuse.
-pub fn confirm_mainnet_entry(rpc_url: &str, wallet: &str, leader: Option<&str>) -> Result<()> {
+/// Each key is labelled by its **role**, not by where it came from: `admin` is
+/// the `--wallet` keypair — the registry's genesis admin and the payer of
+/// every ceremony transaction — and `leader` is the operator-supplied vault
+/// leader that signs the vault steps. Both are confirmed along with everything
+/// else; a `None` leader says plainly that those steps will refuse.
+pub fn confirm_mainnet_entry(rpc_url: &str, admin: &str, leader: Option<&str>) -> Result<()> {
     let host = host_of(rpc_url).unwrap_or_else(|| "<unparsed>".to_string());
     eprintln!();
     eprintln!("  ╔══════════════════════════════════════════════════════════╗");
     eprintln!("  ║  ⚠  MAINNET-BETA — REAL FUNDS                            ║");
     eprintln!("  ╚══════════════════════════════════════════════════════════╝");
     eprintln!("   RPC host: {host}");
-    eprintln!("   wallet:   {wallet}");
-    eprintln!(
-        "   leader:   {}",
-        leader.unwrap_or("(none — create-vault and deposit will refuse)")
-    );
+    eprintln!("   admin:    {admin}  (--wallet; registry admin + fee payer)");
+    match leader {
+        Some(leader) => {
+            eprintln!("   leader:   {leader}  (--leader; leads every roster vault)")
+        }
+        None => eprintln!("   leader:   (none — create-vault and deposit will refuse)"),
+    }
     eprintln!(
         "   Genesis verified as mainnet-beta. Every action in this session\n   \
          moves real money and nothing is reversible. No validator is\n   \
