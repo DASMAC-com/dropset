@@ -336,9 +336,12 @@ tiers**:
   possible and stays auditable in the transcript.
 - **DENY** — a very small catastrophic set that **no marker lifts**: a
   recursive delete of `/`, `~`, `$HOME`, or the home directory's
-  absolute path (bare, trailing-slash or globbed; force flag or not;
-  the target anywhere among the operands), and a force-push to the
-  default branch in any of its spellings.
+  absolute path (bare, trailing-slash or globbed; force flag or not),
+  and a force-push to the default branch in any of its spellings. An
+  `rm` being run — at the start of a line, after a control operator,
+  or as a shell's `-c` payload — denies with the target anywhere among
+  its unquoted operands; a line of a quoted message is prose, so there
+  only the flags-only shape applies.
 
 Every git rule matches through git's global options, so
 `git -C <path> push --force origin main` is the same deny as the bare

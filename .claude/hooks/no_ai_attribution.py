@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word mkfifo
 """PreToolUse guard: block AI attribution in a commit message or PR body.
 
 CLAUDE.md forbids AI attribution outright — no ``Co-Authored-By:`` trailer
@@ -37,7 +38,7 @@ one that is not trusted at all:
 
 * It sees a message passed INLINE (``-m``, ``--body``), including in a clustered
   short flag (``-am``, ``-Sam``), and one passed as a FILE (``git commit -F``,
-  ``gh … --body-file``): the file is read, up to ``MESSAGE_FILE_CAP`` bytes, and
+  ``gh … --body-file``): the file is read, up to ``MESSAGE_FILE_CAP`` characters, and
   scanned like an inline value. The file path matters because the sibling
   compound guard tells agents to pass a large message exactly that way. A
   relative path resolves against the payload's ``cwd``; stdin (``-F -``) and a
@@ -66,6 +67,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import sys
 import tempfile
 
@@ -115,9 +117,9 @@ GIT_TEXT_FLAGS = ("--message", "-m")
 GH_TEXT_FLAGS = ("--body", "--title", "-b", "-t")
 
 #: Flags whose value is a PATH to authored prose. `git commit -F` / `--file`,
-#: and `gh`'s `-F` / `--body-file`.
+#: and `gh`'s `-F` / `--body-file` — spelled `--notes-file` on `gh release`.
 GIT_FILE_FLAGS = ("--file", "-F")
-GH_FILE_FLAGS = ("--body-file", "-F")
+GH_FILE_FLAGS = ("--body-file", "--notes-file", "-F")
 
 #: How much of a message file is read. A trailer sits at the end of a message,
 #: but no real commit message or PR body approaches this.
@@ -299,6 +301,11 @@ def _file_texts(paths, cwd):
 
     ``-`` is stdin, which a hook cannot see, so it is skipped; so is any file
     that cannot be opened. Both fail OPEN, like every other parse problem here.
+
+    Only a REGULAR file is opened. Opening a named pipe for reading blocks until
+    a writer appears, and a tty blocks on read, so `-F` aimed at either would
+    hang the hook — and with it the Bash call — until the harness timed it out.
+    A NUL in the path raises ValueError rather than OSError, so both are caught.
     """
     texts = []
     for path in paths:
@@ -308,11 +315,13 @@ def _file_texts(paths, cwd):
         if not os.path.isabs(path) and cwd:
             path = os.path.join(cwd, path)
         try:
+            if not stat.S_ISREG(os.stat(path).st_mode):
+                continue
             # `errors="replace"` for the same reason `_scan` uses it: a decode
             # error must not escape as an exception.
             with open(path, encoding="utf-8", errors="replace") as handle:
                 texts.append(handle.read(MESSAGE_FILE_CAP))
-        except OSError:
+        except (OSError, ValueError):
             continue
     return texts
 
@@ -524,13 +533,23 @@ def _self_test():
             ("git commit -F dirty.txt", tmp, True),
             (f"gh pr create --title x --body-file {dirty}", None, True),
             (f"gh pr comment 1 -F {dirty}", None, True),
+            (f"gh pr create --title x --body-file={dirty}", None, True),
+            ("gh pr comment 1 -F dirty.txt", tmp, True),
+            (f"gh release create v1 --notes-file {dirty}", None, True),
             (f"git commit -S -F {clean}", None, False),
             # Stdin and an unreadable path fail open.
             ("git commit -F -", tmp, False),
             (f"git commit -F {tmp}/missing.txt", None, False),
+            (f"git commit -F {tmp}", None, False),
             # A non-authoring subcommand still is not inspected.
             (f"git log -F {dirty}", None, False),
         ]
+        # A named pipe must be skipped, not opened: opening one for reading
+        # blocks until a writer appears, so a regression here HANGS.
+        if hasattr(os, "mkfifo"):
+            pipe = os.path.join(tmp, "pipe")
+            os.mkfifo(pipe)
+            file_cases.append((f"git commit -F {pipe}", None, False))
         for cmd, cwd, should_block in file_cases:
             payload = {"tool_name": "Bash", "tool_input": {"command": cmd}}
             if cwd is not None:
