@@ -63,7 +63,7 @@ rename, the first thing that costs anything to undo:
 | `agent-locked`            | Same, agent empty or unreachable                                                   | **Stop and ask**: unlock the 1Password app.                 |
 | `gpg`                     | `gpg.format` unset or non-`ssh`                                                    | Proceed; nothing to check.                                  |
 
-On either stop, ask rather than retrying more than once or working
+On any stop in this step, ask rather than retrying more than once or working
 around it; nothing is lost, since no commit was written yet.
 
 Do not add an agent probe (`ssh-add -l`, `ssh-keygen -Y sign`) or a
