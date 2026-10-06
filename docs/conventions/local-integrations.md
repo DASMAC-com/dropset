@@ -530,8 +530,10 @@ Four design properties, each deliberate:
 Two bounds worth knowing, since a guard trusted past its reach is worse
 than one that is not trusted:
 
-- It sees an **inline** message. A commit written in an editor, or
-  passed with `-F <file>` / `--body-file`, is invisible to it.
+- It sees a message passed **inline** or as a **file**
+  (`git commit -F <file>`, `gh … --body-file`), which it reads and
+  scans. A commit written in an editor, or a message on stdin
+  (`-F -`), is invisible to it.
 - A PR created through the **GitHub MCP** never passes through `Bash`.
   That is why `review-pr` and `pr-title-description` run the guard's
   `--scan` mode over a body before submitting it —

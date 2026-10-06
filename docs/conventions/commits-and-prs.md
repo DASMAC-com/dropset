@@ -54,9 +54,10 @@
   body before submitting it — the same patterns, one owner, rather
   than a second copy that drifts.
 - **Known gap, stated so the guard is not trusted past its reach:** it
-  sees a message passed *inline*. A commit written in an editor, or
-  passed with `-F <file>` / `--body-file`, carries its text somewhere
-  the guard never looks.
+  sees a message passed *inline* or as a *file* (`-F <file>` /
+  `--body-file`, which it reads). A commit written in an editor, or a
+  message on stdin (`-F -`), carries its text somewhere the guard
+  never looks.
 - Commit messages: imperative summary line, capitalized first letter,
   no trailing period. Optional body explains the *why*, wrapped at 72
   chars.

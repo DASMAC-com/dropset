@@ -17,8 +17,8 @@ Two tiers, deliberately:
   marker `#destructive-ok` in the command, so a deliberate one stays possible
   and stays auditable in the transcript.
 * **DENY** — a very small catastrophic set that no marker overrides: a
-  recursive delete of `/` or the home directory, and a force-push to the
-  default branch.
+  recursive delete of `/` or the home directory (force flag or not, the target
+  anywhere among the operands), and a force-push to the default branch.
 
 **This is a best-effort advisory stop, not a policy boundary.** It reads one
 command string and matches patterns; a determined or unusual spelling gets
@@ -38,20 +38,73 @@ Fails **open**: any parse problem returns 0 rather than wedging the session.
 """
 
 import json
+import os
 import re
 import sys
 
 ESCAPE_HATCH = "#destructive-ok"
 
 # --------------------------------------------------------------------------
+# git global options. Every git pattern below is built on `_GIT`, never on a
+# bare `\bgit\s+`, because a global option between `git` and its subcommand
+# otherwise defeats the match at every tier — `git -C /x push --force origin
+# main` classified clean, deny tier included. That is not an unusual spelling
+# this guard can shrug off as best-effort: `git -C <path>` is a shape the
+# repo's own skills prescribe.
+#
+# The value-taking set is the same table `no_git_grep.py` and
+# `no_ai_attribution.py` carry (each hook is a standalone script, so it is
+# copied rather than imported). Every other dash token is a valueless global
+# (`--no-pager`, `-P`, `--bare`) or a `--name=value` spelling.
+#
+# The prefix is WIDENED rather than the line rewritten, deliberately: `_matches`
+# compares match offsets against quoted-span offsets, and a normalized line
+# would no longer share them.
+# --------------------------------------------------------------------------
+
+GIT_VALUE_FLAGS = (
+    "--git-dir",
+    "--namespace",
+    "--super-prefix",
+    "--work-tree",
+    "-C",
+    "-c",
+)
+_GIT_OPTION_VALUE = r"(?:\"[^\"]*\"|'[^']*'|[^\s\"']+)"
+_GIT = (
+    r"\bgit(?:\s+(?:(?:"
+    + "|".join(re.escape(flag) for flag in GIT_VALUE_FLAGS)
+    + r")\s+"
+    + _GIT_OPTION_VALUE
+    + r"|-[^\s\"'=]+(?:="
+    + _GIT_OPTION_VALUE
+    + r")?))*\s+"
+)
+
+# --------------------------------------------------------------------------
 # DENY — no override. Kept deliberately tiny: every entry must be something
 # with no legitimate use from an agent session in this repo.
 # --------------------------------------------------------------------------
 
-# A recursive-force `rm`, in either flag order. `[rR]` is deliberate: BSD/macOS
-# `rm` accepts `-R` as a first-class recursive flag, and this repo runs on
-# macOS — a case-sensitive `r` left `rm -Rf /` unclassified at every tier.
-_RM_RECURSIVE_FORCE = r"\brm\b(?=(?:\s+-\S+)*\s+-\S*[rR])(?=(?:\s+-\S+)*\s+-\S*f)"
+# A recursive `rm`, force or not. `[rR]` is deliberate: BSD/macOS `rm` accepts
+# `-R` as a first-class recursive flag, and this repo runs on macOS — a
+# case-sensitive `r` left `rm -Rf /` unclassified at every tier.
+#
+# The DENY tier is built on this, not on `_RM_RECURSIVE_FORCE`. Requiring a force
+# flag there left `rm -r ~` and `rm -R /` unclassified at every tier, which
+# contradicts what this module says the deny set is. And `-f` adds nothing to
+# the destructive power from an agent session: the Bash tool's stdin is not a
+# terminal, so BSD `rm` removes write-protected files without prompting anyway.
+#
+# A recursive flag is a SHORT cluster holding `r`/`R`, or `--recursive`. The
+# `(?!-)` matters: `-\S*[rR]` alone read the `r` in `--force` and
+# `--no-preserve-root` as recursion.
+_RM_RECURSIVE = r"\brm\b(?=(?:\s+-\S+)*\s+(?:-(?!-)\S*[rR]|--recursive\b))"
+
+# A recursive-force `rm`, in either flag order — the ASK tier. A plain `rm -r
+# <dir>` stays unclassified there; flagging every recursive delete of a build
+# directory would train the operator to approve without reading.
+_RM_RECURSIVE_FORCE = _RM_RECURSIVE + r"(?=(?:\s+-\S+)*\s+-\S*f)"
 
 # The targets that make a recursive delete catastrophic rather than merely
 # destructive. `~/` and `$HOME/` (with the trailing slash) are included because
@@ -62,11 +115,22 @@ _RM_RECURSIVE_FORCE = r"\brm\b(?=(?:\s+-\S+)*\s+-\S*[rR])(?=(?:\s+-\S+)*\s+-\S*f
 # anchor, in a spelling the sibling compound guard also passes. The `+` covers
 # `///` and any longer run for free. Longest alternatives come first so the
 # greedy match consumes the whole run rather than stopping after one slash.
+#
+# The home directory's ABSOLUTE spelling is resolved at import time and joins
+# the list, because agents here are told to prefer absolute paths:
+# `rm -rf /Users/<user>/` reached only the marker-liftable ask tier. A HOME
+# that does not resolve to an absolute path other than `/` adds nothing.
+_HOME = os.path.expanduser("~").rstrip("/")
+_ABSOLUTE_HOME = (
+    rf"|{re.escape(_HOME)}/+\*|{re.escape(_HOME)}/+|{re.escape(_HOME)}"
+    if _HOME.startswith("/")
+    else ""
+)
 _CATASTROPHIC_CORE = (
     r"(?:/+\*|/+"
     r"|~/+\*|~/+|~"
     r"|\$HOME/+\*|\$HOME/+|\$HOME"
-    r"|\$\{HOME\}/+\*|\$\{HOME\}/+|\$\{HOME\})"
+    r"|\$\{HOME\}/+\*|\$\{HOME\}/+|\$\{HOME\}" + _ABSOLUTE_HOME + r")"
 )
 
 # The same targets, optionally wrapped in **matching** quotes, because that is
@@ -127,8 +191,22 @@ _CATASTROPHIC_TARGET = (
 # tail then matched anyway — which is how `git commit -m "… rm -rf /
 # --no-preserve-root"` still denied after the shell split. Excluding quotes from
 # the flag class is what makes the two tails actually differ.
-_RM_TAIL_STRICT = r"(?:\s+-[^\s\"']+)*\s*$"
-_RM_TAIL_SHELL = r"(?:\s+-[^\s\"']+)*[\s\"']*$"
+#
+# **The target may be ANY operand, not only the last.** Tolerating only flags
+# after it meant one more path demoted a root or home delete to the liftable
+# ask tier: `rm -rf ~/ .cache` (the stray-space slip for `~/.cache`),
+# `rm -rf build /` and `rm -rf / build` all asked. So an operand may precede
+# the target and follow it, and `_RM_OPERAND` is what keeps that from widening
+# the deny tier into prose. It excludes quotes for the reason above — a
+# trailing `then"` still ends a stored message — and shell control characters,
+# so a SECOND command's path is never read as this one's operand:
+# `rm -rf build; ls /` lists root, and must not deny. The bound: a quoted
+# operand before or after the target is not tolerated, so `rm -rf "a b" /`
+# still asks rather than denies.
+_RM_OPERAND = r"[^\s\"';&|<>()`]+"
+_RM_HEAD = r"(?:\s+" + _RM_OPERAND + r")*\s+"
+_RM_TAIL_STRICT = r"(?:\s+" + _RM_OPERAND + r")*\s*$"
+_RM_TAIL_SHELL = r"(?:\s+" + _RM_OPERAND + r")*[\s\"']*$"
 
 # Programs that hand a quoted argument to a shell for execution. Only these get
 # the quote-tolerant tail. An allowlist, not a denylist of "safe" programs: the
@@ -139,12 +217,7 @@ SHELL_PROGRAMS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash", "fish"})
 # Denies that apply on EVERY line, whatever the program.
 DENY_PATTERNS = (
     (
-        re.compile(
-            _RM_RECURSIVE_FORCE
-            + r"(?:\s+-\S+)*\s+"
-            + _CATASTROPHIC_TARGET
-            + _RM_TAIL_STRICT
-        ),
+        re.compile(_RM_RECURSIVE + _RM_HEAD + _CATASTROPHIC_TARGET + _RM_TAIL_STRICT),
         "a recursive delete of the filesystem root or the home directory",
     ),
     (
@@ -159,7 +232,7 @@ DENY_PATTERNS = (
         # trailing lookahead keeps `+main-thing:x` (a differently-named branch)
         # out of a tier no marker can lift.
         re.compile(
-            r"\bgit\s+push\b"
+            _GIT + r"push\b"
             r"(?=.*(?:--force\b|--force-with-lease\b|(?<!\w)-f(?!\w)"
             r"|\+(?:[\w./-]*[:/])?(?:main|master)(?=[:\s]|$)))"
             r"(?=.*\b(?:main|master)\b)"
@@ -178,12 +251,7 @@ DENY_PATTERNS = (
 # live false positive. See `_RM_TAIL_SHELL`.
 SHELL_DENY_PATTERNS = (
     (
-        re.compile(
-            _RM_RECURSIVE_FORCE
-            + r"(?:\s+-\S+)*\s+"
-            + _CATASTROPHIC_TARGET
-            + _RM_TAIL_SHELL
-        ),
+        re.compile(_RM_RECURSIVE + _RM_HEAD + _CATASTROPHIC_TARGET + _RM_TAIL_SHELL),
         "a recursive delete of the filesystem root or the home directory",
     ),
 )
@@ -245,13 +313,13 @@ ASK_PATTERNS = (
         # tolerates the `=<refname>` argument because `\b` sits before the `=`
         # too.
         re.compile(
-            r"\bgit\s+push\b.*(?:--force(?!-with-lease\b)\b"
+            _GIT + r"push\b.*(?:--force(?!-with-lease\b)\b"
             r"|(?<![\w-])-(?!-)[A-Za-z]*f[A-Za-z]*(?![\w-])"
             r"|\+[\w./-]+:)"
         ),
         "a force-push without a lease",
     ),
-    (re.compile(r"\bgit\s+reset\s+--hard\b"), "a hard reset, which discards changes"),
+    (re.compile(_GIT + r"reset\s+--hard\b"), "a hard reset, which discards changes"),
     (
         # `-n` is git clean's DRY RUN. `git clean -ndx` is the recommended
         # preview and deletes nothing, so blocking it is a pure false positive.
@@ -263,7 +331,7 @@ ASK_PATTERNS = (
         # -fdx` both went unclassified — the false-positive fix opening a real
         # hole, which is the failure mode to watch for in this whole file.
         re.compile(
-            r"\bgit\s+clean\b(?![^\n]*\s(?:-[a-zA-Z]*n|--dry-run\b))"
+            _GIT + r"clean\b(?![^\n]*\s(?:-[a-zA-Z]*n|--dry-run\b))"
             r"(?:\s+-\S+)*\s+-\S*[fx]"
         ),
         "a `git clean` that deletes untracked files",
@@ -290,7 +358,7 @@ ASK_PATTERNS = (
         "a docker prune or volume removal, which destroys local state",
     ),
     (
-        re.compile(r"\bgit\s+branch\b(?:\s+-\S+)*\s+-\S*D"),
+        re.compile(_GIT + r"branch\b(?:\s+-\S+)*\s+-\S*D"),
         "a forced branch delete",
     ),
 )
@@ -935,7 +1003,53 @@ def _self_test():
         # A trailing backslash continues the command; the newline is not a
         # separator, so this must classify as the one command it actually is.
         ("rm -rf \\\n  /", "deny"),
+        # A git GLOBAL OPTION between `git` and the subcommand defeated every
+        # git pattern, deny tier included — and `git -C <path>` is a shape the
+        # repo's own skills prescribe.
+        ("git -C /x push --force origin main", "deny"),
+        ("git --no-pager push -f origin main", "deny"),
+        ('git -C "/a b" -c core.pager=cat push origin +main:main', "deny"),
+        ("git --git-dir=/x/.git push --force origin main", "deny"),
+        ("git -C /x push --force origin eng-942", "ask"),
+        ("git -C /x reset --hard HEAD~1", "ask"),
+        ("git -C /x clean -fdx", "ask"),
+        ("git -C /x branch -D eng-1", "ask"),
+        ("git -C /x clean -ndx", None),
+        ("git -C /x push --force-with-lease origin eng-942", None),
+        ("git -C /repos/main push -u origin eng-942", None),
+        # A recursive delete needs no force flag to be catastrophic: the Bash
+        # tool's stdin is not a terminal, so `rm` never prompts. Both of these
+        # passed the guard at every tier.
+        ("rm -r ~", "deny"),
+        ("rm -R /", "deny"),
+        ("rm -r $HOME/", "deny"),
+        ("rm --recursive ~", "deny"),
+        ('bash -c "rm -r /"', "deny"),
+        # ...while a plain recursive delete elsewhere stays unclassified, and
+        # the `r` inside a LONG option is not recursion.
+        ("rm -r build", None),
+        ("rm --force notes.txt", None),
+        # A catastrophic target is catastrophic as ANY operand, not only the
+        # last. These all asked, one marker away from the home directory.
+        ("rm -rf ~/ .cache", "deny"),
+        ("rm -rf build /", "deny"),
+        ("rm -rf / build", "deny"),
+        ('bash -c "rm -rf ~/ .cache"', "deny"),
+        # ...but a second command's path is not this command's operand, and
+        # prose that merely quotes the spelling still never reaches deny.
+        ("rm -rf build; ls /", "ask"),
+        ('git commit -m "Never run rm -rf / and then walk away"', "ask"),
+        ("rm -rf ~/build", "ask"),
     ]
+    # The absolute spelling of the home directory, which agents are told to
+    # prefer. Built from the real HOME so the case holds on any machine.
+    if _HOME.startswith("/"):
+        cases += [
+            (f"rm -rf {_HOME}/", "deny"),
+            (f"rm -rf {_HOME}", "deny"),
+            (f"rm -rf {_HOME}/*", "deny"),
+            (f"rm -rf {_HOME}/scratch", "ask"),
+        ]
     failures = []
     for cmd, expected in cases:
         tier, _ = classify(cmd)
