@@ -314,7 +314,10 @@ pub struct LadderEpochRow {
     pub market: String,
     /// `bid` or `ask` — the migration CHECKs it.
     pub side: String,
-    /// 0 is the tightest level.
+    /// 0 is the level the configured ladder declared first. With today's values
+    /// that is also the tightest, but nothing enforces the ordering — see the
+    /// migration's own note on this column, and prefer `min(offset_ppm)` over
+    /// index 0 if you need the touch.
     pub level_idx: i16,
     /// Offset from the reference in ppm; bids subtract, asks add. Never
     /// rewritten by a reshape, unlike [`Self::size_bps`].
@@ -322,8 +325,10 @@ pub struct LadderEpochRow {
     /// The level's size share in bps **as armed** — so after
     /// `ladder::scale_side` or `ladder::zero_side`, not as configured.
     pub size_bps: i32,
-    /// The shape this epoch is, rendered exactly as `Sample::profile_kind` is
-    /// so the two columns correlate.
+    /// The shape this epoch is, rendered exactly as `Sample::profile_kind` is —
+    /// so the two columns share a vocabulary, but **not** a timing, and must
+    /// not be joined on equality. A sample carries the kind armed *before* its
+    /// tick; this carries the kind that tick armed.
     pub profile_kind: String,
 }
 
@@ -909,7 +914,7 @@ pub fn contribution_samples(ts: i64, market: &str, fair: &FairValue) -> Vec<Cont
 ///
 /// **Sizes and offsets are read from `profile`, never from `ladder`** — that is
 /// the point of taking both. `ladder` supplies only the level *count*, because
-/// `model::ladder::build_profile` fills the first `ladder.len()` of
+/// `model::ladder::build_profile` fills the first `min(ladder.len(), N_LEVELS)` of
 /// [`N_LEVELS`] slots and leaves the tail zeroed; a row for a zeroed tail slot
 /// would plot a level sitting exactly at the reference, which nobody is
 /// quoting. The values themselves come from the profile because

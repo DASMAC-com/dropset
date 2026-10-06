@@ -27,9 +27,10 @@
 --     ask = on_chain_reference * (1 + offset_ppm / 1e6)
 --
 -- which is the arithmetic `telemetry::SampleBuilder::touch` applies to the
--- tightest level, applied to each. The bot evaluates it in `f64`; a SQL
--- consumer dividing a `BIGINT` by `1000000.0` evaluates it in `numeric` and
--- widens on the multiply, so the two agree to display precision rather than
+-- tightest level, applied to each. The bot evaluates it in `f64`, while a SQL
+-- consumer dividing a `BIGINT` by `1000000.0` gets `numeric` — which the
+-- multiply against a `double precision` reference then casts back down to
+-- `double precision`. So the two paths agree to display precision rather than
 -- bit-for-bit. `on_chain_reference` is on every telemetry
 -- row, so the only thing missing was the ladder's *shape* — and the shape is
 -- near-constant: it changes on a re-arm, which is a restart, a reshape, a
@@ -41,10 +42,11 @@
 --
 -- **`size_bps` is what was ARMED, not what was configured**, and that is the
 -- reason this table stores sizes at all rather than leaving them to be read
--- from the bot's config. `model::ladder::scale_side` (the > 30% reshape) and
--- `zero_side` (the freeze) rewrite per-level sizes at runtime — flooring, then
--- renormalizing if a side would exceed BPS — so the resting sizes routinely
--- differ from `DEFAULT_LADDER`. Reading sizes from config would show the
+-- from the bot's config. Two primitives rewrite per-level sizes at runtime:
+-- `model::ladder::scale_side` (the > 30% reshape) scales them, flooring and
+-- then renormalizing if a side would exceed BPS, while `zero_side` (the
+-- freeze) simply assigns zero. Either way the resting sizes routinely differ
+-- from `DEFAULT_LADDER`. Reading sizes from config would show the
 -- operator the shape the bot intended rather than the one it armed, which is
 -- precisely the divergence a tuning session is looking for.
 --

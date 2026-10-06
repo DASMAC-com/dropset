@@ -13,8 +13,18 @@
 -- What this clause actually absorbs is the residue outside that argument — a
 -- process restart that re-arms inside the same second as the previous
 -- process's last arm, and a backward clock step, `armed_at` being wall time.
--- In both cases silently dropping one telemetry row is the right price: an
--- aborted transaction would take the tick's sample and legs down with it.
+-- Be precise about what that costs, because it is more than one row. Every
+-- row of one epoch shares an `armed_at`, so a conflict drops the whole epoch
+-- and leaves the PREVIOUS shape as the latest one on record — a consumer then
+-- keeps reading the old ladder until the next re-arm, which the daily
+-- heartbeat bounds at a day. That over-states resting liquidity, the one
+-- direction a consumer of this table most wants to avoid.
+--
+-- It is still the right trade, twice over. An aborted transaction would take
+-- the tick's sample and legs down with it, losing strictly more. And
+-- `DO UPDATE` would not help: a shorter new ladder cannot evict the old
+-- epoch's surplus deep rows, since they carry the same `armed_at` and no
+-- longer appear in the incoming set at all.
 INSERT INTO maker_ladder_epoch (
     armed_at,
     market,

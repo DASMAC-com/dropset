@@ -97,9 +97,16 @@ UNION ALL
 -- through explicit name mappers instead -- so the two tables spell the same
 -- enum differently. If the maker's rendering ever changes, this predicate
 -- stops matching and the overlay silently disappears.
+--
+-- The regime's payload is stripped, and that is not cosmetic. Regime::Degraded
+-- carries a Degrade reason, so Debug renders it as Degraded(StaticPeg) rather
+-- than a bare Degraded -- and a static tick is ALWAYS degraded. Interpolating
+-- it raw would split this overlay into one series per reason, each fragmented
+-- by spanNulls and each its own legend row, for a panel whose question is only
+-- "is this print a fallback". The reason itself is on the regime panel below.
 SELECT
   to_timestamp(ts) AS "time",
-  'fair (' || anchor || ' peg, ' || regime || ')' AS metric,
+  'fair (' || anchor || ' peg, ' || split_part(regime, '(', 1) || ')' AS metric,
   fair AS value
 FROM ticks
 WHERE anchor = 'Static'
