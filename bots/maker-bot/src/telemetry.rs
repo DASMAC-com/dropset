@@ -49,6 +49,7 @@ use crate::model::ladder::Side;
 use anyhow::Result;
 use async_trait::async_trait;
 use dropset_fair_value::{Candidates, FairValue, FusionReport, LegStaleness, Legs, SourceClass};
+use dropset_sdk::layout::{LiquidityProfile, N_LEVELS};
 // `MAX_ERROR_CHARS` bounds the tick-error text a sample carries. Taken from
 // the framework rather than restated, so the two error columns cannot drift
 // apart — see its own doc there for why the bound is a character count.
@@ -297,9 +298,38 @@ pub struct ContributionSample {
     pub weight: f64,
 }
 
+/// One level of one side of the ladder the bot just armed — the
+/// `maker_ladder_epoch` row.
+///
+/// Emitted **per re-arm, not per tick**, which is the whole reason this is a
+/// separate record rather than more columns on [`Sample`]. A level's price is
+/// already derivable per tick from the telemetry row's `on_chain_reference` and
+/// this row's `offset_ppm`, so storing the shape once per epoch yields the same
+/// numbers as a per-tick table for orders of magnitude fewer rows. The
+/// migration states the arithmetic and the volume case.
+#[derive(Clone, Debug)]
+pub struct LadderEpochRow {
+    /// Unix seconds of the tick that armed this shape.
+    pub armed_at: i64,
+    pub market: String,
+    /// `bid` or `ask` — the migration CHECKs it.
+    pub side: String,
+    /// 0 is the tightest level.
+    pub level_idx: i16,
+    /// Offset from the reference in ppm; bids subtract, asks add. Never
+    /// rewritten by a reshape, unlike [`Self::size_bps`].
+    pub offset_ppm: i64,
+    /// The level's size share in bps **as armed** — so after
+    /// `ladder::scale_side` or `ladder::zero_side`, not as configured.
+    pub size_bps: i32,
+    /// The shape this epoch is, rendered exactly as `Sample::profile_kind` is
+    /// so the two columns correlate.
+    pub profile_kind: String,
+}
+
 /// What the telemetry channel carries.
 ///
-/// One channel for all five kinds, so a tick's sample, its legs, its per-source
+/// One channel for all six kinds, so a tick's sample, its legs, its per-source
 /// contributions, and any feed liveness that landed alongside are written in
 /// **one transaction** by one [`StoreWriter`] — rather than five runners racing
 /// five connections to describe the same instant.
@@ -312,6 +342,11 @@ pub enum Record {
     Sample(Box<Sample>),
     Legs(Vec<LegSample>),
     Contributions(Vec<ContributionSample>),
+    /// The ladder shape just armed on-chain, one row per defined level per
+    /// side. Unlike every other variant this is **not** emitted every tick —
+    /// only when the cold path re-arms the profile, which is a restart, a
+    /// reshape, a freeze-side, a halt, or the daily heartbeat.
+    Ladder(Vec<LadderEpochRow>),
     /// A **polled** source's turn, from the framework runner's metrics seam.
     Health(HealthUpdate),
     /// A **push** source's transport transition, from the producer's own
@@ -553,6 +588,13 @@ impl StoreWriter for TelemetryWriter {
                     }
                     n
                 }
+                Record::Ladder(rows) => {
+                    let mut n = 0;
+                    for row in rows {
+                        n += write_ladder_epoch(tx, row).await?;
+                    }
+                    n
+                }
                 Record::Health(update) => write_health(tx, update).await?,
                 Record::Liveness(update) => write_liveness(tx, update).await?,
             };
@@ -636,6 +678,23 @@ async fn write_contribution(
     .bind(row.weight)
     .execute(&mut **tx)
     .await?;
+    Ok(res.rows_affected())
+}
+
+async fn write_ladder_epoch(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    row: &LadderEpochRow,
+) -> Result<u64> {
+    let res = sqlx::query(include_str!("../queries/maker_ladder_epoch_insert.sql"))
+        .bind(row.armed_at)
+        .bind(&row.market)
+        .bind(&row.side)
+        .bind(row.level_idx)
+        .bind(row.offset_ppm)
+        .bind(row.size_bps)
+        .bind(&row.profile_kind)
+        .execute(&mut **tx)
+        .await?;
     Ok(res.rows_affected())
 }
 
@@ -844,6 +903,43 @@ pub fn contribution_samples(ts: i64, market: &str, fair: &FairValue) -> Vec<Cont
         }
     }
     out
+}
+
+/// The `maker_ladder_epoch` rows for a profile the bot has just armed.
+///
+/// **Sizes and offsets are read from `profile`, never from `ladder`** — that is
+/// the point of taking both. `ladder` supplies only the level *count*, because
+/// `model::ladder::build_profile` fills the first `ladder.len()` of
+/// [`N_LEVELS`] slots and leaves the tail zeroed; a row for a zeroed tail slot
+/// would plot a level sitting exactly at the reference, which nobody is
+/// quoting. The values themselves come from the profile because
+/// `model::ladder::scale_side` and `zero_side` rewrite per-level sizes after
+/// `build_profile` ran, so the config says what was intended and only the
+/// profile says what was armed.
+pub fn ladder_epoch_rows(
+    armed_at: i64,
+    market: &str,
+    ladder: &[LadderLevel],
+    profile: &LiquidityProfile,
+    profile_kind: ProfileKind,
+) -> Vec<LadderEpochRow> {
+    let kind = format!("{profile_kind:?}");
+    let mut rows = Vec::with_capacity(ladder.len().min(N_LEVELS) * 2);
+    for (side, levels) in [("bid", &profile.bids), ("ask", &profile.asks)] {
+        for (idx, level) in levels.iter().take(ladder.len().min(N_LEVELS)).enumerate() {
+            rows.push(LadderEpochRow {
+                armed_at,
+                market: market.to_string(),
+                side: side.to_string(),
+                // `N_LEVELS` is 8, so the cast cannot truncate.
+                level_idx: idx as i16,
+                offset_ppm: i64::from(level.price_offset.get()),
+                size_bps: i32::from(level.size_bps.get()),
+                profile_kind: kind.clone(),
+            });
+        }
+    }
+    rows
 }
 
 /// The state a tick reached, which decides its `action` label and how much of
@@ -1337,6 +1433,97 @@ mod tests {
         assert_eq!(one_side.best_ask, None);
     }
 
+    /// Only the levels the ladder *defines* get rows. The on-chain profile has
+    /// `N_LEVELS` (8) slots and the config fills four, so a writer looping the
+    /// slots instead of the ladder would emit four extra rows per side at
+    /// `offset_ppm = 0` — levels sitting exactly at the reference, which the
+    /// panel would draw as a line on top of the fair price that nobody quotes.
+    #[test]
+    fn ladder_epoch_rows_cover_only_the_defined_levels() {
+        let profile = crate::model::ladder::build_profile(&DEFAULT_LADDER);
+        let rows = ladder_epoch_rows(7, "EURC", &DEFAULT_LADDER, &profile, ProfileKind::Standard);
+
+        assert_eq!(rows.len(), DEFAULT_LADDER.len() * 2);
+        assert!(
+            rows.iter().all(|r| r.offset_ppm > 0),
+            "a zeroed tail slot reached the rows"
+        );
+        assert_eq!(rows.iter().filter(|r| r.side == "bid").count(), 4);
+        assert_eq!(rows.iter().filter(|r| r.side == "ask").count(), 4);
+        assert!(rows.iter().all(|r| r.armed_at == 7 && r.market == "EURC"));
+        assert!(rows.iter().all(|r| r.profile_kind == "Standard"));
+    }
+
+    /// The whole reason this table stores sizes rather than leaving them to be
+    /// read from the bot's config: a freeze rewrites the armed sizes, and the
+    /// config still says what was merely intended.
+    ///
+    /// It also pins the asymmetry the migration leans on — `zero_side` touches
+    /// `size_bps` only, so the zeroed side keeps its offsets and the recorded
+    /// prices stay derivable even for a side that is quoting nothing.
+    #[test]
+    fn a_frozen_side_records_zero_sizes_with_its_offsets_intact() {
+        let mut profile = crate::model::ladder::build_profile(&DEFAULT_LADDER);
+        crate::model::ladder::zero_side(&mut profile, Side::Bid);
+        let rows = ladder_epoch_rows(
+            7,
+            "EURC",
+            &DEFAULT_LADDER,
+            &profile,
+            ProfileKind::FrozenSide(Side::Bid),
+        );
+
+        let bids: Vec<_> = rows.iter().filter(|r| r.side == "bid").collect();
+        let asks: Vec<_> = rows.iter().filter(|r| r.side == "ask").collect();
+
+        assert!(
+            bids.iter().all(|r| r.size_bps == 0),
+            "the freeze is recorded"
+        );
+        assert_eq!(
+            bids.iter().map(|r| r.offset_ppm).collect::<Vec<_>>(),
+            vec![5_000, 10_000, 20_000, 50_000],
+            "zeroing a side must not disturb its offsets"
+        );
+        assert_eq!(
+            asks.iter().map(|r| r.size_bps).collect::<Vec<_>>(),
+            vec![4_000, 3_000, 2_000, 1_000],
+            "the rebuild side keeps quoting its configured sizes"
+        );
+        assert!(rows.iter().all(|r| r.profile_kind == "FrozenSide(Bid)"));
+    }
+
+    /// A reshape scales the accumulating side's sizes, so the recorded row is
+    /// the scaled value and not the configured one. Pinned separately from the
+    /// freeze because this is the case a config-reading writer gets *plausibly*
+    /// wrong — the numbers still look like a ladder, they are just the wrong
+    /// one.
+    #[test]
+    fn a_reshape_records_the_scaled_sizes_not_the_configured_ones() {
+        let mut profile = crate::model::ladder::build_profile(&DEFAULT_LADDER);
+        crate::model::ladder::scale_side(&mut profile, Side::Bid, 0.5);
+        let rows = ladder_epoch_rows(
+            7,
+            "EURC",
+            &DEFAULT_LADDER,
+            &profile,
+            ProfileKind::Reshaped(Side::Bid),
+        );
+
+        let bids: Vec<_> = rows
+            .iter()
+            .filter(|r| r.side == "bid")
+            .map(|r| r.size_bps)
+            .collect();
+        assert_eq!(bids, vec![2_000, 1_500, 1_000, 500]);
+        assert_ne!(
+            bids,
+            vec![4_000, 3_000, 2_000, 1_000],
+            "the configured sizes must not be what was recorded"
+        );
+        assert!(rows.iter().all(|r| r.profile_kind == "Reshaped(Bid)"));
+    }
+
     #[test]
     fn an_invalid_on_chain_reference_reports_no_touch() {
         let mut b = SampleBuilder::new(1, eurc(), fair(Some(1.14)), ProfileKind::Standard);
@@ -1433,7 +1620,7 @@ mod tests {
         (columns, highest)
     }
 
-    /// The four telemetry writes bind positionally into SQL held in separate
+    /// The telemetry writes bind positionally into SQL held in separate
     /// files, so nothing in the compiler relates a column to the value that
     /// lands in it — there is no compile-time database here (deliberately;
     /// see the module doc), and no test touches a live one.
@@ -1453,7 +1640,7 @@ mod tests {
     /// if these grow again.
     #[test]
     fn every_insert_matches_the_bind_order_beside_it() {
-        let cases: [(&str, &str, &[&str], usize); 5] = [
+        let cases: [(&str, &str, &[&str], usize); 6] = [
             (
                 "maker_telemetry_insert",
                 include_str!("../queries/maker_telemetry_insert.sql"),
@@ -1526,6 +1713,20 @@ mod tests {
                     "weight",
                 ],
                 8,
+            ),
+            (
+                "maker_ladder_epoch_insert",
+                include_str!("../queries/maker_ladder_epoch_insert.sql"),
+                &[
+                    "armed_at",
+                    "market",
+                    "side",
+                    "level_idx",
+                    "offset_ppm",
+                    "size_bps",
+                    "profile_kind",
+                ],
+                7,
             ),
             (
                 "feed_health_ok",
