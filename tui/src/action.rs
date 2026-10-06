@@ -1247,9 +1247,9 @@ fn do_create_vault(
         .context("market not found — create the market first")?;
     if let Some(seat) = existing_seat(&seats, &leader.pubkey()) {
         return Ok(Outcome::AlreadyThere(format!(
-            "leader {} already leads vault {} on the {} market — never opening a second",
+            "leader {} already leads vault #{} on the {} market — never opening a second",
             leader.pubkey(),
-            seat.idx,
+            seat.seq,
             config.base.symbol
         )));
     }
@@ -1343,8 +1343,8 @@ fn do_deposit(
         DepositSeat::Fund(seat) => seat,
         DepositSeat::Seeded(seat) => {
             return Ok(Outcome::AlreadyThere(format!(
-                "the {} vault ({}) already holds a deposit",
-                config.base.symbol, seat.idx
+                "the {} vault #{} already holds a deposit",
+                config.base.symbol, seat.seq
             )))
         }
         DepositSeat::NoVault => anyhow::bail!(
@@ -1607,6 +1607,7 @@ mod tests {
     fn seat(idx: u32, leader: Pubkey, seeded: bool) -> VaultSeat {
         VaultSeat {
             idx,
+            seq: u64::from(idx) + 1,
             leader,
             seeded,
         }

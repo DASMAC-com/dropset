@@ -445,7 +445,12 @@ pub fn read_market_at(client: &RpcClient, address: Pubkey) -> Option<MarketView>
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VaultSeat {
     /// Its sector index — valid only for this read, since sectors recycle.
+    /// What an instruction addresses the vault by.
     pub idx: u32,
+    /// Its per-market vault number, stamped at `create_vault`: with the
+    /// market, the vault's durable identity — what a person should be told,
+    /// since a reused sector gets a new one.
+    pub seq: u64,
     pub leader: Pubkey,
     /// Whether it holds a deposit (any shares or inventory).
     pub seeded: bool,
@@ -492,6 +497,7 @@ pub fn vault_seats_fresh(client: &RpcClient, market: &Pubkey) -> Result<Option<V
         view.active_vaults()
             .map(|(idx, v)| VaultSeat {
                 idx,
+                seq: v.seq.get(),
                 leader: Pubkey::new_from_array(v.leader),
                 seeded: is_seeded(v),
             })
@@ -820,11 +826,13 @@ mod tests {
         let seats = [
             VaultSeat {
                 idx: 0,
+                seq: 1,
                 leader: other,
                 seeded: true,
             },
             VaultSeat {
                 idx: 3,
+                seq: 2,
                 leader: me,
                 seeded: false,
             },
