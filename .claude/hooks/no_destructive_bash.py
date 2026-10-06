@@ -17,8 +17,9 @@ Two tiers, deliberately:
   marker `#destructive-ok` in the command, so a deliberate one stays possible
   and stays auditable in the transcript.
 * **DENY** — a very small catastrophic set that no marker overrides: a
-  recursive delete of `/` or the home directory (force flag or not, the target
-  anywhere among the operands), and a force-push to the default branch.
+  recursive delete of `/` or the home directory (force flag or not; for an
+  `rm` actually being run, the target anywhere among its unquoted operands),
+  and a force-push to the default branch.
 
 **This is a best-effort advisory stop, not a policy boundary.** It reads one
 command string and matches patterns; a determined or unusual spelling gets
@@ -218,7 +219,9 @@ _RM_TAIL_SHELL = r"(?:\s+-[^\s\"']+)*[\s\"']*$"
 #
 # That shape is confined to an `rm` that is really being RUN — at the start of a
 # line that does not begin inside an open quote (after `sudo` / `env` and
-# similar wrappers), or after an unquoted control operator, or as the payload of
+# similar wrappers taking dash-only options — `sudo -u root` and `env FOO=1` are
+# not recognized, and fall back to the flags-only shape), or after an unquoted
+# control operator, or as the payload of
 # a shell's `-c`. The first version applied it on every line, and because
 # `classify` splits on newlines, a line of a multi-line commit message or PR
 # body reading `rm -r ~ and rm -R / are closed` became an un-overridable deny —
@@ -641,42 +644,63 @@ def unquoted_start_lines(cmd):
     typically a multi-line commit message or PR body — so it is prose rather
     than a command, even though `classify` sees it as a line of its own. Quote
     state is carried across newlines with the same rules as `quoted_spans`.
+
+    A HEREDOC body is prose for the same reason, and is skipped through its
+    terminator: `git commit -F - <<'EOF'` with a body line reading
+    `rm -r / x unclassified` was otherwise an un-overridable deny. Skipping the
+    body also stops an apostrophe inside it from opening a quote that never
+    closes, which used to hide every real command after the heredoc. The
+    exception is a heredoc fed to a SHELL (`bash <<EOF`), whose body is
+    commands and is kept.
     """
     result = []
     quote = None
-    starts_quoted = False
-    current = []
-    i = 0
-    n = len(cmd)
-    while i < n:
-        c = cmd[i]
-        if c == "\n":
-            line = "".join(current)
-            if line.strip() and not starts_quoted:
-                result.append(line)
-            current = []
-            starts_quoted = quote is not None
-            i += 1
+    heredoc = None
+    for line in cmd.split("\n"):
+        if heredoc is not None:
+            if line.strip() == heredoc:
+                heredoc = None
             continue
-        current.append(c)
+        opener = None
+        if quote is None:
+            if line.strip():
+                result.append(line)
+            if program_of(line) not in SHELL_PROGRAMS:
+                spans = quoted_spans(line)
+                for match in _HEREDOC_RE.finditer(line):
+                    if not any(lo <= match.start() < hi for lo, hi, _ in spans):
+                        opener = match.group("tag")
+                        break
+        quote = _carry_quote(line, quote)
+        if opener is not None and quote is None:
+            heredoc = opener
+    return result
+
+
+# A heredoc operator and its terminator word, quoted or not. `<<<` is a
+# here-STRING, which has no body, so it is excluded.
+_HEREDOC_RE = re.compile(r"(?<!<)<<-?(?!<)\s*(['\"]?)(?P<tag>[A-Za-z_]\w*)\1")
+
+
+def _carry_quote(line, quote):
+    """The quote still open at the end of ``line``, given ``quote`` at its start."""
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
         if quote is None:
             if c == "\\":
-                current.append(cmd[i + 1 : i + 2])
                 i += 2
                 continue
             if c in "'\"":
                 quote = c
         elif quote == '"' and c == "\\":
-            current.append(cmd[i + 1 : i + 2])
             i += 2
             continue
         elif c == quote:
             quote = None
         i += 1
-    line = "".join(current)
-    if line.strip() and not starts_quoted:
-        result.append(line)
-    return result
+    return quote
 
 
 def inert_spans(line):
@@ -1179,6 +1203,12 @@ def _self_test():
         ('git commit -m "Subject\n\nrm -rf build / then more\n"', "ask"),
         ('git commit -m "a; rm -rf / && b"', "ask"),
         ("echo rm -r foo /", None),
+        # A heredoc body is prose too — unless a shell is reading it — and an
+        # apostrophe inside one must not hide the real command after it.
+        ("git commit -F - <<'EOF'\nSubject\n\nrm -r / x unclassified\nEOF", None),
+        ("cat <<EOF\nit's here\nEOF\nrm -rf build /", "deny"),
+        ("bash <<EOF\nrm -rf ~/ .cache\nEOF", "deny"),
+        ("cat <<< 'x'\nrm -rf build /", "deny"),
         # Long options: `--recursive` still counts, and the `r` inside
         # `--no-preserve-root` does not.
         ("rm --recursive --force build", "ask"),
