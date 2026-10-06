@@ -330,9 +330,9 @@ pub struct LadderEpochRow {
 /// What the telemetry channel carries.
 ///
 /// One channel for all six kinds, so a tick's sample, its legs, its per-source
-/// contributions, and any feed liveness that landed alongside are written in
-/// **one transaction** by one [`StoreWriter`] — rather than five runners racing
-/// five connections to describe the same instant.
+/// contributions, any ladder shape it armed, and any feed liveness that landed
+/// alongside are written in **one transaction** by one [`StoreWriter`] — rather
+/// than six runners racing six connections to describe the same instant.
 /// `Sample` is boxed because it is an order of magnitude wider than the other
 /// variants, and an unboxed enum is sized for its largest: every queued
 /// record — including a one-word health update — would otherwise reserve the
@@ -346,7 +346,7 @@ pub enum Record {
     /// side. Unlike every other variant this is **not** emitted every tick —
     /// only when the cold path re-arms the profile, which is a restart, a
     /// reshape, a freeze-side, a halt, or the daily heartbeat.
-    Ladder(Vec<LadderEpochRow>),
+    LadderEpoch(Vec<LadderEpochRow>),
     /// A **polled** source's turn, from the framework runner's metrics seam.
     Health(HealthUpdate),
     /// A **push** source's transport transition, from the producer's own
@@ -588,7 +588,7 @@ impl StoreWriter for TelemetryWriter {
                     }
                     n
                 }
-                Record::Ladder(rows) => {
+                Record::LadderEpoch(rows) => {
                     let mut n = 0;
                     for row in rows {
                         n += write_ladder_epoch(tx, row).await?;
@@ -924,9 +924,12 @@ pub fn ladder_epoch_rows(
     profile_kind: ProfileKind,
 ) -> Vec<LadderEpochRow> {
     let kind = format!("{profile_kind:?}");
-    let mut rows = Vec::with_capacity(ladder.len().min(N_LEVELS) * 2);
+    // The defined level count, which is the whole contract of taking both
+    // arguments — see the doc comment above.
+    let defined = ladder.len().min(N_LEVELS);
+    let mut rows = Vec::with_capacity(defined * 2);
     for (side, levels) in [("bid", &profile.bids), ("ask", &profile.asks)] {
-        for (idx, level) in levels.iter().take(ladder.len().min(N_LEVELS)).enumerate() {
+        for (idx, level) in levels.iter().take(defined).enumerate() {
             rows.push(LadderEpochRow {
                 armed_at,
                 market: market.to_string(),
@@ -1450,6 +1453,22 @@ mod tests {
         );
         assert_eq!(rows.iter().filter(|r| r.side == "bid").count(), 4);
         assert_eq!(rows.iter().filter(|r| r.side == "ask").count(), 4);
+        // `level_idx` is part of the table's key and the insert is
+        // `ON CONFLICT DO NOTHING`, so a constant index would persist ONE row
+        // per side instead of four and report nothing — `rows_affected()` would
+        // simply come back 0, which the writer treats as routine. Asserting the
+        // sequence is what makes that mutation fail here instead of silently in
+        // production.
+        for side in ["bid", "ask"] {
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r.side == side)
+                    .map(|r| r.level_idx)
+                    .collect::<Vec<_>>(),
+                vec![0, 1, 2, 3],
+                "{side} levels must be indexed 0..n in order"
+            );
+        }
         assert!(rows.iter().all(|r| r.armed_at == 7 && r.market == "EURC"));
         assert!(rows.iter().all(|r| r.profile_kind == "Standard"));
     }

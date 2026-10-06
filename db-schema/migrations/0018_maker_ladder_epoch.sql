@@ -27,14 +27,17 @@
 --     ask = on_chain_reference * (1 + offset_ppm / 1e6)
 --
 -- which is the arithmetic `telemetry::SampleBuilder::touch` applies to the
--- tightest level, applied to each. `on_chain_reference` is on every telemetry
+-- tightest level, applied to each. The bot evaluates it in `f64`; a SQL
+-- consumer dividing a `BIGINT` by `1000000.0` evaluates it in `numeric` and
+-- widens on the multiply, so the two agree to display precision rather than
+-- bit-for-bit. `on_chain_reference` is on every telemetry
 -- row, so the only thing missing was the ladder's *shape* — and the shape is
 -- near-constant: it changes on a re-arm, which is a restart, a reshape, a
 -- freeze-side, a halt, or the daily heartbeat. Recording the shape per epoch
 -- and deriving the price per tick is therefore not an approximation of the
--- per-tick table; it yields the same numbers for ~4 orders of magnitude fewer
--- rows. Retention is not needed and is not deferred-with-a-note: at tens of
--- rows/day/market there is nothing to prune.
+-- per-tick table; it yields the same prices for roughly 3 to 4 orders of
+-- magnitude fewer rows. Retention is not needed and is not
+-- deferred-with-a-note: at tens of rows/day/market there is nothing to prune.
 --
 -- **`size_bps` is what was ARMED, not what was configured**, and that is the
 -- reason this table stores sizes at all rather than leaving them to be read
@@ -61,13 +64,22 @@
 -- duplicate would be the copy that goes stale.
 --
 -- **Only the levels the ladder DEFINES get rows.** The on-chain profile has
--- `N_LEVELS` (8) slots and `build_profile` fills the first `ladder.len()` (4
--- today), leaving the tail zeroed. A zeroed slot is `offset_ppm = 0` with
+-- `N_LEVELS` (8) slots and `build_profile` fills the first
+-- `min(ladder.len(), N_LEVELS)` of them (4 today), leaving the tail zeroed. A
+-- zeroed slot is `offset_ppm = 0` with
 -- `size_bps = 0` — inert on-chain, but a row for it would plot a level sitting
 -- exactly at the reference, which is a line at the fair price that no one is
--- quoting. The writer therefore emits rows only for defined levels, so the
--- level count is a property of the epoch and a future longer ladder needs no
+-- quoting. The writer therefore emits rows only for defined levels, capped the
+-- same way, so it can never record a level the chain was never given; the
+-- level count is a property of the epoch, and a longer ladder needs no
 -- migration.
+--
+-- A SHORTER ladder, though, is a consumer's problem rather than this table's.
+-- Dropping a level stops emitting rows for its index, so a consumer deriving
+-- each index's validity window independently would leave the old deepest level
+-- open-ended and keep drawing it. Derive epoch boundaries from the distinct
+-- `armed_at` for the market and join the levels onto those, so an index absent
+-- from the newer epoch simply has no row.
 --
 -- **`side` takes a CHECK where every other enum-ish column in this schema does
 -- not**, which is a deliberate departure worth stating. `0003`'s rule is that a
@@ -82,10 +94,14 @@
 --
 -- **Keyed `(market, armed_at, side, level_idx)`.** The cold path sends at most
 -- one `SetLiquidityProfile` per market per cycle and every arm path returns
--- immediately after it, so two re-arms cannot share a market and a wall-clock
--- second at the 5 s tick. No extra index: the consuming query asks for the
--- epoch in force at a tick ("latest `armed_at` <= ts, for this market"), which
--- the key's `(market, armed_at)` prefix already serves.
+-- immediately after it, so within one process's tick loop two re-arms will not
+-- share a market and a wall-clock second at the 5 s tick. That argument does
+-- not cover a process restart arming inside the same second as the previous
+-- process's last arm, nor a backward clock step — `armed_at` is wall time —
+-- which is the residue the writer's `ON CONFLICT DO NOTHING` absorbs.
+--
+-- No extra index: a consumer reads this market's epoch rows and brackets them
+-- by `armed_at`, which the key's `(market, armed_at)` prefix already orders.
 --
 -- **Grafana reads this; nothing surfaces it in the TUI**, per the standing
 -- surface split. `0002_reader_role` already grants `SELECT` on future tables in
@@ -100,8 +116,13 @@ CREATE TABLE maker_ladder_epoch (
     market       TEXT     NOT NULL,
     -- `bid` or `ask`.
     side         TEXT     NOT NULL,
-    -- 0 is the tightest level. The ladder is validated monotonic in
-    -- `offset_ppm`, so level order is also distance order.
+    -- 0 is the tightest level, and with today's ladder level order is also
+    -- distance order. That is a property of the configured values rather than
+    -- an enforced invariant: `config::tests::ladder_is_monotonic` asserts it
+    -- of the default ladder only, and the strategy's ladder is a runtime
+    -- `Vec` that nothing re-checks — which is why the bot derives its touch
+    -- from `min(offset_ppm)` rather than from index 0. A consumer wanting the
+    -- tightest level should do the same.
     level_idx    SMALLINT NOT NULL,
     -- Offset from the reference, in ppm — bids subtract, asks add.
     offset_ppm   BIGINT   NOT NULL,
@@ -109,8 +130,13 @@ CREATE TABLE maker_ladder_epoch (
     size_bps     INTEGER  NOT NULL,
     -- Which shape this epoch is, in the same `Debug`-rendered vocabulary
     -- `maker_telemetry.profile_kind` uses (`Standard`, `Reshaped(Bid)`,
-    -- `FrozenSide(Ask)`, `Halted`) so the two columns can be correlated
-    -- directly.
+    -- `FrozenSide(Ask)`, `Halted`).
+    --
+    -- The vocabulary matches; the TIMING does not, so do not join the two
+    -- columns on equality. A telemetry sample is built at the top of the tick
+    -- and carries the kind armed *before* it, while this row carries the kind
+    -- the same tick just armed — so on an arming tick the two legitimately
+    -- disagree, and this one is the fresher of the pair.
     profile_kind TEXT     NOT NULL,
     PRIMARY KEY (market, armed_at, side, level_idx),
     CONSTRAINT side_is_a_book_side

@@ -1519,13 +1519,13 @@ fn quote_market_inner(
             // success, so a persistently failing cold path would otherwise retry
             // forever and the book would never go dark at all.
             if !invalidate_resting_book(ctx, cfg, &vault, None, InvalidateReason::Halted)? {
-                zero_both_sides(ctx, cfg, ts)?;
+                zero_both_sides(ctx, cfg, now, ts)?;
             }
             return Ok(());
         }
         Action::FreezeSide(side) => {
             if ctx.profile_kind != ProfileKind::FrozenSide(side) {
-                freeze_side(ctx, cfg, side, ts)?;
+                freeze_side(ctx, cfg, side, now, ts)?;
                 return Ok(());
             }
         }
@@ -1651,21 +1651,31 @@ fn decide_position(
 /// Record the shape just armed, so a dashboard can plot the ladder's profile
 /// against the fair price without the schema carrying a row per level per tick.
 ///
-/// **Call this only on a re-arm's success path, and only after
-/// `ctx.profile_kind` has been updated.** A send that failed armed nothing, so
-/// an epoch written for it would make the panel draw levels that are not
-/// resting — the same under-stating-risk direction `SampleBuilder::touch`
-/// refuses when it reports the *pre-tick* touch rather than this tick's
-/// intention. Reading `ctx.profile_kind` after the assignment is what keeps the
-/// recorded kind and the recorded sizes describing one shape.
-fn record_ladder_epoch(ctx: &Context, cfg: &BotConfig, profile: &LiquidityProfile, ts: i64) {
+/// **Call this only on a re-arm's success path.** A send that failed armed
+/// nothing, so an epoch written for it would make the panel draw levels that
+/// are not resting — over-stating liquidity, which is the same unsafe direction
+/// `SampleBuilder::touch` refuses when it reports the *pre-tick* touch rather
+/// than this tick's intention.
+///
+/// `kind` is passed rather than read from `ctx`, so each call site has to name
+/// the shape it just armed. Reading `ctx.profile_kind` here would have worked
+/// only while the emit stayed below the assignment, leaving the "recorded kind
+/// and recorded sizes describe one shape" invariant resting on statement order
+/// in four separate functions, with no test over any of them.
+fn record_ladder_epoch(
+    ctx: &Context,
+    cfg: &BotConfig,
+    profile: &LiquidityProfile,
+    kind: ProfileKind,
+    ts: i64,
+) {
     ctx.telemetry
-        .emit(Record::Ladder(telemetry::ladder_epoch_rows(
+        .emit(Record::LadderEpoch(telemetry::ladder_epoch_rows(
             ts,
             ctx.cfg.symbol,
             &cfg.strategy.ladder,
             profile,
-            ctx.profile_kind,
+            kind,
         )));
 }
 
@@ -1697,7 +1707,7 @@ fn arm_standard(ctx: &mut Context, cfg: &BotConfig, now: Instant, ts: i64) -> Re
     )?;
     ctx.profile_kind = ProfileKind::Standard;
     ctx.last_profile_at = now;
-    record_ladder_epoch(ctx, cfg, &profile, ts);
+    record_ladder_epoch(ctx, cfg, &profile, ProfileKind::Standard, ts);
     println!("[{}][profile] armed standard ladder", ctx.cfg.symbol);
     Ok(())
 }
@@ -1728,7 +1738,7 @@ fn arm_reshape(
     )?;
     ctx.profile_kind = ProfileKind::Reshaped(accumulating);
     ctx.last_profile_at = now;
-    record_ladder_epoch(ctx, cfg, &profile, ts);
+    record_ladder_epoch(ctx, cfg, &profile, ProfileKind::Reshaped(accumulating), ts);
     let rebuild = match accumulating {
         Side::Bid => Side::Ask,
         Side::Ask => Side::Bid,
@@ -1741,7 +1751,13 @@ fn arm_reshape(
 }
 
 /// Zero the accumulating side so only the rebuild side quotes (§4).
-fn freeze_side(ctx: &mut Context, cfg: &BotConfig, side: Side, ts: i64) -> Result<()> {
+fn freeze_side(
+    ctx: &mut Context,
+    cfg: &BotConfig,
+    side: Side,
+    now: Instant,
+    ts: i64,
+) -> Result<()> {
     let mut profile = ladder::build_profile(&cfg.strategy.ladder);
     ladder::zero_side(&mut profile, side);
     chain::set_liquidity_profile(
@@ -1752,8 +1768,8 @@ fn freeze_side(ctx: &mut Context, cfg: &BotConfig, side: Side, ts: i64) -> Resul
         ladder::checked_bytes(&profile)?,
     )?;
     ctx.profile_kind = ProfileKind::FrozenSide(side);
-    ctx.last_profile_at = Instant::now();
-    record_ladder_epoch(ctx, cfg, &profile, ts);
+    ctx.last_profile_at = now;
+    record_ladder_epoch(ctx, cfg, &profile, ProfileKind::FrozenSide(side), ts);
     println!(
         "[{}][freeze] zeroed {side:?} side — only the rebuild side quotes",
         ctx.cfg.symbol
@@ -1769,7 +1785,7 @@ fn freeze_side(ctx: &mut Context, cfg: &BotConfig, side: Side, ts: i64) -> Resul
 /// the kill stamp first (see the `Action::Halt` arm), because zeroing the profile
 /// does nothing about the levels already resting. A no-op once the shape is
 /// already `Halted`, so repeat cycles cost nothing.
-fn zero_both_sides(ctx: &mut Context, cfg: &BotConfig, ts: i64) -> Result<()> {
+fn zero_both_sides(ctx: &mut Context, cfg: &BotConfig, now: Instant, ts: i64) -> Result<()> {
     if ctx.profile_kind != ProfileKind::Halted {
         let mut profile = ladder::build_profile(&cfg.strategy.ladder);
         ladder::zero_side(&mut profile, Side::Bid);
@@ -1782,8 +1798,8 @@ fn zero_both_sides(ctx: &mut Context, cfg: &BotConfig, ts: i64) -> Result<()> {
             ladder::checked_bytes(&profile)?,
         )?;
         ctx.profile_kind = ProfileKind::Halted;
-        ctx.last_profile_at = Instant::now();
-        record_ladder_epoch(ctx, cfg, &profile, ts);
+        ctx.last_profile_at = now;
+        record_ladder_epoch(ctx, cfg, &profile, ProfileKind::Halted, ts);
         println!(
             "[{}][halt] zeroed both sides; the resting book was already killed",
             ctx.cfg.symbol

@@ -29,19 +29,36 @@ WITH ticks AS (
     AND market = ${market:sqlstring}
 ),
 
-epochs AS (
+-- Epoch validity windows are derived at EPOCH granularity -- from the distinct
+-- armed_at -- and the levels are then joined onto them. Bracketing each
+-- (side, level_idx) independently would be wrong whenever the ladder gets
+-- SHORTER: the dropped index stops receiving rows, so its last window would
+-- never be closed and the panel would keep drawing a deep level the bot has
+-- not armed since. That direction over-states resting liquidity, which is the
+-- one direction this panel must never take.
+bounds AS (
   SELECT
     armed_at,
-    side,
-    level_idx,
-    offset_ppm,
-    size_bps,
-    lead(armed_at) OVER (
-      PARTITION BY side, level_idx
-      ORDER BY armed_at
-    ) AS superseded_at
-  FROM maker_ladder_epoch
-  WHERE market = ${market:sqlstring}
+    lead(armed_at) OVER (ORDER BY armed_at) AS superseded_at
+  FROM (
+    SELECT DISTINCT armed_at
+    FROM maker_ladder_epoch
+    WHERE market = ${market:sqlstring}
+  ) AS a
+),
+
+epochs AS (
+  SELECT
+    l.armed_at,
+    l.side,
+    l.level_idx,
+    l.offset_ppm,
+    l.size_bps,
+    b.superseded_at
+  FROM maker_ladder_epoch AS l
+  INNER JOIN bounds AS b
+    ON b.armed_at = l.armed_at
+  WHERE l.market = ${market:sqlstring}
 )
 
 SELECT
@@ -73,10 +90,17 @@ UNION ALL
 -- labelled with both the anchor and the regime, so a static print is visually
 -- distinct from a composed one instead of reading as one. Overlays the
 -- continuous fair line rather than replacing it, so the line keeps its shape.
+--
+-- 'Static' carries a capital S because maker_telemetry stores anchor as the Debug
+-- rendering of the Anchor enum. The lowercase vocabulary (static, fx,
+-- crypto_reference, none) belongs to the fair_price table, which writes
+-- through explicit name mappers instead -- so the two tables spell the same
+-- enum differently. If the maker's rendering ever changes, this predicate
+-- stops matching and the overlay silently disappears.
 SELECT
   to_timestamp(ts) AS "time",
   'fair (' || anchor || ' peg, ' || regime || ')' AS metric,
   fair AS value
 FROM ticks
-WHERE anchor = 'static'
+WHERE anchor = 'Static'
 ORDER BY 1
