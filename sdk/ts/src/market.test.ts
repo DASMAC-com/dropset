@@ -38,13 +38,13 @@ import { initSimulator } from './simulate';
 await initSimulator(readFileSync(new URL('./wasm/dropset_interface_bg.wasm', import.meta.url)));
 
 // Slab layout constants (mirror `layout.rs`): discriminator + on-chain
-// MarketHeader (253) = the offset of the u32 slab length; the first sector
+// MarketHeader (261) = the offset of the u32 slab length; the first sector
 // starts at the next 4-byte boundary after it.
 const DISCRIMINATOR = 8;
-const HEADER = 253;
-const LEN_AT = DISCRIMINATOR + HEADER; // 261
-const ITEMS_START = (LEN_AT + 4 + 3) & ~3; // 268
-const VAULT = 692;
+const HEADER = 261;
+const LEN_AT = DISCRIMINATOR + HEADER; // 269
+const ITEMS_START = (LEN_AT + 4 + 3) & ~3; // 276
+const VAULT = 700;
 
 // MarketHeader field offsets, relative to the start of the header (i.e.
 // after the discriminator). Only `head` / `activeCount` matter to the reader.
@@ -52,17 +52,17 @@ const H_HEAD = 8;
 const H_ACTIVE_COUNT = 20;
 
 // Vault field offsets (relative to the sector start).
-const V_REF_STAMP = 72;
-const V_REF_PRICE = 80;
-const V_REF_QUOTE_SLOT = 84;
-const V_REF_QUOTE_UNIX = 88;
-const V_BASE_ATOMS = 92;
-const V_QUOTE_ATOMS = 100;
+const V_REF_STAMP = 80;
+const V_REF_PRICE = 88;
+const V_REF_QUOTE_SLOT = 92;
+const V_REF_QUOTE_UNIX = 96;
+const V_BASE_ATOMS = 100;
+const V_QUOTE_ATOMS = 108;
 // Level is 14 bytes and Position 20, so each side's array is 112 / 160.
-const V_PROFILE_BIDS = 148;
-const V_PROFILE_ASKS = 260;
-const V_REMAINING_BIDS = 372;
-const V_REMAINING_ASKS = 532;
+const V_PROFILE_BIDS = 156;
+const V_PROFILE_ASKS = 268;
+const V_REMAINING_BIDS = 380;
+const V_REMAINING_ASKS = 540;
 /** `Level` / `Position` strides — 14 and 20 bytes under dual-domain expiry. */
 const LEVEL = 14;
 const POSITION = 20;

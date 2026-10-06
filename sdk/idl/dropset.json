@@ -4371,6 +4371,16 @@
               "Market PDA bump."
             ],
             "type": "u8"
+          },
+          {
+            "name": "next_vault_seq",
+            "docs": [
+              "Last vault number handed out; `CreateVault` checked-increments it",
+              "and stamps the result on `Vault::seq`, so the first vault on a",
+              "market is `1`. A `u64` so exhaustion is physically unreachable —",
+              "an overflow would permanently brick vault creation on the market."
+            ],
+            "type": "u64"
           }
         ]
       }

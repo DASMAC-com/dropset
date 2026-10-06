@@ -190,7 +190,8 @@ The byte-exact layout is owned by
 (`MarketHeader`) and canonicalized in the IDL. Conceptually the header
 carries the market-wide `nonce`, the three DLL heads + `active_count`
 that thread the vault sectors (see **Storage layout**), the
-`outstanding_vault_depositors` counter, the per-market knobs
+`outstanding_vault_depositors` counter, the `next_vault_seq` vault-number
+counter (see **Vault**), the per-market knobs
 (`taker_fee`, `max_platform_fee`, `default_min_leader_share`,
 `fee_config`) seeded from the
 registry at creation and tunable downstream by admins, the base/quote
@@ -493,15 +494,19 @@ path (`SetReferencePrice`) never touches list pointers.
 - **Iterate active vaults** (taker hot path) → walk the DLL from
   `head`. Tombstones are not visited.
 - **Insert (`CreateVault`)** → pop the free list if non-empty, else
-  `realloc` by `size_of::<Vault>()`; prepend at `head`.
+  `realloc` by `size_of::<Vault>()`; stamp a fresh `seq` from
+  `next_vault_seq`; prepend at `head`.
 - **Tombstone (`CloseVault`)** → unlink from active DLL, prepend
   at `tombstone_head`. The vault keeps its data; only the list
   membership changes.
 - **Reclaim (`Withdraw` that drives `total_shares` to 0 on any
   non-free vault)** → unlink from whichever DLL the vault is on
   (active for a drained frozen vault, tombstone for a closed
-  vault), zero `vault.leader` and `vault.quote_authority` so the
-  emptiness marker holds, push onto free list.
+  vault), zero `vault.leader` so the emptiness marker holds, push onto
+  free list. Every other field — `quote_authority` and `seq` included —
+  is left stale; nothing reads it, since every handler gates on
+  occupancy first, and `CreateVault` re-zeroes the whole sector on
+  reuse.
 
 Market creation only pays rent for the header.
 
@@ -528,14 +533,14 @@ The byte-exact layout of the vault sector and its inline records
 `Position`) is owned by
 [`state/market/layout.rs`](../programs/dropset/src/state/market/layout.rs)
 (`Vault`, `ReferencePrice`, `Remaining`, `Position`) and canonicalized
-in the IDL. A vault carries the `leader` and `quote_authority`, the
-`reference_price`, pooled `base_atoms` / `quote_atoms`, the share
-bookkeeping (`total_shares`, `leader_shares`, `hwm`, `perf_fee_rate`,
-`min_leader_share`), the `frozen` / `allow_outside_depositors` /
-`outside_deposits_approved` / `tombstoned` flags, the `profile` ladder,
-and the materialized `remaining`. DLL pointers (`next` / `prev`) thread
-it into one of three lists (see **Storage layout**). The load-bearing
-invariants and rationale:
+in the IDL. A vault carries the `leader` and `quote_authority`, its `seq`
+vault number, the `reference_price`, pooled `base_atoms` /
+`quote_atoms`, the share bookkeeping (`total_shares`, `leader_shares`,
+`hwm`, `perf_fee_rate`, `min_leader_share`), the `frozen` /
+`allow_outside_depositors` / `outside_deposits_approved` / `tombstoned`
+flags, the `profile` ladder, and the materialized `remaining`. DLL
+pointers (`next` / `prev`) thread it into one of three lists (see
+**Storage layout**). The load-bearing invariants and rationale:
 
 - **Inventory backs the book; treasury holds the atoms.** `base_atoms`
   backs asks, `quote_atoms` backs bids; both are pooled across the
@@ -569,6 +574,16 @@ invariants and rationale:
   caller may pass one; otherwise the protocol stamps `leader`, so the
   hot-path auth check is a single compare. Rotated via
   `SetQuoteAuthority` (leader-only).
+- **Vault identity is `(market, seq)`.** `CreateVault` checked-increments
+  `MarketHeader.next_vault_seq` and stamps the result, so the first vault
+  on a market is `1` and `0` means never stamped. A rotation keeps the
+  vault's `seq`; a reclaim-and-reuse of the sector is a **new** vault
+  with a new one. `sector_idx` remains the addressing handle every
+  instruction takes — no instruction takes `seq` — and user surfaces
+  are to render "Vault #N", never the sector index. The counter is a `u64`
+  because exhaustion would permanently brick vault creation on the
+  market, and a `u32` is reachable at a zero create fee. Re-creating a
+  market restarts the sequence; an indexer must fence that by time.
 
 **`ReferencePrice` — stamp encoding.** `stamp` packs `market.nonce` at
 the last `SetReferencePrice` / `SetLiquidityProfile`, OR'd with
@@ -844,10 +859,10 @@ no further fee accrues to the leader after exit. They differ in
 
 Either state ends at **Reclaim** (see **Storage layout**): the
 final `Withdraw` that drives `total_shares` to 0 unlinks the vault
-from its current DLL, zeroes `vault.leader` and `vault.quote_authority`
-so the emptiness marker holds, and pushes the sector onto the free
-list. The same leader pubkey may then `CreateVault` afresh — paying
-the create-vault fee again — on this or any other market.
+from its current DLL, zeroes `vault.leader` so the emptiness marker
+holds, and pushes the sector onto the free list. The same leader
+pubkey may then `CreateVault` afresh — paying the create-vault fee
+again — on this or any other market.
 
 When the `admin-teardown` Cargo feature is enabled (see **Account
 lifecycle and rent reclamation**), an admin may additionally

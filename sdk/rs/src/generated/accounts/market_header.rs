@@ -96,12 +96,17 @@ pub struct MarketHeader {
     pub accrued_quote_fee_atoms: u64,
     /// Market PDA bump.
     pub bump: u8,
+    /// Last vault number handed out; `CreateVault` checked-increments it
+    /// and stamps the result on `Vault::seq`, so the first vault on a
+    /// market is `1`. A `u64` so exhaustion is physically unreachable —
+    /// an overflow would permanently brick vault creation on the market.
+    pub next_vault_seq: u64,
 }
 
 pub const MARKET_HEADER_DISCRIMINATOR: [u8; 8] = [56, 105, 191, 242, 226, 243, 198, 164];
 
 impl MarketHeader {
-    pub const LEN: usize = 261;
+    pub const LEN: usize = 269;
 
     #[inline(always)]
     pub fn from_bytes(data: &[u8]) -> Result<Self, std::io::Error> {

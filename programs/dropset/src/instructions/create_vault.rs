@@ -5,7 +5,8 @@
 //! Registry's fee ATA — waived when the signer is a registry admin.
 //! Allocates a sector via [`crate::state::VaultDll::allocate_sector`]
 //! (free list reuse, else slab realloc), threads it onto the active
-//! DLL, and writes the leader's pubkey, quote authority, perf-fee rate,
+//! DLL, and writes the leader's pubkey, quote authority, vault number
+//! (`seq`, from the market's `next_vault_seq` counter), perf-fee rate,
 //! `min_leader_share` (stamped from the market default), and HWM seed.
 //!
 //! Admins may pass a `leader_override` to seat a vault on someone
@@ -160,6 +161,16 @@ impl CreateVault {
         // detached (`next == prev == NULL_SECTOR`).
         let sector = self.market.allocate_sector(self.payer.as_ref())?;
 
+        // Hand out the next vault number. Checked, though a `u64` cannot
+        // be exhausted in practice: a wrap would re-issue a live identity.
+        let seq = self
+            .market
+            .next_vault_seq
+            .get()
+            .checked_add(1)
+            .ok_or(DropsetError::MathOverflow)?;
+        self.market.next_vault_seq = seq.into();
+
         // Stamp the new sector BEFORE threading it onto the active DLL
         // (WARNING 1e). `swap.rs` relies on the invariant "a vault on
         // the active DLL has a non-default leader"; linking first and
@@ -168,7 +179,7 @@ impl CreateVault {
         // race us inside a single transaction, but ordering the writes
         // so the invariant holds at every step keeps the matching
         // engine's assumption honest. `allocate_sector` zeroed the
-        // sector, so we only write the leader-controlled fields.
+        // sector, so we only write the fields this handler sets.
         let market_addr = *self.market.address();
         let min_leader_share = self.market.default_min_leader_share.get();
         {
@@ -178,6 +189,7 @@ impl CreateVault {
             let vault = self.market.mutate_vault(sector)?;
             vault.leader = leader;
             vault.quote_authority = quote_authority;
+            vault.seq = seq.into();
             vault.perf_fee_rate = perf_fee_rate.into();
             vault.min_leader_share = min_leader_share.into();
             vault.hwm = Q32_32_ONE.into();
