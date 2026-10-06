@@ -55,7 +55,7 @@ import json
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Rough bytes-per-token divisor for approximating a result's token cost from its
@@ -90,23 +90,54 @@ CONTEXT_MIN_AVG_BYTES = 400
 # as if it were a token sink when it cost ~20 tokens.
 RUN_QUIET_MARKER = "run_quiet.py"
 
-# Bedrock per-million-token rates, in US dollars, for the model the worker
-# sessions run on. **Verified 2026-09-11** against the real bill: pricing one
-# session's own transcript usage records at these rates was hand-checked against
-# the billed amount and agreed. That is a single end-to-end agreement, not a
-# measured error bound — do not read it as one. Named with that date so the
-# daily Cost Explorer
-# reconciliation in the planning session knows exactly what to re-check — a rate
-# change, a new billed model, or an unexplained line shows up as drift between
-# the billed day and the sum of the fleet's transcript-priced estimates.
+
+@dataclass(frozen=True)
+class Rates:
+    """Bedrock per-million-token rates for one model, in US dollars.
+
+    ``verified`` is the date pricing a session's own transcript at these rates
+    was hand-checked against the real bill and agreed, or ``None`` for a rate
+    that is only projected. A verification is a single end-to-end agreement,
+    not a measured error bound — do not read it as one.
+
+    One-hour cache writes are the only write tier (this fleet's sessions run
+    with the 1h TTL), so there is deliberately no 5-minute rate: adding one
+    would invite pricing a write at a tier the session did not use.
+    """
+
+    input: float
+    output: float
+    cache_read: float
+    cache_write_1h: float
+    verified: str | None
+
+
+# Keyed by ``message.model`` exactly as the transcript records it, so each
+# message is priced at its own model's rate and a session that switched models
+# mid-way prices both halves correctly. A Bedrock session records the plain
+# first-party name (see `resolve_substrate`), which is why the keys carry no
+# region or inference-profile prefix.
 #
-# One-hour cache writes are the only write tier used here (this fleet's sessions
-# run with the 1h TTL), so there is deliberately no 5-minute rate: adding one
-# would invite pricing a write at a tier the session did not use.
-INPUT_RATE_PER_MTOK = 5.50
-OUTPUT_RATE_PER_MTOK = 27.50
-CACHE_READ_RATE_PER_MTOK = 0.55
-CACHE_WRITE_1H_RATE_PER_MTOK = 11.00
+# A model missing here REFUSES to price — the report withholds every dollar
+# figure and names the model — rather than falling back to some default row,
+# because a wrong figure silently corrupts the daily Cost Explorer
+# reconciliation while a missing one is a visible gap. The dates are named so
+# that reconciliation knows exactly what to re-check: a rate change, a new
+# billed model, or an unexplained line shows up as drift between the billed day
+# and the sum of the fleet's transcript-priced estimates.
+#
+# Opus 5.5 is seeded at 1.10x the first-party list price, the Bedrock premium
+# Opus 5 carried. The public Price List API carries no current Anthropic model,
+# so it cannot be read programmatically; it stays unverified until the first
+# Opus 5.5 fleet day is reconciled against Cost Explorer by usage type.
+RATES_BY_MODEL: dict[str, Rates] = {
+    "claude-opus-5": Rates(5.50, 27.50, 0.55, 11.00, verified="2026-09-11"),
+    "claude-opus-5-5": Rates(4.40, 22.00, 0.22, 8.80, verified=None),
+}
+
+# The key a message with no recorded model is accumulated under. It is never
+# in `RATES_BY_MODEL`, so billable tokens under it refuse to price by name.
+UNRECORDED_MODEL = "<unrecorded>"
 
 # Where a launch records the substrate it started on, relative to the base repo.
 # Written by `_ds_substrate_write` in `.claude/shell/init.zsh` and read back by
@@ -127,6 +158,34 @@ SUBSTRATE_SEAT = "seat"
 
 
 @dataclass
+class Tokens:
+    """The four billed token tiers of one model's share of a session."""
+
+    input: int = 0
+    output: int = 0
+    cache_creation: int = 0
+    cache_read: int = 0
+
+    def add(self, usage: dict) -> None:
+        self.input += int(usage.get("input_tokens", 0) or 0)
+        self.output += int(usage.get("output_tokens", 0) or 0)
+        self.cache_creation += int(usage.get("cache_creation_input_tokens", 0) or 0)
+        self.cache_read += int(usage.get("cache_read_input_tokens", 0) or 0)
+
+    def billable(self) -> bool:
+        """Whether any tier is non-zero. A zero-usage message — Claude Code
+        records a failed request as a ``<synthetic>`` model with an all-zero
+        usage block — costs nothing, so an unknown model there must not refuse.
+        """
+        return bool(self.input or self.output or self.cache_creation or self.cache_read)
+
+
+def _model_of(msg: dict) -> str:
+    model = msg.get("model")
+    return model if isinstance(model, str) and model else UNRECORDED_MODEL
+
+
+@dataclass
 class Totals:
     """Session-wide token totals, summed across every assistant turn."""
 
@@ -135,6 +194,9 @@ class Totals:
     cache_creation: int = 0
     cache_read: int = 0
     turns: int = 0
+    # The same tokens split by the model each message recorded, which is what
+    # gets priced: see `RATES_BY_MODEL`.
+    by_model: dict[str, Tokens] = field(default_factory=dict)
     # The prefix carried by the first and last billed request. Every turn
     # re-sends the whole conversation, so this pair is the growth curve that
     # makes the quadratic visible: a session's bill is roughly the average
@@ -144,7 +206,8 @@ class Totals:
     prefix_last: int = 0
     prefix_max: int = 0
 
-    def add(self, usage: dict) -> None:
+    def add(self, usage: dict, model: str = UNRECORDED_MODEL) -> None:
+        self.by_model.setdefault(model, Tokens()).add(usage)
         fresh = int(usage.get("input_tokens", 0) or 0)
         written = int(usage.get("cache_creation_input_tokens", 0) or 0)
         read = int(usage.get("cache_read_input_tokens", 0) or 0)
@@ -178,9 +241,17 @@ class Totals:
         return self.prefix_last - self.prefix_first
 
 
+class UnpricedModel(KeyError):
+    """A model carried billable tokens and has no row in `RATES_BY_MODEL`."""
+
+    def __init__(self, model: str) -> None:
+        super().__init__(model)
+        self.model = model
+
+
 @dataclass
 class Cost:
-    """A dollar breakdown of one token profile, at the verified Bedrock rates.
+    """A dollar breakdown of one token profile, at each model's Bedrock rates.
 
     **Only ever rendered in the Markdown headline for a Bedrock session** — the
     figures are always present in ``--json``, for tooling that wants them, and a
@@ -199,17 +270,33 @@ class Cost:
     cache_write: float = 0.0
 
     @classmethod
-    def price(cls, tokens: Totals | SubAgentLine) -> Cost:
-        """Price a token profile. Takes anything carrying the four token fields."""
+    def price(cls, tokens: Tokens | Totals | SubAgentLine, model: str) -> Cost:
+        """Price a token profile at ``model``'s rates. Takes anything carrying
+        the four token fields; raises :class:`UnpricedModel` for a model with
+        no row in `RATES_BY_MODEL` rather than pricing it at some default.
+        """
+        rates = RATES_BY_MODEL.get(model)
+        if rates is None:
+            raise UnpricedModel(model)
         per_mtok = 1_000_000.0
         return cls(
-            input=tokens.input / per_mtok * INPUT_RATE_PER_MTOK,
-            output=tokens.output / per_mtok * OUTPUT_RATE_PER_MTOK,
-            cache_read=tokens.cache_read / per_mtok * CACHE_READ_RATE_PER_MTOK,
-            cache_write=(
-                tokens.cache_creation / per_mtok * CACHE_WRITE_1H_RATE_PER_MTOK
-            ),
+            input=tokens.input / per_mtok * rates.input,
+            output=tokens.output / per_mtok * rates.output,
+            cache_read=tokens.cache_read / per_mtok * rates.cache_read,
+            cache_write=tokens.cache_creation / per_mtok * rates.cache_write_1h,
         )
+
+    @classmethod
+    def price_by_model(cls, by_model: dict[str, Tokens]) -> Cost:
+        """Price each model's share at its own rates and sum. A share with no
+        billable tokens is skipped, so a zero-usage ``<synthetic>`` record never
+        trips the refusal.
+        """
+        cost = cls()
+        for model, tokens in by_model.items():
+            if tokens.billable():
+                cost = cost.plus(cls.price(tokens, model))
+        return cost
 
     def total(self) -> float:
         return self.input + self.output + self.cache_read + self.cache_write
@@ -251,6 +338,9 @@ class SubAgentLine:
     output: int = 0
     cache_creation: int = 0
     cache_read: int = 0
+    # A sub-agent can run on a different model from its parent, so it is priced
+    # from its own split, never the parent's.
+    by_model: dict[str, Tokens] = field(default_factory=dict)
 
     def total_input(self) -> int:
         return self.input + self.cache_creation + self.cache_read
@@ -397,6 +487,7 @@ class _SubAgentAcc:
     output: int = 0
     cache_creation: int = 0
     cache_read: int = 0
+    by_model: dict[str, Tokens] = field(default_factory=dict)
 
 
 class SessionAggregator:
@@ -470,6 +561,7 @@ class SessionAggregator:
         acc.output += int(usage.get("output_tokens", 0) or 0)
         acc.cache_creation += int(usage.get("cache_creation_input_tokens", 0) or 0)
         acc.cache_read += int(usage.get("cache_read_input_tokens", 0) or 0)
+        acc.by_model.setdefault(_model_of(msg), Tokens()).add(usage)
 
     def _first_usage_sighting(self, msg_id) -> bool:
         """Whether this message's usage has not yet been counted. A message
@@ -498,7 +590,7 @@ class SessionAggregator:
             # Sum usage once per logical message, not once per content-block
             # record (which repeats the same usage).
             if self._first_usage_sighting(msg.get("id")):
-                self.totals.add(usage)
+                self.totals.add(usage, _model_of(msg))
         # The content array is walked on *every* record (tool_use items are
         # idempotent in `pending`; tool_results live in separate user records),
         # so attribution is unaffected by the per-message split.
@@ -596,6 +688,7 @@ class SessionAggregator:
                 output=acc.output,
                 cache_creation=acc.cache_creation,
                 cache_read=acc.cache_read,
+                by_model=acc.by_model,
             )
             for agent, acc in self._subagents.items()
         ]
@@ -634,10 +727,24 @@ class SessionAggregator:
         # session's cost is mostly theirs — reporting only the main line would
         # understate the very sessions the small-PRs convention targets. They are
         # priced separately as well as summed, so the split stays visible.
-        session_cost = Cost.price(self.totals)
-        subagent_cost = Cost()
-        for line in subagents:
-            subagent_cost = subagent_cost.plus(Cost.price(line))
+        #
+        # Every billable model across the main session and its sub-agents is
+        # checked BEFORE anything is priced: one unknown model withholds all
+        # three figures, since a partial sum would read as the whole bill.
+        billable: set[str] = set()
+        for by_model in [self.totals.by_model, *(s.by_model for s in subagents)]:
+            billable.update(m for m, t in by_model.items() if t.billable())
+        unpriced_models = sorted(m for m in billable if m not in RATES_BY_MODEL)
+        priced_models = sorted(m for m in billable if m in RATES_BY_MODEL)
+        session_cost: Cost | None = None
+        subagent_cost: Cost | None = None
+        total_cost: Cost | None = None
+        if not unpriced_models:
+            session_cost = Cost.price_by_model(self.totals.by_model)
+            subagent_cost = Cost()
+            for line in subagents:
+                subagent_cost = subagent_cost.plus(Cost.price_by_model(line.by_model))
+            total_cost = session_cost.plus(subagent_cost)
 
         return {
             "totals": self.totals,
@@ -646,7 +753,9 @@ class SessionAggregator:
             "cwd": self.cwd,
             "session_cost": session_cost,
             "subagent_cost": subagent_cost,
-            "total_cost": session_cost.plus(subagent_cost),
+            "total_cost": total_cost,
+            "priced_models": priced_models,
+            "unpriced_models": unpriced_models,
             "cache_hit_rate": cache_hit_rate,
             "tools": tools,
             "top_sinks": sinks,
@@ -928,6 +1037,13 @@ def money(dollars: float) -> str:
     return f"${dollars:.3f}"
 
 
+def _rate_standing(model: str) -> str:
+    verified = RATES_BY_MODEL[model].verified
+    if verified:
+        return f"`{model}` verified {verified}"
+    return f"`{model}` projected, unverified"
+
+
 def to_markdown(report: dict, session_label: str) -> str:
     """Render the compact Markdown summary printed by default."""
     totals: Totals = report["totals"]
@@ -937,7 +1053,16 @@ def to_markdown(report: dict, session_label: str) -> str:
     # **Dollars first, and only for a Bedrock worker.** The headline is the
     # number the small-PRs convention is trying to drive down, so it leads; a
     # seat session says so instead of being priced at worker rates.
-    if report["substrate"] == SUBSTRATE_BEDROCK:
+    if report["substrate"] == SUBSTRATE_BEDROCK and report["unpriced_models"]:
+        out.append(
+            "**Cost withheld**: no Bedrock rate for {} — add a row to "
+            "`RATES_BY_MODEL` rather than pricing at another model's rate; "
+            "substrate {}.\n".format(
+                ", ".join(f"`{m}`" for m in report["unpriced_models"]),
+                report["substrate_reason"],
+            )
+        )
+    elif report["substrate"] == SUBSTRATE_BEDROCK:
         total: Cost = report["total_cost"]
         session: Cost = report["session_cost"]
         sub: Cost = report["subagent_cost"]
@@ -952,9 +1077,14 @@ def to_markdown(report: dict, session_label: str) -> str:
         # operator-asserted `--substrate bedrock` renders byte-identically to a
         # marker-verified one — on precisely the figure the daily
         # reconciliation consumes, where that provenance is the point.
+        #
+        # Each priced model names its rate's standing, because a projected rate
+        # rendered as if verified is exactly the drift the reconciliation hunts.
         out.append(
-            "at the verified Bedrock rates (2026-09-11); substrate {}.\n".format(
-                report["substrate_reason"]
+            "at Bedrock rates — {}; substrate {}.\n".format(
+                ", ".join(_rate_standing(m) for m in report["priced_models"])
+                or "no billable tokens",
+                report["substrate_reason"],
             )
         )
         # **(all agents)** is load-bearing: these four figures price
@@ -1088,6 +1218,14 @@ def to_json(report: dict) -> str:
                 "prefix_last": obj.prefix_last,
                 "prefix_max": obj.prefix_max,
                 "prefix_growth": obj.prefix_growth(),
+                "by_model": obj.by_model,
+            }
+        if isinstance(obj, Tokens):
+            return {
+                "input": obj.input,
+                "output": obj.output,
+                "cache_creation": obj.cache_creation,
+                "cache_read": obj.cache_read,
             }
         if isinstance(obj, Cost):
             return {
@@ -1113,6 +1251,7 @@ def to_json(report: dict) -> str:
                 "output": obj.output,
                 "cache_creation": obj.cache_creation,
                 "cache_read": obj.cache_read,
+                "by_model": obj.by_model,
             }
         if isinstance(obj, HardeningCandidate):
             return {

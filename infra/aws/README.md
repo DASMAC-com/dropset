@@ -470,8 +470,9 @@ launch that misbehaves:
 ```sh
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=us-west-2
-export ANTHROPIC_MODEL='us.anthropic.claude-opus-5[1m]'
-export ANTHROPIC_DEFAULT_HAIKU_MODEL='us.anthropic.claude-haiku-4-5-20251001'
+export ANTHROPIC_MODEL='us.anthropic.claude-opus-5-5[1m]'
+fast='us.anthropic.claude-haiku-4-5-20251001-v1:0'
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$fast"
 export ENABLE_PROMPT_CACHING_1H=1
 export AWS_BEARER_TOKEN_BEDROCK="$(op read \
   --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")"
@@ -498,7 +499,9 @@ operator's to make.
 
 `ANTHROPIC_DEFAULT_HAIKU_MODEL` pins the fast tier at Bedrock Haiku so
 background sub-turns bill to credits alongside the primary model,
-rather than falling back to the subscription.
+rather than falling back to the subscription. The id needs its `-v1:0`
+suffix: Claude Code passes it through verbatim, and Bedrock rejects the
+bare `…-20251001` form as an invalid model identifier.
 
 Setting `ANTHROPIC_MODEL` does more than pick the primary model: on
 Bedrock it also routes background tasks (session titles and the like) to
@@ -531,7 +534,7 @@ as a permissions fault, and confirm with
 `get-foundation-model-availability`, whose `agreementAvailability` flips
 from `NOT_AVAILABLE` to `AVAILABLE`.
 
-**The `[1m]` suffix is not decoration.** Opus 5 supports a 1M-token
+**The `[1m]` suffix is not decoration.** Opus 5.5 supports a 1M-token
 context window, but on a third-party provider the window defaults to
 **200k** and the suffix is how you opt in. Claude Code strips it before
 calling Bedrock, so it never reaches the provider as part of the model

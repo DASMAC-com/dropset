@@ -71,10 +71,17 @@ and prints, as compact Markdown (or `--json`):
 
 - **What the session cost** — the headline, stated first: one
   line saying this session cost about N dollars, then the
-  breakdown (cache-read, cache-write, output, input) at the
-  verified Bedrock rates, computed from the session's own
-  transcript usage records. Sub-agent cost is priced too and
-  split out, because a fan-out session's bill is mostly theirs.
+  breakdown (cache-read, cache-write, output, input), computed
+  from the session's own transcript usage records with each
+  message priced at **its own model's** Bedrock rate. The
+  headline names every priced model and whether its rate is
+  verified against a bill or only projected (Opus 5.5 is
+  projected until the first reconciled fleet day). A model
+  with no rate row **withholds the dollar figure and names
+  the model** rather than pricing at a default; the fix is a
+  row in the tool's `RATES_BY_MODEL`. Sub-agent cost is priced
+  too and split out, because a fan-out session's bill is
+  mostly theirs.
 
   **Only a Bedrock session gets a dollar figure.** A **seat**
   session (`plan`, `architect`, `explore`, `housekeeping`)
@@ -288,8 +295,9 @@ Keep it tight; this is a recommendation, not a patch.
 
 **Rank levers by estimated dollars saved, not tokens.** Dollars
 are what the credit spend is billed against, and the two orders
-differ: a cache-read-heavy sink priced at $0.55/Mtok can rank
-below a much smaller output-heavy one at $27.50/Mtok. Where a
+differ: a cache-read-heavy sink priced at $0.22/Mtok can rank
+below a much smaller output-heavy one at $22.00/Mtok (Opus 5.5,
+projected). Where a
 lever's saving can only be stated in tokens, price it at the
 rates the tool reports and say which tier it lands in. For a
 **seat** session there is no dollar figure to rank by, so rank

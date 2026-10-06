@@ -397,7 +397,7 @@ class BedrockEnvGate(SubstrateHarness):
             env={"AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"},
         )
         self.assertIn("rc=0", result.stdout)
-        self.assertIn("MODEL=us.anthropic.claude-opus-5[1m]", result.stdout)
+        self.assertIn("MODEL=us.anthropic.claude-opus-5-5[1m]", result.stdout)
         self.assertIn("REGION=us-west-2", result.stdout)
         self.assertIn("CACHE=1", result.stdout)
         # The fast tier is pinned so background sub-turns bill to credits too,

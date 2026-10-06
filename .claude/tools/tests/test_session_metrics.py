@@ -20,13 +20,19 @@ from unittest import mock
 import session_metrics as sm
 
 
-def assistant(usage: str, tool_uses: str) -> str:
+# The model fixtures record unless a test says otherwise: the one with a rate
+# verified against a bill, so the dollar figures below are the verified ones.
+MODEL = "claude-opus-5"
+
+
+def assistant(usage: str, tool_uses: str, model: str = MODEL) -> str:
     """A compact assistant record with one usage block and any tool_use items."""
     return json.dumps(
         {
             "type": "assistant",
             "message": {
                 "role": "assistant",
+                "model": model,
                 "usage": json.loads(usage),
                 "content": json.loads(f"[{tool_uses}]") if tool_uses else [],
             },
@@ -34,7 +40,9 @@ def assistant(usage: str, tool_uses: str) -> str:
     )
 
 
-def assistant_with_id(msg_id: str, usage: str, tool_uses: str) -> str:
+def assistant_with_id(
+    msg_id: str, usage: str, tool_uses: str, model: str = MODEL
+) -> str:
     """An assistant record carrying a logical message id, to model the
     one-record-per-content-block split that repeats the same usage.
     """
@@ -44,6 +52,7 @@ def assistant_with_id(msg_id: str, usage: str, tool_uses: str) -> str:
             "message": {
                 "role": "assistant",
                 "id": msg_id,
+                "model": model,
                 "usage": json.loads(usage),
                 "content": json.loads(f"[{tool_uses}]") if tool_uses else [],
             },
@@ -707,16 +716,17 @@ class PrefixGrowth(unittest.TestCase):
 
 
 class Costing(unittest.TestCase):
-    """Dollars computed from the transcript at the verified Bedrock rates."""
+    """Dollars computed from the transcript at each message's model's rates."""
+
+    MILLION_EACH = sm.Tokens(
+        input=1_000_000,
+        output=1_000_000,
+        cache_creation=1_000_000,
+        cache_read=1_000_000,
+    )
 
     def test_prices_each_tier_at_its_own_rate(self):
-        totals = sm.Totals(
-            input=1_000_000,
-            output=1_000_000,
-            cache_creation=1_000_000,
-            cache_read=1_000_000,
-        )
-        cost = sm.Cost.price(totals)
+        cost = sm.Cost.price(self.MILLION_EACH, "claude-opus-5")
         # A round million of each tier prices to exactly the per-Mtok rate, so a
         # transposed rate cannot hide behind a plausible-looking total.
         self.assertAlmostEqual(cost.input, 5.50, places=6)
@@ -729,8 +739,89 @@ class Costing(unittest.TestCase):
         # The shape the issue is about: a session whose bill is mostly the
         # replayed prefix, not its output.
         totals = sm.Totals(input=1_000, output=30_000, cache_read=5_000_000)
-        cost = sm.Cost.price(totals)
+        cost = sm.Cost.price(totals, "claude-opus-5")
         self.assertGreater(cost.cache_read, cost.output)
+
+    def test_opus_5_5_prices_at_its_projected_row(self):
+        cost = sm.Cost.price(self.MILLION_EACH, "claude-opus-5-5")
+        self.assertAlmostEqual(cost.input, 4.40, places=6)
+        self.assertAlmostEqual(cost.output, 22.00, places=6)
+        self.assertAlmostEqual(cost.cache_write, 8.80, places=6)
+        self.assertAlmostEqual(cost.cache_read, 0.22, places=6)
+        # Projected, not billed: the headline must not call it verified.
+        self.assertIsNone(sm.RATES_BY_MODEL["claude-opus-5-5"].verified)
+
+    def test_an_unknown_model_refuses_by_name(self):
+        with self.assertRaises(sm.UnpricedModel) as caught:
+            sm.Cost.price(self.MILLION_EACH, "claude-opus-9")
+        self.assertEqual(caught.exception.model, "claude-opus-9")
+
+    def test_each_message_is_priced_at_its_own_model(self):
+        # A session that switched models mid-way: one million output tokens on
+        # each, so the sum is the two output rates and nothing else.
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(
+            assistant_with_id("m1", '{"output_tokens":1000000}', "", "claude-opus-5")
+        )
+        agg.ingest_main_line(
+            assistant_with_id("m2", '{"output_tokens":1000000}', "", "claude-opus-5-5")
+        )
+        report = agg.finish(sm.SUBSTRATE_BEDROCK)
+        self.assertAlmostEqual(report["total_cost"].total(), 49.50, places=6)
+        self.assertEqual(report["priced_models"], ["claude-opus-5", "claude-opus-5-5"])
+
+    def test_a_sub_agent_is_priced_at_its_own_model(self):
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant_with_id("m1", '{"output_tokens":1000000}', ""))
+        agg.ingest_subagent_line(
+            "lens",
+            assistant_with_id(
+                "msg_lens", '{"output_tokens":1000000}', "", "claude-opus-5-5"
+            ),
+        )
+        report = agg.finish(sm.SUBSTRATE_BEDROCK)
+        self.assertAlmostEqual(report["session_cost"].total(), 27.50, places=6)
+        self.assertAlmostEqual(report["subagent_cost"].total(), 22.00, places=6)
+
+    def test_one_unknown_model_withholds_every_figure(self):
+        # A partial sum would read as the whole bill, so a single unpriced
+        # sub-agent blanks the main session's figure too.
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant_with_id("m1", '{"output_tokens":1000}', ""))
+        agg.ingest_subagent_line(
+            "lens",
+            assistant_with_id("msg_lens", '{"output_tokens":1000}', "", "claude-x"),
+        )
+        report = agg.finish(sm.SUBSTRATE_BEDROCK)
+        self.assertEqual(report["unpriced_models"], ["claude-x"])
+        self.assertIsNone(report["session_cost"])
+        self.assertIsNone(report["subagent_cost"])
+        self.assertIsNone(report["total_cost"])
+
+    def test_a_message_with_no_model_refuses_rather_than_defaulting(self):
+        record = json.loads(assistant('{"output_tokens":1000}', ""))
+        del record["message"]["model"]
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(json.dumps(record))
+        report = agg.finish(sm.SUBSTRATE_BEDROCK)
+        self.assertEqual(report["unpriced_models"], [sm.UNRECORDED_MODEL])
+
+    def test_a_zero_usage_synthetic_record_does_not_refuse(self):
+        # Claude Code records a failed request as model `<synthetic>` with an
+        # all-zero usage block; it costs nothing and must not blank the figure.
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant_with_id("m1", '{"output_tokens":1000000}', ""))
+        agg.ingest_main_line(
+            assistant_with_id(
+                "m2",
+                '{"input_tokens":0,"output_tokens":0}',
+                "",
+                "<synthetic>",
+            )
+        )
+        report = agg.finish(sm.SUBSTRATE_BEDROCK)
+        self.assertEqual(report["unpriced_models"], [])
+        self.assertAlmostEqual(report["total_cost"].total(), 27.50, places=6)
 
     def test_subagent_cost_is_summed_and_split_out(self):
         agg = sm.SessionAggregator()
@@ -938,8 +1029,29 @@ class SubstrateRendering(unittest.TestCase):
     def test_a_bedrock_session_leads_with_dollars(self):
         md = sm.to_markdown(self._report(sm.SUBSTRATE_BEDROCK), "abcd1234")
         self.assertIn("This session cost about $", md)
-        self.assertIn("verified Bedrock rates", md)
+        self.assertIn("`claude-opus-5` verified 2026-09-11", md)
         self.assertIn("Cost breakdown", md)
+
+    def test_a_projected_rate_is_named_as_unverified(self):
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant('{"output_tokens":1000}', "", "claude-opus-5-5"))
+        md = sm.to_markdown(agg.finish(sm.SUBSTRATE_BEDROCK), "abcd1234")
+        self.assertIn("`claude-opus-5-5` projected, unverified", md)
+        self.assertNotIn("verified 20", md)
+
+    def test_an_unpriced_bedrock_session_names_the_model_and_no_figure(self):
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant('{"output_tokens":1000}', "", "claude-x"))
+        report = agg.finish(sm.SUBSTRATE_BEDROCK)
+        md = sm.to_markdown(report, "abcd1234")
+        self.assertIn("**Cost withheld**", md)
+        self.assertIn("`claude-x`", md)
+        self.assertNotIn("$", md)
+        # The token profile survives; only the dollar figure is withheld.
+        self.assertIn("**Totals**", md)
+        parsed = json.loads(sm.to_json(report))
+        self.assertIsNone(parsed["total_cost"])
+        self.assertEqual(parsed["unpriced_models"], ["claude-x"])
 
     def test_a_seat_session_shows_no_dollar_figure_at_all(self):
         md = sm.to_markdown(self._report(sm.SUBSTRATE_SEAT), "abcd1234")
