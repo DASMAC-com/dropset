@@ -30,13 +30,16 @@
 //! that classification lets it skip the interactive prompt it calls
 //! [`ensure_not_mainnet`] before closing anything.
 //!
-//! The cockpit does **not**. Its policy comes from the operator's declared
-//! `--cluster`, so a mainnet session is held to [`Cluster::verify_genesis`]
-//! while a localnet one is checked against nothing — the validator it spawns is
-//! assumed to be the thing answering on the loopback port. That assumption is
-//! older than this module and unchanged by it, but it is an assumption, and
-//! stating the pairing as though the cockpit implemented it would be a claim
-//! this file cannot support.
+//! The cockpit pairs them differently, because its policy comes from the
+//! operator's declared `--cluster` rather than from the URL. A mainnet session
+//! is held to [`Cluster::verify_genesis`] at launch. A localnet session cannot
+//! check at launch — its validator is still booting — so it checks **lazily**:
+//! [`Identity::of_local`] classifies the genesis hash on the first poll that
+//! reaches a chain, and until that says [`Identity::Verified`] the cockpit refuses
+//! every write. The case it closes is something other than the spawned
+//! validator answering on the loopback port (a tunnel left forwarding to
+//! mainnet): the spawn returns as soon as the child is launched, with no
+//! readiness check, so nothing else would notice.
 
 use crate::chain;
 use crate::validator;
@@ -177,6 +180,49 @@ pub fn ensure_not_mainnet(client: &RpcClient) -> Result<()> {
     }
 }
 
+/// What a session knows about which chain is behind its endpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Identity {
+    /// Not yet established — the endpoint has not answered a genesis read.
+    Unchecked,
+    /// Confirmed to be the chain the session declared: a local ledger for a
+    /// localnet session, mainnet-beta (verified at launch) for a mainnet one.
+    Verified,
+    /// A localnet session whose loopback endpoint answers as mainnet-beta.
+    Mainnet,
+}
+
+impl Identity {
+    /// Classify a localnet session's genesis read.
+    ///
+    /// Unlike [`ensure_not_mainnet`], a failed read stays
+    /// [`Identity::Unchecked`] rather than passing. That function guards a
+    /// one-shot path that must not fail on a booting validator; this one
+    /// gates a session that will simply ask again on the next poll, so there
+    /// is no reason to wave anything through.
+    pub fn of_local(genesis: &Result<String>) -> Self {
+        match genesis {
+            Ok(seen) if seen == MAINNET_GENESIS_HASH => Identity::Mainnet,
+            Ok(_) => Identity::Verified,
+            Err(_) => Identity::Unchecked,
+        }
+    }
+
+    /// Why writes are refused under this identity, or `None` when they may go.
+    pub fn write_refusal(self) -> Option<&'static str> {
+        match self {
+            Identity::Verified => None,
+            Identity::Unchecked => {
+                Some("chain identity not yet verified — waiting for the endpoint")
+            }
+            Identity::Mainnet => Some(
+                "the loopback endpoint is MAINNET-BETA, not the spawned validator — refusing \
+                 every write (a tunnel or proxy on the port is the usual cause)",
+            ),
+        }
+    }
+}
+
 /// Whether `rpc_url` targets a validator on **this host**.
 ///
 /// Matches on the URL's **host component** exactly, not a substring: a remote
@@ -242,7 +288,11 @@ pub fn confirm() -> Result<()> {
 ///
 /// Runs before the alternate screen is entered, so the warning is in the
 /// scrollback rather than painted over by the first frame.
-pub fn confirm_mainnet_entry(rpc_url: &str, wallet: &str) -> Result<()> {
+///
+/// `leader` is the operator-supplied vault leader, named here so the key that
+/// will sign the vault steps is confirmed along with everything else; `None`
+/// says plainly that those steps will refuse.
+pub fn confirm_mainnet_entry(rpc_url: &str, wallet: &str, leader: Option<&str>) -> Result<()> {
     let host = host_of(rpc_url).unwrap_or_else(|| "<unparsed>".to_string());
     eprintln!();
     eprintln!("  ╔══════════════════════════════════════════════════════════╗");
@@ -250,6 +300,10 @@ pub fn confirm_mainnet_entry(rpc_url: &str, wallet: &str) -> Result<()> {
     eprintln!("  ╚══════════════════════════════════════════════════════════╝");
     eprintln!("   RPC host: {host}");
     eprintln!("   wallet:   {wallet}");
+    eprintln!(
+        "   leader:   {}",
+        leader.unwrap_or("(none — create-vault and deposit will refuse)")
+    );
     eprintln!(
         "   Genesis verified as mainnet-beta. Every action in this session\n   \
          moves real money and nothing is reversible. No validator is\n   \
@@ -320,6 +374,20 @@ mod tests {
         // the network: an unreachable URL still succeeds.
         let client = chain::rpc("http://127.0.0.1:1");
         assert!(Cluster::Localnet.verify_genesis(&client).is_ok());
+    }
+
+    #[test]
+    fn local_identity_refuses_writes_until_a_non_mainnet_genesis_is_seen() {
+        let mainnet = Identity::of_local(&Ok(MAINNET_GENESIS_HASH.to_string()));
+        assert_eq!(mainnet, Identity::Mainnet);
+        assert!(mainnet.write_refusal().is_some());
+        // A read failure is not a pass: the session keeps asking.
+        let failed = Identity::of_local(&Err(anyhow!("connection refused")));
+        assert_eq!(failed, Identity::Unchecked);
+        assert!(failed.write_refusal().is_some());
+        let local = Identity::of_local(&Ok("SomeFreshTestValidatorGenesis1111111111111".into()));
+        assert_eq!(local, Identity::Verified);
+        assert_eq!(local.write_refusal(), None);
     }
 
     #[test]

@@ -8,6 +8,7 @@ use crate::accounts::{ChainState, Liveness, ParticipantView, Phase};
 use crate::action::{self, Action};
 use crate::app::{swap_side_label, App, LogKind};
 use crate::book;
+use crate::cluster::Cluster;
 use crate::explorer;
 use dropset_sdk::DROPSET_ID;
 use ratatui::{
@@ -206,12 +207,13 @@ fn explorer_status(app: &App) -> Span<'static> {
 
 fn draw_menu(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     let phase = app.chain.phase();
-    let next = action::recommended_next(phase);
+    let cluster = app.ctx.cluster;
+    let next = action::recommended_next(phase, cluster);
     let items: Vec<ListItem> = app
         .menu_entries()
         .iter()
         .enumerate()
-        .map(|(i, &a)| menu_item(i, a, phase, next))
+        .map(|(i, &a)| menu_item(i, a, phase, cluster, next))
         .collect();
     // Name the cluster in the border on mainnet, so the one pane the operator
     // is always looking at says which chain this is. The localnet title is
@@ -232,8 +234,14 @@ fn draw_menu(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     f.render_stateful_widget(list, area, &mut app.menu);
 }
 
-fn menu_item(i: usize, action: Action, phase: Phase, next: Option<Action>) -> ListItem<'static> {
-    let enabled = action.enabled(phase);
+fn menu_item(
+    i: usize,
+    action: Action,
+    phase: Phase,
+    cluster: Cluster,
+    next: Option<Action>,
+) -> ListItem<'static> {
+    let enabled = action.enabled(phase, cluster);
     let recommended = next == Some(action);
     let key = Span::styled(format!("{}. ", i + 1), Style::new().fg(Color::DarkGray));
     let label_style = if !enabled {
@@ -248,7 +256,7 @@ fn menu_item(i: usize, action: Action, phase: Phase, next: Option<Action>) -> Li
         spans.push(Span::styled("  ← next", Style::new().fg(Color::Green)));
     } else if !enabled {
         spans.push(Span::styled(
-            format!("  ({})", action.disabled_reason(phase)),
+            format!("  ({})", action.disabled_reason(phase, cluster)),
             Style::new().fg(Color::DarkGray),
         ));
     }
@@ -264,10 +272,40 @@ fn menu_item(i: usize, action: Action, phase: Phase, next: Option<Action>) -> Li
 /// vault is selected, mirroring how the setup menu greys steps that can't run
 /// yet. Keep the line count in sync with [`RUNTIME_ACTIONS_ROWS`], which sizes
 /// the box.
+///
+/// On mainnet every one of these controls is refused — the bots and the
+/// eCLOB controls sign with committed localnet role keys, the swap with the
+/// committed taker — so the pane says so instead of advertising keys that only
+/// produce an error line. Same row count, so the layout does not shift.
 fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
-    let ready = app.chain.phase() == Phase::Ready;
     let tag = |s: &'static str| Span::styled(format!("{s:<6}"), Style::new().fg(Color::DarkGray));
     let live = Style::new().fg(Color::Gray);
+    if app.ctx.cluster.is_mainnet() {
+        let off = Style::new().fg(Color::DarkGray);
+        let lines = vec![
+            Line::from(vec![
+                tag("bots"),
+                Span::styled("localnet only (committed role keys)", off),
+            ]),
+            Line::from(vec![
+                tag("swap"),
+                Span::styled("localnet only (no mainnet taker key)", off),
+            ]),
+            Line::from(vec![tag("peg"), Span::styled("localnet only", off)]),
+            Line::from(vec![tag("shape"), Span::styled("localnet only", off)]),
+            Line::from(vec![tag("view"), Span::styled("r refresh · q quit", live)]),
+        ];
+        f.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .title(" actions · runtime · MAINNET ")
+                    .borders(Borders::ALL),
+            ),
+            area,
+        );
+        return;
+    }
+    let ready = app.chain.phase() == Phase::Ready;
     // Market-scoped controls read live only once a seeded vault exists.
     let market_style = if ready {
         live

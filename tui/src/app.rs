@@ -16,7 +16,7 @@ use crate::accounts::{self, ChainState, Liveness};
 use crate::action::{self, Action, JobContext};
 use crate::bot::{self, BotManager};
 use crate::chain;
-use crate::cluster::Cluster;
+use crate::cluster::{Cluster, Identity};
 use crate::explorer;
 use crate::fills;
 use crate::job::{JobEvent, Logger};
@@ -131,10 +131,19 @@ pub struct App {
     /// poll can read its holdings for the accounts pane. `None` if the role
     /// key can't be loaded.
     swapper: Option<Pubkey>,
-    /// Known mint → ticker, resolved once at startup from the bootstrap's
-    /// fixed mint keys, so the accounts pane can name a discovered
-    /// market's coins (the chain scan only yields mint pubkeys).
+    /// Known mint → ticker, resolved once at startup from the cluster's
+    /// roster (localnet keypairs or mainnet addresses), so the accounts pane
+    /// can name a discovered market's coins (the chain scan only yields mint
+    /// pubkeys).
     pub(crate) mint_symbols: Vec<(Pubkey, &'static str)>,
+    /// The roster's market PDAs, resolved once at startup and stamped onto
+    /// every poll so the phase measures progress against what should exist.
+    roster_markets: Vec<Pubkey>,
+    /// Which chain is behind the endpoint. A mainnet session starts
+    /// [`Identity::Verified`] (its genesis was checked at launch); a localnet
+    /// one starts [`Identity::Unchecked`] and is classified on the first poll
+    /// that reaches a chain. Writes are refused until it is verified.
+    pub(crate) identity: Identity,
     /// Index into [`ChainState::markets`] of the market whose order book and
     /// accounts are shown — the "which bot's book am I looking at" selection,
     /// moved with `[` / `]`.
@@ -222,7 +231,13 @@ impl App {
         // Resolve the swapper (FFFF) once — used to read its holdings each poll.
         let swapper = market::taker(&ctx.repo_root).ok().map(|k| k.pubkey());
         // Resolve the known mint tickers once — used to label the accounts pane.
-        let mint_symbols = market::mint_symbols(&ctx.repo_root);
+        let mint_symbols = market::mint_symbols(&ctx.repo_root, ctx.cluster);
+        let roster_markets = market::roster_markets(&ctx.repo_root, ctx.cluster);
+        let identity = if ctx.cluster.is_mainnet() {
+            Identity::Verified
+        } else {
+            Identity::Unchecked
+        };
         Ok(Self {
             ctx,
             validator,
@@ -235,6 +250,8 @@ impl App {
             log_path,
             swapper,
             mint_symbols,
+            roster_markets,
+            identity,
             selected_market: 0,
             swap_units: action::DEFAULT_PROBE_UNITS,
             swap_side: SwapSide::Buy,
@@ -280,7 +297,8 @@ impl App {
             self.log(
                 LogKind::Info,
                 format!(
-                    "Connected to {} — read-only, no validator spawned.",
+                    "Connected to {} — no validator spawned; the menu runs the \
+                     existence-checked ceremony only.",
                     self.ctx.cluster.label()
                 ),
             );
@@ -334,7 +352,7 @@ impl App {
         if self.auto_bootstrap
             && !self.job_running
             && Action::BootstrapAll.available_on(self.ctx.cluster)
-            && Action::BootstrapAll.enabled(self.chain.phase())
+            && Action::BootstrapAll.enabled(self.chain.phase(), self.ctx.cluster)
         {
             self.auto_bootstrap = false;
             self.run_action(Action::BootstrapAll);
@@ -539,7 +557,7 @@ impl App {
                 self.run_action(Action::ResetAllLadders);
             }
             KeyCode::Enter => self.run_selected(),
-            KeyCode::Char(d @ '1'..='8') => {
+            KeyCode::Char(d @ '1'..='9') => {
                 let idx = (d as usize) - ('1' as usize);
                 if idx < self.menu_entries().len() {
                     self.menu.select(Some(idx));
@@ -576,24 +594,34 @@ impl App {
     /// on mainnet means real quotes and real takes signed by committed localnet
     /// role keys.
     ///
-    /// Today they are inert there only by accident: all four resolve a symbol by
-    /// matching a discovered market's base mint against `mint_symbols`, which is
-    /// built from the localnet `keys/` mints and so matches nothing on mainnet.
-    /// Mainnet mint addressing removes that accident, which is why the refusal
-    /// is explicit here rather than left incidental.
+    /// This refusal is the **only** thing keeping them off mainnet. All four
+    /// resolve a symbol by matching a discovered market's base mint against
+    /// `mint_symbols`, and since mainnet mint addressing that map names the
+    /// real roster mints — so on mainnet they would now resolve a symbol and
+    /// launch. They used to be inert there by accident, when the map held only
+    /// localnet `keys/` mints; that accident is gone, and this check is not
+    /// incidental.
+    ///
+    /// The same reasoning covers a localnet session whose chain identity is not
+    /// yet verified (see [`Identity`]): a bot pointed at a tunnelled mainnet
+    /// would quote real funds just the same.
     fn refuse_on_mainnet(&mut self, what: &str) -> bool {
-        if !self.ctx.cluster.is_mainnet() {
-            return false;
+        if self.ctx.cluster.is_mainnet() {
+            self.log(
+                LogKind::Err,
+                format!(
+                    "{what} — localnet only: the bots quote and take with committed \
+                     role keys ({})",
+                    self.ctx.cluster.label()
+                ),
+            );
+            return true;
         }
-        self.log(
-            LogKind::Err,
-            format!(
-                "{what} — localnet only: the bots quote and take with committed \
-                 role keys ({})",
-                self.ctx.cluster.label()
-            ),
-        );
-        true
+        if let Some(reason) = self.identity.write_refusal() {
+            self.log(LogKind::Err, format!("{what} — {reason}"));
+            return true;
+        }
+        false
     }
 
     fn selected_symbol(&self) -> Option<&'static str> {
@@ -889,11 +917,24 @@ impl App {
             );
             return;
         }
+        // Every write waits on a verified chain identity. The explorer reads
+        // and the wipe discards only this process's own ledger, so both stay
+        // reachable — the wipe is how an operator recovers.
+        if !matches!(action, Action::OpenExplorer | Action::Wipe) {
+            if let Some(reason) = self.identity.write_refusal() {
+                self.log(LogKind::Err, format!("{} — {reason}", action.label()));
+                return;
+            }
+        }
         let phase = self.chain.phase();
-        if !action.enabled(phase) {
+        if !action.enabled(phase, self.ctx.cluster) {
             self.log(
                 LogKind::Err,
-                format!("{} — {}", action.label(), action.disabled_reason(phase)),
+                format!(
+                    "{} — {}",
+                    action.label(),
+                    action.disabled_reason(phase, self.ctx.cluster)
+                ),
             );
             return;
         }
@@ -959,6 +1000,9 @@ impl App {
                 self.fills.clear();
                 self.unverified_markets.clear();
                 self.basis_config_suspects.clear();
+                // A respawned validator has a fresh genesis, so whatever was
+                // verified was verified about a ledger that no longer exists.
+                self.identity = Identity::Unchecked;
                 self.dirty = true;
                 self.log(
                     LogKind::Ok,
@@ -992,6 +1036,35 @@ impl App {
         }
     }
 
+    /// Classify the chain behind a localnet session's endpoint, once, on the
+    /// first poll that reaches one.
+    ///
+    /// Lazy because the validator is still booting at launch, and one-shot
+    /// because the answer cannot change until a wipe replaces the ledger
+    /// (which resets it). A failed read leaves it [`Identity::Unchecked`] to
+    /// be asked again next poll. Logged loudly when the answer is mainnet,
+    /// since every write the panel offers is then refused.
+    fn check_identity(&mut self) {
+        if self.identity != Identity::Unchecked || !self.chain.validator_up {
+            return;
+        }
+        self.identity = Identity::of_local(&chain::genesis_hash(&self.client));
+        match self.identity {
+            Identity::Mainnet => {
+                if let Some(reason) = self.identity.write_refusal() {
+                    self.log(LogKind::Err, format!("\u{26a0} {reason}"));
+                }
+            }
+            Identity::Verified => {
+                self.log(
+                    LogKind::Info,
+                    "Chain identity verified — a local ledger, not mainnet.".to_string(),
+                );
+            }
+            Identity::Unchecked => {}
+        }
+    }
+
     /// Re-poll on-chain state if forced (`dirty`) or the interval elapsed.
     /// Also reaps any maker bot that exited on its own, so the per-market
     /// status reflects a crashed or orphaned bot, and clamps the selection to
@@ -1005,6 +1078,8 @@ impl App {
                 self.selected_market,
                 &self.mint_symbols,
             );
+            self.chain.roster_markets = self.roster_markets.clone();
+            self.check_identity();
             let log = Logger::new(self.tx.clone());
             self.bots.reap(&log);
             self.takers.reap(&log);

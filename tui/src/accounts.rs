@@ -13,12 +13,13 @@
 // cspell:word keypairs
 
 use crate::chain;
+use anyhow::{anyhow, bail, Context, Result};
 use dropset_sdk::accounts::{
     fetch_maybe_registry_header, VaultDepositorHeader, MARKET_HEADER_DISCRIMINATOR,
     VAULT_DEPOSITOR_HEADER_DISCRIMINATOR,
 };
 use dropset_sdk::clock::{SlotTime, WallTime};
-use dropset_sdk::layout::MarketView as SlabView;
+use dropset_sdk::layout::{MarketView as SlabView, Vault};
 use dropset_sdk::matching::{resting_levels, BookLevel, SwapSide};
 use dropset_sdk::price::Price;
 use dropset_sdk::shared::MaybeAccount;
@@ -43,6 +44,8 @@ pub enum Phase {
     RegistryAbsent,
     MarketAbsent,
     VaultAbsent,
+    /// Every vault exists, but at least one holds no deposit yet.
+    VaultUnseeded,
     Ready,
 }
 
@@ -55,6 +58,7 @@ impl Phase {
             Phase::RegistryAbsent => "Registry absent",
             Phase::MarketAbsent => "Market absent",
             Phase::VaultAbsent => "Vault absent",
+            Phase::VaultUnseeded => "Vault unseeded",
             Phase::Ready => "Ready",
         }
     }
@@ -87,6 +91,8 @@ pub struct MarketView {
     pub active_count: u32,
     /// `(sector_index, leader)` for every live vault — drives teardown.
     pub live_vaults: Vec<(u32, Pubkey)>,
+    /// How many of the live vaults hold no shares yet — opened, never seeded.
+    pub unseeded_vaults: u32,
     /// The `reference_price.quote_slot` of the first live vault — the one whose
     /// leader the accounts pane shows as the MM bot. Drives the leader's
     /// liveness (freshness against the poll's head slot). `None` when the market
@@ -168,12 +174,24 @@ pub struct ChainState {
     /// The swapper / taker (`FFFF`), with its wallet token holdings for the
     /// *selected* market — `None` until a market exists (and the key resolves).
     pub swapper: Option<ParticipantView>,
+    /// The market PDAs the session's roster expects. Not read from the chain —
+    /// the caller sets it after [`poll`] — but stored here so [`Self::phase`]
+    /// can measure progress against what *should* exist. Empty means no
+    /// roster is known, and the phase falls back to the discovered markets.
+    pub roster_markets: Vec<Pubkey>,
 }
 
 impl ChainState {
     /// Derive the gating [`Phase`] from the snapshot. The bootstrap actions
-    /// bring up every demo market together, so the phase is an aggregate:
-    /// `Ready` only once every discovered market has a live vault.
+    /// bring up every roster market together, so the phase is an aggregate:
+    /// `Ready` only once every roster market exists with a live, seeded vault.
+    ///
+    /// Measured against the roster rather than against whatever was
+    /// discovered, so a run that stopped part-way still reads as unfinished.
+    /// Gated on the discovered list alone, one created market of three read as
+    /// "market already exists" and greyed out the very step needed to finish —
+    /// unrecoverable on mainnet, where there is no wipe. The phase is only a
+    /// hint: each ceremony step re-checks the chain fresh before it sends.
     pub fn phase(&self) -> Phase {
         if !self.validator_up {
             return Phase::NoValidator;
@@ -184,13 +202,30 @@ impl ChainState {
         if self.registry.is_none() {
             return Phase::RegistryAbsent;
         }
-        if self.markets.is_empty() {
+        let tracked: Vec<&MarketView> = if self.roster_markets.is_empty() {
+            self.markets.iter().collect()
+        } else {
+            if !self
+                .roster_markets
+                .iter()
+                .all(|r| self.markets.iter().any(|m| m.address == *r))
+            {
+                return Phase::MarketAbsent;
+            }
+            self.markets
+                .iter()
+                .filter(|m| self.roster_markets.contains(&m.address))
+                .collect()
+        };
+        if tracked.is_empty() {
             return Phase::MarketAbsent;
         }
-        if self.markets.iter().all(|m| m.active_count > 0) {
-            Phase::Ready
-        } else {
+        if tracked.iter().any(|m| m.active_count == 0) {
             Phase::VaultAbsent
+        } else if tracked.iter().any(|m| m.unseeded_vaults > 0) {
+            Phase::VaultUnseeded
+        } else {
+            Phase::Ready
         }
     }
 
@@ -390,6 +425,73 @@ pub fn read_market_at(client: &RpcClient, address: Pubkey) -> Option<MarketView>
     .next()
 }
 
+/// One live vault on a market, as a pre-flight check reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VaultSeat {
+    /// Its sector index — valid only for this read, since sectors recycle.
+    pub idx: u32,
+    pub leader: Pubkey,
+    /// Whether it holds a deposit (any shares or inventory).
+    pub seeded: bool,
+}
+
+/// Whether a vault holds any deposit at all. Shares, not just inventory, so a
+/// vault whose inventory was fully withdrawn but whose share ledger still
+/// carries a balance does not read as fresh.
+fn is_seeded(v: &Vault) -> bool {
+    v.total_shares.get() > 0 || v.base_atoms.get() > 0 || v.quote_atoms.get() > 0
+}
+
+/// The registry, read **fresh** for a pre-flight check: `Ok(None)` only when
+/// the account is genuinely absent, and an error — never `None` — when the read
+/// fails. See [`chain::fetch_fresh`] for why the distinction is load-bearing.
+pub fn registry_fresh(client: &RpcClient) -> Result<Option<RegistryView>> {
+    if chain::fetch_fresh(client, &chain::registry_pda(), "registry")?.is_none() {
+        return Ok(None);
+    }
+    read_registry(client)
+        .map(Some)
+        .context("the registry exists but could not be read back — refusing")
+}
+
+/// Every live vault on `market`, read **fresh**: `Ok(None)` when the market
+/// account is absent, an error when it cannot be read or decoded.
+///
+/// A direct read of the one account rather than [`read_market_at`]'s
+/// program-wide scan, which both folds a failure into `None` and costs a
+/// `get_program_accounts` on mainnet for what is a single-account question.
+pub fn vault_seats_fresh(client: &RpcClient, market: &Pubkey) -> Result<Option<Vec<VaultSeat>>> {
+    let Some(account) = chain::fetch_fresh(client, market, "market")? else {
+        return Ok(None);
+    };
+    if account.owner != DROPSET_ID {
+        bail!(
+            "{market} is owned by {}, not the Dropset program",
+            account.owner
+        );
+    }
+    let view = SlabView::load(&account.data)
+        .map_err(|_| anyhow!("{market} does not decode as a market slab"))?;
+    Ok(Some(
+        view.active_vaults()
+            .map(|(idx, v)| VaultSeat {
+                idx,
+                leader: Pubkey::new_from_array(v.leader),
+                seeded: is_seeded(v),
+            })
+            .collect(),
+    ))
+}
+
+/// The seats in `seats` that `leader` leads, in sector order.
+pub fn seats_led_by(seats: &[VaultSeat], leader: &Pubkey) -> Vec<VaultSeat> {
+    seats
+        .iter()
+        .filter(|s| s.leader == *leader)
+        .copied()
+        .collect()
+}
+
 /// Discover the localnet markets by scanning the program's owned accounts for
 /// the `MarketHeader` discriminator, decoding each one's header + active vault
 /// list via the slab-layout mirror, and reconstructing its resting book at
@@ -466,6 +568,7 @@ fn read_markets(
         // the first one (the vault the accounts pane surfaces as the MM bot),
         // its quote slot for the leader's liveness.
         let mut live_vaults: Vec<(u32, Pubkey)> = Vec::new();
+        let mut unseeded_vaults = 0u32;
         let mut leader_quote_slot: Option<u32> = None;
         let mut leader_reference: Option<Price> = None;
         for (idx, v) in view.active_vaults() {
@@ -481,6 +584,9 @@ fn read_markets(
                 }
             }
             live_vaults.push((idx, Pubkey::new_from_array(v.leader)));
+            if !is_seeded(v) {
+                unseeded_vaults += 1;
+            }
         }
 
         // Reconstruct the resting book via the shared matcher (Buy ⇒ asks,
@@ -533,6 +639,7 @@ fn read_markets(
             quote_treasury_lamports: lamports(1),
             active_count: header.active_count.get(),
             live_vaults,
+            unseeded_vaults,
             leader_quote_slot,
             reference_price,
             depositors,
@@ -563,6 +670,7 @@ mod tests {
             quote_treasury_lamports: 0,
             active_count,
             live_vaults: Vec::new(),
+            unseeded_vaults: 0,
             leader_quote_slot: None,
             reference_price: None,
             depositors: Vec::new(),
@@ -657,6 +765,63 @@ mod tests {
             ready_state(vec![market(1, 1), market(2, 2)]).phase(),
             Phase::Ready
         );
+        // A vault that exists but holds nothing yet gates on the deposit step.
+        let mut unseeded = market(1, 2);
+        unseeded.unseeded_vaults = 1;
+        assert_eq!(
+            ready_state(vec![market(1, 1), unseeded]).phase(),
+            Phase::VaultUnseeded
+        );
+    }
+
+    #[test]
+    fn phase_measures_progress_against_the_roster() {
+        // One of two roster markets created: still awaiting market creation,
+        // so the step that finishes the job stays enabled. Gated on the
+        // discovered list alone this read "vault absent" and stranded the run.
+        let mut state = ready_state(vec![market(0, 1)]);
+        state.roster_markets = vec![
+            Pubkey::new_from_array([1; 32]),
+            Pubkey::new_from_array([2; 32]),
+        ];
+        assert_eq!(state.phase(), Phase::MarketAbsent);
+        // Both present; a foreign market with no vault does not hold it back,
+        // and a roster market with no vault does.
+        let mut state = ready_state(vec![market(1, 1), market(1, 2), market(0, 9)]);
+        state.roster_markets = vec![
+            Pubkey::new_from_array([1; 32]),
+            Pubkey::new_from_array([2; 32]),
+        ];
+        assert_eq!(state.phase(), Phase::Ready);
+        state.markets[1].active_count = 0;
+        assert_eq!(state.phase(), Phase::VaultAbsent);
+    }
+
+    #[test]
+    fn seats_led_by_selects_only_the_leaders_vaults() {
+        let me = Pubkey::new_unique();
+        let other = Pubkey::new_unique();
+        let seats = [
+            VaultSeat {
+                idx: 0,
+                leader: other,
+                seeded: true,
+            },
+            VaultSeat {
+                idx: 3,
+                leader: me,
+                seeded: false,
+            },
+        ];
+        assert_eq!(seats_led_by(&seats, &me), vec![seats[1]]);
+        assert!(seats_led_by(&seats, &Pubkey::new_unique()).is_empty());
+    }
+
+    #[test]
+    fn fresh_reads_refuse_on_an_unreachable_endpoint() {
+        let client = chain::rpc("http://127.0.0.1:1");
+        assert!(registry_fresh(&client).is_err());
+        assert!(vault_seats_fresh(&client, &Pubkey::new_unique()).is_err());
     }
 
     #[test]

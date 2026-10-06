@@ -20,11 +20,20 @@
 //! leader co-signs only the vault-gated instructions (`set_liquidity_profile`
 //! and `deposit_leader` here, `set_reference_price` once a maker bot or the
 //! eCLOB controls quote), so it needs no SOL balance.
+//!
+//! Mainnet is a second roster, [`MAINNET_PAIRS`], over the **same**
+//! [`PairConfig`] type rather than a parallel one. What differs is where each
+//! address comes from: a localnet mint is a [`MintKey::Keypair`] the bootstrap
+//! creates, a mainnet mint is a [`MintKey::Existing`] address that is only ever
+//! verified, never created — minting one would issue counterfeit tokens — and a
+//! mainnet leader is [`LeaderKey::Operator`], arriving at launch rather than
+//! from a committed file. [`roster`] picks between them by cluster.
 
 // cspell:word keypairs
 
 use crate::accounts::MarketView;
 use crate::chain;
+use crate::cluster::Cluster;
 use crate::job::Logger;
 use anyhow::{Context, Result};
 use bytemuck::Zeroable;
@@ -33,16 +42,48 @@ use dropset_sdk::layout::LiquidityProfile;
 use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix, PROFILE_BYTES};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
-use solana_pubkey::Pubkey;
+use solana_pubkey::{pubkey, Pubkey};
 use solana_signer::Signer;
 use std::path::Path;
 
-/// A mock SPL mint in a localnet pair: a checked-in keypair (named relative
-/// to the repo root), a human symbol for the log, and its decimals.
+/// Where a mint's address comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MintKey {
+    /// A checked-in localnet keypair, named relative to the repo root. The
+    /// bootstrap creates the mint at this keypair's address.
+    Keypair(&'static str),
+    /// A real mint that already exists on its cluster. Verified before use and
+    /// never created: the address is the issuer's, not ours.
+    Existing(Pubkey),
+}
+
+/// One SPL mint in a pair: where its address comes from, a human symbol for
+/// the log, and its decimals.
 pub struct MintSpec {
     pub symbol: &'static str,
-    pub keypair_file: &'static str,
+    pub key: MintKey,
     pub decimals: u8,
+}
+
+impl MintSpec {
+    /// This mint's address — loaded from its keypair file, or the fixed
+    /// address itself.
+    pub fn address(&self, repo_root: &Path) -> Result<Pubkey> {
+        match self.key {
+            MintKey::Keypair(file) => Ok(load_key(repo_root, file)?.pubkey()),
+            MintKey::Existing(address) => Ok(address),
+        }
+    }
+}
+
+/// Where a pair's leader / quote-authority key comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeaderKey {
+    /// A checked-in localnet role key, named relative to the repo root.
+    Keypair(&'static str),
+    /// Supplied by the operator at launch (`--leader`). The committed role
+    /// keys lead nothing real, so a mainnet pair names no file at all.
+    Operator,
 }
 
 /// The USD value each side of a seeded vault opens with — the demo's $100
@@ -60,10 +101,9 @@ pub const SEED_USD_PER_SIDE: f64 = 100.0;
 pub struct PairConfig {
     pub base: MintSpec,
     pub quote: MintSpec,
-    /// Leader + quote-authority keypair (a checked-in role key). Must not be
-    /// the admin wallet — anchor-v2 rejects the same key in the admin and
-    /// leader slots of `create_vault`.
-    pub leader_keypair_file: &'static str,
+    /// Leader + quote-authority key. Must not be the admin wallet — anchor-v2
+    /// rejects the same key in the admin and leader slots of `create_vault`.
+    pub leader: LeaderKey,
     /// Expected (quote-per-base) price in human units, e.g. `1.14` USDC per
     /// EURC. Nothing stamps it on chain — the maker bot discovers the live
     /// price from its feeds and stamps that — so it serves only to balance the
@@ -101,17 +141,48 @@ const fn fx_market(
     PairConfig {
         base: MintSpec {
             symbol,
-            keypair_file,
+            key: MintKey::Keypair(keypair_file),
             decimals,
         },
         quote: MintSpec {
             symbol: "USDC",
-            keypair_file: "keys/USDC.json",
+            key: MintKey::Keypair("keys/USDC.json"),
             decimals: 6,
         },
-        leader_keypair_file: "keys/EEEE.json",
+        leader: LeaderKey::Keypair("keys/EEEE.json"),
         reference_price,
         // Never expires in wall time; re-armed by the maker bot.
+        expiry_offset_secs: WallSpan::UNBOUNDED,
+    }
+}
+
+/// Circle's mainnet USDC — the quote leg of every mainnet pair, and the mint
+/// the mainnet registry charges its per-vault fee in.
+pub const MAINNET_USDC: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+
+/// A mainnet `<token>/USDC` pair over a real, existing base mint, led by the
+/// operator-supplied leader. Shares [`fx_market`]'s ladder, expiry and seed
+/// reference so a mainnet vault opens with the same shape and sizing as its
+/// localnet rehearsal.
+const fn mainnet_fx_market(
+    symbol: &'static str,
+    mint: Pubkey,
+    decimals: u8,
+    reference_price: f64,
+) -> PairConfig {
+    PairConfig {
+        base: MintSpec {
+            symbol,
+            key: MintKey::Existing(mint),
+            decimals,
+        },
+        quote: MintSpec {
+            symbol: "USDC",
+            key: MintKey::Existing(MAINNET_USDC),
+            decimals: 6,
+        },
+        leader: LeaderKey::Operator,
+        reference_price,
         expiry_offset_secs: WallSpan::UNBOUNDED,
     }
 }
@@ -142,6 +213,51 @@ pub const PAIRS: [&PairConfig; 9] = [
     &MARKET_AUDD,
     &MARKET_CADC,
 ];
+
+// The mainnet MVP pairs. Addresses and decimals are the issuers' own, as
+// recorded in the frontend's `currencies.json` — the test
+// `mainnet_mints_match_the_frontend_currency_data` holds the two copies equal,
+// so neither can drift from the other unnoticed.
+pub const MAINNET_EURC: PairConfig = mainnet_fx_market(
+    "EURC",
+    pubkey!("HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr"),
+    6,
+    1.14,
+);
+pub const MAINNET_AUDD: PairConfig = mainnet_fx_market(
+    "AUDD",
+    pubkey!("AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw"),
+    6,
+    0.7214,
+);
+pub const MAINNET_CADC: PairConfig = mainnet_fx_market(
+    "CADC",
+    pubkey!("9ewjJpmD1ES83RDRFnHs7V2hUdH76WAVjdvu6UV6WNo7"),
+    6,
+    0.7244,
+);
+
+/// Every mainnet pair the ceremony brings up.
+pub const MAINNET_PAIRS: [&PairConfig; 3] = [&MAINNET_EURC, &MAINNET_AUDD, &MAINNET_CADC];
+
+/// The pairs a `cluster` session brings up.
+pub fn roster(cluster: Cluster) -> &'static [&'static PairConfig] {
+    match cluster {
+        Cluster::Localnet => &PAIRS,
+        Cluster::Mainnet => &MAINNET_PAIRS,
+    }
+}
+
+/// The market PDA of every pair in `cluster`'s roster — what the phase gate
+/// measures progress against, so a ceremony that stopped part-way still reads
+/// as unfinished. A pair whose mints do not resolve is skipped.
+pub fn roster_markets(repo_root: &Path, cluster: Cluster) -> Vec<Pubkey> {
+    roster(cluster)
+        .iter()
+        .filter_map(|c| pair_mints(repo_root, c).ok())
+        .map(|(base, quote)| chain::market_pda(&base, &quote))
+        .collect()
+}
 
 /// The opening / reset quote ladder: a four-rung symmetric ladder of
 /// `(offset_ppm, size_bps)` mirroring the maker bot's own `DEFAULT_LADDER`
@@ -184,26 +300,22 @@ pub fn seed_deposit(config: &PairConfig) -> (u64, u64) {
     (base_atoms, quote_atoms)
 }
 
-/// Resolve each known pair's mint address → human ticker, loading the
-/// checked-in mint keypairs once. The chain scan that discovers a market only
-/// yields mint pubkeys, so the accounts pane needs this to label a market with
-/// its coins. A pair whose keypair files don't load is skipped — its mints
-/// fall back to the generic base/quote labels.
-pub fn mint_symbols(repo_root: &Path) -> Vec<(Pubkey, &'static str)> {
+/// Resolve each `cluster` pair's mint address → human ticker. The chain scan
+/// that discovers a market only yields mint pubkeys, so the accounts pane needs
+/// this to label a market with its coins. A mint whose address doesn't resolve
+/// (a localnet keypair file that won't load) is skipped — it falls back to the
+/// generic base/quote labels.
+pub fn mint_symbols(repo_root: &Path, cluster: Cluster) -> Vec<(Pubkey, &'static str)> {
     let mut out = Vec::new();
-    for pair in PAIRS {
+    for pair in roster(cluster) {
         for spec in [&pair.base, &pair.quote] {
-            if let Ok(kp) = load_key(repo_root, spec.keypair_file) {
-                out.push((kp.pubkey(), spec.symbol));
+            if let Ok(address) = spec.address(repo_root) {
+                out.push((address, spec.symbol));
             }
         }
     }
     out
 }
-
-/// The bootstrap always opens the market's first vault, so its sector index
-/// is 0. The seed instructions address the vault by this index.
-const VAULT_IDX: u32 = 0;
 
 /// The taker / swapper role key (`keys/README.md`'s `FFFF`). The swap probe
 /// signs and pays for its take with this, so the swapper is a distinct,
@@ -212,37 +324,59 @@ const VAULT_IDX: u32 = 0;
 const TAKER_KEYPAIR_FILE: &str = "keys/FFFF.json";
 
 /// Load the leader / quote-authority keypair `config` names.
-pub fn leader(repo_root: &Path, config: &PairConfig) -> Result<Keypair> {
-    load_key(repo_root, config.leader_keypair_file)
+///
+/// An [`LeaderKey::Operator`] pair names no file, so this needs the key the
+/// operator supplied at launch as `operator`; without it, it errors rather
+/// than falling back to a committed role key that leads nothing real.
+pub fn leader(
+    repo_root: &Path,
+    config: &PairConfig,
+    operator: Option<&Keypair>,
+) -> Result<Keypair> {
+    match config.leader {
+        LeaderKey::Keypair(file) => load_key(repo_root, file),
+        LeaderKey::Operator => operator.map(Keypair::insecure_clone).with_context(|| {
+            format!(
+                "the {} leader is operator-supplied on this cluster — relaunch with \
+                 --leader <keypair>",
+                config.base.symbol
+            )
+        }),
+    }
 }
 
-/// The `PairConfig` whose base mint is `base_mint`, resolving it by loading the
-/// checked-in mint keypairs and matching addresses — `None` for a market minted
-/// outside the bootstrap roster. Lets a market-scoped control (the eCLOB
-/// reprice / reshape keybinds) recover the selected market's seed ladder and
-/// leader key from just its base mint.
-pub fn config_for(repo_root: &Path, base_mint: &Pubkey) -> Option<&'static PairConfig> {
-    PAIRS.into_iter().find(|c| {
-        load_key(repo_root, c.base.keypair_file)
-            .map(|k| k.pubkey() == *base_mint)
-            .unwrap_or(false)
-    })
+/// The `cluster` pair whose base mint is `base_mint` — `None` for a market
+/// outside the roster. Lets a market-scoped control (the eCLOB reprice /
+/// reshape keybinds) recover the selected market's seed ladder and leader key
+/// from just its base mint.
+pub fn config_for(
+    repo_root: &Path,
+    cluster: Cluster,
+    base_mint: &Pubkey,
+) -> Option<&'static PairConfig> {
+    roster(cluster)
+        .iter()
+        .copied()
+        .find(|c| c.base.address(repo_root).is_ok_and(|a| a == *base_mint))
 }
 
-/// Load the leader / quote-authority keypair for the market with `base_mint` —
-/// the signer `set_reference_price` / `set_liquidity_profile` require.
+/// Load the localnet leader / quote-authority keypair for the market with
+/// `base_mint` — the signer `set_reference_price` / `set_liquidity_profile`
+/// require. Localnet only: the eCLOB controls that call it are unavailable on
+/// mainnet.
 pub fn leader_for(repo_root: &Path, base_mint: &Pubkey) -> Result<Keypair> {
-    let config = config_for(repo_root, base_mint).context("market not in the bootstrap roster")?;
-    leader(repo_root, config)
+    let config = config_for(repo_root, Cluster::Localnet, base_mint)
+        .context("market not in the bootstrap roster")?;
+    leader(repo_root, config, None)
 }
 
-/// Resolve a pair's two mint pubkeys from its checked-in keypair files without
-/// creating them — used to address an already-created market (its PDA is
-/// seeded on `[base, quote]`).
+/// Resolve a pair's two mint pubkeys without creating them — used to address
+/// an already-created market (its PDA is seeded on `[base, quote]`).
 pub fn pair_mints(repo_root: &Path, config: &PairConfig) -> Result<(Pubkey, Pubkey)> {
-    let base = load_key(repo_root, config.base.keypair_file)?;
-    let quote = load_key(repo_root, config.quote.keypair_file)?;
-    Ok((base.pubkey(), quote.pubkey()))
+    Ok((
+        config.base.address(repo_root)?,
+        config.quote.address(repo_root)?,
+    ))
 }
 
 /// Load the taker / swapper role key (`FFFF`) — the probe swap's signer.
@@ -250,32 +384,57 @@ pub fn taker(repo_root: &Path) -> Result<Keypair> {
     load_key(repo_root, TAKER_KEYPAIR_FILE)
 }
 
-/// Create `config`'s two fixed mints at their checked-in addresses, with the
-/// admin `wallet` as mint authority, and return `(base_mint, quote_mint)`.
-pub fn create_pair_mints(
+/// Make `config`'s two mints usable and return `(base_mint, quote_mint)`.
+///
+/// A [`MintKey::Keypair`] mint is created at its checked-in address with the
+/// admin `wallet` as mint authority (existence-checked, so a re-run is a
+/// no-op). A [`MintKey::Existing`] mint is **never created** — only verified
+/// to exist with the decimals the pair expects, because the address is a real
+/// issuer's and anything this crate minted there would be counterfeit.
+pub fn ensure_pair_mints(
     client: &RpcClient,
     wallet: &Keypair,
     repo_root: &Path,
     config: &PairConfig,
     log: &Logger,
 ) -> Result<(Pubkey, Pubkey)> {
-    let base = load_key(repo_root, config.base.keypair_file)?;
-    let quote = load_key(repo_root, config.quote.keypair_file)?;
-    log.log(format!(
-        "Creating fixed {} + {} mints…",
-        config.base.symbol, config.quote.symbol
-    ));
-    chain::create_mint(client, wallet, &base, config.base.decimals).context("create base mint")?;
-    chain::create_mint(client, wallet, &quote, config.quote.decimals)
-        .context("create quote mint")?;
-    log.log(format!("{}: {}", config.base.symbol, base.pubkey()));
-    log.log(format!("{}: {}", config.quote.symbol, quote.pubkey()));
-    Ok((base.pubkey(), quote.pubkey()))
+    let base = ensure_mint(client, wallet, repo_root, &config.base, log)?;
+    let quote = ensure_mint(client, wallet, repo_root, &config.quote, log)?;
+    Ok((base, quote))
 }
 
-/// Create every pair's shared quote mint once, up front, deduped by address.
-/// All FX pairs quote in the same fixed USDC mint, and [`create_pair_mints`]'
-/// underlying [`chain::create_mint`] is existence-checked but *not*
+/// [`ensure_pair_mints`]' per-mint half.
+fn ensure_mint(
+    client: &RpcClient,
+    wallet: &Keypair,
+    repo_root: &Path,
+    spec: &MintSpec,
+    log: &Logger,
+) -> Result<Pubkey> {
+    match spec.key {
+        MintKey::Keypair(file) => {
+            let kp = load_key(repo_root, file)?;
+            log.log(format!("Creating fixed {} mint…", spec.symbol));
+            chain::create_mint(client, wallet, &kp, spec.decimals)
+                .with_context(|| format!("create {} mint", spec.symbol))?;
+            log.log(format!("{}: {}", spec.symbol, kp.pubkey()));
+            Ok(kp.pubkey())
+        }
+        MintKey::Existing(address) => {
+            chain::verify_mint(client, &address, spec.decimals)
+                .with_context(|| format!("verify the real {} mint", spec.symbol))?;
+            log.log(format!(
+                "{}: {address} (existing mint, verified)",
+                spec.symbol
+            ));
+            Ok(address)
+        }
+    }
+}
+
+/// Create every localnet pair's shared quote mint once, up front, deduped by
+/// address. All FX pairs quote in the same fixed USDC mint, and
+/// [`ensure_pair_mints`]' underlying [`chain::create_mint`] is existence-checked but *not*
 /// concurrency-safe — two threads creating the same mint would both find it
 /// absent and one would fail with "account already in use". So the parallel
 /// per-market bootstrap pre-creates the shared quote mint(s) here, sequentially,
@@ -290,13 +449,8 @@ pub fn ensure_quote_mints(
 ) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     for config in PAIRS {
-        let quote = load_key(repo_root, config.quote.keypair_file)?;
-        if seen.insert(quote.pubkey()) {
-            log.log(format!(
-                "Creating shared {} quote mint…",
-                config.quote.symbol
-            ));
-            chain::create_mint(client, wallet, &quote, config.quote.decimals)
+        if seen.insert(config.quote.address(repo_root)?) {
+            ensure_mint(client, wallet, repo_root, &config.quote, log)
                 .with_context(|| format!("create shared quote mint {}", config.quote.symbol))?;
         }
     }
@@ -328,7 +482,7 @@ pub fn prefund_leader_quotes(
     let mut totals: std::collections::HashMap<(Pubkey, Pubkey), u64> =
         std::collections::HashMap::new();
     for config in PAIRS {
-        let leader = leader(repo_root, config)?;
+        let leader = leader(repo_root, config, None)?;
         let (_, quote_mint) = pair_mints(repo_root, config)?;
         let (_, quote_atoms) = seed_deposit(config);
         *totals.entry((leader.pubkey(), quote_mint)).or_default() += quote_atoms;
@@ -343,6 +497,27 @@ pub fn prefund_leader_quotes(
             .context("pre-fund leader quote")?;
     }
     Ok(())
+}
+
+/// Where [`seed_vault`]'s opening deposit comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Funding {
+    /// Localnet: the admin mints both legs to the leader first.
+    MintBoth,
+    /// Localnet, parallel bootstrap: mint the base leg only. The shared quote
+    /// ATA was already filled with the whole deposit total up front (via
+    /// [`prefund_leader_quotes`]), and the per-market quote top-up would be
+    /// both redundant *and* unsafe concurrently — every market's
+    /// `mint_to(USDC, leader_ata, <same amount>)` is byte-identical, so
+    /// parallel workers sharing a blockhash produce the same signature and all
+    /// but one are dropped by the validator's dedup. The sequential caller uses
+    /// [`Funding::MintBoth`]: the work between its identical mints advances the
+    /// blockhash, so their signatures differ.
+    MintBaseOnly,
+    /// Mainnet: the leader already holds both legs, and nothing is minted —
+    /// the mints are real and the admin is not their authority. The balances
+    /// are checked before anything is sent.
+    LeaderHeld,
 }
 
 /// Bring the market's freshly-created vault up: set the quote ladder, then
@@ -367,23 +542,20 @@ pub fn prefund_leader_quotes(
 /// restores the demo's intended arc: an FX pair with no liquidity, filling in
 /// live as the maker starts quoting.
 ///
-/// `prefunded_quote` skips the per-market quote (USDC) top-up: when the caller
-/// has already funded the shared leader quote ATA with the whole deposit total
-/// up front (via [`prefund_leader_quotes`], the parallel bootstrap path), that
-/// top-up is both redundant *and* unsafe to run concurrently — every market's
-/// `mint_to(USDC, leader_ata, <same amount>)` is byte-identical, so parallel
-/// workers sharing a blockhash produce the same signature and all but one are
-/// dropped by the validator's dedup (or surface as an error). The sequential
-/// caller leaves it `false` and funds the quote leg here as before — the work
-/// between its identical mints advances the blockhash, so their signatures
-/// differ.
+/// `vault_idx` is the sector the caller found the leader's vault in, read
+/// fresh from the chain — never assumed. Sector indices recycle, so on a
+/// market anyone else has used the leader's vault need not be sector 0.
+///
+/// `funding` says where the deposit comes from; see [`Funding`].
+#[allow(clippy::too_many_arguments)]
 pub fn seed_vault(
     client: &RpcClient,
     wallet: &Keypair,
     leader: &Keypair,
     config: &PairConfig,
     market: &MarketView,
-    prefunded_quote: bool,
+    vault_idx: u32,
+    funding: Funding,
     log: &Logger,
 ) -> Result<()> {
     // 1. Quote ladder — a multi-rung symmetric ladder at the default spread, so
@@ -396,7 +568,27 @@ pub fn seed_vault(
         &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
         config.expiry_offset_secs,
     );
-    let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, VAULT_IDX, bytes);
+    // Check the leader can cover the deposit before the first send, so an
+    // underfunded mainnet leader is refused with nothing written rather than
+    // left with a ladder and no inventory.
+    let (base_atoms, quote_atoms) = seed_deposit(config);
+    if funding == Funding::LeaderHeld {
+        for (mint, need, symbol) in [
+            (&market.base_mint, base_atoms, config.base.symbol),
+            (&market.quote_mint, quote_atoms, config.quote.symbol),
+        ] {
+            let held = chain::token_balance(client, &leader.pubkey(), mint)
+                .with_context(|| format!("read the leader's {symbol} balance"))?;
+            if held < need {
+                anyhow::bail!(
+                    "leader {} holds {held} {symbol} atoms, the deposit needs {need} — \
+                     fund it first; nothing was sent",
+                    leader.pubkey()
+                );
+            }
+        }
+    }
+    let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, vault_idx, bytes);
     chain::send_logged(
         client,
         wallet,
@@ -408,17 +600,17 @@ pub fn seed_vault(
     .context("set_liquidity_profile")?;
 
     // 2. Fund the leader's ATAs (admin is the mint authority), then seed. The
-    //    base leg is always funded here — each market's base mint / amount is
-    //    unique, so it can't collide across parallel workers. The quote leg is
-    //    funded here only when it wasn't pre-funded up front: see
-    //    `prefunded_quote` and [`prefund_leader_quotes`].
-    let (base_atoms, quote_atoms) = seed_deposit(config);
-    let base_ata =
-        chain::create_ata_idempotent(client, wallet, &leader.pubkey(), &market.base_mint)
-            .context("leader base ATA")?;
-    chain::mint_to(client, wallet, &market.base_mint, &base_ata, base_atoms)
-        .context("mint base to leader")?;
-    if !prefunded_quote {
+    //    base leg is minted under either `Mint*` mode — each market's base
+    //    mint / amount is unique, so it can't collide across parallel workers.
+    //    The quote leg is minted only under `MintBoth`: see `Funding`.
+    if funding != Funding::LeaderHeld {
+        let base_ata =
+            chain::create_ata_idempotent(client, wallet, &leader.pubkey(), &market.base_mint)
+                .context("leader base ATA")?;
+        chain::mint_to(client, wallet, &market.base_mint, &base_ata, base_atoms)
+            .context("mint base to leader")?;
+    }
+    if funding == Funding::MintBoth {
         let quote_ata =
             chain::create_ata_idempotent(client, wallet, &leader.pubkey(), &market.quote_mint)
                 .context("leader quote ATA")?;
@@ -436,7 +628,7 @@ pub fn seed_vault(
         &market.quote_mint,
         &market.base_treasury,
         &market.quote_treasury,
-        VAULT_IDX,
+        vault_idx,
         base_atoms,
         quote_atoms,
     );
@@ -644,9 +836,117 @@ mod tests {
     #[test]
     fn leader_key_is_not_a_pair_mint() {
         for c in PAIRS {
-            assert_ne!(c.leader_keypair_file, c.base.keypair_file);
-            assert_ne!(c.leader_keypair_file, c.quote.keypair_file);
-            assert_eq!(c.quote.keypair_file, "keys/USDC.json");
+            let LeaderKey::Keypair(leader) = c.leader else {
+                panic!("{}: a localnet pair names its leader file", c.base.symbol);
+            };
+            assert_ne!(MintKey::Keypair(leader), c.base.key);
+            assert_ne!(MintKey::Keypair(leader), c.quote.key);
+            assert_eq!(c.quote.key, MintKey::Keypair("keys/USDC.json"));
+        }
+    }
+
+    /// The mainnet roster must never be able to mint or sign with a committed
+    /// key: every mint is an existing address and every leader comes from the
+    /// operator. This is the by-construction half of "real mints are never
+    /// created" — `ensure_mint` cannot reach `create_mint` for an
+    /// `Existing` mint.
+    #[test]
+    fn mainnet_roster_references_real_mints_and_operator_leaders() {
+        let symbols = |c: Cluster| roster(c).iter().map(|p| p.base.symbol).collect::<Vec<_>>();
+        assert_eq!(symbols(Cluster::Mainnet), ["EURC", "AUDD", "CADC"]);
+        assert_eq!(symbols(Cluster::Localnet).len(), PAIRS.len());
+        for c in MAINNET_PAIRS {
+            assert!(
+                matches!(c.base.key, MintKey::Existing(_)),
+                "{}",
+                c.base.symbol
+            );
+            assert_eq!(c.quote.key, MintKey::Existing(MAINNET_USDC));
+            assert_eq!(c.leader, LeaderKey::Operator);
+        }
+        // And the localnet roster stays entirely keypair-backed, so the
+        // bootstrap never reaches a real issuer's address.
+        for c in PAIRS {
+            assert!(matches!(c.base.key, MintKey::Keypair(_)));
+            assert!(matches!(c.quote.key, MintKey::Keypair(_)));
+        }
+    }
+
+    /// A pair whose leader is operator-supplied refuses to load without one,
+    /// instead of quietly falling back to a committed role key.
+    #[test]
+    fn operator_leader_is_required_on_mainnet() {
+        let root = Path::new("/nonexistent");
+        let err = leader(root, &MAINNET_EURC, None).unwrap_err();
+        assert!(format!("{err:#}").contains("--leader"), "{err:#}");
+        let supplied = Keypair::new();
+        let got = leader(root, &MAINNET_EURC, Some(&supplied)).unwrap();
+        assert_eq!(got.pubkey(), supplied.pubkey());
+    }
+
+    /// The Rust-side mainnet addresses are a second copy of the frontend's
+    /// `currencies.json` — the one place they lived before — so pin the two
+    /// equal: address and decimals, base and quote. A typo here would point a
+    /// real-funds ceremony at the wrong mint, which `verify_mint` would only
+    /// catch if the wrong address happened not to be a mint at all.
+    #[test]
+    fn mainnet_mints_match_the_frontend_currency_data() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../frontend/lib/data/currencies.json"
+        );
+        let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let currencies: serde_json::Value =
+            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {path}: {e}"));
+        let listed = |symbol: &str| -> (String, u64) {
+            currencies
+                .as_object()
+                .expect("currencies.json is a currency-keyed object")
+                .values()
+                .flat_map(|entry| entry["stablecoins"].as_array().cloned().unwrap_or_default())
+                .find(|coin| coin["symbol"] == symbol)
+                .map(|coin| {
+                    (
+                        coin["mint"].as_str().expect("mint is a string").to_owned(),
+                        coin["decimals"].as_u64().expect("decimals is a number"),
+                    )
+                })
+                .unwrap_or_else(|| panic!("{symbol} is not listed in currencies.json"))
+        };
+        for c in MAINNET_PAIRS {
+            for spec in [&c.base, &c.quote] {
+                let MintKey::Existing(address) = spec.key else {
+                    unreachable!("pinned by the roster test");
+                };
+                let (mint, decimals) = listed(spec.symbol);
+                assert_eq!(address.to_string(), mint, "{} address", spec.symbol);
+                assert_eq!(
+                    u64::from(spec.decimals),
+                    decimals,
+                    "{} decimals",
+                    spec.symbol
+                );
+            }
+        }
+    }
+
+    /// The mainnet pairs reuse the localnet seed sizing, so the same two
+    /// invariants must hold for them: a quotable reference and a balanced
+    /// ≈ $100-a-side deposit.
+    #[test]
+    fn mainnet_pairs_encode_and_seed_balanced() {
+        for c in MAINNET_PAIRS {
+            let ratio = human_to_atoms_ratio(c.reference_price, c.base.decimals, c.quote.decimals);
+            assert!(Price::from_value(ratio).is_some(), "{}", c.base.symbol);
+            let (base_atoms, quote_atoms) = seed_deposit(c);
+            let base_usd =
+                base_atoms as f64 / 10f64.powi(c.base.decimals as i32) * c.reference_price;
+            assert!(
+                (base_usd - SEED_USD_PER_SIDE).abs() < 1.0,
+                "{}",
+                c.base.symbol
+            );
+            assert_eq!(quote_atoms, 100_000_000, "{}", c.base.symbol);
         }
     }
 
