@@ -36,6 +36,7 @@ use crate::telemetry::{self, MarketId, Outcome, Record, SampleBuilder};
 use anyhow::Result;
 use dropset_fair_value::{Candidates, ClockCtx, LegReport, LegStaleness, Legs, Reading};
 use dropset_feeds::venues::{ErApiSnapshot, FrankfurterSnapshot, FxQuote};
+use dropset_sdk::layout::LiquidityProfile;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::collections::HashMap;
@@ -1352,7 +1353,7 @@ fn quote_market(
         .last_set(ctx.last_set_price)
         .ladder(&cfg.strategy.ladder);
 
-    let result = quote_market_inner(ctx, cfg, now, fair, got_fill, store, &mut sample);
+    let result = quote_market_inner(ctx, cfg, now, ts, fair, got_fill, store, &mut sample);
     if let Err(e) = &result {
         // Recorded *alongside* whatever the tick decided, never over it. A
         // halt whose kill stamp then failed is the most alarming row the
@@ -1366,10 +1367,19 @@ fn quote_market(
 
 /// Quote one market for this cycle: read its vault, value inventory off the
 /// composed reference, and fire at most one instruction.
+///
+/// Every argument is one of the tick's inputs and none of them groups with
+/// another: `now` and `ts` are the same instant in the two representations the
+/// code needs (monotonic for durations, wall-clock for a database stamp, the
+/// same pair [`TickCtx`] carries), and the rest are the caller's handles.
+/// Bundling them to satisfy the lint would hide the tick's inputs behind a
+/// struct that exists only for the lint.
+#[allow(clippy::too_many_arguments)]
 fn quote_market_inner(
     ctx: &mut Context,
     cfg: &BotConfig,
     now: Instant,
+    ts: i64,
     fair: FairValue,
     got_fill: Option<(u64, u64)>,
     store: StoreStatus,
@@ -1509,13 +1519,13 @@ fn quote_market_inner(
             // success, so a persistently failing cold path would otherwise retry
             // forever and the book would never go dark at all.
             if !invalidate_resting_book(ctx, cfg, &vault, None, InvalidateReason::Halted)? {
-                zero_both_sides(ctx, cfg)?;
+                zero_both_sides(ctx, cfg, now, ts)?;
             }
             return Ok(());
         }
         Action::FreezeSide(side) => {
             if ctx.profile_kind != ProfileKind::FrozenSide(side) {
-                freeze_side(ctx, cfg, side)?;
+                freeze_side(ctx, cfg, side, now, ts)?;
                 return Ok(());
             }
         }
@@ -1523,13 +1533,13 @@ fn quote_market_inner(
             if ctx.profile_kind != ProfileKind::Reshaped(accumulating)
                 || profile_heartbeat_due(ctx, cfg, now)
             {
-                arm_reshape(ctx, cfg, accumulating, now)?;
+                arm_reshape(ctx, cfg, accumulating, now, ts)?;
                 return Ok(());
             }
         }
         Action::Quote => {
             if standard_arm_due(ctx, cfg, now) {
-                arm_standard(ctx, cfg, now)?;
+                arm_standard(ctx, cfg, now, ts)?;
                 return Ok(());
             }
         }
@@ -1638,6 +1648,37 @@ fn decide_position(
     }
 }
 
+/// Record the shape just armed, so a dashboard can plot the ladder's profile
+/// against the fair price without the schema carrying a row per level per tick.
+///
+/// **Call this only on a re-arm's success path.** A send that failed armed
+/// nothing, so an epoch written for it would make the panel draw levels that
+/// are not resting — over-stating liquidity, which is the same unsafe direction
+/// `SampleBuilder::touch` refuses when it reports the *pre-tick* touch rather
+/// than this tick's intention.
+///
+/// `kind` is passed rather than read from `ctx`, so each call site has to name
+/// the shape it just armed. Reading `ctx.profile_kind` here would have worked
+/// only while the emit stayed below the assignment, leaving the "recorded kind
+/// and recorded sizes describe one shape" invariant resting on statement order
+/// in four separate functions, with no test over any of them.
+fn record_ladder_epoch(
+    ctx: &Context,
+    cfg: &BotConfig,
+    profile: &LiquidityProfile,
+    kind: ProfileKind,
+    ts: i64,
+) {
+    ctx.telemetry
+        .emit(Record::LadderEpoch(telemetry::ladder_epoch_rows(
+            ts,
+            ctx.cfg.symbol,
+            &cfg.strategy.ladder,
+            profile,
+            kind,
+        )));
+}
+
 /// Whether the daily `SetLiquidityProfile` heartbeat is due — re-arm even an
 /// unchanged shape this often so deep, rarely-filled levels don't expire dark.
 fn profile_heartbeat_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
@@ -1655,7 +1696,7 @@ fn standard_arm_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
 }
 
 /// Arm the full symmetric ladder.
-fn arm_standard(ctx: &mut Context, cfg: &BotConfig, now: Instant) -> Result<()> {
+fn arm_standard(ctx: &mut Context, cfg: &BotConfig, now: Instant, ts: i64) -> Result<()> {
     let profile = ladder::build_profile(&cfg.strategy.ladder);
     chain::set_liquidity_profile(
         &ctx.client,
@@ -1666,6 +1707,7 @@ fn arm_standard(ctx: &mut Context, cfg: &BotConfig, now: Instant) -> Result<()> 
     )?;
     ctx.profile_kind = ProfileKind::Standard;
     ctx.last_profile_at = now;
+    record_ladder_epoch(ctx, cfg, &profile, ProfileKind::Standard, ts);
     println!("[{}][profile] armed standard ladder", ctx.cfg.symbol);
     Ok(())
 }
@@ -1674,7 +1716,13 @@ fn arm_standard(ctx: &mut Context, cfg: &BotConfig, now: Instant) -> Result<()> 
 /// and leans into offloading the heavy leg — the §4 row 1 reshape (imbalance
 /// over 30%), a milder step than the freeze. The reference skew (applied every
 /// cycle) supplies the price shift that invites rebalancing.
-fn arm_reshape(ctx: &mut Context, cfg: &BotConfig, accumulating: Side, now: Instant) -> Result<()> {
+fn arm_reshape(
+    ctx: &mut Context,
+    cfg: &BotConfig,
+    accumulating: Side,
+    now: Instant,
+    ts: i64,
+) -> Result<()> {
     let mut profile = ladder::build_profile(&cfg.strategy.ladder);
     ladder::scale_side(
         &mut profile,
@@ -1690,6 +1738,7 @@ fn arm_reshape(ctx: &mut Context, cfg: &BotConfig, accumulating: Side, now: Inst
     )?;
     ctx.profile_kind = ProfileKind::Reshaped(accumulating);
     ctx.last_profile_at = now;
+    record_ladder_epoch(ctx, cfg, &profile, ProfileKind::Reshaped(accumulating), ts);
     let rebuild = match accumulating {
         Side::Bid => Side::Ask,
         Side::Ask => Side::Bid,
@@ -1702,7 +1751,13 @@ fn arm_reshape(ctx: &mut Context, cfg: &BotConfig, accumulating: Side, now: Inst
 }
 
 /// Zero the accumulating side so only the rebuild side quotes (§4).
-fn freeze_side(ctx: &mut Context, cfg: &BotConfig, side: Side) -> Result<()> {
+fn freeze_side(
+    ctx: &mut Context,
+    cfg: &BotConfig,
+    side: Side,
+    now: Instant,
+    ts: i64,
+) -> Result<()> {
     let mut profile = ladder::build_profile(&cfg.strategy.ladder);
     ladder::zero_side(&mut profile, side);
     chain::set_liquidity_profile(
@@ -1713,7 +1768,8 @@ fn freeze_side(ctx: &mut Context, cfg: &BotConfig, side: Side) -> Result<()> {
         ladder::checked_bytes(&profile)?,
     )?;
     ctx.profile_kind = ProfileKind::FrozenSide(side);
-    ctx.last_profile_at = Instant::now();
+    ctx.last_profile_at = now;
+    record_ladder_epoch(ctx, cfg, &profile, ProfileKind::FrozenSide(side), ts);
     println!(
         "[{}][freeze] zeroed {side:?} side — only the rebuild side quotes",
         ctx.cfg.symbol
@@ -1729,7 +1785,7 @@ fn freeze_side(ctx: &mut Context, cfg: &BotConfig, side: Side) -> Result<()> {
 /// the kill stamp first (see the `Action::Halt` arm), because zeroing the profile
 /// does nothing about the levels already resting. A no-op once the shape is
 /// already `Halted`, so repeat cycles cost nothing.
-fn zero_both_sides(ctx: &mut Context, cfg: &BotConfig) -> Result<()> {
+fn zero_both_sides(ctx: &mut Context, cfg: &BotConfig, now: Instant, ts: i64) -> Result<()> {
     if ctx.profile_kind != ProfileKind::Halted {
         let mut profile = ladder::build_profile(&cfg.strategy.ladder);
         ladder::zero_side(&mut profile, Side::Bid);
@@ -1742,7 +1798,8 @@ fn zero_both_sides(ctx: &mut Context, cfg: &BotConfig) -> Result<()> {
             ladder::checked_bytes(&profile)?,
         )?;
         ctx.profile_kind = ProfileKind::Halted;
-        ctx.last_profile_at = Instant::now();
+        ctx.last_profile_at = now;
+        record_ladder_epoch(ctx, cfg, &profile, ProfileKind::Halted, ts);
         println!(
             "[{}][halt] zeroed both sides; the resting book was already killed",
             ctx.cfg.symbol
