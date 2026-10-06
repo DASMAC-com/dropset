@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Use to audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — and when pulling a planning-filed audit issue, which names its target. Audits across the dimensions the scope's platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness) with an adversarial sub-agent cross-check this invocation authorizes. Files confirmed findings as the fewest coherent Linear issues, each sized to a short session, PARKED (Todo plus the `Audit findings` milestone) with no relations or edges. Also the engine `audit` drives one file at a time.
+description: Use to audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — and when pulling a planning-filed audit issue, which names its target and runs as an `explore` task in its own worktree with the issue held In Progress until ratification-plus-fold. Audits across the dimensions the scope's platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness) with an adversarial sub-agent cross-check this invocation authorizes. Files confirmed findings as the fewest coherent Linear issues, each sized to a short session, PARKED (Todo plus the `Audit findings` milestone) with no relations or edges. Also the engine `audit` drives one file at a time.
 disable-model-invocation: false
 user-invocable: true
 ---

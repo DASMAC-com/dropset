@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Use for a deliberate, broad, RANDOM audit sweep — an ad-hoc invocation only, never a default; a targeted audit of one named target is `audit-scope`. Runs one bounded seven-unit rotation (four random files via the `audit-scope` engine, plus one subsystem, one inter-subsystem interface, and one repo-layout and spec-health pass), each adversarially cross-checked by sub-agents, which this invocation authorizes. Dedups against Linear and files confirmed findings as the fewest coherent issues, PARKED (Todo plus the `Audit findings` milestone) with no relations or edges. Announces counts and titles, then stops; run it again for another rotation.
+description: Use for a deliberate, broad, RANDOM audit sweep — an ad-hoc invocation only, never a default; a targeted audit of one named target is `audit-scope`. Runs one bounded seven-unit rotation (four random files via the `audit-scope` engine, plus one subsystem, one inter-subsystem interface, and one repo-layout and spec-health pass), each adversarially cross-checked by sub-agents, which this invocation authorizes. Dedups against Linear and files confirmed findings as the fewest coherent issues, PARKED (Todo plus the `Audit findings` milestone) with no relations or edges. Runs as an `explore` task in its own worktree. Announces counts and titles, then stops; run it again for another rotation.
 disable-model-invocation: false
 user-invocable: true
 ---

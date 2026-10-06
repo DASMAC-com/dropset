@@ -63,6 +63,9 @@ rename, the first thing that costs anything to undo:
 | `agent-locked`            | Same, agent empty or unreachable                                                   | **Stop and ask**: unlock the 1Password app.                 |
 | `gpg`                     | `gpg.format` unset or non-`ssh`                                                    | Proceed; nothing to check.                                  |
 
+On either stop, ask rather than retrying more than once or working
+around it; nothing is lost, since no commit was written yet.
+
 Do not add an agent probe (`ssh-add -l`, `ssh-keygen -Y sign`) or a
 `--show-signature` read: with an external signer git never consults
 the agent, so those fail unconditionally and block every bootstrap
@@ -182,9 +185,17 @@ The phase-specific reminders not stated in the convention:
     python3 .claude/tools/lint_paths.py --changed
   ```
 
-  Scope the **file list**, never the crate set — a crate-scoped
+  Append `-- <hook-id>` to narrow it to one hook. Scope the **file
+  list**, never the crate set — a crate-scoped
   `cargo clippy` reports false dead-code errors; verify in the form
   CI runs.
+
+- **Don't re-derive a diff.** Content you wrote through `Edit` /
+  `Write` is already in context, and a diff `review_diff.py --split`
+  already wrote is read from its slices. Reach for `git diff` only for
+  a change you have not read (a rebase, a hook autofix, a sibling
+  session), and take `--stat` first when the question is which files
+  moved.
 
 - **`replace_all` is safe only when search and replacement are
   disjoint.** A replacement that contains the search string rewrites
@@ -388,8 +399,8 @@ per-directory content, which step 3 handles.
 1. **Surface the task when no other context was given.**
 
    - **Read the description from step 10's response — don't
-     re-fetch.** Use `get_issue` only if that write failed. Do pull
-     `list_comments`: acceptance criteria sometimes live in an
+     re-fetch.** Use `get_issue` only if that write failed or was
+     skipped. Do pull `list_comments`: acceptance criteria sometimes live in an
      anchored comment.
 
    - **On a long spec, spill the body to a scratchpad file on the
