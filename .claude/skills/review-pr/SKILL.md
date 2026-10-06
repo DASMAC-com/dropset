@@ -3149,8 +3149,8 @@ already being asked to start the review.
      afterwards that the rule *reads* as belonging to this
      step, so it did not fire during the implement phase where
      the sweeps actually happened. It applies wherever a search
-     is issued; `init-pr`'s context-discipline block states the
-     same thing for the implement phase, and
+     is issued; `init-pr`'s context-discipline section binds the
+     implement phase to it by citation, and
      `docs/conventions/context-economy.md` → "The levers" is
      the canonical statement.
 
