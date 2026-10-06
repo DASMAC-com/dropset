@@ -19,6 +19,8 @@ WITH ticks AS (
   SELECT
     ts,
     fair,
+    anchor,
+    regime,
     on_chain_reference,
     reference_valid,
     frozen
@@ -64,4 +66,17 @@ SELECT
   'fair value' AS metric,
   fair AS value
 FROM ticks
+UNION ALL
+-- A market with no live leg publishes the STATIC PEG as a real price, at a
+-- degraded regime anchored static -- so a 1.14 EURC print at bring-up is the
+-- fallback constant rather than a composed mid. Drawn as its own series,
+-- labelled with both the anchor and the regime, so a static print is visually
+-- distinct from a composed one instead of reading as one. Overlays the
+-- continuous fair line rather than replacing it, so the line keeps its shape.
+SELECT
+  to_timestamp(ts) AS "time",
+  'fair (' || anchor || ' peg, ' || regime || ')' AS metric,
+  fair AS value
+FROM ticks
+WHERE anchor = 'static'
 ORDER BY 1

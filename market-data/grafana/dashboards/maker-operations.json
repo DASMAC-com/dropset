@@ -243,7 +243,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "The SHAPE of the book around fair value \u2014 every quoted level, not just the touch. The panel above plots `best bid` / `best ask`, which is level 0 only; this one shows how far out the deeper levels sit and therefore what the liquidity profile actually looks like while you tune it. Read the spacing: a ladder bunched against fair is exposed to adverse selection, one spread wide gets no fills, and the gap between the innermost pair and the `fair value` line is the half-spread a taker pays.\n\nLEVELS ARE DERIVED, NOT RECORDED PER TICK. `maker_ladder_epoch` stores the armed shape once per re-arm (a restart, a reshape, a freeze-side, a halt, or the daily heartbeat) and the reference moves every tick, so each level's price is recomputed as `reference * (1 +/- offset_ppm / 1e6)` \u2014 the same arithmetic the bot uses for the touch. The numbers are therefore exact, not interpolated; what is NOT available is a shape change the bot never armed.\n\nA SIDE THAT STOPS is dark, and the four causes are not distinguished here. A halt and a freeze-side are visible as the levels of that side disappearing (their armed size is zero); a frozen vault and an invalid reference drop both sides while the ladder may still be configured normally. `Tick outcome` and `Composition regime / health` below are what separate them \u2014 as on the panel above, dark and unknown look identical from here.\n\nSIZES ARE RECORDED BUT NOT DRAWN. Each level's `size_bps` as armed is in the table, including the scaled values a reshape writes, so a depth view is a query away; this panel deliberately answers only the spread question.",
+      "description": "The SHAPE of the book around fair value \u2014 every quoted level, not just the touch. The panel above plots `best bid` / `best ask`, which is level 0 only; this one shows how far out the deeper levels sit and therefore what the liquidity profile actually looks like while you tune it. Read the spacing: a ladder bunched against fair is exposed to adverse selection, one spread wide gets no fills, and the gap between the innermost pair and the `fair value` line is the half-spread a taker pays.\n\nLEVELS ARE DERIVED, NOT RECORDED PER TICK. `maker_ladder_epoch` stores the armed shape once per re-arm (a restart, a reshape, a freeze-side, a halt, or the daily heartbeat) and the reference moves every tick, so each level's price is recomputed as `reference * (1 +/- offset_ppm / 1e6)` \u2014 the same arithmetic the bot uses for the touch. The numbers are therefore exact, not interpolated; what is NOT available is a shape change the bot never armed.\n\nA STATIC PRINT IS NOT A COMPOSED ONE, and the panel says which. A market with no live leg publishes the static peg constant as a real price at a degraded regime anchored static \u2014 a 1.14 EURC print at bring-up is the fallback constant, not a composed mid \u2014 so those ticks carry a second, red dashed `fair (static peg, <regime>)` series naming both the anchor and the regime. It overlays the continuous `fair value` line rather than replacing it, so the line keeps its shape and the fallback is still unmistakable. No paused-state visual exists on purpose: a NULL fair means the paused regime, which is unreachable for the current roster since all three MVP markets carry a finite positive static peg, so its absence is expected rather than a gap. Nothing here keys a threshold or a color on `health = ok` either \u2014 no MVP market composes one.\n\nA SIDE THAT STOPS is dark, and the four causes are not distinguished here. A halt and a freeze-side are visible as the levels of that side disappearing (their armed size is zero); a frozen vault and an invalid reference drop both sides while the ladder may still be configured normally. `Tick outcome` and `Composition regime / health` below are what separate them \u2014 as on the panel above, dark and unknown look identical from here.\n\nSIZES ARE RECORDED BUT NOT DRAWN. Each level's `size_bps` as armed is in the table, including the scaled values a reshape writes, so a depth view is a query away; this panel deliberately answers only the spread question.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -301,6 +301,35 @@
                 "id": "color",
                 "value": {
                   "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^fair \\(.* peg,.*"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    4,
+                    4
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
                   "mode": "fixed"
                 }
               }
@@ -368,7 +397,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- Every quoted level against the fair the maker priced off. The levels are\n-- DERIVED rather than stored per tick: maker_ladder_epoch holds the armed\n-- shape once per re-arm, on_chain_reference moves every tick, and a level's\n-- price is the arithmetic the bot applies to the tightest level to get\n-- best_bid / best_ask.\n--\n-- Three gates cover all four ways a side goes dark, and the split is the\n-- point. size_bps > 0 catches every cause that goes THROUGH a re-arm, since\n-- the epoch records sizes as armed: a halt zeroes both sides, a freeze-side\n-- zeroes one. reference_valid and frozen catch the two that re-arm nothing,\n-- so no epoch would ever show them. Both gates reject NULL, which is the\n-- conservative direction -- a tick whose vault read failed draws no level\n-- rather than a level that may not be resting.\nWITH ticks AS (\n  SELECT\n    ts,\n    fair,\n    on_chain_reference,\n    reference_valid,\n    frozen\n  FROM maker_telemetry\n  WHERE $__unixEpochFilter(ts)\n    AND market = ${market:sqlstring}\n),\n\nepochs AS (\n  SELECT\n    armed_at,\n    side,\n    level_idx,\n    offset_ppm,\n    size_bps,\n    lead(armed_at) OVER (\n      PARTITION BY side, level_idx\n      ORDER BY armed_at\n    ) AS superseded_at\n  FROM maker_ladder_epoch\n  WHERE market = ${market:sqlstring}\n)\n\nSELECT\n  to_timestamp(t.ts) AS \"time\",\n  e.side || ' L' || e.level_idx AS metric,\n  (t.on_chain_reference * (\n    1 + CASE e.side WHEN 'bid' THEN -1 ELSE 1 END\n    * e.offset_ppm / 1000000.0\n  ))::double precision AS value\nFROM ticks AS t\nINNER JOIN epochs AS e\n  ON\n    t.ts >= e.armed_at\n    AND (e.superseded_at IS NULL OR t.ts < e.superseded_at)\nWHERE\n  t.reference_valid\n  AND NOT t.frozen\n  AND e.size_bps > 0\nUNION ALL\nSELECT\n  to_timestamp(ts) AS \"time\",\n  'fair value' AS metric,\n  fair AS value\nFROM ticks\nORDER BY 1",
+          "rawSql": "-- Every quoted level against the fair the maker priced off. The levels are\n-- DERIVED rather than stored per tick: maker_ladder_epoch holds the armed\n-- shape once per re-arm, on_chain_reference moves every tick, and a level's\n-- price is the arithmetic the bot applies to the tightest level to get\n-- best_bid / best_ask.\n--\n-- Three gates cover all four ways a side goes dark, and the split is the\n-- point. size_bps > 0 catches every cause that goes THROUGH a re-arm, since\n-- the epoch records sizes as armed: a halt zeroes both sides, a freeze-side\n-- zeroes one. reference_valid and frozen catch the two that re-arm nothing,\n-- so no epoch would ever show them. Both gates reject NULL, which is the\n-- conservative direction -- a tick whose vault read failed draws no level\n-- rather than a level that may not be resting.\nWITH ticks AS (\n  SELECT\n    ts,\n    fair,\n    anchor,\n    regime,\n    on_chain_reference,\n    reference_valid,\n    frozen\n  FROM maker_telemetry\n  WHERE $__unixEpochFilter(ts)\n    AND market = ${market:sqlstring}\n),\n\nepochs AS (\n  SELECT\n    armed_at,\n    side,\n    level_idx,\n    offset_ppm,\n    size_bps,\n    lead(armed_at) OVER (\n      PARTITION BY side, level_idx\n      ORDER BY armed_at\n    ) AS superseded_at\n  FROM maker_ladder_epoch\n  WHERE market = ${market:sqlstring}\n)\n\nSELECT\n  to_timestamp(t.ts) AS \"time\",\n  e.side || ' L' || e.level_idx AS metric,\n  (t.on_chain_reference * (\n    1 + CASE e.side WHEN 'bid' THEN -1 ELSE 1 END\n    * e.offset_ppm / 1000000.0\n  ))::double precision AS value\nFROM ticks AS t\nINNER JOIN epochs AS e\n  ON\n    t.ts >= e.armed_at\n    AND (e.superseded_at IS NULL OR t.ts < e.superseded_at)\nWHERE\n  t.reference_valid\n  AND NOT t.frozen\n  AND e.size_bps > 0\nUNION ALL\nSELECT\n  to_timestamp(ts) AS \"time\",\n  'fair value' AS metric,\n  fair AS value\nFROM ticks\nUNION ALL\n-- A market with no live leg publishes the STATIC PEG as a real price, at a\n-- degraded regime anchored static -- so a 1.14 EURC print at bring-up is the\n-- fallback constant rather than a composed mid. Drawn as its own series,\n-- labelled with both the anchor and the regime, so a static print is visually\n-- distinct from a composed one instead of reading as one. Overlays the\n-- continuous fair line rather than replacing it, so the line keeps its shape.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  'fair (' || anchor || ' peg, ' || regime || ')' AS metric,\n  fair AS value\nFROM ticks\nWHERE anchor = 'static'\nORDER BY 1",
           "refId": "A"
         }
       ],
