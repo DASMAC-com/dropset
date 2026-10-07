@@ -3917,7 +3917,8 @@
           {
             "name": "vault_seq",
             "docs": [
-              "The occupying vault's `seq`; see the module doc."
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
             ],
             "type": "u64"
           },
@@ -3954,7 +3955,8 @@
           {
             "name": "vault_seq",
             "docs": [
-              "The occupying vault's `seq`; see the module doc."
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
             ],
             "type": "u64"
           },
@@ -4000,7 +4002,8 @@
           {
             "name": "vault_seq",
             "docs": [
-              "The occupying vault's `seq`; see the module doc."
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
             ],
             "type": "u64"
           },
@@ -4149,9 +4152,8 @@
           {
             "name": "vault_seq",
             "docs": [
-              "The filled vault's `seq`; see the module doc. Placed after",
-              "`level_idx` rather than beside `sector_idx` so it lands on an",
-              "8-byte boundary without disturbing any existing field or pad."
+              "The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
             ],
             "type": "u64"
           },
@@ -4225,7 +4227,8 @@
           {
             "name": "vault_seq",
             "docs": [
-              "The occupying vault's `seq`; see the module doc."
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
             ],
             "type": "u64"
           },
@@ -4546,7 +4549,8 @@
           {
             "name": "vault_seq",
             "docs": [
-              "The occupying vault's `seq`; see the module doc."
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
             ],
             "type": "u64"
           },
@@ -4757,7 +4761,8 @@
           {
             "name": "vault_seq",
             "docs": [
-              "The occupying vault's `seq`; see the module doc."
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
             ],
             "type": "u64"
           },
@@ -5048,7 +5053,8 @@
           {
             "name": "vault_seq",
             "docs": [
-              "The occupying vault's `seq`; see the module doc."
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
             ],
             "type": "u64"
           },

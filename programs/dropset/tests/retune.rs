@@ -38,6 +38,7 @@ fn min_leader_share_admin_retunes_floor() {
     let ev = common::events::set_min_leader_share(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, f.vault(0).seq.get());
     assert_eq!(ev.min_leader_share, 100_000);
 }
 

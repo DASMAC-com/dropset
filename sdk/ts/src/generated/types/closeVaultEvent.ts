@@ -9,13 +9,19 @@
 import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
 export type CloseVaultEvent = { market: Address; sectorIdx: number; 
-/** The occupying vault's `seq`; see the module doc. */
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
 vaultSeq: bigint; leader: Address; 
 /** Active-DLL length after the move. */
 activeCountAfter: number;  };
 
 export type CloseVaultEventArgs = { market: Address; sectorIdx: number; 
-/** The occupying vault's `seq`; see the module doc. */
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
 vaultSeq: number | bigint; leader: Address; 
 /** Active-DLL length after the move. */
 activeCountAfter: number;  };

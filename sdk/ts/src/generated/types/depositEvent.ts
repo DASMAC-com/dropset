@@ -9,11 +9,17 @@
 import { combineCodec, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
 export type DepositEvent = { market: Address; sectorIdx: number; 
-/** The occupying vault's `seq`; see the module doc. */
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
 vaultSeq: bigint; depositor: Address; isLeader: boolean; isSeeding: boolean; baseIn: bigint; quoteIn: bigint; sharesOut: bigint; totalSharesAfter: bigint; leaderSharesAfter: bigint; baseAtomsAfter: bigint; quoteAtomsAfter: bigint;  };
 
 export type DepositEventArgs = { market: Address; sectorIdx: number; 
-/** The occupying vault's `seq`; see the module doc. */
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
 vaultSeq: number | bigint; depositor: Address; isLeader: boolean; isSeeding: boolean; baseIn: number | bigint; quoteIn: number | bigint; sharesOut: number | bigint; totalSharesAfter: number | bigint; leaderSharesAfter: number | bigint; baseAtomsAfter: number | bigint; quoteAtomsAfter: number | bigint;  };
 
 export function getDepositEventEncoder(): FixedSizeEncoder<DepositEventArgs> {

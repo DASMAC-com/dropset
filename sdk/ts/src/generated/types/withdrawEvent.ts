@@ -9,13 +9,19 @@
 import { combineCodec, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getI64Decoder, getI64Encoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
 export type WithdrawEvent = { market: Address; sectorIdx: number; 
-/** The occupying vault's `seq`; see the module doc. */
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
 vaultSeq: bigint; depositor: Address; isLeader: boolean; sharesIn: bigint; baseOut: bigint; quoteOut: bigint; totalSharesAfter: bigint; leaderSharesAfter: bigint; baseAtomsAfter: bigint; quoteAtomsAfter: bigint; 
 /** Signed PnL delta crystallized on this withdrawal (outside path). */
 realizedPnlDelta: bigint;  };
 
 export type WithdrawEventArgs = { market: Address; sectorIdx: number; 
-/** The occupying vault's `seq`; see the module doc. */
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
 vaultSeq: number | bigint; depositor: Address; isLeader: boolean; sharesIn: number | bigint; baseOut: number | bigint; quoteOut: number | bigint; totalSharesAfter: number | bigint; leaderSharesAfter: number | bigint; baseAtomsAfter: number | bigint; quoteAtomsAfter: number | bigint; 
 /** Signed PnL delta crystallized on this withdrawal (outside path). */
 realizedPnlDelta: number | bigint;  };

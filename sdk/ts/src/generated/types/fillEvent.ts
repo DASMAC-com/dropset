@@ -18,9 +18,8 @@ side: number;
  */
 pad: ReadonlyUint8Array; sectorIdx: number; levelIdx: number; 
 /**
- * The filled vault's `seq`; see the module doc. Placed after
- * `level_idx` rather than beside `sector_idx` so it lands on an
- * 8-byte boundary without disturbing any existing field or pad.
+ * The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
  */
 vaultSeq: bigint; fillBase: bigint; fillQuote: bigint; fillPrice: Price; 
 /**
@@ -39,9 +38,8 @@ side: number;
  */
 pad: ReadonlyUint8Array; sectorIdx: number; levelIdx: number; 
 /**
- * The filled vault's `seq`; see the module doc. Placed after
- * `level_idx` rather than beside `sector_idx` so it lands on an
- * 8-byte boundary without disturbing any existing field or pad.
+ * The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
  */
 vaultSeq: number | bigint; fillBase: number | bigint; fillQuote: number | bigint; fillPrice: PriceArgs; 
 /**

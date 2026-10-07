@@ -25,7 +25,8 @@ use crate::Price;
 pub struct CreateVaultEvent {
     pub market: Address,
     pub sector_idx: u32,
-    /// The occupying vault's `seq`; see the module doc.
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     pub leader: Address,
     pub quote_authority: Address,
@@ -41,7 +42,8 @@ pub struct CreateVaultEvent {
 pub struct CloseVaultEvent {
     pub market: Address,
     pub sector_idx: u32,
-    /// The occupying vault's `seq`; see the module doc.
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     pub leader: Address,
     /// Active-DLL length after the move.
@@ -55,7 +57,8 @@ pub struct CloseVaultEvent {
 pub struct FreezeVaultEvent {
     pub market: Address,
     pub sector_idx: u32,
-    /// The occupying vault's `seq`; see the module doc.
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     pub leader: Address,
 }
@@ -67,7 +70,8 @@ pub struct FreezeVaultEvent {
 pub struct SetMinLeaderShareEvent {
     pub market: Address,
     pub sector_idx: u32,
-    /// The occupying vault's `seq`; see the module doc.
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     pub min_leader_share: u32,
 }
@@ -248,7 +252,8 @@ pub struct SetRegistryDefaultsEvent {
 pub struct DepositEvent {
     pub market: Address,
     pub sector_idx: u32,
-    /// The occupying vault's `seq`; see the module doc.
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     pub depositor: Address,
     pub is_leader: bool,
@@ -267,7 +272,8 @@ pub struct DepositEvent {
 pub struct WithdrawEvent {
     pub market: Address,
     pub sector_idx: u32,
-    /// The occupying vault's `seq`; see the module doc.
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     pub depositor: Address,
     pub is_leader: bool,
@@ -289,7 +295,8 @@ pub struct WithdrawEvent {
 pub struct RealizeEvent {
     pub market: Address,
     pub sector_idx: u32,
-    /// The occupying vault's `seq`; see the module doc.
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     pub shares_minted: u64,
     pub leader_shares_after: u64,
@@ -345,9 +352,8 @@ pub struct FillEvent {
     pub _pad: [u8; 7],
     pub sector_idx: u32,
     pub level_idx: u32,
-    /// The filled vault's `seq`; see the module doc. Placed after
-    /// `level_idx` rather than beside `sector_idx` so it lands on an
-    /// 8-byte boundary without disturbing any existing field or pad.
+    /// The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     pub fill_base: u64,
     pub fill_quote: u64,
@@ -364,6 +370,9 @@ pub struct FillEvent {
 
 // Pin the bytemuck wire layout: off-chain decoders read this body
 // verbatim, so a size or offset change must be a deliberate edit here.
+// `vault_seq` sits after `level_idx` rather than beside `sector_idx` so
+// it lands on an 8-byte boundary without disturbing any existing field
+// or pad.
 const _: () = assert!(core::mem::size_of::<FillEvent>() == 208);
 const _: () = assert!(core::mem::offset_of!(FillEvent, vault_seq) == 144);
 

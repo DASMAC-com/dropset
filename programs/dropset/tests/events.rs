@@ -282,9 +282,11 @@ fn freeze_vault_emits_freeze_vault_event() {
 
 /// The reason events carry `vault_seq`: a reclaimed sector is reused by
 /// the next `create_vault`, so `sector_idx` alone cannot tell the old
-/// occupant's events from the new one's. The draining withdraw reclaims
-/// the sector inside the same instruction, and must still report the
-/// outgoing vault's seq rather than whatever the sector holds afterward.
+/// occupant's events from the new one's. The outgoing vault's events
+/// report seq 1 up to and including the draining exit; the new occupant
+/// of the same sector reports seq 2 on its create, seed, and fills. Every
+/// other event test runs on a market's first vault (seq 1), so this is
+/// the one place a value that merely equals 1 on sector 0 would fail.
 #[test]
 fn sector_reuse_is_disambiguated_by_vault_seq() {
     let mut f = Fixture::seeded(1_000_000, 1_085_000);
@@ -309,4 +311,31 @@ fn sector_reuse_is_disambiguated_by_vault_seq() {
     let ev = events::create_vault(&reopen);
     assert_eq!(ev.sector_idx, 0, "same sector");
     assert_eq!(ev.vault_seq, 2, "new occupant, new identity");
+
+    // Bring the new occupant live and trade against it. Expire the
+    // blockhash first: these calls mirror `seeded`'s byte for byte, and
+    // LiteSVM would otherwise reject them as already processed.
+    f.svm.expire_blockhash();
+    let px = Price::encode(10_850_000, 0).unwrap();
+    f.set_reference_price(&leader, 0, px.as_u32(), 0)
+        .expect("set_reference_price");
+    f.set_liquidity_profile(&leader, 0, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("set_liquidity_profile");
+    let seed = f
+        .deposit_leader_as_meta(&leader, 0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+        .expect("seed the new occupant");
+    let ev = events::deposit(&seed);
+    assert!(ev.is_seeding, "the new occupant's first deposit is a seed");
+    assert_eq!(ev.vault_seq, 2);
+
+    let taker = f.funded_depositor(0, 200_000);
+    let swap = f
+        .swap_meta(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
+        .expect("swap Buy");
+    let fills = events::fills(&swap);
+    assert!(!fills.is_empty(), "the new occupant fills");
+    for fill in &fills {
+        assert_eq!(fill.sector_idx, 0);
+        assert_eq!(fill.vault_seq, 2, "fills attribute to the new occupant");
+    }
 }

@@ -9,11 +9,17 @@
 import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
 export type RealizeEvent = { market: Address; sectorIdx: number; 
-/** The occupying vault's `seq`; see the module doc. */
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
 vaultSeq: bigint; sharesMinted: bigint; leaderSharesAfter: bigint; totalSharesAfter: bigint; hwmAfter: bigint;  };
 
 export type RealizeEventArgs = { market: Address; sectorIdx: number; 
-/** The occupying vault's `seq`; see the module doc. */
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
 vaultSeq: number | bigint; sharesMinted: number | bigint; leaderSharesAfter: number | bigint; totalSharesAfter: number | bigint; hwmAfter: number | bigint;  };
 
 export function getRealizeEventEncoder(): FixedSizeEncoder<RealizeEventArgs> {

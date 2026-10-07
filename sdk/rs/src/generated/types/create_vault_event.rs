@@ -18,7 +18,8 @@ pub struct CreateVaultEvent {
     )]
     pub market: Pubkey,
     pub sector_idx: u32,
-    /// The occupying vault's `seq`; see the module doc.
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     #[cfg_attr(
         feature = "serde",

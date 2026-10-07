@@ -460,5 +460,6 @@ mod tests {
             Value::String(u64::MAX.to_string()),
             "a u64 past 2^53 must not be a bare JSON number"
         );
+        assert_eq!(json["vault_seq"], Value::String("1".to_string()));
     }
 }
