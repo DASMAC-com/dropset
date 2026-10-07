@@ -385,7 +385,8 @@ services:
     #
     # Long-form syntax because the short `src:dst:ro` form of the two
     # provisioning paths exceeds the repo's 80-column yamllint limit; the
-    # dashboards and home mounts would fit, and use it too so all read alike.
+    # dashboards and home mounts would fit, but use it too so all four read
+    # alike.
     volumes:
     - read_only: true
       source: '../../market-data/grafana/dashboards'

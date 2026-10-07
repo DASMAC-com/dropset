@@ -19,10 +19,10 @@
 # committed JSON on the host shows up in the browser within the interval, with
 # no container restart.
 #
-# No `folder`, on purpose: everything in this instance is dropset, so a folder
-# is only one more click between the menu and every dashboard. That leaves the
-# `Dropset` folder `provisioning/alerting/maker.yml` creates (alert rules must
-# live in a folder) beside the dashboards with no dashboards in it. That is
+# No `folder`, on purpose: everything in this instance is Dropset's, so a
+# folder is only one more click between the menu and every dashboard. Alert
+# rules must live in a folder, so `provisioning/alerting/maker.yml` still
+# creates `Dropset`; it sits beside the dashboards, empty of them. That is
 # expected: alerts are read from the Alerting page, not the dashboard list.
 apiVersion: 1
 providers:

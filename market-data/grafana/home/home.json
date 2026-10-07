@@ -28,7 +28,7 @@
       "type": "dashlist"
     }
   ],
-  "schemaVersion": 41,
+  "schemaVersion": 39,
   "tags": [],
   "time": {
     "from": "now-6h",
