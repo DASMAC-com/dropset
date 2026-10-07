@@ -6,6 +6,14 @@
 //! they can carry variable-shape data; `FillEvent` uses
 //! `#[event(bytemuck)]` because it is fixed-size by construction and
 //! lives on the hot path where the zero serializer cost matters.
+//!
+//! Every event that names a sector by `sector_idx` also carries
+//! `vault_seq`, the occupying vault's `Vault::seq`. A sector is reused
+//! once its vault drains and is reclaimed, so `sector_idx` alone does not
+//! identify a vault across time: an indexer that misses one
+//! `CreateVaultEvent` would otherwise attribute the new occupant's fills
+//! to the previous one. `(market, sector_idx, vault_seq)` is the stable
+//! vault identity.
 
 use anchor_lang_v2::prelude::*;
 
@@ -17,6 +25,8 @@ use crate::Price;
 pub struct CreateVaultEvent {
     pub market: Address,
     pub sector_idx: u32,
+    /// The occupying vault's `seq`; see the module doc.
+    pub vault_seq: u64,
     pub leader: Address,
     pub quote_authority: Address,
     pub perf_fee_rate: u32,
@@ -31,6 +41,8 @@ pub struct CreateVaultEvent {
 pub struct CloseVaultEvent {
     pub market: Address,
     pub sector_idx: u32,
+    /// The occupying vault's `seq`; see the module doc.
+    pub vault_seq: u64,
     pub leader: Address,
     /// Active-DLL length after the move.
     pub active_count_after: u32,
@@ -43,6 +55,8 @@ pub struct CloseVaultEvent {
 pub struct FreezeVaultEvent {
     pub market: Address,
     pub sector_idx: u32,
+    /// The occupying vault's `seq`; see the module doc.
+    pub vault_seq: u64,
     pub leader: Address,
 }
 
@@ -53,6 +67,8 @@ pub struct FreezeVaultEvent {
 pub struct SetMinLeaderShareEvent {
     pub market: Address,
     pub sector_idx: u32,
+    /// The occupying vault's `seq`; see the module doc.
+    pub vault_seq: u64,
     pub min_leader_share: u32,
 }
 
@@ -232,6 +248,8 @@ pub struct SetRegistryDefaultsEvent {
 pub struct DepositEvent {
     pub market: Address,
     pub sector_idx: u32,
+    /// The occupying vault's `seq`; see the module doc.
+    pub vault_seq: u64,
     pub depositor: Address,
     pub is_leader: bool,
     pub is_seeding: bool,
@@ -249,6 +267,8 @@ pub struct DepositEvent {
 pub struct WithdrawEvent {
     pub market: Address,
     pub sector_idx: u32,
+    /// The occupying vault's `seq`; see the module doc.
+    pub vault_seq: u64,
     pub depositor: Address,
     pub is_leader: bool,
     pub shares_in: u64,
@@ -269,6 +289,8 @@ pub struct WithdrawEvent {
 pub struct RealizeEvent {
     pub market: Address,
     pub sector_idx: u32,
+    /// The occupying vault's `seq`; see the module doc.
+    pub vault_seq: u64,
     pub shares_minted: u64,
     pub leader_shares_after: u64,
     pub total_shares_after: u64,
@@ -287,12 +309,14 @@ impl RealizeEvent {
         outcome: &RealizeOutcome,
         market: Address,
         sector_idx: u32,
+        vault_seq: u64,
         leader_shares_after: u64,
         total_shares_after: u64,
     ) -> Option<Self> {
         (outcome.shares_minted > 0).then_some(RealizeEvent {
             market,
             sector_idx,
+            vault_seq,
             shares_minted: outcome.shares_minted,
             leader_shares_after,
             total_shares_after,
@@ -321,6 +345,10 @@ pub struct FillEvent {
     pub _pad: [u8; 7],
     pub sector_idx: u32,
     pub level_idx: u32,
+    /// The filled vault's `seq`; see the module doc. Placed after
+    /// `level_idx` rather than beside `sector_idx` so it lands on an
+    /// 8-byte boundary without disturbing any existing field or pad.
+    pub vault_seq: u64,
     pub fill_base: u64,
     pub fill_quote: u64,
     pub fill_price: Price,
@@ -333,6 +361,11 @@ pub struct FillEvent {
     pub nonce_after: u64,
     pub taker_fee_atoms: u64,
 }
+
+// Pin the bytemuck wire layout: off-chain decoders read this body
+// verbatim, so a size or offset change must be a deliberate edit here.
+const _: () = assert!(core::mem::size_of::<FillEvent>() == 208);
+const _: () = assert!(core::mem::offset_of!(FillEvent, vault_seq) == 144);
 
 /// Emitted once per `swap` that skimmed a caller-declared platform fee —
 /// never on the no-integrator path, and never when the declared rate

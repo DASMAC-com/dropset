@@ -2620,7 +2620,7 @@ ceiling is **64 inner instructions per transaction**
 `emit_cpi!` per matched leg; see **Granularity** below), this count —
 not the per-CPI 10 KiB data cap — is what bounds a take: it can record
 at most `64 − (top-level ix + token CPIs)` legs in one transaction (a
-single `FillEvent` is ~208 B, nowhere near the data cap).
+single `FillEvent` is ~216 B, nowhere near the data cap).
 
 **Why fills must be events, not account diffs.** `market.nonce` is
 bumped on every fill and every quote update, and a geyser stream
@@ -2638,6 +2638,22 @@ an on-chain self-trade/wash flag** — there is no leader allowlist (see
 and the deliberately-minimized match loop should not carry it. Wash
 classification is left to off-chain consumers, which have the
 maker/taker identities to cluster on.
+
+**Vault identity — every sector-carrying event also carries
+`vault_seq`.** Pubkeys attribute a fill to a leader, but not to a
+*vault*: one leader can open a vault, drain it, and reopen on the same
+reclaimed sector. So every event that names a sector by `sector_idx` —
+`CreateVault`, `CloseVault`, `FreezeVault`, `SetMinLeaderShare`,
+`Deposit`, `Withdraw`, `Realize`, and `Fill` — also carries `vault_seq`,
+the occupying vault's `seq` from the market's monotonic vault counter
+(see **Vault**). `(market, sector_idx, vault_seq)` is the stable vault
+identity. Without it, an RPC-poll indexer that misses one
+`CreateVaultEvent` attributes the new occupant's flows to the previous
+one. The seq is read while the sector is still occupied, so a draining
+withdraw that reclaims its sector in the same instruction still names
+the outgoing vault. It is a plain new field, never carved out of an
+existing pad: pads are reserved for post-mainnet growth, under the same
+rule as the vault struct.
 
 **Granularity — per-leg emit, every leg recorded.** A single take can
 sweep many levels across many vaults (the sorted-`Vec` fill loop in

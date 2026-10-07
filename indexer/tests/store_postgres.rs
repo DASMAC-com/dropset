@@ -79,6 +79,7 @@ fn fill(market: Pubkey, base: u64, quote: u64, fee: u64) -> Vec<u8> {
             pad: [0; 7],
             sector_idx: 1,
             level_idx: 2,
+            vault_seq: 1,
             fill_base: base,
             fill_quote: quote,
             fill_price: 1,
@@ -99,6 +100,7 @@ fn deposit(market: Pubkey) -> Vec<u8> {
         &DepositEvent {
             market,
             sector_idx: 1,
+            vault_seq: 1,
             depositor: Pubkey::new_unique(),
             is_leader: true,
             is_seeding: false,

@@ -473,6 +473,7 @@ mod tests {
             pad: [0; 7],
             sector_idx: 4,
             level_idx: 2,
+            vault_seq: 1,
             fill_base: 1_000,
             fill_quote: 730,
             fill_price: 0x1234_5678,
@@ -495,8 +496,8 @@ mod tests {
     }
 
     /// The borsh body is exactly the on-chain `repr(C)` size — the explicit
-    /// padding fields make the two layouts byte-identical (200 bytes:
-    /// 4×32-byte keys + u8 + [u8;7] + 2×u32 + 2×u64 + u32 + [u8;4] + 4×u64).
+    /// padding fields make the two layouts byte-identical (208 bytes:
+    /// 4×32-byte keys + u8 + [u8;7] + 2×u32 + 3×u64 + u32 + [u8;4] + 4×u64).
     /// The subscribe URL reaches a column the read-only dashboard role can
     /// read, so every credential shape a hosted endpoint uses has to be gone
     /// before it gets there. The query case is the one the framework's
@@ -550,7 +551,7 @@ mod tests {
     #[test]
     fn body_is_the_fixed_event_size() {
         let body = borsh::to_vec(&sample_event(Pubkey::new_unique())).unwrap();
-        assert_eq!(body.len(), 200);
+        assert_eq!(body.len(), 208);
     }
 
     #[test]

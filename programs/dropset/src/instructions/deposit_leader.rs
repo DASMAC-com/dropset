@@ -90,7 +90,7 @@ impl DepositLeader {
         max_quote_in: u64,
     ) -> Result<(Option<RealizeEvent>, DepositEvent)> {
         let signer_addr = *self.signer.address();
-        let (leader, frozen, tombstoned, total_shares) = {
+        let (leader, frozen, tombstoned, total_shares, vault_seq) = {
             let v = self.market.read_vault(vault_idx)?;
             require!(v.is_occupied(), DropsetError::VaultEmpty);
             (
@@ -98,6 +98,7 @@ impl DepositLeader {
                 v.frozen.get(),
                 v.tombstoned.get(),
                 v.total_shares.get(),
+                v.seq.get(),
             )
         };
         require!(!frozen, DropsetError::VaultFrozen);
@@ -206,12 +207,14 @@ impl DepositLeader {
             &realize_outcome,
             market_addr,
             vault_idx,
+            vault_seq,
             new_leader_shares,
             new_total,
         );
         let deposit_event = DepositEvent {
             market: market_addr,
             sector_idx: vault_idx,
+            vault_seq,
             depositor: signer_addr,
             is_leader: true,
             is_seeding,

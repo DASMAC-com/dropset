@@ -6,20 +6,26 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
+import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
-export type CloseVaultEvent = { market: Address; sectorIdx: number; leader: Address; 
+export type CloseVaultEvent = { market: Address; sectorIdx: number; 
+/** The occupying vault's `seq`; see the module doc. */
+vaultSeq: bigint; leader: Address; 
 /** Active-DLL length after the move. */
 activeCountAfter: number;  };
 
-export type CloseVaultEventArgs = CloseVaultEvent;
+export type CloseVaultEventArgs = { market: Address; sectorIdx: number; 
+/** The occupying vault's `seq`; see the module doc. */
+vaultSeq: number | bigint; leader: Address; 
+/** Active-DLL length after the move. */
+activeCountAfter: number;  };
 
 export function getCloseVaultEventEncoder(): FixedSizeEncoder<CloseVaultEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['leader', getAddressEncoder()], ['activeCountAfter', getU32Encoder()]]);
+    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['leader', getAddressEncoder()], ['activeCountAfter', getU32Encoder()]]);
 }
 
 export function getCloseVaultEventDecoder(): FixedSizeDecoder<CloseVaultEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['leader', getAddressDecoder()], ['activeCountAfter', getU32Decoder()]]);
+    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['leader', getAddressDecoder()], ['activeCountAfter', getU32Decoder()]]);
 }
 
 export function getCloseVaultEventCodec(): FixedSizeCodec<CloseVaultEventArgs, CloseVaultEvent> {

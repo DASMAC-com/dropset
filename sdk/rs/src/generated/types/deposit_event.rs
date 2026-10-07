@@ -18,6 +18,8 @@ pub struct DepositEvent {
     )]
     pub market: Pubkey,
     pub sector_idx: u32,
+    /// The occupying vault's `seq`; see the module doc.
+    pub vault_seq: u64,
     #[cfg_attr(
         feature = "serde",
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")

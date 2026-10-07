@@ -122,6 +122,7 @@ impl<'a> Cursor<'a> {
 pub struct CreateVault {
     pub market: [u8; 32],
     pub sector_idx: u32,
+    pub vault_seq: u64,
     pub leader: [u8; 32],
     pub quote_authority: [u8; 32],
     pub perf_fee_rate: u32,
@@ -135,6 +136,7 @@ pub fn create_vault(meta: &TransactionMetadata) -> CreateVault {
     let d = CreateVault {
         market: c.pubkey(),
         sector_idx: c.u32(),
+        vault_seq: c.u64(),
         leader: c.pubkey(),
         quote_authority: c.pubkey(),
         perf_fee_rate: c.u32(),
@@ -149,6 +151,7 @@ pub fn create_vault(meta: &TransactionMetadata) -> CreateVault {
 pub struct CloseVault {
     pub market: [u8; 32],
     pub sector_idx: u32,
+    pub vault_seq: u64,
     pub leader: [u8; 32],
     pub active_count_after: u32,
 }
@@ -159,6 +162,7 @@ pub fn close_vault(meta: &TransactionMetadata) -> CloseVault {
     let d = CloseVault {
         market: c.pubkey(),
         sector_idx: c.u32(),
+        vault_seq: c.u64(),
         leader: c.pubkey(),
         active_count_after: c.u32(),
     };
@@ -170,6 +174,7 @@ pub fn close_vault(meta: &TransactionMetadata) -> CloseVault {
 pub struct FreezeVault {
     pub market: [u8; 32],
     pub sector_idx: u32,
+    pub vault_seq: u64,
     pub leader: [u8; 32],
 }
 
@@ -179,6 +184,7 @@ pub fn freeze_vault(meta: &TransactionMetadata) -> FreezeVault {
     let d = FreezeVault {
         market: c.pubkey(),
         sector_idx: c.u32(),
+        vault_seq: c.u64(),
         leader: c.pubkey(),
     };
     c.finish();
@@ -189,6 +195,7 @@ pub fn freeze_vault(meta: &TransactionMetadata) -> FreezeVault {
 pub struct SetMinLeaderShare {
     pub market: [u8; 32],
     pub sector_idx: u32,
+    pub vault_seq: u64,
     pub min_leader_share: u32,
 }
 
@@ -198,6 +205,7 @@ pub fn set_min_leader_share(meta: &TransactionMetadata) -> SetMinLeaderShare {
     let d = SetMinLeaderShare {
         market: c.pubkey(),
         sector_idx: c.u32(),
+        vault_seq: c.u64(),
         min_leader_share: c.u32(),
     };
     c.finish();
@@ -404,6 +412,7 @@ pub fn platform_fee(meta: &TransactionMetadata) -> PlatformFee {
 pub struct Deposit {
     pub market: [u8; 32],
     pub sector_idx: u32,
+    pub vault_seq: u64,
     pub depositor: [u8; 32],
     pub is_leader: bool,
     pub is_seeding: bool,
@@ -422,6 +431,7 @@ pub fn deposit(meta: &TransactionMetadata) -> Deposit {
     let d = Deposit {
         market: c.pubkey(),
         sector_idx: c.u32(),
+        vault_seq: c.u64(),
         depositor: c.pubkey(),
         is_leader: c.bool(),
         is_seeding: c.bool(),
@@ -441,6 +451,7 @@ pub fn deposit(meta: &TransactionMetadata) -> Deposit {
 pub struct Withdraw {
     pub market: [u8; 32],
     pub sector_idx: u32,
+    pub vault_seq: u64,
     pub depositor: [u8; 32],
     pub is_leader: bool,
     pub shares_in: u64,
@@ -459,6 +470,7 @@ pub fn withdraw(meta: &TransactionMetadata) -> Withdraw {
     let d = Withdraw {
         market: c.pubkey(),
         sector_idx: c.u32(),
+        vault_seq: c.u64(),
         depositor: c.pubkey(),
         is_leader: c.bool(),
         shares_in: c.u64(),
@@ -478,6 +490,7 @@ pub fn withdraw(meta: &TransactionMetadata) -> Withdraw {
 pub struct Realize {
     pub market: [u8; 32],
     pub sector_idx: u32,
+    pub vault_seq: u64,
     pub shares_minted: u64,
     pub leader_shares_after: u64,
     pub total_shares_after: u64,
@@ -490,6 +503,7 @@ pub fn realize(meta: &TransactionMetadata) -> Realize {
     let d = Realize {
         market: c.pubkey(),
         sector_idx: c.u32(),
+        vault_seq: c.u64(),
         shares_minted: c.u64(),
         leader_shares_after: c.u64(),
         total_shares_after: c.u64(),

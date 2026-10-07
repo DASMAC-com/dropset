@@ -89,7 +89,7 @@ pub fn event_to_json(e: &DropsetEvent) -> Value {
         DropsetEvent::Fill(x) => json!({
             "market": pk(&x.market), "taker": pk(&x.taker), "leader": pk(&x.leader),
             "quote_authority": pk(&x.quote_authority), "side": x.side,
-            "sector_idx": x.sector_idx, "level_idx": x.level_idx,
+            "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "level_idx": x.level_idx,
             "fill_base": wide(x.fill_base), "fill_quote": wide(x.fill_quote),
             "fill_price": x.fill_price,
             "base_atoms_after": wide(x.base_atoms_after),
@@ -98,7 +98,7 @@ pub fn event_to_json(e: &DropsetEvent) -> Value {
             "taker_fee_atoms": wide(x.taker_fee_atoms),
         }),
         DropsetEvent::Deposit(x) => json!({
-            "market": pk(&x.market), "sector_idx": x.sector_idx, "depositor": pk(&x.depositor),
+            "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "depositor": pk(&x.depositor),
             "is_leader": x.is_leader, "is_seeding": x.is_seeding,
             "base_in": wide(x.base_in), "quote_in": wide(x.quote_in),
             "shares_out": wide(x.shares_out),
@@ -108,7 +108,7 @@ pub fn event_to_json(e: &DropsetEvent) -> Value {
             "quote_atoms_after": wide(x.quote_atoms_after),
         }),
         DropsetEvent::Withdraw(x) => json!({
-            "market": pk(&x.market), "sector_idx": x.sector_idx, "depositor": pk(&x.depositor),
+            "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "depositor": pk(&x.depositor),
             "is_leader": x.is_leader, "shares_in": wide(x.shares_in),
             "base_out": wide(x.base_out), "quote_out": wide(x.quote_out),
             "total_shares_after": wide(x.total_shares_after),
@@ -118,26 +118,26 @@ pub fn event_to_json(e: &DropsetEvent) -> Value {
             "realized_pnl_delta": wide(x.realized_pnl_delta),
         }),
         DropsetEvent::CreateVault(x) => json!({
-            "market": pk(&x.market), "sector_idx": x.sector_idx, "leader": pk(&x.leader),
+            "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "leader": pk(&x.leader),
             "quote_authority": pk(&x.quote_authority), "perf_fee_rate": x.perf_fee_rate,
             "min_leader_share": x.min_leader_share, "allow_outside_depositors": x.allow_outside_depositors,
         }),
         DropsetEvent::CloseVault(x) => json!({
-            "market": pk(&x.market), "sector_idx": x.sector_idx, "leader": pk(&x.leader),
+            "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "leader": pk(&x.leader),
             "active_count_after": x.active_count_after,
         }),
         DropsetEvent::FreezeVault(x) => json!({
-            "market": pk(&x.market), "sector_idx": x.sector_idx, "leader": pk(&x.leader),
+            "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "leader": pk(&x.leader),
         }),
         DropsetEvent::Realize(x) => json!({
-            "market": pk(&x.market), "sector_idx": x.sector_idx,
+            "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq),
             "shares_minted": wide(x.shares_minted),
             "leader_shares_after": wide(x.leader_shares_after),
             "total_shares_after": wide(x.total_shares_after),
             "hwm_after": wide(x.hwm_after),
         }),
         DropsetEvent::SetMinLeaderShare(x) => json!({
-            "market": pk(&x.market), "sector_idx": x.sector_idx, "min_leader_share": x.min_leader_share,
+            "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "min_leader_share": x.min_leader_share,
         }),
         DropsetEvent::SetMarketFeeConfig(x) => json!({
             "market": pk(&x.market), "mint": pk(&x.mint),
@@ -442,6 +442,7 @@ mod tests {
         let deposit = DropsetEvent::Deposit(dropset_sdk::types::DepositEvent {
             market: Pubkey::new_unique(),
             sector_idx: 1,
+            vault_seq: 1,
             depositor: Pubkey::new_unique(),
             is_leader: true,
             is_seeding: false,

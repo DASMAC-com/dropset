@@ -207,6 +207,7 @@ impl CreateVault {
         Ok(CreateVaultEvent {
             market: market_addr,
             sector_idx: sector,
+            vault_seq: seq,
             leader,
             quote_authority,
             perf_fee_rate,

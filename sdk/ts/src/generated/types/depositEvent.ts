@@ -8,16 +8,20 @@
 
 import { combineCodec, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
-export type DepositEvent = { market: Address; sectorIdx: number; depositor: Address; isLeader: boolean; isSeeding: boolean; baseIn: bigint; quoteIn: bigint; sharesOut: bigint; totalSharesAfter: bigint; leaderSharesAfter: bigint; baseAtomsAfter: bigint; quoteAtomsAfter: bigint;  };
+export type DepositEvent = { market: Address; sectorIdx: number; 
+/** The occupying vault's `seq`; see the module doc. */
+vaultSeq: bigint; depositor: Address; isLeader: boolean; isSeeding: boolean; baseIn: bigint; quoteIn: bigint; sharesOut: bigint; totalSharesAfter: bigint; leaderSharesAfter: bigint; baseAtomsAfter: bigint; quoteAtomsAfter: bigint;  };
 
-export type DepositEventArgs = { market: Address; sectorIdx: number; depositor: Address; isLeader: boolean; isSeeding: boolean; baseIn: number | bigint; quoteIn: number | bigint; sharesOut: number | bigint; totalSharesAfter: number | bigint; leaderSharesAfter: number | bigint; baseAtomsAfter: number | bigint; quoteAtomsAfter: number | bigint;  };
+export type DepositEventArgs = { market: Address; sectorIdx: number; 
+/** The occupying vault's `seq`; see the module doc. */
+vaultSeq: number | bigint; depositor: Address; isLeader: boolean; isSeeding: boolean; baseIn: number | bigint; quoteIn: number | bigint; sharesOut: number | bigint; totalSharesAfter: number | bigint; leaderSharesAfter: number | bigint; baseAtomsAfter: number | bigint; quoteAtomsAfter: number | bigint;  };
 
 export function getDepositEventEncoder(): FixedSizeEncoder<DepositEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['depositor', getAddressEncoder()], ['isLeader', getBooleanEncoder()], ['isSeeding', getBooleanEncoder()], ['baseIn', getU64Encoder()], ['quoteIn', getU64Encoder()], ['sharesOut', getU64Encoder()], ['totalSharesAfter', getU64Encoder()], ['leaderSharesAfter', getU64Encoder()], ['baseAtomsAfter', getU64Encoder()], ['quoteAtomsAfter', getU64Encoder()]]);
+    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['depositor', getAddressEncoder()], ['isLeader', getBooleanEncoder()], ['isSeeding', getBooleanEncoder()], ['baseIn', getU64Encoder()], ['quoteIn', getU64Encoder()], ['sharesOut', getU64Encoder()], ['totalSharesAfter', getU64Encoder()], ['leaderSharesAfter', getU64Encoder()], ['baseAtomsAfter', getU64Encoder()], ['quoteAtomsAfter', getU64Encoder()]]);
 }
 
 export function getDepositEventDecoder(): FixedSizeDecoder<DepositEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['depositor', getAddressDecoder()], ['isLeader', getBooleanDecoder()], ['isSeeding', getBooleanDecoder()], ['baseIn', getU64Decoder()], ['quoteIn', getU64Decoder()], ['sharesOut', getU64Decoder()], ['totalSharesAfter', getU64Decoder()], ['leaderSharesAfter', getU64Decoder()], ['baseAtomsAfter', getU64Decoder()], ['quoteAtomsAfter', getU64Decoder()]]);
+    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['depositor', getAddressDecoder()], ['isLeader', getBooleanDecoder()], ['isSeeding', getBooleanDecoder()], ['baseIn', getU64Decoder()], ['quoteIn', getU64Decoder()], ['sharesOut', getU64Decoder()], ['totalSharesAfter', getU64Decoder()], ['leaderSharesAfter', getU64Decoder()], ['baseAtomsAfter', getU64Decoder()], ['quoteAtomsAfter', getU64Decoder()]]);
 }
 
 export function getDepositEventCodec(): FixedSizeCodec<DepositEventArgs, DepositEvent> {

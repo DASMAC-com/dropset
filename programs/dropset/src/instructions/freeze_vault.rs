@@ -49,11 +49,13 @@ impl FreezeVault {
         let vault = self.market.mutate_vault(vault_idx)?;
         require!(vault.is_occupied(), DropsetError::VaultEmpty);
         let leader = vault.leader;
+        let vault_seq = vault.seq.get();
         vault.frozen = true.into();
 
         Ok(FreezeVaultEvent {
             market: market_addr,
             sector_idx: vault_idx,
+            vault_seq,
             leader,
         })
     }

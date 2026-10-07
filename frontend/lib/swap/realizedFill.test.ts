@@ -44,6 +44,7 @@ const fillEventData = (taker: string = OWNER): string => {
     pad: new Uint8Array(7),
     sectorIdx: 0,
     levelIdx: 0,
+    vaultSeq: 1n,
     fillBase: 1_200n,
     fillQuote: 600n,
     fillPrice: 0x0001_0000,

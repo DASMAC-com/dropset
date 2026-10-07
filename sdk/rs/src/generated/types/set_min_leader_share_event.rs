@@ -18,5 +18,7 @@ pub struct SetMinLeaderShareEvent {
     )]
     pub market: Pubkey,
     pub sector_idx: u32,
+    /// The occupying vault's `seq`; see the module doc.
+    pub vault_seq: u64,
     pub min_leader_share: u32,
 }

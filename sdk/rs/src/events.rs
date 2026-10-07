@@ -603,6 +603,7 @@ mod tests {
             pad: [0; 7],
             sector_idx: 3,
             level_idx: 7,
+            vault_seq: 17,
             fill_base: 1_000,
             fill_quote: 2_000,
             fill_price: 42_000_000,

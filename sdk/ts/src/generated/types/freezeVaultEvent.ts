@@ -6,18 +6,22 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
+import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
-export type FreezeVaultEvent = { market: Address; sectorIdx: number; leader: Address;  };
+export type FreezeVaultEvent = { market: Address; sectorIdx: number; 
+/** The occupying vault's `seq`; see the module doc. */
+vaultSeq: bigint; leader: Address;  };
 
-export type FreezeVaultEventArgs = FreezeVaultEvent;
+export type FreezeVaultEventArgs = { market: Address; sectorIdx: number; 
+/** The occupying vault's `seq`; see the module doc. */
+vaultSeq: number | bigint; leader: Address;  };
 
 export function getFreezeVaultEventEncoder(): FixedSizeEncoder<FreezeVaultEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['leader', getAddressEncoder()]]);
+    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['leader', getAddressEncoder()]]);
 }
 
 export function getFreezeVaultEventDecoder(): FixedSizeDecoder<FreezeVaultEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['leader', getAddressDecoder()]]);
+    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['leader', getAddressDecoder()]]);
 }
 
 export function getFreezeVaultEventCodec(): FixedSizeCodec<FreezeVaultEventArgs, FreezeVaultEvent> {
