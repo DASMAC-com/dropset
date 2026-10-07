@@ -5,1040 +5,217 @@ disable-model-invocation: true
 user-invocable: true
 ---
 
-<!-- cspell:word ETIMEDOUT -->
-
 # `init-pr`
 
-Bootstrap the current worktree: fetch main, set up the
-branch, push a draft PR so CI caches start warming while
-work continues.
+Bootstrap the current worktree: fetch main, set up the branch, push a
+draft PR so CI caches start warming while work continues. This is the
+first skill an agent runs after `claude --worktree <tag>` starts.
 
-This is the first skill an agent should run after
-`claude --worktree <tag>` starts.
+Three cheap pre-checks come **first**, before anything that mutates the
+worktree: the model tier, the `gh` credential (with commit signing),
+and whether the issue already has a merged PR. Each catches a failure
+that is otherwise discovered late and expensively.
 
-Three cheap pre-checks come **first**, before anything that
-mutates the worktree — the model tier this session is running
-as, the `gh` credential, and whether the issue already has a
-merged PR. All three exist because the failure they catch is
-otherwise discovered late and expensively; the third catches a
-session that had nothing to build at all.
+The measured incidents behind the rules below live in
+[`history.md`](history.md) — one provenance line here, the figures
+there.
 
 ## Step 0: check which model this session is running as
 
-**Before any other work — before the helper call, before the
-rebase — check the model this session is running as.** The
-system prompt states it.
+Before any other work, read the model from the system prompt.
+Planning sessions run on a Fable/Mythos-tier model; implementation
+sessions (`init-pr` → run-to-completion → `review-pr`) run on the saved
+default. If this session is **Fable/Mythos-tier**, stop and ask via
+`AskUserQuestion`:
 
-The working split is: **planning** sessions run on a
-Fable/Mythos-tier model, **implementation** sessions
-(`init-pr` → run-to-completion → `review-pr`) run on the
-saved default. The failure mode is forgetting to switch back
-and burning Fable-tier credits on a 40-minute deterministic
-implementation run — which is exactly what this skill starts.
+1. *"Restart this session on the default model and re-run /init-pr"*
+   — recommended. Stop; the user restarts.
+1. *"Continue on this model anyway"* — proceed, and don't ask again.
 
-So if this session is a **Fable/Mythos-tier** model, **stop
-and ask** via `AskUserQuestion` before doing anything else,
-with the recommended option first:
+Gate on that **named tier list**, never on "is not Opus": a Haiku or
+Sonnet session is a deliberate cheap-run experiment. A skill cannot
+switch models, so detect-and-stop is the whole mechanism. `review-pr`
+gets no such guard — it runs inside the session this one already
+vetted.
 
-1. *"Restart this session on the default model and re-run
-   /init-pr"* — recommended.
-1. *"Continue on this model anyway"*.
-
-On the first, stop; the user restarts. On the second, proceed
-normally and don't ask again this session.
-
-Two things to get right:
-
-- **Gate on the Fable/Mythos tier specifically, not on "is
-  not Opus".** A Haiku or Sonnet session is a deliberate
-  cheap-run experiment and must not trip the guard. Keeping
-  the check to a named tier list also means that if the
-  pricing picture changes later, this is a one-line edit.
-- **Detect-and-stop is the whole mechanism.** A skill cannot
-  switch the session's model, so there is no hook and no tool
-  here — just the check and the question.
-
-`review-pr` deliberately gets **no** such guard: it runs
-inside the same implementation session, which is already on
-the right model by the time it is invoked.
-
-## Step 0b: pre-check the GitHub credential
-
-Still before anything that mutates the worktree, confirm the
-`gh` credential works:
+## Step 0b: pre-check the GitHub credential and signing
 
 ```sh
 gh auth status
 ```
 
-One call, free on the happy path, and it prevents a
-half-finished bootstrap. One run reached **step 7 of 12** —
-branch renamed, rebased, signed empty commit made — before
-`git push` died with "could not read Username", because the
-token had expired. Diagnosing it then took five extra calls
-— `git remote -v`, `gh auth status`, the credential helper
-config, `git ls-remote`, a retry — plus two `printenv` token
-probes, and the first evidence was actively misleading:
-**anonymous reads succeed on this repo**, so `git ls-remote`
-came back clean while pushes were dead.
+If it reports no valid credential, **stop** and tell the user to
+re-authenticate — don't rename, rebase, or commit first (anonymous
+reads succeed on this repo, so a dead token otherwise surfaces only at
+`git push`). Read the **scope set** too: step 9 needs `notifications`,
+which a re-auth silently drops; the one-time fix is
+`gh auth refresh -h github.com -s notifications`.
 
-Read the **scope set** from the same output while you are
-there. The step-9 notification-unsubscribe needs the
-`notifications` scope, and a re-auth silently drops it — that
-step is best-effort so it won't block, but naming the missing
-scope here beats discovering it at the end. The one-time
-operator fix:
+**Signing is read from the helper call below — its `signing` field —
+never by probing the ssh agent here.** Act on it before step 4's
+rename, the first thing that costs anything to undo:
 
-```sh
-gh auth refresh -h github.com -s notifications
-```
+| `signing`                 | Configuration                                                                      | Action                                                      |
+| ------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `external-signer`         | `gpg.format = ssh`, `gpg.ssh.program` is a non-`ssh-keygen` signer (`op-ssh-sign`) | Proceed — the signer reaches its own backend, not an agent. |
+| `external-signer-missing` | Same, but the signer resolves neither on disk nor on `PATH`                        | **Stop and ask**: reinstall it or fix `gpg.ssh.program`.    |
+| `agent-ok`                | `gpg.format = ssh`, agent-based (no program, or `ssh-keygen`), agent holds keys    | Proceed.                                                    |
+| `agent-locked`            | Same, agent empty or unreachable                                                   | **Stop and ask**: unlock the 1Password app.                 |
+| `gpg`                     | `gpg.format` unset or non-`ssh`                                                    | Proceed; nothing to check.                                  |
 
-If `gh auth status` reports no valid credential, **stop** and
-tell the user to re-authenticate — don't rename, rebase, or
-commit first.
+On any stop in this step, ask rather than retrying more than once or working
+around it; nothing is lost, since no commit was written yet.
 
-**Pre-check commit signing too, for the same reason.** Branch
-protection requires a verified signature on every commit, so a
-signing setup that cannot sign fails the bootstrap commit at
-step 6 — after the branch has been renamed and rebased. That is
-the same half-finished-bootstrap shape this step exists to
-prevent.
+Do not add an agent probe (`ssh-add -l`, `ssh-keygen -Y sign`) or a
+`--show-signature` read: with an external signer git never consults
+the agent, so those fail unconditionally and block every bootstrap
+with a diagnosis no operator can clear.
 
-**Read the verdict from the helper call below — do not probe the
-ssh agent here.** The branch/worktree helper reports it as a
-`signing` field (with the configured signer path as
-`signing_program`), so there is no separate command to run;
-act on it **before step 4's rename**, which is the first thing
-that costs anything to undo. The helper's own `--link-env`
-symlinks are idempotent and never clobber, so a stop after that
-call leaves nothing to clean up.
-
-**There are three signing configurations and only one of them
-routes through an ssh agent.** That is why the helper dispatches
-on config *before* deciding whether to probe at all — it still
-probes the agent, but only in the configuration where the agent
-is actually in the signing path. `gpg.format` selects the
-family; within the ssh family, `gpg.ssh.program` discriminates
-external-signer from agent-based:
-
-| `signing`                 | Configuration                                                                                                     | What to do                                                                                                |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `external-signer`         | `gpg.format = ssh` **and** a `gpg.ssh.program` that is anything but `ssh-keygen` (e.g. 1Password's `op-ssh-sign`) | Proceed. Such a signer reaches its own backend over its own IPC, so the agent is not in the signing path. |
-| `external-signer-missing` | Same, but the signer resolves neither on disk nor on `PATH`                                                       | **Stop and ask** — moved, uninstalled, or a stale setting.                                                |
-| `agent-ok`                | `gpg.format = ssh`, no signer program (or an agent-delegating one, e.g. `ssh-keygen`), agent holds identities     | Proceed.                                                                                                  |
-| `agent-locked`            | Same, agent holds nothing or is unreachable                                                                       | **Stop and ask** — the operator unlocks the app.                                                          |
-| `gpg`                     | `gpg.format` unset (git defaults to `openpgp`) or any non-`ssh` value                                             | Proceed; this check has nothing to say about a GPG key.                                                   |
-
-**Why not just probe the agent, which is what this step used to
-do.** For **agent-based** ssh signing the agent listing is the
-right probe, and the reasoning is sound: reading
-`git config --get user.signingkey` reports only that a key is
-*configured*, which is exactly the state a locked agent is in,
-so it passes silently in the one case worth catching. Measured
-first-hand on a locked 1Password agent.
-
-But that argument holds *only* for agent-based signing, and
-stating it without its bound is what made this step wrong.
-**With a signer that has its own backend, git never consults
-`SSH_AUTH_SOCK` or any ssh agent** — the signer reaches that
-backend over its own IPC — so `ssh-add -l` fails
-unconditionally, and an agent-first pre-check hard-stops **every
-bootstrap on that machine** with a diagnosis no operator action
-can clear.
-
-Measured four times on one machine, each burning an
-operator round trip; the fourth was the session that fixed it,
-whose own bootstrap commit signed successfully in the state the
-probe had just called broken.
-
-Note the bound on *that* claim in turn, since overstating it is
-the same mistake one level down: it is a property of that kind
-of signer, not of every value `gpg.ssh.program` can hold.
-`ssh-keygen` — git's own default for the setting — signs
-*through* the agent, so a machine configured with it is
-agent-based no matter how the config reads. The helper knows
-this and routes it to the agent branch.
-
-**Two things that look like better probes and are not**, both
-measured: a second agent-side probe (`ssh-keygen -Y sign` under
-the ambient environment) fails for the same reason and only adds
-confidence to the wrong answer — the key really does live in
-1Password's own agent, which git is not using; and a
-`--show-signature` read of an existing commit demands an
-`allowedSignersFile` and errors when local *verification* is
-unconfigured, which says nothing about the ability to *sign*.
-The only forms that hold are this config gate and an actual
-signed commit. So if you are tempted to add a probe here, don't:
-the dispatch above is the fix.
-
-When one of the two stopping verdicts fires, the fix is an
-operator one either way — but they are **different** fixes, so
-name the right one:
-
-- **`agent-locked`** — unlock the 1Password desktop app, which
-  restores its SSH agent.
-- **`external-signer-missing`** — the configured signer resolves
-  neither on disk nor on `PATH`, so unlocking anything will not
-  help: the app has moved or been uninstalled, or
-  `gpg.ssh.program` points somewhere stale. Reinstall it, or
-  update the setting to where the signer now lives.
-
-Either way **stop and ask** rather than retrying more than once
-or working around it. Nothing is
-lost: the rename and rebase are idempotent and no commit was
-written. For the record, the failure it spares you is a step-6
-commit dying with `failed to fill whole buffer`, then
-`fatal: failed to write commit object`.
-
-Keep the standing **"a signing failure is an unpushed-state
-alarm"** rule as well; this adds a pre-check, it does not
-replace the alarm. State the gate's bound honestly, because the
-two ssh verdicts do **not** prove the same thing:
-
-- **`agent-ok` rests on a live probe**, so it does say the agent
-  can sign right now.
-- **`external-signer` rests only on the signer program
-  resolving.** A locked 1Password app leaves `op-ssh-sign`
-  exactly where it was, so this verdict proves the signing path
-  is *wired*, never that the backend is *unlocked* — and on this
-  repo's own machines that is the common configuration. A
-  locked app will still fail at step 6.
-
-So the gate rules out a misconfigured signing path, and a locked
-agent only in the agent-based case. It does not validate
-`user.signingkey`, and it cannot know whether a backend will
-still be unlocked later. Both an ssh agent and
-a signer's app can lock
-*during* a long unattended wait — which is why `review-pr` gets
-its assurance from an actual **checkpoint commit** before its
-fan-out and its CI wait, rather than from any probe. A signed
-commit is the only check that proves signing works, which is
-also why step 6 is where a real failure surfaces.
+State the gate's bound honestly: `agent-ok` rests on a live probe;
+`external-signer` proves only that the signing path is **wired**, not
+that the backend is unlocked. A locked app still fails at step 6 (as
+`failed to fill whole buffer`), and only a signed commit proves
+signing works. The standing rule holds: **a signing failure is an
+unpushed-state alarm.**
 
 ## Step 0c: pre-check that the issue is not already merged
-
-Still before anything that mutates the worktree, confirm the
-issue does not already have a **merged** PR against it:
 
 ```sh
 gh pr list --repo DASMAC-com/dropset --search "<ENG-###>" \
   --state all --json number,title,state,mergedAt
 ```
 
-Read the result:
+- **A merged PR is a STOP.** Touch nothing. Say "ENG-### already
+  merged as PR #N; the issue looks mis-stated or mis-queued" and ask
+  via `AskUserQuestion` whether to stand down or proceed with genuine
+  follow-up scope. Done means operator-ratified, not merged (per
+  `docs/conventions/linear-automation.md`), so a merged issue sitting
+  in Backlog is a contradiction, not an instruction.
+- **A closed-not-merged PR is a warning** — name it and carry on.
+- **None, or only open ones**, is normal; say nothing.
 
-- **A merged PR is a STOP.** Do not rename, rebase, commit or
-  map anything. Surface it in one sentence — "ENG-### already
-  merged as PR #N; the issue looks mis-stated or mis-queued" —
-  and ask via `AskUserQuestion` whether to stand down or to
-  proceed anyway because there is genuinely follow-up scope.
-  The issue being pullable is not evidence that work remains:
-  per `docs/conventions/linear-automation.md`, **Done means
-  operator-ratified, not merged**, so a merged issue sitting in
-  Backlog is a contradiction, not an instruction.
-- **A closed-not-merged PR is a WARNING, not a stop.** A
-  legitimate retry exists — an abandoned attempt, a superseded
-  approach — so name it and carry on.
-- **No PRs, or only open ones, is the normal case.** Say
-  nothing and proceed. (An open PR on this branch is what a
-  resumed session looks like.)
-
-**Why this is a pre-check and not a step-12 concern.** Measured
-(2026-09-03, the ENG-1060 session): the issue was implemented
-and merged as PR #381 and landed In Review per convention, then
-moved **backwards to Backlog fourteen minutes later** — In
-Progress 09-01 22:45, In Review 09-02 00:14, Backlog 09-02
-00:28. That made merged scope look pullable. A worker session
-launched against it a day later, bootstrapped a worktree, hit
-the signing pre-check, consumed an operator round trip, and
-only then discovered there was nothing to build.
-
-**The root cause of the backwards move is unknown** — an
-automation write-back, an integration setting, or a stray
-click; the state history alone cannot distinguish them, and the
-convention was working as stated everywhere else that day. The
-guard is worth having regardless of cause, because it catches
-the whole class: any path that re-queues completed scope,
-including a human re-opening the wrong issue.
-
-**Why `gh` here rather than the GitHub MCP.** This is a
-field-selected read of at most a few rows, and the MCP search
-getter returns whole PR objects — the same
-orders-of-magnitude argument `docs/conventions/github-mcp.md`
-records for `gh api --jq`. It also reuses an existing
-`Bash(gh pr list:*)` allow-rule, so it costs no new prompt.
+`gh` rather than the MCP because this is a field-selected read of a
+few rows and reuses the existing `Bash(gh pr list:*)` rule.
 
 ## Input
 
-Accepts an optional Linear tag like `eng-123`.
-If not provided, infer it from the worktree
-directory name (the last component of the current
-working directory). If the inferred name doesn't
-match `eng-###` (case-insensitive), stop and ask.
+An optional Linear tag like `eng-123`; otherwise infer it from the
+worktree directory name. If it doesn't match `eng-###`
+(case-insensitive), stop and ask.
 
-**When invoked with no other context** — just the
-tag (or nothing), and no task instructions in the
-session — treat the linked Linear issue as the full
-specification for this worktree. After
-bootstrapping, surface that issue's description and
-checklist as the plan of work (final step) so the
-session can proceed straight into the task without
-asking what to build. Instructions the user *did*
-give take precedence over the issue.
+**With no other context** — just the tag, no task instructions — the
+linked Linear issue is the full specification: surface its
+description and checklist as the plan of work (step 12) and proceed
+straight into the task. Instructions the user *did* give win.
 
 ## Decision points use `AskUserQuestion`
 
-`init-pr` brackets the whole worktree session: it
-bootstraps, surfaces the task, and the session then
-proceeds straight into the work. Wherever that flow
-needs a decision from the user — a design choice, an
-open question, a branching point — ask through the
-**`AskUserQuestion`** TUI selector, not a free-text
-prompt, so the human picks from the little terminal
-pop-up instead of typing a reply. Offer concrete
-options, and where one is the sensible default put it
-**first** and label it "(Recommended)". The closing
-`/review-pr` handoff (final step) is one such decision
-point; the same applies to every other one the session
-surfaces. This mirrors how `review-pr` already prompts
-at its merge-queue handoff — the same TUI-selector
-pattern, applied one stage earlier at the
-init-pr → review-pr boundary.
+Every decision the session needs — a design choice, an open question,
+the closing `/review-pr` handoff — goes through the `AskUserQuestion`
+selector, never a free-text prompt, with concrete options and the
+sensible default **first**, labeled "(Recommended)". This mirrors
+`review-pr`'s merge-queue handoff one stage earlier.
 
-## Surveying code: prefer the `Explore` agent — and scope it
+## The implement phase: context discipline
 
-When the surfaced task is greenfield and the work begins
-with **surveying implementations** — reading one or more
-repos (external *or* in-repo) to learn a pattern before
-building — spawn the **`Explore`** agent for that survey,
-**not** a `general-purpose` agent, and pass it an explicit
-file/dir **path allowlist** scoped to what's worth reading.
+The context economy `review-pr` enforces applies equally to the
+implement phase this skill hands into — it slips here because no skill
+is driving. The rules live in `docs/conventions/context-economy.md` →
+"The levers" and bind the **main loop**, not only sub-agents. Read
+them there; what follows is only what is specific to this phase or not
+stated there.
 
-`Explore` reads **excerpts** (it locates and slice-reads)
-rather than ingesting whole files, so it caps the dominant
-cost of a research phase: a `general-purpose` survey of
-reference repos has pulled **multi-MB of external source
-whole-file** into context (e.g. an entire reference repo at
-2–2.5M input each), which is then replayed every later turn
-(per `CLAUDE.md` → "Context economy"). Whole-repo ingestion
-is somewhat inherent to "survey N references," but `Explore`
-plus a scoped allowlist is the lever that bounds it. Give
-the agent the canonical sub-agent brief and name the
-specific paths it should look at, rather than turning it
-loose on a whole tree.
+The three rules specific to `init-pr`:
 
-**Compose that brief with the committed tool, not by reading
-the convention doc.** `review-pr` already does this and the
-implement phase was left to hand-quote:
+1. **Confirm a disposition another session owns before mapping
+   anything.** The tell is a spec whose headline item is phrased as a
+   settled decision you did not watch being made ("drop the X tier",
+   "now that Y is retired"). A filed issue is a snapshot of its
+   discovery commit; one message to the owning session costs a
+   fraction of one map, and a reversed premise invalidates the map.
 
-```sh
-python3 .claude/tools/lens_preamble.py --out <scratchpad>/brief.md \
-  --no-facts
-```
+1. **Survey with a scoped `Explore` agent, or not at all.** For a
+   survey of reference code (external or in-repo), spawn `Explore`,
+   not `general-purpose`, with an explicit **named-path allowlist**,
+   caps in **turns and tool calls** (e.g. "≤ 8 turns, ≤ 12 tool
+   calls, then report"), and a compact file → responsibility → key
+   symbols map as the deliverable. A ≤ ~3-file question is cheaper
+   Read directly. Compose the brief with the committed tool, never by
+   reading the convention doc to quote it:
 
-**`--no-facts` is not optional here.** The tool **refuses** a run with
-neither `--fact` nor `--facts-file` nor `--no-facts`, exiting 2 — and a
-research fan-out in the implement phase usually has no facts block to
-pass, so the bare form fails at exactly the moment you are spawning.
-If you *do* hold verified facts, pass them instead: they are worth far
-more than the flag.
+   ```sh
+   python3 .claude/tools/lens_preamble.py --out <scratchpad>/brief.md \
+     --no-facts
+   ```
 
-It assembles the standing brief from
-`docs/conventions/sub-agent-brief.md` so a session never reads
-that file in order to quote it — which is the whole point, since
-the file is prose a caller would otherwise buy in full just to
-paste it. Hand the agent the path.
+   `--no-facts` is required when you hold no verified facts (the tool
+   exits 2 with none of `--fact`, `--facts-file`, `--no-facts`); pass
+   facts instead when you have them.
 
-**And cap a research fan-out in TURNS and TOOL CALLS, not only
-in report length.** A length cap bounds what comes back and
-says nothing about what the agent spends getting there; the
-turn and tool-call caps are what actually bound a survey. State
-both (e.g. "≤ 8 turns, ≤ 12 tool calls, then report") — the same
-pair `review-pr`'s lens briefs use.
+1. **Ask a live planning session before reading the Planning
+   document.** `ListAgents` is the liveness check. The document getter
+   returns the whole, growing body with no slice accessor, and a stale
+   line reads exactly like a current one; a planning session answers
+   with the current ruling. Read the document only when none is live.
 
-**In-repo / in-workspace surveys need the same scoping —
-they are not exempt.** An open-ended "map how the TUI + the
-bots work" over this workspace was the single top token
-sink of three consecutive sessions, each time answering a
-question that ultimately needed only ~3–6 named modules the
-main loop then Read anyway (duplicating the survey). So when
-the survey is an in-repo map, don't hand the agent a broad
-mandate: give it an **explicit named-path file allowlist**
-(the specific modules you expect to matter) **and a turn
-budget** (e.g. "≤ 8 turns, then report"), and ask for a
-compact map — file → responsibility → the few symbols that
-matter — not a narration of everything it read. And weigh
-whether to spawn an agent at all: a **≤ ~3-file question is
-cheaper Read directly** from the main loop than surveyed,
-since a sub-agent survey of it just gets re-Read afterward.
+The phase-specific reminders not stated in the convention:
 
-## Implementing the task: keep context discipline on
+- **Reading whole is licensed by any ONE of four conditions** — you
+  will both edit the file and brief agents on it; a planned
+  multi-region read covering most of it; an exemplar you will imitate
+  N times; or proving an absence that is itself the answer. Absent
+  all four, slice. The test is **reuse, not size**: name who else
+  uses the content. If a search already named the line, slice from
+  it. Decide the license **before the first slice** when you intend
+  to rewrite a file.
 
-The same context economy `review-pr` enforces applies during
-the **implement** phase this skill hands off into — it slips
-here precisely because no skill is driving. These habits, per
-`CLAUDE.md` → "Context economy", apply to the **main loop**,
-not only to the sub-agents you brief:
+- **Section maps match declarations only.** Anchor at column zero;
+  no comment-marker alternation (`^#`, `^///`) in a source map — on a
+  prose file `^#` *is* the declaration, and
+  `read_result.py --headings <file>` does it outright. On a
+  records-shaped data file, match the one identifying field.
+  `search_source.py` refuses the comment-marker form; a refusal is an
+  unanswered question, never zero hits.
 
-- **When the task's headline item rests on a disposition
-  ANOTHER session owns, confirm it with one message before
-  mapping anything.** This is first because it invalidates
-  work rather than merely costing tokens: one session spent
-  ≈3.5k mapping every reference for a tier deletion, and a
-  planning ruling minutes later **reversed the premise** — the
-  query shapes were right, the premise was not, and the whole
-  map was reverted.
-
-  The tell is a spec whose central item is phrased as a
-  settled decision you did not watch being made: "drop the X
-  tier", "now that Y is retired", "since Z was ratified". A
-  filed issue is a **snapshot of its discovery commit**, and a
-  disposition another session owns can move under it. One
-  message costs a fraction of one map.
-
-  This is the same discipline as verifying an issue's
-  `file:line` citations against `HEAD` (see the surfaced-task
-  step below) — applied to its *premises* rather than its
-  coordinates.
-
-- **Slice-read large files.** To find an append point,
-  confirm an import, or edit one function in a big source
-  (a 600–1000-line module whose `#[cfg(test)]` block is half
-  the file), **Grep to the region** then `Read` with
-  `offset`/`limit` — don't pull the whole file.
-
-- **Map the structure before a big Read — scoped to the
-  file(s) you are about to read.** One Grep for
-  the language's **top-level declaration** shape
-  (`^pub enum|^pub struct|^impl`, say) gives you the section
-  map, and the map tells you which slice you actually want. A
-  dispatcher whole-file Read (≈4.4k) to find **one** append
-  point is the recurring shape this prevents.
-
-  **Trigger it on the QUESTION, not the line count.** This
-  used to say "any Read over ~300 lines", which makes it a
-  judgement call exactly at the boundary and silently exempts
-  the files most often read to *learn a convention*. Measured:
-  a **310-line** module — one line past that threshold, and
-  reading as a small file — was read whole at **≈3.4k**, its
-  session's single largest result of any kind, when three
-  regions totalling ~60 lines were what was wanted and no
-  whole-read condition applied. The same session sliced
-  correctly whenever the purpose *was* editing, which is what
-  identifies the culprit: the size trigger is not what failed,
-  the purpose framing is. **Reading to learn — types,
-  conventions, an exemplar you will not imitate N times — is
-  always a slice, at any size**; keep ~300 lines as a
-  secondary backstop for edit-shaped reads.
-
-  That enumeration is load-bearing, not decoration. Without
-  it "reading to learn is always a slice" reads as forbidding
-  the fourth whole-read condition below, which licenses a
-  whole read precisely in order to *learn* that something is
-  absent. The two compose only because "to learn" here means
-  those three cases, and proving an absence is not one of
-  them.
-
-  **Anchor at column zero; never add a leading-space
-  alternative.** This bullet used to offer `^fn |^impl |^pub`,
-  and that example was itself the bug — a bare `^pub` matches
-  `pub fn` at top level only by luck of Rust formatting, and
-  any `^ *fn` variant turns the map into a dump of the
-  `#[cfg(test)]` module, routinely more than half a Rust file.
-  Measured: a correctly-`--glob`-scoped map over one ~2140-line
-  file returned **97 matches at ≈1.9k**, about 80 of them
-  test-module functions, to choose regions of a ~17-line type
-  surface. The scope was right and the width was wrong, which
-  is why `--glob` did not save it.
-
-  **Pass `--glob <the file>`.** This instruction used to name
-  a pattern and no scope, and aimed at the whole source set it
-  *becomes* the sink: an `^export|^function|^const` probe
-  returned 747 matches across 75 files and was one session's
-  single largest result (≈4.5k) — fired to map the structure of
-  two files it had already identified, and answering nothing
-  the run used. The map you want is of the file you are
-  opening, not of the repo.
-
-  **Don't put a comment-line alternation in a section map.**
-  Adding `^#` / `^##` to the pattern defeats the map's own
-  purpose in a comment-heavy file: a section-map grep over the
-  563-line `Makefile` used
-  `^[a-zA-Z0-9_-]*:|^# |^##` and so returned every comment
-  line in a file that is mostly prose comments — **≈5.4k** to
-  answer "where are the rules", and that session's single
-  largest result. The `Makefile` is the case in point; any
-  file whose comments outweigh its declarations behaves the
-  same. Match the **declaration** shape only (for a Makefile,
-  `^[a-zA-Z0-9_-]+:`), and if you genuinely want the prose
-  headings, ask for them as a separate narrow query.
-
-  **In Rust, `^///` is prose — never put it in a section
-  map.** This is the branch that slips past the rule above,
-  because a doc comment is *declaration-adjacent*: it sits
-  immediately above the item it documents, so it reads as part
-  of the declaration rather than as content. It is content.
-  Measured: mapping `db-schema/tests/schema_fence.rs` with
-  `^enum |^fn |^async fn |^#\[|^const |^/// |^}` returned
-  **≈1.8k**, the fifth-largest single result of that run, to
-  answer "where are the declarations" — because that file is
-  roughly half doc comment by design, the repo's house style
-  there being long rationale blocks. A Rust section map wants
-  `^fn |^pub fn |^impl |^enum |^struct |^const` and nothing
-  else.
-
-  The one-line generalization worth carrying: **a marker that
-  *introduces* a declaration is not the declaration**, and only
-  the declaration belongs in a section map.
-
-  **`search_source.py` now REFUSES both of those patterns**, so
-  this pair is enforced rather than merely advised — a comment
-  marker (`///`, `//!`, `//`, `%`, `;`, or a bare `#`) in an
-  **anchored** branch of an **alternation** exits non-zero and
-  names the narrower pattern to use instead. Three things follow.
-  A refusal is an **unanswered question, not zero hits**: re-ask
-  it with the declaration shape rather than reading the exit code
-  as "no matches". A **single-branch** pattern is never refused —
-  one `^///` is a deliberate search for doc-comment lines, and
-  only an alternation is a section map. And two shapes are
-  allowed on purpose: `^#[` (a Rust attribute *is* declaration
-  shape), and `^#` on a **prose** sweep, where a markdown heading
-  is the declaration — which the tool infers from `--all-text`,
-  a prose `--ext`, or a `--glob` naming a prose file, so scope
-  the sweep rather than expecting it to guess. If the comment
-  marker genuinely
-  *is* the target — auditing doc comments themselves, say —
-  `--force-comments` says so explicitly.
-
-  **On a prose file, the declaration shape IS the heading
-  marker — `^#`, and nothing else.** The rule above reads as
-  being about source, so a doc gets mapped with an alternation
-  that also matches its content: one map over a 1,275-line doc
-  matched headings **and every table row**, returning ≈2.6k for
-  a where-question that two headings answered — the widest
-  branch bought the file's entire tabular content.
-  `read_result.py --headings <file>` already does exactly the
-  right thing on any markdown file, so prefer it outright.
-
-  **The general form, which is the part to carry away: ask
-  what the widest branch of your alternation matches on its
-  own.** If any branch would match ordinary content rather
-  than a declaration, the map is no longer smaller than the
-  file, and the map was the whole point.
-
-  **On a RECORDS-shaped data file, match one field — even
-  when every branch is a legitimate declaration.** The rule
-  above catches a branch matching ordinary *content*; this is
-  the case where none of them do and the map is still several
-  times too big, because in a file of like objects each branch
-  fires **once per record** rather than once per section. The
-  branches do not partition the file, they multiply it.
-  Measured: a 394-line JSON array of stablecoins mapped with
-  `'"symbol"\|"mint"\|"name"'` returned ~88 lines at **≈1.0k**
-  — that session's largest Bash result — where `'"symbol"'`
-  alone returns ~25 and answers the same navigational
-  question; the mint and name values were never used from the
-  map and both came from the slice that followed. Pick the
-  single field that **identifies** a record and take the rest
-  from the slice.
-
-- **If an earlier call this session already named the file,
-  pass `--glob` on it.** Scope and output width are separate
-  axes, and this one has a concrete trigger: you already know
-  where it is. Two of one session's three largest Bash results
-  were unscoped sweeps fired when the target was already
-  known — ≈3.7k to settle a *one-bit* question, and ≈1.8k
-  sweeping a whole crate for one config field a section map
-  had already located. Scoped to one file, the same tool cost
-  ≈200–500 tokens per call in that same run.
-
-  **And when you know where a symbol is DEFINED and are
-  sweeping for its consumers, scope the sweep to the
-  consumers.** The definition is the one match you are
-  guaranteed not to need, and it is usually still in context
-  from the read that raised the question — so a `--context`
-  sweep re-buys it. Measured: a session that had just read a
-  constant's definition swept the identifier with
-  `--context 12`, its largest `search_source` call at ≈1.5k,
-  and roughly half the payload was the definition site read
-  moments earlier; the question was solely how the caller
-  passes the value. This is a third axis rather than the scope
-  rule again — that sweep was *already* narrow (two files,
-  both genuine hits) and the tool's advisory correctly did not
-  fire, because what was wasteful was one **specific known
-  file**, which no density heuristic can know is redundant.
-
-- **Before the third slice of one file, sum what you have
-  already read.** Past roughly half the file, take one bounded
-  read over the remaining regions instead of slicing again.
-  This is the accumulating case, and it needs its own trigger
-  because it looks compliant at every step: one session mapped
-  a ~650-line `Makefile` correctly and then sliced it **five**
-  times off that map — 225 lines, 98, 50, 26, 14 — about 413
-  lines, the first slice alone its largest result at ≈3.3k.
-  Neither adjacent rule fires, since the regions were
-  discovered incrementally rather than planned, and the map
-  was followed by slices rather than a whole read. The saving
-  is modest in raw tokens; the stronger case is fewer round
-  trips.
-
-  **Count the ACT, not the tool.** This rule is phrased around
-  `Read` with `offset`/`limit`, so a session slicing some other
-  way reads it as inapplicable — and its purpose is bounding
-  the accumulation, not the mechanism. A shell slice costs the
-  same. The tally counts every mechanism together:
-  `Read offset/limit`, `sed -n 'A,Bp'`, `head`,
-  `read_result.py --slice`, `show_at_ref.py`.
-
-  A `cat -n` of a file belongs on that list as a **whole-file
-  read**, subject to the four conditions below — it does not
-  look like one at the call site, which is how a 99-line file
-  got bought whole for a one-region edit.
-
-  **The tally is per file, per SESSION, not per burst** — a
-  file revisited in a later phase carries its earlier slices
-  forward. **And a formatter autofix invalidates offsets but
-  does NOT reset the budget**; counting "since the last format"
-  makes every autofix a laundering step.
-
-  The case that settles it in advance: **when you already
-  intend to rewrite a file, decide the whole-read license
-  before the first slice.** A rewrite is a planned multi-region
-  read by definition, so reaching that conclusion after paying
-  for slices means paying for both.
-
-- **If you already ran the map, slice from it.** A map
-  followed by a whole-file Read means the map was wasted —
-  you paid for the section list and then bought the file
-  anyway. One session ran the structure grep over both router
-  modules and then read both whole (**≈8.6k, 62% of all its
-  Read cost**); one of those reads was sanctioned (that file
-  was both edited and excerpted into two lens briefs), but the
-  router *test* module's ≈4.2k was not — never edited, never
-  briefed, nothing amortized it. Four regions were needed and
-  the map had already named all four.
-
-  This is the **operational trigger** the whole-read rule
-  below lacks. "Whole only when you will both edit and brief"
-  is necessary and did not fire here; "you have a map, so
-  slice" would have.
-
-- **This covers a sibling `SKILL.md` or convention doc too —
-  those are what a mid-session handoff actually reaches
-  for.** The rule reads as being about large *source* files,
-  which is why it gets skipped for skill docs, and several of
-  those run past 1800 lines. On one two-line copy PR the two
-  largest results of the entire run were `review-pr/SKILL.md`
-  (≈1.6k, sliced) and `pr-title-description/SKILL.md` (≈1.3k,
-  read whole) — together ~93% of its Read cost, when all that
-  was needed from the latter was the title/description format
-  in its steps 3–4. Grep the doc's headings (`^#`), then
-  slice.
-
-- **A planned multi-region read is ONE bounded read, not
-  several.** When you already know you need three parts of a
-  file, don't slice-read it three times — one run read
-  `swap.rs` across four separate slices, together **more** than
-  a single whole-file read would have cost. Slicing is only
-  cheaper when you are reading less.
-
-- **Reading 3+ files just to orient is the trigger, not an
-  exception.** Whole-file Reads at *survey* time were the
-  single largest sink of one session (top five, ≈15k) — the
-  crate was small, so no per-file budget felt warranted, yet
-  `model.rs` is ~40% `#[cfg(test)]` and only two signatures
-  were needed. Grep to the symbol, then `Read` the slice.
-
-- **Reading whole is licensed by any ONE of four
-  conditions** — they are alternatives, not a conjunction, and
-  the full statement with its evidence is in
-  `docs/conventions/context-economy.md` → "The levers":
-
-  1. you will **both** edit the file and brief agents on it
-     (one session's five whole reads, ≈23k, went inline into
-     all five lens briefs — paid once, amortized five times);
-  1. you have planned a **multi-region** read whose regions add
-     up to most of the file;
-  1. the file is an **exemplar you are about to imitate N
-     times**, so the read amortizes across the N outputs;
-  1. you are **proving an ABSENCE and the absence is the
-     answer** — a negative claim cannot be established from a
-     slice, which shows a thing missing from the lines you
-     read and never from the file. Only when the absence *is*
-     what you will report, and only for a bounded file; say in
-     the report that the read was for a negative.
-
-  Absent all four, slice.
-
-  **The test is REUSE, not size** — which is why it gets
-  skipped: stated as a list of conditions it reads as being
-  about *large* files, so a small one passes an imagined size
-  test and the license is never run. A 192-line whole read for
-  a two-line edit is proportionally worse than a 600-line read
-  five lens briefs reuse. Measured beside two correctly-
-  licensed reads in one session: a 192-line module read whole
-  (≈2.3k) for one call site plus one import, never briefed to
-  any agent — while a sweep minutes earlier had already named
-  the exact line. So **name who else will use this content**
-  before reading whole; if the answer is "only this edit",
-  slice. And the operational trigger the conditions lack: **if
-  a search has already named the line you are about to edit,
-  slice from that line.** That sweep was a section map, and it
-  counts as one even though it came from `search_source.py`
-  rather than a deliberate structure grep.
-
-- **Route any repeated verbose-on-success command through the
-  quiet runner** — and read that **by shape, not by name.**
-  *Any* long-running build, lint, deploy, or acceptance target
-  goes through `python3 .claude/tools/run_quiet.py -- <cmd>`
-  (or runs backgrounded), **during implementation**, not only
-  during `review-pr`.
-
-  Naming runners individually is what keeps letting one slip.
-  The list once said cargo and make: one session then ran the
-  cspell hook unwrapped and landed its truncated per-file
-  cascade in context (**≈2.5k**) because `pre-commit` was not
-  on the list, and another paid **3.5k across 7 bare
-  invocations** of a Docker collector-stack target because it
-  was an *acceptance check* rather than a named command. A
-  third ran the frontend test script 12 times and a frontend
-  `exec` 9 times unwrapped, ≈5.2k for output that is one line
-  when it passes.
-
-  So the shapes that qualify include, and are not limited to,
-  `cargo`, `make`, `pnpm`, `docker`, `pre-commit run`, and
-  `python3 .claude/tools/lint_paths.py`. If you are about to
-  run something whose success output is longer than its
-  verdict, wrap it.
-
-  **A DRY RUN or expansion is in this class too, and reads as
-  if it is not.** Naming runners is what lets it slip: a reader
-  checking `make -n` against the list sees `make`, then reasons
-  that `-n` exempts it. It does not. The class by shape is **any
-  command whose output is a program's own text rather than its
-  result** — `make -n`, `make -p`, `git config --list`,
-  `docker compose config` — and the follow-up is a grep of the
-  captured log for the one line in question, never a read of
-  the result.
-
-  The reason it sticks: you are asking a *targeted* question of
-  a *whole-program* dump, so the ratio of wanted to bought
-  lines is worst exactly when the target is most recursive.
-  Measured: `make -n demo` run four times, the two unwrapped
-  calls landing the whole expanded recipe cascade — one the
-  session's 6th-largest single result at ≈972 tokens, ≈1.1k
-  across the shape — to learn whether one recipe line still
-  carried a teardown. Asked later through the wrapper plus a
-  two-pattern grep of the log, the same question cost ~50
-  tokens.
-
-  Two things specific to the dry-run case, both counterintuitive:
-  `make -n` still **executes** `$(MAKE)` sub-make lines, so it is
-  not side-effect-free either — that run's first `make -n demo`
-  really did tear down the keyless collectors. And the cascade
-  scales with the target's recursion depth rather than with the
-  question, so the cheapest-looking target produced the fattest
-  result.
-
-  **Nothing prints until the command exits**, so do not poll
-  the log of a *backgrounded* run — one session made seven such
-  `tail` calls, all empty. Wait for the completion
-  notification.
-
-- **Verifying a UI change in a browser: assert
-  programmatically, and screenshot CLIPPED.** This belongs here
-  because browser verification happens in the implement phase,
-  where no skill is driving. A screenshot read back is a
-  top-tier context sink: five full-viewport PNGs were **91% of
-  one session's entire Read cost** (≈105k of ≈115k) and its top
-  five largest results, while two **clipped** captures in the
-  same session cost ≈1.4k each and answered the question
-  completely.
-
-  So: measure the element's bounding box and assert the
-  geometry — an intersection check is a few hundred bytes and
-  is *stronger* evidence than an image because it is exact —
-  then pass that rect to puppeteer's `clip`. Reserve a
-  full-viewport capture for when the composition itself is the
-  question, and take at most one. Not "don't screenshot": the
-  full frames in that session were shown to the operator and
-  drove real decisions. See
-  `docs/conventions/context-economy.md` → "The levers".
-
-  **Capture at `deviceScaleFactor: 1`.** The rule above bounds
-  the capture's *extent* and says nothing about its
-  **resolution**, which reads as complete — clipping is the
-  salient waste, so it gets followed while the scale factor goes
-  unexamined. A 2x capture is four times the bytes for a
-  judgement 1x already answers. Reserve 2x for a question
-  genuinely about rendering fidelity — hinting, sub-pixel
-  spacing, a hairline border — and say so when you take one.
-
-  **The one case where the image IS the cheaper evidence: a
-  pseudo-state style.** Verifying `:hover` / `:focus` /
-  `:active`, do **not** read it back with `getComputedStyle`,
-  page-side or over CDP. A forced pseudo-state does not surface
-  in any computed-style read, and `page.hover()` does not
-  produce `:hover` in headless at all — both return the
-  **resting** value with no error, which looks exactly like a
-  broken CSS rule. So the cheap assertion is not just weaker
-  here, it actively misleads. Force the state with CDP
-  `CSS.forcePseudoState` and **compare rendered captures**, or
-  read `CSS.getMatchedStylesForNode`. Assert-don't-screenshot is
-  right for layout and wrong for state styling.
-
-  **Otherwise, assert on the DOM rather than on an image.**
-  Reading a rendered link's `href` and counting annotation
-  markers settled three verifications exactly, for a few hundred
-  tokens.
-
-- **Before `replace_all`, check whether the replacement
-  CONTAINS the search string.** If it does, the call is not
-  idempotent: sites already carrying the new name get rewritten
-  again, so a call that looks like a safe mechanical rename
-  corrupts the sites that were already correct. Either scope
-  the edit to the specific occurrences, or rename through a
-  token that is not a substring of its replacement.
-
-  The general form: **`replace_all` is safe only when search
-  and replacement are disjoint** — which makes the trap
-  strongest for the commonest kind of rename, widening an
-  identifier by prefix or suffix.
-
-  Measured: a `replace_all` of `MAX_ATTEMPTS` →
-  `REALIZED_FILL_MAX_ATTEMPTS` rewrote the substring inside an
-  import line that had *already* been written by hand,
-  producing `REALIZED_FILL_REALIZED_FILL_MAX_ATTEMPTS`. It
-  surfaced as **14 failing tests** with
-  `ReferenceError: REALIZED_FILL_MAX_ATTEMPTS is not defined` —
-  a runtime error naming the **correct** symbol, which reads as
-  "the import is missing" rather than "the import is mangled",
-  so the first instinct is to open the wrong file. Cost was a
-  full frontend test run, a slice-read to find the mangling, a
-  corrective edit and a second test run.
-
-- **Verify at checkpoints, not after every edit.** Those 12
-  test runs were a fix-verify loop after single-file edits,
-  which `review-pr` already forbids; it slipped because that
-  rule is written in terms of the Rust suites, so a frontend
-  test script read as out of scope. It is not — batch a logical
-  change, then verify once, whatever the runner is.
-
-- **Lint the changed set, not the whole tree.** After an edit,
-  the post-edit check is one bare command:
+- **Lint the changed set** with one bare command; full `make lint`
+  only before committing and at the end:
 
   ```sh
   python3 .claude/tools/run_quiet.py -- \
     python3 .claude/tools/lint_paths.py --changed
   ```
 
-  It resolves this branch's own files (merge-base with
-  `origin/main`, plus untracked-not-ignored paths) and runs the
-  hooks over just those; append `-- <hook-id>` to narrow
-  further. The full `make lint` is for the two checkpoints —
-  once before committing, once at the end — and nowhere else.
-  This exists because restating the rule demonstrably does not
-  work: one session paid **13 full sweeps (≈5.8k)** while
-  editing the rule that forbids them, for the plain reason that
-  `make lint` needed no arguments and the scoped form did. Now
-  neither does.
+  Append `-- <hook-id>` to narrow it to one hook. Scope the **file
+  list**, never the crate set — a crate-scoped
+  `cargo clippy` reports false dead-code errors; verify in the form
+  CI runs.
 
-  **Scope the FILE list, never the crate set — and verify in
-  the exact form CI runs.** These are different axes and only
-  one of them is safe. Narrowing which *files* are linted is
-  what the command above does, and it is correct. Narrowing
-  which *crate* clippy sees changes **what clippy can
-  analyze**: a crate-scoped `cargo clippy` reported **five
-  false dead-code errors** in an untouched crate, because
-  scoping excluded that crate's own test targets — the only
-  consumers of the helpers it then called dead. The CI form
-  exited clean on the same tree.
+- **Don't re-derive a diff.** Content you wrote through `Edit` /
+  `Write` is already in context, and a diff `review_diff.py --split`
+  already wrote is read from its slices. Reach for `git diff` only for
+  a change you have not read (a rebase, a hook autofix, a sibling
+  session), and take `--stat` first when the question is which files
+  moved.
 
-  The trap is that the scoped form *looks* more disciplined
-  while being confidently wrong, and a false positive here
-  costs more than the sweep it saved: the session has to
-  disprove five errors before it can trust the tree. So take
-  the invocation the hook config specifies, and if you want it
-  narrower, narrow `--files`.
+- **`replace_all` is safe only when search and replacement are
+  disjoint.** A replacement that contains the search string rewrites
+  sites already renamed (`MAX_ATTEMPTS` → `REALIZED_FILL_MAX_ATTEMPTS`
+  mangles an existing import), and surfaces as an error naming the
+  *correct* symbol.
 
-- **Run a fast suite whole, through the wrapper — not per
-  module.** For an edit under `.claude/tools/`:
-
-  ```sh
-  python3 .claude/tools/run_quiet.py -- make tools-tests
-  ```
-
-  Not `python3 -m unittest discover … -p test_X.py`. The narrow
-  form feels cheaper because it targets the one tool you edited,
-  and it is not: measured at **32 calls / ≈7.1k** against **15
-  calls / 516 tokens** for the whole suite, because the `make`
-  target is wrapped and the discover call is not. It is ~14× per
-  call for a *narrower* answer — and it missed a sibling test
-  the edit had just broken, twice in one session. Reserve the
-  per-module form for a suite slow enough that the wall-clock
-  saving exceeds the context; this one runs in under a second.
-  See `docs/conventions/context-economy.md` → "When a suite is
-  fast enough to run whole".
-
-- **Poll CI with the committed tool, not by hand.** One session
-  ran `gh pr checks` four times manually (922 tokens) before
-  using `python3 .claude/tools/wait_for_checks.py` once (≈200).
-  The tool existed and `review-pr` prescribes it; the manual
-  polls happened here, in the implement phase, where no skill
-  was driving.
-
-- **Search source with the tool, not a bare recursive grep.**
-  `python3 .claude/tools/search_source.py '<pattern>'` already
-  prunes the generated families and the never-search trees
-  (`target/` alone is multi-GB and `grep -r` does not honor
-  gitignore), and it reduces to one stable allow-rule however
-  the pattern and filters vary.
-
-- **Match the search shape to the question type.** This is the
-  single most recurring trim lever across mined sessions, and
-  it is missed *here*, in the implement phase, because the rule
-  reads as belonging to `review-pr`'s hoisted-grep step. It
-  does not — it is phase-neutral (see
-  `docs/conventions/context-economy.md` → "The levers"). When
-  the question is **where is it** or **does it exist**, ask
-  `--files-only` and stop; take `--context N` only when the
-  question is genuinely *what does this code do*. Seven
-  separate sessions answered a location question with a full
-  context sweep, one paying ≈3.6k to find a three-line
-  function.
-
-  **Narrowing the SCOPE is a separate axis from narrowing the
-  output.** The rule above bounds what each match prints; it
-  says nothing about how much tree gets searched, and three
-  sessions paid for that gap. One's largest result (≈3.6k) was
-  a repo-wide sweep for identifiers that were entirely
-  frontend-local, and the very next call with `--dir frontend`
-  answered the real question for a fraction. Pass `--dir` or
-  `--glob` whenever the claim is confined to one tree.
-
-  **And `--context N` scales with match DENSITY, not count.**
-  Clustered matches make context windows overlap toward buying
-  the file outright: a `--context 3` sweep hitting 21 matches
-  in a single file bought that file roughly twice (≈3.1k)
-  *after* `--files-only` had already identified it. When matches
-  cluster in one file, take `--files-only` then slice-read the
-  region.
-
-  **Say the widest branch of your pattern out loud before you
-  issue it.** If it is an ordinary English word — `age`, `time`,
-  `state`, `value`, `elapsed`, `drain` — it matches prose and
-  identifiers throughout and the result is the file. Anchor it
-  (`\.age`, `fn drain`, `age:`), or grep the distinctive branch
-  alone and widen only if that comes back empty. The
-  generalizable half: **an alternation's cost is set by its
-  worst branch, not by its intent** — a pattern is only as
-  narrow as the commonest word in it.
-
-  **A token under about five characters needs a word-boundary
-  anchor.** Ask what common words contain it: `pip` returns
-  `pipeline` and `piped`; `sig` returns `signature`, `signer`;
-  `env` returns `environment`, `envelope`. Anchor with `\b…\b`
-  (`\bpips?\b` for a plural). Measured at ≈2.1k for a ~10-line
-  answer the anchored form gave for a few hundred. This bounds
-  **what matches at all** — a different axis from the two above.
-
-  **Sweep for call sites BEFORE compiling, not by compiling.**
-  When a change alters a signature, a public type, or a field
-  shape, name the consuming files in one call —
-  `search_source.py '<symbol>' --files-only` — and fix them in
-  one pass; the compile then *verifies* rather than *discovers*.
-  "Let the compiler find it" is a good habit for **checking**;
-  the anti-pattern is using it to **enumerate**, and the tell is
-  consecutive compiles returning the same error class at
-  different sites, each one a full build plus a result.
-
-  **That advisory line is a DIRECTIVE — do not consume a
-  result it flags.** `search_source.py` prints it when the
-  sweep clusters or spreads, and detection is not what is
-  missing: one session got the correct advisory on its **top
-  two sinks** (≈3.1k, 39% of its whole Bash cost) and used
-  both results anyway. When you see it, re-issue with
-  `--files-only` (or add a `--glob`) and slice-read the region
-  it names.
-
-  **Two cases no longer rely on you obeying it, because the
-  tool now acts.** Once the scope narrows to one named file it
-  **clamps** a wide `--context` to a line or two; and past a
-  size threshold, at any scope, it **degrades** to
-  `--files-only` and says so. Both announce themselves on the
-  summary line. `--force-context` overrides the second — take
-  it when the surrounding lines genuinely are the question, not
-  to get a location answer back in its expensive form.
-
-  **Enumerating several known blocks from one file is a
-  slice-read, not a grep.** It is a third shape beside
-  existence and adjudication, and the thresholds above cannot
-  save you from it, because they fire once the call is made.
-  One `--context 3` sweep for this cost ≈2.0k — its run's
-  largest single result — and *still* needed four slice reads
-  afterwards, since the context width truncated the very
-  bullets it was meant to retrieve.
-
-  **A pattern you have not searched before starts
-  `--files-only`.** The advisory can only arrive *with* a
-  payload already paid for, so the first call needs its own
-  rule: locate first, earn context on a narrowed second call.
-  Five of one session's seven largest results were
-  context-bearing sweeps (≈7.4k of a ≈25k session). This does
-  not override the location-vs-adjudication split above —
-  adjudication sweeps take context and are right to.
-
-- **Don't re-derive a diff — of your own edits, or one
-  already written to disk.** This section covers slice-reading
-  files and says nothing about diffs, and that is where the
-  calls land: in one session a bare `git diff` of two source
-  files was the **largest single result (≈2.9k)** and the
-  `git diff` shape totalled **4.3k over 6 calls** — all during
-  the *implement* phase, before `review-pr` ran. Another paid
-  **≈4.3k** diffing a file it had itself just authored via
-  `Edit`.
-
-  Two cases, one rule:
-
-  - **You wrote it.** Content that reached the tree through
-    `Edit` / `Write` is already in context, so diffing it buys
-    it twice. No command needed.
-  - **A tool already wrote the diff.** Read
-    `review_diff.py --split`'s slices rather than re-running
-    `git diff` over the same range.
-
-  Reach for `git diff` when the change came from somewhere you
-  have **not** read — a rebase, a hook autofix, a sibling
-  session — and take `--stat` first when the question is only
-  *which files moved*.
-
-- **Verify a list-producing flag with a count, not the list.**
-  One session's largest single result (≈5.8k) was a new tool's
-  `--print` dumping ~600 paths to answer the yes/no question
-  "did the flag work".
-
-- **Narrowest-form applies to listing and blob commands too.**
-  `git show <ref>:<path>` prints the **whole blob** (≈3.8k) —
-  `--no-patch` suppresses a *diff*, not a blob dump; a
-  `git ls-files` sweep cost ≈2.2k to locate one known file; and
-  for a single scalar from GitHub, a field-selected
-  `gh api --jq` beats the MCP getter by orders of magnitude
-  (`get_latest_release` returned 60,413 characters and
-  overflowed the result cap). See
-  `docs/conventions/github-mcp.md` for that carve-out.
+- **Route any verbose-on-success command through
+  `run_quiet.py`, by shape not by name** — builds, lints, `pnpm`,
+  `docker`, `pre-commit run`, and dry runs (`make -n` still executes
+  `$(MAKE)` lines). Don't poll a backgrounded run's log; wait for the
+  notification. A `.claude/tools/` edit runs `make tools-tests`
+  whole, through the wrapper. Poll CI with `wait_for_checks.py`.
 
 ## The branch/worktree helper tool
 
-The deterministic string/path work this bootstrap needs —
-**tag validation**, **base-repo resolution**,
-**branch-name normalization**, and the **two operator-file
-symlinks** (`frontend/.env.local` and
-`infra/localnet/secrets.local.env`) — lives in the Python
-skill-tool `.claude/tools/init_pr_branch.py` (per
-`CLAUDE.md` → "Skill tooling"), so the skill drives it
-instead of hand-parsing `git worktree list` in prose. Run
-it **once** near the top with the resolved tag; it runs
-the two read-only git reads itself and prints JSON:
+Tag validation, base-repo resolution, branch-name normalization, the
+signing verdict, and the two operator-file symlinks
+(`frontend/.env.local`, `infra/localnet/secrets.local.env`) live in
+`.claude/tools/init_pr_branch.py`. Run it **once**, near the top:
 
 ```sh
 python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
@@ -1046,7 +223,7 @@ python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
 
 ```json
 {
-  "tag": "eng-603",          // the validated tag, lowercased
+  "tag": "eng-603",          // validated, lowercased
   "tag_valid": true,         // false (+ non-zero exit) if not eng-###
   "base_repo": "/…/dropset", // the refs/heads/main worktree, or null
   "current_branch": "worktree-eng-603",
@@ -1055,314 +232,108 @@ python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
   "env_link": "created",     // frontend/.env.local
   "secrets_env_link": "exists",  // infra/localnet/secrets.local.env
   "frontend_node_modules": "absent",  // present / absent / no-frontend
-  "signing": "external-signer",   // the step-0b dispatch table
-  "signing_program": "/…/op-ssh-sign"  // null when none is configured
+  "program_so": "absent",    // present / absent / no-program
+  "signing": "external-signer",       // the step-0b table
+  "signing_program": "/…/op-ssh-sign" // null when none is configured
 }
 ```
 
-Both link fields carry the same five-value vocabulary —
-`created` / `exists` / `no-source` / `no-base` / `failed` —
-and are reported **separately**, because a machine can
-legitimately have one file and not the other.
+Steps 1–4 and step 0b read their answers from this one call. The
+`frontend_node_modules`, `program_so` and `signing` fields are
+**measured facts** rather than predictions: act on them, don't reason
+from the diff. `--link-env` keeps the command line free of absolute
+paths, so it reduces to one stable allow-rule.
 
-Steps 1, 2, 3, and 4 read their answers from this one call — and
-so does step 0b's signing gate, via the `signing` field. Act on
-that field before the step-4 rename: it is the last point where
-stopping costs nothing.
-
-**Two of these fields are measured facts rather than
-predictions**, and that is deliberate in both cases.
-`frontend_node_modules` replaced a conditional that lost
-reliably to "this diff doesn't touch the frontend", and
-`signing` replaced an unconditional `ssh-add -l` that was an
-unclearable false positive on external-signer machines. The
-pattern generalizes: when the skill would otherwise reason its
-way to a fact the tool can just look up, report the fact.
-
-**Why `--link-env` is a flag and not a shell step.** The env
-symlink used to be prose here: two existence checks plus an
-`ln -s` against an **absolute base-repo path**, which
-re-prompted on *every* bootstrap because the file-access
-heuristic gates on the absolute path. Folding the step into
-the call above means the command line carries **no absolute
-path** at all, so there is nothing left to gate. The
-enclave file rides the same flag for the same reason, and
-adding it cost the command line nothing.
-
-**A note on where allow-rules live, since this skill used to
-state it wrongly.** `settings.local.json` is **one shared
-file, resolved through worktrees to the main checkout** — a
-fresh worktree carries no copy of its own and needs none, and
-a rule firmed in any worktree is immediately live in all of
-them. So `Bash(python3 .claude/tools/:*)` works fine at
-project scope; the old rationale here ("user level is the
-only scope a fresh worktree inherits") was **false**. Promote
-a rule to `~/.claude/settings.json` when you want it in
-**other repos**, which is a different question entirely. See
-`docs/conventions/local-integrations.md` → "How settings
-files resolve across worktrees".
-
-What a cold worktree genuinely lacks is untracked
-per-directory *content* — `frontend/node_modules`,
-`frontend/.env.local`, and `infra/localnet/secrets.local.env`
-— which is what step 3 handles.
+`settings.local.json` is one shared file resolved through worktrees to
+the main checkout, so project-scope allow-rules are live in every
+worktree; promote to `~/.claude/settings.json` only for other repos
+(see `docs/conventions/local-integrations.md` → "How settings files
+resolve across worktrees"). What a cold worktree lacks is untracked
+per-directory content, which step 3 handles.
 
 ## Steps
 
-1. **Validate the tag.** Take `tag_valid` / `tag` from
-   the helper's output. If `tag_valid` is `false` (the
-   tool also exits non-zero), stop and ask the user for a
-   valid `eng-###` tag. Otherwise use the lowercased
-   `tag` from here on.
+1. **Validate the tag.** If `tag_valid` is `false`, stop and ask for a
+   valid `eng-###`. Otherwise use the lowercased `tag`.
 
-1. **Fetch the latest `main`.** The point is to start the
-   rebase below from current upstream, not from whatever this
-   worktree last saw. Do it from **inside this worktree**:
+1. **Fetch the latest `main`**, from inside this worktree:
 
    ```sh
    git fetch origin main
    ```
 
-   That updates the shared `origin/main` ref (worktrees share
-   one `.git`), which is what step 5 rebases onto.
+   This updates the shared `origin/main` ref that step 5 rebases onto.
+   Never `git -C <base_repo> pull --ff-only` — the harness's worktree
+   isolation refuses git operations outside this worktree. (The
+   repo's worktree edit-path guard is a different thing; it covers
+   file-mutating tools, not `Bash`.) Fast-forwarding the base repo's
+   checkout is whoever works there's job.
 
-   **Don't reach for `git -C <base_repo> pull --ff-only`.**
-   Earlier versions of this step did, and in a
-   worktree-isolated session it is refused: a worktree
-   session's git operations have to target its own worktree,
-   so redirecting out of it with `-C` doesn't run. The fetch
-   above achieves what this step actually needs without
-   leaving the worktree.
+1. **Read the cold-worktree fields** from the helper's JSON. Nothing
+   here blocks the bootstrap.
 
-   To be precise about the mechanism, since it is easy to
-   mis-attribute: the refusal comes from the **harness's own
-   worktree isolation**, not from any hook this repo commits.
-   The repo's **worktree edit-path guard** is a different
-   thing — it covers **file-mutating tools** (`Edit`, `Write`,
-   `MultiEdit`, `NotebookEdit`) that target a base-repo
-   absolute path, and never inspects `Bash` at all (see
-   `docs/conventions/local-integrations.md` → "The worktree
-   edit-path guard hook"). Both point the same way; only one
-   of them is what stops this command.
+   - **`env_link`** (`frontend/.env.local`) and **`secrets_env_link`**
+     (the secrets enclave file `make collectors-up` reads; without it
+     the keyed venues are skipped) each report `created` / `exists`
+     (left untouched, never clobbered) / `no-source` / `no-base` (main
+     isn't checked out anywhere) / `failed` (mention it; copy by hand).
+     Read the two independently.
 
-   The one thing the fetch does *not* do is fast-forward the
-   base repo's checked-out `main` working tree. That matters
-   only to whoever is working in the base repo directly, not
-   to this bootstrap, so leave it to them. `base_repo` from
-   the helper's output is still worth keeping — the two
-   symlinks used it, and a `null` value is the same condition
-   that reports `"no-base"` for both of them.
-
-1. **Confirm the two operator-file symlinks.** The
-   `--link-env` flag on the helper call above **already did
-   this** — it symlinks each of the base repo's copies into
-   this worktree, so neither has to be copied by hand. Both
-   are git-ignored, so neither link is tracked. There is no
-   shell to run here; just read the two fields from that one
-   JSON result:
-
-   - **`env_link`** — `frontend/.env.local`, so `pnpm dev` /
-     `make frontend` pick up the same env.
-   - **`secrets_env_link`** —
-     `infra/localnet/secrets.local.env`, the local secrets
-     enclave's one operator file (the vault name plus one
-     `op://` reference per credential). Without it,
-     `make collectors-up` in this worktree brings up the
-     keyless feeds and warns that it is skipping the keyed
-     venues. Unlike
-     `settings.local.json`, this path is **not** resolved
-     through a worktree to the main checkout, so the symlink
-     is what gives it that resolution.
-
-   Each field carries the same five values:
-
-   - `"created"` — the link was made.
-   - `"exists"` — this worktree already had the path, so it
-     was left untouched (it may be a real file someone placed
-     deliberately; the tool never clobbers).
-   - `"no-source"` — nothing to link: either main has no such
-     file, or this worktree has no containing directory to
-     link it into.
-   - `"no-base"` — main isn't checked out anywhere, so there
-     was no base repo to link from (the same condition that
-     skipped the pull above).
-   - `"failed"` — the link couldn't be created (an unwritable
-     parent directory, a read-only mount). Mention it and
-     carry on; the file will want copying by hand.
-
-   **Read the two independently.** A machine that has never
-   run the frontend has no `.env.local`, and one that has
-   never touched the FX collectors has no enclave file;
-   neither absence says anything about the other, which is why
-   there are two fields rather than one.
-
-   Every outcome is fine to proceed on; none of them blocks
-   the bootstrap. The tool never raises here — it reports
-   `"failed"` instead, because this one call also carries the
-   tag / base-repo / branch answers the next steps read.
-
-   **Note the other cold-worktree prerequisite while you're
-   here: `frontend/node_modules`.** A fresh worktree has
-   none, and the `biome` and `tsc` hooks shell out to
-   `pnpm -C frontend exec …`, so without it they fail with
-   `Command "biome" not found` and have to be re-run:
-
-   ```sh
-   python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install
-   ```
-
-   **Route it through the quiet runner.** A cold install's
-   output is nearly all registry `ETIMEDOUT` retries and
-   peer-dependency trees — one session's single largest result
-   (≈2.0k) for a command whose informative content is "it
-   worked". It is the verbose-by-refresh class
-   (`docs/conventions/context-economy.md`), and the runner
-   prints one line on success and the failing tail otherwise.
-
-   **Spell it `--dir`, not `-C`** — for consistency with
-   `review-pr`'s lint step, which prescribes the same form.
-   Note the permission-matcher argument for it does **not**
-   apply to this call any more: wrapped in the quiet runner,
-   the matcher sees the `python3 .claude/tools/` prefix, so
-   the two spellings are indistinguishable to it here. The
-   `--dir`/`-C` distinction still matters for an *unwrapped*
-   `pnpm` call, which is why the rule stands elsewhere.
-
-   **This is not only a frontend-task concern.** `make lint`
-   runs the whole hook set over the tree, and those two are
-   typed on `ts` / `tsx` / `js` / `css` — which the repo has
-   plenty of regardless of what *this* branch touches. So the
-   first full `make lint` in a cold worktree fails on them
-   whatever the task is.
-
-   **So read `frontend_node_modules` from the same JSON and
-   act on it — do not predict from the diff.** On `"absent"`,
-   run the install now, as part of the bootstrap. On
-   `"present"` or `"no-frontend"` there is nothing to do.
-
-   **`program_so` is the same shape, with the opposite
-   action.** The field reports `present` / `absent` /
-   `no-program` from the same JSON. On `absent`, do **not**
-   build it at bootstrap — note that any litesvm test under
-   `programs/dropset/tests/` needs
-   `python3 .claude/tools/run_quiet.py -- make program` first,
-   and leave it there. That asymmetry with `pnpm install` is
-   deliberate: the BPF build takes minutes and most tasks never
-   touch `programs/**`, whereas the install is one quiet command
-   the first full lint needs regardless.
-
-   Why it is worth reporting at all: a cold worktree fails
-   **every** litesvm test at once, with a 125-line tail
-   complaining about a missing program keypair and suggesting
-   `anchor keys sync && anchor build` — which is *not* the
-   command this repo uses (`make program` copies the committed
-   keypair from `keys/` first). Every test failing together
-   reads like a broken harness rather than a missing artifact.
-   And the diff-keyed conditional loses here exactly as it does
-   for the frontend: the branch that measured this changed only
-   `programs/dropset/tests/**`, never `programs/dropset/src/**`.
-
-   One related trap worth knowing in the same breath:
-   `make test-no-teardown` leaves a `--no-default-features`
-   `.so` behind, so a later scoped `cargo test` fails ~15
-   unrelated teardown tests. `review-pr` step 11 documents that
-   ordering; a cold worktree reaches the same class from the
-   other direction.
-
-   This used to say "install when the surfaced task touches
-   `frontend/**`, or before the first full lint", and the
-   conditional lost reliably to *this diff doesn't touch the
-   frontend*. Measured: a **docs-only** diff whose first
-   `make lint` failed on exactly two hooks:
-   `Command "biome" not found` and
-   `Command "tsc" not found`, with every other hook passing.
-   The failing hooks covered nothing in the diff, which is
-   precisely why the install had been skipped and precisely
-   why the failure carried no information. Recovery cost the
-   failed sweep, an install, and two scoped re-runs.
-
-   The asymmetry is one-directional: installing unnecessarily
-   costs one quiet command; not installing when it was needed
-   costs a failed full lint, a diagnosis of an error that says
-   nothing about the diff, an install anyway, and
-   re-verification. Reporting it as a field rather than
-   hard-coding an unconditional install keeps the skill acting
-   on a measured fact, the same design the two symlink
-   outcomes already use. (`review-pr`'s lint step covers the
-   recovery, but recovering is the expensive path.)
-
-1. Normalize the branch name to the bare Linear tag.
-   The `task` shell helper starts worktree sessions with
-   `claude -w <tag>`, which names the worktree directory
-   `eng-###` but the **branch** `worktree-eng-###` —
-   there's no CLI flag to drop the `worktree-` prefix, so
-   the skill strips it here rather than leaving each
-   session to rename it by hand. The helper already
-   computed this: read `rename_needed`, `current_branch`,
-   and `normalized_branch` from its output.
-
-   - If `rename_needed` is `true`, rename the branch to
-     the bare `eng-###` — pass both names literally so the
-     call reduces to a stable allow-rule:
+   - **`frontend_node_modules`: on `absent`, install now**, whatever the
+     task touches — the `biome` and `tsc` hooks run on the whole tree,
+     so the first full `make lint` fails without it:
 
      ```sh
-     git branch -m <current_branch> <normalized_branch>
+     python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install
      ```
 
-   - If `rename_needed` is `false` (the branch is already
-     `eng-###`, or any other non-`worktree-` name), this
-     is a **no-op** — leave it alone. Only the
-     `worktree-`-prefixed default is rewritten.
+   - **`program_so`: on `absent`, do not build at bootstrap.** Note
+     that any litesvm test under `programs/dropset/tests/` needs
+     `python3 .claude/tools/run_quiet.py -- make program` first (it
+     copies the committed keypair; the failing tests' own
+     `anchor keys sync && anchor build` suggestion is wrong for this
+     repo). Also note `make test-no-teardown` leaves a
+     `--no-default-features` `.so` behind that fails ~15 teardown tests
+     in a later scoped `cargo test`.
 
-1. Rebase onto the freshly-fetched upstream main so the
-   worktree starts from the latest code:
+1. **Normalize the branch name.** `claude -w <tag>` names the branch
+   `worktree-eng-###`. If `rename_needed` is `true`:
+
+   ```sh
+   git branch -m <current_branch> <normalized_branch>
+   ```
+
+   Otherwise this is a no-op.
+
+1. **Rebase onto the fetched upstream:**
 
    ```sh
    git rebase origin/main
    ```
 
-   **`origin/main`, not the local `main`.** The step-2 fetch
-   updates the remote-tracking ref; the local `main` branch is
-   only fast-forwarded by whoever has it checked out, so
-   rebasing onto it can silently start from stale code.
+   `origin/main`, never the local `main`, which may be stale. On
+   conflicts, `git rebase --abort` and tell the user; never resolve
+   them here.
 
-   If the rebase produces conflicts, abort it
-   (`git rebase --abort`) and tell the user.
-   Do not attempt to resolve conflicts
-   automatically in this skill.
-
-1. Create an empty, **signed** commit so there is
-   something to push. Its message is a **conforming
-   semantic subject**, not the bare tag:
+1. **Create an empty, signed commit** with a conforming semantic
+   subject:
 
    ```sh
    git commit --allow-empty -S -m "chore(<ENG-###>): Bootstrap the worktree"
    ```
 
-   The `-S` is mandatory: branch protection on
-   this repo requires every commit to have a
-   verified signature.
+   `-S` is mandatory (branch protection). The message must be
+   byte-identical to the step-8 PR title: with one commit on the
+   branch, the Semantic PR workflow compares the two.
 
-   **Why the message conforms.** The next-but-one step
-   opens the PR with this exact string as the title, and
-   the Semantic PR workflow validates *both* — see the
-   rationale there. Keep the two byte-identical: with a
-   single commit on the branch, the workflow's
-   `validateSingleCommitMatchesPrTitle` compares them and
-   fails on any divergence.
-
-1. Push the branch:
+1. **Push:**
 
    ```sh
    git push -u origin <eng-###>
    ```
 
-1. Create a draft PR with an empty body, via the GitHub
-   MCP, titled with the **same string as the bootstrap
-   commit** — not the bare tag. This repo is
-   `DASMAC-com/dropset`, so pass `owner: "DASMAC-com"`,
-   `repo: "dropset"`; the head is the branch you just
-   pushed and the base is `main`:
+1. **Open a draft PR** with an empty body and the bootstrap commit's
+   subject as its title:
 
    ```txt
    mcp__github__create_pull_request(
@@ -1376,62 +347,21 @@ per-directory *content* — `frontend/node_modules`,
    )
    ```
 
-   **Why not the bare tag, which is what this step used
-   to pass.** `ENG-###` alone cannot satisfy the Semantic
-   PR workflow — it requires a type and a scope
-   (`scopes: ^ENG-[0-9]+$`) and a capitalized subject — so
-   the `opened`-triggered run **always failed**, every
-   time, on every PR this skill has ever created. Nothing
-   merged unguarded (GitHub evaluates a required check
-   against the *latest* run per context, and
-   `pr-title-description` renames the title during review,
-   whose `edited` trigger reruns and passes), but the
-   failed run stays in the rollup — `gh pr checks`, the UI
-   checks list — forever. On PR #329 that residue read as
-   a semantic-check bypass and cost an operator
-   investigation. The merge-queue leg is a deliberate
-   auto-pass (a merge group cannot see a PR title), so the
-   PR-path run is the *only* real enforcement, and it
-   should never carry guaranteed-failure noise.
+   Never the bare tag: it cannot satisfy the Semantic PR workflow
+   (type, `^ENG-[0-9]+$` scope, capitalized subject), so the
+   `opened` run always fails and stays in the checks rollup forever.
+   `pr-title-description` rewrites the title during review. Keep the
+   returned `number` and URL.
 
-   A conforming seed costs nothing: `pr-title-description`
-   still rewrites the final title during review exactly as
-   before, so this changes only what the title is *between*
-   open and review. `chore` is the honest type for an empty
-   bootstrap commit, and it is in the action's default type
-   set.
-
-   The call returns the PR object, including its
-   `html_url` and `number` — keep both (the number for
-   the next step, the URL for the final one).
-
-1. **Unsubscribe from this PR's notifications** so its
-   lifecycle doesn't ping the author. Opening a PR
-   auto-subscribes you to it, and the draft then generates a
-   stream of notifications through its life (CI results,
-   assignment, and finally the merge) — noise in a
-   solo / agent-driven flow. Unsubscribe right after
-   creating it. No GitHub MCP tool covers a per-PR
-   subscription (`manage_notification_subscription` needs an
-   existing thread; `manage_repository_notification_subscription`
-   is repo-wide), so this is a **documented `gh` exception**
-   (per `docs/conventions/github-mcp.md`). The working path is
-   the GraphQL `updateSubscription` mutation, keyed by the
-   PR's GraphQL **node id**.
-
-   `create_pull_request` returns the PR's *numeric* database
-   id, **not** the node id the mutation needs, so first
-   resolve the node id from the `number` kept above — gh's
-   `id` field over its GraphQL is the node id, and this reuses
-   the existing `Bash(gh pr view:*)` allow-rule:
+1. **Unsubscribe from the PR's notifications** — best-effort; on any
+   error, note it and continue. No MCP tool covers a per-PR
+   subscription, so this is a documented `gh` exception
+   (`docs/conventions/github-mcp.md`). Resolve the GraphQL node id
+   (the MCP returns the numeric id), then set `IGNORED`:
 
    ```sh
    gh pr view <number> --repo DASMAC-com/dropset --json id
    ```
-
-   Then set the subscription to `IGNORED` with the node id
-   (`<node_id>`, e.g. `PR_kwDO…`) — this reuses the existing
-   `Bash(gh api graphql:*)` allow-rule:
 
    ```sh
    gh api graphql -F id=<node_id> -f query='
@@ -1442,30 +372,13 @@ per-directory *content* — `frontend/node_modules`,
      }'
    ```
 
-   A success returns `viewerSubscription: "UNSUBSCRIBED"` —
-   GitHub normalizes the `IGNORED` readback to `UNSUBSCRIBED`,
-   which is what stops the lifecycle self-pings. The mutation
-   needs the `gh` token's **`notifications`** OAuth scope; if
-   it's missing the call fails with `INSUFFICIENT_SCOPES` (a
-   one-time operator grant:
-   `gh auth refresh -h github.com -s notifications`). Step 0b's
-   pre-check already read the scope set, so if it flagged
-   `notifications` as absent, expect this to fail and say so
-   rather than re-diagnosing it here.
+   Success reads back `viewerSubscription: "UNSUBSCRIBED"`. Without
+   the `notifications` scope it fails with `INSUFFICIENT_SCOPES`; if
+   step 0b flagged that, say so rather than re-diagnosing.
+   `housekeeping`'s notification sweep catches what this misses.
 
-   Make it **best-effort**: if either call errors, note it and
-   continue — a notification ping must never block
-   bootstrapping. (`housekeeping`'s merged-PR notification
-   sweep remains the catch-all for anything this misses.)
-   **Tradeoff:** unsubscribing suppresses this PR's routine
-   lifecycle notifications; a direct @-mention or an explicit
-   review request can still re-notify — accepted in this
-   solo / agent-driven flow.
-
-1. Mark the Linear issue **In Progress** so the board
-   reflects that work on this worktree has started.
-   Update it by identifier (the uppercase tag) via the
-   `claude.ai Linear` MCP:
+1. **Mark the Linear issue In Progress** via the MCP; on failure, warn
+   and continue:
 
    ```txt
    mcp__claude_ai_Linear__save_issue(
@@ -1474,223 +387,71 @@ per-directory *content* — `frontend/node_modules`,
    )
    ```
 
-   If the issue doesn't exist or the update fails, warn
-   and continue — bootstrapping shouldn't be blocked by
-   Linear.
+   **Keep the response — it echoes the whole issue body**, which step
+   12 needs. This is the one deliberate exception to routing a
+   state-only write through the zero-echo `board_batch.py state`: here
+   the echo *is* how the session obtains the spec, so the zero-echo
+   path would only move the cost to a `get_issue`. Do not "optimize"
+   it (see `docs/conventions/linear-automation.md`).
 
-   **Keep this response — it carries the whole issue
-   body.** `save_issue` echoes the complete `description`
-   back even on a state-only write that sent no body at
-   all, so the payload the next step needs has already
-   been bought. Re-`get_issue`ing it there pays for the
-   same body twice: two ≈1.1k echoes for one payload in
-   one measured run, and far worse on a consolidated spec.
+1. **Print the PR URL** and confirm the issue moved to In Progress.
 
-   **This one write deliberately stays on the MCP, and it is
-   the exception rather than the rule.** A state-only
-   transition otherwise belongs on the zero-echo path
-   (`board_batch.py state`), which is what `review-pr` uses at
-   its handoff — the echo there transmits one enum and buys
-   nothing, because that session already holds the body. Here
-   the echo does **double duty**: it is also how this session
-   obtains the spec it is about to surface, so routing this
-   write through the zero-echo path would not save the body,
-   it would just move it to a `get_issue` on the next step.
-   Do not "optimize" it. See
-   `docs/conventions/linear-automation.md`.
+1. **Surface the task when no other context was given.**
 
-1. Print the new PR URL and confirm the Linear issue was
-   moved to In Progress.
+   - **Read the description from step 10's response — don't
+     re-fetch.** Use `get_issue` only if that write failed or was
+     skipped. Do pull `list_comments`: acceptance criteria sometimes live in an
+     anchored comment.
 
-1. **Surface the task when no other context was
-   given.** If the session was started with no
-   instructions beyond the tag, the linked Linear
-   issue *is* the spec.
+   - **On a long spec, spill the body to a scratchpad file on the
+     first read** (or use the harness's persisted copy if it
+     overflowed) and work from it thereafter:
 
-   **Read the description out of the previous step's
-   response — don't re-fetch it.** The In-Progress write
-   already returned the full body; a `get_issue` here is a
-   second echo of a payload the session is holding. Only
-   reach for `get_issue` if that write failed or was
-   skipped. Do still pull
-   `mcp__claude_ai_Linear__list_comments` — acceptance
-   criteria sometimes live in an anchored comment, not the
-   body, and that is a payload the session does *not*
-   already have.
+     ```sh
+     python3 .claude/tools/read_result.py --field description \
+       --headings <persisted-result-or-spill>
+     python3 .claude/tools/read_result.py --field description \
+       --section 'What changes' <persisted-result-or-spill>
+     ```
 
-   **On a long spec, spill the body to a scratchpad file on
-   the FIRST read and grep the file thereafter.** A
-   consolidated spec is consulted many times across a session,
-   and each consultation through `--field description` buys it
-   again: the three largest results of one measured session
-   were **the same issue body, read three times (≈14.8k)**.
-   `--field` on a long field is a whole read wearing a slicing
-   tool's clothes, and it does not look like one at the call
-   site — which is why the tool now prints only the head and
-   names what it withheld.
+     Read the whole body once, to plan; after that, a heading map or
+     a section, never the field again.
 
-   If the echo overflowed the result cap, the harness has
-   already written it to disk and named the path; otherwise
-   write it yourself. Then work from the file:
+   - **An ambiguous tag gets an `AskUserQuestion`, never a
+     speculative fetch of candidates.**
 
-   ```sh
-   python3 .claude/tools/read_result.py --field description \
-     --headings <persisted-result-or-spill>
-   python3 .claude/tools/read_result.py --field description \
-     --section 'What changes' <persisted-result-or-spill>
-   ```
+   - **Treat the issue's `file:line` citations — and its "already
+     landed" claims — as a snapshot of its discovery commit.** Verify
+     each against `HEAD`; the stable key is the `**Fingerprint**`
+     slug, never a line number.
 
-   Read the whole body **once**, to plan; after that, reach
-   for a heading map or a section, never the field again.
+   Present the description and checklist as the plan of work. The
+   user's own instructions win.
 
-   Present the description and any checklist as the plan
-   of work so the session can proceed straight into the
-   task. If the user provided their own instructions,
-   those win; don't override them with the issue.
-
-   **If the tag is AMBIGUOUS, ask — don't fetch candidates to
-   find out.** An `AskUserQuestion` costs on the order of a
-   hundred tokens; a whole-issue read on a mature body costs
-   thousands, and bodies here grow large by design. Measured:
-   a single speculative read was the largest result of its
-   session (≈4.5k), fetched to disambiguate an operator
-   reference transcribed as "8.5.9" that could plausibly have
-   named three issues — and it did not settle it. The planning
-   session could not disambiguate it either, the operator
-   resolved it directly, and the session asked anyway. So
-   ≈4.5k bought a guess that was neither confirmed nor used.
-   The conventions bound *repeat* fetches; nothing bounds the
-   first one, which is exactly where a speculative read lands.
-
-   **Wanting board or sequencing state? Ask a live planning
-   session before reading the Planning document.** `ListAgents`
-   is the liveness check, and messaging a planning session is
-   already the documented channel in the other direction. The
-   document getter returns the entire content with no slice
-   accessor, and the document only grows between close-out
-   rewrites, so the cost rises over time: one worktree
-   session's whole-document read was its largest result by a
-   wide margin (≈9.6k, about 2.4x the next largest and more
-   than every file Read in that session combined) to answer a
-   question that turned on roughly six lines. The same session
-   then messaged the live planning session and got a strictly
-   better answer for a fraction — the state of both blockers,
-   the operator's posture, a ruling on the actual question,
-   and an unprompted correction to a measured fact in the
-   document that had gone stale. The read surfaced none of
-   that, because a stale line reads exactly like a current
-   one. Read the document only when no planning session is
-   live.
-
-   **Treat the issue's `file:line` citations as a snapshot
-   of its discovery commit.** A filed issue records where
-   something was when it was *found*, which may be months
-   of unrelated PRs ago — so verify each citation against
-   `HEAD` before implementing it. One session's surfaced
-   task named four `(§4 row 5)` citations across two files;
-   **all four** had since been rewritten away by an
-   unrelated PR, one named file had no relevant references
-   at all, and the work item turned out to be moot —
-   established at the cost of four exploratory greps
-   including a ≈1.1k repo-wide sweep. The stable key is the
-   `**Fingerprint**` slug, never the line number: find the
-   thing the fingerprint names, then re-derive its
-   location.
-
-   The same goes for a spec's own claims about what has
-   shipped. A long-lived consolidated issue often carries
-   "this part already landed in PR #N" notes; those are
-   reliable, but a part filed *before* an unrelated change
-   may describe code that no longer exists.
-
-1. **Claim the migration number NOW if the task adds one —
-   at branch time, not at rebase.** When the surfaced task
-   will add a `db-schema/migrations/` file, resolve its
-   number here, before any work:
+1. **Claim the migration number now if the task adds one** under
+   `db-schema/migrations/`:
 
    ```sh
    python3 .claude/tools/migration_collisions.py --others-from-gh
    ```
 
-   One call. `--others-from-gh` runs the `gh pr list` read
-   **inside the tool's own process**, and it compares
-   **numbers, not filenames**, so `0003_telemetry.sql` and
-   `0003_roster.sql` collide.
+   At branch time the file doesn't exist, so the tool reports
+   `status: "nothing_claimed"` and `clear: true` — a vacuous
+   all-clear. **Read `next_free_number`** (one past the highest in the
+   tree or any open PR, never a hole) and take it; re-run once the
+   file is written so the compare actually runs. This is a branch-time
+   step because the in-tree ascend guard first fires at rebase, and an
+   applied migration is immutable — renumbering the wrong side against
+   the shared dev database wedges it.
 
-   **Read `next_free_number` — that is what this call is
-   for.** At branch time the file does not exist yet, so the
-   tool reports `status: "nothing_claimed"` rather than a
-   verdict, and hands back **one past the highest number** in
-   the tree or in any open PR. Take it, and re-run once the
-   file is written so the compare actually runs.
-
-   One past the highest, deliberately **not** the lowest
-   unclaimed: a hole may be held by something neither
-   comparison set can see — a sibling merged since the
-   merge-base is in neither — so only the maximum is
-   unclaimed everywhere the tool looked. (Filling a hole
-   would in fact apply cleanly; see `docs/data-feeds.md`
-   §8. This is about keeping the claim verifiable.)
-
-   This is a fix, not a nicety: in this state the tool
-   reports `clear: true`, which read alone is a **vacuous
-   all-clear in the one place the answer is load-bearing** —
-   nothing has been compared, because there is nothing to
-   compare, and a real collision would surface only on the
-   re-run afterwards. `clear` still reads `true` here, for
-   backwards compatibility; it is `status` that distinguishes
-   a checked verdict from an empty one, so read that.
-
-   **This used to be two commands with no way to connect
-   them.** The step named a `gh pr list` and a
-   `--others <file>.json` compare and left the gap to the
-   caller, and every sanctioned way across it is closed: a
-   `>` redirect is a compound the shell guard blocks (and
-   worktree isolation refused it first), a pipe likewise, and
-   capturing the output to re-emit it with `Write` routes
-   every open PR's file list **through context** — the exact
-   ~4.0k cost for a two-line answer that the tool exists to
-   avoid. The read moved into the tool, matching how
-   `review_diff.py --overlap` already handles the identical
-   problem. `--others <file>.json` remains for a caller that
-   already holds the inventory.
-
-   **Why here rather than at review.** `review-pr` already
-   runs this probe, and that is too late by construction: the
-   in-tree ascend guard only fires once both files coexist in
-   one tree, which first happens at **rebase** — after the
-   branch is written, reviewed and CI-green. Two branches took
-   the same number twice in one week. Cost per occurrence is a
-   rebase, a renumber and a full re-verify — and the expensive
-   half is one no guard can catch, because an applied
-   migration is **immutable**: renumbering the wrong side
-   against the shared dev database wedges it, and recovery is
-   manual surgery or a data-destroying wipe.
-
-   The probe is proven and cheap — one call, run by hand
-   before an enqueue and answered immediately. If it reports a
-   collision, take the free number now, while nothing has been
-   written and nothing has been applied.
-
-1. **Hand off to `/review-pr` when the work is ready.**
-   This is the closing step of the bracketed session.
-   Once the surfaced task's work is complete and every
-   design decision and open question has been resolved
-   (each asked through `AskUserQuestion`, per "Decision
-   points use `AskUserQuestion`" above), announce that
-   the work is ready and ask — again **via
-   `AskUserQuestion`** — whether to run `/review-pr` now.
-
-   **This question is `review-pr`'s entry gate, so it
-   carries the review tier too — one interaction, not
-   two.** The chosen tier **is** the authorization for
-   `review-pr`'s adversarial sub-agent fan-out; that skill
-   asks no separate spawn question later (see its "The
-   entry gate" section, which is the other half of this
-   contract).
-
-   So compute the signals first, from a real diff rather
-   than an impression — **and rebase before you do**:
+1. **Hand off to `/review-pr` when the work is ready.** Once the
+   task is complete and every open question is resolved, ask via
+   `AskUserQuestion` whether to run `/review-pr` now. **This question
+   is `review-pr`'s entry gate** — the chosen tier authorizes its
+   sub-agent fan-out, and it asks no separate spawn question (see its
+   "The entry gate" section). Compute the signals from a real diff,
+   **rebasing first** — a stale base makes the `files` array describe
+   main's commits, not the branch:
 
    ```sh
    git fetch origin main
@@ -1699,68 +460,19 @@ per-directory *content* — `frontend/node_modules`,
      --out <scratchpad>/review-diff.txt
    ```
 
-   **A stale base makes the tier signals meaningless as well
-   as expensive**, and you learn it only after paying. Run
-   against a base that moved during the implement phase, the
-   verdict returns *main's* file list: one session whose
-   `origin/main` had gained 3 commits got back **85 files**,
-   every one from main's own commits, at ≈2.0k — its
-   third-largest result — when the branch's actual diff was 6
-   files. The tool did its job, reporting `ready: false` with
-   the stale-base blocker and exiting non-zero, but the
-   `files` array had already been serialized into the result.
-   And `files` is precisely what the tier decision reads, so
-   on a stale base it describes the wrong diff.
+   (To skip the rebase, call `--gate-only` first and take the full
+   verdict only once `base_fresh` holds.) Read `files` and per-file
+   `changes`, then offer:
 
-   Rebasing is preferred over the cheap alternative because it
-   removes the failure rather than pricing it — and `review-pr`
-   step 2 rebases regardless, so nothing is lost. If you would
-   rather not rebase here, call `--gate-only` first (it emits
-   the verdict fields and omits the `files` array) and take the
-   full verdict only once `base_fresh` holds.
+   - **"Yes — full adversarial suite"** — first, recommended.
+   - **"Yes — reduced tier"** — *only* under `review-pr`'s small-diff
+     threshold (≤ 5 files, ≤ 60 changed lines, no program / SDK /
+     migration / generation-input path, single crate), naming the
+     actual signals in the option.
+   - **"Not yet"** — stop and leave the PR as it is.
 
-   Read `files` and the per-file `changes` for size, and
-   whether any path is program code, the SDK surface, a
-   migration, or a generation input. Then offer:
-
-   - **"Yes — full adversarial suite" (first, recommended)**
-
-   - **"Yes — reduced tier"**, *only* when the signals sit
-     under the small-diff threshold `review-pr` documents
-     (≤ 5 files, ≤ 60 changed lines, no program / SDK /
-     migration / generation-input path, single crate).
-     Name the actual signals in the option so the choice is
-     informed.
-
-   - **"Not yet"**
-
-   - On either **yes**, route straight into `/review-pr`,
-     carrying the chosen tier.
-
-   - On **not yet**, stop and leave the PR as it is.
-
-   **Do not write a "delivered" narrative onto the Linear
-   issue at this point.** It is tempting — the work reads as
-   finished — but the adversarial pass has not run yet, and
-   on one measured run it *invalidated* the summary that had
-   already been written (the route memoization the note
-   described was removed as a blocking bug), forcing a
-   second corrections append. Two full-body echoes for one
-   story. The disposition is `review-pr`'s to record after
-   its fan-out, when it is actually known; leave the issue
-   alone here beyond the In-Progress transition in the
-   earlier step.
-
-   Do **not** surface `/pr-title-description` as its own
-   step in this flow: `review-pr` already **calls** it
-   for the final title and body — at its
-   title-and-description step, and again if its
-   `Semantic PR` check finds the title non-conforming — so
-   offering it here would be redundant noise. (Named rather
-   than numbered on purpose: a by-number citation into
-   another skill's step list goes stale silently the next
-   time a step is inserted, and `convention_refs.py`
-   resolves paths and anchors, not step numbers.) The two
-   user-facing skills are `/init-pr` then `/review-pr`;
-   `pr-title-description` is a helper `review-pr` drives,
-   not a freestanding stage.
+   On either yes, route straight into `/review-pr` with the tier.
+   **Write no "delivered" narrative onto the Linear issue here** — the
+   adversarial pass has not run and may invalidate it; the disposition
+   is `review-pr`'s to record. Don't surface `/pr-title-description`
+   as its own step: `review-pr` calls it.
