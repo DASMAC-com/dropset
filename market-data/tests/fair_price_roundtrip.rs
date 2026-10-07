@@ -279,16 +279,29 @@ async fn fx_tape_live_follows_the_fx_leg_contributors() {
     assert_eq!(got.fx_tape_live, Some(true), "a tape was credited");
     assert!(!(got.basis_outlier || got.uncertain || got.basis_breach || got.usdc_breach));
 
-    // The same engine fed a daily fix alone on the FX leg.
+    // A daily fix credited on the FX leg, beside a tape that was OFFERED but
+    // is far too stale to be credited. The tape candidate is what pins the
+    // contributors-not-candidates rule: a column derived from what was offered
+    // would read TRUE here.
     let age = Duration::from_secs(1);
     let mut engine = FairValueEngine::new(FairValueConfig::default());
     let legs = Legs {
-        fx: Candidates::none().push_reference("frankfurter", Some(Reading::new(1.14, age))),
+        fx: Candidates::none()
+            .push_trusted(
+                "pyth-hermes",
+                Some(Reading::new(1.14, Duration::from_secs(30 * 24 * 3600))),
+            )
+            .push_reference("frankfurter", Some(Reading::new(1.14, age))),
         crypto_usdc: Candidates::none().push("coinbase", Some(Reading::new(1.141, age))),
         usdc_usd: Candidates::none().push("kraken", Some(Reading::new(1.0, age))),
         static_usd: 1.14,
     };
     let fixed = quiet(engine.compose(legs, Duration::from_secs(5), ClockCtx::in_session()));
+    // The premise, asserted rather than assumed: the fix was credited and the
+    // stale tape was not. Without it a FALSE could come from an empty leg.
+    let credited: Vec<&str> = fixed.fx_leg.contributors.iter().map(|c| c.source).collect();
+    assert!(credited.contains(&"frankfurter"), "credited: {credited:?}");
+    assert!(!credited.contains(&"pyth-hermes"), "credited: {credited:?}");
     publish(&pool, 1_700_000_401, "EUR-USD", &fixed, STALE)
         .await
         .expect("publish a fix-only composition");
@@ -330,6 +343,11 @@ async fn a_degraded_composition_reads_back_through_the_reader() {
     publish(&pool, 1_700_000_515, "CADC-USDC", &fv, STALE)
         .await
         .expect("publish the degraded tick");
+    // A newer row for a product the reader did not ask for, which must not
+    // come back — the product filter is part of what is being read.
+    publish(&pool, 1_700_000_530, "EURC-USDC", &older, STALE)
+        .await
+        .expect("publish a product the reader did not ask for");
 
     let stored = read_row(&pool, "CADC-USDC", 1_700_000_515).await;
     assert_eq!(stored.regime, "degraded");
@@ -343,7 +361,11 @@ async fn a_degraded_composition_reads_back_through_the_reader() {
         .latest()
         .await
         .expect("read the newest rows");
-    assert_eq!(rows.len(), 1, "one row per product");
+    assert_eq!(rows.len(), 1, "one row per requested product");
+    assert_eq!(
+        rows[0].product_id, "CADC-USDC",
+        "only the requested product"
+    );
     assert_eq!(rows[0].ts, 1_700_000_515, "the newest tick wins");
     let back = rows[0].fair_value().expect("a published row decodes");
     assert_eq!(back.regime, Regime::Degraded(Degrade::StaticPeg));

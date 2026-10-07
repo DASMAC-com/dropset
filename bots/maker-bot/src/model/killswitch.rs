@@ -110,10 +110,11 @@ pub enum HaltReason {
     /// tape — the fail-closed reading.
     NoLiveTape,
     /// This market quotes off the fair-price estimator, and the estimator has
-    /// stopped publishing a usable row for it: none at all past the startup
-    /// grace, the newest one older than
-    /// [`crate::fair_price::MAX_PUBLISHED_FAIR_AGE`] or stamped implausibly
-    /// far ahead, or one that does not decode.
+    /// stopped publishing a usable row for it: none at all once the reader has
+    /// answered or the startup grace has elapsed, the newest one older than
+    /// [`crate::fair_price::MAX_PUBLISHED_FAIR_AGE`] or stamped further ahead
+    /// than [`crate::fair_price::MAX_PUBLISHED_FAIR_SKEW`], or one that does
+    /// not decode — a value no composition produces included.
     ///
     /// The fail-closed rule carried one hop up. Store silence halts because
     /// the data the operator chose to price off is gone; for a published

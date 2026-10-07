@@ -455,6 +455,20 @@ pub async fn publish(
 /// a price nobody is standing behind.
 pub const MAX_PUBLISHED_FAIR_AGE: Duration = Duration::from_secs(60);
 
+/// How far ahead of a consumer's clock a published row's stamp may sit before
+/// the row is refused.
+///
+/// Deliberately much tighter than [`crate::fx_store::MAX_PUBLICATION_SKEW`],
+/// whose 120s is sized for a minute-candle collector's widest honest overshoot.
+/// A published row has no bucket to overshoot — its stamp is the estimator's
+/// tick on a host clock — so only NTP skew is honest, and that is sub-second.
+/// The bound also composes with [`MAX_PUBLISHED_FAIR_AGE`]: a row reads as age
+/// zero until the consumer's clock catches up with its stamp, so the longest a
+/// dead estimator's last row can keep quoting is this plus the age bound. At
+/// the candle bound that would have been three minutes against a one-minute
+/// age rule.
+pub const MAX_PUBLISHED_FAIR_SKEW: Duration = Duration::from_secs(5);
+
 /// One published composition, as read back from `fair_price`.
 ///
 /// Carries the wire names as stored rather than parsed, so a row this crate
@@ -508,10 +522,21 @@ impl FairPriceRow {
     /// so a disagreement means the row was written by a writer whose mapping
     /// differs from this one, and quoting off either half would be a guess.
     ///
+    /// **The values are checked too, because nothing upstream does.** 0011
+    /// constrains only `product_id`: `fair` and `basis` are unconstrained
+    /// DOUBLE PRECISION, so Postgres accepts NaN, infinities, zero and
+    /// negatives, and the engine's own guarantees — a mid is finite and
+    /// positive, and absent exactly in [`Regime::Paused`] — are lost the moment
+    /// the value crosses a table. An inline composition never needed these
+    /// checks; a decoded one is the only thing standing between a corrupt row
+    /// and the quoting mid, since the kill switch reads no price.
+    ///
     /// # Errors
     ///
     /// [`MalformedRow`] when a wire name does not decode, the regime pair breaks
-    /// 0011's invariant, or the stored health disagrees with the regime.
+    /// 0011's invariant, the stored health disagrees with the regime, `fair` is
+    /// absent outside a paused regime (or present inside one), or `fair`,
+    /// `basis` or `basis_age_secs` carries a value no composition produces.
     pub fn fair_value(&self) -> Result<FairValue, MalformedRow> {
         let anchor = parse_anchor(&self.anchor).ok_or(MalformedRow("anchor"))?;
         let regime =
@@ -520,14 +545,26 @@ impl FairPriceRow {
         if health != regime.health() {
             return Err(MalformedRow("health"));
         }
+        let usable = |v: f64| v.is_finite() && v > 0.0;
+        if self.fair.is_none() != (regime == Regime::Paused) || !self.fair.is_none_or(usable) {
+            return Err(MalformedRow("fair"));
+        }
+        if !self.basis.is_none_or(usable) {
+            return Err(MalformedRow("basis"));
+        }
+        // Refused rather than clamped: a negative age reads as "observed just
+        // now", which is the fail-open direction for anything that ages it.
+        let basis_age = match self.basis_age_secs {
+            None => None,
+            Some(s) if s >= 0 => Some(Duration::from_secs(s as u64)),
+            Some(_) => return Err(MalformedRow("basis_age_secs")),
+        };
         Ok(FairValue {
             fair: self.fair,
             anchor,
             regime,
             basis: self.basis,
-            basis_age: self
-                .basis_age_secs
-                .map(|s| Duration::from_secs(s.max(0) as u64)),
+            basis_age,
             basis_outlier: self.basis_outlier,
             fx_leg: LegReport::default(),
             crypto_leg: LegReport::default(),
@@ -543,10 +580,16 @@ impl FairPriceRow {
     /// How old this row is at `now_unix`, floored at zero.
     ///
     /// A row stamped ahead of the reader's clock reads as age zero here; the
-    /// consumer refuses one stamped *implausibly* far ahead separately, through
-    /// [`crate::fx_store::future_stamped`], for the reason that function gives.
+    /// consumer refuses one stamped further ahead than
+    /// [`MAX_PUBLISHED_FAIR_SKEW`] separately, through [`Self::future_stamped`].
     pub fn age(&self, now_unix: i64) -> Duration {
         Duration::from_secs(now_unix.saturating_sub(self.ts).max(0) as u64)
+    }
+
+    /// Whether this row is stamped further ahead of `now_unix` than
+    /// [`MAX_PUBLISHED_FAIR_SKEW`].
+    pub fn future_stamped(&self, now_unix: i64) -> bool {
+        self.ts.saturating_sub(now_unix) > MAX_PUBLISHED_FAIR_SKEW.as_secs() as i64
     }
 }
 
@@ -939,5 +982,83 @@ mod tests {
         let r = row("normal", None, "ok");
         assert_eq!(r.age(1_030), Duration::from_secs(30));
         assert_eq!(r.age(900), Duration::ZERO);
+    }
+
+    /// A mid no composition produces is refused, never quoted — Postgres
+    /// accepts every one of these into the unconstrained column.
+    #[test]
+    fn a_mid_no_composition_produces_is_refused() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.08] {
+            let r = FairPriceRow {
+                fair: Some(bad),
+                ..row("normal", None, "ok")
+            };
+            assert_eq!(
+                r.fair_value().err(),
+                Some(MalformedRow("fair")),
+                "fair = {bad} must not decode"
+            );
+            let r = FairPriceRow {
+                basis: Some(bad),
+                ..row("normal", None, "ok")
+            };
+            assert_eq!(
+                r.fair_value().err(),
+                Some(MalformedRow("basis")),
+                "basis = {bad} must not decode"
+            );
+        }
+    }
+
+    /// The mid is absent exactly in the paused regime: a paused row decodes
+    /// with no mid (the consumer's pause path), and either mismatch is refused
+    /// — a paused row carrying a price would otherwise be quoted.
+    #[test]
+    fn the_mid_is_absent_exactly_when_paused() {
+        let paused = FairPriceRow {
+            fair: None,
+            anchor: "none".into(),
+            basis: None,
+            basis_age_secs: None,
+            ..row("paused", None, "pause")
+        };
+        let fv = paused.fair_value().expect("a paused row decodes");
+        assert_eq!(fv.fair, None);
+        assert_eq!(fv.regime, Regime::Paused);
+
+        let priced_pause = FairPriceRow {
+            fair: Some(1.08),
+            ..paused.clone()
+        };
+        assert_eq!(priced_pause.fair_value().err(), Some(MalformedRow("fair")));
+
+        let unpriced_normal = FairPriceRow {
+            fair: None,
+            ..row("normal", None, "ok")
+        };
+        assert_eq!(
+            unpriced_normal.fair_value().err(),
+            Some(MalformedRow("fair"))
+        );
+    }
+
+    /// A negative basis age is refused rather than clamped to "just observed".
+    #[test]
+    fn a_negative_basis_age_is_refused() {
+        let r = FairPriceRow {
+            basis_age_secs: Some(-1),
+            ..row("normal", None, "ok")
+        };
+        assert_eq!(r.fair_value().err(), Some(MalformedRow("basis_age_secs")));
+    }
+
+    /// The skew bound is inclusive: a row stamped exactly the bound ahead is
+    /// accepted, one second further is refused.
+    #[test]
+    fn future_stamped_is_inclusive_of_the_bound() {
+        let skew = MAX_PUBLISHED_FAIR_SKEW.as_secs() as i64;
+        let r = row("normal", None, "ok");
+        assert!(!r.future_stamped(r.ts - skew));
+        assert!(r.future_stamped(r.ts - skew - 1));
     }
 }
