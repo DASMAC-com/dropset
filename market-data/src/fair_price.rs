@@ -625,10 +625,27 @@ impl FairPriceSource {
         }
     }
 
-    /// Read the newest published row for every configured product.
+    /// Read the newest published row for every configured product, as of this
+    /// host's clock.
     pub async fn latest(&self) -> Result<Vec<FairPriceRow>> {
+        self.latest_at(dropset_feeds::now_secs()).await
+    }
+
+    /// [`Self::latest`] against an explicit `now_unix`, so the stamp ceiling
+    /// is testable.
+    ///
+    /// **Rows stamped further ahead than [`MAX_PUBLISHED_FAIR_SKEW`] are not
+    /// read at all**, and that has to happen here rather than in the consumer.
+    /// The query takes the newest row by stamp, so a single future-stamped row
+    /// would otherwise shadow every honest row written after it — and once the
+    /// clock caught up to within the skew, the consumer would accept it as
+    /// fresh and quote a price composed long before. Excluded at the source,
+    /// the newest honest row stays visible and ages normally.
+    pub async fn latest_at(&self, now_unix: i64) -> Result<Vec<FairPriceRow>> {
+        let ceiling = now_unix.saturating_add(MAX_PUBLISHED_FAIR_SKEW.as_secs() as i64);
         let rows = sqlx::query(include_str!("../queries/fair_price_latest.sql"))
             .bind(&self.products)
+            .bind(ceiling)
             .fetch_all(&self.pool)
             .await?;
 

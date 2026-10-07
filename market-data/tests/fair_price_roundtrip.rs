@@ -313,6 +313,36 @@ async fn fx_tape_live_follows_the_fx_leg_contributors() {
     );
 }
 
+/// A row stamped far ahead of the reader's clock is not read, so it cannot
+/// shadow the honest row beneath it. Taken newest-by-stamp, it would — and
+/// once the clock came within the skew bound of it, it would be quoted as
+/// fresh off a composition an hour old.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_future_stamped_row_does_not_shadow_the_honest_one() {
+    let (_pg, pool) = start_pg().await;
+    let now = 1_700_000_600;
+    let fv = composed();
+    publish(&pool, now, "EURC-USDC", &fv, STALE)
+        .await
+        .expect("publish the honest tick");
+    publish(&pool, now + 3_600, "EURC-USDC", &fv, STALE)
+        .await
+        .expect("publish a row an hour ahead");
+
+    let source = FairPriceSource::new("test", pool.clone(), vec!["EURC-USDC".into()]);
+    let rows = source.latest_at(now).await.expect("read as of now");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].ts, now, "the honest row, not the future one");
+
+    // Within the skew bound of the future row, it is the newest and is read.
+    let rows = source
+        .latest_at(now + 3_600 - 5)
+        .await
+        .expect("read near the future stamp");
+    assert_eq!(rows[0].ts, now + 3_600);
+}
+
 /// A **degraded** composition — the case no test wrote before, so the degrade
 /// vocabulary went unexercised in both directions — survives publish, the
 /// reader's query, and decoding back into the composition the maker quotes off.
