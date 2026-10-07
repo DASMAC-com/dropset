@@ -96,6 +96,20 @@ class DescriptionValue(unittest.TestCase):
         text = "---\ndescription: >-\n  first line\n  second\nname: x\n---\n"
         self.assertEqual(ss.description_value(text), "first line second")
 
+    def test_every_wrapped_form_is_measured_in_full(self):
+        # Under-measuring a wrapped description is the gate's one fail-open
+        # path, so each way of wrapping a long line must fold its body.
+        forms = {
+            "plain continued": "description: first line\n  second\n",
+            "empty then indented": "description:\n  first line\n  second\n",
+            "indent then chomp": "description: >2-\n  first line\n  second\n",
+            "header comment": "description: | # note\n  first line\n  second\n",
+        }
+        for label, field in forms.items():
+            with self.subTest(form=label):
+                text = f"---\nname: x\n{field}user-invocable: true\n---\n"
+                self.assertEqual(ss.description_value(text), "first line second")
+
     def test_no_frontmatter(self):
         self.assertIsNone(ss.description_value("# heading\ndescription: no\n"))
 
@@ -165,6 +179,42 @@ class Check(Fixture):
         self.assertEqual(code, 1)
         self.assertIn("small/SKILL.md#description", err)
 
+    def test_an_over_cap_project_file_fails_at_its_own_cap(self):
+        self.put("CLAUDE.md", "p" * (ss.PROJECT_CAP + 1))
+        self.write_baseline(
+            {self.big_key(): {"ceiling": ss.ENTRY_CAP + 500, "issue": "ENG-1"}}
+        )
+        code, _, err = self.run_tool("--check")
+        self.assertEqual(code, 1)
+        self.assertIn(f"CLAUDE.md: {ss.PROJECT_CAP + 1:,} bytes", err)
+
+    def test_a_malformed_ceiling_fails_and_holds_the_subject_to_the_cap(self):
+        for ceiling in (-1, "big", True, None):
+            with self.subTest(ceiling=ceiling):
+                self.write_baseline(
+                    {self.big_key(): {"ceiling": ceiling, "issue": "ENG-1"}}
+                )
+                code, _, err = self.run_tool("--check")
+                self.assertEqual(code, 1)
+                self.assertIn("is not a byte count", err)
+                self.assertIn(f"{self.big_key()}: {ss.ENTRY_CAP + 500:,} bytes", err)
+
+    def test_a_non_object_baseline_fails_without_a_traceback(self):
+        for body in ("[]", '{"exceptions": ["ab"]}', '{"exceptions": {"k": 1}}'):
+            with self.subTest(body=body):
+                self.baseline.write_text(body, encoding="utf-8")
+                code, _, err = self.run_tool("--check")
+                self.assertEqual(code, 1)
+                self.assertNotIn("Traceback", err)
+
+    def test_slack_under_a_ceiling_is_a_notice_not_a_failure(self):
+        self.write_baseline(
+            {self.big_key(): {"ceiling": ss.ENTRY_CAP + 900, "issue": "ENG-1"}}
+        )
+        code, _, err = self.run_tool("--check")
+        self.assertEqual(code, 0)
+        self.assertIn(f"note: {self.big_key()}", err)
+
 
 class Write(Fixture):
     def test_write_lowers_a_ceiling_to_the_current_size(self):
@@ -196,6 +246,25 @@ class Write(Fixture):
     def test_write_never_adds_an_entry_on_its_own(self):
         self.run_tool("--write")
         self.assertEqual(json.loads(self.baseline.read_text())["exceptions"], {})
+
+    def test_write_drops_an_entry_whose_subject_is_gone(self):
+        self.write_baseline(
+            {
+                self.big_key(): {"ceiling": ss.ENTRY_CAP + 500, "issue": "ENG-1"},
+                "gone/SKILL.md": {"ceiling": ss.ENTRY_CAP + 9, "issue": "ENG-1"},
+            }
+        )
+        self.run_tool("--write")
+        stored = json.loads(self.baseline.read_text())["exceptions"]
+        self.assertEqual(list(stored), [self.big_key()])
+
+    def test_write_refuses_a_malformed_baseline_and_leaves_it_alone(self):
+        body = json.dumps({"exceptions": {self.big_key(): {"ceiling": "x"}}})
+        self.baseline.write_text(body, encoding="utf-8")
+        code, _, err = self.run_tool("--write")
+        self.assertEqual(code, 2)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(self.baseline.read_text(), body)
 
 
 class Admit(Fixture):
@@ -229,6 +298,23 @@ class Admit(Fixture):
         self.assertEqual(code, 2)
         self.assertIn("expected KEY=ENG-###", err)
 
+    def test_admit_refuses_a_duplicate_request(self):
+        code, _, err = self.run_tool(
+            "--write",
+            "--admit",
+            f"{self.big_key()}=ENG-7",
+            "--admit",
+            f"{self.big_key()}=ENG-8",
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("never raised", err)
+        self.assertFalse(self.baseline.exists())
+
+    def test_admit_refuses_an_unknown_subject(self):
+        code, _, err = self.run_tool("--write", "--admit", "nope/SKILL.md=ENG-7")
+        self.assertEqual(code, 2)
+        self.assertIn("no such subject", err)
+
 
 class Report(Fixture):
     def test_report_ranks_entries_and_counts_siblings(self):
@@ -237,6 +323,10 @@ class Report(Fixture):
         lines = out.splitlines()
         self.assertTrue(lines[0].startswith("* big"))
         self.assertIn(f"siblings {ss.ENTRY_CAP + 1:>8,} (1)", lines[1])
+
+    def test_report_ignores_a_malformed_baseline(self):
+        self.baseline.write_text("[]", encoding="utf-8")
+        self.assertEqual(self.run_tool("--report")[0], 0)
 
 
 if __name__ == "__main__":

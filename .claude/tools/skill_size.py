@@ -29,11 +29,11 @@ ceiling, so an over-cap file cannot grow by a byte and an under-cap file — a
 stale entry's included — may grow to the cap. (The filing said "lesser", which
 would fail every frozen exception on enable day; the two behaviors it
 describes need the greater.) ``--write`` only ever *lowers* a ceiling (to the
-current size) or drops an entry whose subject is under its cap; it never
-raises one and never adds one.
-Admitting a new exception is a separate, explicit act (``--admit``) that must
-name its retiring issue — and a hand-raised ceiling is a review finding, since
-no tool can see the history that would prove it.
+current size) or drops an entry whose subject is under its cap or gone; it
+never raises one and never adds one. Admitting a new exception is a separate,
+explicit act (``--admit``) that must name its retiring issue — and a raised or
+added ceiling is a blocking review finding, since no tool can see the history
+that would prove it.
 
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -61,9 +61,10 @@ DEFAULT_BASELINE = "cfg/skill-size-baseline.json"
 # A retiring-issue reference. Data, not prose, so it carries the tag.
 _ISSUE_RE = re.compile(r"^ENG-[0-9]+$")
 
-# YAML block-scalar indicators: `>`, `|`, optionally with a chomping and/or
-# indentation indicator (`>-`, `|+`, `>2`).
-_BLOCK_SCALAR_RE = re.compile(r"^[>|][+-]?[0-9]?$")
+# YAML block-scalar header: `>` or `|`, then an optional chomping indicator and
+# an optional indentation digit (1-9) in either order (`>-`, `|+`, `>2`, `>2-`,
+# `>-2`), then an optional trailing comment.
+_BLOCK_SCALAR_RE = re.compile(r"^[>|](?:[1-9][+-]?|[+-][1-9]?)?(?:\s+#.*)?$")
 
 
 class Subject(NamedTuple):
@@ -77,10 +78,13 @@ class Subject(NamedTuple):
 def description_value(text: str) -> str | None:
     """Return the frontmatter ``description`` value of a ``SKILL.md``.
 
-    Handles the plain one-line form every skill uses today and the YAML
-    block-scalar forms (``>`` / ``|``) a writer may reach for when a line gets
-    long — the latter is folded to the indented lines that follow, which is
-    what the harness reads. ``None`` when there is no frontmatter or no key.
+    Handles the plain one-line form every skill uses today and every way a
+    writer may wrap a long one: a block scalar (``>`` / ``|`` header), a plain
+    scalar continued on indented lines, or an empty value followed by indented
+    text. Each is folded with the indented lines that follow, up to the next
+    unindented line or the closing ``---``, because under-measuring a wrapped
+    description is the one way this gate could fail open. ``None`` when there
+    is no frontmatter or no key.
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -91,14 +95,12 @@ def description_value(text: str) -> str | None:
         if not line.startswith("description:"):
             continue
         value = line[len("description:") :].strip()
-        if not _BLOCK_SCALAR_RE.match(value):
-            return value
-        body: list[str] = []
+        parts = [] if _BLOCK_SCALAR_RE.match(value) else [value]
         for follow in lines[index + 1 :]:
             if follow.strip() == "---" or (follow and not follow[0].isspace()):
                 break
-            body.append(follow.strip())
-        return " ".join(part for part in body if part)
+            parts.append(follow.strip())
+        return " ".join(part for part in parts if part)
     return None
 
 
@@ -125,16 +127,43 @@ def collect(root: Path) -> list[Subject]:
     return subjects
 
 
-def load_baseline(path: Path) -> dict[str, dict]:
-    """Read the baseline's exceptions; a missing file means no exceptions."""
+def load_baseline(path: Path) -> tuple[dict[str, dict], list[str]]:
+    """Read the baseline's exceptions, returning ``(exceptions, errors)``.
+
+    A missing file means no exceptions. Every shape problem — a non-object
+    root or entry, a ceiling that is not a non-negative integer, an issue that
+    is not a string — is returned as an error and its entry left out, so
+    ``--check`` reports it as a failure and ``--write`` refuses to run rather
+    than either one crashing. Leaving a malformed entry out fails closed: its
+    subject is held to the plain cap.
+    """
     if not path.is_file():
-        return {}
+        return {}, []
     data = json.loads(path.read_text(encoding="utf-8"))
-    return dict(data.get("exceptions", {}))
+    raw = data.get("exceptions", {}) if isinstance(data, dict) else None
+    if not isinstance(raw, dict):
+        return {}, [f"{path.name}: expected an object with an `exceptions` object"]
+    exceptions: dict[str, dict] = {}
+    errors: list[str] = []
+    for key, entry in raw.items():
+        ceiling = entry.get("ceiling") if isinstance(entry, dict) else None
+        issue = entry.get("issue") if isinstance(entry, dict) else None
+        # `bool` is an `int` subclass, so JSON `true` would read as 1.
+        if not isinstance(ceiling, int) or isinstance(ceiling, bool) or ceiling < 0:
+            errors.append(f"{key}: baseline ceiling {ceiling!r} is not a byte count")
+        elif not isinstance(issue, str):
+            errors.append(f"{key}: baseline issue {issue!r} is not a string")
+        else:
+            exceptions[key] = {"ceiling": ceiling, "issue": issue}
+    return exceptions, errors
 
 
 def dump_baseline(path: Path, exceptions: dict[str, dict]) -> None:
-    """Write the baseline deterministically (sorted keys, trailing newline)."""
+    """Write the baseline deterministically (sorted keys, trailing newline).
+
+    Only ``ceiling`` and ``issue`` are written: a hand-added field does not
+    survive ``--write``, so put notes in the retiring issue, not the file.
+    """
     body = {
         "exceptions": {
             key: {
@@ -152,31 +181,26 @@ def check(
 ) -> tuple[list[str], list[str]]:
     """Return ``(failures, notices)`` for the measured subjects.
 
-    A failure is a subject over its limit, a malformed baseline entry, or an
-    entry naming a subject that no longer exists. A notice is an entry whose
-    subject is now below its ceiling — harmless (the slack can be regrown, but
-    never past the ceiling), and cleared by ``--write``.
+    A failure is a subject over its limit, an over-cap ceiling naming no
+    retiring issue, or an entry naming a subject that no longer exists
+    (malformed entries are reported by ``load_baseline``). A notice is an entry
+    whose subject is now below its ceiling — harmless (the slack can be
+    regrown, but never past the ceiling), and cleared by ``--write``.
     """
     failures: list[str] = []
     notices: list[str] = []
     by_key = {subject.key: subject for subject in subjects}
 
     for key in sorted(exceptions):
-        entry = exceptions[key]
-        ceiling = entry.get("ceiling")
-        issue = entry.get("issue")
-        if not isinstance(ceiling, int) or ceiling < 0:
-            failures.append(f"{key}: baseline ceiling {ceiling!r} is not a byte count")
-            continue
+        ceiling = exceptions[key]["ceiling"]
+        issue = exceptions[key]["issue"]
         subject = by_key.get(key)
         if subject is None:
             failures.append(
                 f"{key}: baseline entry names nothing that exists — run --write"
             )
             continue
-        if ceiling > subject.cap and not (
-            isinstance(issue, str) and _ISSUE_RE.match(issue)
-        ):
+        if ceiling > subject.cap and not _ISSUE_RE.match(issue):
             failures.append(
                 f"{key}: ceiling {ceiling:,} is above the {subject.cap:,} cap and "
                 f"names no retiring issue (got {issue!r})"
@@ -184,15 +208,13 @@ def check(
 
     for subject in subjects:
         entry = exceptions.get(subject.key)
-        ceiling = entry.get("ceiling") if entry is not None else None
-        if not isinstance(ceiling, int):
-            ceiling = subject.cap
+        ceiling = subject.cap if entry is None else entry["ceiling"]
         limit = max(subject.cap, ceiling)
         if subject.size > limit:
             if limit == subject.cap:
                 why = f"cap {subject.cap:,}"
             else:
-                why = f"frozen until {entry.get('issue')}"
+                why = f"frozen until {entry['issue']}"
             failures.append(
                 f"{subject.key}: {subject.size:,} bytes > {limit:,} ({why})"
             )
@@ -207,7 +229,8 @@ def check(
 def write(subjects: list[Subject], exceptions: dict[str, dict]) -> dict[str, dict]:
     """Tighten the baseline: lower ceilings, drop entries no longer needed.
 
-    Never raises a ceiling and never adds an entry. A subject that has grown
+    Drops an entry whose subject is within its cap or no longer exists. Never
+    raises a ceiling and never adds an entry. A subject that has grown
     past its ceiling keeps the old one, so ``--check`` keeps failing it — the
     fix is to shrink the file, not to re-baseline it.
     """
@@ -243,7 +266,7 @@ def admit(
             errors.append(f"{request}: expected KEY=ENG-###")
         elif subject is None:
             errors.append(f"{key}: no such subject")
-        elif key in exceptions:
+        elif key in admitted:
             errors.append(f"{key}: already in the baseline; ceilings are never raised")
         elif subject.size <= subject.cap:
             errors.append(
@@ -258,7 +281,11 @@ def report(root: Path, subjects: list[Subject], show_all: bool) -> list[str]:
     """Per-skill sizes, largest entry file first, siblings reported not capped."""
     by_key = {subject.key: subject for subject in subjects}
     rows: list[tuple[int, str]] = []
-    for skill_dir in sorted(p for p in (root / SKILLS_DIR).iterdir() if p.is_dir()):
+    skills = root / SKILLS_DIR
+    skill_dirs = (
+        sorted(p for p in skills.iterdir() if p.is_dir()) if skills.is_dir() else []
+    )
+    for skill_dir in skill_dirs:
         entry_key = f"{SKILLS_DIR}/{skill_dir.name}/{ENTRY_NAME}"
         entry = by_key.get(entry_key)
         description = by_key.get(entry_key + DESCRIPTION_SUFFIX)
@@ -324,17 +351,21 @@ def main(argv: list[str] | None = None) -> int:
 
     root: Path = args.root
     baseline_path: Path = args.baseline or root / DEFAULT_BASELINE
-    subjects = collect(root)
-    exceptions = load_baseline(baseline_path)
-
     if args.admit and not args.write:
         parser.error("--admit requires --write")
 
+    subjects = collect(root)
     if args.report:
         print("\n".join(report(root, subjects, args.all)))
         return 0
 
+    exceptions, baseline_errors = load_baseline(baseline_path)
     if args.write:
+        if baseline_errors:
+            for error in baseline_errors:
+                print(f"skill-size: {error}", file=sys.stderr)
+            print("skill-size: fix the baseline by hand first", file=sys.stderr)
+            return 2
         exceptions, errors = admit(subjects, exceptions, args.admit)
         if errors:
             for error in errors:
@@ -348,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     failures, notices = check(subjects, exceptions)
+    failures = baseline_errors + failures
     for notice in notices:
         print(f"skill-size: note: {notice}", file=sys.stderr)
     if not failures:

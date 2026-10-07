@@ -243,7 +243,8 @@ Files already over a cap are **frozen** in `cfg/skill-size-baseline.json`
 at their size on admission, each naming the issue that retires it. A
 frozen file may not grow by a byte; `--write` only lowers a ceiling or
 drops a retired entry, and admitting a new exception (`--admit`) must name
-an issue. **A hand-raised ceiling is a review finding.**
+an issue. **A raised or newly added ceiling is a blocking review
+finding** — no tool can see the history that would prove it justified.
 
 Two rules keep the cap from turning into deletion:
 
@@ -253,8 +254,10 @@ Two rules keep the cap from turning into deletion:
   again.
 - **Compress, don't erase.** Keep the rule once plus one provenance line.
   The measurements and incident narrative move to the skill's
-  `history.md` ledger. A removed rule points to its ledger entry or its
-  new home.
+  `history.md` ledger beside its `SKILL.md` (create it if the skill has
+  none); for `CLAUDE.md` they move to the convention doc the section
+  indexes. A removed rule points to its ledger entry or its new home,
+  as provenance — never as an instruction to read the ledger.
 
 ## The levers
 

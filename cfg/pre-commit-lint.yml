@@ -193,8 +193,7 @@ repos:
 # Resident-size gate: skill entry files, skill descriptions and CLAUDE.md are
 # loaded into every session that reaches them, so each carries a hard byte cap,
 # with today's over-cap files frozen at their size in
-# cfg/skill-size-baseline.json. `review-pr` alone grew 60k to 292k bytes over
-# July to October with nothing pushing back. `always_run` with
+# cfg/skill-size-baseline.json. `always_run` with
 # `pass_filenames: false` because the check is over the whole skill set and a
 # baseline edit alone must re-run it; it reads only committed files, so CI's
 # lint workflow enforces it too.
@@ -203,7 +202,7 @@ repos:
     entry: 'python3 .claude/tools/skill_size.py --check'
     id: 'skill-size'
     language: 'system'
-    name: 'Skill entry files and descriptions stay under their byte caps'
+    name: 'Skill entry files, descriptions and CLAUDE.md stay under byte caps'
     pass_filenames: false
   repo: 'local'
 # hadolint-py wraps the hadolint binary so the hook needs neither Docker nor
